@@ -269,12 +269,7 @@ async function prepare(options, onComputerStart) {
   await removeUnmountedRuntimes(assets).catch(() => {});
   await waitFor(() => runDocker(['info', '--format', '{{.ServerVersion}}']), { signal });
   for (let index = 0; index < manifest.images.length; index++) {
-    const item = manifest.images[index];
-    if (
-      !['workspace', 'browser', 'postgres'].includes(item.name) ||
-      !/^sha256:[a-f0-9]{64}$/.test(item.id)
-    )
-      throw new Error('The Otto computer image is invalid.');
+    const item = validImage(manifest.images[index]);
     let installed = '';
     try {
       installed = await runDocker(['image', 'inspect', '--format', '{{.Id}}', item.reference]);
@@ -318,6 +313,46 @@ async function prepare(options, onComputerStart) {
     signal,
     status,
   });
+}
+
+function validImage(item) {
+  if (
+    !['workspace', 'browser', 'postgres'].includes(item.name) ||
+    !/^sha256:[a-f0-9]{64}$/.test(item.id) ||
+    !/^images\/(workspace|browser|postgres)\.tar\.gz$/.test(item.file)
+  )
+    throw new Error('The Otto computer image is invalid.');
+  return item;
+}
+
+export async function preloadRuntimeImages({ dataRoot, assets, signal }) {
+  const root = resolve(dataRoot);
+  const identity = createHash('sha256').update(root).digest('hex').slice(0, 12);
+  const env = {
+    PATH: ['/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter),
+    HOME: homedir(),
+    DOCKER_HOST: `unix://${join(homedir(), '.otto-desktop', identity, 'otto/sock/docker.sock')}`,
+    DOCKER_CONFIG: join(root, 'desktop-runtime/docker-config'),
+  };
+  const runDocker = (args, extra = {}) =>
+    execute(join(assets, 'docker-host/docker/docker'), args, { env, signal, ...extra });
+  const manifest = JSON.parse(await readFile(join(assets, 'manifest.json'), 'utf8'));
+  const loaded = [];
+  for (const item of manifest.images.map(validImage)) {
+    const installed = await runDocker([
+      'image',
+      'inspect',
+      '--format',
+      '{{.Id}}',
+      item.reference,
+    ]).catch(() => '');
+    if (installed === item.id) continue;
+    if ((await fileHash(join(assets, item.file))) !== item.sha256)
+      throw new Error('An Otto computer image is damaged. Reinstall this build.');
+    await runDocker(['load', '--input', join(assets, item.file)], { timeout: 600_000 });
+    loaded.push(item.name);
+  }
+  return loaded;
 }
 
 async function removeUnmountedRuntimes(assets) {

@@ -785,6 +785,7 @@ async function checkForUpdates(manual = true) {
           await dialog.showMessageBox({ message: 'Otto is up to date.', buttons: ['OK'] });
         return;
       }
+      if (!manual && notifyUpdate(candidate)) return;
       const { response } = await dialog.showMessageBox({
         message: `Otto ${candidate.version} is ready.`,
         buttons: ['Restart', 'Later'],
@@ -814,6 +815,22 @@ async function checkForUpdates(manual = true) {
   checkingUpdates = checking;
   refreshUpdateMenu();
   return checking;
+}
+
+function notifyUpdate(candidate) {
+  if (!preferences.notifications || !Notification.isSupported()) return false;
+  const notification = new Notification({
+    title: `Otto ${candidate.version} is ready`,
+    body: 'Restart Otto to use the new version.',
+  });
+  displayedNotifications.add(notification);
+  notification.on('click', () => {
+    if (!quitting && updates?.ready) void checkForUpdates();
+  });
+  notification.on('close', () => displayedNotifications.delete(notification));
+  notification.on('failed', () => displayedNotifications.delete(notification));
+  notification.show();
+  return true;
 }
 
 async function restartForUpdate() {
@@ -1207,11 +1224,18 @@ else {
             const { prepareRuntimeUpdate } = await import(
               pathToFileURL(join(engineRoot, 'desktop/runtime/assets.mjs')).href
             );
-            await prepareRuntimeUpdate(candidate.runtime, {
+            const assets = await prepareRuntimeUpdate(candidate.runtime, {
               resourcesPath: engineRoot,
               downloadUrl: candidate.downloadUrl,
               signal,
             });
+            if (!engine || closingEngine) return;
+            const { preloadRuntimeImages } = await import(
+              pathToFileURL(join(engineRoot, 'desktop/runtime/index.mjs')).href
+            );
+            await preloadRuntimeImages({ dataRoot: profileRoot, assets, signal }).catch(
+              (error) => void writeDiagnostic(error.message).catch(() => {}),
+            );
           },
           restart: restartForUpdate,
           onStatus: (phase) => {
