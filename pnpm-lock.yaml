@@ -223,8 +223,8 @@ importers:
         specifier: 2.2.2
         version: 2.2.2
       prettier:
-        specifier: 3.9.9
-        version: 3.9.9
+        specifier: 3.9.10
+        version: 3.9.10
       tailwindcss:
         specifier: ^4.1.17
         version: 4.3.3
@@ -3424,8 +3424,8 @@ packages:
       preact-render-to-string:
         optional: true
 
-  prettier@3.9.9:
-    resolution: {integrity: sha512-Z/CJHIkdujO/OtN7nXUii0Rf3VT5SRuhjBA82Xvu2XhBUgX3nhP67T0LHceBdQLex7OOFGTox+Q5Yg8Jk2Qivg==}
+  prettier@3.9.10:
+    resolution: {integrity: sha512-skGHTH1Yb9QvaTC4hWnRTzEYtCpApF0UMBPz+t/0ZPzP8ihefo/btKd+QA7pUE0fEwA1SbS/NmhyEcstdXOIdA==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -7776,7 +7776,7 @@ snapshots:
 
   preact@10.29.8: {}
 
-  prettier@3.9.9: {}
+  prettier@3.9.10: {}
 
   process-warning@4.0.1: {}
 
