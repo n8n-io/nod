@@ -17,7 +17,12 @@ import type {
   VaultImportResult,
   VaultPaymentCard,
 } from '../shared/contracts.ts';
-import type { BrowserPage, CredentialKind, CredentialSubmission } from '../ports/computer.ts';
+import type {
+  BrowserAction,
+  BrowserPage,
+  CredentialKind,
+  CredentialSubmission,
+} from '../ports/computer.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { SiteIcon } from '../ports/link-preview.ts';
 import {
@@ -131,7 +136,7 @@ type VaultOptions = {
   retry(turnId: string): Promise<void>;
   inject(input: CredentialInjection): Promise<CredentialSubmission | void>;
   keyStore: CredentialKeyStore;
-  page?(threadId: string): Promise<BrowserPage>;
+  page?(threadId: string, step?: BrowserAction): Promise<BrowserPage>;
   emailCode?(input: EmailCodeRequest, signal: AbortSignal): Promise<PrivateEmailCode | undefined>;
   icon?(origin: string): Promise<SiteIcon | null>;
 };
@@ -1094,6 +1099,18 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       ...(kind === 'otp' && input.emailCode !== undefined ? { emailCode: input.emailCode } : {}),
       ...(kind === 'otp' && input.emailRecipient ? { emailRecipient: input.emailRecipient } : {}),
     };
+    const siteLabel = async (selector: string, fallback: string) =>
+      (
+        await options.page?.(threadId, { action: 'fill', selector }).catch(() => undefined)
+      )?.controls?.[0]?.name.trim() || fallback;
+    const targetLabel = await siteLabel(
+      [target].flat()[0]!,
+      kind === 'identifier'
+        ? 'Email, phone or username'
+        : kind === 'otp'
+          ? 'Verification code'
+          : 'Password',
+    );
     const inspection: StoredInspection = {
       origin,
       fields: [
@@ -1102,20 +1119,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
               {
                 kind: 'identifier' as const,
                 selector: usernameSelector,
-                label: 'Email, phone or username',
+                label: await siteLabel(usernameSelector, 'Email, phone or username'),
               },
             ]
           : []),
-        ...[target].flat().map((selector) => ({
-          kind,
-          selector,
-          label:
-            kind === 'identifier'
-              ? 'Email, phone or username'
-              : kind === 'otp'
-                ? 'Verification code'
-                : 'Password',
-        })),
+        ...[target].flat().map((selector) => ({ kind, selector, label: targetLabel })),
       ],
     };
     return { input: resolved, inspection };

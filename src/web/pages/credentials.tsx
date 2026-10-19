@@ -415,7 +415,11 @@ function CredentialForm({ id }: { id: string }) {
                       </Field>
                     )}
                     {password && (
-                      <Field label="Password">
+                      <Field
+                        label={
+                          fields.find((field) => field.kind === 'password')?.label || 'Password'
+                        }
+                      >
                         <Input
                           name="password"
                           type="password"

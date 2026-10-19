@@ -166,6 +166,11 @@ test(
     const vault = await createVault(pool, {
       keyStore: { id: 'fixture', configured: true, getKey: async () => fixtureKey },
       retry: async () => {},
+      page: async (_threadId, step) => ({
+        origin: 'https://example.com',
+        url: 'https://example.com/login',
+        ...(step ? { controls: [{ role: 'textbox', name: 'Passwort' }] } : {}),
+      }),
       inject: async (input) => {
         if (failNext) {
           failNext = false;
@@ -214,6 +219,10 @@ test(
       const form = await app.inject({ url });
       assert.equal(form.statusCode, 200);
       assert.equal(form.headers['cache-control'], 'no-store');
+      assert.deepEqual(
+        form.json<CredentialRequest>().fields?.map((field) => field.label),
+        ['Passwort'],
+      );
       const first = app.inject({
         method: 'POST',
         url,
