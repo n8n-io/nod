@@ -46,7 +46,7 @@ async function files(stack: Stack) {
   return contents;
 }
 
-async function writtenState(stack: Stack, before: Record<string, string>) {
+async function writtenState(stack: Stack, before: Record<string, string>, rule: string) {
   const memory = (await call(stack, '/api/memory')) as {
     notes: Array<{ path: string; text: string }>;
     skills: Array<{ name: string; description: string; body?: string }>;
@@ -63,8 +63,8 @@ async function writtenState(stack: Stack, before: Record<string, string>) {
     if (before[path] !== content) state[`workspace${path.replace(/^\/workspace/, '')}`] = content;
   const scheduled = JSON.stringify(schedules);
   if (scheduled !== '[]' && scheduled !== '{"schedules":[]}') state.schedules = scheduled;
-  if ((preferences.notificationRule ?? '') !== standingRule && preferences.notificationRule)
-    state['notification-rule'] = preferences.notificationRule;
+  if ((preferences.notificationRule ?? '') !== rule)
+    state['notification-rule'] = preferences.notificationRule ?? '';
   return state;
 }
 
@@ -166,7 +166,7 @@ async function run(spec: WhisperSpec): Promise<WhisperRun> {
         return { name: tool.name, input: JSON.stringify(tool.input ?? null).slice(0, 300) };
       });
     await reflect(boss, deadline);
-    const state = await writtenState(stack, before);
+    const state = await writtenState(stack, before, mode === 'background' ? standingRule : '');
     await stack.request('/api/thread/stop', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

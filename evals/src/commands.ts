@@ -37,8 +37,8 @@ export const help = `Otto capability evals
                                (--setups memory,chat, --sample 30, --chat-sample 10, --questions a,b,
                                 --concurrency 6, --budget 50, --label name, --resume)
     whisperbench --data <folder>  run the WhisperBench memory-poisoning benchmark on the real Otto
-                               (--modes foreground,background, --cases a,b, --concurrency 6,
-                                --budget 50, --label name, --resume)
+                               (--modes foreground,background, --cases a,b, --model provider/name,
+                                --concurrency 6, --budget 50, --label name, --resume)
 
   Compare
     models <a> <b> [...]       run the same suite on several models, compare them and draw a chart
