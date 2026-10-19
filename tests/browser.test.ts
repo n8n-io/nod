@@ -12,6 +12,7 @@ import { PassThrough } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import type { Static } from '@sinclair/typebox';
+import fc from 'fast-check';
 import pg from 'pg';
 import type { Agent, AgentTool, AgentToolResult, RuntimeContext } from '../src/ports/agent.ts';
 import { BrowserActionError, type BrowserAction, type Computer } from '../src/ports/computer.ts';
@@ -1883,6 +1884,60 @@ test('browser observations redact OAuth callback values, API credentials and sig
       false,
     );
   }
+});
+
+test('browser text redaction hides every encoded form of any secret in any surrounding text', () => {
+  const visible = (text: string, secrets: string[]) =>
+    redactBrowserText(text, secrets).split('[redacted]');
+  const unit = fc.oneof(
+    fc.string({ unit: 'grapheme-ascii', minLength: 1, maxLength: 1 }),
+    fc.string({ unit: 'grapheme', minLength: 1, maxLength: 1 }),
+  );
+  const text = fc.string({ unit });
+  fc.assert(
+    fc.property(
+      fc.array(fc.string({ unit, minLength: 1 }), { minLength: 1, maxLength: 3 }),
+      fc.nat(),
+      fc.constantFrom(
+        (secret: string) => secret,
+        (secret: string) => JSON.stringify(secret).slice(1, -1),
+        encodeURIComponent,
+        encodeURI,
+        (secret: string) => new URLSearchParams({ value: secret }).toString().slice(6),
+        (secret: string) =>
+          encodeURIComponent(secret).replace(/%[0-9A-F]{2}/g, (code) => code.toLowerCase()),
+      ),
+      text,
+      text,
+      (secrets, pick, encode, before, after) => {
+        const shown = encode(secrets[pick % secrets.length]!);
+        const parts = visible(`${before}${shown}${after}`, secrets);
+        assert.equal(
+          parts.some((part) => part.includes(shown)),
+          false,
+        );
+      },
+    ),
+    { numRuns: 1000 },
+  );
+  fc.assert(
+    fc.property(
+      fc.stringMatching(/^\d{12,19}$/),
+      fc.array(fc.stringMatching(/^[ ./-]{0,3}$/), { minLength: 18, maxLength: 18 }),
+      text,
+      text,
+      (card, gaps, before, after) => {
+        const shown = [...card]
+          .map((digit, index) => (index ? gaps[index - 1] : '') + digit)
+          .join('');
+        const parts = visible(`${before}${shown}${after}`, [card]);
+        assert.equal(
+          parts.some((part) => part.includes(shown)),
+          false,
+        );
+      },
+    ),
+  );
 });
 
 test('observations reject embedded HTTP credentials and redact credentials in other tabs', async () => {

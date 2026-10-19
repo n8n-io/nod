@@ -1,0 +1,14 @@
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2027-01-19
+reason = "braces has no fixed release. It reaches the docs only through starlight-llms-txt, which calls micromatch at build time on include and exclude globs we don't set."
+
+[[IgnoredVulns]]
+id = "GHSA-238p-pmpm-9mq7"
+ignoreUntil = 2027-01-19
+reason = "The fix is KaTeX 0.18, which needs mermaid 12, which astro-mermaid doesn't support yet. Mermaid renders only our own diagrams, none use math, and the bypass needs an existing prototype pollution."
+
+[[IgnoredVulns]]
+id = "GHSA-rj75-hqrm-r3gf"
+ignoreUntil = 2027-01-19
+reason = "The fix is postcss-selector-parser 7, which expressive-code doesn't use yet through postcss-nested 6. It parses only expressive-code's own theme CSS at build time."

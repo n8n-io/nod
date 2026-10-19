@@ -71,7 +71,7 @@ Merged changes reach desktop users in the next desktop release. A maintainer run
 
 ## Dependency updates
 
-[Dependabot](https://github.com/n8n-io/otto/blob/main/.github/dependabot.yml) checks for updates every Monday at 06:00 Europe/Lisbon. It covers npm packages in the app, the desktop app and the Cloudflare adapter, GitHub Actions, Dockerfiles and Compose images.
+[Dependabot](https://github.com/n8n-io/otto/blob/main/.github/dependabot.yml) checks for updates every Monday at 06:00 Europe/Lisbon. It covers npm packages in the app, the desktop app, the Cloudflare adapter and the docs site, GitHub Actions, Dockerfiles and Compose images.
 
 | Rule       | What it does                                                                                                                                                                 |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -110,6 +110,8 @@ GitHub doesn't trigger workflows from a merge made with `GITHUB_TOKEN`, so the w
 :::caution[Not every pin is covered]
 Dependabot doesn't update Python packages installed inline in Dockerfiles, tools downloaded by pinned workflow commands, or the desktop runtime's custom build lock. Update those by hand.
 :::
+
+Known vulnerabilities that reach only the docs site and have no usable fix are listed in [`docs/osv-scanner.toml`](https://github.com/n8n-io/otto/blob/main/docs/osv-scanner.toml), each with its reason and a review date. OSV-Scanner and OpenSSF Scorecard skip them until that date.
 
 ## Related resources
 
