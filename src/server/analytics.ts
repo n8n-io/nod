@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { link, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -40,7 +40,9 @@ export function analyticsEnvironment(
 ): AnalyticsConfiguration['environment'] {
   const explicit = z.enum(['development', 'production']).safeParse(env.OTTO_ANALYTICS_ENVIRONMENT);
   if (explicit.success) return explicit.data;
-  return env.NODE_ENV === 'production' ? 'production' : 'development';
+  return env.NODE_ENV === 'production' && !/^\d+\.\d+\.\d+-/.test(env.OTTO_APP_VERSION ?? '')
+    ? 'production'
+    : 'development';
 }
 
 async function installationId(root: string, supplied?: string) {
@@ -124,7 +126,7 @@ export async function createAnalytics(options: {
   appVersion?: string;
 }) {
   const appVersion = analyticsVersion.safeParse(options.appVersion).data;
-  const localId = options.provider
+  let localId = options.provider
     ? await installationId(options.dataRoot, options.installationId).catch(() => null)
     : null;
   const available = Boolean(options.provider && localId);
@@ -141,6 +143,7 @@ export async function createAnalytics(options: {
     model?: TurnModel;
   }>();
   const replaySessions = new Map<string, string>();
+  const actedRuns = new Set<string>();
   let closed = false;
   function state(owner: string) {
     let value = states.get(owner);
@@ -195,6 +198,17 @@ export async function createAnalytics(options: {
       ).data;
     const parsed = analyticsEvent.safeParse(event);
     if (!parsed.success) return;
+    if (
+      runId &&
+      ((parsed.data.event === 'otto_confirmation_changed' &&
+        parsed.data.properties.status === 'executed') ||
+        (parsed.data.event === 'otto_secure_entry_changed' &&
+          parsed.data.properties.kind === 'payment' &&
+          parsed.data.properties.status === 'submitted'))
+    ) {
+      if (actedRuns.size >= 1000) actedRuns.delete(actedRuns.values().next().value!);
+      actedRuns.add(runId);
+    }
     if (run) {
       const { data } = parsed;
       if (data.event === 'otto_turn_started' && data.properties.model_provider)
@@ -229,9 +243,14 @@ export async function createAnalytics(options: {
       );
     } catch {}
   }
-  function setUsageData(owner: string, enabled: boolean, revision = state(owner).revision) {
+  function setUsageData(
+    owner: string,
+    enabled: boolean,
+    revision = state(owner).revision,
+    force = false,
+  ) {
     const current = state(owner);
-    if (current.enabled === enabled && current.revision === revision) return;
+    if (!force && current.enabled === enabled && current.revision === revision) return;
     current.controller.abort();
     const controller = new AbortController();
     if (!enabled) controller.abort();
@@ -256,6 +275,9 @@ export async function createAnalytics(options: {
     replaySession(turnId: string) {
       return replaySessions.get(turnId);
     },
+    actionSucceeded(runId: string) {
+      return actedRuns.has(runId);
+    },
     currentRun(owner: string) {
       const run = runs.getStore();
       return run?.owner === owner ? run : undefined;
@@ -274,6 +296,20 @@ export async function createAnalytics(options: {
       };
     },
     setUsageData,
+    async resetInstallation() {
+      if (!available || options.installationId !== undefined)
+        throw new Error('The analytics installation ID cannot be reset here.');
+      const id = randomUUID();
+      const temporary = join(options.dataRoot, `.analytics-${id}`);
+      try {
+        await writeFile(temporary, id, { flag: 'wx', mode: 0o600 });
+        await rename(temporary, join(options.dataRoot, 'analytics-id'));
+      } finally {
+        await rm(temporary, { force: true });
+      }
+      localId = id;
+      for (const [owner, current] of states) setUsageData(owner, current.enabled, undefined, true);
+    },
     forOwner:
       (owner: string): CaptureAnalytics =>
       (event, delivery) =>

@@ -276,6 +276,7 @@ jobs:
       OTTO_DESKTOP_TARGET: ${{ matrix.platform }}
       OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
       OTTO_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
+      OTTO_RELEASE_BUILD: 'true'
       OTTO_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.OTTO_DESKTOP_UPDATE_SOURCE_URL }}
       OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
       OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
@@ -422,6 +423,7 @@ jobs:
       deployment: false
     env:
       OTTO_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
+      OTTO_RELEASE_BUILD: 'true'
       OTTO_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.OTTO_DESKTOP_UPDATE_SOURCE_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

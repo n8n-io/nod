@@ -1014,8 +1014,10 @@ async function startEngine({ runtime, signal }) {
     OTTO_DESKTOP_OWNER_ID: await profileOwner(),
     OTTO_DESKTOP_AUTH_TOKEN: authToken,
     OTTO_ANALYTICS_ENABLED: String(analytics.enabled),
-    ...(analytics.distinctId ? { OTTO_ANALYTICS_ID: analytics.distinctId.slice(6) } : {}),
-    OTTO_ANALYTICS_ENVIRONMENT: app.isPackaged ? 'production' : 'development',
+    OTTO_ANALYTICS_ENVIRONMENT:
+      app.isPackaged && ottoBuild?.release === true && /^\d+\.\d+\.\d+$/.test(app.getVersion())
+        ? 'production'
+        : 'development',
     OTTO_PUBLIC_URL: engineOrigin,
     OTTO_DATA_ROOT: profileRoot,
     OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),

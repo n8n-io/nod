@@ -20,7 +20,11 @@ export async function transaction<T>(
     const value = await fn(client);
     await client.query('COMMIT');
     committed.delete(client);
-    for (const callback of callbacks) callback();
+    for (const callback of callbacks) {
+      try {
+        callback();
+      } catch {}
+    }
     return value;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});

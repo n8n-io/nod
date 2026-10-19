@@ -165,7 +165,7 @@ export async function createApprovals(
   analytics?: CaptureAnalytics,
 ) {
   const changed = (
-    status: 'asked' | 'approved' | 'declined' | 'expired' | 'uncertain',
+    status: 'asked' | 'approved' | 'declined' | 'executed' | 'expired' | 'uncertain',
     action: string,
     source: string,
   ) => {
@@ -582,6 +582,7 @@ export async function createApprovals(
         prompt: `The action the user confirmed did not run, so nothing was done: ${(error as Error).message} Do not report it as done.`,
       };
     }
+    changed('executed', approval.action, approval.turn_source);
     const prompt = `The exact action confirmed by the user was executed once by the trusted worker. Do not repeat it. Continue from its result.\n${untrustedBlock(`${approval.action} result`, JSON.stringify(result) ?? 'null')}`;
     signal.throwIfAborted();
     return { prompt };

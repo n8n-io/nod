@@ -4056,6 +4056,9 @@ test(
               task_action: 'translate',
               task_subject: 'audio',
               task_activities: ['translate:audio'],
+              use_case: 'question_answering',
+              context: 'unclear',
+              collaboration: 'directive',
               outcome: 'active',
             },
           ],
@@ -4098,6 +4101,9 @@ test(
             task_action: 'find',
             task_subject: 'web',
             task_activities: ['find:web'],
+            use_case: 'question_answering',
+            context: 'unclear',
+            collaboration: 'directive',
             outcome: 'completed',
           },
         ],
@@ -4157,6 +4163,9 @@ test(
           task_action: 'find',
           task_subject: 'web',
           task_activities: ['find:web'],
+          use_case: 'question_answering',
+          context: 'unclear',
+          collaboration: 'directive',
           outcome: 'completed',
         },
       ],
@@ -4216,6 +4225,61 @@ test(
 );
 
 test(
+  'a completed task counts as action_succeeded only when its turn executed a confirmed action or submitted a payment',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const processor = await f.processor(async ({ input }) => ({
+      tasks: [
+        {
+          task_id: null,
+          request_message_id: (
+            input as { messages: Array<{ id: string; current: boolean }> }
+          ).messages.find((message) => message.current)!.id,
+          task_type: 'transaction',
+          task_action: 'cancel',
+          task_subject: 'finance',
+          task_activities: ['cancel:finance'],
+          use_case: 'subscription_management',
+          context: 'personal',
+          collaboration: 'directive',
+          outcome: 'completed',
+        },
+      ],
+      frustration: null,
+    }));
+    const evidence = [];
+    for (const acted of [
+      {
+        event: 'otto_confirmation_changed',
+        properties: { status: 'executed', action_kind: 'app', source: 'user' },
+      },
+      {
+        event: 'otto_secure_entry_changed',
+        properties: { kind: 'payment', status: 'submitted', currency: 'EUR', amount: 12 },
+      },
+      {
+        event: 'otto_secure_entry_changed',
+        properties: { kind: 'sign_in', status: 'submitted' },
+      },
+      undefined,
+    ] as const) {
+      const turn = await f.turn({ session: randomUUID() });
+      const before = f.events.length;
+      await processor.observe(turn.id, async () => {
+        if (acted) f.analytics.capture(f.ownerId, acted);
+      });
+      await processor.drain();
+      const updated = f.events.slice(before).find((event) => event.event === 'otto_task_updated');
+      assert.equal(updated?.properties.use_case, 'subscription_management');
+      evidence.push(updated?.properties.completion_evidence);
+    }
+    assert.deepEqual(evidence, ['action_succeeded', 'action_succeeded', 'inferred', 'inferred']);
+  },
+);
+
+test(
   'conversation analytics fences owners, sessions, archived threads and non-user background work',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
@@ -4259,6 +4323,9 @@ test(
             task_action: 'find',
             task_subject: 'web',
             task_activities: ['find:web'],
+            use_case: 'question_answering',
+            context: 'unclear',
+            collaboration: 'directive',
             outcome: 'completed',
           },
         ],
@@ -4295,6 +4362,9 @@ test(
             task_action: 'find',
             task_subject: 'web',
             task_activities: ['find:web'],
+            use_case: 'question_answering',
+            context: 'unclear',
+            collaboration: 'directive',
             outcome: 'completed',
           },
         ],
@@ -4347,6 +4417,9 @@ test(
             task_action: 'find',
             task_subject: 'web',
             task_activities: ['find:web'],
+            use_case: 'question_answering',
+            context: 'unclear',
+            collaboration: 'directive',
             outcome: known ? 'completed' : 'active',
           },
         ],
@@ -4399,6 +4472,9 @@ test(
       task_action: 'find',
       task_subject: 'web',
       task_activities: ['find:web'],
+      use_case: 'question_answering',
+      context: 'unclear',
+      collaboration: 'directive',
       outcome: 'active',
     });
     answer = { tasks: [task(seed.messageId)], frustration: null };
@@ -4467,6 +4543,9 @@ test(
           task_action: 'find',
           task_subject: 'web',
           task_activities: ['find:web'],
+          use_case: 'question_answering',
+          context: 'unclear',
+          collaboration: 'directive',
           outcome: 'active',
         },
       ],
@@ -4559,6 +4638,9 @@ test(
           task_action: 'find',
           task_subject: 'web',
           task_activities: ['find:web'],
+          use_case: 'question_answering',
+          context: 'unclear',
+          collaboration: 'directive',
           outcome: 'completed',
         },
       ],
@@ -4592,6 +4674,9 @@ test(
             task_action: 'find',
             task_subject: 'web',
             task_activities: ['find:web'],
+            use_case: 'question_answering',
+            context: 'unclear',
+            collaboration: 'directive',
             outcome: 'active',
           },
         ],

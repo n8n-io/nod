@@ -5,6 +5,7 @@ import { Switch } from '../../../components/ui';
 import { errorMessage } from '../../../lib/api';
 import { Bubble, Footer, Messages, useReveal } from '../motion';
 import { prepareSuggestions } from '../storage';
+import { posthogConfig } from '../../../../shared/analytics';
 
 const sequence = [
   { typing: 450 },
@@ -62,8 +63,11 @@ export function OpenSource({ arrived, onNext, onBack, busy, notice, usage }: Ste
           </Bubble>,
           <Bubble className="ob-open-usage">
             <p id={`${id}-usage-data`}>
-              Share usage insights with the Otto team at n8n. Your model derives them from chats;
-              messages, files and keys are not sent to PostHog.
+              Sends the Otto team at n8n how you use Otto, the websites it visits, purchase amounts
+              and task labels your model writes from your chats, never message content.{' '}
+              <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
+                What’s shared
+              </a>
             </p>
             <div className="ob-open-toggle">
               <Switch

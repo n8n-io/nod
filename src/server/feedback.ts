@@ -227,21 +227,23 @@ export async function registerFeedback(
         throw fail('This submission already has different content.', 409);
       return receipt(winner.rows[0]);
     }
-    options.analytics?.({
-      event: 'otto_feedback_sent',
-      properties: {
-        category: input.category,
-        has_attachments: input.attachments.length > 0,
-        has_report: input.reportId !== null,
-      },
-    });
     pending.add(input.submissionId);
     if (repairs.size >= 5) repairs.delete(repairs.keys().next().value!);
     repairs.set(input.submissionId, { envelope, expiresAt: Date.now() + 3_600_000 });
     try {
       if (request.raw.aborted || reply.raw.destroyed || Date.now() - startedAt > 60_000)
         return await save({ submissionId: input.submissionId, status: 'rejected' });
-      return await save(await options.delivery.submit(envelope));
+      const delivered = await save(await options.delivery.submit(envelope));
+      if (delivered.status === 'submitted' || delivered.status === 'partial')
+        options.analytics?.({
+          event: 'otto_feedback_sent',
+          properties: {
+            category: input.category,
+            has_attachments: input.attachments.length > 0,
+            has_report: input.reportId !== null,
+          },
+        });
+      return delivered;
     } catch {
       return { submissionId: input.submissionId, status: 'unknown' } satisfies FeedbackReceipt;
     } finally {

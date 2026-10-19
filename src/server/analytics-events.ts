@@ -52,6 +52,8 @@ export const taskAction = z.enum([
   'submit',
   'explain',
   'plan',
+  'order',
+  'cancel',
   'unknown',
 ]);
 export const taskSubject = z.enum([
@@ -62,6 +64,7 @@ export const taskSubject = z.enum([
   'spreadsheet',
   'file',
   'calendar',
+  'meeting',
   'contact',
   'task',
   'automation',
@@ -72,10 +75,76 @@ export const taskSubject = z.enum([
   'video',
   'product',
   'post',
-  'payment',
+  'finance',
   'travel',
+  'place',
+  'device',
   'knowledge',
   'unknown',
+]);
+export const taskUseCase = z.enum([
+  'morning_briefing',
+  'news_digest',
+  'topic_monitoring',
+  'email_triage',
+  'reply_drafting',
+  'inbox_cleanup',
+  'message_sending',
+  'meeting_prep',
+  'meeting_notes',
+  'phone_calls',
+  'meeting_scheduling',
+  'calendar_management',
+  'reminders',
+  'task_planning',
+  'fact_checking',
+  'question_answering',
+  'how_to_advice',
+  'learning_and_tutoring',
+  'recommendations',
+  'product_research',
+  'price_tracking',
+  'online_shopping',
+  'food_ordering',
+  'returns_and_refunds',
+  'subscription_management',
+  'bill_payment',
+  'expense_tracking',
+  'finance_review',
+  'investment_monitoring',
+  'tax_paperwork',
+  'form_filling',
+  'trip_planning',
+  'travel_booking',
+  'reservations_and_tickets',
+  'home_search',
+  'local_search',
+  'contact_management',
+  'social_media',
+  'writing_and_editing',
+  'presentations',
+  'image_generation',
+  'video_creation',
+  'translation',
+  'document_analysis',
+  'data_analysis',
+  'file_organization',
+  'automation_setup',
+  'app_connection',
+  'coding_and_websites',
+  'device_control',
+  'sales_outreach',
+  'customer_support',
+  'recruiting',
+  'other',
+]);
+export const taskContext = z.enum(['work', 'personal', 'unclear']);
+export const taskCollaboration = z.enum([
+  'directive',
+  'iteration',
+  'learning',
+  'validation',
+  'unclear',
 ]);
 export const taskActivities = z
   .array(
@@ -170,6 +239,9 @@ const taskProperties = z.object({
   task_action: taskAction,
   task_subject: taskSubject,
   task_activities: taskActivities,
+  use_case: taskUseCase,
+  context: taskContext,
+  collaboration: taskCollaboration,
   source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
   channel: z.enum(['web', 'telegram', 'whatsapp', 'other']),
 });
@@ -320,7 +392,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       properties: taskProperties
         .extend({
           outcome: taskOutcome,
-          completion_evidence: z.enum(['inferred', 'none']),
+          completion_evidence: z.enum(['action_succeeded', 'inferred', 'none']),
           elapsed_ms: duration,
           turn_count: z.number().int().positive(),
         })
@@ -370,7 +442,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       event: z.literal('otto_confirmation_changed'),
       properties: z
         .object({
-          status: z.enum(['asked', 'approved', 'declined', 'expired', 'uncertain']),
+          status: z.enum(['asked', 'approved', 'declined', 'executed', 'expired', 'uncertain']),
           action_kind: z.enum(['app', 'browser', 'sign_in', 'settings', 'memory']),
           source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
         })
@@ -404,6 +476,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
           source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
           task_count: z.number().int().min(0).max(8).optional(),
           unknown_label_count: z.number().int().min(0).max(200).optional(),
+          other_label_count: z.number().int().min(0).max(200).optional(),
         })
         .strict(),
     })

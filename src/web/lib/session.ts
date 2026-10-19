@@ -205,6 +205,17 @@ export function createSessionStore(
       }
     }
   }
+  async function resetAnalyticsId() {
+    const session = await request<SessionResponse>('/api/account/analytics-id', {
+      method: 'POST',
+      body: '{}',
+      cache: 'no-store',
+    });
+    if (!validSession(session)) return;
+    read?.abort();
+    version++;
+    accept(session);
+  }
   return {
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -215,6 +226,7 @@ export function createSessionStore(
     getSnapshot: () => snapshot,
     refresh,
     revokeUsageData,
+    resetAnalyticsId,
     update,
     invalidate,
   };

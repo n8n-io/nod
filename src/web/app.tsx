@@ -21,6 +21,7 @@ import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
 import { useSession } from './hooks/use-session';
+import { sessionStore } from './lib/session';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
 import { AccountSettings } from './components/account-settings';
@@ -376,11 +377,13 @@ function AuthenticatedApp({
     user: session.user!,
     theme: session.settings!.theme,
     usageData: session.settings!.usageData,
+    analyticsId: session.analytics?.distinctId ?? undefined,
     traces: session.capabilities.traces ? session.settings!.traces : undefined,
     saving,
     onSettings: openSettings,
     onTheme: (theme) => onAccountUpdate({ theme }),
     onUsageData: (usageData) => onAccountUpdate({ usageData }),
+    onResetAnalyticsId: sessionStore.resetAnalyticsId,
     onTraces: (traces) => onAccountUpdate({ traces }),
   };
   const allowed = path !== '/browser' || session.capabilities.developer;

@@ -93,6 +93,7 @@ configuration.ottoBuild = {
   platform: 'win32-x64',
   ...(updateSourceUrl ? { updateSourceUrl } : {}),
   ...(tracesToken ? { tracesToken } : {}),
+  ...(process.env.OTTO_RELEASE_BUILD === 'true' ? { release: true } : {}),
 };
 delete configuration.devDependencies;
 delete configuration.scripts;
