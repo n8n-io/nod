@@ -554,9 +554,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
       }
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;
-      return reply
-        .code(409)
-        .send({ error: browserErrorMessage(code) ?? 'The browser did not take that input.' });
+      return reply.code(409).send({
+        error:
+          browserErrorMessage(code) ??
+          'The browser did not finish that input. Check the page before trying again.',
+      });
     }
     return { ok: true };
   });

@@ -8,6 +8,7 @@ import { createAgentBrowserComputer } from '../agent-browser/index.ts';
 import { containerBrowserOptions } from './config.ts';
 import {
   browserFrame,
+  browserInputResult,
   browserMetadata,
   browserResponse,
   browserSocketPath,
@@ -344,8 +345,25 @@ export async function startContainerBrowserWorker(
             const { threadId } = request;
             const computer = viewing;
             inputs = inputs
-              .then(async () => (await computer).control!(threadId, frame.input, controller.signal))
-              .catch(() => {});
+              .then(async () => {
+                let result;
+                try {
+                  controller.signal.throwIfAborted();
+                  await (await computer).control(threadId, frame.input, controller.signal);
+                  controller.signal.throwIfAborted();
+                  result = { id: frame.id, inputId: frame.inputId, ok: true };
+                } catch (error) {
+                  result = {
+                    id: frame.id,
+                    inputId: frame.inputId,
+                    ok: false,
+                    ...(error instanceof BrowserActionError ? { error: error.code } : {}),
+                  };
+                }
+                if (!socket.destroyed)
+                  await send(JSON.stringify(browserInputResult.parse(result)) + '\n');
+              })
+              .catch(stop);
           } else {
             if (!request || frame.id !== request.id) return stop();
             controller.abort();

@@ -1645,18 +1645,33 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
   };
 }
 
-test('a live view streams frames and carries input over one bridge call, and closing it keeps the browser', async () => {
+test('a live view acknowledges applied input, reports failures and cancels pending input when closed', async () => {
   const inputs: unknown[] = [];
+  let failInput = false;
+  let inputStarted = deferred();
+  let inputAborted = deferred();
+  let allowInput: Promise<void> | undefined;
+  let inputSignal: AbortSignal | undefined;
+  const viewSignals: AbortSignal[] = [];
   let disposals = 0;
   const computer: Computer = {
     ...syntheticComputer(),
     dispose: async () => {
       disposals++;
     },
-    control: async (_id, input) => {
+    control: async (_id, input, signal) => {
+      inputSignal = signal;
+      inputStarted.resolve();
+      const aborted = inputAborted;
+      signal?.addEventListener('abort', () => aborted.resolve(), { once: true });
+      if (failInput)
+        throw new BrowserActionError('browser_click_intercepted', 'Synthetic private detail');
+      await allowInput;
+      signal?.throwIfAborted();
       inputs.push(input);
     },
     view: async function* (_id, signal) {
+      viewSignals.push(signal);
       yield Buffer.from('first frame');
       while (inputs.length < 2 && !signal.aborted) await delay(5);
       yield Buffer.from('second frame');
@@ -1680,6 +1695,86 @@ test('a live view streams frames and carries input over one bridge call, and clo
       { type: 'text', text: 'hi' },
     ]);
     await assert.rejects(client.control!('task', { type: 'text', text: 'late' }), /not open/);
+    const controller = new AbortController();
+    const stream = client.view!('task', controller.signal)[Symbol.asyncIterator]();
+    await stream.next();
+    failInput = true;
+    await assert.rejects(
+      client.control!('task', { type: 'mouse', event: 'down', x: 0.5, y: 0.5 }),
+      (error: unknown) =>
+        error instanceof BrowserActionError &&
+        error.code === 'browser_click_intercepted' &&
+        !error.message.includes('Synthetic private detail'),
+    );
+    assert.equal(inputs.length, 2);
+    failInput = false;
+    inputStarted = deferred();
+    inputAborted = deferred();
+    const ready = deferred();
+    allowInput = ready.promise;
+    let acknowledged = false;
+    const typing = client.control!('task', { type: 'text', text: 'before Done' }).then(() => {
+      acknowledged = true;
+    });
+    await inputStarted.promise;
+    assert.equal(acknowledged, false);
+    ready.resolve();
+    await typing;
+    assert.deepEqual(inputs.at(-1), { type: 'text', text: 'before Done' });
+    controller.abort();
+    await stream.return?.();
+
+    inputStarted = deferred();
+    inputAborted = deferred();
+    const interrupted = deferred();
+    allowInput = interrupted.promise;
+    const nextController = new AbortController();
+    const next = client.view!('task', nextController.signal)[Symbol.asyncIterator]();
+    await next.next();
+    const pendingInput = client.control!('task', { type: 'text', text: 'interrupted' });
+    const rejected = assert.rejects(pendingInput, /did not finish/);
+    await inputStarted.promise;
+    nextController.abort();
+    await rejected;
+    await inputAborted.promise;
+    interrupted.resolve();
+    await next.return?.();
+    assert.equal(inputs.length, 3);
+
+    inputStarted = deferred();
+    inputAborted = deferred();
+    const timedOut = deferred();
+    allowInput = timedOut.promise;
+    const timedClient = fixture.client('/synthetic/input-timeout', { timeoutMs: 30 });
+    const timedView = timedClient
+      .view('task', new AbortController().signal)
+      [Symbol.asyncIterator]();
+    await timedView.next();
+    await assert.rejects(
+      timedClient.control('task', { type: 'text', text: 'timed out' }),
+      /did not finish/,
+    );
+    await inputAborted.promise;
+    timedOut.resolve();
+    await timedView.return?.();
+    assert.equal(inputs.length, 3);
+
+    allowInput = undefined;
+    const olderController = new AbortController();
+    const older = client.view('task', olderController.signal)[Symbol.asyncIterator]();
+    await older.next();
+    const newestController = new AbortController();
+    const newest = client.view('task', newestController.signal)[Symbol.asyncIterator]();
+    await newest.next();
+    await client.control('task', { type: 'text', text: 'newest view' });
+    assert.equal(inputSignal, viewSignals.at(-1));
+    olderController.abort();
+    await older.return?.();
+    await client.control('task', { type: 'text', text: 'still newest' });
+    assert.equal(inputSignal, viewSignals.at(-1));
+    newestController.abort();
+    await newest.return?.();
+    assert.equal(inputs.length, 5);
     assert.match((await client.act('task', { action: 'snapshot' })).text, /Synthetic page/);
     assert.equal(disposals, 0);
   } finally {

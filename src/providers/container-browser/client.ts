@@ -13,11 +13,11 @@ import {
   browserCardInput,
   browserRequest,
   browserResponse,
+  browserViewResult,
   chunkFrame,
   imageBytes,
   responseBytes,
   transferBytes,
-  viewFrame,
   type BrowserCall,
   type BrowserMetadata,
   type BrowserResponse,
@@ -45,7 +45,7 @@ export function createBridgeComputer(options: {
   >();
   const pending = new Set<Promise<unknown>>();
   const cancellations = new Set<() => void>();
-  const views = new Map<string, Set<(input: unknown) => void>>();
+  const views = new Map<string, Set<(input: unknown, signal?: AbortSignal) => Promise<void>>>();
   let disposing: Promise<void> | undefined;
   let recovering: Promise<void> | undefined;
   const reopenNotice =
@@ -230,47 +230,104 @@ export function createBridgeComputer(options: {
     });
     const child = options.launch({ method: 'view', threadId });
     let closed = false;
-    child.on('close', () => (closed = true));
-    child.on('error', () => (closed = true));
-    child.stdin.on('error', () => {});
-    child.stderr.resume();
-    let lines = '';
+    let exited = false;
+    let latest: Buffer | undefined;
+    let wake = () => {};
+    const inputs = new Map<string, { resolve(): void; reject(error: Error): void }>();
+    const open = views.get(threadId) ?? new Set();
     const write = (frame: unknown) => {
       if (closed) return;
-      if (!lines)
-        setImmediate(() => {
-          if (!closed) child.stdin.write(lines);
-          lines = '';
-        });
-      lines += JSON.stringify(browserFrame.parse(frame)) + '\n';
+      child.stdin.write(JSON.stringify(browserFrame.parse(frame)) + '\n');
     };
-    const send = (input: unknown) => write({ type: 'input', id: request.id, input });
-    const cancel = () => write({ type: 'cancel', id: request.id });
-    const open = views.get(threadId) ?? new Set();
+    const stop = () => {
+      closed = true;
+      open.delete(send);
+      if (!open.size && views.get(threadId) === open) views.delete(threadId);
+      for (const input of inputs.values())
+        input.reject(
+          new Error('The browser input did not finish. Check the page before trying again.'),
+        );
+      inputs.clear();
+      wake();
+    };
+    const cancel = () => {
+      write({ type: 'cancel', id: request.id });
+      stop();
+    };
+    const send = async (input: unknown, inputSignal?: AbortSignal) => {
+      inputSignal?.throwIfAborted();
+      if (closed) throw new Error('The browser view is not open.');
+      const inputId = randomUUID();
+      const timer = setTimeout(cancel, options.timeoutMs ?? 30_000);
+      inputSignal?.addEventListener('abort', cancel, { once: true });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          inputs.set(inputId, { resolve, reject });
+          write({ type: 'input', id: request.id, inputId, input });
+        });
+      } finally {
+        inputs.delete(inputId);
+        clearTimeout(timer);
+        inputSignal?.removeEventListener('abort', cancel);
+      }
+    };
+    child.on('close', () => {
+      exited = true;
+      stop();
+    });
+    child.on('error', stop);
+    child.stdin.on('error', cancel);
+    child.stderr.resume();
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('error', cancel);
+    child.stdout.on('end', stop);
+    let buffered = '';
+    child.stdout.on('data', (chunk: string) => {
+      if (closed) return;
+      buffered += chunk;
+      try {
+        for (let end = buffered.indexOf('\n'); end >= 0; end = buffered.indexOf('\n')) {
+          if (end > viewFrameLine) return cancel();
+          const result = browserViewResult.parse(JSON.parse(buffered.slice(0, end)));
+          buffered = buffered.slice(end + 1);
+          if (result.id !== request.id) return cancel();
+          if ('frame' in result) {
+            latest = Buffer.from(result.frame, 'base64');
+            wake();
+          } else {
+            const input = inputs.get(result.inputId);
+            inputs.delete(result.inputId);
+            if (result.ok) input?.resolve();
+            else
+              input?.reject(
+                result.error
+                  ? new BrowserActionError(result.error)
+                  : new Error('The browser did not take that input.'),
+              );
+          }
+        }
+        if (buffered.length > viewFrameLine) cancel();
+      } catch {
+        cancel();
+      }
+    });
     views.set(threadId, open.add(send));
     signal.addEventListener('abort', cancel, { once: true });
     cancellations.add(cancel);
     write({ type: 'request', request });
+    if (signal.aborted) cancel();
     try {
-      let buffered = '';
-      child.stdout.setEncoding('utf8');
-      for await (const chunk of child.stdout) {
-        buffered += chunk;
-        if (buffered.length > viewFrameLine) return;
-        for (let end = buffered.indexOf('\n'); end >= 0; end = buffered.indexOf('\n')) {
-          const frame = viewFrame.safeParse(JSON.parse(buffered.slice(0, end)));
-          buffered = buffered.slice(end + 1);
-          if (!frame.success || frame.data.id !== request.id) return;
-          yield Buffer.from(frame.data.frame, 'base64');
-        }
+      while (!closed || latest) {
+        const frame = latest;
+        latest = undefined;
+        if (frame) yield frame;
+        else await new Promise<void>((resolve) => (wake = resolve));
       }
     } finally {
-      open.delete(send);
-      if (!open.size && views.get(threadId) === open) views.delete(threadId);
       signal.removeEventListener('abort', cancel);
       cancellations.delete(cancel);
       cancel();
-      if (!closed) setTimeout(() => closed || child.kill('SIGKILL'), 5_000).unref();
+      if (!exited) setTimeout(() => exited || child.kill('SIGKILL'), 5_000).unref();
     }
   }
 
@@ -307,10 +364,10 @@ export function createBridgeComputer(options: {
         await call({ method: 'act', threadId: threadIdentity(id), input }, signal),
       ),
     screenshot: image,
-    control: async (id, input) => {
+    control: async (id, input, signal) => {
       const send = [...(views.get(threadIdentity(id)) ?? [])].at(-1);
       if (!send) throw new Error('The browser view is not open.');
-      send(input);
+      await send(input, signal);
     },
     view,
     upload: async (id, input, signal) => {

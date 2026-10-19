@@ -44,7 +44,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   const [shown, setShown] = useState(false);
   const [failures, setFailures] = useState(0);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState<'back' | 'reload' | null>(null);
+  const [loading, setLoading] = useState<'back' | 'reload' | 'resize' | null>(null);
   const [returning, setReturning] = useState(false);
   const [closed, setClosed] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -66,17 +66,19 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
         pending.current.splice(0, inputs.length);
         try {
           await post('/api/browser-handoff', { turnId, inputs });
-          setError('');
+          if (inputs.some((input) => input.type !== 'mouse' || input.event !== 'move'))
+            setError('');
         } catch (reason) {
           setError(errorMessage(reason));
           setLive(false);
           pending.current.length = 0;
           setAttempt((value) => value + 1);
+          throw reason;
         }
       }
     })().finally(() => {
       sending.current = null;
-      if (pending.current.length) void flush();
+      if (pending.current.length) void flush().catch(() => {});
     });
     return sending.current;
   }
@@ -105,7 +107,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     )
       queued[queued.length - 1] = { type: 'text', text: last.text + input.text };
     else queued.push(input);
-    void flush();
+    void flush().catch(() => {});
   }
 
   function point(event: React.MouseEvent<HTMLImageElement>) {
@@ -201,10 +203,19 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     }
   }
 
-  function resize(value: boolean) {
-    setLive(false);
-    setShown(false);
-    setExpanded(value);
+  async function resize(value: boolean) {
+    if (returning || loading) return;
+    setLoading('resize');
+    try {
+      await flush();
+      setLive(false);
+      setShown(false);
+      setExpanded(value);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setLoading(null);
+    }
   }
 
   useEffect(() => {
@@ -298,17 +309,18 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     };
     element.addEventListener('wheel', wheel, { passive: false });
     return () => element.removeEventListener('wheel', wheel);
-  }, [closed, live, expanded]);
+  }, [closed, live, expanded, loading, returning]);
 
   useEffect(() => {
     if (!expanded || closed) return;
     screen.current?.focus();
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !screen.current?.contains(event.target as Node)) resize(false);
+      if (event.key === 'Escape' && !screen.current?.contains(event.target as Node))
+        void resize(false);
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [expanded, closed]);
+  }, [expanded, closed, loading, returning]);
 
   if (closed) return null;
   const busy = returning || loading !== null;
@@ -325,7 +337,8 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     <Button
       variant="ghost"
       size="icon"
-      onClick={() => resize(!expanded)}
+      onClick={() => void resize(!expanded)}
+      disabled={busy}
       aria-label={expanded ? 'Shrink browser' : 'Enlarge browser'}
       title={expanded ? 'Shrink browser' : 'Enlarge browser'}
     >
@@ -456,7 +469,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
       </div>
       {createPortal(
         <>
-          <div className="browser-handoff-overlay" onClick={() => resize(false)} />
+          <div className="browser-handoff-overlay" onClick={() => void resize(false)} />
           {panel}
         </>,
         document.body,
