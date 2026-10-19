@@ -31,7 +31,8 @@ export function isPublicAddress(address: string): boolean {
   return (
     /^[23][0-9a-f]{0,3}:/.test(normal) &&
     !/^2002:/.test(normal) &&
-    !/^2001:(?::|0:|db8:|2:|10:|20:)/.test(normal)
+    !/^2001:(?::|0:|db8:|2:|10:|20:)/.test(normal) &&
+    !/^3fff:[0-9a-f]{0,3}:/.test(normal)
   );
 }
 

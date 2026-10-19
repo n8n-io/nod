@@ -91,6 +91,8 @@ test('public web validation rejects local, private, rebinding and credential URL
     'fd00::1',
     '2001:db8::1',
     '2002:7f00:1::',
+    '3fff::1',
+    '3fff:fff::1',
   ])
     assert.equal(isPublicAddress(address), false, address);
   for (const address of [

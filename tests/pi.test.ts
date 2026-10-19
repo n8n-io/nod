@@ -342,28 +342,29 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     reached.push(`${request.method} ${request.url}`);
     response.end('<html><body><p>Loopback service</p></body></html>');
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const port = (server.address() as { port: number }).port;
   const settings = join(tmpdir(), 'otto-pi', 'web-search.json');
   const previous = await readFile(settings, 'utf8').catch(() => undefined);
-  await mkdir(join(tmpdir(), 'otto-pi'), { recursive: true });
-  await writeFile(
-    settings,
-    JSON.stringify({
-      ssrf: { allowRanges: ['127.0.0.0/8'] },
-      proxy: `http://127.0.0.1:${port}`,
-    }),
-  );
-  const agent = createPiAgent({
-    provider: 'openai',
-    apiKey: 'fixture-key',
-    sessionRoot: directory,
-    createSession: async (options) => {
-      captured = options;
-      return createAgentSession(options);
-    },
-  });
+  let agent: ReturnType<typeof createPiAgent> | undefined;
   try {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    await mkdir(join(tmpdir(), 'otto-pi'), { recursive: true });
+    await writeFile(
+      settings,
+      JSON.stringify({
+        ssrf: { allowRanges: ['127.0.0.0/8'] },
+        proxy: `http://127.0.0.1:${port}`,
+      }),
+    );
+    agent = createPiAgent({
+      provider: 'openai',
+      apiKey: 'fixture-key',
+      sessionRoot: directory,
+      createSession: async (options) => {
+        captured = options;
+        return createAgentSession(options);
+      },
+    });
     const session = await agent.open({
       ...fakeExecution(randomUUID(), randomUUID()),
       systemPrompt: 'fixture',
@@ -463,8 +464,8 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     assert.deepEqual(reached, []);
     await session.dispose();
   } finally {
-    await agent.dispose();
-    server.close();
+    await agent?.dispose();
+    await new Promise((resolve) => server.close(resolve));
     if (previous === undefined) await rm(settings, { force: true });
     else await writeFile(settings, previous);
     await rm(directory, { recursive: true, force: true });
