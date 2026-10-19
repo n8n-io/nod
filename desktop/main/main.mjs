@@ -779,19 +779,23 @@ function refreshUpdateMenu() {
 async function checkForUpdates(manual = true) {
   if (!updates || quitting || (!manual && updates.ready)) return;
   if (checkingUpdates) return checkingUpdates;
+  const release = () => {
+    if (checkingUpdates === checking) checkingUpdates = undefined;
+    refreshUpdateMenu();
+  };
   const checking = (async () => {
     try {
       const candidate = await updates.check();
       updateFailed = false;
       if (quitting) return;
       if (!candidate) {
+        release();
         if (manual)
           await dialog.showMessageBox({ message: 'Otto is up to date.', buttons: ['OK'] });
         return;
       }
       if (!manual && (await notifyUpdate(candidate))) return;
-      if (checkingUpdates === checking) checkingUpdates = undefined;
-      refreshUpdateMenu();
+      release();
       const { response } = await dialog.showMessageBox({
         message: `Otto ${candidate.version} is ready.`,
         buttons: ['Restart', 'Later'],
@@ -805,6 +809,7 @@ async function checkForUpdates(manual = true) {
       if (!updates.ready) updateFailed = true;
       await writeDiagnostic(error.message).catch(() => {});
       if (!manual && !updates.ready) throw error;
+      release();
       await dialog.showMessageBox({
         type: 'warning',
         message: updates.ready
@@ -814,10 +819,7 @@ async function checkForUpdates(manual = true) {
         buttons: ['OK'],
       });
     }
-  })().finally(() => {
-    if (checkingUpdates === checking) checkingUpdates = undefined;
-    refreshUpdateMenu();
-  });
+  })().finally(release);
   checkingUpdates = checking;
   refreshUpdateMenu();
   return checking;
