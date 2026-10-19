@@ -20,6 +20,15 @@ const modes: { id: Mode; name: string; sub: string }[] = [
   { id: 'own', name: 'My Composio key', sub: 'Use your own project.' },
 ];
 
+const keyPermissions = [
+  ['Connected accounts', 'Read and write'],
+  ['Session management', 'Read and write'],
+  ['Session tool execution', 'Write only'],
+  ['Toolkits', 'Read only'],
+  ['Auth configs', 'Read only'],
+  ['Proxy execute (Legacy)', 'Write only'],
+];
+
 export const connectionRoutes: Record<Mode, string> = {
   otto: 'App requests and results pass through n8n’s hosted connection service and Composio.',
   own: 'App requests and results go through your own Composio project.',
@@ -401,12 +410,36 @@ export function ConnectionChoice({
                   : 'Save'}
           </Button>
         </div>
-        <p className="connection-muted">
-          <a href="https://platform.composio.dev" target="_blank" rel="noreferrer">
-            Get a key from Composio
-          </a>
-          {area !== 'onboarding' && '. It’s encrypted and never shown to the AI.'}
-        </p>
+        {area !== 'onboarding' && (
+          <p className="connection-muted">It’s encrypted and never shown to the AI.</p>
+        )}
+        <details className="connection-help">
+          <summary>How to get a key</summary>
+          <ol>
+            <li>
+              In the{' '}
+              <a href="https://dashboard.composio.dev" target="_blank" rel="noreferrer">
+                Composio dashboard
+              </a>
+              , open your project’s <strong>Settings → API Keys</strong> and select{' '}
+              <strong>Create API Key</strong>.
+            </li>
+            <li>
+              Give it these permissions. Read-only access isn’t enough.
+              <ul>
+                {keyPermissions.map(([name, access]) => (
+                  <li key={name}>
+                    {name}: <strong>{access}</strong>
+                  </li>
+                ))}
+              </ul>
+            </li>
+            <li>
+              Leave the rest at <strong>No access</strong>, then copy the key and paste it here. You
+              can’t change a key’s permissions later.
+            </li>
+          </ol>
+        </details>
         {!status.keyWritable && (
           <p className="connection-error">
             Otto can’t open its secure key store. Your current setup hasn’t changed.

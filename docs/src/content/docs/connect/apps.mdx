@@ -59,7 +59,7 @@ Source/server installs using their own Composio project can configure webhooks w
 
 ## Use your own Composio project
 
-Choose **My Composio key** during setup or in **Settings → App connections**, and paste a project key from the steps below. Otto checks the key before saving it, stores it encrypted on your installation and only shows its last four characters. App consent then uses your project.
+Choose **My Composio key** during setup or in **Settings → App connections**, and paste a project key from the steps below. **How to get a key**, under the key field, shows the same steps in Otto. Otto checks the key before saving it, stores it encrypted on your installation and only shows its last four characters. App consent then uses your project.
 
 The desktop app uses OS-protected storage. A local web install uses the macOS Keychain or a private per-profile key file on Linux. Other server configurations need an operator-provided Vault key. If encrypted data already exists but its key is missing, restore the original key; Otto won't replace it. See [Configuration](/deploy/configuration/#vault).
 
@@ -78,7 +78,7 @@ On a source/server install you can instead set `COMPOSIO_API_KEY` in the server 
 <Steps>
 
 1. In the [Composio Dashboard](https://dashboard.composio.dev), open **Platform → your project → Settings → API Keys**.
-2. Select **Create API Key** and create a scoped project key with the permissions in the table below.
+2. Select **Create API Key** and create a scoped project key with the permissions in the table below. Read-only access isn't enough, because Otto creates sessions, opens sign-in links and runs app actions.
 3. Leave **Tools**, **Triggers**, **Webhooks**, **Observability**, **MCP (Legacy)** and **Tool execution (Legacy)** at **No access**.
 4. Copy the key.
 
