@@ -1,5 +1,82 @@
 # Desktop changelog
 
+## 0.1.16 - 2026-10-19
+
+### Features
+
+- **trust:** Treat what an email says as its sender's claim, plus WhisperBench. [#310](https://github.com/n8n-io/otto/pull/310) (1c494cc)
+- **memory:** Recall what you said, with ranked search and dated notes, plus LongMemEval. [#308](https://github.com/n8n-io/otto/pull/308) (f727692)
+- **models:** Set an OpenAI-compatible server in .env, and make adding local models more robust. [#311](https://github.com/n8n-io/otto/pull/311) (5ba593e)
+- **models:** Connect Ollama, LM Studio, vLLM and other OpenAI-compatible servers. [#309](https://github.com/n8n-io/otto/pull/309) (d3dbb2a)
+- **trust:** Judge website steps by the form they send, and keep a task's request. [#304](https://github.com/n8n-io/otto/pull/304) (9f727af)
+- Learned skills, scheduled brief and watch fixes, and a task list that starts fresh after a reset. [#305](https://github.com/n8n-io/otto/pull/305) (0671c5c)
+- Otto writes its task and tip messages instead of fixed text. [#302](https://github.com/n8n-io/otto/pull/302) (e2a9250)
+- **trust:** Show and edit the standing instruction on the Trust page. [#299](https://github.com/n8n-io/otto/pull/299) (cfab43d)
+- **evals:** Add a 153-case release suite and fakes for Drive, Docs, Notion and Linear. [#286](https://github.com/n8n-io/otto/pull/286) (d742104)
+- **trust:** Let background work act on the owner's standing instruction. [#298](https://github.com/n8n-io/otto/pull/298) (dca741f)
+- Connect apps with Google sign-in or a Composio key. [#204](https://github.com/n8n-io/otto/pull/204) (6585f15)
+- **trust:** Check browser steps that can commit with the same checker. [#293](https://github.com/n8n-io/otto/pull/293) (71b721e)
+- Use decision models for trust checks. [commit](https://github.com/n8n-io/otto/commit/bd284fb228f78d0ecbd25686200bedd71643e053) (bd284fb)
+
+### Fixes
+
+- **web:** Block private IP addresses and saved proxies in the web extension. [#331](https://github.com/n8n-io/otto/pull/331) (b50c966)
+- Harden hosted tenant isolation and lifecycle. [#307](https://github.com/n8n-io/otto/pull/307) (b9a778f)
+- Harden browser, hosted runtime and connection boundaries. [#306](https://github.com/n8n-io/otto/pull/306) (4e9c208)
+- A question keeps the last word, drop two unsupported prompt rules, and harness fixes. [#301](https://github.com/n8n-io/otto/pull/301) (34ff171)
+- Continued tasks browse again, and other release eval misses. [#300](https://github.com/n8n-io/otto/pull/300) (834e861)
+- **trust:** Decide actions with the selected model, and other release eval findings. [#296](https://github.com/n8n-io/otto/pull/296) (05f95ae)
+- **trust:** Check memory forget and clear, and never click from a download. [#295](https://github.com/n8n-io/otto/pull/295) (11880c7)
+- **desktop:** Smooth onboarding and unify Telegram setup. [#297](https://github.com/n8n-io/otto/pull/297) (2aecaf2)
+- Watch apps only when asked, hand the browser back without a message, hide passkeys. [#294](https://github.com/n8n-io/otto/pull/294) (0e9e640)
+- **trust:** Give the gate the facts it was missing. [#285](https://github.com/n8n-io/otto/pull/285) (a7dae35)
+- **chat:** Drop the author line from reply quotes. [#283](https://github.com/n8n-io/otto/pull/283) (9987b24)
+- **release:** Wait up to 30 minutes for Apple's staple ticket. [#282](https://github.com/n8n-io/otto/pull/282) (094ac05)
+
+### Documentation
+
+- **trust:** Add a narrated video tour of the trust check. [#303](https://github.com/n8n-io/otto/pull/303) (660b62f)
+- List n8n update checks and web search, and fix memory and checker facts. [#292](https://github.com/n8n-io/otto/pull/292) (86ef97e)
+- Say a separate check decides and what lessons are. [#291](https://github.com/n8n-io/otto/pull/291) (816b561)
+
+<details>
+<summary>Maintenance (22 changes)</summary>
+
+- **deps:** Bump e2b from 2.52.1 to 2.56.0. [#329](https://github.com/n8n-io/otto/pull/329) (9bca9b4)
+- **deps:** Bump dotenv from 18.0.7 to 18.0.8. [#330](https://github.com/n8n-io/otto/pull/330) (078f12e)
+- **deps:** Bump @radix-ui/react-slot from 1.4.0 to 1.5.0. [#328](https://github.com/n8n-io/otto/pull/328) (3e21553)
+- **deps-dev:** Bump fake-indexeddb from 6.2.4 to 6.2.5. [#325](https://github.com/n8n-io/otto/pull/325) (e773b03)
+- **deps:** Bump pi-web-access from 0.37.0 to 0.41.0. [#327](https://github.com/n8n-io/otto/pull/327) (790ba12)
+- **deps:** Bump the chat-sdk group across 1 directory with 4 updates. [#315](https://github.com/n8n-io/otto/pull/315) (a0ce31a)
+- **deps:** Bump agent-browser from 0.38.2 to 0.39.1. [#318](https://github.com/n8n-io/otto/pull/318) (5e5d880)
+- **deps-dev:** Bump yaml from 2.9.0 to 2.9.1. [#326](https://github.com/n8n-io/otto/pull/326) (3885898)
+- **deps:** Bump the react group across 1 directory with 2 updates. [#316](https://github.com/n8n-io/otto/pull/316) (1184d8f)
+- **deps:** Bump zod from 4.6.5 to 4.6.7. [#319](https://github.com/n8n-io/otto/pull/319) (8b2a54e)
+- **deps:** Bump @radix-ui/react-dialog from 1.2.0 to 1.3.1. [#322](https://github.com/n8n-io/otto/pull/322) (e3e8e9d)
+- **deps:** Align @types/node with the Node 24 runtime and hold mermaid at 11. [#320](https://github.com/n8n-io/otto/pull/320) (723077c)
+- **deps:** Bump astro to 7.4.0 and @astrojs/markdown-satteri to 0.4.4. [#317](https://github.com/n8n-io/otto/pull/317) (776ff72)
+- **deps:** Bump the tiptap group across 1 directory with 10 updates. [#314](https://github.com/n8n-io/otto/pull/314) (b32bb67)
+- **deps:** Bump rust in /. [#313](https://github.com/n8n-io/otto/pull/313) (f36071a)
+- **deps:** Bump @fastify/multipart from 10.1.3 to 10.1.4. [#323](https://github.com/n8n-io/otto/pull/323) (5cfffcf)
+- **deps-dev:** Bump lefthook from 2.2.1 to 2.2.2. [#321](https://github.com/n8n-io/otto/pull/321) (91aa39c)
+- **deps:** Bump the pi group across 1 directory with 2 updates. [#312](https://github.com/n8n-io/otto/pull/312) (c9a20f0)
+- **release:** List only the installers in the release notes. [#290](https://github.com/n8n-io/otto/pull/290) (9106ca9)
+- Remove internal Linear link from the RTK eval manifest. [#289](https://github.com/n8n-io/otto/pull/289) (05a63fa)
+- Package desktop apps only for releases. [commit](https://github.com/n8n-io/otto/commit/90aa7b9590618493a5fa57e6b8f842057b4a2371) (90aa7b9)
+- Remove low-value tests and legacy compatibility code. [#284](https://github.com/n8n-io/otto/pull/284) (01912b8)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/otto/compare/desktop-v0.1.15...b50c966f53cd74a7ed7483ecf8409ab075d280f3)
+
+<details>
+<summary>Build details</summary>
+
+Source: `b50c966f53cd74a7ed7483ecf8409ab075d280f3`
+Previous release: `desktop-v0.1.15`
+
+</details>
+
 ## 0.1.15 - 2026-10-15
 
 Mac builds are now signed with n8n's Developer ID and notarized by Apple, so macOS opens them without **Open Anyway**. Otto 0.1.12 and earlier can't update to this version on its own: download it and replace Otto in Applications once, or run the Terminal installer. Your data is kept.
