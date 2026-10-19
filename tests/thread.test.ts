@@ -4141,6 +4141,81 @@ test(
 );
 
 test(
+  'turn and task events carry the model the turn used, falling back to the selection at turn start',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const processor = await f.processor(async ({ input }) => ({
+      tasks: [
+        {
+          task_id: null,
+          request_message_id: (
+            input as { messages: Array<{ id: string; current: boolean }> }
+          ).messages.find((message) => message.current)!.id,
+          task_type: 'research',
+          task_action: 'find',
+          task_subject: 'web',
+          task_activities: ['find:web'],
+          outcome: 'completed',
+        },
+      ],
+      frustration: null,
+    }));
+    const selected = {
+      source: 'user',
+      channel: 'web',
+      background: false,
+      model_provider: 'openai',
+      model: 'gpt-selected',
+    } as const;
+    for (const used of [true, false]) {
+      const turn = await f.turn({ session: randomUUID() });
+      const before = f.events.length;
+      await processor.observe(turn.id, async () => {
+        f.analytics.capture(f.ownerId, { event: 'otto_turn_started', properties: selected });
+        if (used)
+          f.analytics.capture(f.ownerId, {
+            event: 'otto_model_used',
+            properties: {
+              provider: 'anthropic',
+              model: 'claude-used',
+              purpose: 'agent',
+              outcome: 'succeeded',
+              input_tokens: 1,
+              output_tokens: 1,
+              pricing: 'api',
+            },
+          });
+        f.analytics.capture(f.ownerId, {
+          event: 'otto_turn_completed',
+          properties: { ...selected, outcome: 'succeeded', duration_ms: 1 },
+        });
+      });
+      await processor.drain();
+      const expected = used ? ['anthropic', 'claude-used'] : ['openai', 'gpt-selected'];
+      const events = f.events
+        .slice(before)
+        .filter((event) =>
+          [
+            'otto_turn_completed',
+            'otto_task_started',
+            'otto_task_linked',
+            'otto_task_updated',
+          ].includes(event.event),
+        );
+      assert.equal(events.length, 4);
+      for (const event of events)
+        assert.deepEqual(
+          [event.properties.model_provider, event.properties.model],
+          expected,
+          event.event,
+        );
+    }
+  },
+);
+
+test(
   'conversation analytics fences owners, sessions, archived threads and non-user background work',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {

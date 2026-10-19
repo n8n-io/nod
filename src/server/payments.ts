@@ -223,6 +223,11 @@ export async function createPayments(
           value = await options.card(row.card_id, row.card_version, client);
         },
         perform: async () => {
+          captureSecureEntry(
+            options.analytics,
+            { kind: 'payment', origin: row.origin, payment: spent(row) },
+            'approved',
+          );
           await options.fill({
             threadId: row.browser_id ?? row.thread_id,
             fields: row.fields,
@@ -386,7 +391,7 @@ export async function createPayments(
       captureSecureEntry(
         options.analytics,
         { kind: 'payment', origin: previous.origin, payment: spent(previous) },
-        'closed',
+        'superseded',
       );
     captureSecureEntry(
       options.analytics,

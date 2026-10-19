@@ -9,6 +9,7 @@ import { posthogConfig, type AnalyticsConfiguration } from '../shared/analytics.
 
 import {
   analyticsEvent,
+  analyticsModelProvider,
   analyticsTool,
   analyticsVersion,
   type AnalyticsEvent,
@@ -88,6 +89,12 @@ export function analyticsModel(provider: string, model?: string) {
   };
 }
 
+export type TurnModel = { model_provider: z.infer<typeof analyticsModelProvider>; model?: string };
+
+function turnModel(provider: TurnModel['model_provider'], model?: string): TurnModel {
+  return { model_provider: provider, ...(model ? { model } : {}) };
+}
+
 const workspaceTools = new Set(['read', 'bash', 'edit', 'write', 'find', 'ls', 'grep']);
 const webTools = new Set(['web_search', 'fetch_content', 'get_search_content', 'code_search']);
 
@@ -131,6 +138,7 @@ export async function createAnalytics(options: {
     id: string;
     turnId?: string;
     consent: ReturnType<typeof consent>;
+    model?: TurnModel;
   }>();
   const replaySessions = new Map<string, string>();
   let closed = false;
@@ -192,6 +200,17 @@ export async function createAnalytics(options: {
       ).data;
     const parsed = analyticsEvent.safeParse(event);
     if (!parsed.success) return;
+    if (run) {
+      const { data } = parsed;
+      if (data.event === 'otto_turn_started' && data.properties.model_provider)
+        run.model ??= turnModel(data.properties.model_provider, data.properties.model);
+      if (data.event === 'otto_model_used' && data.properties.purpose === 'agent')
+        run.model = turnModel(data.properties.provider, data.properties.model);
+      if (data.event === 'otto_turn_completed' && run.model) {
+        const { model_provider: _, model: __, ...properties } = data.properties;
+        data.properties = { ...properties, ...run.model };
+      }
+    }
     const version = analyticsVersion.safeParse(delivery.appVersion ?? appVersion).data;
     try {
       options.provider?.capture(

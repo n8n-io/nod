@@ -116,17 +116,17 @@ export const analyticsCases: AnalyticsCase[] = [
       message(
         1,
         'user',
-        'Draft a short meeting invitation email. Separately, create a weekly meal plan document.',
+        'Draft a short meeting invitation email. Separately, create a one-page welcome guide document for new volunteers.',
       ),
       message(
         2,
         'assistant',
-        'Invitation draft: Please join our planning meeting on Friday at 10. I also created meal-plan.md with meals for all seven days.',
+        'Invitation draft: Please join our planning meeting on Friday at 10. I also created welcome-guide.md with the first-day steps and contacts.',
       ),
     ],
     [
       task('communication', 'draft', 'email', 'completed'),
-      task('document_creation', 'create', 'document', 'completed'),
+      task('content_creation', 'create', 'document', 'completed'),
     ],
   ),
   fixture(
@@ -211,12 +211,12 @@ export const analyticsCases: AnalyticsCase[] = [
     ],
     [
       {
-        ...task('document_creation', 'create', 'document', 'completed', 1, 100),
+        ...task('content_creation', 'create', 'document', 'completed', 1, 100),
         task_activities: ['create:document', 'edit:document'],
       },
     ],
     known(
-      'document_creation',
+      'content_creation',
       'create',
       'document',
       'completed',
@@ -234,18 +234,18 @@ export const analyticsCases: AnalyticsCase[] = [
       ],
       [
         {
-          ...task('document_creation', 'create', 'document', 'active', 3, 100),
+          ...task('content_creation', 'create', 'document', 'active', 3, 100),
           task_activities: ['create:document', 'edit:document'],
         },
       ],
       known(
-        'document_creation',
+        'content_creation',
         'create',
         'document',
         'completed',
         'Create a monthly spending report in EUR.',
       ),
-      frustration('repeated_correction', 'ignored_instruction', 'document_creation', [1, 3]),
+      frustration('repeated_correction', 'ignored_instruction', 'content_creation', [1, 3]),
     ),
     acceptedFrustrationSignals: ['repeated_correction', 'repeated_request'],
   },
@@ -445,7 +445,7 @@ export const analyticsCases: AnalyticsCase[] = [
     ],
     [task('file_management', 'delete', 'document', 'completed')],
     known(
-      'document_creation',
+      'content_creation',
       'create',
       'document',
       'completed',
@@ -481,6 +481,18 @@ export const analyticsCases: AnalyticsCase[] = [
         task_activities: ['find:spreadsheet', 'analyze:spreadsheet', 'send:email'],
       },
     ],
+  ),
+  fixture(
+    'holdout-general-question',
+    [
+      message(1, 'user', 'How does compound interest work?'),
+      message(
+        2,
+        'assistant',
+        'Compound interest adds each period’s interest to the balance, so later interest is earned on earlier interest too.',
+      ),
+    ],
+    [task('advice', 'explain', 'knowledge', 'completed')],
   ),
   fixture(
     'holdout-independent-find-analyze-send',

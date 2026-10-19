@@ -1163,7 +1163,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       );
       return superseded.rows;
     }, pool);
-    for (const row of closed) captureSecureEntry(options.analytics, row, 'closed');
+    for (const row of closed) captureSecureEntry(options.analytics, row, 'superseded');
     captureSecureEntry(options.analytics, input, 'requested');
     return { url: `/vault/${token}` };
   }
@@ -1595,7 +1595,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             ],
           );
         });
-        captureSecureEntry(options.analytics, row, 'closed');
+        captureSecureEntry(options.analytics, row, 'superseded');
         captureSecureEntry(
           options.analytics,
           { kind: fresh.input.kind, origin: row.origin },

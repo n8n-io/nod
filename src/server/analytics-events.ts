@@ -15,7 +15,7 @@ const domain = z
 export const taskType = z.enum([
   'research',
   'communication',
-  'document_creation',
+  'content_creation',
   'data_analysis',
   'file_management',
   'scheduling',
@@ -24,6 +24,7 @@ export const taskType = z.enum([
   'translation',
   'software_development',
   'transaction',
+  'advice',
   'unknown',
 ]);
 export const taskAction = z.enum([
@@ -46,8 +47,11 @@ export const taskAction = z.enum([
   'extract',
   'convert',
   'run',
-  'purchase',
+  'pay',
   'book',
+  'submit',
+  'explain',
+  'plan',
   'unknown',
 ]);
 export const taskSubject = z.enum([
@@ -67,6 +71,10 @@ export const taskSubject = z.enum([
   'audio',
   'video',
   'product',
+  'post',
+  'payment',
+  'travel',
+  'knowledge',
   'unknown',
 ]);
 export const taskActivities = z
@@ -156,6 +164,8 @@ const turnProperties = z.object({
 });
 const taskProperties = z.object({
   task_id: z.uuid(),
+  model_provider: analyticsModelProvider.optional(),
+  model: analyticsModel.optional(),
   task_type: taskType,
   task_action: taskAction,
   task_subject: taskSubject,
@@ -432,7 +442,14 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       properties: z
         .object({
           kind: z.enum(['sign_in', 'payment', 'code']),
-          status: z.enum(['requested', 'submitted', 'failed', 'uncertain', 'closed']),
+          status: z.enum([
+            'requested',
+            'superseded',
+            'approved',
+            'submitted',
+            'failed',
+            'uncertain',
+          ]),
           domain: domain.optional(),
           currency: z
             .string()

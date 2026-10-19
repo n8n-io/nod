@@ -2208,9 +2208,14 @@ test(
         input: Record<string, unknown>;
       }> = [];
       let duringFill = async () => {};
+      const secureEntries: string[] = [];
       const make = () =>
         createPayments(pool, {
           ownerId: 'local-development',
+          analytics: (event) => {
+            if (event.event === 'otto_secure_entry_changed')
+              secureEntries.push(event.properties.status);
+          },
           uses: vault.uses,
           inOtto: async () => inOtto,
           present: async (turn, input) => {
@@ -2343,6 +2348,10 @@ test(
         'submitted',
         'unavailable',
       ]);
+      assert.deepEqual(
+        secureEntries.filter((status) => status !== 'requested'),
+        ['approved'],
+      );
       assert.equal(resumed.length, 1);
       assert.equal(fills.length, 1);
       assert.equal(fills[0].destinations.number, shop);
@@ -2351,6 +2360,7 @@ test(
       await payments.request(turn, order);
       const older = (await latest()).id;
       await payments.request(turn, order);
+      assert.deepEqual(secureEntries.slice(-2), ['superseded', 'requested']);
       assert.equal((await payments.submitCode(turn.turnId, '737', older)).status, 'unavailable');
       failFill = true;
       assert.equal(await reply('737'), 'unavailable');
