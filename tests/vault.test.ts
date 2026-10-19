@@ -173,6 +173,7 @@ test(
         }
         assert.equal(input.origin, 'https://example.com');
         assert.equal(input.password, 'secret-password');
+        assert.equal(input.username, undefined);
         injected++;
         started();
         await injectionComplete;
@@ -217,7 +218,6 @@ test(
         method: 'POST',
         url,
         payload: {
-          label: 'Fixture login',
           username: 'person@example.com',
           password: 'secret-password',
         },
@@ -229,7 +229,7 @@ test(
         .inject({
           method: 'POST',
           url,
-          payload: { label: 'Fixture login', password: 'second-secret' },
+          payload: { password: 'second-secret' },
         })
         .finally(() => {
           secondSettled = true;
@@ -246,7 +246,7 @@ test(
           await app.inject({
             method: 'POST',
             url,
-            payload: { label: 'Fixture login', password: 'secret-password' },
+            payload: { password: 'secret-password' },
           })
         ).statusCode,
         409,
@@ -300,7 +300,7 @@ test(
           await app.inject({
             method: 'POST',
             url: expiredUrl,
-            payload: { label: 'Fixture login', password: 'expired-secret' },
+            payload: { password: 'expired-secret' },
           })
         ).statusCode,
         409,
@@ -450,7 +450,7 @@ test(
           await app.inject({
             method: 'POST',
             url,
-            payload: { label: 'Fixture login', password: 'stale-secret' },
+            payload: { password: 'stale-secret' },
           })
         ).statusCode,
         409,
@@ -464,7 +464,7 @@ test(
           await app.inject({
             method: 'POST',
             url,
-            payload: { label: 'Fixture login', password: 'stale-secret' },
+            payload: { password: 'stale-secret' },
           })
         ).statusCode,
         409,
@@ -474,7 +474,7 @@ test(
           await app.inject({
             method: 'POST',
             url: freshUrl,
-            payload: { label: 'Fixture login', password: 'fresh-secret' },
+            payload: { password: 'fresh-secret' },
           })
         ).statusCode,
         200,
@@ -501,7 +501,7 @@ test(
           await app.inject({
             method: 'POST',
             url: failedUrl,
-            payload: { label: 'Fixture login', password: 'failed-secret' },
+            payload: { password: 'failed-secret' },
           })
         ).statusCode,
         502,
@@ -569,7 +569,7 @@ async function vaultFixture() {
     app.inject({
       method: 'POST',
       url,
-      payload: { label: 'Fixture login', password: 'fixture-secret' },
+      payload: { password: 'fixture-secret' },
     });
   return {
     ...seeded,
@@ -1283,9 +1283,7 @@ test(
                 url,
                 payload: {
                   username: 'synthetic-member',
-                  ...(kind === 'password'
-                    ? { label: 'Fixture login', password: 'synthetic-password' }
-                    : {}),
+                  ...(kind === 'password' ? { password: 'synthetic-password' } : {}),
                 },
               });
               assert.equal(response.statusCode, 200, response.body);
@@ -1314,7 +1312,7 @@ test(
             await app.inject({
               method: 'POST',
               url,
-              payload: { label: 'Fixture', password: 'synthetic-password' },
+              payload: { password: 'synthetic-password' },
             })
           ).statusCode,
           409,
@@ -1892,10 +1890,9 @@ test(
       const begin = async (
         id: string,
         credentials = {
-          label: 'My Google account',
           username: 'synthetic@example.test',
           password: 'one-form-synthetic-password',
-        } as { label?: string; username: string; password?: string },
+        } as { username: string; password?: string },
       ) => {
         if (!tasks.has(id)) {
           const turn = await startTurn();
@@ -3231,11 +3228,7 @@ test(
     const submitted = await app.inject({
       method: 'POST',
       url: manual.url.replace('/vault/', '/api/credential-requests/'),
-      payload: {
-        label: 'Manually entered fixture',
-        username,
-        password: 'fixture-private-password',
-      },
+      payload: { username, password: 'fixture-private-password' },
     });
     assert.equal(submitted.statusCode, 200);
     assert.deepEqual(await turns.resumed(manualTurn.turnId), [

@@ -82,7 +82,6 @@ const cardSecret = z.object({
 type CardSecret = z.infer<typeof cardSecret>;
 const submissionInput = z
   .object({
-    label: z.string().trim().min(1).max(100).optional(),
     username: z.string().optional(),
     password: z.string().min(1).optional(),
     code: z.string().min(1).optional(),
@@ -1194,10 +1193,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const pending = row.status === 'pending' && row.current_step;
     let savedEntries: CredentialRequest['savedEntries'];
     let selectedEntryId: string | undefined;
+    let username: string | undefined;
     if (pending && row.kind !== 'otp') {
       const chosen = await selection(row.root_turn_id, row.owner_id, row.origin);
       const selected = chosen?.kind === 'identifier' ? chosen : undefined;
-      const username = await stagedUsername(selected);
+      username = await stagedUsername(selected);
       const entries = await pool.query<EntryRow>(
         'SELECT e.* FROM vault_entries e WHERE e.owner_id=$1 AND e.origin=$2 ORDER BY e.updated_at DESC',
         [row.owner_id, row.origin],
@@ -1246,6 +1246,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
                 : 'expired',
       ...(savedEntries ? { savedEntries } : {}),
       ...(selectedEntryId ? { selectedEntryId } : {}),
+      ...(row.kind === 'password' && username ? { username } : {}),
     };
   }
 
@@ -1351,21 +1352,16 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             password: values.password ?? '',
             code: values.code,
           };
-          label = values.label;
+          label = input.label;
           if ((input.kind === 'identifier' || input.usernameSelector) && !secret.username)
             throw new VaultError('Enter the email, phone number or username.');
           if (input.kind === 'password' && !secret.password)
             throw new VaultError('Enter the password.');
-          if (
-            (input.kind === 'password' || (input.kind === 'identifier' && secret.password)) &&
-            !label
-          )
-            throw new VaultError('Give this login a name.');
           if (input.kind === 'otp' && !secret.code)
             throw new VaultError('Enter the verification code.');
           if (input.kind === 'identifier') {
             heldPassword = secret.password;
-            heldLabel = label ?? '';
+            heldLabel = label;
           }
         } else {
           if (!['identifier', 'password'].includes(input.kind))

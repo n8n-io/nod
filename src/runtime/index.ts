@@ -136,6 +136,7 @@ export function createAgentRuntime(dependencies: {
     let waitingForUser = false;
     let waitingFor: RuntimeResult['waitingFor'];
     let waitingMessage: string | undefined;
+    const sites = new Map<string, string>();
     let stopped = false;
     let modelFailed = false;
     let modelIncomplete = false;
@@ -185,6 +186,7 @@ export function createAgentRuntime(dependencies: {
     signal.addEventListener('abort', abort, { once: true });
 
     let taskResult = '';
+    const speaks = !context.background || Boolean(context.taskContext);
     const deliverReply = async (text: string, id?: string, replyToMessageId?: string) => {
       signal.throwIfAborted();
       const trimmed = text.trim();
@@ -213,7 +215,7 @@ export function createAgentRuntime(dependencies: {
     };
 
     const flushText = () => {
-      if (bufferedText && !stopped && !context.background) {
+      if (bufferedText && !stopped && speaks) {
         context.delta(bufferedText, (streamId ??= randomUUID()));
         streamedText += bufferedText;
       }
@@ -232,7 +234,7 @@ export function createAgentRuntime(dependencies: {
     };
     const completeStream = (persist = false) => {
       flushText();
-      if (streamId && !context.background) {
+      if (streamId && speaks) {
         if (persist && !streamSubmitted && !stopped && streamedText.trim())
           queueStreamReply(streamedText, streamId);
         if (!streamSubmitted) context.delta('', streamId, true);
@@ -273,6 +275,13 @@ export function createAgentRuntime(dependencies: {
         }
         const id = randomUUID();
         const started = performance.now();
+        const event = () => ({
+          execution: source,
+          callId: id,
+          ...(browserTools.has(name) && sites.has(source.browserId)
+            ? { site: sites.get(source.browserId) }
+            : {}),
+        });
         const end = (fields: {
           status: 'succeeded' | 'failed' | 'cancelled';
           output?: unknown;
@@ -302,12 +311,11 @@ export function createAgentRuntime(dependencies: {
           assertActive();
           await pendingReplies;
           assertActive();
-          await context.emit('tool_start', label, { execution: source, callId: id });
+          await context.emit('tool_start', label, event());
           assertActive();
           const output = await execute();
           signal.throwIfAborted();
-          if (!stopped)
-            await context.emit('tool_complete', label, { execution: source, callId: id });
+          if (!stopped) await context.emit('tool_complete', label, event());
           result = isToolResult(output) ? output : textResult(output);
           if (
             !nested &&
@@ -317,10 +325,7 @@ export function createAgentRuntime(dependencies: {
             result = delimit(name, result);
           end({ status: 'succeeded', output });
         } catch (error) {
-          if (!stopped)
-            await context
-              .emit('tool_failed', label, { execution: source, callId: id })
-              .catch(() => {});
+          if (!stopped) await context.emit('tool_failed', label, event()).catch(() => {});
           const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
           const failure = signal.aborted
             ? 'The action was cancelled.'
@@ -443,6 +448,10 @@ export function createAgentRuntime(dependencies: {
         reply,
         pause,
         confirm,
+        visited: (browserId: string, url: string) => {
+          const host = URL.parse(url)?.host;
+          if (host) sites.set(browserId, host);
+        },
       };
       const delegate = async (title: string, instruction: string) => {
         assertActive();
@@ -531,7 +540,7 @@ export function createAgentRuntime(dependencies: {
           ...shared,
           execution,
           delegate,
-          ...(!context.background || context.taskContext ? { followUp } : {}),
+          ...(speaks ? { followUp } : {}),
         },
         async () => {
           if (!browsed) await computer.hold(browserId, false).catch(() => {});
@@ -627,7 +636,7 @@ export function createAgentRuntime(dependencies: {
             modelFailed = modelIncomplete = false;
             if (context.taskContext) taskResult = event.text;
           }
-          if (stopped || context.background) return;
+          if (stopped || !speaks) return;
           if (event.type === 'text_delta') {
             streamId ??= randomUUID();
             bufferedText += event.text;

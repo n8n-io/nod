@@ -57,7 +57,7 @@ A model-written task list in the workspace does not replace the ledger. The exis
 
 1. The owner gives the coordinator an independent goal. The coordinator uses `task start` with a title, completion condition, brief and planned steps.
 2. One transaction saves the task, posts its first message and queues its first turn. A task started from chat uses its task ID as the session ID. The original owner message stays linked to the task.
-3. The worker opens that saved session. The task updates its current activity and steps as it works.
+3. The worker opens that saved session. The task updates its current activity and steps as it works. Text the model writes between tool calls is posted under the task's message, and the model is told to write one sentence only when a new step or finding adds real value. Event and schedule runs stay quiet. While the turn runs, the task's card shows its latest tool step and, for browser steps, the website.
 4. If the task needs the owner, it asks a question and waits. Other sessions continue.
 5. A reply to the task's first message, question, file or result continues that task. An ordinary message goes to the coordinator, which can forward the exact owner message to one or more selected open tasks. A finished or stopped task reopens only when the owner replies to one of its messages. If the target is unclear, it asks.
 6. The task checks its completion condition, shares any result files and calls `task finish`. Its final reply goes directly to its message in the shared conversation.

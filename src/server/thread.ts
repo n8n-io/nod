@@ -233,7 +233,7 @@ async function insertEvent(
   event?: ExecutionEvent,
 ) {
   await client.query(
-    'INSERT INTO turn_events(id,turn_id,type,summary,run_id,parent_run_id,session_id,browser_id,call_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+    'INSERT INTO turn_events(id,turn_id,type,summary,run_id,parent_run_id,session_id,browser_id,call_id,site) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
     [
       randomUUID(),
       turnId,
@@ -244,6 +244,7 @@ async function insertEvent(
       event?.execution.sessionId ?? null,
       event?.execution.browserId ?? null,
       event?.callId ?? null,
+      event?.site ?? null,
     ],
   );
 }

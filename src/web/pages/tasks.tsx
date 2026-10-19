@@ -8,6 +8,7 @@ import {
   CircleCheck,
   CircleSlash,
   Clock,
+  Globe2,
   Hourglass,
   LoaderCircle,
   MessageCircle,
@@ -52,14 +53,40 @@ const closed = (task: Task) => task.status === 'done' || task.status === 'cancel
 function TaskActivity({ id }: { id: string }) {
   const data = usePageData<TaskDetail>(`/api/tasks/${id}`);
   if (data.error) return <Notice>Could not load activity.</Notice>;
+  const rows: Array<TaskDetail['events'][number] & { count: number }> = [];
+  for (const event of data.data?.events ?? []) {
+    const last = rows.at(-1);
+    if (
+      last &&
+      event.type === 'tool_start' &&
+      last.type === event.type &&
+      last.summary === event.summary &&
+      last.site === event.site &&
+      last.parentRunId === event.parentRunId
+    )
+      last.count++;
+    else rows.push({ ...event, count: 1 });
+  }
   return (
     <ol className="task-activity">
-      {data.data?.events.map((event) => (
-        <li key={event.id} data-helper={Boolean(event.parentRunId)}>
-          <span>
-            {event.parentRunId ? 'Helper · ' : ''}
-            {event.summary}
-          </span>
+      {rows.map((event) => (
+        <li
+          key={event.id}
+          data-kind={event.type === 'message' ? 'message' : 'step'}
+          data-helper={Boolean(event.parentRunId)}
+        >
+          {event.type === 'message' ? (
+            <Markdown allowedElements={[]} unwrapDisallowed>
+              {event.summary}
+            </Markdown>
+          ) : (
+            <span>
+              {event.parentRunId ? 'Helper · ' : ''}
+              {event.summary}
+              {event.site ? ` · ${event.site}` : ''}
+              {event.count > 1 ? ` ×${event.count}` : ''}
+            </span>
+          )}
         </li>
       ))}
     </ol>
@@ -128,9 +155,16 @@ export function TaskCard({
             {!steps.length && chevron}
           </span>
           <span className="task-preview-line">
-            <Markdown allowedElements={[]} unwrapDisallowed>
-              {line}
-            </Markdown>
+            {task.activity ? (
+              <>
+                {task.activity.site && <Globe2 size={14} aria-hidden="true" />}
+                {task.activity.site ?? task.activity.tool}
+              </>
+            ) : (
+              <Markdown allowedElements={[]} unwrapDisallowed>
+                {line}
+              </Markdown>
+            )}
           </span>
           {steps.length > 0 && (
             <span className="task-preview-foot">

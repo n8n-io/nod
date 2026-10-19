@@ -49,8 +49,9 @@ const sandbox = {
 };
 
 test('real Pi sessions persist a credential pause and resume without replaying chat history', async (t) => {
-  for (const background of [false, true])
-    await t.test(background ? 'background session' : 'chat session', async () => {
+  for (const kind of ['chat', 'background', 'task'] as const)
+    await t.test(`${kind} session`, async () => {
+      const background = kind !== 'chat';
       const directory = await mkdtemp(join(tmpdir(), 'otto-pi-'));
       const id = 'test-' + randomUUID();
       const replies: string[] = [];
@@ -62,6 +63,17 @@ test('real Pi sessions persist a credential pause and resume without replaying c
         turnId: randomUUID(),
         sessionId: background ? randomUUID() : id,
         background,
+        ...(kind === 'task'
+          ? {
+              taskContext: {
+                id: randomUUID(),
+                title: 'Fixture task',
+                brief: '',
+                doneWhen: 'Signed in',
+                revision: 1,
+              },
+            }
+          : {}),
         prompt: 'Sign in to the fixture',
         history: [{ role: 'user', text: 'Older fixture context' }],
         workspacePath: directory,
@@ -197,7 +209,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
           1,
         );
         assert.equal(prompts[1].includes('runtime-fixture-key'), false);
-        assert.equal(replies.length, background ? 0 : 1);
+        assert.equal(replies.length, kind === 'background' ? 0 : 1);
       } finally {
         await runtime.dispose();
         await rm(directory, { recursive: true, force: true });

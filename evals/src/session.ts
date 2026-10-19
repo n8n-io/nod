@@ -144,8 +144,6 @@ export function createSession(options: {
       ? {
           token,
           kind: request.kind as string,
-          label: request.label as string | undefined,
-          fields: (request.fields ?? []) as Array<{ kind: string }>,
         }
       : undefined;
   }
@@ -258,10 +256,7 @@ export function createSession(options: {
       const login = user.signIn!;
       interactions.push({ kind: 'secret', requestKind: 'password', text: pending.text, at });
       await post(`/api/credential-requests/${form.token}`, {
-        ...(form.label ? { label: form.label } : {}),
-        ...(form.kind === 'identifier' || form.fields.some((field) => field.kind === 'identifier')
-          ? { username: login.username }
-          : {}),
+        username: login.username,
         ...(form.kind === 'password' ? { password: login.password } : {}),
       });
       return true;

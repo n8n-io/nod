@@ -83,6 +83,7 @@ export async function initializeDatabase() {
     ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS session_id uuid;
     ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS browser_id text;
     ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS call_id uuid;
+    ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS site text;
     CREATE TABLE IF NOT EXISTS messages (
       id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL,
       thread_id uuid REFERENCES threads(id), turn_id uuid REFERENCES turns(id),
