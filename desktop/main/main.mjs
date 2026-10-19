@@ -74,6 +74,7 @@ let updateSource;
 let updates;
 let checkingUpdates;
 let updatePhase = 'idle';
+let updateFailed = false;
 let stopUpdateChecks;
 let closingEngine = false;
 let tray;
@@ -735,11 +736,6 @@ async function finishEnginePreparation() {
     setupWindow = undefined;
     await completeDesktopSetup(completedWindow);
   }
-  if (updates && !stopUpdateChecks)
-    stopUpdateChecks = startDesktopUpdateChecks({
-      check: () => checkForUpdates(false),
-      powerMonitor,
-    });
   return status;
 }
 
@@ -751,7 +747,7 @@ function refreshUpdateMenu() {
         checking: 'Checking for updates…',
         preparing: 'Preparing update…',
         downloading: 'Downloading update…',
-      }[updatePhase] || 'Check for Updates…';
+      }[updatePhase] || (updateFailed ? 'Update Failed. Try Again…' : 'Check for Updates…');
   const item = Menu.getApplicationMenu?.()?.getMenuItemById('desktop-update');
   if (item) {
     item.label = label;
@@ -777,10 +773,13 @@ function refreshUpdateMenu() {
 async function checkForUpdates(manual = true) {
   if (!updates || quitting || (!manual && updates.ready)) return;
   if (checkingUpdates) return checkingUpdates;
-  checkingUpdates = (async () => {
+  const checking = (async () => {
     try {
       const candidate = await updates.check();
+      updateFailed = false;
       if (quitting) return;
+      if (checkingUpdates === checking) checkingUpdates = undefined;
+      refreshUpdateMenu();
       if (!candidate) {
         if (manual)
           await dialog.showMessageBox({ message: 'Otto is up to date.', buttons: ['OK'] });
@@ -796,23 +795,25 @@ async function checkForUpdates(manual = true) {
       if (response === 0 && !quitting) await updates.restart();
     } catch (error) {
       if (quitting) return;
+      if (!updates.ready) updateFailed = true;
       await writeDiagnostic(error.message).catch(() => {});
-      if (manual || updates.ready)
-        await dialog.showMessageBox({
-          type: 'warning',
-          message: updates.ready
-            ? 'Otto could not restart yet.'
-            : 'Otto could not check for updates.',
-          detail: bounded(error.message),
-          buttons: ['OK'],
-        });
+      if (!manual && !updates.ready) throw error;
+      await dialog.showMessageBox({
+        type: 'warning',
+        message: updates.ready
+          ? 'Otto could not restart yet.'
+          : 'Otto could not check for updates.',
+        detail: bounded(error.message),
+        buttons: ['OK'],
+      });
     }
   })().finally(() => {
-    checkingUpdates = undefined;
+    if (checkingUpdates === checking) checkingUpdates = undefined;
     refreshUpdateMenu();
   });
+  checkingUpdates = checking;
   refreshUpdateMenu();
-  return checkingUpdates;
+  return checking;
 }
 
 async function restartForUpdate() {
@@ -1166,6 +1167,23 @@ else {
   void app
     .whenReady()
     .then(async () => {
+      if (app.isPackaged && process.platform === 'darwin' && !app.isInApplicationsFolder()) {
+        const { response } = await dialog.showMessageBox({
+          message: 'Move Otto to your Applications folder?',
+          detail: 'Otto can update itself only from Applications.',
+          buttons: ['Move to Applications', 'Not Now'],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (response === 0) {
+          try {
+            if (app.moveToApplicationsFolder()) return;
+          } catch (error) {
+            await writeDiagnostic(error.message).catch(() => {});
+          }
+        }
+      }
       if (app.isPackaged && ['darwin', 'win32'].includes(process.platform)) {
         const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
         const windows = process.platform === 'win32';
@@ -1200,6 +1218,10 @@ else {
             updatePhase = phase;
             refreshUpdateMenu();
           },
+        });
+        stopUpdateChecks = startDesktopUpdateChecks({
+          check: () => checkForUpdates(false),
+          powerMonitor,
         });
       }
       nativeTheme.on('updated', publishPreferences);

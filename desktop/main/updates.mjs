@@ -141,7 +141,7 @@ export function createUpdateSource({
       signal,
     );
   };
-  const newest = async (currentVersion, signal) => {
+  const newest = async (currentVersion, signal, resolve) => {
     versionParts(currentVersion);
     const releases = await json(
       `${base}/releases${sourceUrl ? '' : '?per_page=100'}`,
@@ -158,13 +158,24 @@ export function createUpdateSource({
           compareVersions(release.tag_name.slice(9), currentVersion) > 0,
       )
       .sort((a, b) => compareVersions(b.tag_name.slice(9), a.tag_name.slice(9)));
-    if (!newer.length) return undefined;
-    const listed = newer[0];
-    if (!Number.isSafeInteger(listed.id) || listed.id < 1)
-      throw new Error('The desktop release identity is invalid.');
-    const release = published(await json(releasePath(listed.id), request, signal), listed.tag_name);
-    if (release.id !== listed.id) throw new Error('The desktop release identity changed.');
-    return release;
+    let failure;
+    for (const listed of newer.slice(0, 3)) {
+      try {
+        if (!Number.isSafeInteger(listed.id) || listed.id < 1)
+          throw new Error('The desktop release identity is invalid.');
+        const release = published(
+          await json(releasePath(listed.id), request, signal),
+          listed.tag_name,
+        );
+        if (release.id !== listed.id) throw new Error('The desktop release identity changed.');
+        return await resolve(release);
+      } catch (error) {
+        signal?.throwIfAborted();
+        failure ??= error;
+      }
+    }
+    if (failure) throw failure;
+    return undefined;
   };
   if (os === 'win32')
     return {
@@ -182,89 +193,87 @@ export function createUpdateSource({
           signal,
         );
       },
-      async latest(currentVersion, signal) {
-        const release = await newest(currentVersion, signal);
-        if (!release) return undefined;
+      latest: (currentVersion, signal) =>
+        newest(currentVersion, signal, async (release) => {
+          const version = release.tag_name.slice(9);
+          const manifest = await getAsset(release, 'release-win32-x64.json', signal);
+          if (
+            manifest.version !== version ||
+            manifest.platform !== platform ||
+            !sourceHash.test(manifest.source) ||
+            manifest.installer?.file !== 'Otto-Setup-x64.exe' ||
+            manifest.runtime?.file !== 'Otto-Runtime-win32-x64.tar.gz'
+          )
+            throw new Error('The desktop update metadata is incompatible.');
+          const files = {};
+          for (const key of ['installer', 'runtime']) {
+            const entry = manifest[key];
+            const item = asset(release, entry.file);
+            if (
+              !hash.test(entry.sha256) ||
+              item.size !== entry.bytes ||
+              item.digest !== `sha256:${entry.sha256}`
+            )
+              throw new Error('The desktop update files do not match their metadata.');
+            files[key] = {
+              file: entry.file,
+              bytes: entry.bytes,
+              sha256: entry.sha256,
+              url: assetUrl(release, item),
+            };
+          }
+          return { version, source: manifest.source, ...files };
+        }),
+    };
+  return {
+    runtimeDownloadUrl,
+    latest: (currentVersion, signal) =>
+      newest(currentVersion, signal, async (release) => {
+        const manifest = await getAsset(release, metadataName('release'), signal);
         const version = release.tag_name.slice(9);
-        const manifest = await getAsset(release, 'release-win32-x64.json', signal);
         if (
           manifest.version !== version ||
           manifest.platform !== platform ||
           !sourceHash.test(manifest.source) ||
-          manifest.installer?.file !== 'Otto-Setup-x64.exe' ||
-          manifest.runtime?.file !== 'Otto-Runtime-win32-x64.tar.gz'
+          !['self-signed', 'developer-id'].includes(manifest.signing?.mode) ||
+          !hash.test(manifest.runtime?.fingerprint) ||
+          !hash.test(manifest.runtime?.id) ||
+          manifest.update?.file !== `Otto-${arch}.zip` ||
+          !hash.test(manifest.update.sha256)
         )
           throw new Error('The desktop update metadata is incompatible.');
-        const files = {};
-        for (const key of ['installer', 'runtime']) {
-          const entry = manifest[key];
-          const item = asset(release, entry.file);
-          if (
-            !hash.test(entry.sha256) ||
-            item.size !== entry.bytes ||
-            item.digest !== `sha256:${entry.sha256}`
-          )
-            throw new Error('The desktop update files do not match their metadata.');
-          files[key] = {
-            file: entry.file,
-            bytes: entry.bytes,
-            sha256: entry.sha256,
-            url: assetUrl(release, item),
-          };
+        const zip = asset(release, manifest.update.file);
+        if (zip.size !== manifest.update.bytes)
+          throw new Error('The desktop update archive size does not match.');
+        if (zip.digest !== `sha256:${manifest.update.sha256}`)
+          throw new Error('The desktop update archive digest does not match.');
+        const runtime = await getAsset(release, metadataName('runtime-release'), signal);
+        if (
+          runtime.id !== manifest.runtime.id ||
+          runtime.fingerprint !== manifest.runtime.fingerprint ||
+          runtime.archive?.file !== manifest.runtime.archive?.file ||
+          runtime.archive?.bytes !== manifest.runtime.archive?.bytes ||
+          runtime.archive?.sha256 !== manifest.runtime.archive?.sha256
+        )
+          throw new Error('The desktop update runtime does not match.');
+        const downloadUrl = await runtimeDownloadUrl(runtime, signal);
+        let feedUrl;
+        if (sourceUrl)
+          feedUrl = `${releasePath(release.id)}/feed/${zip.id}?version=${currentVersion}&platform=${platform}`;
+        else {
+          const feed = await getAsset(release, metadataName('update'), signal);
+          const expected = `https://github.com/${repository}/releases/download/${release.tag_name}/${zip.name}`;
+          if (feed.url !== expected) throw new Error('The desktop update feed does not match.');
+          feedUrl = `https://github.com/${repository}/releases/download/${release.tag_name}/${metadataName('update')}`;
         }
-        return { version, source: manifest.source, ...files };
-      },
-    };
-  return {
-    runtimeDownloadUrl,
-    async latest(currentVersion, signal) {
-      const release = await newest(currentVersion, signal);
-      if (!release) return undefined;
-      const manifest = await getAsset(release, metadataName('release'), signal);
-      const version = release.tag_name.slice(9);
-      if (
-        manifest.version !== version ||
-        manifest.platform !== platform ||
-        !sourceHash.test(manifest.source) ||
-        !['self-signed', 'developer-id'].includes(manifest.signing?.mode) ||
-        !hash.test(manifest.runtime?.fingerprint) ||
-        !hash.test(manifest.runtime?.id) ||
-        manifest.update?.file !== `Otto-${arch}.zip` ||
-        !hash.test(manifest.update.sha256)
-      )
-        throw new Error('The desktop update metadata is incompatible.');
-      const zip = asset(release, manifest.update.file);
-      if (zip.size !== manifest.update.bytes)
-        throw new Error('The desktop update archive size does not match.');
-      if (zip.digest !== `sha256:${manifest.update.sha256}`)
-        throw new Error('The desktop update archive digest does not match.');
-      const runtime = await getAsset(release, metadataName('runtime-release'), signal);
-      if (
-        runtime.id !== manifest.runtime.id ||
-        runtime.fingerprint !== manifest.runtime.fingerprint ||
-        runtime.archive?.file !== manifest.runtime.archive?.file ||
-        runtime.archive?.bytes !== manifest.runtime.archive?.bytes ||
-        runtime.archive?.sha256 !== manifest.runtime.archive?.sha256
-      )
-        throw new Error('The desktop update runtime does not match.');
-      const downloadUrl = await runtimeDownloadUrl(runtime, signal);
-      let feedUrl;
-      if (sourceUrl)
-        feedUrl = `${releasePath(release.id)}/feed/${zip.id}?version=${currentVersion}&platform=${platform}`;
-      else {
-        const feed = await getAsset(release, metadataName('update'), signal);
-        const expected = `https://github.com/${repository}/releases/download/${release.tag_name}/${zip.name}`;
-        if (feed.url !== expected) throw new Error('The desktop update feed does not match.');
-        feedUrl = `https://github.com/${repository}/releases/download/${release.tag_name}/${metadataName('update')}`;
-      }
-      return {
-        version,
-        source: manifest.source,
-        runtime,
-        downloadUrl,
-        feedUrl,
-      };
-    },
+        return {
+          version,
+          source: manifest.source,
+          runtime,
+          downloadUrl,
+          feedUrl,
+        };
+      }),
   };
 }
 
@@ -275,6 +284,7 @@ export function createDesktopUpdater({
   prepareRuntime,
   restart,
   onStatus = () => {},
+  downloadTimeout = 30 * 60 * 1000,
 }) {
   let checking;
   let restarting;
@@ -308,6 +318,7 @@ export function createDesktopUpdater({
               native.removeListener('update-downloaded', downloaded);
               native.removeListener('update-not-available', unavailable);
               controller.signal.removeEventListener('abort', aborted);
+              clearTimeout(timeout);
               error ? reject(error) : resolve();
             };
             const failed = (error) => finish(error);
@@ -320,6 +331,11 @@ export function createDesktopUpdater({
             const unavailable = () =>
               finish(new Error('The selected desktop update is unavailable.'));
             const aborted = () => finish(new Error('Otto is closing.'));
+            const timeout = setTimeout(
+              () => finish(new Error('The desktop update download timed out.')),
+              downloadTimeout,
+            );
+            timeout.unref?.();
             native.once('error', failed);
             native.once('update-downloaded', downloaded);
             native.once('update-not-available', unavailable);
@@ -355,8 +371,14 @@ export function createDesktopUpdater({
   };
 }
 
-export function startDesktopUpdateChecks({ check, powerMonitor, interval = 6 * 60 * 60 * 1000 }) {
+export function startDesktopUpdateChecks({
+  check,
+  powerMonitor,
+  interval = 6 * 60 * 60 * 1000,
+  retry = 15 * 60 * 1000,
+}) {
   let timer;
+  let failures = 0;
   let pending = false;
   let resumePending = false;
   let stopped = false;
@@ -367,10 +389,16 @@ export function startDesktopUpdateChecks({ check, powerMonitor, interval = 6 * 6
     clearTimeout(timer);
     try {
       await check();
+      failures = 0;
     } catch {
+      failures++;
     } finally {
       pending = false;
-      const delay = resumePending ? 0 : interval;
+      const delay = resumePending
+        ? 0
+        : failures
+          ? Math.min(interval, retry * 2 ** (failures - 1))
+          : interval;
       resumePending = false;
       due = Date.now() + delay;
       if (!stopped) {

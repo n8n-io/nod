@@ -30,7 +30,11 @@ import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
 import { saveArtifactDownload } from '../main/downloads.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from '../main/lifecycle.mjs';
-import { createDesktopUpdater, createUpdateSource } from '../main/updates.mjs';
+import {
+  createDesktopUpdater,
+  createUpdateSource,
+  startDesktopUpdateChecks,
+} from '../main/updates.mjs';
 import { stageWindowsUpdate } from '../runtime/windows.mjs';
 
 function deferred() {
@@ -1376,6 +1380,37 @@ test('desktop updates bind newer published releases and both source adapters to 
     f.release.assets.push({ ...f.release.assets[0], id: 999 });
     await assert.rejects(f.source.latest('0.1.0'));
   }
+});
+
+test('an incomplete newest release falls back to the next newer complete release', async () => {
+  for (const sourceUrl of [undefined, 'https://updates.example.invalid/otto-desktop']) {
+    const f = updateReleaseFixture(sourceUrl);
+    const broken = { ...f.release, id: 15, tag_name: 'desktop-v0.3.0', assets: [] };
+    f.values.get(`${f.base}/releases${sourceUrl ? '' : '?per_page=100'}`).push(broken);
+    f.values.set(`${f.base}/releases/15`, broken);
+    assert.equal((await f.source.latest('0.1.0')).version, '0.2.0');
+    f.release.assets = [];
+    await assert.rejects(f.source.latest('0.1.0'), /incomplete/);
+  }
+});
+
+test('automatic update checks retry failures sooner and return to the normal interval', async () => {
+  const powerMonitor = new EventEmitter();
+  const started = [];
+  let failures = 3;
+  const stop = startDesktopUpdateChecks({
+    powerMonitor,
+    interval: 60_000,
+    retry: 5,
+    check: async () => {
+      started.push(Date.now());
+      if (failures-- > 0) throw new Error('Desktop updates are unavailable.');
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  stop();
+  assert.equal(started.length, 4);
+  assert.ok(started[3] - started[2] >= started[2] - started[1]);
 });
 
 test('first installation resolves its exact published runtime without a newer app and rejects changed identities', async () => {
