@@ -4077,6 +4077,71 @@ test(
 );
 
 test(
+  'conversation analytics keeps messages with numbers, masks the digits and drops verification codes',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const priced = await f.turn({
+      prompt: 'My budget for a laptop is 1500 EUR, suggest two',
+      reply: 'Model A costs 1299 EUR with 512 GB',
+    });
+    const code = await f.turn({ prompt: '482913', at: Date.parse('2026-10-14T12:01:00.000Z') });
+    const inputs: Array<{ messages: Array<{ id: string; text: string }> }> = [];
+    const processor = await f.processor(async (request) => {
+      inputs.push(request.input as (typeof inputs)[number]);
+      return { tasks: [], frustration: null };
+    });
+    processor.start(priced.id)();
+    processor.start(code.id)();
+    await processor.drain();
+    const [first, second] = inputs.map(
+      (input) => new Map(input.messages.map((m) => [m.id, m.text])),
+    );
+    assert.equal(first!.get(priced.messageId), 'My budget for a laptop is # EUR, suggest two');
+    assert.equal(first!.get(priced.replyId), 'Model A costs # EUR with # GB');
+    assert.equal(second!.has(code.messageId), false);
+    assert.ok(!JSON.stringify(inputs).match(/1500|1299|482913/));
+  },
+);
+
+test(
+  'conversation analytics keeps a task whose dimensions fall outside the vocabulary as other and unclear',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const turn = await f.turn();
+    const processor = await f.processor(async () => ({
+      tasks: [
+        {
+          task_id: null,
+          request_message_id: turn.messageId,
+          task_type: 'research',
+          task_action: 'find',
+          task_subject: 'web',
+          task_activities: ['find:web'],
+          use_case: 'synthetic_private_family',
+          context: 'synthetic_context',
+          collaboration: 'synthetic_mode',
+          outcome: 'active',
+        },
+      ],
+      frustration: null,
+    }));
+    processor.start(turn.id)();
+    await processor.drain();
+    const started = f.events.find((event) => event.event === 'otto_task_started')!;
+    assert.equal(started.properties.use_case, 'other');
+    assert.equal(started.properties.context, 'unclear');
+    assert.equal(started.properties.collaboration, 'unclear');
+    assert.ok(!JSON.stringify(f.events).includes('synthetic_'));
+    const health = f.events.find((event) => event.event === 'otto_task_analysis')!;
+    assert.equal(health.properties.other_label_count, 3);
+  },
+);
+
+test(
   'web turns carry the recording session id on turn and classifier events; other turns carry none',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {

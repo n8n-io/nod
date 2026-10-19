@@ -66,7 +66,8 @@ function modelUsed(usage: ProviderUsageEvent): Parameters<CaptureAnalytics>[0] {
       ...analyticsModel(usage.provider, usage.model),
       purpose: usage.category,
       outcome: usage.status,
-      input_tokens: tokens(usage.inputTokens),
+      input_tokens:
+        tokens(usage.inputTokens) + tokens(usage.cacheReadTokens) + tokens(usage.cacheWriteTokens),
       output_tokens: tokens(usage.outputTokens),
       ...(spent !== null ? { cost_usd: Math.round(spent * 1e6) / 1e6 } : {}),
       pricing: charged !== null ? 'api' : estimated !== null ? 'plan_estimate' : 'unavailable',
@@ -182,7 +183,7 @@ export function createLedger({
                   category: 'agent',
                   operation: 'request',
                   status: value.status ?? 'succeeded',
-                  durationMs: 0,
+                  durationMs: Math.max(0, Date.now() - Date.parse(event.createdAt)) || 0,
                   pricing: costSource,
                 },
                 session,
@@ -215,6 +216,7 @@ export function createLedger({
       },
       curate: async (request, signal, report) => {
         if (await limitReached()) throw new Error(spendingLimitReached);
+        const started = performance.now();
         try {
           return await base.curate(request, signal, (value) => {
             const usage: ProviderUsageEvent = {
@@ -224,10 +226,12 @@ export function createLedger({
                   ? 'review'
                   : request.task === 'plan'
                     ? 'tasks'
-                    : 'memory',
+                    : request.task === 'analytics'
+                      ? 'analytics'
+                      : 'memory',
               operation: request.task,
               status: 'succeeded',
-              durationMs: 0,
+              durationMs: performance.now() - started,
               ...value,
             };
             record(usage);

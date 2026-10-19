@@ -456,7 +456,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
         .object({
           provider: analyticsModelProvider,
           model: analyticsModel.optional(),
-          purpose: z.enum(['agent', 'memory', 'review', 'tasks']),
+          purpose: z.enum(['agent', 'memory', 'review', 'tasks', 'analytics']),
           outcome: z.enum(['succeeded', 'failed', 'cancelled']),
           input_tokens: duration,
           output_tokens: duration,

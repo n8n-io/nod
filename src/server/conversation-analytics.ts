@@ -33,9 +33,9 @@ export const conversationAnalyticsClassification = z
             task_action: taskAction,
             task_subject: taskSubject,
             task_activities: taskActivities,
-            use_case: taskUseCase,
-            context: taskContext,
-            collaboration: taskCollaboration,
+            use_case: taskUseCase.catch('other'),
+            context: taskContext.catch('unclear'),
+            collaboration: taskCollaboration.catch('unclear'),
             outcome: taskOutcome,
           })
           .strict()
@@ -116,11 +116,13 @@ export function createConversationAnalytics(options: {
     if (
       personalSecret.test(value) ||
       securityCodeIn(value) ||
-      classifyVerificationReply(value).kind !== 'ordinary'
+      classifyVerificationReply(value).kind === 'code'
     )
       return '';
     const safe = redact(value);
-    return (typeof safe === 'string' ? safe : JSON.stringify(safe)).slice(0, 1200);
+    return (typeof safe === 'string' ? safe : JSON.stringify(safe))
+      .replace(/\d{3,}/g, '#')
+      .slice(0, 1200);
   }
 
   async function saveConsent(enabled: boolean, revision?: string, rotate = true) {

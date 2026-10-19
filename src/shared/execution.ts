@@ -15,7 +15,7 @@ export interface ExecutionEvent {
 
 export interface UsageDetails {
   provider: string;
-  category: 'agent' | 'memory' | 'review' | 'tasks';
+  category: 'agent' | 'memory' | 'review' | 'tasks' | 'analytics';
   operation: string;
   model?: string;
   status: 'succeeded' | 'failed' | 'cancelled';

@@ -473,6 +473,50 @@ describe('analytics privacy', () => {
       assert.ok(!JSON.stringify(captured).includes(value), value);
   });
 
+  test('agent model usage analytics carry the request duration and cached input', async () => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'production',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    analytics.setUsageData('owner-fixture', true);
+    const ledger = createLedger({
+      pool: { query: async () => ({ rows: [] }) } as never,
+      ownerId: 'owner-fixture',
+      analytics: analytics.forOwner('owner-fixture'),
+    });
+    const agent = ledger.agent({
+      open: async (session) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () =>
+          session.onEvent({
+            type: 'model_usage',
+            id: randomUUID(),
+            provider: 'openai',
+            model: 'gpt-6-luna',
+            inputTokens: 20,
+            outputTokens: 5,
+            cacheReadTokens: 2000,
+            cacheWriteTokens: 0,
+            totalTokens: 2025,
+            costUsd: 0.001,
+            costSource: 'sdk_estimate',
+            createdAt: new Date(Date.now() - 1_500).toISOString(),
+          }),
+      }),
+      dispose() {},
+    });
+    const opened = await agent.open({ turnId: randomUUID(), onEvent() {} } as never);
+    await opened.prompt('Synthetic', []);
+    const used = captured.find((event) => event.event === 'otto_model_used')!;
+    assert.equal(used.properties.input_tokens, 2020);
+    assert.ok(Number(used.properties.duration_ms) >= 1_500);
+  });
+
   test('model usage analytics never send custom endpoint or unbounded model names', async () => {
     const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
@@ -498,6 +542,7 @@ describe('analytics privacy', () => {
             model: 'private-finance-model',
             durationMs: 12.4,
             inputTokens: 10,
+            cacheReadTokens: 30,
             outputTokens: 5,
             costUsd: 0.0000123456,
           });
@@ -532,7 +577,7 @@ describe('analytics privacy', () => {
           ...shared,
           provider: 'compatible',
           model: 'custom',
-          input_tokens: 10,
+          input_tokens: 40,
           output_tokens: 5,
           cost_usd: 0.000012,
           pricing: 'api',
