@@ -197,9 +197,13 @@ const detectors: [RegExp, string, ((match: string) => boolean)?][] = [
   ],
   [/\b[2-9]\d{3}[ -]\d{4}[ -]\d{4}\b/g, '[id number]', aadhaar],
   [/\b[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}\b/g, '[mac]'],
-  [/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/g, '[ip]', ipAddress],
+  [/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?!\d|\.\d)/g, '[ip]', ipAddress],
   [/(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])/g, '[ip]', ipAddress],
 ];
+
+export function personalKey(key: string) {
+  return personalKeys.has(key.replace(/[^a-z0-9]/gi, '').toLowerCase());
+}
 
 function valueEnd(text: string, start: number) {
   const first = text[start];
@@ -233,7 +237,7 @@ function personalValues(text: string) {
   let result = '';
   let offset = 0;
   for (let match = key.exec(text); match; match = key.exec(text)) {
-    if (!personalKeys.has(match[1].replace(/[^a-z0-9]/gi, '').toLowerCase())) continue;
+    if (!personalKey(match[1])) continue;
     const start = match.index + match[0].length;
     const end = valueEnd(text, start);
     if (end < 0 || ['null', '""', '[]', '{}'].includes(text.slice(start, end))) continue;

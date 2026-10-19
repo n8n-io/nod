@@ -1,19 +1,33 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { ModelTrace, ModelTraceDelivery, ModelTraces } from '../ports/traces.ts';
-import { createPersonalDataRedactor, type PersonalProfile } from './personal-data.ts';
+import { createPersonalDataRedactor, personalKey, type PersonalProfile } from './personal-data.ts';
 import { createTextRedactor, withoutSecretKeys } from './redaction.ts';
 
 const cacheLimit = 4096;
 const identifiers = new Set(['session_id', 'turn_id', 'run_id', 'parent_run_id']);
 
-function structured(value: string) {
+function structured(value: string, text: (value: string) => string) {
   const trimmed = value.trim();
-  if (!/^[[{]/.test(trimmed)) return value;
+  if (!/^[[{]/.test(trimmed)) return text(value);
+  let parsed: unknown;
   try {
-    return JSON.stringify(withoutSecretKeys(JSON.parse(trimmed)));
+    parsed = JSON.parse(trimmed);
   } catch {
-    return value;
+    return text(value);
   }
+  const visit = (item: unknown, key?: string): unknown =>
+    key !== undefined && personalKey(key) && item !== null && item !== ''
+      ? '[personal]'
+      : typeof item === 'string'
+        ? text(item)
+        : Array.isArray(item)
+          ? item.map((entry) => visit(entry))
+          : item && typeof item === 'object'
+            ? Object.fromEntries(
+                Object.entries(item).map(([name, entry]) => [name, visit(entry, name)]),
+              )
+            : item;
+  return JSON.stringify(visit(withoutSecretKeys(parsed)));
 }
 
 export function createModelTraces(deliver?: ModelTraceDelivery) {
@@ -49,7 +63,7 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
       let safe = cache.get(key);
       if (safe === undefined) {
         if (cache.size >= cacheLimit) cache.clear();
-        cache.set(key, (safe = text(structured(value))));
+        cache.set(key, (safe = structured(value, text)));
       }
       return safe;
     };

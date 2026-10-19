@@ -68,21 +68,9 @@ Analytics have no fields for raw messages, Vault values, full page addresses, na
 
 ## Conversation traces
 
-Conversation traces are off until you turn on **Share conversation traces** in **Settings**. The switch appears in the official desktop app, or when an operator sets `OTTO_TRACES_URL` and `OTTO_TRACES_TOKEN`. While it's on, every request Otto makes to your model, from chats, tasks, helpers and background checks, is sent with the model's reply to the Otto team at n8n. A trace holds the messages and tool results the model saw, the names of the tools it could use, its reply, token counts and cost. It carries no account, installation or device identifier: the traces of one conversation are grouped under a random ID that changes every day and whenever Otto restarts, so they can't be matched to you or to other Otto data. Your saved memory, learned skills and format preferences are left out of the instructions. n8n's service sees your IP address when it receives a trace but doesn't add it to the trace. Checks of emails that may give access to an account are never traced, and neither are requests to decision services. Traces go through n8n's Otto Traces service to n8n's LangSmith project in the EU and are deleted after 14 days. n8n uses them to find and fix problems in Otto and doesn't use them to train AI models.
+Conversation traces are off until you turn on **Share conversation traces** in **Settings**. While it's on, each request Otto makes to your model is sent with the model's reply to the Otto team at n8n, through n8n's Otto Traces service to n8n's LangSmith project in the EU. Traces are deleted after 14 days, and n8n doesn't use them to train AI models.
 
-Before a trace leaves your computer, Otto removes:
-
-- known keys and secrets, and text shaped like a key, token or password
-- your name as set in Otto
-- email addresses, and the name written beside one
-- phone numbers, checked against each country's numbering plan
-- payment card numbers, IBANs and crypto wallet addresses, each with its checksum
-- US, Spanish, UK, Brazilian and Indian ID numbers
-- IP and MAC addresses
-- the values of personal fields in app data, such as `first_name`, `displayName`, `birthday`, `address` or `phone`; a field called just `name` is kept
-- images
-
-Removal is automatic and can miss personal details written in other forms, such as other people's names or a street address in plain text. Turning the switch off stops new traces at once; traces already sent are deleted when they expire. Operators can turn traces off for everyone by setting `OTTO_TRACES_URL` to an empty value.
+Before a trace leaves your computer, Otto removes known secrets, your name, email addresses, phone numbers, card numbers, IBANs, crypto wallets, common ID numbers, IP addresses, personal fields in app data and images. A trace carries no account or device identifier, its conversation ID changes every day and whenever Otto restarts, and your saved memory is left out. Removal is automatic and can miss details written in other forms, such as another person's name in a sentence. See [Conversation traces](/trust/conversation-traces/) for every layer, an example and where traces go.
 
 ## Feedback
 

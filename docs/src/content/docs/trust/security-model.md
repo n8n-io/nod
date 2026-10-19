@@ -2,7 +2,7 @@
 title: Security model and limits
 description: Who Otto trusts with what, the rules its server enforces, the limits of those rules, and how to report a vulnerability.
 sidebar:
-  order: 12
+  order: 13
 ---
 
 This page sets out who Otto trusts with what, which rules the server enforces, and what those rules don't cover. It's written for security reviewers. For data flows and threats, see the [Security review guide](/trust/security-review/).
