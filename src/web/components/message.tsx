@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, Check, CornerUpLeft, SmilePlus, MoreHorizontal, X } from 'lucide-react';
+import { Copy, Check, CornerUpLeft, SmilePlus, X } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -366,7 +366,7 @@ export function MessageBubble({
       <div className="message-content">
         <div className="message-row">
           <div
-            className={`message-bubble${shownReaction ? ' has-reaction' : ''}`}
+            className="message-bubble"
             onDoubleClick={
               message.role === 'assistant' && !streaming
                 ? (event) => {
@@ -399,34 +399,34 @@ export function MessageBubble({
                 />
               )}
             </div>
-            {reaction ? (
-              <button
-                key={reaction}
-                type="button"
-                className={reactionClass}
-                disabled={reacting}
-                onClick={() => void leave(reaction)}
-                aria-label={`Remove your ${selectedName || reactionName(reaction)} reaction`}
-                title={`Your reaction: ${selectedName || reactionName(reaction)}. Click to remove`}
-              >
-                {reactionEmoji(reaction)}
-              </button>
-            ) : (
-              agentReaction && (
-                <span
-                  key={agentReaction}
-                  className={reactionClass}
-                  role="img"
-                  aria-label={`Otto reacted: ${reactionName(agentReaction)}`}
-                  title={`Otto reacted: ${reactionName(agentReaction)}`}
-                >
-                  {agentReaction}
-                </span>
-              )
-            )}
           </div>
           {!streaming && (
             <div className="message-tools">
+              {reaction ? (
+                <button
+                  key={reaction}
+                  type="button"
+                  className={reactionClass}
+                  disabled={reacting}
+                  onClick={() => void leave(reaction)}
+                  aria-label={`Remove your ${selectedName || reactionName(reaction)} reaction`}
+                  title={`Your reaction: ${selectedName || reactionName(reaction)}. Click to remove`}
+                >
+                  {reactionEmoji(reaction)}
+                </button>
+              ) : (
+                agentReaction && (
+                  <span
+                    key={agentReaction}
+                    className={reactionClass}
+                    role="img"
+                    aria-label={`Otto reacted: ${reactionName(agentReaction)}`}
+                    title={`Otto reacted: ${reactionName(agentReaction)}`}
+                  >
+                    {agentReaction}
+                  </span>
+                )
+              )}
               <time
                 className="message-time"
                 dateTime={message.createdAt}
@@ -471,19 +471,6 @@ export function MessageBubble({
                   </Button>
                 )}
               </div>
-              <Button
-                className="message-more-action"
-                size="icon"
-                variant="ghost"
-                aria-label="Message options"
-                aria-haspopup="menu"
-                onClick={(event) => {
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  openMenu(rect.right - 192, rect.bottom + 6, event.currentTarget);
-                }}
-              >
-                <MoreHorizontal size={16} />
-              </Button>
             </div>
           )}
         </div>

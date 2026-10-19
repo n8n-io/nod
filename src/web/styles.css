@@ -1110,8 +1110,6 @@ input[type='range']:disabled {
   display: flex;
   align-items: center;
   gap: 0;
-  opacity: 0;
-  transition: opacity 140ms;
 }
 .message-actions .button {
   width: 27px;
@@ -1120,22 +1118,6 @@ input[type='range']:disabled {
 .message-actions .button[aria-pressed='true'] {
   color: var(--accent);
   background: var(--accent-soft);
-}
-.message-more {
-  position: relative;
-}
-.message-more summary {
-  display: flex;
-  width: 27px;
-  height: 26px;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  color: var(--muted-foreground);
-  list-style: none;
-}
-.message-more summary::-webkit-details-marker {
-  display: none;
 }
 .message-attachments {
   display: flex;
