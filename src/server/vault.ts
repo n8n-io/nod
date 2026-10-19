@@ -1210,10 +1210,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const matches =
         row.kind === 'password' && selected && username === undefined ? [] : entries.rows;
       savedEntries = [];
+      const credentialKey = matches.length ? await key() : Buffer.alloc(0);
       for (const entry of matches) {
         let secret: ReturnType<typeof openCredential>;
         try {
-          secret = openCredential(await key(), entry);
+          secret = openCredential(credentialKey, entry);
         } catch {
           continue;
         }
