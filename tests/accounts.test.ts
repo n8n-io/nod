@@ -25,15 +25,22 @@ import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics, type Analytics } from '../src/server/analytics.ts';
 import { createLedger } from '../src/server/ledger.ts';
+import { createModelTraces } from '../src/server/traces.ts';
+import type { ModelTrace } from '../src/ports/traces.ts';
 
 describe('account routes', () => {
   const origin = 'http://localhost:4399';
-  async function fixture(start?: (ownerId: string) => Promise<void>, analytics?: Analytics) {
+  async function fixture(
+    start?: (ownerId: string) => Promise<void>,
+    analytics?: Analytics,
+    onTraces?: (enabled: boolean) => void,
+  ) {
     let record: StoredAccount = {
       theme: 'system',
       onboardingCompleted: false,
       displayName: null,
       usageData: false,
+      traces: false,
     };
     const calls = { writes: 0, started: [] as (string | undefined)[] };
     const accounts: AccountStore = {
@@ -51,6 +58,7 @@ describe('account routes', () => {
           onboardingCompleted: input.onboardingCompleted ?? saved.onboardingCompleted,
           displayName: saved.displayName,
           usageData: input.usageData ?? saved.usageData,
+          traces: input.traces ?? saved.traces,
         };
         return {
           ...record,
@@ -72,6 +80,8 @@ describe('account routes', () => {
         calls.started.push(name);
         await start?.(owner);
       },
+      traces: onTraces !== undefined,
+      onTraces,
     }).register(app);
     await app.ready();
     return { app, calls, record: () => record };
@@ -100,6 +110,7 @@ describe('account routes', () => {
         });
       const initial = await request();
       assert.equal(initial.json().settings.usageData, false);
+      assert.equal(initial.json().capabilities.traces, false);
       assert.deepEqual(
         [initial.json().analytics.enabled, initial.json().analytics.distinctId],
         [false, null],
@@ -132,6 +143,114 @@ describe('account routes', () => {
     }
   });
 
+  test('conversation traces stay off until the owner opts in, stop at once and leave without personal data', async (t) => {
+    const delivered: ModelTrace[] = [];
+    const traces = createModelTraces(async (trace) => {
+      delivered.push(trace);
+    });
+    traces.configure({
+      secrets: ['fixture-model-key-8c41f2'],
+      profile: async () => ({ names: ['Marta Vidal'], region: 'ES' }),
+    });
+    const f = await fixture(undefined, undefined, (enabled) => traces.configure({ enabled }));
+    t.after(() => f.app.close());
+    const request = (payload?: object) =>
+      f.app.inject({
+        method: payload ? 'PATCH' : 'GET',
+        url: payload ? '/api/account' : '/api/session',
+        headers: { origin },
+        ...(payload ? { payload } : {}),
+      });
+    const trace = (content: string): ModelTrace => ({
+      id: randomUUID(),
+      name: 'fixture-model',
+      provider: 'fixture',
+      startedAt: '2026-10-19T10:00:00.000Z',
+      endedAt: '2026-10-19T10:00:01.000Z',
+      messages: [
+        { role: 'user', content },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'call-1',
+              type: 'function',
+              function: {
+                name: 'send_email',
+                arguments:
+                  '{"first_name":"Jordi","to":"jordi@example.com","address":{"line1":"12 Main St"},"password":"fixture-tool-secret-77","fields":[["password","fixture-pair-secret-88"]]}',
+              },
+            },
+          ],
+        },
+      ],
+      tools: ['send_email'],
+      output: { role: 'assistant', content: 'Thanks Marta, sent to +44 20 7946 0958.' },
+      usage: {
+        inputTokens: 10,
+        outputTokens: 2,
+        totalTokens: 12,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: null,
+      },
+      metadata: { session_id: 'fixture-session', turn_id: 'fixture-turn' },
+    });
+    const settle = async (count: number) => {
+      for (let attempt = 0; attempt < 40 && delivered.length < count; attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    };
+    const initial = (await request()).json();
+    assert.deepEqual([initial.capabilities.traces, initial.settings.traces], [true, false]);
+    traces.record(trace('Before opting in'));
+    await settle(1);
+    assert.equal(traces.active(), false);
+    assert.equal(delivered.length, 0);
+    assert.equal((await request({ traces: true })).json().settings.traces, true);
+    assert.equal(f.record().traces, true);
+    traces.record(
+      trace(
+        'I am Marta Vidal <marta.vidal@example.com>, cc alice smith <alice@example.com>, card 4111 1111 1111 1111, IBAN ES91 2100 0418 4502 0005 1332, call 612 345 678, DNI 12345678Z, server 2001:db8::1 and 203.0.113.42. Host 192.168.1.1.example stays. Key fixture-model-key-8c41f2, order 123456 on 2026-10-19',
+      ),
+    );
+    await settle(1);
+    assert.equal(delivered.length, 1);
+    const sent = JSON.stringify(delivered[0]);
+    for (const value of [
+      'Marta',
+      'Vidal',
+      'marta.vidal@example.com',
+      'Jordi',
+      'jordi@example.com',
+      'alice smith',
+      '12 Main St',
+      '2001:db8::1',
+      '203.0.113.42',
+      '4111',
+      'ES91',
+      '612 345 678',
+      '7946',
+      '12345678Z',
+      'fixture-model-key-8c41f2',
+      'fixture-tool-secret-77',
+      'fixture-pair-secret-88',
+    ])
+      assert.ok(!sent.includes(value), value);
+    assert.match(sent, /order 123456 on 2026-10-19/);
+    assert.match(sent, /192\.168\.1\.1\.example/);
+    assert.deepEqual(Object.keys(delivered[0].metadata), ['session_id', 'turn_id']);
+    assert.match(delivered[0].metadata.session_id, /^[0-9a-f]{32}$/);
+    assert.ok(!sent.includes('fixture-session') && !sent.includes('fixture-turn'));
+    traces.record(trace('A second request in the same conversation'));
+    await settle(2);
+    assert.equal(delivered[1].metadata.session_id, delivered[0].metadata.session_id);
+    await request({ traces: false });
+    traces.record(trace('After opting out'));
+    await settle(3);
+    assert.equal(delivered.length, 2);
+  });
+
   test('account changes require the same origin and owner and never accept provider or owner input', async (t) => {
     const f = await fixture();
     t.after(() => f.app.close());
@@ -160,6 +279,7 @@ describe('account routes', () => {
       [{}, { email: 'other@example.test' }, 400],
       [{}, { developer: true }, 400],
       [{}, { avatarUrl: 'https://example.test/pixel' }, 400],
+      [{}, { traces: true }, 400],
     ] as const) {
       const response = await f.app.inject({
         method: 'PATCH',

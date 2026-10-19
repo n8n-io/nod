@@ -82,6 +82,8 @@ type Row = {
   answered: boolean;
   question: string | null;
   question_message_id: string | null;
+  activity_tool: string | null;
+  activity_site: string | null;
 };
 
 function failure(message: string, statusCode = 400) {
@@ -141,11 +143,15 @@ export function createTasks(options: {
            t.created_at,t.updated_at,t.closed_at,COALESCE((SELECT r.status FROM turns r WHERE r.owner_id=t.owner_id AND r.session_id=t.session_id AND r.status='running'),u.status) AS turn_status,
            EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.thread_id=u.thread_id
              AND n.session_id=u.session_id AND n.parent_turn_id=u.id) AS answered,
-           q.text AS question,q.id AS question_message_id
+           q.text AS question,q.id AS question_message_id,a.summary AS activity_tool,a.site AS activity_site
          FROM tasks t LEFT JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
          LEFT JOIN LATERAL (SELECT m.id,m.text FROM messages m
            WHERE u.status='waiting' AND m.owner_id=u.owner_id AND m.turn_id=u.id AND m.role='assistant' AND m.text<>''
            ORDER BY m.created_at DESC,m.id DESC LIMIT 1) q ON true
+         LEFT JOIN LATERAL (SELECT e.summary,e.site FROM turns r JOIN turn_events e ON e.turn_id=r.id
+           WHERE r.owner_id=t.owner_id AND r.session_id=t.session_id AND r.status='running'
+             AND e.type IN ('tool_start','tool_complete','tool_failed')
+           ORDER BY e.created_at DESC,e.id DESC LIMIT 1) a ON true
          WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3 OR t.state='open')
            AND ($4::uuid IS NULL OR u.thread_id=$4)
          ORDER BY t.state='open' DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
@@ -177,6 +183,14 @@ export function createTasks(options: {
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
         closedAt: row.closed_at?.toISOString() ?? null,
+        ...(value === 'working' && row.activity_tool
+          ? {
+              activity: {
+                tool: row.activity_tool,
+                ...(row.activity_site ? { site: row.activity_site } : {}),
+              },
+            }
+          : {}),
       };
     });
   }
@@ -526,8 +540,14 @@ export function createTasks(options: {
       if (!task) throw failure('Task not found.', 404);
       const events = (
         await pool.query(
-          `SELECT e.id,e.type,e.summary,e.run_id AS "runId",e.parent_run_id AS "parentRunId",e.created_at AS "createdAt"
-         FROM turn_events e JOIN turns u ON u.id=e.turn_id WHERE u.task_id=$1 AND u.owner_id=$2 ORDER BY e.created_at,e.id`,
+          `SELECT e.id,e.type,e.summary,e.site,e.run_id AS "runId",e.parent_run_id AS "parentRunId",e.created_at AS "createdAt"
+         FROM turn_events e JOIN turns u ON u.id=e.turn_id
+         WHERE u.task_id=$1 AND u.owner_id=$2 AND e.type IN ('tool_complete','tool_failed')
+         UNION ALL
+         SELECT m.id,'message',m.text,NULL,NULL,NULL,m.created_at
+         FROM messages m JOIN turns u ON u.id=m.turn_id
+         WHERE u.task_id=$1 AND u.owner_id=$2 AND m.owner_id=$2 AND m.role='assistant' AND m.text<>''
+         ORDER BY 7,1`,
           [id, ownerId],
         )
       ).rows;

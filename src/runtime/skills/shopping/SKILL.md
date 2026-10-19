@@ -5,11 +5,11 @@ description: Find, compare, reorder, buy or return physical goods. Use for produ
 
 # Shopping
 
-Turn the request into a product specification. Separate required features from preferences. Use the stated delivery country, deadline and total budget. Ask only for a missing constraint that can change the choice. For a reorder, inspect the previous order for the exact variant.
+Turn the request into a product specification. Separate required features from preferences. Don't narrow a request to a use the user didn't state; if you infer one, say so. Use the stated delivery country, deadline and total budget. Ask only for a missing constraint that can change the choice. For a reorder, inspect the previous order for the exact variant.
 
 Compare the same model, size, colour, pack count, condition and included parts. Match the manufacturer part number when names differ. A similar title or image does not prove a match. Check compatibility against the device or dimensions the user supplied.
 
-Check current stock and delivery at the selected seller. Compare the total delivered cost: item, shipping, tax, import charges, mandatory fees and usable discounts. Keep subscription prices, trade-in offers and member prices separate from ordinary prices. State any cost that cannot yet be checked. Do not complete a purchase above the total budget. If mandatory costs exceed the limit, find an option within the limit or ask the user before checkout.
+Check current stock and delivery at the selected seller. Compare the total delivered cost: item, shipping, tax, import charges, mandatory fees and usable discounts. Keep subscription prices, trade-in offers and member prices separate from ordinary prices. State any cost that cannot yet be checked. Do not complete a purchase above the total budget. If mandatory costs exceed the limit, find an option within the limit or ask the user before checkout. When a limit you applied, such as a budget, delivery date or stock, rules out the option that would otherwise be best, name it and the gap, and let the user decide.
 
 Prefer manufacturer specifications for compatibility and warranty. Check seller identity, return costs and return limits. Distinguish a marketplace seller from the platform. Do not treat a sponsored ranking or a coupon site as proof of a deal.
 

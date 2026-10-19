@@ -376,10 +376,12 @@ function AuthenticatedApp({
     user: session.user!,
     theme: session.settings!.theme,
     usageData: session.settings!.usageData,
+    traces: session.capabilities.traces ? session.settings!.traces : undefined,
     saving,
     onSettings: openSettings,
     onTheme: (theme) => onAccountUpdate({ theme }),
     onUsageData: (usageData) => onAccountUpdate({ usageData }),
+    onTraces: (traces) => onAccountUpdate({ traces }),
   };
   const allowed = path !== '/browser' || session.capabilities.developer;
   const match = /^\/(vault|credentials|payments)\/([^/]+)\/?$/.exec(path);

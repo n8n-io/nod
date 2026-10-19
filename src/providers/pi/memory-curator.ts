@@ -1,4 +1,8 @@
-import { InMemoryCredentialStore, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
+import {
+  InMemoryCredentialStore,
+  getSupportedThinkingLevels,
+  type Context,
+} from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { createPiModelRuntime } from './models.ts';
 import type { ModelAccess } from '../../ports/models.ts';
@@ -6,6 +10,8 @@ import { lightestEffort } from '../../shared/models.ts';
 import type { MemoryCurator } from '../../ports/memory-curator.ts';
 import { agentModels, memoryModels } from '../../shared/model-defaults.ts';
 import { piUsageMetrics } from './usage.ts';
+import { piModelTrace } from './traces.ts';
+import type { ModelTraces } from '../../ports/traces.ts';
 
 function json(text: string) {
   const body = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1] ?? text;
@@ -25,6 +31,7 @@ export function createPiMemoryCurator(options: {
   lightest?: boolean;
   apiKey?: string;
   runtime?: ModelRuntime;
+  traces?: ModelTraces;
 }): MemoryCurator {
   let loaded: ReturnType<typeof load> | undefined;
   async function load() {
@@ -76,21 +83,26 @@ export function createPiMemoryCurator(options: {
       });
       const { runtime, model, effort, subscription } = await loaded;
       const complete = async () => {
-        const reply = await runtime.completeSimple(
-          model,
-          {
-            systemPrompt: instructions,
-            messages: [{ role: 'user', content: JSON.stringify(input), timestamp: Date.now() }],
-          },
-          {
-            signal: AbortSignal.any([
-              AbortSignal.timeout(task === 'analytics' ? 20_000 : 45_000),
-              ...(signal ? [signal] : []),
-            ]),
-            maxTokens: task === 'analytics' ? 2048 : 8192,
-            reasoning: effort === 'off' ? undefined : effort,
-          },
-        );
+        const context: Context = {
+          systemPrompt: instructions,
+          messages: [{ role: 'user', content: JSON.stringify(input), timestamp: Date.now() }],
+        };
+        const startedAt = new Date().toISOString();
+        const reply = await runtime.completeSimple(model, context, {
+          signal: AbortSignal.any([
+            AbortSignal.timeout(task === 'analytics' ? 20_000 : 45_000),
+            ...(signal ? [signal] : []),
+          ]),
+          maxTokens: task === 'analytics' ? 2048 : 8192,
+          reasoning: effort === 'off' ? undefined : effort,
+        });
+        if (task !== 'access' && options.traces?.active())
+          options.traces.record(
+            piModelTrace(
+              { model, context, message: reply, startedAt },
+              { source: 'curator', task },
+            ),
+          );
         if (reply.usage?.totalTokens)
           report?.({
             id: crypto.randomUUID(),

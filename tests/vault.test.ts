@@ -166,6 +166,11 @@ test(
     const vault = await createVault(pool, {
       keyStore: { id: 'fixture', configured: true, getKey: async () => fixtureKey },
       retry: async () => {},
+      page: async (_threadId, step) => ({
+        origin: 'https://example.com',
+        url: 'https://example.com/login',
+        ...(step ? { controls: [{ role: 'textbox', name: 'Passwort' }] } : {}),
+      }),
       inject: async (input) => {
         if (failNext) {
           failNext = false;
@@ -173,6 +178,7 @@ test(
         }
         assert.equal(input.origin, 'https://example.com');
         assert.equal(input.password, 'secret-password');
+        assert.equal(input.username, undefined);
         injected++;
         started();
         await injectionComplete;
@@ -213,11 +219,14 @@ test(
       const form = await app.inject({ url });
       assert.equal(form.statusCode, 200);
       assert.equal(form.headers['cache-control'], 'no-store');
+      assert.deepEqual(
+        form.json<CredentialRequest>().fields?.map((field) => field.label),
+        ['Passwort'],
+      );
       const first = app.inject({
         method: 'POST',
         url,
         payload: {
-          label: 'Fixture login',
           username: 'person@example.com',
           password: 'secret-password',
         },
@@ -229,7 +238,7 @@ test(
         .inject({
           method: 'POST',
           url,
-          payload: { label: 'Fixture login', password: 'second-secret' },
+          payload: { password: 'second-secret' },
         })
         .finally(() => {
           secondSettled = true;
@@ -246,7 +255,7 @@ test(
           await app.inject({
             method: 'POST',
             url,
-            payload: { label: 'Fixture login', password: 'secret-password' },
+            payload: { password: 'secret-password' },
           })
         ).statusCode,
         409,
@@ -300,7 +309,7 @@ test(
           await app.inject({
             method: 'POST',
             url: expiredUrl,
-            payload: { label: 'Fixture login', password: 'expired-secret' },
+            payload: { password: 'expired-secret' },
           })
         ).statusCode,
         409,
@@ -450,7 +459,7 @@ test(
           await app.inject({
             method: 'POST',
             url,
-            payload: { label: 'Fixture login', password: 'stale-secret' },
+            payload: { password: 'stale-secret' },
           })
         ).statusCode,
         409,
@@ -464,7 +473,7 @@ test(
           await app.inject({
             method: 'POST',
             url,
-            payload: { label: 'Fixture login', password: 'stale-secret' },
+            payload: { password: 'stale-secret' },
           })
         ).statusCode,
         409,
@@ -474,7 +483,7 @@ test(
           await app.inject({
             method: 'POST',
             url: freshUrl,
-            payload: { label: 'Fixture login', password: 'fresh-secret' },
+            payload: { password: 'fresh-secret' },
           })
         ).statusCode,
         200,
@@ -501,7 +510,7 @@ test(
           await app.inject({
             method: 'POST',
             url: failedUrl,
-            payload: { label: 'Fixture login', password: 'failed-secret' },
+            payload: { password: 'failed-secret' },
           })
         ).statusCode,
         502,
@@ -569,7 +578,7 @@ async function vaultFixture() {
     app.inject({
       method: 'POST',
       url,
-      payload: { label: 'Fixture login', password: 'fixture-secret' },
+      payload: { password: 'fixture-secret' },
     });
   return {
     ...seeded,
@@ -1283,9 +1292,7 @@ test(
                 url,
                 payload: {
                   username: 'synthetic-member',
-                  ...(kind === 'password'
-                    ? { label: 'Fixture login', password: 'synthetic-password' }
-                    : {}),
+                  ...(kind === 'password' ? { password: 'synthetic-password' } : {}),
                 },
               });
               assert.equal(response.statusCode, 200, response.body);
@@ -1314,7 +1321,7 @@ test(
             await app.inject({
               method: 'POST',
               url,
-              payload: { label: 'Fixture', password: 'synthetic-password' },
+              payload: { password: 'synthetic-password' },
             })
           ).statusCode,
           409,
@@ -1892,10 +1899,9 @@ test(
       const begin = async (
         id: string,
         credentials = {
-          label: 'My Google account',
           username: 'synthetic@example.test',
           password: 'one-form-synthetic-password',
-        } as { label?: string; username: string; password?: string },
+        } as { username: string; password?: string },
       ) => {
         if (!tasks.has(id)) {
           const turn = await startTurn();
@@ -3241,11 +3247,7 @@ test(
     const submitted = await app.inject({
       method: 'POST',
       url: manual.url.replace('/vault/', '/api/credential-requests/'),
-      payload: {
-        label: 'Manually entered fixture',
-        username,
-        password: 'fixture-private-password',
-      },
+      payload: { username, password: 'fixture-private-password' },
     });
     assert.equal(submitted.statusCode, 200);
     assert.deepEqual(await turns.resumed(manualTurn.turnId), [
@@ -3827,7 +3829,7 @@ assert.doesNotMatch(content, /synthetic-private/);
 
 const analytics = await import('./src/web/lib/analytics-client.ts');
 const { posthog: sdk } = await import('posthog-js/no-external');
-analytics.configureAnalytics({enabled:true, distinctId:'local:11111111-1111-4111-8111-111111111111',deployment:'local',environment:'production'},'web');
+analytics.configureAnalytics({enabled:true, distinctId:'local:11111111-1111-4111-8111-111111111111',environment:'production'},'web');
 sdk.set_config({request_batching:false,disable_compression:true,api_transport:'fetch'});
 await new Promise(resolve => setTimeout(resolve,80));
 const { createRoot } = await import('react-dom/client');

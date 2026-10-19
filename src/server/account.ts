@@ -9,6 +9,7 @@ const accountUpdate = z
     theme: z.enum(['light', 'dark', 'system']).optional(),
     onboardingCompleted: z.boolean().optional(),
     usageData: z.boolean().optional(),
+    traces: z.boolean().optional(),
   })
   .strict();
 
@@ -19,6 +20,8 @@ export function createAccountSession(options: {
   developerIds?: ReadonlySet<string>;
   analytics?: Analytics;
   start?(ownerId: string, name?: string): Promise<void>;
+  traces?: boolean;
+  onTraces?(enabled: boolean): void;
 }) {
   const origin = new URL(options.origin).origin;
   const user = options.localUser;
@@ -33,19 +36,23 @@ export function createAccountSession(options: {
       const consent = await options.accounts.readConsent(owner);
       if (accountVersion !== version || pending) continue;
       options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+      options.onTraces?.(account.traces);
       return { ...account, usageData: consent.enabled };
     }
   }
   async function updateAccount(input: AccountUpdate) {
     const version = ++accountVersion;
     if (input.usageData === false) options.analytics?.setUsageData(owner, false);
+    if (input.traces === false) options.onTraces?.(false);
     const update = (pending ?? Promise.resolve())
       .catch(() => {})
       .then(async () => {
         const account = await options.accounts.update(owner, input);
         const consent = await options.accounts.readConsent(owner);
-        if (accountVersion === version)
+        if (accountVersion === version) {
           options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+          options.onTraces?.(account.traces);
+        }
         return { ...account, usageData: consent.enabled };
       });
     pending = update;
@@ -61,8 +68,12 @@ export function createAccountSession(options: {
         theme: account.theme,
         onboardingCompleted: account.onboardingCompleted,
         usageData: account.usageData,
+        traces: account.traces,
       },
-      capabilities: { developer: Boolean(options.developerIds?.has(owner)) },
+      capabilities: {
+        developer: Boolean(options.developerIds?.has(owner)),
+        traces: options.traces === true,
+      },
       ...(options.analytics ? { analytics: options.analytics.configuration(owner) } : {}),
     };
   }
@@ -104,6 +115,8 @@ export function createAccountSession(options: {
     app.patch('/api/account', async (request, reply) => {
       if (!guard(request, reply)) return;
       const input = accountUpdate.parse(request.body);
+      if (input.traces === true && options.traces !== true)
+        return reply.code(400).send({ error: 'Conversation traces are not available here.' });
       let onboardingCompletedNow = false;
       if (input.onboardingCompleted) {
         if (

@@ -52,7 +52,8 @@ The app download is small. On first launch, Otto downloads a matching runtime pa
 
 - Otto checks the archive size and SHA-256 before it extracts anything.
 - On a Mac, before it installs, Otto checks free space for the extracted files plus 512 MiB, and the archive size when it downloads.
-- On a Mac, Otto checks every extracted file. Verified packs live in `~/Library/Application Support/Otto/runtime/<release>`. The VM mounts them read-only. Old versions stay on disk; Otto doesn't clean them up yet.
+- On a Mac, Otto checks every extracted file. Verified packs live in `~/Library/Application Support/Otto/runtime/<release>`. The VM mounts them read-only. After the VM starts, Otto deletes packs that no Otto VM mounts and that are more than a day old, so a downloaded update waits for its restart.
+- After its containers start, Otto removes container images from earlier runtimes. On a Mac, the freed space returns to your disk.
 - On Windows, Otto imports the pack into its WSL distribution, then deletes the archive.
 - An app update reuses the runtime when it hasn't changed.
 
@@ -113,7 +114,7 @@ flowchart TD
 
 Restarting stops a running reply, scheduled task or background check, and you can ask Otto to continue afterwards. Queued messages, schedules and app checks resume. Unsent text in the message box isn't kept.
 
-Otto downloads the new app or installer and, when it changed, the new runtime pack before it offers the restart. On a Mac, an update must be signed by n8n, and Otto refuses one with a lower version number, so an update feed can't roll Otto back to an older build. On Windows, the restart runs the installer in the background and opens Otto again.
+Otto downloads the new app or installer and, when it changed, the new runtime pack in the background before it offers the restart. On a Mac, it also loads the new container images into the running computer, so Otto is ready soon after the restart. An update found by an automatic check shows a notification when notifications are on, and the menu offers **Restart to update**. On a Mac, an update must be signed by n8n, and Otto refuses one with a lower version number, so an update feed can't roll Otto back to an older build. On Windows, the restart runs the installer in the background and opens Otto again.
 
 Otto keeps its profile, credentials and container volumes. A runtime update replaces tools and images without resetting the database.
 

@@ -21,7 +21,7 @@ Vault keeps your website logins and cards, under **Trust → Saved**. Otto can s
 
 **Import from a password manager.** Select **New → Import passwords** and choose a CSV exported from Chrome, 1Password or another password manager. Otto imports the website logins and skips archived items. Passkeys, cookies and other items aren't imported. Delete the exported file afterwards, because it isn't encrypted.
 
-**Add one during a task.** When a task needs a login you haven't saved, Otto opens a private **Sign in** form. Enter the details and select **Save and continue**. The values never pass through chat or the model.
+**Add one during a task.** When a task needs a login you haven't saved, Otto opens a private **Sign in** form. Its fields use the website's own names, such as **Username** or **Email address**; an account the site took on an earlier page gets a generic label. Enter the account and password, then select **Save and continue**. Otto saves both under the website's name, even when the site took the account on an earlier page, and types only the fields that page asks for. The values never pass through chat or the model.
 
 A private form stays open while its task waits for you. It closes once it's used, when Otto asks for a newer one, when Otto starts on a newer message in the same conversation, or when you select **Stop**. A scheduled run or background task has its own session, so chatting with Otto never closes its form.
 

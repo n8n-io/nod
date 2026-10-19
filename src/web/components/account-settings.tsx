@@ -6,6 +6,7 @@ import {
   Clock3,
   KeyRound,
   Globe,
+  MessageSquareText,
   MapPin,
   Plug,
   Monitor,
@@ -602,6 +603,38 @@ export function AccountSettings({
                     Share usage insights with the Otto team at n8n. Your model derives them from
                     chats; messages, files and keys are not sent to PostHog.
                   </p>
+                  {account.traces !== undefined && (
+                    <>
+                      <div className="account-preference-row">
+                        <span data-analytics-public>
+                          <MessageSquareText size={16} aria-hidden="true" />
+                          Share conversation traces
+                        </span>
+                        <Switch
+                          checked={account.traces}
+                          disabled={account.saving}
+                          aria-label="Share conversation traces"
+                          aria-describedby={`${id}-traces`}
+                          onCheckedChange={(traces) => {
+                            setError('');
+                            void account.onTraces(traces).catch((cause) => {
+                              if (active.current) setError(errorMessage(cause));
+                            });
+                          }}
+                        />
+                      </div>
+                      <p
+                        id={`${id}-traces`}
+                        className="account-preference-hint"
+                        data-analytics-public
+                      >
+                        Send Otto’s conversations, including what it reads and does, to the Otto
+                        team at n8n to improve Otto. Your name, email addresses, phone numbers, card
+                        numbers and IBANs are removed first, and traces carry no account or device
+                        ID. Kept for 14 days and never used to train AI models.
+                      </p>
+                    </>
+                  )}
                 </>
               )}
               {tab === 'Preferences' && <PreferencesForm onDirtyChange={setPreferencesDirty} />}

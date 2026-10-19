@@ -2,11 +2,7 @@ import { PostHog } from 'posthog-node';
 import type { ProductAnalytics } from '../../ports/analytics.ts';
 import { posthogConfig } from '../../shared/analytics.ts';
 
-export function createPostHogAnalytics(
-  options: {
-    permitted?(distinctId: string, revision?: string): Promise<boolean>;
-  } = {},
-): ProductAnalytics {
+export function createPostHogAnalytics(): ProductAnalytics {
   const clients = new Map<
     AbortSignal,
     { distinctId: string; revision?: string; client: PostHog }
@@ -39,15 +35,7 @@ export function createPostHogAnalytics(
           flushInterval: 10_000,
           before_send: (event) => (signal.aborted ? null : event),
           fetch: async (url, request) => {
-            if (
-              signal.aborted ||
-              (options.permitted &&
-                !(await options
-                  .permitted(input.distinctId, input.consentRevision)
-                  .catch(() => false))) ||
-              signal.aborted
-            )
-              return Response.json({ status: 1 });
+            if (signal.aborted) return Response.json({ status: 1 });
             return fetch(url, {
               ...request,
               signal: request.signal ? AbortSignal.any([signal, request.signal]) : signal,

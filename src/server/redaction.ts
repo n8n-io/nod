@@ -36,26 +36,29 @@ export function redactSecretText(value: string): string {
     .replace(/\bdata:[^,\s]+;base64,[A-Za-z0-9+/=]+/g, '[binary omitted]');
 }
 
-function compileRedactor(
-  secrets: string[] = [],
-  limits: { string?: number; payload?: number; minimumSecretLength?: number } = {},
-) {
-  const stringLimit = Math.min(64_000, Math.max(100, limits.string ?? 8000));
-  const payloadLimit = Math.min(160_000, Math.max(1000, limits.payload ?? payloadDefault));
+function secretText(secrets: string[], minimumSecretLength = 8) {
   const values = [
     ...new Set(
       secrets
         .flatMap((value) => [value, value.trim()])
-        .filter((value) => value.length >= (limits.minimumSecretLength ?? 8)),
+        .filter((value) => value.length >= minimumSecretLength),
     ),
   ].sort((a, b) => b.length - a.length);
   const secretVariants = [...new Set(values.flatMap((value) => [value, encodeURIComponent(value)]))]
     .sort((a, b) => b.length - a.length)
     .map((value) => value.replace(/[.*+?^$()|[\]{}\\]/g, '\\$&'));
   const secretPattern = secretVariants.length ? new RegExp(secretVariants.join('|'), 'g') : null;
-  function text(value: string): string {
-    return redactSecretText(secretPattern ? value.replace(secretPattern, hidden) : value);
-  }
+  return (value: string): string =>
+    redactSecretText(secretPattern ? value.replace(secretPattern, hidden) : value);
+}
+
+function compileRedactor(
+  secrets: string[] = [],
+  limits: { string?: number; payload?: number; minimumSecretLength?: number } = {},
+) {
+  const stringLimit = Math.min(64_000, Math.max(100, limits.string ?? 8000));
+  const payloadLimit = Math.min(160_000, Math.max(1000, limits.payload ?? payloadDefault));
+  const text = secretText(secrets, limits.minimumSecretLength);
   return function redact(value: unknown): unknown {
     let nodes = 0;
     let fragments = 0;
@@ -175,6 +178,18 @@ export function createRedactor(
       size = secrets.length;
     }
     return redact(value);
+  };
+}
+
+export function createTextRedactor(secrets: string[]) {
+  let size = -1;
+  let text: ReturnType<typeof secretText>;
+  return (value: string) => {
+    if (size !== secrets.length) {
+      text = secretText(secrets);
+      size = secrets.length;
+    }
+    return text(value);
   };
 }
 

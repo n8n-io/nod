@@ -36,7 +36,6 @@ import {
 } from '../src/providers/container-browser/index.ts';
 import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
 import { startContainerBrowserWorker } from '../src/providers/container-browser/worker.ts';
-import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import { createArtifactService } from '../src/server/artifacts.ts';
 import { createPostgresObjectStore } from '../src/server/object-storage.ts';
 import { browserDownloadPdf, createBrowserDownloadFixture } from './browser-download-fixture.ts';
@@ -292,45 +291,6 @@ test(
   },
 );
 
-const key = `artifacts/${randomUUID()}`;
-test('private filesystem objects survive factory restart and preserve conditional writes and path bounds', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-objects-'));
-  const outside = await mkdtemp(join(tmpdir(), 'otto-outside-'));
-  try {
-    const first = createFilesystemObjectStore(root);
-    assert.equal(await first.read(key, 100), undefined);
-    const version = await first.write(key, Buffer.from('private'), { expectedVersion: null });
-    const next = createFilesystemObjectStore(root);
-    assert.equal((await next.read(key, 100))?.bytes.toString(), 'private');
-    await assert.rejects(
-      next.write(key, Buffer.from('foreign'), { expectedVersion: null }),
-      ObjectStoreConflict,
-    );
-    await assert.rejects(
-      next.write(key, Buffer.from('foreign'), { expectedVersion: 'stale' }),
-      ObjectStoreConflict,
-    );
-    await assert.rejects(next.read(key, 2), /unavailable/);
-    await assert.rejects(next.read('../secret', 100), /identifier/);
-    await next.write(key, Buffer.from('next'), { expectedVersion: version });
-    await assert.rejects(next.remove(key, { expectedVersion: version }), ObjectStoreConflict);
-    const file = join(outside, 'private');
-    await writeFile(file, 'never read');
-    await rm(join(root, key));
-    await symlink(file, join(root, key));
-    await assert.rejects(next.read(key, 100), /unavailable/);
-    await rm(join(root, 'artifacts'), { recursive: true });
-    await symlink(outside, join(root, 'artifacts'));
-    await assert.rejects(
-      next.write(key, Buffer.from('escape'), { expectedVersion: null }),
-      /unavailable/,
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-    await rm(outside, { recursive: true, force: true });
-  }
-});
-
 async function fixture() {
   const schema = 'test_private_objects_' + randomUUID().replaceAll('-', '');
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -431,7 +391,7 @@ test(
         createArtifactService({
           database,
           ownerId,
-          store: createFilesystemObjectStore(join(root, ownerId)),
+          localRoot: join(root, ownerId),
         });
       const original = create('owner-one');
       const saved = await original.storeArtifact(

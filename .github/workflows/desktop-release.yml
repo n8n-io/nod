@@ -347,6 +347,7 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ vars.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ vars.APPLE_API_ISSUER }}
+          OTTO_TRACES_TOKEN: ${{ secrets.OTTO_TRACES_TOKEN }}
         run: >-
           node .github/scripts/with-apple-signing.mjs
           pnpm --dir desktop run build --release
@@ -446,10 +447,12 @@ jobs:
           path: .local/windows-runtime-assets
       - name: Check Windows workspace paths
         run: pnpm exec tsx --test --test-name-pattern="workspace paths cannot|workspace artifact reads" tests/sandbox.test.ts
-      - run: |
-          pnpm run build
-          node desktop/scripts/build-windows.mjs
-          node desktop/scripts/check-windows.mjs
+      - run: pnpm run build
+      - name: Package the Windows installer
+        env:
+          OTTO_TRACES_TOKEN: ${{ secrets.OTTO_TRACES_TOKEN }}
+        run: node desktop/scripts/build-windows.mjs
+      - run: node desktop/scripts/check-windows.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-windows-x64

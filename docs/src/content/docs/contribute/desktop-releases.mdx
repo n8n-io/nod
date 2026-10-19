@@ -119,8 +119,12 @@ Release builds run one at a time, and up to 100 runs can wait in the queue. A fa
 
 Drafts are never offered to the installer or the updater.
 
-- Every app checks at startup, every six hours while it's open, and after waking if a check is due. **Check for Updates…** checks right away.
-- Updates download on their own, then offer **Restart** or **Later**.
+- Every app checks at startup, even when its runtime fails to start, every six hours while it's open, and after waking if a check is due. **Check for Updates…** checks right away.
+- After a failed automatic check, Otto retries after 15 minutes, doubling up to six hours, and the menu shows **Update Failed. Try Again…**.
+- When the newest release is incomplete for a platform, Otto tries up to three newer releases and offers the first that validates.
+- A Mac app outside Applications offers to move itself there at startup, because it can update itself only from Applications.
+- Updates download in the background. On a Mac, Otto also loads the new runtime's images into the running VM, so the restart skips that step.
+- An automatic check announces a ready update with a notification when notifications are on, and with a **Restart** or **Later** dialog otherwise. The menu offers **Restart to update** until you restart.
 - If a reply, schedule or background check is running, or Otto can't tell, it asks before restarting.
 - If the runtime hasn't changed, Otto reuses it and downloads only the app or installer.
 - On Windows, the restart runs the verified installer silently over the current install, then opens Otto again. The profile is kept.

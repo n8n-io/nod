@@ -70,6 +70,8 @@ let updateSource;
 let updates;
 let checkingUpdates;
 let updatePhase = 'idle';
+let updateFailed = false;
+let pendingPreload;
 let stopUpdateChecks;
 let closingEngine = false;
 let tray;
@@ -652,6 +654,8 @@ function baseEnvironment() {
       'OTTO_FEEDBACK_URL',
       'OTTO_FEEDBACK_TOKEN',
       'OTTO_FEEDBACK_RECEIPT_URL_PREFIX',
+      'OTTO_TRACES_URL',
+      'OTTO_TRACES_TOKEN',
     ]
       .filter((key) => typeof process.env[key] === 'string')
       .map((key) => [key, process.env[key]]),
@@ -728,11 +732,11 @@ async function finishEnginePreparation() {
     setupWindow = undefined;
     if (completedWindow && !completedWindow.isDestroyed()) completedWindow.destroy();
   }
-  if (updates && !stopUpdateChecks)
-    stopUpdateChecks = startDesktopUpdateChecks({
-      check: () => checkForUpdates(false),
-      powerMonitor,
-    });
+  if (pendingPreload) {
+    const assets = pendingPreload;
+    pendingPreload = undefined;
+    void preloadUpdateImages(assets);
+  }
   return status;
 }
 
@@ -744,7 +748,7 @@ function refreshUpdateMenu() {
         checking: 'Checking for updates…',
         preparing: 'Preparing update…',
         downloading: 'Downloading update…',
-      }[updatePhase] || 'Check for Updates…';
+      }[updatePhase] || (updateFailed ? 'Update Failed. Try Again…' : 'Check for Updates…');
   const item = Menu.getApplicationMenu?.()?.getMenuItemById('desktop-update');
   if (item) {
     item.label = label;
@@ -770,15 +774,23 @@ function refreshUpdateMenu() {
 async function checkForUpdates(manual = true) {
   if (!updates || quitting || (!manual && updates.ready)) return;
   if (checkingUpdates) return checkingUpdates;
-  checkingUpdates = (async () => {
+  const release = () => {
+    if (checkingUpdates === checking) checkingUpdates = undefined;
+    refreshUpdateMenu();
+  };
+  const checking = (async () => {
     try {
       const candidate = await updates.check();
+      updateFailed = false;
       if (quitting) return;
       if (!candidate) {
+        release();
         if (manual)
           await dialog.showMessageBox({ message: 'Otto is up to date.', buttons: ['OK'] });
         return;
       }
+      if (!manual && (await notifyUpdate(candidate))) return;
+      release();
       const { response } = await dialog.showMessageBox({
         message: `Otto ${candidate.version} is ready.`,
         buttons: ['Restart', 'Later'],
@@ -789,23 +801,49 @@ async function checkForUpdates(manual = true) {
       if (response === 0 && !quitting) await updates.restart();
     } catch (error) {
       if (quitting) return;
+      if (!updates.ready) updateFailed = true;
       await writeDiagnostic(error.message).catch(() => {});
-      if (manual || updates.ready)
-        await dialog.showMessageBox({
-          type: 'warning',
-          message: updates.ready
-            ? 'Otto could not restart yet.'
-            : 'Otto could not check for updates.',
-          detail: bounded(error.message),
-          buttons: ['OK'],
-        });
+      if (!manual && !updates.ready) throw error;
+      release();
+      await dialog.showMessageBox({
+        type: 'warning',
+        message: updates.ready
+          ? 'Otto could not restart yet.'
+          : 'Otto could not check for updates.',
+        detail: bounded(error.message),
+        buttons: ['OK'],
+      });
     }
-  })().finally(() => {
-    checkingUpdates = undefined;
-    refreshUpdateMenu();
-  });
+  })().finally(release);
+  checkingUpdates = checking;
   refreshUpdateMenu();
-  return checkingUpdates;
+  return checking;
+}
+
+async function notifyUpdate(candidate) {
+  if (!preferences.notifications || !Notification.isSupported()) return false;
+  if (isQuietTime((await appPreferences.get()).preferences)) return true;
+  const notification = new Notification({
+    title: `Otto ${candidate.version} is ready`,
+    body: 'Restart Otto to use the new version.',
+  });
+  displayedNotifications.add(notification);
+  notification.on('click', () => {
+    if (!quitting && updates?.ready) void checkForUpdates();
+  });
+  notification.on('close', () => displayedNotifications.delete(notification));
+  notification.on('failed', () => displayedNotifications.delete(notification));
+  notification.show();
+  return true;
+}
+
+async function preloadUpdateImages(assets, signal) {
+  const { preloadRuntimeImages } = await import(
+    pathToFileURL(join(engineRoot, 'desktop/runtime/index.mjs')).href
+  );
+  await preloadRuntimeImages({ dataRoot: profileRoot, assets, signal }).catch(
+    (error) => void writeDiagnostic(error.message).catch(() => {}),
+  );
 }
 
 async function restartForUpdate() {
@@ -958,6 +996,12 @@ async function startEngine({ runtime, signal }) {
   if (providerEnvironment.OTTO_VAULT_KEY) knownSecrets.add(providerEnvironment.OTTO_VAULT_KEY);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
   if (process.env.OTTO_FEEDBACK_TOKEN) knownSecrets.add(process.env.OTTO_FEEDBACK_TOKEN);
+  const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
+  const tracesToken =
+    typeof ottoBuild?.tracesToken === 'string'
+      ? ottoBuild.tracesToken
+      : process.env.OTTO_TRACES_TOKEN;
+  if (tracesToken) knownSecrets.add(tracesToken);
   const analytics = await analyticsConfiguration().catch(() => ({ enabled: false }));
   const environment = {
     ...baseEnvironment(),
@@ -976,6 +1020,7 @@ async function startEngine({ runtime, signal }) {
     OTTO_DATA_ROOT: profileRoot,
     OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),
     ...(process.env.OTTO_FEEDBACK_URL === '' ? { OTTO_FEEDBACK_ENABLED: 'false' } : {}),
+    ...(tracesToken ? { OTTO_TRACES_TOKEN: tracesToken } : {}),
     PI_CODING_AGENT_DIR: join(profileRoot, 'pi'),
   };
   if (quitting || signal.aborted) throw new Error('Otto is closing.');
@@ -1152,6 +1197,23 @@ else {
   void app
     .whenReady()
     .then(async () => {
+      if (app.isPackaged && process.platform === 'darwin' && !app.isInApplicationsFolder()) {
+        const { response } = await dialog.showMessageBox({
+          message: 'Move Otto to your Applications folder?',
+          detail: 'Otto can update itself only from Applications.',
+          buttons: ['Move to Applications', 'Not Now'],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (response === 0) {
+          try {
+            if (app.moveToApplicationsFolder()) return;
+          } catch (error) {
+            await writeDiagnostic(error.message).catch(() => {});
+          }
+        }
+      }
       if (app.isPackaged && ['darwin', 'win32'].includes(process.platform)) {
         const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
         const windows = process.platform === 'win32';
@@ -1175,17 +1237,23 @@ else {
             const { prepareRuntimeUpdate } = await import(
               pathToFileURL(join(engineRoot, 'desktop/runtime/assets.mjs')).href
             );
-            await prepareRuntimeUpdate(candidate.runtime, {
+            const assets = await prepareRuntimeUpdate(candidate.runtime, {
               resourcesPath: engineRoot,
               downloadUrl: candidate.downloadUrl,
               signal,
             });
+            if (!engine || closingEngine) pendingPreload = assets;
+            else await preloadUpdateImages(assets, signal);
           },
           restart: restartForUpdate,
           onStatus: (phase) => {
             updatePhase = phase;
             refreshUpdateMenu();
           },
+        });
+        stopUpdateChecks = startDesktopUpdateChecks({
+          check: () => checkForUpdates(false),
+          powerMonitor,
         });
       }
       nativeTheme.on('updated', publishPreferences);

@@ -7,7 +7,6 @@ export const posthogConfig = {
 export interface AnalyticsConfiguration {
   enabled: boolean;
   distinctId: string | null;
-  deployment: 'local';
   environment: 'development' | 'production';
   appVersion?: string;
 }

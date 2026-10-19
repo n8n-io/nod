@@ -527,6 +527,7 @@ test('scenario API calls use authenticated local transport and refuse outside ta
     onboardingCompleted: false,
     displayName: null,
     usageData: false,
+    traces: false,
   };
   let writes = 0;
   let started = 0;

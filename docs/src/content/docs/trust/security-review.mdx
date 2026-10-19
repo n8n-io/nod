@@ -31,9 +31,10 @@ flowchart LR
   server --> box[Workspace<br/>no keys]:::muted
   server --> browser[Browser]:::muted --> sites[Websites]
   server -. opt-in, masked .-> analytics[Usage analytics]:::muted
+  server -. opt-in, scrubbed .-> traces[Conversation traces]:::muted
 ```
 
-Model requests go to the provider the user connects. Managed app requests and results pass through n8n's hosted connection service and Composio. Direct MCP connections and servers using their own Composio project bypass that service. Feedback and masked usage analytics are optional.
+Model requests go to the provider the user connects. Managed app requests and results pass through n8n's hosted connection service and Composio. Direct MCP connections and servers using their own Composio project bypass that service. Feedback, masked usage analytics and scrubbed [conversation traces](/trust/conversation-traces/) are optional.
 
 ## What Otto stores
 
@@ -75,9 +76,9 @@ Tests use synthetic data and disposable databases. They never call a live model 
 
 ## Common questions
 
-**Does n8n see our conversations?** Managed app requests and results pass through n8n and can include conversation content used in app actions. Feedback can also include a diagnostic report of recent chat and actions. Usage analytics are opt-in and mask content.
+**Does n8n see our conversations?** Managed app requests and results pass through n8n and can include conversation content used in app actions. Feedback can also include a diagnostic report of recent chat and actions. Usage analytics are opt-in and mask content. Conversation traces are opt-in too: when a user turns them on, scrubbed model requests and replies go to the Otto team's LangSmith project for 14 days, without any account or device identifier.
 
-**Does Otto train on our data?** Otto doesn't train models. The model provider you connect processes requests under its own terms.
+**Does Otto train on our data?** Otto doesn't train models, and n8n doesn't use conversation traces to train AI models. The model provider you connect processes requests under its own terms.
 
 **Can we choose the model?** Yes. Users connect OpenAI, Anthropic, OpenRouter or a ChatGPT plan. In local Otto they can also add an OpenAI-compatible server, such as Ollama, at any address. The trust check then runs on that model. Operators can also provide server-managed keys. There's no setting yet that limits which providers users can add.
 

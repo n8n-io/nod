@@ -164,6 +164,10 @@
 .task-preview-line {
   color: var(--text-secondary);
 }
+.task-preview-line svg {
+  margin-right: 4px;
+  vertical-align: -2px;
+}
 .task-preview-foot {
   display: flex;
   align-items: center;
@@ -291,14 +295,24 @@
   max-height: 20rem;
   overflow: auto;
   margin: 0;
-  padding-left: 1.4rem;
+  padding-left: 0;
+  list-style: none;
   font-size: var(--text-control);
 }
 .task-activity li {
   margin: 0.35rem 0;
 }
-.task-activity [data-helper='true'] {
+.task-activity [data-kind='step'] {
   padding-left: 0.75rem;
+  color: var(--text-secondary);
+}
+.task-activity-failed {
+  margin-right: 4px;
+  vertical-align: -2px;
+  color: var(--error);
+}
+.task-activity [data-helper='true'] {
+  padding-left: 1.5rem;
 }
 .messages > .task-preview {
   margin-left: 2.75rem;

@@ -18,6 +18,9 @@ const assets = resolve(
   process.env.OTTO_RUNTIME_ASSETS || join(root, '.local/windows-runtime-assets'),
 );
 const configuration = JSON.parse(await readFile(join(root, 'desktop/package.json'), 'utf8'));
+const tracesToken = process.env.OTTO_TRACES_TOKEN;
+if (tracesToken && !/^[A-Za-z0-9_-]{32,128}$/.test(tracesToken))
+  throw new Error('OTTO_TRACES_TOKEN must be 32 to 128 URL-safe characters.');
 const updateSourceUrl = process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL;
 if (
   updateSourceUrl &&
@@ -89,6 +92,7 @@ configuration.ottoBuild = {
   builtAt: new Date().toISOString(),
   platform: 'win32-x64',
   ...(updateSourceUrl ? { updateSourceUrl } : {}),
+  ...(tracesToken ? { tracesToken } : {}),
 };
 delete configuration.devDependencies;
 delete configuration.scripts;

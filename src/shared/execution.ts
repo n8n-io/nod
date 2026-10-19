@@ -10,6 +10,7 @@ export interface ExecutionScope {
 export interface ExecutionEvent {
   execution: ExecutionScope;
   callId?: string;
+  site?: string;
 }
 
 export interface UsageDetails {

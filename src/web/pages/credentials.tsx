@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, KeyRound, LockKeyhole, ArrowUpRight } from 'lucide-react';
 import type { CredentialRequest, PaymentRequest } from '../../shared/contracts';
 import { api } from '../lib/api';
-import { originLabel, suggestLoginName } from '../lib/vault-name';
+import { originLabel } from '../lib/vault-name';
 import { returnToChat } from '../lib/navigation';
 import { subscribeAppEvents } from '../lib/app-events';
 import { Button, Field, Input, Loading, Notice } from '../components/ui';
@@ -116,7 +116,6 @@ function CredentialForm({ id }: { id: string }) {
   const [saving, setSaving] = useState(false);
   const [retried, setRetried] = useState(false);
   const [enterNew, setEnterNew] = useState(false);
-  const [loginName, setLoginName] = useState<string>();
   useEffect(() => {
     if (request?.status !== 'entering') return;
     const controller = new AbortController();
@@ -174,8 +173,7 @@ function CredentialForm({ id }: { id: string }) {
   const expired = uncertain || request?.status === 'expired';
   const filled = request?.status === 'filled';
   const fields = request?.fields ?? [];
-  const username =
-    request?.kind === 'identifier' || fields.some((field) => field.kind === 'identifier');
+  const username = request?.kind === 'identifier' || request?.kind === 'password';
   const password = request?.kind === 'password';
   const savedEntries = request?.kind === 'otp' ? [] : (request?.savedEntries ?? []);
   const choosingSaved = savedEntries.length > 0 && !enterNew;
@@ -256,22 +254,11 @@ function CredentialForm({ id }: { id: string }) {
     if (!request || saving) return;
     const form = event.currentTarget,
       data = new FormData(form);
-    if (password) setLoginName(String(data.get('label') || ''));
     const input =
       request.kind === 'otp'
         ? { code: data.get('code') }
         : {
-            ...(password
-              ? {
-                  label:
-                    String(data.get('label') || '').trim() ||
-                    suggestLoginName(
-                      request.origin,
-                      savedEntries.map((entry) => entry.label),
-                    ),
-                  password: data.get('password'),
-                }
-              : {}),
+            ...(password ? { password: data.get('password') } : {}),
             ...(username ? { username: data.get('username') } : {}),
           };
     form.reset();
@@ -410,23 +397,6 @@ function CredentialForm({ id }: { id: string }) {
                   </Field>
                 ) : (
                   <>
-                    {password && (
-                      <Field label="Name">
-                        <Input
-                          name="label"
-                          defaultValue={
-                            loginName ??
-                            suggestLoginName(
-                              request.origin,
-                              savedEntries.map((entry) => entry.label),
-                            )
-                          }
-                          onInput={(event) => setLoginName(event.currentTarget.value)}
-                          placeholder="For example, my work account"
-                          maxLength={100}
-                        />
-                      </Field>
-                    )}
                     {username && (
                       <Field
                         label={
@@ -437,19 +407,24 @@ function CredentialForm({ id }: { id: string }) {
                         <Input
                           name="username"
                           autoComplete="username"
-                          autoFocus
+                          defaultValue={request.username}
+                          autoFocus={!request.username}
                           required
                           maxLength={320}
                         />
                       </Field>
                     )}
                     {password && (
-                      <Field label="Password">
+                      <Field
+                        label={
+                          fields.find((field) => field.kind === 'password')?.label || 'Password'
+                        }
+                      >
                         <Input
                           name="password"
                           type="password"
                           autoComplete="current-password"
-                          autoFocus={!username}
+                          autoFocus={Boolean(request.username)}
                           required
                           maxLength={8192}
                         />

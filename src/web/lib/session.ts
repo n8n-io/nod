@@ -17,7 +17,11 @@ type SessionRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
 function validSession(value: unknown): value is SessionResponse {
   if (!value || typeof value !== 'object') return false;
   const session = value as Partial<SessionResponse>;
-  if (typeof session.capabilities?.developer !== 'boolean') return false;
+  if (
+    typeof session.capabilities?.developer !== 'boolean' ||
+    typeof session.capabilities.traces !== 'boolean'
+  )
+    return false;
   if (session.user === null) return session.settings === null && !session.capabilities.developer;
   const user = session.user;
   return (
@@ -30,7 +34,8 @@ function validSession(value: unknown): value is SessionResponse {
     !!session.settings &&
     ['system', 'light', 'dark'].includes(session.settings.theme) &&
     typeof session.settings.onboardingCompleted === 'boolean' &&
-    typeof session.settings.usageData === 'boolean'
+    typeof session.settings.usageData === 'boolean' &&
+    typeof session.settings.traces === 'boolean'
   );
 }
 
@@ -91,7 +96,12 @@ export function createSessionStore(
     mutation = undefined;
     clearPrivate();
     const session = snapshot.session
-      ? { ...snapshot.session, user: null, settings: null, capabilities: { developer: false } }
+      ? {
+          ...snapshot.session,
+          user: null,
+          settings: null,
+          capabilities: { developer: false, traces: false },
+        }
       : null;
     applyTheme(null);
     publish({

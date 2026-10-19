@@ -68,13 +68,13 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 158 cases of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 159 cases of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 225 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 224 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run.
 
@@ -324,7 +324,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 227 cases: 65 controlled cases, 158 release cases, three live web cases and the harness canary.
+The suite has 228 cases: 65 controlled cases, 159 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -405,7 +405,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 
 <details>
 
-<summary>All 158 release cases</summary>
+<summary>All 159 release cases</summary>
 
 | Scenario                           | What it checks                                                                                                                    | Capabilities                    |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
@@ -413,6 +413,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 | `agenda-tomorrow`                  | What's on my calendar tomorrow?                                                                                                   | apps                            |
 | `ambiguous-recipient-asks`         | Email Ana that the files are ready                                                                                                | progress, apps                  |
 | `archive-newsletters`              | Archive the newsletters in my inbox from the last seven days. Leave everything else alone.                                        | apps, approvals                 |
+| `best-just-over-budget`            | What are the best headphones I can get from SoundHouse for €340?                                                                  | research, browser               |
 | `book-call-in-window`              | Book a 30-minute call with Leo tomorrow between 10 and 12, wherever I'm free                                                      | apps                            |
 | `buy-quantity-total`               | Order 3 of the braided 1 m USB-C cables with my Visa                                                                              | vault, browser, approvals       |
 | `can-i-make-it`                    | Can I take a call on Thursday at 15:00 for an hour?                                                                               | apps                            |

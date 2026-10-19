@@ -38,10 +38,10 @@ import { createDecisionModel } from '../providers/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
 import type { ChannelSetupVerifier } from '../ports/channel-settings.ts';
-import type { PrivateObjectStore } from '../ports/object-storage.ts';
 import type { LinkPreviewProvider } from '../ports/link-preview.ts';
 import type { FeedbackDelivery } from '../ports/feedback.ts';
 import { createN8nFeedback } from '../providers/n8n/feedback.ts';
+import { createN8nTraces } from '../providers/n8n/traces.ts';
 import { agentModels } from '../shared/model-defaults.ts';
 import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
@@ -53,7 +53,6 @@ import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from './discovered-connections.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
 import { createDockerWorkspace } from '../providers/docker/index.ts';
-import { createFilesystemObjectStore } from '../providers/object-storage/filesystem.ts';
 import {
   createEnvironmentKeyStore,
   parseCredentialKey,
@@ -80,12 +79,13 @@ import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals, turnOrigin } from './approvals.ts';
 import { createCommunication, publicText } from './communication.ts';
 import { createTrust } from './trust.ts';
-import { createArtifactService, localArtifacts } from './artifacts.ts';
+import { localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
 import { createChannelSettings } from './channel-settings.ts';
 import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
 import { createAccountStore } from './account-store.ts';
+import { createModelTraces, type ModelTraceGate } from './traces.ts';
 import { runtimeAccount } from './account-profile.ts';
 import { createAccountSession } from './account.ts';
 import { createPostgresObjectStore } from './object-storage.ts';
@@ -124,7 +124,7 @@ import {
 } from './thread.ts';
 import { browserOf } from './turn-chain.ts';
 import type { VaultActivityReason } from '../shared/contracts.ts';
-import { createTriage } from './triage.ts';
+import { createTriage, getPreferences } from './triage.ts';
 import { createTasks } from './tasks.ts';
 import { checkedKeyStore, createVault, credentialOrigin, sealedDataExists } from './vault.ts';
 import { createVaultAccess } from './vault-access.ts';
@@ -139,7 +139,6 @@ export interface ApplicationAdapters {
   models?: ReturnType<typeof createModelService>;
   integrationKey?: ReturnType<typeof createIntegrationKeyService>;
   integrationAccess?: ReturnType<typeof createIntegrationAccess>;
-  objectStore?: PrivateObjectStore;
   agent: Agent;
   computer: Computer;
   workspace: Workspace;
@@ -154,6 +153,7 @@ export interface ApplicationAdapters {
   messaging?: MessagingTransport;
   linkPreviews?: LinkPreviewProvider;
   feedback?: FeedbackDelivery;
+  traces?: ModelTraceGate;
   messagingSetup?: {
     verifier: ChannelSetupVerifier;
     create(environment: Record<string, string>): MessagingTransport;
@@ -227,12 +227,19 @@ export function createDefaultAdapters(
     },
     changed: refresh,
   });
+  const traces = createModelTraces(
+    createN8nTraces({
+      url: env.OTTO_TRACES_URL ?? 'https://internal.users.n8n.cloud/webhook/otto/traces',
+      token: env.OTTO_TRACES_TOKEN,
+    }),
+  );
   const modelCurator = createPiMemoryCurator({
     get provider() {
       return models.current.provider;
     },
     resolve: () => models.resolve(true),
     configured: () => models.configured,
+    traces,
   });
   const selectedCurator = createPiMemoryCurator({
     get provider() {
@@ -243,6 +250,7 @@ export function createDefaultAdapters(
       return { ...access, effort: lightestEffort(access.definition.choice.efforts) };
     },
     configured: () => models.configured,
+    traces,
   });
   const decisions = createDecisionModel({
     resolve: async () => {
@@ -303,24 +311,13 @@ export function createDefaultAdapters(
           Reflect.get(integrationKey.mode === 'own' ? ownIntegrations : ottoIntegrations, key),
       })
     : ownIntegrations;
-  const databaseObjects =
-    env.OBJECT_STORAGE_PROVIDER === 'postgres'
-      ? createPostgresObjectStore({ database: pool, ownerId })
-      : undefined;
-  const objectStore =
-    databaseObjects ??
-    (env.OBJECT_STORAGE_PROVIDER === 'filesystem'
-      ? createFilesystemObjectStore(env.OBJECT_STORAGE_ROOT || join(dataRoot, 'objects'))
-      : undefined);
   return {
     ...(analyticsEnabled(env) ? { analytics: createPostHogAnalytics() } : {}),
     initialize: async () => {
       await models.initialize();
       await integrationProxy?.initialize();
       await integrationKey.initialize();
-      await databaseObjects?.initialize();
     },
-    objectStore,
     models,
     agent: createPiAgent({
       resolve: () => models.resolve(),
@@ -328,7 +325,7 @@ export function createDefaultAdapters(
       model,
       sessionRoot: join(dataRoot, 'sessions'),
       configRoot: join(dataRoot, 'pi'),
-      objectStore,
+      traces,
     }),
     computer: createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
     workspace: createDockerWorkspace({
@@ -362,6 +359,7 @@ export function createDefaultAdapters(
         feedbackUrl === defaultFeedbackUrl ? undefined : env.OTTO_FEEDBACK_RECEIPT_URL_PREFIX,
       recipient: feedbackUrl === defaultFeedbackUrl ? 'n8n' : undefined,
     }),
+    traces,
     get model() {
       return models.current;
     },
@@ -417,12 +415,10 @@ async function initializeApplication(
   await initializeDatabase();
   await adapters.initialize?.();
   await initializeThreads();
-  const artifacts = adapters.objectStore
-    ? createArtifactService({ database: pool, ownerId, store: adapters.objectStore })
-    : localArtifacts;
+  const artifacts = localArtifacts;
   const secrets = Object.entries(process.env)
     .filter(([key]) =>
-      /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|DESKTOP_AUTH_TOKEN|FEEDBACK_TOKEN)$/.test(
+      /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|DESKTOP_AUTH_TOKEN|FEEDBACK_TOKEN|TRACES_TOKEN)$/.test(
         key,
       ),
     )
@@ -541,13 +537,9 @@ async function initializeApplication(
     },
   });
   const speech = createSpeech(adapters.speech);
-  let memoryStore = adapters.objectStore;
-  if (!memoryStore) {
-    const objects = createPostgresObjectStore({ database: pool, ownerId });
-    await objects.initialize();
-    await importMemoryFile(objects, join(dataRoot, 'objects', 'memory'));
-    memoryStore = objects;
-  }
+  const memoryStore = createPostgresObjectStore({ database: pool, ownerId });
+  await memoryStore.initialize();
+  await importMemoryFile(memoryStore, join(dataRoot, 'objects', 'memory'));
   const memory = createMemoryService({ pool, ownerId, store: memoryStore });
   const communication = createCommunication({
     pool,
@@ -868,6 +860,22 @@ async function initializeApplication(
   });
   const localConsent = await localAccounts.readConsent(ownerId);
   analytics.setUsageData(ownerId, localConsent?.enabled ?? false, localConsent?.revision);
+  adapters.traces?.configure({
+    enabled: (await localAccounts.read(ownerId)).traces,
+    secrets,
+    profile: async () => {
+      const [account, preferences] = await Promise.all([
+        localAccounts.read(ownerId),
+        getPreferences(),
+      ]);
+      return {
+        names: account.displayName ? [account.displayName] : [],
+        region: preferences.locale
+          ? new Intl.Locale(preferences.locale).maximize().region
+          : undefined,
+      };
+    },
+  });
   let pendingInventory = Promise.resolve();
   observeConnections = (only) =>
     (pendingInventory = pendingInventory
@@ -1308,7 +1316,6 @@ async function initializeApplication(
       readPiSessionEntries({
         threadId,
         sessionRoot: join(dataRoot, 'sessions'),
-        objectStore: adapters.objectStore,
       }),
   };
   await registerFeedback(app, {
@@ -1332,6 +1339,8 @@ async function initializeApplication(
     localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
     developerIds: desktopMode ? new Set() : new Set([ownerId]),
     start: (_owner, name) => welcome(name),
+    traces: adapters.traces?.available ?? false,
+    onTraces: (enabled) => adapters.traces?.configure({ enabled }),
   }).register(app);
   ledger.registerRoutes(app);
   if (adapters.linkPreviews) {

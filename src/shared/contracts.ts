@@ -169,6 +169,7 @@ export interface CredentialRequest {
   status: 'pending' | 'entering' | 'uncertain' | 'filled' | 'expired';
   savedEntries?: (VaultLoginEntry & { username: string })[];
   selectedEntryId?: string;
+  username?: string;
 }
 export interface Connection {
   canReconnect?: boolean;
@@ -265,6 +266,7 @@ export interface Task {
   stepIndex?: number;
   revision?: number;
   appliedRevision?: number;
+  activity?: { tool: string; site?: string };
 }
 export interface TaskDetail {
   task: Task;
@@ -272,6 +274,7 @@ export interface TaskDetail {
     id: string;
     type: string;
     summary: string;
+    site: string | null;
     runId: string | null;
     parentRunId: string | null;
     createdAt: string;

@@ -57,7 +57,7 @@ Otto counts installations, not people. Two installations count as two, and a sha
 
 ## Events
 
-Every event carries `analytics_schema=otto_v3`, `deployment=local` and `environment`. Packaged releases add `app_version`.
+Every event carries `analytics_schema=otto_v3` and `environment`. Packaged releases add `app_version`.
 
 - **UI events** and recordings add `surface` (`web` or `desktop`) and a normalized `route`.
 - **Server events** add `capture_source=server`.
