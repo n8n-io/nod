@@ -167,7 +167,7 @@ export interface CredentialRequest {
   kind: 'identifier' | 'password' | 'otp';
   fields?: { kind: 'identifier' | 'password' | 'otp'; selector: string; label: string }[];
   status: 'pending' | 'entering' | 'uncertain' | 'filled' | 'expired';
-  savedEntries?: VaultLoginEntry[];
+  savedEntries?: (VaultLoginEntry & { username: string })[];
   selectedEntryId?: string;
 }
 export interface Connection {

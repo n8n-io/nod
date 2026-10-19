@@ -1197,7 +1197,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const row = rows[0];
     if (!row) throw new VaultError('Credential request not found.', 404);
     const pending = row.status === 'pending' && row.current_step;
-    let savedEntries: VaultLoginEntry[] | undefined;
+    let savedEntries: CredentialRequest['savedEntries'];
     let selectedEntryId: string | undefined;
     if (pending && row.kind !== 'otp') {
       const chosen = await selection(row.root_turn_id, row.owner_id, row.origin);
@@ -1211,17 +1211,18 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         row.kind === 'password' && selected && username === undefined ? [] : entries.rows;
       savedEntries = [];
       for (const entry of matches) {
-        if (row.kind === 'password') {
-          let secret: ReturnType<typeof openCredential>;
-          try {
-            secret = openCredential(await key(), entry);
-          } catch {
-            continue;
-          }
-          if (!secret.password || (username !== undefined && secret.username !== username))
-            continue;
+        let secret: ReturnType<typeof openCredential>;
+        try {
+          secret = openCredential(await key(), entry);
+        } catch {
+          continue;
         }
-        savedEntries.push(metadata(entry));
+        if (
+          row.kind === 'password' &&
+          (!secret.password || (username !== undefined && secret.username !== username))
+        )
+          continue;
+        savedEntries.push({ ...metadata(entry), username: secret.username });
       }
       if (
         selected &&

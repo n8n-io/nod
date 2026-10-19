@@ -378,7 +378,7 @@ function CredentialForm({ id }: { id: string }) {
                     <KeyRound size={16} />
                     <span>
                       <strong>{entry.label}</strong>
-                      {entry.usernameHint && <small>{entry.usernameHint}</small>}
+                      {entry.username && <small>{entry.username}</small>}
                     </span>
                     <ArrowUpRight size={16} />
                   </Button>

@@ -1012,8 +1012,11 @@ test(
             await addTask(taskId);
             const url = await form(taskId);
             assert.deepEqual(
-              (await describe(url)).savedEntries?.map((entry) => entry.id).sort(),
-              [first.id, second.id].sort(),
+              (await describe(url)).savedEntries?.map((entry) => [entry.id, entry.username]).sort(),
+              [
+                [first.id, 'same-first@example.test'],
+                [second.id, 'same-second@example.test'],
+              ].sort(),
             );
             const before = injections.length;
             const result = await choose(url, id);
