@@ -1,12 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
+import { isIP } from 'node:net';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
-import { Agent as Connections } from 'undici';
+import { Agent as Connections, buildConnector } from 'undici';
 import {
   createAgentSession,
   createCodemodeExtension,
@@ -34,7 +35,7 @@ import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';
 import { agentModels } from '../../shared/model-defaults.ts';
 import { createSandbox, workspaceOutputs } from './sandbox.ts';
-import { publicLookup } from '../agent-browser/network.ts';
+import { isPublicAddress, publicLookup } from '../agent-browser/network.ts';
 
 function isFinalAnswer(signature: string | undefined) {
   if (!signature?.startsWith('{')) return false;
@@ -73,7 +74,15 @@ let webConnections: Connections | undefined;
 
 function publicWebRequests() {
   if (webConnections) return webConnections;
-  webConnections = new Connections({ connect: { lookup: publicLookup() } });
+  const connect = buildConnector({ lookup: publicLookup() });
+  webConnections = new Connections({
+    connect: (options, callback) => {
+      const host = options.hostname.replace(/^\[|\]$/g, '');
+      if (isIP(host) && !isPublicAddress(host))
+        return callback(new Error('Private network destinations are blocked.'), null);
+      connect(options, callback);
+    },
+  });
   const send = globalThis.fetch;
   globalThis.fetch = ((input, init) => {
     const dispatcher = webRequests.getStore();
@@ -110,6 +119,7 @@ const webAccess = {
   githubPrIssue: { enabled: false },
   video: { enabled: false },
   allowBrowserCookies: false,
+  proxy: null,
 };
 
 function configureWebAccess(root: string) {

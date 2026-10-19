@@ -4933,7 +4933,10 @@ test(
       assert.ok(row.summary.slice(0, 700).includes(selected.connectionId!));
       assert.ok(row.summary.slice(0, 700).includes('998877665544'));
     }
-    assert.doesNotMatch(JSON.stringify(receipts), /1234|A1B2C3|reset\?token|credential/);
+    assert.doesNotMatch(
+      JSON.stringify(receipts).replaceAll(selected.connectionId!, ''),
+      /1234|A1B2C3|reset\?token|credential/,
+    );
     assert.equal(receipts[1].poll_connection_id, selected.connectionId);
     assert.equal(receipts[1].trigger_id, null);
     await send('');

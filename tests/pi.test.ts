@@ -336,6 +336,24 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
   const { workspace, scripts } = recordingWorkspace();
   const ran: string[] = [];
   let captured: Parameters<typeof createAgentSession>[0];
+  const { createServer } = await import('node:http');
+  const reached: string[] = [];
+  const server = createServer((request, response) => {
+    reached.push(`${request.method} ${request.url}`);
+    response.end('<html><body><p>Loopback service</p></body></html>');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as { port: number }).port;
+  const settings = join(tmpdir(), 'otto-pi', 'web-search.json');
+  const previous = await readFile(settings, 'utf8').catch(() => undefined);
+  await mkdir(join(tmpdir(), 'otto-pi'), { recursive: true });
+  await writeFile(
+    settings,
+    JSON.stringify({
+      ssrf: { allowRanges: ['127.0.0.0/8'] },
+      proxy: `http://127.0.0.1:${port}`,
+    }),
+  );
   const agent = createPiAgent({
     provider: 'openai',
     apiKey: 'fixture-key',
@@ -416,14 +434,6 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     assert.ok('query' in (webSearch.definition.parameters as { properties: object }).properties);
     const dns = (await import('node:dns')).default;
     const { syncBuiltinESMExports } = await import('node:module');
-    const { createServer } = await import('node:http');
-    const reached: string[] = [];
-    const server = createServer((request, response) => {
-      reached.push(`${request.method} ${request.url}`);
-      response.end('<html><body><p>Loopback service</p></body></html>');
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as { port: number }).port;
     const validate = dns.promises.lookup;
     const connect = dns.lookup;
     dns.promises.lookup = (async () => [{ address: '93.184.216.34', family: 4 }]) as never;
@@ -436,6 +446,7 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
       for (const args of [
         { url: `http://rebind.test:${port}/direct` },
         { url: `http://rebind.test:${port}/proxied`, proxy: `http://127.0.0.1:${port}` },
+        { url: `http://127.0.0.1:${port}/literal` },
       ])
         await fetchContent.definition.execute(
           'call',
@@ -448,12 +459,14 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
       dns.promises.lookup = validate;
       dns.lookup = connect;
       syncBuiltinESMExports();
-      server.close();
     }
     assert.deepEqual(reached, []);
     await session.dispose();
   } finally {
     await agent.dispose();
+    server.close();
+    if (previous === undefined) await rm(settings, { force: true });
+    else await writeFile(settings, previous);
     await rm(directory, { recursive: true, force: true });
   }
 });
