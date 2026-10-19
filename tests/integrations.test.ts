@@ -7721,6 +7721,31 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
       });
     });
   }
+  result = {
+    error: `Permission denied. ${'x'.repeat(5000)}`,
+    data: {
+      ok: false,
+      needed: `canvases:write,${'y'.repeat(5000)}`,
+      provided: `chat:write,channels:read,${'z'.repeat(5000)}`,
+    },
+  };
+  await assert.rejects(
+    session.execute('SLACK_CREATE_CANVAS', {}, 'fixture-account'),
+    (error: Error) => {
+      assert.match(error.message, /needed: canvases:write/);
+      assert.match(error.message, /provided: chat:write,channels:read/);
+      assert.match(error.message, /Permission denied/);
+      assert.ok(error.message.length < 5000);
+      return true;
+    },
+  );
+  result = { data: { ok: false, error: 'invalid_auth' }, successful: true, error: null };
+  await assert.rejects(
+    session.execute('SLACK_SEND_MESSAGE', {}, 'fixture-account'),
+    /invalid_auth/,
+  );
+  result = { data: { ok: false }, successful: true, error: null };
+  await assert.rejects(session.execute('SLACK_SEND_MESSAGE', {}, 'fixture-account'));
   result = { data: { ok: true, canvas_id: 'fixture-canvas' }, error: null };
   assert.deepEqual(await session.execute('SLACK_CREATE_CANVAS', {}, 'fixture-account'), result);
   result = { data: { ok: false }, error: null };

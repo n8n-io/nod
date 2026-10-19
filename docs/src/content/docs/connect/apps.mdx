@@ -154,9 +154,9 @@ With an empty mapping, the broker reuses or creates an enabled Composio-managed 
 
 ## When an action needs a missing permission
 
-Otto is instructed to explain the blocked action, preserve prepared work, and offer a supported alternative through the same connection. For example, it can offer a plain Slack message when creating a canvas needs a missing permission. It asks before changing the requested result or switching to browser sign-in.
+Otto is instructed to explain the blocked action, preserve prepared work, and compare supported recovery options that meet your choices. It asks before changing the requested result, method or account unless you already chose that recovery path.
 
-Reconnecting uses the account's existing permission configuration. It cannot add a permission that configuration doesn't request. If the scope is missing there, your Composio project administrator or the Easy Connect operator must update the configuration before you reconnect. Slack canvas creation requires [`canvases:write`](https://docs.slack.dev/reference/methods/canvases.create/), in the auth config's [`user_scopes`](https://docs.composio.dev/kb/guide/toolkits-slack) for the Slack toolkit.
+For Composio-managed OAuth connections, reconnecting with an unchanged auth configuration cannot add a permission that configuration doesn't request. If the scope is missing there, your Composio project administrator or the Easy Connect operator must update the configuration before you reconnect. Slack canvas creation requires [`canvases:write`](https://docs.slack.dev/reference/methods/canvases.create/), in the auth config's [`user_scopes`](https://docs.composio.dev/kb/guide/toolkits-slack) for the Slack toolkit.
 
 ## Every action goes through the trust check
 

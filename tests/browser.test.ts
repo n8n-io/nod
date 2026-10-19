@@ -1599,6 +1599,7 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
   });
   const launches: Array<{ command: string; args: string[]; env: NodeJS.ProcessEnv | undefined }> =
     [];
+  const bridges: ChildProcessWithoutNullStreams[] = [];
   const launch: BrowserBridgeLauncher = (command, args, options) => {
     launches.push({ command, args, env: options.env });
     const process = Object.assign(new EventEmitter(), {
@@ -1617,7 +1618,9 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
         process.stderr.end();
         process.emit('close', code);
       });
-    return process as unknown as ChildProcessWithoutNullStreams;
+    const bridge = process as unknown as ChildProcessWithoutNullStreams;
+    bridges.push(bridge);
+    return bridge;
   };
   const clients: Computer[] = [];
   function client(dataRoot: string, options: { timeoutMs?: number; drainTimeoutMs?: number } = {}) {
@@ -1630,6 +1633,7 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
     socketPath,
     worker,
     launches,
+    bridges,
     instances,
     client,
     instance(dataRoot: string) {
@@ -1645,8 +1649,14 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
   };
 }
 
-test('a live view acknowledges applied input, reports failures and cancels pending input when closed', async () => {
+test('a live view acknowledges applied input or fails', { timeout: 10_000 }, async (t) => {
   const inputs: unknown[] = [];
+  const initialInputs: Array<Parameters<Computer['control']>[1]> = [
+    { type: 'mouse', event: 'move', x: 0.5, y: 0.5 },
+    { type: 'text', text: 'hi' },
+    { type: 'wheel', deltaX: 12, deltaY: -240 },
+    { type: 'key', key: 'Shift+Tab' },
+  ];
   let failInput = false;
   let inputStarted = deferred();
   let inputAborted = deferred();
@@ -1667,13 +1677,14 @@ test('a live view acknowledges applied input, reports failures and cancels pendi
       if (failInput)
         throw new BrowserActionError('browser_click_intercepted', 'Synthetic private detail');
       await allowInput;
+      await delay(1, undefined, { signal });
       signal?.throwIfAborted();
       inputs.push(input);
     },
     view: async function* (_id, signal) {
       viewSignals.push(signal);
       yield Buffer.from('first frame');
-      while (inputs.length < 2 && !signal.aborted) await delay(5);
+      while (inputs.length < initialInputs.length && !signal.aborted) await delay(5);
       yield Buffer.from('second frame');
       await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
     },
@@ -1685,15 +1696,16 @@ test('a live view acknowledges applied input, reports failures and cancels pendi
     for await (const frame of client.view!('task', new AbortController().signal)) {
       frames.push(String(frame));
       if (frames.length === 1) {
-        await client.control!('task', { type: 'mouse', event: 'move', x: 0.5, y: 0.5 });
-        await client.control!('task', { type: 'text', text: 'hi' });
+        await Promise.all(
+          initialInputs.map(async (input, index) => {
+            await client.control('task', input);
+            assert.deepEqual(inputs[index], input);
+          }),
+        );
       } else break;
     }
     assert.deepEqual(frames, ['first frame', 'second frame']);
-    assert.deepEqual(inputs, [
-      { type: 'mouse', event: 'move', x: 0.5, y: 0.5 },
-      { type: 'text', text: 'hi' },
-    ]);
+    assert.deepEqual(inputs, initialInputs);
     await assert.rejects(client.control!('task', { type: 'text', text: 'late' }), /not open/);
     const controller = new AbortController();
     const stream = client.view!('task', controller.signal)[Symbol.asyncIterator]();
@@ -1706,7 +1718,7 @@ test('a live view acknowledges applied input, reports failures and cancels pendi
         error.code === 'browser_click_intercepted' &&
         !error.message.includes('Synthetic private detail'),
     );
-    assert.equal(inputs.length, 2);
+    assert.equal(inputs.length, initialInputs.length);
     failInput = false;
     inputStarted = deferred();
     inputAborted = deferred();
@@ -1724,22 +1736,25 @@ test('a live view acknowledges applied input, reports failures and cancels pendi
     controller.abort();
     await stream.return?.();
 
-    inputStarted = deferred();
-    inputAborted = deferred();
-    const interrupted = deferred();
-    allowInput = interrupted.promise;
-    const nextController = new AbortController();
-    const next = client.view!('task', nextController.signal)[Symbol.asyncIterator]();
-    await next.next();
-    const pendingInput = client.control!('task', { type: 'text', text: 'interrupted' });
-    const rejected = assert.rejects(pendingInput, /did not finish/);
-    await inputStarted.promise;
-    nextController.abort();
-    await rejected;
-    await inputAborted.promise;
-    interrupted.resolve();
-    await next.return?.();
-    assert.equal(inputs.length, 3);
+    for (const interruption of ['abort', 'disconnect']) {
+      inputStarted = deferred();
+      inputAborted = deferred();
+      const interrupted = deferred();
+      allowInput = interrupted.promise;
+      const nextController = new AbortController();
+      const next = client.view!('task', nextController.signal)[Symbol.asyncIterator]();
+      await next.next();
+      const pendingInput = client.control!('task', { type: 'text', text: 'interrupted' });
+      const rejected = assert.rejects(pendingInput, /did not finish/);
+      await inputStarted.promise;
+      if (interruption === 'abort') nextController.abort();
+      else fixture.bridges.at(-1)!.stdin.destroy();
+      await rejected;
+      await inputAborted.promise;
+      interrupted.resolve();
+      await next.return?.();
+      assert.equal(inputs.length, initialInputs.length + 1);
+    }
 
     inputStarted = deferred();
     inputAborted = deferred();
@@ -1750,14 +1765,22 @@ test('a live view acknowledges applied input, reports failures and cancels pendi
       .view('task', new AbortController().signal)
       [Symbol.asyncIterator]();
     await timedView.next();
-    await assert.rejects(
-      timedClient.control('task', { type: 'text', text: 'timed out' }),
-      /did not finish/,
-    );
-    await inputAborted.promise;
-    timedOut.resolve();
-    await timedView.return?.();
-    assert.equal(inputs.length, 3);
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+      const timeout = assert.rejects(
+        timedClient.control('task', { type: 'text', text: 'timed out' }),
+        /did not finish/,
+      );
+      await inputStarted.promise;
+      t.mock.timers.tick(30);
+      await timeout;
+      await inputAborted.promise;
+    } finally {
+      t.mock.timers.reset();
+      timedOut.resolve();
+      await timedView.return?.();
+    }
+    assert.equal(inputs.length, initialInputs.length + 1);
 
     allowInput = undefined;
     const olderController = new AbortController();
@@ -1774,7 +1797,7 @@ test('a live view acknowledges applied input, reports failures and cancels pendi
     assert.equal(inputSignal, viewSignals.at(-1));
     newestController.abort();
     await newest.return?.();
-    assert.equal(inputs.length, 5);
+    assert.equal(inputs.length, initialInputs.length + 3);
     assert.match((await client.act('task', { action: 'snapshot' })).text, /Synthetic page/);
     assert.equal(disposals, 0);
   } finally {

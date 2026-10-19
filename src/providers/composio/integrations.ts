@@ -115,11 +115,13 @@ function providerFailure(action: string, result: Record<string, unknown>) {
   );
   const permissions = ['needed', 'provided'].flatMap((field) => {
     const value = data[field] ?? result[field];
-    return typeof value === 'string' && value ? [`${field}: ${value}`] : [];
+    return typeof value === 'string' && value
+      ? [`${field}: ${value.length > 1000 ? `${value.slice(0, 1000)}…` : value}`]
+      : [];
   });
   const text = [
-    typeof detail === 'string' ? detail : JSON.stringify(detail ?? result),
     ...permissions,
+    typeof detail === 'string' ? detail : JSON.stringify(detail ?? result),
   ].join('; ');
   const log = typeof result.logId === 'string' ? ` (Composio log ${result.logId})` : '';
   return `Composio could not complete ${action}: ${text.slice(0, 4000)}${log}`;
