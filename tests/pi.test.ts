@@ -20,6 +20,7 @@ import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/comput
 import {
   closeInterruptedCalls,
   openLocalSession,
+  readPiSessionEntries,
   rebaseAt,
   removedCredential,
 } from '../src/providers/pi/checkpoint.ts';
@@ -854,6 +855,86 @@ test('closeInterruptedCalls answers each dangling tool call with an unknown-outc
   assert.match(text, /outcome is unknown/);
   closeInterruptedCalls(manager);
   assert.equal(toolResults(manager).length, 2);
+});
+
+test('real Pi saves its user message and tool call before a side effect and records the result', async () => {
+  const f = await fixture();
+  const sessionRoot = join(f.directory, 'sessions');
+  let turns = 0;
+  let executed = 0;
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture',
+    sessionRoot,
+    createSession: async (options) => {
+      const result = await createAgentSession(options);
+      result.session.agent.streamFunction = (model) => {
+        const tool = turns++ === 0;
+        const message: AssistantMessage = {
+          role: 'assistant',
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          timestamp: Date.now(),
+          stopReason: tool ? 'toolUse' : 'stop',
+          content: tool
+            ? [{ type: 'toolCall', id: 'effect-one', name: 'effect', arguments: {} }]
+            : [{ type: 'text', text: 'Done' }],
+          usage: {
+            input: 1,
+            output: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 2,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: 'start', partial: message });
+        stream.push({ type: 'done', reason: tool ? 'toolUse' : 'stop', message });
+        return stream;
+      };
+      return result;
+    },
+  });
+  try {
+    const session = await agent.open({
+      ...fakeExecution(f.threadId, randomUUID()),
+      systemPrompt: 'fixture',
+      ...sandbox,
+      shouldStop: () => false,
+      onEvent() {},
+      tools: [
+        {
+          name: 'effect',
+          description: 'fixture',
+          parameters: { type: 'object', properties: {} },
+          async execute() {
+            const saved = await localText(join(sessionRoot, f.threadId));
+            assert.match(saved, /synthetic user request/);
+            assert.match(saved, /toolCall/);
+            executed++;
+            return { content: [{ type: 'text', text: 'saved receipt' }] };
+          },
+        },
+      ],
+    });
+    await session.prompt('synthetic user request', []);
+    assert.equal(executed, 1);
+    assert.equal(turns, 2);
+    await agent.dispose();
+    const entries = await readPiSessionEntries({ threadId: f.threadId, sessionRoot });
+    assert.ok(entries.every((entry) => entry.type !== 'session'));
+    assert.equal(
+      entries.filter((entry) => entry.type === 'message' && entry.message.role === 'toolResult')
+        .length,
+      1,
+    );
+    assert.match(JSON.stringify(entries), /saved receipt/);
+  } finally {
+    await agent.dispose();
+    await f.close();
+  }
 });
 
 test('a reopened local session closes dangling tool calls before the next prompt', async () => {
