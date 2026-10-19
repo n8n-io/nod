@@ -435,8 +435,9 @@ export function ConnectionChoice({
               </ul>
             </li>
             <li>
-              Leave the rest at <strong>No access</strong>, then copy the key and paste it here. You
-              can’t change a key’s permissions later.
+              If your server sets <code>COMPOSIO_WEBHOOK_SECRET</code>, also give Triggers:{' '}
+              <strong>Read and write</strong>. Leave the rest at <strong>No access</strong>, then
+              copy the key and paste it here. You can’t change a key’s permissions later.
             </li>
           </ol>
         </details>
