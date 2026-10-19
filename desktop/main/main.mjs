@@ -75,6 +75,7 @@ let updates;
 let checkingUpdates;
 let updatePhase = 'idle';
 let updateFailed = false;
+let pendingPreload;
 let stopUpdateChecks;
 let closingEngine = false;
 let tray;
@@ -736,6 +737,11 @@ async function finishEnginePreparation() {
     setupWindow = undefined;
     await completeDesktopSetup(completedWindow);
   }
+  if (pendingPreload) {
+    const assets = pendingPreload;
+    pendingPreload = undefined;
+    void preloadUpdateImages(assets);
+  }
   return status;
 }
 
@@ -785,7 +791,7 @@ async function checkForUpdates(manual = true) {
           await dialog.showMessageBox({ message: 'Otto is up to date.', buttons: ['OK'] });
         return;
       }
-      if (!manual && notifyUpdate(candidate)) return;
+      if (!manual && (await notifyUpdate(candidate))) return;
       const { response } = await dialog.showMessageBox({
         message: `Otto ${candidate.version} is ready.`,
         buttons: ['Restart', 'Later'],
@@ -817,8 +823,9 @@ async function checkForUpdates(manual = true) {
   return checking;
 }
 
-function notifyUpdate(candidate) {
+async function notifyUpdate(candidate) {
   if (!preferences.notifications || !Notification.isSupported()) return false;
+  if (isQuietTime((await appPreferences.get()).preferences)) return true;
   const notification = new Notification({
     title: `Otto ${candidate.version} is ready`,
     body: 'Restart Otto to use the new version.',
@@ -831,6 +838,15 @@ function notifyUpdate(candidate) {
   notification.on('failed', () => displayedNotifications.delete(notification));
   notification.show();
   return true;
+}
+
+async function preloadUpdateImages(assets, signal) {
+  const { preloadRuntimeImages } = await import(
+    pathToFileURL(join(engineRoot, 'desktop/runtime/index.mjs')).href
+  );
+  await preloadRuntimeImages({ dataRoot: profileRoot, assets, signal }).catch(
+    (error) => void writeDiagnostic(error.message).catch(() => {}),
+  );
 }
 
 async function restartForUpdate() {
@@ -1229,13 +1245,8 @@ else {
               downloadUrl: candidate.downloadUrl,
               signal,
             });
-            if (!engine || closingEngine) return;
-            const { preloadRuntimeImages } = await import(
-              pathToFileURL(join(engineRoot, 'desktop/runtime/index.mjs')).href
-            );
-            await preloadRuntimeImages({ dataRoot: profileRoot, assets, signal }).catch(
-              (error) => void writeDiagnostic(error.message).catch(() => {}),
-            );
+            if (!engine || closingEngine) pendingPreload = assets;
+            else await preloadUpdateImages(assets, signal);
           },
           restart: restartForUpdate,
           onStatus: (phase) => {

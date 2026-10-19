@@ -8,7 +8,12 @@ import { delimiter, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pipeline } from 'node:stream/promises';
 import { guestConfiguration, protectNetworks } from './guest-config.mjs';
-import { ensureRuntimeAssets, findRuntimeAssets, removeUnusedRuntimes } from './assets.mjs';
+import {
+  assetHash,
+  ensureRuntimeAssets,
+  findRuntimeAssets,
+  removeUnusedRuntimes,
+} from './assets.mjs';
 
 export { installRuntimeArchive } from './assets.mjs';
 
@@ -347,7 +352,7 @@ export async function preloadRuntimeImages({ dataRoot, assets, signal }) {
       item.reference,
     ]).catch(() => '');
     if (installed === item.id) continue;
-    if ((await fileHash(join(assets, item.file))) !== item.sha256)
+    if ((await assetHash(join(assets, item.file), signal)) !== item.sha256)
       throw new Error('An Otto computer image is damaged. Reinstall this build.');
     await runDocker(['load', '--input', join(assets, item.file)], { timeout: 600_000 });
     loaded.push(item.name);

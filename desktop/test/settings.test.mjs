@@ -1394,23 +1394,37 @@ test('an incomplete newest release falls back to the next newer complete release
   }
 });
 
-test('automatic update checks retry failures sooner and return to the normal interval', async () => {
+test('automatic update checks retry failures sooner and return to the normal interval', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const powerMonitor = new EventEmitter();
-  const started = [];
+  let calls = 0;
   let failures = 3;
   const stop = startDesktopUpdateChecks({
     powerMonitor,
     interval: 60_000,
     retry: 5,
     check: async () => {
-      started.push(Date.now());
+      calls++;
       if (failures-- > 0) throw new Error('Desktop updates are unavailable.');
     },
   });
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  stop();
-  assert.equal(started.length, 4);
-  assert.ok(started[3] - started[2] >= started[2] - started[1]);
+  t.after(stop);
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  await settle();
+  for (const [wait, expected] of [
+    [4, 1],
+    [1, 2],
+    [9, 2],
+    [1, 3],
+    [19, 3],
+    [1, 4],
+    [59_999, 4],
+    [1, 5],
+  ]) {
+    t.mock.timers.tick(wait);
+    await settle();
+    assert.equal(calls, expected);
+  }
 });
 
 test('first installation resolves its exact published runtime without a newer app and rejects changed identities', async () => {
