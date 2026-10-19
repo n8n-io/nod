@@ -427,63 +427,65 @@ export function MessageBubble({
           </div>
           {!streaming && (
             <div className="message-tools">
-              <time
-                className="message-time"
-                dateTime={message.createdAt}
-                title={formatFullDateTime(message.createdAt, dateFormat)}
-              >
-                {formatTime(message.createdAt, dateFormat)}
-              </time>
-              <div className="message-actions" aria-label="Message actions">
-                {onReply && (
+              <div className="message-tools-bar">
+                <time
+                  className="message-time"
+                  dateTime={message.createdAt}
+                  title={formatFullDateTime(message.createdAt, dateFormat)}
+                >
+                  {formatTime(message.createdAt, dateFormat)}
+                </time>
+                <div className="message-actions" aria-label="Message actions">
+                  {onReply && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label="Reply to message"
+                      title="Reply"
+                      onClick={reply}
+                    >
+                      <CornerUpLeft size={16} />
+                    </Button>
+                  )}
                   <Button
                     size="icon"
                     variant="ghost"
-                    aria-label="Reply to message"
-                    title="Reply"
-                    onClick={reply}
+                    aria-label={copied ? 'Message copied' : 'Copy message'}
+                    title="Copy"
+                    onClick={() => void copy()}
                   >
-                    <CornerUpLeft size={16} />
+                    {copied ? <Check size={16} /> : <Copy size={16} />}
                   </Button>
-                )}
+                  {message.role === 'assistant' && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label="React to message"
+                      title="React"
+                      aria-haspopup="dialog"
+                      aria-expanded={pickingReaction}
+                      onClick={(event) =>
+                        pickingReaction ? closePicker() : openPicker(event.currentTarget)
+                      }
+                    >
+                      <SmilePlus size={16} />
+                    </Button>
+                  )}
+                </div>
                 <Button
+                  className="message-more-action"
                   size="icon"
                   variant="ghost"
-                  aria-label={copied ? 'Message copied' : 'Copy message'}
-                  title="Copy"
-                  onClick={() => void copy()}
+                  aria-label="Message options"
+                  aria-haspopup="menu"
+                  onClick={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    openMenu(rect.right - 192, rect.bottom + 6, event.currentTarget);
+                  }}
                 >
-                  {copied ? <Check size={16} /> : <Copy size={16} />}
+                  <MoreHorizontal size={16} />
                 </Button>
-                {message.role === 'assistant' && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label="React to message"
-                    title="React"
-                    aria-haspopup="dialog"
-                    aria-expanded={pickingReaction}
-                    onClick={(event) =>
-                      pickingReaction ? closePicker() : openPicker(event.currentTarget)
-                    }
-                  >
-                    <SmilePlus size={16} />
-                  </Button>
-                )}
               </div>
-              <Button
-                className="message-more-action"
-                size="icon"
-                variant="ghost"
-                aria-label="Message options"
-                aria-haspopup="menu"
-                onClick={(event) => {
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  openMenu(rect.right - 192, rect.bottom + 6, event.currentTarget);
-                }}
-              >
-                <MoreHorizontal size={16} />
-              </Button>
             </div>
           )}
         </div>
