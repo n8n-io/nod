@@ -19,6 +19,8 @@ updates:
     ignore:
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
+      - dependency-name: mermaid
+        update-types: ['version-update:semver-major']
     commit-message:
       prefix: chore
       include: scope
