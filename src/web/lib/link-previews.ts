@@ -1,5 +1,6 @@
 import {
   previewableUrl,
+  publicMediaUrl,
   type LinkPreview,
   type LinkPreviewResponse,
 } from '../../shared/link-preview';
@@ -23,15 +24,20 @@ export function loadLinkPreview(value: string): Promise<LinkPreview | null> {
   if (existing && existing.expiresAt > Date.now()) return existing.value;
   const request = post<LinkPreviewResponse>('/api/link-preview', { url })
     .then(({ preview }) => {
-      if (!preview || typeof preview.title !== 'string' || !preview.title.trim()) return null;
-      const destination = previewableUrl(preview.url);
-      if (!destination) return null;
+      const destination = preview && previewableUrl(preview.url);
+      const imageUrl = previewImageUrl(preview?.imageUrl);
+      if (!preview || !destination || !imageUrl) return null;
+      const playerUrl =
+        typeof preview.playerUrl === 'string' ? publicMediaUrl(preview.playerUrl) : null;
       return {
         url: destination,
-        title: preview.title,
+        imageUrl,
+        ...(typeof preview.title === 'string' && preview.title.trim()
+          ? { title: preview.title }
+          : {}),
         ...(typeof preview.description === 'string' ? { description: preview.description } : {}),
         ...(typeof preview.siteName === 'string' ? { siteName: preview.siteName } : {}),
-        imageUrl: previewImageUrl(preview.imageUrl),
+        ...(playerUrl?.startsWith('https:') ? { playerUrl } : {}),
       };
     })
     .catch(() => null);

@@ -2,12 +2,13 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import { parse } from 'parse5';
+import { getDomainWithoutSuffix as domainWithoutSuffix } from 'tldts';
 import type {
   LinkPreviewProvider,
   PublicLinkMetadata,
   SiteIcon,
 } from '../../ports/link-preview.ts';
-import { previewableUrl } from '../../shared/link-preview.ts';
+import { previewableUrl, publicMediaUrl } from '../../shared/link-preview.ts';
 import { publicUrl, type AddressResolver } from '../agent-browser/network.ts';
 import { rasterImageType } from '../raster-image.ts';
 
@@ -113,6 +114,46 @@ function clean(value: string | undefined, max: number) {
   );
 }
 
+function siteTitle(title: string | undefined, url: string) {
+  const site = domainWithoutSuffix(url)
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  if (!title || !site) return title;
+  const squash = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const end = /^(.*\S)\s+[:|\-–—]\s+(.+)$/.exec(title);
+  const trimmed = end && squash(end[2]).startsWith(site) ? end[1] : title;
+  const start = /^(.+?)\s+[:|\-–—]\s+(\S.*)$/.exec(trimmed);
+  const result = start && squash(start[1]) === site ? start[2] : trimmed;
+  return squash(result).length <= site.length + 3 && squash(result).startsWith(site)
+    ? undefined
+    : result;
+}
+
+function jsonLdImage(text: string): string | undefined {
+  try {
+    const stack: unknown[] = [JSON.parse(text)];
+    for (let steps = 0; stack.length && steps < 200; steps++) {
+      const value = stack.pop();
+      if (!value || typeof value !== 'object') continue;
+      if (Array.isArray(value)) {
+        stack.push(...value);
+        continue;
+      }
+      const record = value as Record<string, unknown>;
+      const image = Array.isArray(record.image) ? record.image[0] : record.image;
+      const url =
+        typeof image === 'string'
+          ? image
+          : image && typeof image === 'object'
+            ? (image as Record<string, unknown>).url
+            : undefined;
+      if (typeof url === 'string') return url;
+      if (record['@graph']) stack.push(record['@graph']);
+    }
+  } catch {}
+  return undefined;
+}
+
 export function parseLinkMetadata(html: string, url: string): PublicLinkMetadata | null {
   const document = parse(html);
   const head = document.childNodes.find((node) => node.nodeName === 'html');
@@ -120,34 +161,87 @@ export function parseLinkMetadata(html: string, url: string): PublicLinkMetadata
   const container = elements.find((node) => node.nodeName === 'head');
   const nodes = container && 'childNodes' in container ? container.childNodes : [];
   const meta = new Map<string, string>();
+  const images: string[] = [];
   let title = '';
   for (const node of nodes) {
-    if (node.nodeName === 'meta' && 'attrs' in node) {
-      const attrs = new Map(node.attrs.map((attr) => [attr.name.toLowerCase(), attr.value]));
+    if (!('attrs' in node)) continue;
+    const attrs = new Map(node.attrs.map((attr) => [attr.name.toLowerCase(), attr.value]));
+    if (node.nodeName === 'meta') {
       const key = (attrs.get('property') ?? attrs.get('name'))?.toLowerCase();
       if (key && attrs.has('content') && !meta.has(key)) meta.set(key, attrs.get('content')!);
+      if (attrs.get('itemprop') === 'image' && attrs.get('content'))
+        images.push(attrs.get('content')!);
+    }
+    if (node.nodeName === 'link' && attrs.get('href')) {
+      const rel = (attrs.get('rel') ?? '').toLowerCase().split(/\s+/);
+      if (rel.includes('image_src')) images.push(attrs.get('href')!);
+    }
+    if (
+      node.nodeName === 'script' &&
+      attrs.get('type')?.toLowerCase() === 'application/ld+json' &&
+      'childNodes' in node
+    ) {
+      const image = jsonLdImage(
+        node.childNodes.map((child) => ('value' in child ? child.value : '')).join(''),
+      );
+      if (image) images.push(image);
     }
     if (node.nodeName === 'title' && 'childNodes' in node)
       title = node.childNodes.map((child) => ('value' in child ? child.value : '')).join('');
   }
-  const resultTitle = clean(meta.get('og:title') ?? meta.get('twitter:title') ?? title, 200);
-  if (!resultTitle) return null;
-  const image =
-    meta.get('og:image:secure_url') ?? meta.get('og:image') ?? meta.get('twitter:image');
-  let imageUrl: string | null = null;
-  try {
-    if (image) imageUrl = previewableUrl(new URL(image, url).href);
-  } catch {}
+  const published = clean(meta.get('og:title') ?? meta.get('twitter:title') ?? title, 200);
+  if (!published) return null;
+  const media = (value: string | undefined, secure = false) => {
+    try {
+      const resolved = value && publicMediaUrl(new URL(value, url).href);
+      return resolved && (!secure || resolved.startsWith('https:')) ? resolved : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const image = [
+    meta.get('og:image:secure_url'),
+    meta.get('og:image'),
+    meta.get('og:image:url'),
+    meta.get('twitter:image'),
+    meta.get('twitter:image:src'),
+    ...images,
+  ]
+    .map((value) => media(value))
+    .find(Boolean);
+  const player =
+    media(meta.get('twitter:player'), true) ??
+    (meta.get('og:video:type')?.toLowerCase() === 'text/html'
+      ? media(
+          meta.get('og:video:secure_url') ?? meta.get('og:video:url') ?? meta.get('og:video'),
+          true,
+        )
+      : undefined);
+  const resultTitle = siteTitle(published, url);
   return {
     url,
-    title: resultTitle,
+    ...(resultTitle ? { title: resultTitle } : {}),
     description: clean(
       meta.get('og:description') ?? meta.get('twitter:description') ?? meta.get('description'),
       400,
     ),
     siteName: clean(meta.get('og:site_name'), 100),
-    ...(imageUrl ? { image: imageUrl } : {}),
+    ...(image ? { image } : {}),
+    ...(player ? { player } : {}),
   };
+}
+
+export function decodeHtml(body: Uint8Array, contentType = '') {
+  const start = Buffer.from(body.subarray(0, 2048)).toString('latin1');
+  const label =
+    /charset=["']?([\w-]+)/i.exec(contentType)?.[1] ??
+    /<meta[^>]+charset=["']?([\w-]+)/i.exec(start)?.[1] ??
+    'utf-8';
+  try {
+    return new TextDecoder(label).decode(body);
+  } catch {
+    return new TextDecoder().decode(body);
+  }
 }
 
 function iconUrl(value: string) {
@@ -260,14 +354,17 @@ export function createPublicLinkPreviewProvider(
   return {
     async metadata(url) {
       try {
-        const result = await fetchPublic(url, 256 * 1024);
+        const result = await fetchPublic(url, 1024 * 1024, true);
         if (
           !/^(?:text\/html|application\/xhtml\+xml)(?:;|$)/i.test(
             result.headers['content-type'] ?? '',
           )
         )
           return null;
-        return parseLinkMetadata(Buffer.from(result.body).toString('utf8'), result.url);
+        return parseLinkMetadata(
+          decodeHtml(result.body, result.headers['content-type']),
+          result.url,
+        );
       } catch {
         return null;
       }
@@ -311,12 +408,10 @@ export function createPublicLinkPreviewProvider(
     },
     async image(url) {
       try {
-        const result = await fetchPublic(url, 1024 * 1024);
+        const result = await fetchPublic(url, 5 * 1024 * 1024, false, publicMediaUrl);
         const mimeType = rasterImageType(result.body);
-        if (
-          !mimeType ||
-          result.headers['content-type']?.split(';')[0].trim().toLowerCase() !== mimeType
-        )
+        const declared = result.headers['content-type']?.split(';')[0].trim().toLowerCase();
+        if (!mimeType || (declared === 'image/jpg' ? 'image/jpeg' : declared) !== mimeType)
           return null;
         return { bytes: result.body, mimeType };
       } catch {

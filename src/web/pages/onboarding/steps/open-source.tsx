@@ -63,8 +63,9 @@ export function OpenSource({ arrived, onNext, onBack, busy, notice, usage }: Ste
           </Bubble>,
           <Bubble className="ob-open-usage">
             <p id={`${id}-usage-data`}>
-              Sends the Otto team at n8n how you use Otto, the websites it visits, purchase amounts
-              and task labels your model writes from your chats, never message content.{' '}
+              Sends the Otto team at n8n how you use Otto, the websites it visits or you open,
+              purchase amounts and task labels your model writes from your chats, never message
+              content.{' '}
               <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
                 What’s shared
               </a>

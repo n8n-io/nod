@@ -1,16 +1,17 @@
 export interface LinkPreview {
   url: string;
-  title: string;
+  title?: string;
   description?: string;
   siteName?: string;
-  imageUrl?: string;
+  imageUrl: string;
+  playerUrl?: string;
 }
 
 export interface LinkPreviewResponse {
   preview: LinkPreview | null;
 }
 
-export function previewableUrl(value: string): string | null {
+export function publicMediaUrl(value: string): string | null {
   if (value.length > 2048) return null;
   try {
     const url = new URL(value);
@@ -29,6 +30,18 @@ export function previewableUrl(value: string): string | null {
       host.includes(':')
     )
       return null;
+    url.hash = '';
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+export function previewableUrl(value: string): string | null {
+  if (!publicMediaUrl(value)) return null;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
     if (
       /^(?:auth|login|accounts)\./i.test(host) ||
       ['connect.composio.dev', 'app.composio.dev'].includes(host)
@@ -54,7 +67,7 @@ export function previewableUrl(value: string): string | null {
       if (
         sensitive.test(key) ||
         /^[A-Za-z\d_-]{40,}$/.test(value) ||
-        /^[A-Za-z\d_-]+\.[A-Za-z\d_-]+\.[A-Za-z\d_-]+$/.test(value)
+        /^eyJ[A-Za-z\d_-]*\.[A-Za-z\d_-]+\.[A-Za-z\d_-]*$/.test(value)
       )
         return null;
     }

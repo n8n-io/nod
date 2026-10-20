@@ -9,9 +9,11 @@ import { JSDOM } from 'jsdom';
 import { createBrowserProxy, publicLookup } from '../src/providers/agent-browser/network.ts';
 import {
   createPublicLinkPreviewProvider,
+  decodeHtml,
+  parseLinkMetadata,
   requestPublicPreview,
 } from '../src/providers/public-web/link-preview.ts';
-import { previewableUrl } from '../src/shared/link-preview.ts';
+import { previewableUrl, publicMediaUrl } from '../src/shared/link-preview.ts';
 import { artifactImage, artifactPreview } from '../src/web/components/attachment-images.tsx';
 import { MessageText } from '../src/web/components/message.tsx';
 import type { Artifact } from '../src/shared/contracts.ts';
@@ -29,6 +31,10 @@ const html = (text = '<title>Fixture page</title>') => ({
 });
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAEElEQVR4nGP8w4AALAxEcQAz1AEKG5dMywAAAABJRU5ErkJggg==',
+  'base64',
+);
+const jpeg = Buffer.from(
+  '/9j/4AAQSkZJRgABAQAASABIAAD/2wBDAAICAgICAgMCAgMFAwMDBQYFBQUFBggGBgYGBggKCAgICAgICgoKCgoKCgoMDAwMDAwODg4ODg8PDw8PDw8PDw//2wBDAQICAgQEBAcEBAcQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCrAAo//9k=',
   'base64',
 );
 
@@ -69,15 +75,77 @@ test('preview eligibility blocks local, credential, consent and token URLs befor
     'https://example.com/?X-Amz-Signature=private',
     'https://example.com/?v=' + 'a'.repeat(64),
     'https://example.com/#access_token=private',
+    'https://example.com/?t=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl',
   ])
     assert.equal(previewableUrl(value), null, value);
   assert.equal(
     previewableUrl('https://example.com/article#heading'),
     'https://example.com/article',
   );
+  const image = 'https://i.vimeocdn.com/video/1-' + 'a'.repeat(64) + '?sig=public';
+  assert.equal(previewableUrl(image), null);
+  assert.equal(publicMediaUrl(image), image);
+  for (const value of [
+    'http://127.0.0.1/a.png',
+    'https://localhost/a.png',
+    'https://a:b@example.org/a.png',
+  ])
+    assert.equal(publicMediaUrl(value), null, value);
+  assert.equal(
+    previewableUrl('https://upload.wikimedia.org/a.jpg?utm_source=en.wikipedia.org'),
+    'https://upload.wikimedia.org/a.jpg?utm_source=en.wikipedia.org',
+  );
   assert.equal(
     previewableUrl('https://www.youtube.com/watch?v=abc123'),
     'https://www.youtube.com/watch?v=abc123',
+  );
+});
+
+test('preview media comes only from public addresses and players only over HTTPS', () => {
+  const page = (head: string) =>
+    parseLinkMetadata(
+      `<html><head><title>Page</title>${head}</head></html>`,
+      'https://news.example.org/a',
+    );
+  assert.equal(
+    page('<meta property="og:image" content="http://127.0.0.1/a.png">')?.image,
+    undefined,
+  );
+  assert.equal(
+    page('<script type="application/ld+json">{"image":["https://cdn.example.org/a.jpg"]}</script>')
+      ?.image,
+    'https://cdn.example.org/a.jpg',
+  );
+  assert.equal(
+    page('<meta name="twitter:player" content="http://video.example.org/embed/1">')?.player,
+    undefined,
+  );
+  assert.equal(
+    page('<meta name="twitter:player" content="https://10.0.0.1/embed/1">')?.player,
+    undefined,
+  );
+  assert.equal(
+    page('<meta property="og:video:url" content="https://video.example.org/1.mp4">')?.player,
+    undefined,
+  );
+  assert.equal(
+    page('<meta name="twitter:player" content="https://video.example.org/embed/1">')?.player,
+    'https://video.example.org/embed/1',
+  );
+});
+
+test('preview pages decode with their declared charset', () => {
+  const latin = Buffer.from(
+    '<html><head><meta charset="iso-8859-1"><title>Pastéis</title></head></html>',
+    'latin1',
+  );
+  assert.equal(parseLinkMetadata(decodeHtml(latin), 'https://shop.example.org/')?.title, 'Pastéis');
+  assert.equal(
+    parseLinkMetadata(
+      decodeHtml(latin, 'text/html; charset=ISO-8859-1'),
+      'https://shop.example.org/',
+    )?.title,
+    'Pastéis',
   );
 });
 
@@ -167,9 +235,10 @@ test('image proxy provider accepts bounded raster data and rejects SVG, spoofed 
   for (const [body, mime, expected] of [
     [png, 'image/png', true],
     [png, 'image/jpeg', false],
+    [jpeg, 'image/jpg', true],
     [Buffer.from('<svg/>'), 'image/svg+xml', false],
     [oversized, 'image/png', false],
-    [Buffer.alloc(1024 * 1024 + 1), 'image/png', false],
+    [Buffer.alloc(5 * 1024 * 1024 + 1), 'image/png', false],
   ] as const) {
     const provider = createPublicLinkPreviewProvider({
       resolver: addresses,

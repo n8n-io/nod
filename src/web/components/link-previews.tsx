@@ -1,8 +1,129 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import type { LinkPreview } from '../../shared/link-preview';
 import { previewableUrl } from '../../shared/link-preview';
+import { post } from '../lib/api';
 import { safeMessageLink } from '../lib/message-links';
 import { loadLinkPreview } from '../lib/link-previews';
+
+type Source = 'text' | 'preview' | 'tooltip' | 'player';
+type Link = { url: string; label: string };
+type Row = LinkPreview & { label: string; position: number };
+
+const shownRows = 5;
+
+function autoplay(value: string) {
+  const url = new URL(value);
+  url.searchParams.set('autoplay', '1');
+  return url.href;
+}
+
+function opened(url: string, source: Source, position?: number) {
+  void post('/api/link-preview/opened', {
+    url,
+    source,
+    ...(position ? { position } : {}),
+  }).catch(() => undefined);
+}
+
+function externalAnchor(target: EventTarget | null) {
+  const anchor = target instanceof Element ? target.closest<HTMLAnchorElement>('a[href]') : null;
+  const link = anchor && safeMessageLink(anchor.getAttribute('href') ?? '', window.location.origin);
+  return anchor && link?.kind === 'external' ? { anchor, url: link.href } : null;
+}
+
+function messageLinks(content: HTMLDivElement | null): Link[] {
+  if (!content || content.querySelector('[data-setup]')) return [];
+  const links = new Map<string, Link>();
+  for (const anchor of content.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+    const link = safeMessageLink(anchor.getAttribute('href') ?? '', window.location.origin);
+    if (link?.kind === 'setup') return [];
+    const url = link?.kind === 'external' ? previewableUrl(link.href) : null;
+    if (url && !links.has(url))
+      links.set(url, { url, label: anchor.textContent?.trim().replace(/\s+/g, ' ') || url });
+  }
+  return [...links.values()];
+}
+
+function PreviewRow({ row, active }: { row: Row; active: boolean }) {
+  const [playing, setPlaying] = useState(false);
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  const copy = (
+    <span className="message-link-preview-copy">
+      <strong>{row.label}</strong>
+      {row.title && row.title !== row.label && <span>{row.title}</span>}
+      <small>{row.url}</small>
+    </span>
+  );
+  const image = (
+    <span className="message-link-preview-image">
+      <img src={row.imageUrl} alt="" loading="lazy" onError={() => setFailed(true)} />
+    </span>
+  );
+  const className = `message-link-preview${active ? ' message-link-preview-active' : ''}`;
+  if (!row.playerUrl)
+    return (
+      <a
+        className={className}
+        href={row.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        referrerPolicy="no-referrer"
+        data-url={row.url}
+        onClick={() => opened(row.url, 'preview', row.position)}
+      >
+        {image}
+        {copy}
+      </a>
+    );
+  return (
+    <div
+      className={`${className} message-link-preview-video${playing ? ' message-link-preview-playing' : ''}`}
+      data-url={row.url}
+    >
+      {playing ? (
+        <span className="message-link-preview-player">
+          <iframe
+            src={autoplay(row.playerUrl)}
+            title={row.title ?? row.label}
+            allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+            allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
+            sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
+          />
+        </span>
+      ) : (
+        <button
+          type="button"
+          className="message-link-preview-play"
+          aria-label={`Play ${row.label}`}
+          onClick={() => {
+            setPlaying(true);
+            opened(row.url, 'player', row.position);
+          }}
+        >
+          {image}
+          <span className="message-link-preview-play-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <path d="M8 5.5v13l11-6.5z" fill="currentColor" />
+            </svg>
+          </span>
+        </button>
+      )}
+      <a
+        className="message-link-preview-link"
+        href={row.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        referrerPolicy="no-referrer"
+        onClick={() => opened(row.url, 'preview', row.position)}
+      >
+        {copy}
+      </a>
+    </div>
+  );
+}
 
 export function MessageLinkPreviews({
   content,
@@ -11,33 +132,33 @@ export function MessageLinkPreviews({
   content: RefObject<HTMLDivElement | null>;
   text: string;
 }) {
-  const [previews, setPreviews] = useState<LinkPreview[]>([]);
+  const [rows, setRows] = useState<Row[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const [active, setActive] = useState<string | null>(null);
+  const [tip, setTip] = useState<{ url: string; x: number; y: number; below: boolean } | null>(
+    null,
+  );
+  const list = useRef<HTMLDivElement>(null);
+  const tipElement = useRef<HTMLAnchorElement>(null);
+
   useEffect(() => {
     let current = true;
-    const links = [...(content.current?.querySelectorAll<HTMLAnchorElement>('a[href]') ?? [])].map(
-      (anchor) => safeMessageLink(anchor.getAttribute('href') ?? '', window.location.origin),
-    );
-    const urls =
-      links.some((link) => link?.kind === 'setup') || content.current?.querySelector('[data-setup]')
-        ? []
-        : [
-            ...new Set(
-              links.flatMap((link) => {
-                const url = link?.kind === 'external' ? previewableUrl(link.href) : null;
-                return url ? [url] : [];
-              }),
-            ),
-          ].slice(0, 2);
-    setPreviews((previous) => (previous.length ? [] : previous));
+    const links = messageLinks(content.current);
+    setRows((previous) => (previous.length ? [] : previous));
+    setExpanded(false);
     const load = () => {
-      if (!current || !urls.length) return;
-      void Promise.all(urls.map(loadLinkPreview)).then((values) => {
-        if (current) setPreviews(values.filter((value): value is LinkPreview => value !== null));
+      if (!current || !links.length) return;
+      void Promise.all(links.map((link) => loadLinkPreview(link.url))).then((values) => {
+        if (!current) return;
+        const found = values.flatMap((value, index) =>
+          value ? [{ ...value, ...links[index] }] : [],
+        );
+        setRows(found.map((row, index) => ({ ...row, position: index + 1 })));
       });
     };
     const target = content.current;
     let observer: IntersectionObserver | undefined;
-    if (urls.length && target && typeof IntersectionObserver !== 'undefined') {
+    if (links.length && target && typeof IntersectionObserver !== 'undefined') {
       observer = new IntersectionObserver(
         (entries) => {
           if (!entries.some((entry) => entry.isIntersecting)) return;
@@ -53,34 +174,131 @@ export function MessageLinkPreviews({
       observer?.disconnect();
     };
   }, [content, text]);
-  if (!previews.length) return null;
+
+  useEffect(() => {
+    const target = content.current;
+    if (!target) return;
+    let timer: number | undefined;
+    const show = (event: Event) => {
+      const link = externalAnchor(event.target);
+      if (!link) return;
+      window.clearTimeout(timer);
+      setActive(previewableUrl(link.url));
+      timer = window.setTimeout(() => {
+        const rect = link.anchor.getBoundingClientRect();
+        const below = rect.top < 72;
+        setTip({ url: link.url, x: rect.left, y: below ? rect.bottom + 6 : rect.top - 6, below });
+      }, 150);
+    };
+    const hide = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        setTip(null);
+        setActive(null);
+      }, 250);
+    };
+    const leave = (event: Event) => {
+      if (externalAnchor(event.target)) hide();
+    };
+    const click = (event: Event) => {
+      const link = externalAnchor(event.target);
+      if (link) opened(link.url, 'text');
+    };
+    const keep = () => window.clearTimeout(timer);
+    const tooltip = tipElement.current;
+    target.addEventListener('mouseover', show);
+    target.addEventListener('mouseout', leave);
+    target.addEventListener('focusin', show);
+    target.addEventListener('focusout', leave);
+    target.addEventListener('click', click);
+    tooltip?.addEventListener('mouseenter', keep);
+    tooltip?.addEventListener('mouseleave', hide);
+    return () => {
+      window.clearTimeout(timer);
+      target.removeEventListener('mouseover', show);
+      target.removeEventListener('mouseout', leave);
+      target.removeEventListener('focusin', show);
+      target.removeEventListener('focusout', leave);
+      target.removeEventListener('click', click);
+      tooltip?.removeEventListener('mouseenter', keep);
+      tooltip?.removeEventListener('mouseleave', hide);
+    };
+  }, [content, text, tip]);
+
+  useEffect(() => {
+    const target = list.current;
+    const anchors = () =>
+      [...(content.current?.querySelectorAll<HTMLAnchorElement>('a[href]') ?? [])].map(
+        (anchor) => ({ anchor, url: externalAnchor(anchor)?.url }),
+      );
+    if (!target) return;
+    const over = (event: Event) => {
+      const url = (event.target as Element).closest<HTMLElement>('[data-url]')?.dataset.url;
+      for (const item of anchors())
+        item.anchor.classList.toggle(
+          'message-link-highlight',
+          Boolean(url && item.url && previewableUrl(item.url) === url),
+        );
+    };
+    const leave = () => {
+      for (const item of anchors()) item.anchor.classList.remove('message-link-highlight');
+    };
+    target.addEventListener('mouseover', over);
+    target.addEventListener('mouseleave', leave);
+    return () => {
+      target.removeEventListener('mouseover', over);
+      target.removeEventListener('mouseleave', leave);
+    };
+  }, [content, rows]);
+
+  const visible = expanded ? rows : rows.slice(0, shownRows);
   return (
-    <div className="message-link-previews">
-      {previews.map((preview) => (
-        <a
-          className="message-link-preview"
-          href={preview.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          key={preview.url}
-        >
-          <div className="message-link-preview-copy">
-            <small>{preview.siteName || new URL(preview.url).hostname}</small>
-            <strong>{preview.title}</strong>
-            {preview.description && <span>{preview.description}</span>}
-          </div>
-          {preview.imageUrl && (
-            <img
-              src={preview.imageUrl}
-              alt=""
-              loading="lazy"
-              onError={(event) => {
-                event.currentTarget.hidden = true;
-              }}
-            />
+    <>
+      {rows.length > 0 && (
+        <div className="message-link-previews" ref={list}>
+          {visible.map((row) => (
+            <PreviewRow key={row.url} row={row} active={active === row.url} />
+          ))}
+          {rows.length > shownRows && !expanded && (
+            <button
+              type="button"
+              className="message-link-previews-more"
+              onClick={() => setExpanded(true)}
+            >
+              Show {rows.length - shownRows} more
+            </button>
           )}
-        </a>
-      ))}
-    </div>
+        </div>
+      )}
+      {tip &&
+        createPortal(
+          <a
+            ref={tipElement}
+            className={`message-link-tooltip${tip.below ? ' message-link-tooltip-below' : ''}`}
+            href={tip.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            referrerPolicy="no-referrer"
+            style={{
+              left: tip.x,
+              top: tip.y,
+              transform: tip.below ? undefined : 'translateY(-100%)',
+            }}
+            onClick={() => opened(tip.url, 'tooltip')}
+          >
+            <span>{tip.url}</span>
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path
+                d="M6 3h7v7M13 3 4 12"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </a>,
+          document.body,
+        )}
+    </>
   );
 }

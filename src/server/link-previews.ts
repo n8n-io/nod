@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { LinkPreviewProvider, PreviewImage, SiteIcon } from '../ports/link-preview.ts';
-import { previewableUrl, type LinkPreview } from '../shared/link-preview.ts';
+import { previewableUrl, publicMediaUrl, type LinkPreview } from '../shared/link-preview.ts';
 
 type CachedPreview = { expiresAt: number; preview: LinkPreview | null; imageId?: string };
 type CachedImage = {
@@ -24,7 +24,7 @@ export function createLinkPreviews(
   const queue: Array<() => void> = [];
   async function run<T>(action: () => Promise<T>): Promise<T | null> {
     if (active >= 4) {
-      if (queue.length >= 24) return null;
+      if (queue.length >= 96) throw new Error('Link previews are busy.');
       await new Promise<void>((resolve) => queue.push(resolve));
     } else active++;
     try {
@@ -49,11 +49,20 @@ export function createLinkPreviews(
       previews.delete(key);
       if (entry.imageId) images.delete(entry.imageId);
     }
-    while (images.size > 32) {
+    let bytes = 0;
+    for (const entry of images.values()) bytes += entry.value?.bytes.byteLength ?? 0;
+    while (images.size > 128 || bytes > 32 * 1024 * 1024) {
+      bytes -= images.values().next().value!.value?.bytes.byteLength ?? 0;
       const imageId = images.keys().next().value!;
       images.delete(imageId);
       for (const [url, entry] of previews) if (entry.imageId === imageId) previews.delete(url);
     }
+  }
+  function acceptable(value: PreviewImage) {
+    return value.bytes.byteLength <= 5 * 1024 * 1024 &&
+      ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(value.mimeType)
+      ? value
+      : null;
   }
   async function preview(value: string): Promise<LinkPreview | null> {
     const url = previewableUrl(value);
@@ -69,30 +78,35 @@ export function createLinkPreviews(
 
     const work = (async () => {
       try {
-        const result = await run(() => provider.metadata(url));
+        const fetched = await run(async () => {
+          const metadata = await provider.metadata(url);
+          const imageUrl = metadata?.image && publicMediaUrl(metadata.image);
+          const picture = imageUrl ? await provider.image(imageUrl) : null;
+          return { metadata, imageUrl, picture: picture && acceptable(picture) };
+        });
+        const result = fetched?.metadata;
         const finalUrl = result && previewableUrl(result.url);
-        if (!result || !finalUrl || !result.title.trim()) {
+        if (!result || !finalUrl || !fetched.imageUrl || !fetched.picture) {
           previews.set(url, { expiresAt: now() + 60000, preview: null });
           return null;
         }
         const expiresAt = now() + 600000;
+        const imageId = randomUUID();
+        images.set(imageId, { expiresAt, url: fetched.imageUrl, value: fetched.picture });
+        const playerUrl = result.player && publicMediaUrl(result.player);
         const output: LinkPreview = {
           url: finalUrl,
-          title: result.title,
+          imageUrl: `/api/link-preview/image/${imageId}`,
+          ...(result.title ? { title: result.title } : {}),
           ...(result.description ? { description: result.description } : {}),
           ...(result.siteName ? { siteName: result.siteName } : {}),
+          ...(playerUrl?.startsWith('https:') ? { playerUrl } : {}),
         };
-        const imageUrl = result.image && previewableUrl(result.image);
-        const imageId = imageUrl ? randomUUID() : undefined;
-        if (imageId && imageUrl) {
-          images.set(imageId, { expiresAt, url: imageUrl });
-          output.imageUrl = `/api/link-preview/image/${imageId}`;
-        }
         previews.set(url, { expiresAt, preview: output, imageId });
-        prune();
         return output;
-      } catch {
-        previews.set(url, { expiresAt: now() + 60000, preview: null });
+      } catch (error) {
+        if (!(error instanceof Error && error.message === 'Link previews are busy.'))
+          previews.set(url, { expiresAt: now() + 60000, preview: null });
         return null;
       } finally {
         prune();
@@ -110,18 +124,10 @@ export function createLinkPreviews(
     if (cached.pending) return cached.pending;
     cached.pending = run(() => provider.image(cached.url))
       .then((value) => {
-        cached.value =
-          value &&
-          value.bytes.byteLength <= 1024 * 1024 &&
-          ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(value.mimeType)
-            ? value
-            : null;
+        cached.value = value && acceptable(value);
         return cached.value;
       })
-      .catch(() => {
-        cached.value = null;
-        return null;
-      })
+      .catch(() => null)
       .finally(() => {
         cached.pending = undefined;
       });
@@ -134,6 +140,16 @@ export function createLinkPreviews(
         .strict()
         .parse(request.body);
       return { preview: await preview(input.url) };
+    });
+    app.post('/api/link-preview/opened', async (request, reply) => {
+      z.object({
+        url: z.string().max(2048),
+        source: z.enum(['text', 'preview', 'tooltip', 'player']),
+        position: z.number().int().min(1).max(100).optional(),
+      })
+        .strict()
+        .parse(request.body);
+      return reply.code(204).send();
     });
     app.get<{ Params: { id: string } }>('/api/link-preview/image/:id', async (request, reply) => {
       const id = z.uuid().safeParse(request.params.id);
