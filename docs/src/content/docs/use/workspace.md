@@ -67,7 +67,7 @@ When Otto shares a file, it appears as an attachment in the Otto app, up to 90 M
 | Code, JSON and text                     | With syntax highlighting                                           |
 | ZIP                                     | The list of files inside                                           |
 
-HTML files run in a sandbox, apart from Otto. Their scripts work, but they can't reach Otto or your accounts, load anything from the internet, send forms or open windows. If a page tries to open a website, its preview closes. Other files open without running any code.
+HTML files run in a sandbox, apart from Otto. Their scripts work, but they can't reach Otto or your accounts, load anything from the internet, send forms or open windows. If a page navigates to a website, its preview closes. Other files open without running any code.
 
 Previews have size limits: 4 MB for text, Markdown, HTML and spreadsheets, 25 MB for Word documents and 60 MB for presentations. Download larger files to open them.
 

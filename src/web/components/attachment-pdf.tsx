@@ -3,6 +3,7 @@ import { FileText, Minus, Plus } from 'lucide-react';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import { localPreviewUrl, ownedArtifactUrl } from '../lib/attachment-url';
 import { Button } from './ui';
+import { PreviewLoading } from './attachment-data';
 
 export type PreviewPdfDocument = Pick<PDFDocumentProxy, 'numPages' | 'getPage'>;
 export type PreviewPdfLoading = {
@@ -323,7 +324,7 @@ export default function PdfPreview({
           </div>
         </>
       ) : (
-        <div className="artifact-loading" role="status" aria-label="Loading PDF" />
+        <PreviewLoading />
       )}
     </div>
   );

@@ -86,6 +86,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - A standing instruction runs for any new email or update that matches it, including one that only claims to come from the sender you named.
 - Reads, drafts and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
 - A saved card can't make the issuer enforce the amount, and card support isn't a PCI DSS compliance claim.
+- A script in an HTML preview can still navigate its own frame to a website and take that page's contents with it, as it could if you opened the downloaded file in a browser. It can't read anything from Otto, and the preview closes when it navigates.
 - Tests cover known failure cases. They don't prove that every injection or browser exploit is blocked.
 
 :::

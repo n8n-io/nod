@@ -86,7 +86,7 @@ function kindFromType(type: string): AttachmentKind | null {
 export function attachmentKind(mimeType: string, name = ''): AttachmentKind | null {
   const type = mimeType.split(';', 1)[0].trim().toLowerCase();
   const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1].toLowerCase() ?? '';
-  return extensionKinds[extension] ?? kindFromType(type);
+  return Object.hasOwn(extensionKinds, extension) ? extensionKinds[extension] : kindFromType(type);
 }
 
 export function vectorImage(mimeType: string, name = '') {
@@ -116,5 +116,5 @@ export function fileSize(bytes: number) {
 }
 
 export function fileType(name: string) {
-  return /\.([a-z0-9]{1,5})$/i.exec(name)?.[1].toUpperCase() ?? 'File';
+  return /\.([a-z0-9]{1,10})$/i.exec(name)?.[1].toUpperCase() ?? 'File';
 }

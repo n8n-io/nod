@@ -59,6 +59,8 @@ function ImageView({
 }) {
   const [zoomed, setZoomed] = useState(false);
   const [zoomable, setZoomable] = useState(false);
+  const fits = (image: HTMLImageElement) =>
+    image.naturalWidth <= image.clientWidth + 1 && image.naturalHeight <= image.clientHeight + 1;
   return (
     <div
       className={`artifact-stage is-image${zoomed ? ' is-zoomed' : ''}${zoomable ? ' is-zoomable' : ''}`}
@@ -72,15 +74,13 @@ function ImageView({
         onLoad={(event) => {
           const image = event.currentTarget;
           onDetail(`${image.naturalWidth} × ${image.naturalHeight}`);
-          setZoomable(
-            image.naturalWidth > image.clientWidth + 1 ||
-              image.naturalHeight > image.clientHeight + 1,
-          );
+          setZoomable(!fits(image));
         }}
+        onPointerEnter={(event) => setZoomable(zoomed || !fits(event.currentTarget))}
         onError={onError}
         onClick={(event) => {
-          if (!zoomable) return;
           const image = event.currentTarget;
+          if (!zoomed && fits(image)) return;
           const stage = image.parentElement!;
           const box = image.getBoundingClientRect();
           const x = (event.clientX - box.left) / box.width;
@@ -298,13 +298,20 @@ function ArtifactDrawer({
     const page = root.current?.parentElement;
     if (!page) return;
     const measure = () => setPageWidth(page.clientWidth);
+    const paint = () =>
+      setStage(
+        getComputedStyle(root.current!).getPropertyValue('--artifact-stage').trim() || '#f1f1f1',
+      );
     measure();
-    setStage(
-      getComputedStyle(root.current!).getPropertyValue('--artifact-stage').trim() || '#f1f1f1',
-    );
+    paint();
     const observer = new ResizeObserver(measure);
     observer.observe(page);
-    return () => observer.disconnect();
+    const theme = new MutationObserver(paint);
+    theme.observe(document.documentElement, { attributeFilter: ['data-theme'] });
+    return () => {
+      observer.disconnect();
+      theme.disconnect();
+    };
   }, []);
   useEffect(() => {
     const element = root.current;
@@ -340,6 +347,18 @@ function ArtifactDrawer({
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) onClose();
     else setClosing(true);
   }, [onClose]);
+  useEffect(() => {
+    const forward = (event: MessageEvent) => {
+      if (
+        event.data === 'otto:close' &&
+        event.source &&
+        event.source === root.current?.querySelector('iframe')?.contentWindow
+      )
+        close();
+    };
+    window.addEventListener('message', forward);
+    return () => window.removeEventListener('message', forward);
+  }, [close]);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
       if (

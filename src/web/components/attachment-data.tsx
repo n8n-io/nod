@@ -16,7 +16,13 @@ import { ownedArtifactUrl } from '../lib/attachment-url';
 import type { ImagePreview } from './attachment-images';
 import { FileGlyph } from './attachment-glyph';
 import { CodeView, codeLanguage, formatJson } from './attachment-code';
-import { documentFrame, documentHtml, SandboxedFrame, sandboxedDocument } from './attachment-frame';
+import {
+  documentFrame,
+  documentHtml,
+  escapeForwarder,
+  SandboxedFrame,
+  sandboxedDocument,
+} from './attachment-frame';
 import { SlidesView } from './attachment-slides';
 import { Button, Skeleton } from './ui';
 
@@ -305,33 +311,51 @@ async function readWorkbook(buffer: ArrayBuffer): Promise<Sheet[]> {
   });
 }
 
-type Entry = { path: string; folder: boolean; size: number };
+type Entry = { path: string; parts: string[]; folder: boolean; size: number };
+
+async function expandedSize(data: ArrayBuffer) {
+  const bytes = new Uint8Array(data);
+  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) return 0;
+  const { unzipSync } = await import('fflate');
+  let total = 0;
+  unzipSync(bytes, {
+    filter: (file) => {
+      total += file.originalSize;
+      return false;
+    },
+  });
+  return total;
+}
 
 async function readArchive(buffer: ArrayBuffer) {
   const { unzipSync } = await import('fflate');
   const files: Entry[] = [];
+  const entry = (path: string, folder: boolean, size: number) => ({
+    path,
+    parts: path.replace(/\/$/, '').split('/', 32),
+    folder,
+    size,
+  });
   unzipSync(new Uint8Array(buffer), {
     filter: (file) => {
       if (files.length < 5_000 && !/(?:^|\/)(?:__MACOSX\/|\.DS_Store$)/.test(file.name))
-        files.push({ path: file.name, folder: file.name.endsWith('/'), size: file.originalSize });
+        files.push(entry(file.name, file.name.endsWith('/'), file.originalSize));
       return false;
     },
   });
   const paths = new Set(files.map((file) => file.path));
-  for (const file of files) {
-    const parts = file.path.split('/');
-    for (let index = 1; index < parts.length; index += 1) {
-      const folder = `${parts.slice(0, index).join('/')}/`;
-      if (!paths.has(folder)) {
-        paths.add(folder);
-        files.push({ path: folder, folder: true, size: 0 });
-      }
+  for (const file of files.slice()) {
+    let prefix = '';
+    for (const part of file.parts.slice(0, -1)) {
+      prefix += `${part}/`;
+      if (paths.has(prefix) || files.length >= 10_000) continue;
+      paths.add(prefix);
+      files.push(entry(prefix, true, 0));
     }
   }
-  const segments = (entry: Entry) => entry.path.replace(/\/$/, '').split('/');
   return files.sort((a, b) => {
-    const left = segments(a);
-    const right = segments(b);
+    const left = a.parts;
+    const right = b.parts;
     for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
       if (left[index] === right[index]) continue;
       const leftFolder = index < left.length - 1 || a.folder;
@@ -348,7 +372,7 @@ function ArchiveView({ entries }: { entries: Entry[] }) {
     <div className="artifact-archive" tabIndex={0} data-artifact-scroll="">
       <ul>
         {entries.map((entry) => {
-          const parts = entry.path.replace(/\/$/, '').split('/');
+          const parts = entry.parts;
           const name = parts[parts.length - 1];
           return (
             <li key={entry.path} style={{ paddingLeft: `${12 + (parts.length - 1) * 20}px` }}>
@@ -492,6 +516,11 @@ export default function AttachmentData({
         if (!response.ok) throw new Error('File unavailable');
         const data = await response.arrayBuffer();
         if (data.byteLength > limits[kind]) throw new Error('File too large');
+        if (
+          ['spreadsheet', 'document', 'presentation'].includes(kind) &&
+          (await expandedSize(data)) > 200_000_000
+        )
+          throw new Error('File too large');
         const next =
           kind === 'spreadsheet'
             ? { kind: 'sheets' as const, sheets: await readWorkbook(data) }
@@ -548,7 +577,7 @@ export default function AttachmentData({
     } else if (kind === 'html') onDetail('');
   }, [content, source, kind, mode, onDetail]);
   const frame = useMemo(
-    () => (kind === 'html' && text !== null ? sandboxedDocument(text) : null),
+    () => (kind === 'html' && text !== null ? sandboxedDocument(text, escapeForwarder) : null),
     [kind, text],
   );
   if (error || left || (kind === 'csv' && text !== null && !csv && mode === 'preview'))
