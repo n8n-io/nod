@@ -42,7 +42,7 @@ export function run(command, args, { output = 'combined', timeout = 120_000, ...
         reject(
           Object.assign(
             new Error(`${basename(command)} failed${expired ? ' (timed out)' : ` (${code})`}.`),
-            { diagnostic: stderr.slice(-4096) },
+            { diagnostic: (stdout + stderr).slice(-4096) },
           ),
         );
       else accept((output === 'stdout' ? stdout : stdout + stderr).trim());
@@ -410,13 +410,13 @@ export async function staple(path) {
   for (let attempt = 1; ; attempt++) {
     try {
       await run('/usr/bin/xcrun', ['stapler', 'staple', path]);
-      break;
+      await run('/usr/bin/xcrun', ['stapler', 'validate', path]);
+      return;
     } catch (error) {
       if (attempt === 60) throw error;
       await delay(30_000);
     }
   }
-  await run('/usr/bin/xcrun', ['stapler', 'validate', path]);
 }
 
 export function runtimeUrl(value, archive) {
