@@ -21,13 +21,14 @@ let completed = false;
 let usageData = false;
 let traces = false;
 let user = 'fixture-owner-one';
-let interview = {
+const emptyInterview = () => ({
   generation: crypto.randomUUID(),
   completed: false,
   answers: [] as string[],
   turns: [] as string[][],
   done: false,
-};
+});
+let interview = emptyInterview();
 const configuration = {
   provider: 'fixture',
   model: 'Fixture model',
@@ -149,6 +150,7 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === '/__fixture__/switch') {
+    if (user !== 'fixture-owner-two') interview = emptyInterview();
     user = 'fixture-owner-two';
     usageData = false;
     traces = false;

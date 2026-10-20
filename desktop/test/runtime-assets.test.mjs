@@ -1686,6 +1686,142 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
   }
 });
 
+test('database readiness failure replaces retained PostgreSQL only on the next explicit retry', async () => {
+  const source = await readFile(new URL('../runtime/index.mjs', import.meta.url), 'utf8');
+  const functions = source
+    .slice(
+      source.indexOf('export async function finishRuntime('),
+      source.indexOf('async function stopComputer('),
+    )
+    .replaceAll('export ', '')
+    .replace("const { default: pg } = await import('pg');", '');
+  const { replaceContainer } = await import('../runtime/index.mjs');
+  for (const failure of ['pg_isready', 'connect', 'query']) {
+    const containers = new Map();
+    const commands = [];
+    let fault = 'workspace';
+    let created = 0;
+    let stopped = 0;
+    const runtime = runInNewContext(
+      `${functions}; ({ finishRuntime, prepareRuntime, stopRuntime })`,
+      {
+        resolve,
+        join,
+        process: { platform: 'win32' },
+        preparing: new Map(),
+        storageReady: new Map(),
+        replaceContainer,
+        ensureNetwork: async () => {},
+        protectNetworks: '',
+        waitFor: async (operation) => operation(),
+        removeStaleImages: async () => {},
+        pg: {
+          Client: class {
+            async connect() {
+              if (fault === 'connect') throw new Error('Synthetic connection failure');
+            }
+            async query() {
+              if (fault === 'query') throw new Error('Synthetic query failure');
+            }
+            async end() {}
+          },
+        },
+        prepare: async (options, started) => {
+          started();
+          return runtime.finishRuntime({
+            ...options,
+            resourcesPath: 'synthetic-resources',
+            assets: 'synthetic-assets',
+            identity: 'fixture',
+            manifest: {
+              images: ['postgres', 'workspace', 'browser'].map((name) => ({
+                name,
+                id: `sha256:${name}`,
+              })),
+            },
+            saved: { port: 54329, password: 'synthetic-fixture-password' },
+            controlRoot: 'synthetic-control',
+            path: 'synthetic-path',
+            dockerEnvironment: {},
+            runGuest: async () => {},
+            status: options.onStatus,
+            prepareImage: async (name) => {
+              if (name === fault) throw new Error(`Synthetic ${name} startup failure`);
+            },
+            runDocker: async (args) => {
+              commands.push(args);
+              if (args[0] === 'container' && args[1] === 'inspect') {
+                if (!containers.has(args[2])) throw new Error('Absent synthetic container');
+                return JSON.stringify([containers.get(args[2])]);
+              }
+              if (args[0] === 'run') {
+                const name = args[args.indexOf('--name') + 1];
+                containers.set(name, {
+                  Id: `synthetic-container-${++created}`,
+                  Image: args.find((value) => value.startsWith('sha256:')),
+                  State: { Running: true },
+                  Config: { Labels: { 'dev.otto.desktop.experiment': 'true' } },
+                  Mounts: args.flatMap((value, index) => {
+                    if (value !== '--volume') return [];
+                    const [Name, Destination] = args[index + 1].split(':');
+                    return [{ Type: 'volume', Name, Destination }];
+                  }),
+                });
+              }
+              if (args[0] === 'exec' && args[2] === 'pg_isready' && fault === 'pg_isready')
+                throw new Error('Synthetic PostgreSQL readiness failure');
+              if (args[0] === 'inspect') return 'true';
+              return '';
+            },
+          });
+        },
+        stopComputer: async () => {
+          stopped++;
+        },
+      },
+    );
+    const lifecycle = createDesktopLifecycle({
+      prepareRuntime: (options) =>
+        runtime.prepareRuntime({ ...options, dataRoot: resolve('synthetic-profile') }),
+      validateStart: async () => {},
+      startEngine: async () => {},
+      stopEngine: async () => {},
+      onRuntimeStatus() {},
+    });
+    const postgres = () => containers.get('otto-postgres-fixture').Id;
+    try {
+      await assert.rejects(lifecycle.start(), /Synthetic workspace startup failure/);
+      const original = postgres();
+      fault = 'browser';
+      await assert.rejects(lifecycle.start({ retry: true }), /Synthetic browser startup failure/);
+      assert.equal(postgres(), original);
+      fault = failure;
+      await assert.rejects(lifecycle.start({ retry: true }));
+      assert.equal(postgres(), original);
+      assert.equal(stopped, 0);
+      const attempted = commands.length;
+      fault = undefined;
+      await assert.rejects(lifecycle.start());
+      assert.equal(commands.length, attempted);
+      await lifecycle.start({ retry: true });
+      assert.notEqual(
+        postgres(),
+        original,
+        `${failure}: explicit retry must replace failed PostgreSQL`,
+      );
+      const launches = commands.filter(
+        (args) => args[0] === 'run' && args.includes('otto-postgres-fixture'),
+      );
+      assert.equal(launches.length, 2);
+      assert.deepEqual(launches[1], launches[0]);
+      assert.equal(stopped, 0);
+    } finally {
+      await lifecycle.close();
+    }
+    assert.equal(stopped, 1);
+  }
+});
+
 async function windowsImageFixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'otto-windows-image-order-'));
   t.after(() => rm(root, { recursive: true, force: true }));

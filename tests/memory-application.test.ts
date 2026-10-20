@@ -796,6 +796,7 @@ test(
     let reply: unknown = { messages: ['What synthetic project are you working on?'], done: false };
     let calls = 0;
     let failSeal = false;
+    let keyUnavailable = false;
     let keyReads = 0;
     const curator: MemoryCurator = {
       id: 'draft-fixture',
@@ -815,6 +816,7 @@ test(
           id: 'draft-fixture',
           configured: true,
           getKey: async () => {
+            if (keyUnavailable) throw new Error('Synthetic key temporarily unavailable');
             if (failSeal && ++keyReads === 2)
               throw new Error('Synthetic key temporarily unavailable');
             return secret;
@@ -893,8 +895,28 @@ test(
       'synthetic-other-owner',
       stored.bytes,
     ]);
-    assert.equal((await other.inject(path)).statusCode, 500);
-    assert.equal((await create(ownerId, Buffer.alloc(32, 42)).inject(path)).statusCode, 500);
+    const otherStore = createPostgresObjectStore({ database, ownerId: 'synthetic-other-owner' });
+    const otherObject = (await otherStore.read('onboarding/interview', 128 * 1024))!;
+    assert.deepEqual((await other.inject(path)).json(), { resetVersion: otherObject.version });
+    assert.deepEqual(await otherStore.read('onboarding/interview', 128 * 1024), otherObject);
+    const beforeWrongKey = (await store.read('onboarding/interview', 128 * 1024))!;
+    const wrongKey = await create(ownerId, Buffer.alloc(32, 42)).inject(path);
+    assert.equal(wrongKey.statusCode, 200);
+    assert.deepEqual(wrongKey.json(), { resetVersion: beforeWrongKey.version });
+    assert.deepEqual(await store.read('onboarding/interview', 128 * 1024), beforeWrongKey);
+    assert.equal(
+      (await restarted.inject({ method: 'DELETE', url: path, payload: wrongKey.json() }))
+        .statusCode,
+      409,
+    );
+    assert.deepEqual(await store.read('onboarding/interview', 128 * 1024), beforeWrongKey);
+    keyUnavailable = true;
+    const unavailable = await restarted.inject(path);
+    assert.equal(unavailable.statusCode, 500);
+    assert.equal('resetVersion' in unavailable.json(), false);
+    assert.deepEqual(await store.read('onboarding/interview', 128 * 1024), beforeWrongKey);
+    keyUnavailable = false;
+    assert.equal((await restarted.inject(path)).json().answers[0], answer);
     failSeal = true;
     assert.equal(
       (
@@ -1154,6 +1176,86 @@ test(
       ).statusCode,
       409,
     );
+    await store.write(`artifacts/${randomUUID()}`, Buffer.from('Synthetic private artifact.'), {
+      expectedVersion: null,
+    });
+    const otherObjects = async () =>
+      (
+        await database.query(
+          'SELECT owner_id,object_key,version,bytes FROM private_objects WHERE owner_id<>$1 OR object_key<>$2 ORDER BY owner_id,object_key',
+          [ownerId, 'onboarding/interview'],
+        )
+      ).rows;
+    const preserved = await otherObjects();
+    for (const malformed of [
+      'Synthetic malformed ciphertext.',
+      sealVaultValue(key, ['otto-onboarding-interview-v1', ownerId], '{'),
+      sealVaultValue(
+        key,
+        ['otto-onboarding-interview-v1', ownerId],
+        JSON.stringify({ answers: [] }),
+      ),
+    ]) {
+      const before = (await restarted.inject(path)).json();
+      const original = (await store.read('onboarding/interview', 128 * 1024))!;
+      await store.write('onboarding/interview', Buffer.from(malformed), {
+        expectedVersion: original.version,
+      });
+      const unreadable = (await store.read('onboarding/interview', 128 * 1024))!;
+      const recovery = await restarted.inject(path);
+      assert.equal(recovery.statusCode, 200);
+      assert.deepEqual(recovery.json(), { resetVersion: unreadable.version });
+      assert.deepEqual(await store.read('onboarding/interview', 128 * 1024), unreadable);
+      for (const [app, payload] of [
+        [restarted, { generation: before.generation }],
+        [restarted, { resetVersion: randomUUID() }],
+        [other, recovery.json()],
+      ] as const) {
+        assert.equal((await app.inject({ method: 'DELETE', url: path, payload })).statusCode, 409);
+        assert.deepEqual(await store.read('onboarding/interview', 128 * 1024), unreadable);
+      }
+      keyUnavailable = true;
+      const unavailable = await restarted.inject(path);
+      assert.equal(unavailable.statusCode, 500);
+      assert.equal('resetVersion' in unavailable.json(), false);
+      assert.equal(
+        (await restarted.inject({ method: 'DELETE', url: path, payload: recovery.json() }))
+          .statusCode,
+        500,
+      );
+      assert.deepEqual(await store.read('onboarding/interview', 128 * 1024), unreadable);
+      keyUnavailable = false;
+      await store.write('onboarding/interview', Buffer.from(malformed), {
+        expectedVersion: unreadable.version,
+      });
+      assert.equal(
+        (await restarted.inject({ method: 'DELETE', url: path, payload: recovery.json() }))
+          .statusCode,
+        409,
+      );
+      const currentRecovery = (await restarted.inject(path)).json();
+      const cleared = await restarted.inject({
+        method: 'DELETE',
+        url: path,
+        payload: currentRecovery,
+      });
+      assert.equal(cleared.statusCode, 200);
+      assert.deepEqual(cleared.json(), {
+        generation: cleared.json().generation,
+        completed: false,
+        answers: [],
+        turns: [],
+        done: false,
+      });
+      assert.notEqual(cleared.json().generation, before.generation);
+      assert.deepEqual((await create().inject(path)).json(), cleared.json());
+      assert.equal(
+        (await restarted.inject({ method: 'DELETE', url: path, payload: currentRecovery }))
+          .statusCode,
+        409,
+      );
+      assert.deepEqual(await otherObjects(), preserved);
+    }
   },
 );
 

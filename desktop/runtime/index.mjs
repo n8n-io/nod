@@ -557,30 +557,38 @@ export async function finishRuntime({
       reuse: storageReady.get(resolve(dataRoot))?.postgres,
     },
   );
-  await waitFor(
-    () => runDocker(['exec', names.postgres, 'pg_isready', '-U', 'otto', '-d', 'otto']),
-    { signal },
-  );
   const databaseUrl = `postgresql://otto:${saved.password}@127.0.0.1:${saved.port}/otto`;
-  const { default: pg } = await import('pg');
-  await waitFor(
-    async () => {
-      const client = new pg.Client({
-        connectionString: databaseUrl,
-        connectionTimeoutMillis: 5000,
-        query_timeout: 5000,
-      });
-      try {
-        await client.connect();
-        await client.query('SELECT 1');
-      } catch {
-        throw new Error('Otto could not unlock local storage. Retry without resetting your data.');
-      } finally {
-        await client.end().catch(() => {});
-      }
-    },
-    { signal, attempts: 12 },
-  );
+  try {
+    await waitFor(
+      () => runDocker(['exec', names.postgres, 'pg_isready', '-U', 'otto', '-d', 'otto']),
+      { signal },
+    );
+    const { default: pg } = await import('pg');
+    await waitFor(
+      async () => {
+        const client = new pg.Client({
+          connectionString: databaseUrl,
+          connectionTimeoutMillis: 5000,
+          query_timeout: 5000,
+        });
+        try {
+          await client.connect();
+          await client.query('SELECT 1');
+        } catch {
+          throw new Error(
+            'Otto could not unlock local storage. Retry without resetting your data.',
+          );
+        } finally {
+          await client.end().catch(() => {});
+        }
+      },
+      { signal, attempts: 12 },
+    );
+  } catch (error) {
+    const storage = storageReady.get(resolve(dataRoot));
+    if (storage) storage.postgres = undefined;
+    throw error;
+  }
   const wrapperRoot = join(controlRoot, 'bin');
   if (process.platform !== 'win32') {
     await mkdir(wrapperRoot, { recursive: true, mode: 0o700 });

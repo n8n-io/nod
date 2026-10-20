@@ -7,6 +7,7 @@ import {
   type InterviewMessage,
   type InterviewResponse,
   type OnboardingInterview,
+  type OnboardingInterviewState,
 } from '../../../../shared/onboarding';
 import { OttoGlyph, prefersReducedMotion, Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
@@ -63,6 +64,7 @@ export function About({ arrived, onNext, onBack }: StepProps) {
     done: false,
   });
   const [receipt, setReceipt] = useState({ generation: '', completed: false });
+  const [resetVersion, setResetVersion] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [needsReload, setNeedsReload] = useState(false);
@@ -90,9 +92,17 @@ export function About({ arrived, onNext, onBack }: StepProps) {
   useEffect(() => {
     const controller = new AbortController();
     setLoaded(false);
-    void api<OnboardingInterview>('/api/onboarding/interview', { signal: controller.signal })
+    setResetVersion('');
+    void api<OnboardingInterviewState>('/api/onboarding/interview', { signal: controller.signal })
       .then((saved) => {
         if (controller.signal.aborted) return;
+        if ('resetVersion' in saved) {
+          setResetVersion(saved.resetVersion);
+          setError(
+            'Your saved interview couldn’t be opened. Try again, or discard these answers and start again.',
+          );
+          return;
+        }
         const talk = saved.completed
           ? (restoreCompleted(saved.generation) ?? { answers: [], turns: [[]], done: true })
           : saved;
@@ -216,9 +226,10 @@ export function About({ arrived, onNext, onBack }: StepProps) {
     try {
       const talk = await api<OnboardingInterview>('/api/onboarding/interview', {
         method: 'DELETE',
-        body: JSON.stringify({ generation: receipt.generation }),
+        body: JSON.stringify(resetVersion ? { resetVersion } : { generation: receipt.generation }),
       });
       removeStored('about');
+      setResetVersion('');
       setReceipt({ generation: talk.generation, completed: talk.completed });
       setShown(false);
       setFresh(true);
@@ -227,7 +238,10 @@ export function About({ arrived, onNext, onBack }: StepProps) {
       pendingTurn.current = null;
       writeStored('suggestions', false);
       setTalk(talk);
+      setNeedsReload(false);
+      setLoaded(true);
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 409) setResetVersion('');
       setNeedsReload(cause instanceof ApiError && cause.status === 409);
       setError(errorMessage(cause));
     } finally {
@@ -241,8 +255,12 @@ export function About({ arrived, onNext, onBack }: StepProps) {
     setError('');
     try {
       if (receipt.completed) {
-        const current = await api<OnboardingInterview>('/api/onboarding/interview');
-        if (!current.completed || current.generation !== receipt.generation)
+        const current = await api<OnboardingInterviewState>('/api/onboarding/interview');
+        if (
+          'resetVersion' in current ||
+          !current.completed ||
+          current.generation !== receipt.generation
+        )
           throw new ApiError('Your setup answers changed. Reload them before continuing.', 409);
       } else {
         await api('/api/onboarding/interview', {
@@ -305,7 +323,7 @@ export function About({ arrived, onNext, onBack }: StepProps) {
             </Fragment>
           ))}
           {thinking ? (
-            <Messages key="thinking" items={[]} typing />
+            !error && <Messages key="thinking" items={[]} typing />
           ) : (
             <Reveal
               key={`turn-${index}`}
@@ -377,6 +395,7 @@ export function About({ arrived, onNext, onBack }: StepProps) {
               </Button>
               <Button
                 variant="ghost"
+                disabled={saving}
                 onClick={() => {
                   setError('');
                   if (!loaded || needsReload) setLoadAttempt((value) => value + 1);
@@ -385,6 +404,11 @@ export function About({ arrived, onNext, onBack }: StepProps) {
               >
                 Try again
               </Button>
+              {resetVersion && (
+                <Button variant="ghost" disabled={saving} onClick={() => void restart()}>
+                  Start interview again
+                </Button>
+              )}
             </>
           )}
         </p>

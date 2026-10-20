@@ -22,6 +22,7 @@ export type OnboardingInterview = {
   turns: string[][];
   done: boolean;
 };
+export type OnboardingInterviewState = OnboardingInterview | { resetVersion: string };
 export type SuggestedTask = {
   id: string;
   title: string;

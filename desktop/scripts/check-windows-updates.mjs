@@ -173,6 +173,7 @@ app.whenReady().then(async () => {
       arch: 'x64',
       electronVersion: configuration.devDependencies.electron,
       appVersion: version,
+      win32metadata: { CompanyName: 'n8n GmbH', ProductName: 'Otto', FileDescription: 'Otto' },
       overwrite: true,
     });
     const stage = join(root, `stage-${version}`);

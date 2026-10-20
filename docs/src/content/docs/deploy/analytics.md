@@ -13,7 +13,7 @@ Otto never sends what you write, what Otto replies, what your apps return, or wh
 
 ## Turn usage data on or off
 
-You turn on **Share usage data** in the first onboarding step, or later in **Settings → General**. Nothing is collected before you opt in. The native Welcome window sends nothing. Analytics starts only in the app after your choice is saved.
+You turn on **Share usage data** in the first onboarding step, or later in **Settings → General**. Opt-in usage events and recordings start only in the app after your choice is saved; the native Welcome window sends neither. Desktop update checks use separate weekly installation counts, described below.
 
 Next to the switch, Otto says: "Help us make Otto better by sharing how you use it. Never your messages." It links to this page, which lists everything that is sent.
 

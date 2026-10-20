@@ -4155,6 +4155,11 @@ let holdInterviewRead=false;
 let releaseInterviewRead;
 let failInterviewRead=false;
 let failInterviewReset=false;
+let resetVersion;
+let interviewDeletes=0;
+const recoveryRequests=[];
+let holdRecovery=false;
+let releaseRecovery;
 let failInterviewPost=0;
 let failInterviewSave=false;
 let expectedAnswers=['Synthetic project focus'];
@@ -4166,7 +4171,20 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
   if(path==='/api/onboarding/interview'){
     if(!options.method||options.method==='GET'){
       if(holdInterviewRead)return new Promise(resolve=>{releaseInterviewRead=()=>resolve(Response.json(interviewState()));});
-      return failInterviewRead?Response.json({error:'Synthetic draft unavailable'},{status:500}):Response.json(interviewState());
+      return failInterviewRead?Response.json({error:'Synthetic draft unavailable'},{status:500}):Response.json(resetVersion?{resetVersion}:interviewState());
+    }
+    if(options.method==='DELETE')interviewDeletes++;
+    if(options.method==='DELETE'&&'resetVersion' in body){
+      recoveryRequests.push(body);
+      if(body.resetVersion!==resetVersion)return Response.json({error:'Synthetic recovery version changed'},{status:409});
+      const recover=()=>{
+        resetVersion=undefined;
+        interviewGeneration='synthetic-generation-'+(++generations);
+        interviewCompleted=false;
+        interviewDraft={answers:[],turns:[],done:false};
+        return Response.json(interviewState());
+      };
+      return holdRecovery?new Promise(resolve=>{releaseRecovery=()=>resolve(recover());}):recover();
     }
     if(body.generation!==interviewGeneration)return Response.json({error:'Synthetic generation changed'},{status:409});
     if(options.method==='DELETE'){
@@ -4404,6 +4422,7 @@ failInterviewRead=true;
 await mount(About,'forward');
 await waitFor(()=>button('Try again'));
 assert.match(document.body.textContent,/Synthetic draft unavailable/);
+assert.equal(button('Start interview again'),undefined,'a transient read failure must not offer deletion');
 assert.equal(interviewPosts,postsBeforeRestore);
 failInterviewRead=false;
 await click('Try again');
@@ -4467,6 +4486,44 @@ await mount(About,'back');
 await waitFor(()=>document.body.textContent.includes('Synthetic question?'));
 assert.doesNotMatch(document.body.textContent,/Synthetic retired/);
 assert.equal(sessionStorage.getItem('otto.onboarding.about'),null);
+resetVersion='synthetic-corrupt-version-1';
+const postsBeforeRecovery=interviewPosts;
+const deletesBeforeRecovery=interviewDeletes;
+await mount(About);
+await waitFor(()=>button('Start interview again'));
+assert.equal(button('Try again')?.disabled,false);
+assert.equal(document.querySelector('input[aria-label="Your answer"]')?.disabled??true,true);
+assert.equal(interviewPosts,postsBeforeRecovery,'corrupt saved progress cannot silently start a new interview');
+assert.equal(interviewDeletes,deletesBeforeRecovery,'corrupt saved progress cannot be deleted without an explicit choice');
+holdRecovery=true;
+await act(async()=>{button('Start interview again').click();button('Start interview again').click();});
+await settle();
+assert.deepEqual(recoveryRequests,[{resetVersion:'synthetic-corrupt-version-1'}]);
+assert.equal(interviewDeletes,deletesBeforeRecovery+1);
+assert.equal(interviewPosts,postsBeforeRecovery);
+await act(async()=>releaseRecovery());holdRecovery=false;
+await waitFor(()=>document.body.textContent.includes('Synthetic question?'));
+assert.equal(button('Start interview again'),undefined);
+assert.equal(document.querySelector('input[aria-label="Your answer"]').disabled,false);
+assert.equal(interviewPosts,postsBeforeRecovery+1);
+assert.equal(advances,0);
+resetVersion='synthetic-corrupt-version-2';
+await mount(About);
+await waitFor(()=>button('Start interview again'));
+resetVersion='synthetic-corrupt-version-3';
+await click('Start interview again');
+assert.equal(recoveryRequests.length,2);
+assert.deepEqual(recoveryRequests[1],{resetVersion:'synthetic-corrupt-version-2'});
+assert.equal(button('Start interview again'),undefined,'a stale reset token must require a reload');
+assert.equal(interviewPosts,postsBeforeRecovery+1);
+await click('Try again');
+await waitFor(()=>button('Start interview again'));
+assert.equal(recoveryRequests.length,2,'reloading recovery must never repeat the delete');
+await click('Start interview again');
+await waitFor(()=>document.body.textContent.includes('Synthetic question?'));
+assert.deepEqual(recoveryRequests[2],{resetVersion:'synthetic-corrupt-version-3'});
+assert.equal(interviewDeletes,deletesBeforeRecovery+3);
+assert.equal(interviewPosts,postsBeforeRecovery+2);
 await act(async()=>root.unmount());
 dom.window.close();
 process.exit(0);

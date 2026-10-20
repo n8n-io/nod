@@ -11,6 +11,7 @@ import {
   interviewQuestions,
   type InterviewResponse,
   type OnboardingInterview,
+  type OnboardingInterviewState,
 } from '../shared/onboarding.ts';
 import { line, unsafe } from './memory-tree.ts';
 import { createMemoryService } from './memory.ts';
@@ -131,19 +132,14 @@ export function createOnboardingInterview(options: {
   async function load(store: PrivateObjectStore) {
     const object = await store.read(draftKey, draftBytes);
     if (!object) return { draft: undefined, version: null };
+    const key = await options.keyStore.getKey();
     let saved: z.infer<typeof draftSchema>;
     try {
       saved = draftSchema.parse(
-        JSON.parse(
-          openVaultValue(
-            await options.keyStore.getKey(),
-            binding,
-            Buffer.from(object.bytes).toString(),
-          ),
-        ),
+        JSON.parse(openVaultValue(key, binding, Buffer.from(object.bytes).toString())),
       );
     } catch {
-      throw new Error('Your setup answers could not be opened. Try again.');
+      return { draft: undefined, version: object.version, unreadable: true };
     }
     if (saved.expiresAt <= Date.now()) {
       await store.remove(draftKey, { expectedVersion: object.version });
@@ -262,8 +258,9 @@ export function createOnboardingInterview(options: {
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/onboarding/interview', async (_request, response) => {
       response.header('cache-control', 'no-store');
-      return locked(async (store) => {
+      return locked<OnboardingInterviewState>(async (store) => {
         const saved = await load(store);
+        if (saved.unreadable) return { resetVersion: saved.version };
         if (saved.draft) return saved.draft;
         const draft = emptyDraft();
         await saveDraft(store, draft, saved.version);
@@ -283,14 +280,18 @@ export function createOnboardingInterview(options: {
     });
     app.delete('/api/onboarding/interview', async (request, response) => {
       response.header('cache-control', 'no-store');
-      const { generation } = z
-        .object({ generation: z.uuid().optional() })
-        .strict()
+      const input = z
+        .union([
+          z.object({ generation: z.uuid().optional() }).strict(),
+          z.object({ resetVersion: z.uuid() }).strict(),
+        ])
         .parse(request.body ?? {});
-      if (!generation) throw conflict();
+      if (!('resetVersion' in input) && !input.generation) throw conflict();
       return locked(async (store) => {
         const saved = await load(store);
-        if (!saved.draft || saved.draft.generation !== generation) throw conflict();
+        if ('resetVersion' in input) {
+          if (!saved.unreadable || saved.version !== input.resetVersion) throw conflict();
+        } else if (!saved.draft || saved.draft.generation !== input.generation) throw conflict();
         const draft = emptyDraft();
         await saveDraft(store, draft, saved.version);
         return draft;
