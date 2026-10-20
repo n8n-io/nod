@@ -564,8 +564,14 @@ async function runningDesktop(
         });
       }
       show() {
+        this.minimized = false;
         this.visible = true;
         this.focus();
+      }
+      minimize() {
+        this.minimized = true;
+        this.visible = false;
+        this.focused = false;
       }
       showInactive() {
         this.inactiveShows = (this.inactiveShows ?? 0) + 1;
@@ -1379,6 +1385,15 @@ test('native windows wait for owned renderer readiness before replacing startup'
         assert.equal(Boolean(engine.isFocused()), ['foreground', 'resized'].includes(scenario));
         if (scenario === 'resized') assert.deepEqual(engine.getBounds(), setup.getNormalBounds());
         assert.equal(setup.isDestroyed(), true);
+        if (scenario === 'minimized') {
+          assert.equal(engine.isMinimized(), true);
+          assert.equal(Boolean(engine.isFocused()), false);
+          f.showEngine();
+          assert.equal(f.windows.length, 2);
+          assert.equal(engine.isVisible(), true);
+          assert.equal(engine.isMinimized(), false);
+          assert.equal(engine.isFocused(), true);
+        }
         if (scenario === 'foreground') {
           const child = new engine.constructor({ show: false });
           engine.webContents.emit('did-create-window', child);
@@ -2451,15 +2466,10 @@ app.whenReady().then(async () => {
     delete environment.ELECTRON_RUN_AS_NODE;
     const execute = (file, args, env = environment) =>
       new Promise((resolve, reject) => {
-        execFile(
-          file,
-          args,
-          { env, timeout: 45_000, windowsHide: true },
-          (error, stdout, stderr) => {
-            if (error) reject(new Error(`${error.message}\n${stderr}`));
-            else resolve(stdout);
-          },
-        );
+        execFile(file, args, { env, timeout: 45_000, windowsHide: true }, (error, stdout) => {
+          if (error) reject(error);
+          else resolve(stdout);
+        });
       });
     const { default: electron } = await import('../node_modules/electron/index.js');
     const run = async (mode) => {

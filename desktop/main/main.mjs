@@ -639,7 +639,8 @@ function showEngine({ focus = true } = {}) {
       if (startup && !startup.isDestroyed()) {
         window.setBounds(startup.getNormalBounds());
         const waiting = pendingRenderers.has(startup);
-        if (!startup.isMinimized() && (startup.isVisible() || waiting)) {
+        if (startup.isMinimized()) window.minimize();
+        else if (startup.isVisible() || waiting) {
           if (startup.isFocused() || waiting) window.show();
           else window.showInactive();
         }
