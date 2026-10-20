@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
-import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +40,7 @@ delete environment.ELECTRON_RUN_AS_NODE;
 const receipt = { source: await run('git', ['rev-parse', 'HEAD'], { cwd: repository }) };
 let child;
 let installed = false;
+let failure;
 
 async function recorded() {
   const content = await readFile(events, 'utf8').catch(() => '');
@@ -55,10 +65,18 @@ async function waitFor(predicate) {
 async function start() {
   await rm(stop, { force: true });
   child = spawn(executable, [], { env: environment, stdio: 'ignore', windowsHide: true });
-  child.on('error', () => {});
-  return waitFor((entries) =>
-    entries.find((entry) => entry.event === 'ready' && entry.pid === child.pid),
-  );
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+  return waitFor((entries) => {
+    const ready = entries.find((entry) => entry.event === 'ready' && entry.pid === child.pid);
+    assert.ok(
+      ready || child.exitCode === null,
+      `Otto exited before readiness (${child.exitCode}).`,
+    );
+    return ready;
+  });
 }
 
 async function replace(directory) {
@@ -155,6 +173,7 @@ app.whenReady().then(async () => {
   );
   const installers = {};
   for (const version of ['1.0.0', '1.0.1']) {
+    receipt.stage = `packaging ${version}`;
     await writeFile(
       join(source, 'package.json'),
       JSON.stringify({
@@ -190,8 +209,16 @@ app.whenReady().then(async () => {
       { timeout: 600_000 },
     );
   }
-  await run(installers['1.0.0'], ['/S', `/D=${installation}`], { timeout: 180_000 });
+  receipt.stage = 'installing 1.0.0';
+  await run(installers['1.0.0'], ['/S', `/D=${installation}`], {
+    timeout: 180_000,
+    windowsVerbatimArguments: true,
+    argv0: `"${installers['1.0.0']}"`,
+  });
   installed = true;
+  await stat(executable);
+  await stat(join(installation, 'Uninstall.exe'));
+  receipt.stage = 'starting 1.0.0';
   const first = await start();
   const rejected = join(root, 'rejected');
   await mkdir(rejected);
@@ -201,14 +228,17 @@ app.whenReady().then(async () => {
     `Unicode true\nName "Otto rejected update fixture"\nOutFile "${join(rejected, 'Otto-Setup-x64.exe')}"\nRequestExecutionLevel user\nSilentInstall silent\nSection\nSetErrorLevel 5\nSectionEnd\n`,
   );
   await run(nsis, [rejectedSource]);
-  const failure = await replace(rejected);
-  assert.equal(failure.ok, false, 'A rejected installer must fail without opening Otto.');
+  receipt.stage = 'rejecting failed update';
+  const rejectedUpdate = await replace(rejected);
+  assert.equal(rejectedUpdate.ok, false, 'A rejected installer must fail without opening Otto.');
   await delay(500);
   assert.equal((await recorded()).filter((entry) => entry.event === 'ready').length, 1);
+  receipt.stage = 'restarting 1.0.0';
   const recovered = await start();
   assert.equal(recovered.version, '1.0.0');
   assert.deepEqual(recovered.files, first.files);
   assert.equal(recovered.keyHash, first.keyHash);
+  receipt.stage = 'updating to 1.0.1';
   const success = await replace(dirname(installers['1.0.1']));
   assert.equal(success.ok, true, success.error?.diagnostic);
   const updated = await waitFor((entries) =>
@@ -222,6 +252,7 @@ app.whenReady().then(async () => {
   assert.deepEqual(updated.preferences, first.preferences);
   Object.assign(receipt, {
     passed: true,
+    stage: 'completed',
     versions: ['1.0.0', '1.0.1'],
     realPowerShell: true,
     realNsis: true,
@@ -236,13 +267,21 @@ app.whenReady().then(async () => {
     'Windows update replacement, failed-install recovery and encrypted completed-profile preservation passed.',
   );
 } catch (error) {
+  failure = error;
   Object.assign(receipt, { passed: false, error: error.message, diagnostic: error.diagnostic });
   throw error;
 } finally {
+  receipt.events = await recorded().catch((error) => [
+    { event: 'read-error', message: error.message },
+  ]);
   let cleanupError;
   try {
     if (child?.exitCode === null) child.kill();
-    if (installed) await run(join(installation, 'Uninstall.exe'), ['/S', `_?=${installation}`]);
+    if (installed)
+      await run(join(installation, 'Uninstall.exe'), ['/S', `_?=${installation}`], {
+        windowsVerbatimArguments: true,
+        argv0: `"${join(installation, 'Uninstall.exe')}"`,
+      });
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
     receipt.cleanup = true;
   } catch (error) {
@@ -251,5 +290,5 @@ app.whenReady().then(async () => {
   }
   await mkdir(output, { recursive: true });
   await writeFile(join(output, 'receipt.json'), JSON.stringify(receipt, null, 2));
-  if (cleanupError) throw cleanupError;
+  if (cleanupError && !failure) throw cleanupError;
 }
