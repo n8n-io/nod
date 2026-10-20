@@ -362,10 +362,18 @@ export function createPublicLinkPreviewProvider(
           )
         )
           return null;
-        return parseLinkMetadata(
+        const metadata = parseLinkMetadata(
           decodeHtml(result.body, result.headers['content-type']),
           result.url,
         );
+        if (!metadata?.player) return metadata;
+        const { player, ...rest } = metadata;
+        return (await publicUrl(player, options.resolver).then(
+          () => true,
+          () => false,
+        ))
+          ? metadata
+          : rest;
       } catch {
         return null;
       }

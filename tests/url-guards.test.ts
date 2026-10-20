@@ -181,6 +181,22 @@ test('preview pages decode with their declared charset', () => {
   );
 });
 
+test('a player whose host resolves to a private address is dropped', async () => {
+  const page = (player: string) =>
+    createPublicLinkPreviewProvider({
+      resolver: async (host) => [
+        { address: host === 'player.example.org' ? '10.0.0.7' : '93.184.216.34', family: 4 },
+      ],
+      request: async () =>
+        html(`<title>Video</title><meta name="twitter:player" content="${player}">`),
+    }).metadata('https://video.example.org/watch');
+  assert.equal((await page('https://player.example.org/embed/1'))?.player, undefined);
+  assert.equal(
+    (await page('https://cdn.example.org/embed/1'))?.player,
+    'https://cdn.example.org/embed/1',
+  );
+});
+
 test('every redirect checks DNS again and requests use the verified address', async () => {
   let lookups = 0;
   const calls: string[] = [];

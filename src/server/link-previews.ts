@@ -130,11 +130,15 @@ export function createLinkPreviews(
     if (cached.value !== undefined) return cached.value;
     if (cached.pending) return cached.pending;
     cached.pending = run(() => provider.image(cached.url))
+      .catch(() => null)
       .then((value) => {
         cached.value = value && acceptable(value);
+        if (!cached.value) {
+          images.delete(id);
+          for (const [url, entry] of previews) if (entry.imageId === id) previews.delete(url);
+        }
         return cached.value;
       })
-      .catch(() => null)
       .finally(() => {
         cached.pending = undefined;
         prune();

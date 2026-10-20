@@ -7,8 +7,8 @@ import { safeMessageLink } from '../lib/message-links';
 import { loadLinkPreview } from '../lib/link-previews';
 
 type Source = 'text' | 'preview' | 'tooltip' | 'player';
-type Link = { url: string; label: string };
-type Row = LinkPreview & { label: string; position: number };
+type Link = { url: string; page: string; label: string };
+type Row = LinkPreview & Link & { position: number };
 
 const shownRows = 5;
 
@@ -40,8 +40,13 @@ function messageLinks(content: HTMLDivElement | null): Link[] {
     const url = anchor.getAttribute('href') ?? '';
     const link = safeMessageLink(url, window.location.origin);
     if (link?.kind === 'setup') return [];
-    if (link?.kind === 'external' && previewableUrl(url) && !links.has(url))
-      links.set(url, { url, label: anchor.textContent?.trim().replace(/\s+/g, ' ') || url });
+    const page = link?.kind === 'external' ? previewableUrl(url) : null;
+    if (page && !links.has(page))
+      links.set(page, {
+        url,
+        page,
+        label: anchor.textContent?.trim().replace(/\s+/g, ' ') || url,
+      });
   }
   return [...links.values()];
 }
@@ -77,7 +82,7 @@ function PreviewRow({
         target="_blank"
         rel="noopener noreferrer"
         referrerPolicy="no-referrer"
-        data-url={row.url}
+        data-url={row.page}
         onClick={() => opened(row.url, 'preview', row.position)}
       >
         {image}
@@ -87,7 +92,7 @@ function PreviewRow({
   return (
     <div
       className={`${className} message-link-preview-video${playing ? ' message-link-preview-playing' : ''}`}
-      data-url={row.url}
+      data-url={row.page}
     >
       {playing ? (
         <span className="message-link-preview-player">
@@ -231,7 +236,7 @@ export function MessageLinkPreviews({
       const link = externalAnchor(event.target);
       if (!link) return;
       window.clearTimeout(timer);
-      setActive(link.url);
+      setActive(previewableUrl(link.url));
       timer = window.setTimeout(() => {
         const rect = link.anchor.getBoundingClientRect();
         const below = rect.top < 72;
@@ -313,7 +318,10 @@ export function MessageLinkPreviews({
     const over = (event: Event) => {
       const url = (event.target as Element).closest<HTMLElement>('[data-url]')?.dataset.url;
       for (const item of anchors())
-        item.anchor.classList.toggle('message-link-highlight', Boolean(url && item.url === url));
+        item.anchor.classList.toggle(
+          'message-link-highlight',
+          Boolean(url && item.url && previewableUrl(item.url) === url),
+        );
     };
     const leave = () => {
       for (const item of anchors()) item.anchor.classList.remove('message-link-highlight');
@@ -340,7 +348,7 @@ export function MessageLinkPreviews({
             <PreviewRow
               key={row.url}
               row={row}
-              active={active === row.url}
+              active={active === row.page}
               onImageError={(url) => retry.current(url)}
             />
           ))}
