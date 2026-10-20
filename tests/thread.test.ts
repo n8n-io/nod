@@ -1776,7 +1776,7 @@ test(
             ],
           );
           assert.equal('inbox' in planInputs.at(-1)!.input, false);
-          assert.match(rejected.intro, /^Here’s one thing/);
+          assert.equal(rejected.intro, fallback.intro);
           const repairInput = planInputs.at(-1)!.input as { previous: unknown; problems: string[] };
           assert.ok(repairInput.previous);
           assert.deepEqual(repairInput.problems, [
