@@ -112,7 +112,7 @@ function SetupAction({
         ) : (
           <Icon size={18} aria-hidden="true" />
         )}
-        <span>{label}</span>
+        <span>{app ? `Connect ${app.name}` : label}</span>
       </button>
     );
   return (
