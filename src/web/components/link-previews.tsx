@@ -154,12 +154,20 @@ export function MessageLinkPreviews({
     setExpanded(false);
     const load = () => {
       if (!current || !links.length) return;
-      void Promise.all(links.map((link) => loadLinkPreview(link.url))).then((values) => {
-        if (!current) return;
-        const found = values.flatMap((value, index) =>
-          value ? [{ ...value, ...links[index] }] : [],
-        );
-        setRows(found.map((row, index) => ({ ...row, position: index + 1 })));
+      const found = new Map<number, LinkPreview & Link>();
+      links.forEach((link, index) => {
+        void loadLinkPreview(link.url).then((value) => {
+          if (!current || !value) return;
+          found.set(index, { ...value, ...link });
+          setRows(
+            [...found]
+              .sort(([a], [b]) => a - b)
+              .map(([, row], position) => ({
+                ...row,
+                position: position + 1,
+              })),
+          );
+        });
       });
     };
     const target = content.current;
