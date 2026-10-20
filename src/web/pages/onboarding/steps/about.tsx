@@ -37,10 +37,8 @@ function restore(): Talk {
   return { answers, turns, done: saved?.done === true && turns.length > answers.length };
 }
 
-export function About({ arrived, onNext, onBack, interview }: StepProps) {
-  const [{ answers, turns, done }, setTalk] = useState(() =>
-    interview ? (interview.state ?? { answers: [], turns: [], done: false }) : restore(),
-  );
+export function About({ arrived, onNext, onBack }: StepProps) {
+  const [{ answers, turns, done }, setTalk] = useState(restore);
   const { data: apps } = usePageData<Connection[]>('/api/apps');
   const gmail = apps?.some((app) => app.slug === 'gmail' && app.status === 'connected');
   const [draft, setDraft] = useState('');
@@ -63,7 +61,7 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
   const thinking = turns.length === answers.length;
 
   useEffect(() => {
-    if (!interview) writeStored('about', { owner: owner(), answers, turns, done });
+    writeStored('about', { owner: owner(), answers, turns, done });
   }, [answers, turns, done]);
 
   useEffect(() => {
@@ -82,8 +80,7 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
             method: 'POST',
             body: JSON.stringify({ talk }),
             signal: controller.signal,
-          }).catch((cause): InterviewResponse => {
-            if (interview) throw cause;
+          }).catch((): InterviewResponse => {
             return !count
               ? { messages: opening, done: false }
               : count < interviewQuestions && !turns.flat().includes(handOff)
@@ -100,7 +97,6 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
           turns: [...turns.slice(0, count), reply.messages],
           done: reply.done,
         };
-        await interview?.save(value);
         if (controller.signal.aborted) return;
         pendingTurn.current = null;
         setTalk((current) => (current.answers.length === count ? value : current));
@@ -144,7 +140,6 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
     setError('');
     try {
       const talk = { answers: [...answers, text], turns, done };
-      await interview?.save(talk);
       setDraft('');
       setShown(false);
       setWaited(true);
@@ -165,7 +160,6 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
     setError('');
     try {
       const talk = { answers: [], turns: [], done: false };
-      await interview?.save(talk);
       setShown(false);
       setFresh(true);
       setWaited(false);
@@ -284,7 +278,7 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
           </form>
         </Rise>
       )}
-      {done ? (
+      {done && (
         <Footer
           show={shown}
           onBack={() => void restart()}
@@ -292,13 +286,11 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
           onNext={() => void save()}
           busy={saving}
         />
-      ) : (
-        !interview && arrived === 'back' && !answers.length && <Footer onNext={onNext} />
       )}
       {error && (
         <p className="ob-about-error" role="alert" data-analytics-private>
           {error}
-          {thinking && interview && (
+          {thinking && (
             <>
               <Button variant="ghost" disabled={saving} onClick={onBack}>
                 Back

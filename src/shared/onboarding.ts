@@ -8,7 +8,6 @@ export function connectedGmail(connection: Connection) {
     connection.slug === 'gmail' &&
     connection.status === 'connected' &&
     Boolean(connection.connectionId && connection.accountId) &&
-    !connection.reconnectRequired &&
     !connection.disconnectPending
   );
 }
@@ -20,18 +19,6 @@ export type OnboardingInterview = {
   answers: string[];
   turns: string[][];
   done: boolean;
-};
-export type DesktopSetupState = {
-  version: number;
-  step: OnboardingStep;
-  about?: OnboardingInterview;
-  runtime: { phase: 'preparing' | 'ready' | 'error'; message: string };
-  completed: boolean;
-  completing?: boolean;
-};
-export type DesktopSetupUpdate = {
-  step?: OnboardingStep;
-  about?: OnboardingInterview;
 };
 export type SuggestedTask = {
   id: string;

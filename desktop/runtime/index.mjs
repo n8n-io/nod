@@ -18,6 +18,7 @@ import {
 export { installRuntimeArchive } from './assets.mjs';
 
 const preparing = new Map();
+const storageReady = new Set();
 const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 
 async function fileHash(path) {
@@ -273,17 +274,17 @@ async function prepare(options, onComputerStart) {
   await runLima(['start', '--tty=false', vm], { timeout: 600_000 });
   if (!options.preserveRuntimeCache) await removeUnmountedRuntimes(assets).catch(() => {});
   await waitFor(() => runDocker(['info', '--format', '{{.ServerVersion}}']), { signal });
-  for (let index = 0; index < manifest.images.length; index++) {
-    const item = validImage(manifest.images[index]);
+  const prepareImage = async (name) => {
+    const item = validImage(manifest.images.find((image) => image.name === name));
     let installed = '';
     try {
       installed = await runDocker(['image', 'inspect', '--format', '{{.Id}}', item.reference]);
     } catch {}
-    if (installed === item.id) continue;
+    if (installed === item.id) return;
     status(
       'installing',
       `Preparing ${item.name === 'postgres' ? 'local storage' : `your ${item.name}`}…`,
-      0.3 + index * 0.12,
+      { postgres: 0.3, workspace: 0.8, browser: 0.88 }[name],
     );
     if ((await fileHash(join(assets, item.file))) !== item.sha256)
       throw new Error('An Otto computer image is damaged. Reinstall this build.');
@@ -301,7 +302,7 @@ async function prepare(options, onComputerStart) {
     );
     if ((await runDocker(['image', 'inspect', '--format', '{{.Id}}', item.reference])) !== item.id)
       throw new Error('The loaded Otto image does not match its manifest.');
-  }
+  };
   return finishRuntime({
     dataRoot,
     resourcesPath,
@@ -317,6 +318,8 @@ async function prepare(options, onComputerStart) {
     runGuest: (input) => runLima(['shell', vm, 'sudo', 'bash', '-s'], { input }),
     signal,
     status,
+    prepareImage,
+    onStorageReady: options.onStorageReady,
   });
 }
 
@@ -472,8 +475,10 @@ export async function finishRuntime({
   runGuest,
   signal,
   status,
+  prepareImage,
+  onStorageReady,
 }) {
-  status('starting', 'Preparing secure storage and tools…', 0.72);
+  status('starting', 'Preparing secure storage and tools…', 0.24);
   const names = {
     workspace: `otto-workspace-${identity}`,
     browser: `otto-browser-${identity}`,
@@ -496,6 +501,7 @@ export async function finishRuntime({
   };
   for (const volume of Object.values(volumes)) await runDocker(['volume', 'create', volume]);
   const image = (name) => manifest.images.find((item) => item.name === name).id;
+  await prepareImage?.('postgres');
   await replaceContainer(
     runDocker,
     names.postgres,
@@ -544,78 +550,6 @@ export async function finishRuntime({
     },
     { signal, attempts: 12 },
   );
-  status('starting', 'Preparing your workspace…', 0.82);
-  await replaceContainer(
-    runDocker,
-    names.workspace,
-    image('workspace'),
-    [
-      '--network',
-      `otto-workspace-${identity}`,
-      '--init',
-      '--cap-drop',
-      'ALL',
-      '--security-opt',
-      'no-new-privileges:true',
-      '--pids-limit',
-      '1024',
-      '--memory',
-      '2g',
-      '--cpus',
-      '2',
-      '--volume',
-      `${volumes.workspace}:/workspace`,
-      '--volume',
-      `${volumes.tools}:/home/node`,
-      '--entrypoint',
-      '/usr/bin/sleep',
-    ],
-    { command: ['infinity'] },
-  );
-  status('starting', 'Preparing your browser…', 0.9);
-  await replaceContainer(runDocker, names.browser, image('browser'), [
-    '--network',
-    `otto-browser-${identity}`,
-    '--init',
-    '--cap-drop',
-    'ALL',
-    '--security-opt',
-    'no-new-privileges:true',
-    '--read-only',
-    '--pids-limit',
-    '768',
-    '--memory',
-    '2g',
-    '--cpus',
-    '2',
-    '--shm-size',
-    '256m',
-    '--tmpfs',
-    '/tmp:size=1g',
-    '--tmpfs',
-    '/home/node:uid=1000,gid=1000,mode=700,size=256m',
-    '--volume',
-    `${volumes.browser}:/data`,
-  ]);
-  await waitFor(
-    async () => {
-      if (
-        (await runDocker(['inspect', '--format', '{{.State.Running}}', names.browser])) !== 'true'
-      )
-        throw Object.assign(new Error('Otto’s local browser stopped during setup. Try again.'), {
-          code: 'OTTO_CONTAINER_STOPPED',
-        });
-      return runDocker([
-        'exec',
-        names.browser,
-        'node',
-        '-e',
-        'const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))',
-      ]);
-    },
-    { signal },
-  );
-  await removeStaleImages(runDocker, runGuest, manifest).catch(() => {});
   const wrapperRoot = join(controlRoot, 'bin');
   if (process.platform !== 'win32') {
     await mkdir(wrapperRoot, { recursive: true, mode: 0o700 });
@@ -668,8 +602,86 @@ exec "$docker" "$@"
     WORKSPACE_CONTAINER: names.workspace,
     DATABASE_URL: databaseUrl,
   };
+  const runtime = { env, environment: env, close: () => stopRuntime({ dataRoot, resourcesPath }) };
+  signal?.throwIfAborted();
+  await onStorageReady?.(runtime);
+  signal?.throwIfAborted();
+  await prepareImage?.('workspace');
+  status('starting', 'Preparing your workspace…', 0.82);
+  await replaceContainer(
+    runDocker,
+    names.workspace,
+    image('workspace'),
+    [
+      '--network',
+      `otto-workspace-${identity}`,
+      '--init',
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges:true',
+      '--pids-limit',
+      '1024',
+      '--memory',
+      '2g',
+      '--cpus',
+      '2',
+      '--volume',
+      `${volumes.workspace}:/workspace`,
+      '--volume',
+      `${volumes.tools}:/home/node`,
+      '--entrypoint',
+      '/usr/bin/sleep',
+    ],
+    { command: ['infinity'] },
+  );
+  await prepareImage?.('browser');
+  status('starting', 'Preparing your browser…', 0.9);
+  await replaceContainer(runDocker, names.browser, image('browser'), [
+    '--network',
+    `otto-browser-${identity}`,
+    '--init',
+    '--cap-drop',
+    'ALL',
+    '--security-opt',
+    'no-new-privileges:true',
+    '--read-only',
+    '--pids-limit',
+    '768',
+    '--memory',
+    '2g',
+    '--cpus',
+    '2',
+    '--shm-size',
+    '256m',
+    '--tmpfs',
+    '/tmp:size=1g',
+    '--tmpfs',
+    '/home/node:uid=1000,gid=1000,mode=700,size=256m',
+    '--volume',
+    `${volumes.browser}:/data`,
+  ]);
+  await waitFor(
+    async () => {
+      if (
+        (await runDocker(['inspect', '--format', '{{.State.Running}}', names.browser])) !== 'true'
+      )
+        throw Object.assign(new Error('Otto’s local browser stopped during setup. Try again.'), {
+          code: 'OTTO_CONTAINER_STOPPED',
+        });
+      return runDocker([
+        'exec',
+        names.browser,
+        'node',
+        '-e',
+        'const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))',
+      ]);
+    },
+    { signal },
+  );
+  await removeStaleImages(runDocker, runGuest, manifest).catch(() => {});
   status('ready', 'Your private computer is ready.', 1);
-  return { env, environment: env, close: () => stopRuntime({ dataRoot, resourcesPath }) };
+  return runtime;
 }
 
 export function prepareRuntime(options) {
@@ -678,11 +690,24 @@ export function prepareRuntime(options) {
     let computerMayBeRunning = false;
     preparing.set(
       key,
-      prepare(options, () => {
-        computerMayBeRunning = true;
-      })
+      prepare(
+        {
+          ...options,
+          ...(options.onStorageReady
+            ? {
+                onStorageReady: async (runtime) => {
+                  await options.onStorageReady(runtime);
+                  storageReady.add(key);
+                },
+              }
+            : {}),
+        },
+        () => {
+          computerMayBeRunning = true;
+        },
+      )
         .catch(async (error) => {
-          if (computerMayBeRunning) await stopRuntime(options);
+          if (computerMayBeRunning && !storageReady.has(key)) await stopRuntime(options);
           throw error;
         })
         .finally(() => preparing.delete(key)),
@@ -692,6 +717,11 @@ export function prepareRuntime(options) {
 }
 
 export async function stopRuntime(options) {
+  await stopComputer(options);
+  storageReady.delete(resolve(options.dataRoot || options.root));
+}
+
+async function stopComputer(options) {
   if (process.platform === 'win32') {
     const { stopWindowsRuntime } = await import('./windows.mjs');
     return stopWindowsRuntime(options);

@@ -27,6 +27,13 @@ ipcRenderer.on('otto:feedback:open', () => {
 });
 
 contextBridge.exposeInMainWorld('ottoDesktop', {
+  status: () => ipcRenderer.invoke('otto:status'),
+  prepare: (options) => ipcRenderer.invoke('otto:prepare', options),
+  onStatus: (listener) => {
+    const receive = (_event, value) => listener(value);
+    ipcRenderer.on('otto:status', receive);
+    return () => ipcRenderer.removeListener('otto:status', receive);
+  },
   openSettings: (section = 'general') => ipcRenderer.invoke('otto:settings:open', section),
   openExternal: (url) => ipcRenderer.invoke('otto:external', url),
   getSettings: () => ipcRenderer.invoke('otto:settings:get'),

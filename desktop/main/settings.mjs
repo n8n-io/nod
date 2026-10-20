@@ -78,6 +78,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
               'theme',
               ...preferenceFields,
               'onboardingPreferenceStep',
+              'welcome',
               'secrets',
               'keyMetadata',
             ].includes(field),
@@ -86,6 +87,15 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         preferenceFields.some((field) => typeof value[field] !== 'boolean') ||
         (value.onboardingPreferenceStep !== undefined &&
           !onboardingPreferenceSteps.includes(value.onboardingPreferenceStep)) ||
+        (value.welcome !== undefined &&
+          (!record(value.welcome) ||
+            Object.keys(value.welcome).some(
+              (field) => !['usageData', 'continued', 'acknowledged'].includes(field),
+            ) ||
+            (value.welcome.acknowledged !== undefined &&
+              (value.welcome.acknowledged !== true || value.welcome.continued !== true)) ||
+            typeof value.welcome.usageData !== 'boolean' ||
+            typeof value.welcome.continued !== 'boolean')) ||
         !record(value.secrets) ||
         Object.entries(value.secrets).some(
           ([field, secret]) =>
@@ -177,6 +187,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       notifications: value.notifications,
       theme: value.theme,
       onboardingCompleted: value.onboardingCompleted,
+      ...(value.welcome ? { welcome: { ...value.welcome } } : {}),
       onboardingPreferenceStep: value.onboardingCompleted
         ? 'complete'
         : (value.onboardingPreferenceStep ?? 'notifications'),
@@ -192,7 +203,8 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           throw new Error('Check your settings and try again.');
         if (
           Object.keys(input).some(
-            (key) => !['theme', ...preferenceFields, 'onboardingPreferenceStep'].includes(key),
+            (key) =>
+              !['theme', ...preferenceFields, 'onboardingPreferenceStep', 'welcome'].includes(key),
           )
         )
           throw new Error('These settings are not supported.');
@@ -206,6 +218,22 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           if (!['system', 'light', 'dark'].includes(input.theme))
             throw new Error('Choose a supported appearance.');
           value.theme = input.theme;
+        }
+        if (input.welcome !== undefined) {
+          if (
+            previous.onboardingCompleted ||
+            previous.welcome?.continued ||
+            !input.welcome ||
+            typeof input.welcome !== 'object' ||
+            Array.isArray(input.welcome) ||
+            Object.keys(input.welcome).some(
+              (field) => !['usageData', 'continued'].includes(field),
+            ) ||
+            typeof input.welcome.usageData !== 'boolean' ||
+            typeof input.welcome.continued !== 'boolean'
+          )
+            throw new Error('Welcome has already finished or its choices are invalid.');
+          value.welcome = { ...input.welcome };
         }
         for (const field of preferenceFields) {
           if (input[field] === undefined) continue;
@@ -235,8 +263,22 @@ export function createSettingsStore(path, encryption, platform = process.platfor
             throw new Error('Choose your desktop preference before continuing.');
           value.onboardingPreferenceStep = input.onboardingPreferenceStep;
         }
+        if (value.onboardingCompleted) delete value.welcome;
         await write(value);
         return redacted(value);
+      });
+    },
+    acknowledgeWelcome(expected) {
+      return exclusive(async () => {
+        const value = await read();
+        if (
+          !value.welcome ||
+          value.welcome.continued !== true ||
+          value.welcome.usageData !== expected.usageData ||
+          value.welcome.continued !== expected.continued
+        )
+          throw new Error('Welcome changed. Try again.');
+        await write({ ...value, welcome: { ...value.welcome, acknowledged: true } });
       });
     },
     legacyIntegration() {

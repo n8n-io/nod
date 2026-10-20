@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { desktopOnboardingSteps, OnboardingFrame } from '..';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { desktopOnboardingSteps, OnboardingFrame } from '../frame';
 import { SetupProgress } from '../../../components/setup-progress';
 import { Button } from '../../../components/ui';
 import { errorMessage } from '../../../lib/api';
@@ -14,7 +14,13 @@ type PreferenceStep = Exclude<DesktopSettings['onboardingPreferenceStep'], 'comp
 
 const sequence = [{ typing: 550 }, { wait: 250 }];
 
-export function DesktopPreferencesSetup({ onReady }: { onReady(): void }) {
+export function DesktopPreferencesSetup({
+  onReady,
+  notice,
+}: {
+  onReady(): void;
+  notice?: ReactNode;
+}) {
   const [step, setStep] = useState<PreferenceStep | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -86,6 +92,7 @@ export function DesktopPreferencesSetup({ onReady }: { onReady(): void }) {
         title={error ? 'Your preferences could not be loaded.' : 'Opening your setup…'}
         error={error}
       >
+        {notice}
         {error && (
           <Button
             variant="outline"
@@ -110,6 +117,7 @@ export function DesktopPreferencesSetup({ onReady }: { onReady(): void }) {
         error={error}
         choose={choose}
       />
+      {notice}
     </OnboardingFrame>
   );
 }

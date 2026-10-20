@@ -34,7 +34,11 @@ import {
   createUpdateSource,
   startDesktopUpdateChecks,
 } from '../main/updates.mjs';
-import { protectWindowsProfile, stageWindowsUpdate } from '../runtime/windows.mjs';
+import {
+  protectWindowsProfile,
+  stageWindowsUpdate,
+  windowsEnvironment,
+} from '../runtime/windows.mjs';
 import { buildDesktopUI } from '../scripts/build-ui.mjs';
 
 function deferred() {
@@ -197,54 +201,44 @@ test('artifact downloads clean terminal failures without discarding resumable do
   assert.deepEqual(f.errors, [undefined]);
 });
 
-test('runtime warmup overlaps onboarding without reading credentials or starting the engine', async (t) => {
-  const f = await fixture(t);
-  const gate = deferred();
-  const started = deferred();
+test('storage starts the normal backend before workspace readiness and quit closes it before the runtime', async () => {
+  const storage = deferred();
+  const resources = deferred();
+  const listening = deferred();
   const events = [];
-  let decrypted = 0;
-  const decrypt = f.encryption.decryptString;
-  f.encryption.decryptString = (value) => {
-    decrypted++;
-    return decrypt(value);
-  };
   const computer = { close: async () => events.push('computer closed') };
   const lifecycle = createDesktopLifecycle({
-    prepareRuntime: async () => {
-      events.push('computer started');
-      started.resolve();
-      return gate.promise;
+    prepareRuntime: async ({ onStorageReady }) => {
+      events.push('storage starting');
+      await storage.promise;
+      await onStorageReady(computer);
+      listening.resolve();
+      await resources.promise;
+      return computer;
     },
-    validateStart: async () => {
-      if (!(await f.store.get()).onboardingCompleted) throw new Error('Setup incomplete');
-    },
-    startEngine: async ({ runtime }) => {
+    validateStart: async () => {},
+    startEngine: async ({ runtime, pending }) => {
       assert.equal(runtime, computer);
-      assert.equal((await f.reopen().get()).onboardingCompleted, true);
-      await f.store.environment();
-      events.push('engine started');
+      events.push(pending ? 'backend listening' : 'runtime ready');
     },
     stopEngine: async () => events.push('engine stopped'),
     onRuntimeStatus: () => {},
   });
-  const first = lifecycle.warmup();
-  assert.equal(first, lifecycle.warmup());
-  await started.promise;
-  await assert.rejects(lifecycle.start());
-  assert.equal(lifecycle.engineStarting, false);
-  assert.equal(decrypted, 0);
-  await f.store.save({ onboardingCompleted: true });
   const running = lifecycle.start();
   assert.equal(running, lifecycle.start());
-  assert.equal(lifecycle.engineStarting, false);
-  assert.deepEqual(events, ['computer started']);
-  gate.resolve(computer);
-  await Promise.all([first, running]);
-  assert.ok(decrypted > 0);
-  assert.deepEqual(events, ['computer started', 'engine started']);
+  await new Promise(setImmediate);
+  assert.deepEqual(events, ['storage starting']);
+  storage.resolve();
+  await listening.promise;
+  assert.equal(lifecycle.busy, true);
+  assert.deepEqual(events, ['storage starting', 'backend listening']);
+  resources.resolve();
+  await running;
+  assert.deepEqual(events, ['storage starting', 'backend listening', 'runtime ready']);
   const stopped = lifecycle.close();
   assert.equal(stopped, lifecycle.close());
   await stopped;
+  assert.deepEqual(events.slice(-2), ['engine stopped', 'computer closed']);
 });
 
 test('failed runtime preparation waits for explicit retry and keeps the successful computer', async () => {
@@ -334,14 +328,11 @@ async function runningDesktop(
   {
     allowStart = false,
     reportReady = true,
-    setupReady = true,
-    fastSetupTimeout = false,
     initialState = 'running',
+    storedProfile,
     legacyKey,
     prepareRuntime,
     nativePageLoaded,
-    protectNativeProfile = async () => {},
-    setupCleanup,
     notificationsSupported = false,
     webPreferences = { quietHoursEnabled: false },
     openFile = open,
@@ -355,10 +346,13 @@ async function runningDesktop(
     reveal = () => assert.fail('No file should be revealed.'),
   } = {},
 ) {
-  const storage = await fixture(t, platform);
-  await storage.store.save({
-    onboardingCompleted: initialState !== 'fresh',
-  });
+  const storage = storedProfile
+    ? { ...storedProfile, store: storedProfile.reopen() }
+    : await fixture(t, platform);
+  if (!storedProfile)
+    await storage.store.save({
+      onboardingCompleted: initialState !== 'fresh',
+    });
   if (legacyKey) {
     await storage.store.environment();
     const saved = JSON.parse(await readFile(storage.path, 'utf8'));
@@ -381,7 +375,6 @@ async function runningDesktop(
     handle: (name, handler) => handlers.set(name, handler),
   });
   let openAtLogin = false;
-  let elapsed = 0;
   let requestHeaders;
   const appSession = Object.assign(new EventEmitter(), {
     webRequest: {
@@ -438,22 +431,11 @@ async function runningDesktop(
     createServer,
     AbortController,
     AbortSignal,
-    Date: class extends Date {
-      static now() {
-        return Date.now() + elapsed;
-      }
-    },
-    setTimeout: (callback, ms) => {
-      if (fastSetupTimeout && ms === 100) {
-        elapsed += 45_000;
-        return setTimeout(callback, 0);
-      }
-      return setTimeout(callback, ms);
-    },
+    Date,
+    setTimeout,
     clearTimeout,
     fetch: request,
     createSettingsStore: () => storage.store,
-    protectNativeProfile,
     createDesktopAnalytics,
     createAppPreferencesStore: () => ({
       sync: async () => {},
@@ -469,7 +451,10 @@ async function runningDesktop(
         ...options,
         prepareRuntime: async (options) => {
           await mkdir(join(paths.get('userData'), 'profiles', 'local'), { recursive: true });
-          return prepareRuntime ? prepareRuntime(options) : { env: {} };
+          if (prepareRuntime) return prepareRuntime(options);
+          const runtime = { env: {} };
+          await options.onStorageReady?.(runtime);
+          return runtime;
         },
       }),
     desktopSetupMode,
@@ -488,16 +473,10 @@ async function runningDesktop(
         assert.ok(allowStart, 'The healthy engine must not restart.');
         assert.ok(Object.values(options.env).every((value) => typeof value === 'string'));
         const child = new EventEmitter();
-        child.kind =
-          file.endsWith('/setup.mjs') || file.endsWith('\\setup.mjs') ? 'setup' : 'engine';
+        assert.ok(file.endsWith('/engine.mjs') || file.endsWith('\\engine.mjs'));
+        child.kind = 'engine';
         child.sent = [];
-        child.postMessage = (message) => {
-          child.sent.push(message);
-          if (message.type === 'otto-setup-ack')
-            void Promise.resolve(setupCleanup).then(() =>
-              setImmediate(() => child.emit('message', { type: 'otto-setup-cleaned' })),
-            );
-        };
+        child.postMessage = (message) => child.sent.push(message);
         child.environment = options.env;
         child.port = options.env.PORT;
         child.stdout = { resume() {} };
@@ -506,18 +485,10 @@ async function runningDesktop(
           child.killed = true;
           child.emit('exit', 0);
         };
-        if (child.kind === 'setup' ? setupReady : reportReady)
-          setImmediate(() => {
-            child.emit('message', {
-              type: child.kind === 'setup' ? 'otto-setup-ready' : 'otto-ready',
-              port: Number(options.env.PORT),
-              ...(options.env.OTTO_DESKTOP_SETUP_PENDING === 'true'
-                ? { setupId: 'synthetic-setup-receipt' }
-                : {}),
-            });
-            if (child.kind === 'setup' && initialState === 'frozen')
-              child.emit('message', { type: 'otto-setup-complete' });
-          });
+        if (reportReady)
+          setImmediate(() =>
+            child.emit('message', { type: 'otto-ready', port: Number(options.env.PORT) }),
+          );
         children.push(child);
         return child;
       },
@@ -595,26 +566,25 @@ async function runningDesktop(
     ${source}
     engine = {};
     enginePreferencesReady = true;
+    engineRuntimeReady = true;
     engineOrigin = 'http://127.0.0.1:4310';
     engineBound = true;
     onboardingCompleted = true;
     status.phase = 'ready';
-    ${initialState === 'running' ? '' : "engine = undefined; enginePreferencesReady = false; engineOrigin = ''; engineBound = false; onboardingCompleted = false; status.phase = 'idle';"}
+    ${initialState === 'running' ? '' : "engine = undefined; enginePreferencesReady = false; engineRuntimeReady = false; engineOrigin = ''; engineBound = false; onboardingCompleted = false; status.phase = 'idle';"}
     ${source.slice(source.indexOf('      const appSession ='), source.indexOf('      const image = nativeImage'))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:get'"), source.indexOf("      ipcMain.handle('otto:feedback:context'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:feedback:context'"), source.indexOf("      ipcMain.handle('otto:preferences:get'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:save'"), source.indexOf("      ipcMain.handle('otto:prepare'"))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:prepare'"), source.indexOf("      ipcMain.handle('otto:runtime:warm'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:prepare'"), source.indexOf("      ipcMain.handle('otto:onboarding:replay'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:runtime:install-wsl'"), source.indexOf("      ipcMain.handle('otto:chat-read:get'"))}
-    if (typeof protectProfile === 'function') protectProfile = globalThis.protectNativeProfile;
     globalThis.running = {
       prepare,
       launch: async () => { ${source.slice(source.lastIndexOf('      try {\n        const saved = await settings.get();'), source.indexOf('    })', source.lastIndexOf('      try {\n        const saved = await settings.get();')))} },
       settle: () => preparing ?? Promise.resolve(),
-      close: async () => { quitting = true; await stopEarlySetup(); await lifecycle.close(); },
+      close: async () => { quitting = true; await lifecycle.close(); },
       profileRoot,
       profileOwner,
-      startEarlySetup,
       showEngine,
       showSettings,
       replayOnboarding,
@@ -629,13 +599,6 @@ async function runningDesktop(
     })()`,
     context,
   );
-  if (initialState === 'frozen') {
-    await mkdir(join(context.running.profileRoot, 'onboarding'), { recursive: true });
-    await writeFile(
-      join(context.running.profileRoot, 'onboarding', 'pending'),
-      'synthetic encrypted snapshot',
-    );
-  }
   return {
     ...context.running,
     windows,
@@ -648,7 +611,7 @@ async function runningDesktop(
   };
 }
 
-test('early setup and the full engine use the same release boundary for analytics', async (t) => {
+test('the normal engine uses the release boundary for analytics during first setup', async (t) => {
   for (const scenario of [
     {
       name: 'stable release',
@@ -677,7 +640,7 @@ test('early setup and the full engine use the same release boundary for analytic
   ]) {
     await t.test(scenario.name, async (t) => {
       const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
-        initialState: 'frozen',
+        initialState: 'fresh',
         allowStart: true,
         packaged: true,
         buildMetadata: scenario.buildMetadata,
@@ -688,7 +651,7 @@ test('early setup and the full engine use the same release boundary for analytic
         await f.settle();
         assert.deepEqual(
           f.children.map((child) => child.kind),
-          ['setup', 'engine'],
+          ['engine'],
         );
         assert.ok(
           f.children.every(
@@ -706,117 +669,80 @@ test('early setup and the full engine use the same release boundary for analytic
   }
 });
 
-test('Windows early setup protects its profile before unlocking keys even without WSL', async (t) => {
-  for (const failure of [false, true]) {
-    await t.test(failure ? 'refused permissions' : 'protected profile', async (t) => {
-      const gate = deferred();
-      let protecting = false;
-      let protectedProfile = false;
-      let unlocked = false;
-      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
-        initialState: 'fresh',
-        platform: 'win32',
-        allowStart: true,
-        prepareRuntime: async () => {
-          throw Object.assign(new Error('Synthetic WSL missing'), { code: 'OTTO_WSL_REQUIRED' });
-        },
-        protectNativeProfile: async () => {
-          assert.ok(f.windows.some((window) => window.isVisible()));
-          protecting = true;
-          await gate.promise;
-          if (failure) throw new Error('Synthetic profile protection failed');
-          protectedProfile = true;
-        },
-      });
-      const environment = f.storage.store.environment;
-      f.storage.store.environment = async () => {
-        assert.ok(protectedProfile, 'Profile protection must finish before unlocking keys.');
-        unlocked = true;
-        return environment();
-      };
-      try {
-        const launching = f.launch();
-        for (let attempt = 0; !protecting && attempt < 50; attempt++)
-          await new Promise((accept) => setTimeout(accept, 10));
-        assert.ok(protecting);
-        assert.equal(unlocked, false);
-        assert.equal(f.children.length, 0);
-        gate.resolve();
-        await launching;
-        assert.equal(unlocked, !failure);
-        assert.deepEqual(
-          f.children.map((child) => child.kind),
-          failure ? [] : ['setup'],
-        );
-        if (failure) assert.match(f.status().error, /profile protection failed/);
-        else assert.equal(f.status().runtime.needsWsl, true);
-      } finally {
-        gate.resolve();
-        await f.close();
-      }
-    });
+test('Windows onboarding waits for storage before unlocking credentials and exposes prerequisite recovery', async (t) => {
+  const f = await runningDesktop(
+    t,
+    async () => assert.fail('No backend can run without storage.'),
+    {
+      initialState: 'fresh',
+      platform: 'win32',
+      allowStart: true,
+      prepareRuntime: async () => {
+        throw Object.assign(new Error('Synthetic WSL missing'), { code: 'OTTO_WSL_REQUIRED' });
+      },
+    },
+  );
+  f.storage.store.environment = async () =>
+    assert.fail('No credentials are needed before storage.');
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.children.length, 0);
+    assert.equal(f.status().needsWsl, true);
+    assert.equal(f.windows.filter((window) => window.isVisible()).length, 1);
+  } finally {
+    await f.close();
   }
 });
 
-test('native first launch shows a loading window before unlocking its system key store', async (t) => {
+test('native Welcome is visible before storage and system-key access and accepts only nonsecret choices', async (t) => {
+  const storage = deferred();
   const loaded = deferred();
   const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
     initialState: 'fresh',
     allowStart: true,
     nativePageLoaded: loaded.promise,
+    prepareRuntime: async ({ onStorageReady }) => {
+      await storage.promise;
+      const runtime = { env: {} };
+      await onStorageReady(runtime);
+      return runtime;
+    },
   });
-  const encrypt = f.storage.encryption.encryptString;
-  let observed = false;
-  f.storage.encryption.encryptString = (value) => {
-    const window = f.windows.find((candidate) => candidate.isVisible());
-    assert.ok(window, 'The app must be visible before the blocking system key-store call.');
-    assert.equal(window.query.mode, 'loading');
-    assert.equal(f.status().unlockingKeys, true);
-    assert.equal(f.children.length, 0);
-    observed = true;
-    return encrypt(value);
+  const environment = f.storage.store.environment;
+  let unlocked = 0;
+  f.storage.store.environment = async () => {
+    assert.ok(f.windows.some((window) => window.isVisible()));
+    unlocked++;
+    return environment();
   };
   try {
-    const launching = f.launch();
-    for (let attempt = 0; !f.windows.length && attempt < 50; attempt++)
-      await new Promise((accept) => setTimeout(accept, 10));
-    assert.equal(f.windows.length, 1);
-    const output = await mkdtemp(join(tmpdir(), 'otto-native-startup-'));
-    t.after(() => rm(output, { recursive: true, force: true }));
-    await buildDesktopUI(output);
-    const page = new JSDOM(await readFile(join(output, 'index.html'), 'utf8'), {
-      url: 'file:///synthetic/setup.html?mode=loading&firstSetup=true&unlocking=darwin',
-      runScripts: 'outside-only',
-    });
-    t.after(() => page.window.close());
-    page.window.ottoDesktop = {
-      onStatus() {},
-      onPreferences() {},
-      onNavigate() {},
-      getPreferences: () => new Promise(() => {}),
-      status: () => new Promise(() => {}),
-    };
-    page.window.eval(await readFile(join(output, 'setup.js'), 'utf8'));
-    for (
-      let attempt = 0;
-      !page.window.document.querySelector('[role="status"]') && attempt < 50;
-      attempt++
-    )
-      await new Promise((accept) => setTimeout(accept, 10));
-    assert.ok(page.window.document.querySelector('[role="status"]'));
-    assert.equal(page.window.document.querySelector('input'), null);
-    assert.equal(page.window.document.querySelector('button'), null);
-    await new Promise((accept) => setTimeout(accept, 100));
-    assert.equal(observed, false);
+    const launched = f.launch();
+    for (let i = 0; !f.windows.length && i < 50; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(unlocked, 0);
     loaded.resolve();
-    await launching;
-    assert.equal(observed, true);
-    assert.equal(f.windows.filter((window) => window.isVisible()).length, 1);
-    assert.equal(f.windows[0].isDestroyed(), true);
-    assert.equal(new URL(f.windows.at(-1).url).pathname, '/onboarding');
-    assert.equal(f.status().unlockingKeys, false);
+    await launched;
+    const window = f.windows[0];
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    await f.handlers.get('otto:settings:save')(event, {
+      welcome: { usageData: true, continued: false },
+    });
+    await assert.rejects(
+      f.handlers.get('otto:settings:save')(event, {
+        welcome: { usageData: true, continued: false, apiKey: 'synthetic-secret' },
+      }),
+    );
+    assert.equal(unlocked, 0);
+    assert.equal(f.children.length, 0);
+    storage.resolve();
+    await f.settle();
+    assert.equal(unlocked, 1);
+    assert.equal(f.children.length, 1);
+    assert.equal(f.windows[0].isDestroyed(), false);
+    assert.deepEqual((await f.storage.store.get()).welcome, { usageData: true, continued: false });
   } finally {
     loaded.resolve();
+    storage.resolve();
     await f.close();
   }
 });
@@ -843,6 +769,7 @@ test('native startup recovery keeps current status and serializes retry, prerequ
         },
         onPreferences() {},
         getPreferences: async () => ({ theme: 'light' }),
+        getSettings: async () => ({}),
         status: () => initial.promise,
         prepare(options) {
           calls.push(['prepare', options]);
@@ -983,9 +910,9 @@ test('quitting while macOS keychain access is pending never forks a late setup p
     assert.ok(window);
     assert.equal(window.query.mode, 'loading');
     assert.equal(f.status().unlockingKeys, true);
-    await f.close();
+    const closing = f.close();
     unlocked.resolve(true);
-    await launching;
+    await Promise.all([launching, closing]);
     assert.equal(f.children.length, 0);
     assert.equal((await f.storage.store.get()).onboardingCompleted, false);
   } finally {
@@ -994,160 +921,130 @@ test('quitting while macOS keychain access is pending never forks a late setup p
   }
 });
 
-test('native first-start key-store failure retries shared setup without completing onboarding', async (t) => {
-  for (const failure of ['unavailable', 'denied']) {
-    await t.test(failure, async (t) => {
-      const f = await runningDesktop(t, async () => assert.fail('The full engine must not run.'), {
-        initialState: 'fresh',
-        allowStart: true,
-      });
-      let failing = true;
-      const encrypt = f.storage.encryption.encryptString;
-      f.storage.encryption.isEncryptionAvailable = () => failure !== 'unavailable' || !failing;
-      f.storage.encryption.encryptString = (value) => {
-        if (failure === 'denied' && failing) throw new Error('Synthetic key-store denial.');
-        return encrypt(value);
-      };
-      try {
-        await f.launch();
-        await new Promise(setImmediate);
-        assert.equal(f.status().phase, 'error');
-        assert.equal(f.children.length, 0);
-        assert.equal((await f.storage.store.get()).onboardingCompleted, false);
-        const window = f.windows.at(-1);
-        assert.equal(
-          window.sent.findLast(([channel]) => channel === 'otto:navigate')[1].mode,
-          'loading',
-        );
-        const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-        await assert.rejects(
-          f.handlers.get('otto:settings:save')(event, { onboardingCompleted: true }),
-        );
-        failing = false;
-        await Promise.all([
-          f.handlers.get('otto:prepare')(event, { retry: true }),
-          f.handlers.get('otto:prepare')(event, { retry: true }),
-        ]);
-        assert.equal(f.children.length, 1);
-        assert.equal(f.children[0].kind, 'setup');
-        assert.equal((await f.storage.store.get()).onboardingCompleted, false);
-        assert.equal(new URL(f.windows.at(-1).url).pathname, '/onboarding');
-      } finally {
-        await f.close();
-      }
-    });
+test('native key-store failure needs an explicit retry and never completes onboarding', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'fresh',
+    allowStart: true,
+  });
+  const environment = f.storage.store.environment;
+  let failing = true;
+  f.storage.store.environment = () =>
+    failing ? Promise.reject(new Error('Synthetic key-store denial')) : environment();
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.status().phase, 'error');
+    assert.equal(f.children.length, 0);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, false);
+    const window = f.windows[0];
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    failing = false;
+    await Promise.all([
+      f.handlers.get('otto:prepare')(event, { retry: true }),
+      f.handlers.get('otto:prepare')(event, { retry: true }),
+    ]);
+    assert.equal(f.children.length, 1);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, false);
+  } finally {
+    await f.close();
   }
 });
 
-test('native first launch opens the shared web onboarding while runtime preparation is pending, then imports once', async (t) => {
-  for (const platform of process.platform === 'win32' ? ['win32'] : ['darwin', 'win32']) {
-    await t.test(platform, async (t) => {
-      const runtime = deferred();
-      let preparations = 0;
-      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
-        platform,
-        initialState: 'fresh',
-        allowStart: true,
-        prepareRuntime: async () => {
-          preparations++;
-          return runtime.promise;
-        },
-      });
-      try {
-        await f.launch();
-        assert.equal(preparations, 1);
-        assert.equal(f.children.length, 1);
-        const setup = f.children[0];
-        assert.equal(setup.kind, 'setup');
-        assert.equal(setup.environment.DATABASE_URL, undefined);
-        assert.equal(f.windows.filter((window) => window.isVisible()).length, 1);
-        const window = f.windows.at(-1);
-        assert.equal(new URL(window.url).pathname, '/onboarding');
-        const beforeReplay = await readFile(f.storage.path, 'utf8');
-        const setupUrl = window.url;
-        f.replayOnboarding();
-        assert.equal(window.url, setupUrl);
-        assert.equal(await readFile(f.storage.path, 'utf8'), beforeReplay);
-        assert.equal(f.children.length, 1);
-        const setupOrigin = new URL(window.url).origin;
-        const request = (url, extra = {}) => ({
-          url,
-          webContentsId: window.webContents.id,
-          frame: window.webContents.mainFrame,
-          resourceType: 'xhr',
-          requestHeaders: { 'X-Otto-Desktop-Token': 'forged' },
-          ...extra,
-        });
-        const authorized = await f.headers(request(`${setupOrigin}/api/session`));
-        assert.equal(
-          authorized.requestHeaders['x-otto-desktop-token'],
-          setup.environment.OTTO_DESKTOP_AUTH_TOKEN,
-        );
-        for (const details of [
-          request(`${setupOrigin}/api/session`, { webContentsId: -1 }),
-          request(`${setupOrigin}/api/session`, { frame: { routingId: -1, processId: -1 } }),
-          request('https://external.example.test/api/session'),
-        ]) {
-          const result = await f.headers(details);
-          assert.ok(
-            Object.keys(result.requestHeaders).every(
-              (name) => name.toLowerCase() !== 'x-otto-desktop-token',
-            ),
-          );
-        }
-
-        setup.emit('message', { type: 'otto-setup-complete' });
-        setup.emit('message', { type: 'otto-setup-complete' });
-        await new Promise(setImmediate);
-        assert.equal(f.children.length, 1);
-        runtime.resolve({ env: {} });
-        await f.settle();
-        assert.equal(f.children.length, 2);
-        const engine = f.children[1];
-        assert.equal(engine.kind, 'engine');
-        assert.equal(engine.environment.OTTO_DESKTOP_SETUP_PENDING, 'true');
-        assert.equal(
-          engine.environment.OTTO_DESKTOP_OWNER_ID,
-          setup.environment.OTTO_DESKTOP_OWNER_ID,
-        );
-        assert.equal(engine.environment.OTTO_VAULT_KEY, setup.environment.OTTO_VAULT_KEY);
-        assert.notEqual(
-          engine.environment.OTTO_DESKTOP_AUTH_TOKEN,
-          setup.environment.OTTO_DESKTOP_AUTH_TOKEN,
-        );
-        assert.equal(f.windows.at(-1), window);
-        assert.notEqual(new URL(window.url).origin, setupOrigin);
-        assert.equal(new URL(window.url).pathname, '/');
-        const full = await f.headers(request(`${new URL(window.url).origin}/api/session`));
-        assert.equal(
-          full.requestHeaders['x-otto-desktop-token'],
-          engine.environment.OTTO_DESKTOP_AUTH_TOKEN,
-        );
-        const retired = await f.headers(request(`${setupOrigin}/api/session`));
-        assert.ok(
-          Object.keys(retired.requestHeaders).every(
-            (name) => name.toLowerCase() !== 'x-otto-desktop-token',
-          ),
-        );
-
-        assert.equal(setup.killed, true);
-        assert.equal((await f.storage.store.get()).onboardingCompleted, true);
-        assert.equal(setup.sent.filter((message) => message.type === 'otto-setup-ack').length, 1);
-        assert.equal(f.status().phase, 'ready');
-      } finally {
-        runtime.resolve({ env: {} });
-        await f.close();
+test('native onboarding starts one normal backend at storage readiness and keeps its origin through full runtime readiness', async (t) => {
+  const resources = deferred();
+  const connected = deferred();
+  let writes = 0;
+  const f = await runningDesktop(
+    t,
+    async (url, options) => {
+      if (new URL(url).pathname === '/api/account') {
+        writes++;
+        assert.equal(options.method, 'PATCH');
+        assert.equal(options.headers.Origin, new URL(url).origin);
+        assert.deepEqual(JSON.parse(options.body), { usageData: true });
+        return Response.json({ settings: { usageData: true } });
       }
+      return Response.json({ ok: true });
+    },
+    {
+      initialState: 'fresh',
+      allowStart: true,
+      prepareRuntime: async ({ onStorageReady }) => {
+        const runtime = { env: { DATABASE_URL: 'postgresql://synthetic.invalid/test' } };
+        await onStorageReady(runtime);
+        connected.resolve();
+        await resources.promise;
+        return runtime;
+      },
+    },
+  );
+  try {
+    await f.launch();
+    await connected.promise;
+    assert.equal(f.children.length, 1);
+    const engine = f.children[0];
+    assert.equal(engine.environment.OTTO_DESKTOP_RUNTIME_PENDING, 'true');
+    assert.equal(
+      engine.sent.some((message) => message.type === 'otto-runtime-ready'),
+      false,
+    );
+    const shell = f.windows[0];
+    await f.handlers.get('otto:settings:save')(
+      { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
+      { welcome: { usageData: true, continued: true } },
+    );
+    const opening = f.handlers.get('otto:prepare')({
+      sender: shell.webContents,
+      senderFrame: shell.webContents.mainFrame,
     });
+    for (let i = 0; !shell.isDestroyed() && i < 100; i++)
+      await new Promise((r) => setTimeout(r, 10));
+    const window = f.windows.at(-1);
+    const origin = new URL(window.url).origin;
+    assert.equal(new URL(window.url).searchParams.get('welcome'), 'complete');
+    assert.equal((await f.storage.store.get()).welcome.acknowledged, true);
+    assert.equal(writes, 1);
+    const request = (url, extra = {}) => ({
+      url,
+      webContentsId: window.webContents.id,
+      frame: window.webContents.mainFrame,
+      resourceType: 'xhr',
+      requestHeaders: { 'X-Otto-Desktop-Token': 'forged' },
+      ...extra,
+    });
+    assert.equal(
+      (await f.headers(request(`${origin}/api/session`))).requestHeaders['x-otto-desktop-token'],
+      engine.environment.OTTO_DESKTOP_AUTH_TOKEN,
+    );
+    for (const details of [
+      request(`${origin}/api/session`, { webContentsId: -1 }),
+      request(`${origin}/api/session`, { frame: { routingId: -1, processId: -1 } }),
+      request('https://external.example.test/api/session'),
+    ])
+      assert.ok(
+        Object.keys((await f.headers(details)).requestHeaders).every(
+          (name) => name.toLowerCase() !== 'x-otto-desktop-token',
+        ),
+      );
+    resources.resolve();
+    await opening;
+    await f.settle();
+    assert.equal(f.children.length, 1);
+    assert.equal(new URL(window.url).origin, origin);
+    assert.equal(engine.sent.filter((message) => message.type === 'otto-runtime-ready').length, 1);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, false);
+    assert.equal(f.status().phase, 'ready');
+  } finally {
+    resources.resolve();
+    await f.close();
   }
 });
 
-test('native frozen setup resumes handoff while completed upgrades skip early setup', async (t) => {
-  for (const initialState of ['frozen', 'upgrade', 'replay']) {
+test('completed upgrades retain settings and only explicit replay repeats onboarding', async (t) => {
+  for (const initialState of ['upgrade', 'replay']) {
     await t.test(initialState, async (t) => {
       const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
         initialState,
-        legacyKey: initialState === 'frozen' ? 'synthetic-older-incomplete-project' : undefined,
         allowStart: true,
         argv: initialState === 'replay' ? ['--onboarding'] : [],
       });
@@ -1159,16 +1056,11 @@ test('native frozen setup resumes handoff while completed upgrades skip early se
         assert.equal(f.status().phase, 'ready');
         assert.deepEqual(
           f.children.map((child) => child.kind),
-          initialState === 'frozen' ? ['setup', 'engine'] : ['engine'],
+          ['engine'],
         );
-        assert.equal(
-          f.children.at(-1).environment.OTTO_DESKTOP_SETUP_PENDING,
-          initialState === 'frozen' ? 'true' : undefined,
-        );
+        assert.equal(f.children.at(-1).environment.OTTO_DESKTOP_RUNTIME_PENDING, 'true');
         assert.equal(f.children.at(-1).environment.OTTO_DESKTOP_LEGACY_INTEGRATION, undefined);
-        if (initialState === 'frozen') assert.ok(await f.storage.store.legacyIntegration());
-        if (initialState === 'frozen') assert.equal(f.children[0].killed, true);
-        else if (initialState === 'replay')
+        if (initialState === 'replay')
           assert.ok(f.windows.some((window) => window.url?.endsWith('/onboarding?replay=1')));
         else
           assert.ok(
@@ -1176,10 +1068,8 @@ test('native frozen setup resumes handoff while completed upgrades skip early se
               (window) => !window.url || new URL(window.url).pathname !== '/onboarding',
             ),
           );
-        if (initialState !== 'frozen') {
-          assert.deepEqual(await f.storage.store.environment(), before);
-          assert.deepEqual(await f.storage.store.get(), preferences);
-        }
+        assert.deepEqual(await f.storage.store.environment(), before);
+        assert.deepEqual(await f.storage.store.get(), preferences);
       } finally {
         await f.close();
       }
@@ -1187,7 +1077,167 @@ test('native frozen setup resumes handoff while completed upgrades skip early se
   }
 });
 
-test('native upgrade sends legacy credentials only to its current owned child and clears after exact acknowledgement', async (t) => {
+test('failed Welcome transfer preserves the saved answer and retries without a second choice or engine', async (t) => {
+  let failing = true;
+  let writes = 0;
+  const f = await runningDesktop(
+    t,
+    async (url) => {
+      if (url.endsWith('/api/account')) {
+        writes++;
+        if (failing) throw new Error('Synthetic disconnected transfer');
+        return Response.json({ settings: { usageData: true } });
+      }
+      return Response.json({ ok: true });
+    },
+    { initialState: 'fresh', allowStart: true },
+  );
+  try {
+    await f.launch();
+    await f.settle();
+    const shell = f.windows[0];
+    const event = { sender: shell.webContents, senderFrame: shell.webContents.mainFrame };
+    const choice = { usageData: true, continued: true };
+    assert.deepEqual(
+      (await f.handlers.get('otto:settings:save')(event, { welcome: choice })).welcome,
+      choice,
+    );
+    assert.equal(writes, 0);
+    await assert.rejects(f.handlers.get('otto:prepare')(event));
+    assert.deepEqual((await f.storage.store.get()).welcome, choice);
+    assert.equal(shell.isDestroyed(), false);
+    failing = false;
+    shell.focused = false;
+    await f.handlers.get('otto:prepare')(event, { retry: true });
+    assert.equal(
+      f.windows.some((window) => window.url),
+      false,
+    );
+    f.showEngine();
+    assert.equal(writes, 2);
+    assert.equal(f.children.length, 1);
+    assert.equal((await f.storage.store.get()).welcome.acknowledged, true);
+    assert.ok(f.windows.some((window) => window.url?.endsWith('/onboarding?welcome=complete')));
+  } finally {
+    await f.close();
+  }
+});
+
+test('partial onboarding restart keeps acknowledged consent and normal app progress until durable completion', async (t) => {
+  let usageData = true;
+  let completed = false;
+  let writes = 0;
+  const request = async (url, options) => {
+    if (url.endsWith('/api/account')) {
+      writes++;
+      usageData = JSON.parse(options.body).usageData;
+      return Response.json({ settings: { usageData } });
+    }
+    if (url.endsWith('/api/session'))
+      return Response.json({ settings: { onboardingCompleted: completed, usageData } });
+    return Response.json({ ok: true });
+  };
+  const first = await runningDesktop(t, request, { initialState: 'fresh', allowStart: true });
+  try {
+    await first.launch();
+    await first.settle();
+    const shell = first.windows[0];
+    const event = { sender: shell.webContents, senderFrame: shell.webContents.mainFrame };
+    await first.handlers.get('otto:settings:save')(event, {
+      welcome: { usageData: true, continued: true },
+    });
+    await first.handlers.get('otto:prepare')(event);
+    assert.equal(writes, 1);
+  } finally {
+    await first.close();
+  }
+  usageData = false;
+  const next = await runningDesktop(t, request, {
+    initialState: 'fresh',
+    allowStart: true,
+    storedProfile: first.storage,
+  });
+  try {
+    await next.launch();
+    await next.settle();
+    assert.equal(writes, 1);
+    assert.equal(usageData, false);
+    const window = next.windows.find((window) => window.url);
+    assert.ok(window);
+    assert.equal(new URL(window.url).pathname, '/onboarding');
+    assert.equal(new URL(window.url).searchParams.get('welcome'), 'complete');
+    assert.equal((await next.storage.store.get()).welcome.acknowledged, true);
+    completed = true;
+    await next.handlers.get('otto:settings:save')(
+      { sender: window.webContents, senderFrame: window.webContents.mainFrame },
+      { onboardingCompleted: true },
+    );
+    assert.equal((await next.storage.store.get()).welcome, undefined);
+    assert.equal(writes, 1);
+  } finally {
+    await next.close();
+  }
+});
+
+test('completed backend onboarding wins over a stale native Welcome answer without changing consent', async (t) => {
+  const f = await runningDesktop(
+    t,
+    async (url, options) => {
+      assert.notEqual(options?.method, 'PATCH');
+      return Response.json(
+        url.endsWith('/api/session')
+          ? { settings: { onboardingCompleted: true, usageData: false } }
+          : { ok: true },
+      );
+    },
+    { initialState: 'fresh', allowStart: true },
+  );
+  await f.storage.store.save({ welcome: { usageData: true, continued: true } });
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+    assert.equal((await f.storage.store.get()).welcome, undefined);
+    assert.ok(f.windows.some((window) => window.url && new URL(window.url).pathname === '/'));
+    assert.ok(f.windows.every((window) => !window.url?.includes('welcome=complete')));
+  } finally {
+    await f.close();
+  }
+});
+
+test('workspace failure leaves the pending backend intact and an explicit retry releases it once', async (t) => {
+  let attempts = 0;
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'upgrade',
+    allowStart: true,
+    prepareRuntime: async ({ onStorageReady }) => {
+      const runtime = { env: {} };
+      await onStorageReady(runtime);
+      if (++attempts === 1) throw new Error('Synthetic browser startup failure');
+      return runtime;
+    },
+  });
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.status().phase, 'error');
+    assert.equal(f.children.length, 1);
+    assert.equal(f.children[0].sent.length, 0);
+    await f.prepare();
+    assert.equal(attempts, 1);
+    await f.prepare({ retry: true });
+    assert.equal(attempts, 2);
+    assert.equal(f.children.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(f.children[0].sent)), [
+      { type: 'otto-runtime-ready' },
+    ]);
+    assert.equal(f.status().phase, 'ready');
+  } finally {
+    await f.close();
+  }
+});
+
+test('native upgrade binds legacy cleanup to its owned child and retains ciphertext when cleanup is deferred', async (t) => {
   const key = 'synthetic-private-upgrade-key';
   const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
     initialState: 'upgrade',
@@ -1199,6 +1249,8 @@ test('native upgrade sends legacy credentials only to its current owned child an
     await f.launch();
     await f.settle();
     const child = f.children[0];
+    assert.deepEqual(JSON.parse(JSON.stringify(child.sent)), [{ type: 'otto-runtime-ready' }]);
+    child.sent.length = 0;
     assert.equal(child.environment.OTTO_DESKTOP_LEGACY_INTEGRATION, 'true');
     assert.equal(JSON.stringify(child.environment).includes(key), false);
     assert.equal(JSON.stringify(await f.storage.store.get()).includes(key), false);
@@ -1222,10 +1274,27 @@ test('native upgrade sends legacy credentials only to its current owned child an
     child.emit('message', { ...ack, receipt: '0'.repeat(64) });
     await new Promise(setImmediate);
     assert.equal((await f.storage.store.legacyIntegration()).apiKey, key);
+    const ciphertext = await readFile(f.storage.path, 'utf8');
+    const acknowledge = f.storage.store.acknowledgeLegacyIntegration;
+    f.storage.store.acknowledgeLegacyIntegration = async () => {
+      throw new Error('Synthetic temporary settings write failure');
+    };
     child.emit('message', ack);
     for (let i = 0; i < 100 && child.sent.length < 2; i++)
       await new Promise((accept) => setTimeout(accept, 10));
-    assert.equal(child.sent[1].type, 'otto-legacy-integration-cleaned');
+    assert.deepEqual(JSON.parse(JSON.stringify(child.sent[1])), {
+      type: 'otto-legacy-integration-cleanup-deferred',
+      ownerId,
+      nonce,
+      receipt: payload.receipt,
+    });
+    assert.equal(await readFile(f.storage.path, 'utf8'), ciphertext);
+    assert.equal(f.status().phase, 'ready');
+    f.storage.store.acknowledgeLegacyIntegration = acknowledge;
+    child.emit('message', ack);
+    for (let i = 0; i < 100 && child.sent.length < 3; i++)
+      await new Promise((accept) => setTimeout(accept, 10));
+    assert.equal(child.sent[2].type, 'otto-legacy-integration-cleaned');
     assert.equal(await f.storage.store.legacyIntegration(), undefined);
     assert.deepEqual(await f.storage.store.environment(), before);
     assert.equal((await f.storage.store.get()).onboardingCompleted, true);
@@ -1233,7 +1302,7 @@ test('native upgrade sends legacy credentials only to its current owned child an
     assert.ok(f.windows.every((window) => !JSON.stringify(window.sent).includes(key)));
     f.crash();
     child.emit('message', request);
-    assert.equal(child.sent.length, 2);
+    assert.equal(child.sent.length, 3);
   } finally {
     await f.close();
   }
@@ -1270,58 +1339,7 @@ test('unreadable historical app ciphertext does not block a completed profile an
   }
 });
 
-test('native early setup retry opens Windows recovery instead of repeating failed warmup', async (t) => {
-  let preparations = 0;
-  const f = await runningDesktop(t, async () => assert.fail('No engine can run without WSL.'), {
-    platform: 'win32',
-    initialState: 'fresh',
-    allowStart: true,
-    prepareRuntime: async () => {
-      preparations++;
-      throw Object.assign(new Error('Synthetic WSL missing'), { code: 'OTTO_WSL_REQUIRED' });
-    },
-  });
-  try {
-    await f.launch();
-    assert.equal(f.status().runtime.needsWsl, true);
-    assert.equal(f.windows.filter((window) => window.isVisible()).length, 1);
-    f.children[0].emit('message', { type: 'otto-setup-retry' });
-    await new Promise(setImmediate);
-    assert.equal(preparations, 1);
-    assert.equal(f.windows.filter((window) => window.isVisible()).length, 2);
-    assert.equal(f.windows.at(-1).query.section, 'general');
-    assert.equal(f.children.length, 1);
-  } finally {
-    await f.close();
-  }
-});
-
-test('native early readiness timeout stops the exact child and ignores its late ready message', async (t) => {
-  const f = await runningDesktop(
-    t,
-    async () => assert.fail('A timed-out setup cannot start the engine.'),
-    {
-      initialState: 'fresh',
-      allowStart: true,
-      setupReady: false,
-      fastSetupTimeout: true,
-    },
-  );
-  try {
-    await assert.rejects(f.startEarlySetup(), /could not open setup/);
-    assert.equal(f.children.length, 1);
-    const child = f.children[0];
-    assert.equal(child.killed, true);
-    child.emit('message', { type: 'otto-setup-ready', port: Number(child.port) });
-    assert.equal(f.windows.length, 1);
-    assert.equal(f.windows[0].query.mode, 'loading');
-    assert.equal(f.windows[0].url, undefined);
-  } finally {
-    await f.close();
-  }
-});
-
-test('native quit drains early setup and aborts warmup without starting the full engine', async (t) => {
+test('native quit aborts storage startup without creating a late engine', async (t) => {
   const runtime = deferred();
   let signal;
   let closed = 0;
@@ -1334,9 +1352,10 @@ test('native quit drains early setup and aborts warmup without starting the full
     },
   });
   await f.launch();
+  for (let i = 0; !signal && i < 100; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(signal);
   const closing = f.close();
   await new Promise(setImmediate);
-  assert.equal(f.children[0].killed, true);
   assert.equal(signal.aborted, true);
   runtime.resolve({
     env: {},
@@ -1348,7 +1367,7 @@ test('native quit drains early setup and aborts warmup without starting the full
   assert.equal(closed, 1);
   assert.deepEqual(
     f.children.map((child) => child.kind),
-    ['setup'],
+    [],
   );
 });
 
@@ -1797,6 +1816,7 @@ $results = foreach ($path in @($env:OTTO_STORAGE_TEST_PROFILE, (Join-Path $env:O
 }
 ConvertTo-Json -InputObject @($results) -Compress`,
         ],
+        { ...windowsEnvironment(), OTTO_STORAGE_TEST_PROFILE: profile },
       ),
     );
     assert.equal(acl.length, 3);
@@ -2285,7 +2305,6 @@ test('engine preload exposes no credential reveal and withholds privileged IPC e
     'applySettings',
     'getAppPreferences',
     'saveAppPreferences',
-    'prepare',
     'importRuntime',
   ])
     assert.equal(bridge[field], undefined);
@@ -2296,6 +2315,12 @@ test('engine preload exposes no credential reveal and withholds privileged IPC e
   const value = { theme: 'dark', resolvedTheme: 'dark', notifications: true, launchAtLogin: false };
   listeners.get('otto:preferences')({ sender: 'privileged-synthetic-ipc' }, value);
   assert.deepEqual(received, [value]);
+  bridge.onStatus((...values) => {
+    received = values;
+  });
+  const status = { phase: 'preparing', runtime: { phase: 'starting' } };
+  listeners.get('otto:status')({ sender: 'privileged-synthetic-ipc' }, status);
+  assert.deepEqual(received, [status]);
 });
 
 async function chatReadFixture(t) {
@@ -3139,15 +3164,23 @@ test('desktop preference choices resume durably and cannot skip or regress expli
   assert.equal((await f.reopen().get()).launchAtLogin, false);
 });
 
-test('early desktop preference writes require the owned setup frame and stop after handoff freezes', async (t) => {
-  const runtime = deferred();
-  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
-    initialState: 'fresh',
-    allowStart: true,
-    prepareRuntime: () => runtime.promise,
-  });
+test('desktop preference steps and completion require the owned normal app and durable server completion', async (t) => {
+  let completed = false;
+  const f = await runningDesktop(
+    t,
+    async (url) =>
+      new URL(url).pathname === '/api/account'
+        ? Response.json({ settings: { usageData: false } })
+        : Response.json({ ok: true, settings: { onboardingCompleted: completed } }),
+    {
+      initialState: 'fresh',
+      allowStart: true,
+    },
+  );
+  await f.storage.store.save({ welcome: { usageData: false, continued: true } });
   try {
     await f.launch();
+    await f.settle();
     const window = f.windows.at(-1);
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
     const save = f.handlers.get('otto:settings:save');
@@ -3157,23 +3190,21 @@ test('early desktop preference writes require the owned setup frame and stop aft
         { notifications: true, onboardingPreferenceStep: 'launchAtLogin' },
       ),
     );
+    await assert.rejects(save(event, { welcome: { usageData: true, continued: true } }));
+    await assert.rejects(save(event, { onboardingCompleted: true }));
     await save(event, { notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
-    assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
     await save(event, { launchAtLogin: false, onboardingPreferenceStep: 'complete' });
-    f.children[0].emit('message', { type: 'otto-setup-complete' });
-    await new Promise(setImmediate);
-    await assert.rejects(
-      save(event, { notifications: true, onboardingPreferenceStep: 'launchAtLogin' }),
-    );
     assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
+    completed = true;
+    await save(event, { onboardingCompleted: true });
+    assert.equal((await f.storage.reopen().get()).onboardingCompleted, true);
+    await assert.rejects(save(event, { onboardingCompleted: false }));
   } finally {
-    runtime.resolve({ env: {} });
-    await f.settle();
     await f.close();
   }
 });
 
-test('native setup-ready notification waits for cleanup acknowledgement and only reaches opted-in background users once', async (t) => {
+test('native readiness notification waits for full runtime readiness and reaches opted-in background users once', async (t) => {
   for (const scenario of [
     { enabled: true, focused: false, supported: true, expected: 1 },
     { enabled: false, focused: false, supported: true, expected: 0 },
@@ -3181,37 +3212,30 @@ test('native setup-ready notification waits for cleanup acknowledgement and only
     { enabled: true, focused: false, supported: false, expected: 0 },
   ]) {
     await t.test(JSON.stringify(scenario), async (t) => {
-      const runtime = deferred();
-      const cleanup = deferred();
+      const resources = deferred();
+      const storage = deferred();
       const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
         initialState: 'fresh',
         allowStart: true,
-        prepareRuntime: () => runtime.promise,
-        setupCleanup: cleanup.promise,
+        prepareRuntime: async ({ onStorageReady }) => {
+          const runtime = { env: {} };
+          await onStorageReady(runtime);
+          storage.resolve();
+          await resources.promise;
+          return runtime;
+        },
         notificationsSupported: scenario.supported,
       });
       try {
         await f.storage.store.save({ notifications: scenario.enabled });
         await f.launch();
-        const setup = f.children[0];
-        const window = f.windows.at(-1);
+        await storage.promise;
+        const window = f.windows[0];
         window.focused = scenario.focused;
-        setup.emit('message', { type: 'otto-setup-complete' });
-        runtime.resolve({ env: {} });
-        const deadline = Date.now() + 3000;
-        while (
-          !setup.sent.some((message) => message.type === 'otto-setup-ack') &&
-          Date.now() < deadline
-        )
-          await new Promise(setImmediate);
-        assert.ok(setup.sent.some((message) => message.type === 'otto-setup-ack'));
-        await new Promise(setImmediate);
         assert.equal(f.notifications.length, 0);
-        assert.equal(setup.killed, undefined);
-        cleanup.resolve();
+        resources.resolve();
         await f.settle();
         await new Promise(setImmediate);
-        assert.equal(setup.killed, true);
         assert.equal(f.notifications.length, scenario.expected);
         f.notifyReady();
         f.notifyReady();
@@ -3223,9 +3247,7 @@ test('native setup-ready notification waits for cleanup acknowledgement and only
           assert.equal(window.focused, true);
         }
       } finally {
-        runtime.resolve({ env: {} });
-        cleanup.resolve();
-        await f.settle();
+        resources.resolve();
         await f.close();
       }
     });

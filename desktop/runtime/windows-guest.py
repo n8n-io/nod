@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -17,6 +18,8 @@ if sys.argv[1] == 'docker':
             subprocess.run([docker, 'exec', '--user', 'node', '--workdir', '/workspace', container, 'mkdir', '-p', '--', directory], check=True, stdout=subprocess.DEVNULL)
     os.execv(docker, [docker, *args])
 
+if sys.argv[1] not in ['start', 'image']:
+    sys.exit(64)
 config = json.loads(sys.stdin.buffer.read(8193))
 if not re.fullmatch(r'[a-f0-9]{12}', config['identity']):
     sys.exit(64)
@@ -37,11 +40,25 @@ for attempt in range(120):
     time.sleep(0.5)
 else:
     sys.exit(1)
+if sys.argv[1] == 'start':
+    sys.exit(0)
+name = config.get('name')
+if name not in ['postgres', 'workspace', 'browser']:
+    sys.exit(64)
 manifest = json.load(open('/opt/otto-assets/manifest.json'))
-for image in manifest['images']:
-    result = subprocess.run([docker, 'image', 'inspect', '--format', '{{.Id}}', image['reference']], capture_output=True, text=True)
-    if result.returncode or result.stdout.strip() != image['id']:
-        subprocess.run([docker, 'load', '--input', '/opt/otto-assets/' + image['file']], check=True, stdout=subprocess.DEVNULL)
-    result = subprocess.run([docker, 'image', 'inspect', '--format', '{{.Id}}', image['reference']], check=True, capture_output=True, text=True)
-    if result.stdout.strip() != image['id']:
-        sys.exit(1)
+images = [image for image in manifest['images'] if image['name'] == name]
+if len(images) != 1:
+    sys.exit(64)
+image = images[0]
+if image['file'] != 'images/' + name + '.tar.gz' or not re.fullmatch(r'sha256:[a-f0-9]{64}', image['id']) or not re.fullmatch(r'[a-f0-9]{64}', image['sha256']):
+    sys.exit(64)
+result = subprocess.run([docker, 'image', 'inspect', '--format', '{{.Id}}', image['reference']], capture_output=True, text=True)
+if result.returncode or result.stdout.strip() != image['id']:
+    path = '/opt/otto-assets/' + image['file']
+    with open(path, 'rb') as file:
+        if hashlib.file_digest(file, 'sha256').hexdigest() != image['sha256']:
+            sys.exit(1)
+    subprocess.run([docker, 'load', '--input', path], check=True, stdout=subprocess.DEVNULL)
+result = subprocess.run([docker, 'image', 'inspect', '--format', '{{.Id}}', image['reference']], check=True, capture_output=True, text=True)
+if result.stdout.strip() != image['id']:
+    sys.exit(1)

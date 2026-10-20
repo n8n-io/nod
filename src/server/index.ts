@@ -22,9 +22,21 @@ const legacyIntegration =
           })(),
       })
     : undefined;
-const { app, desktopSetupId } = await createApplication(
-  createDefaultAdapters(process.env, legacyIntegration),
-);
+const runtimeReady =
+  desktopMode && process.env.OTTO_DESKTOP_RUNTIME_PENDING === 'true'
+    ? new Promise<void>((resolve) => {
+        if (!parent) throw new Error('Desktop startup requires Otto.');
+        const ready = (event: { data: unknown }) => {
+          if ((event.data as { type?: string })?.type !== 'otto-runtime-ready') return;
+          parent.removeListener('message', ready);
+          resolve();
+        };
+        parent.on('message', ready);
+      })
+    : undefined;
+const { app } = await createApplication(createDefaultAdapters(process.env, legacyIntegration), {
+  runtimeReady,
+});
 closeApplication = () => app.close();
 if (!desktopMode && process.env.NODE_ENV !== 'production') {
   const { createServer } = await import('vite');
@@ -104,7 +116,6 @@ if (desktopMode)
   ).parentPort?.postMessage({
     type: 'otto-ready',
     port: listeningPort,
-    ...(desktopSetupId ? { setupId: desktopSetupId } : {}),
   });
 else
   console.log(

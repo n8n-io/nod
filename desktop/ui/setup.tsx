@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { SetupProgress } from '../../src/web/components/setup-progress';
+import { Welcome } from '../../src/web/pages/onboarding/steps/welcome';
+import { OnboardingFrame } from '../../src/web/pages/onboarding/frame';
 import '../../src/web/theme.css';
 import '../../src/web/components/motion.css';
 import '../../src/web/components/setup-progress.css';
+import '../../src/web/components/controls.css';
+import '../../src/web/pages/onboarding/onboarding.css';
+import '../../src/web/pages/onboarding/steps/welcome.css';
 
 type RuntimeStatus = {
   phase?: string;
@@ -25,7 +30,11 @@ type Preferences = {
   resolvedTheme?: 'light' | 'dark';
 };
 
+type WelcomeChoice = { usageData: boolean; continued: boolean };
+
 type Desktop = {
+  getSettings(): Promise<{ welcome?: WelcomeChoice }>;
+  saveSettings(change: { welcome: WelcomeChoice }): Promise<{ welcome?: WelcomeChoice }>;
   status(): Promise<Status>;
   getPreferences(): Promise<Preferences>;
   prepare(options?: { retry: boolean }): Promise<Status>;
@@ -59,6 +68,8 @@ function Startup() {
         : { phase: 'preparing' },
   );
   const [busy, setBusy] = useState(false);
+  const [welcome, setWelcome] = useState<WelcomeChoice | null>(null);
+  const [welcomeError, setWelcomeError] = useState('');
   const pending = useRef(false);
 
   useEffect(() => {
@@ -70,10 +81,11 @@ function Startup() {
       if (active) setStatus(value);
     });
     const stopPreferences = desktop.onPreferences(applyPreferences);
-    void Promise.all([desktop.getPreferences(), desktop.status()])
-      .then(([preferences, value]) => {
+    void Promise.all([desktop.getPreferences(), desktop.status(), desktop.getSettings()])
+      .then(([preferences, value, settings]) => {
         if (!active) return;
         applyPreferences(preferences);
+        if (firstSetup) setWelcome(settings.welcome ?? { usageData: false, continued: false });
         if (!receivedStatus) setStatus(value);
       })
       .catch(() => {
@@ -109,6 +121,52 @@ function Startup() {
       setBusy(false);
     }
   }
+
+  async function saveWelcome(choice: WelcomeChoice) {
+    if (!desktop || pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setWelcomeError('');
+    try {
+      const saved = await desktop.saveSettings({ welcome: choice });
+      setWelcome(saved.welcome ?? choice);
+      if (choice.continued) await desktop.prepare();
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : 'Your choice could not be saved. Try again.';
+      setWelcomeError(message);
+      if (choice.continued) setStatus({ phase: 'error', error: message });
+      throw cause;
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  }
+
+  if (firstSetup && welcome && !welcome.continued)
+    return (
+      <>
+        <div className="titlebar" aria-hidden="true" />
+        <OnboardingFrame step="welcome">
+          <div className="ob-screen" inert={busy}>
+            <Welcome
+              arrived="forward"
+              onBack={() => {}}
+              onNext={() => void saveWelcome({ ...welcome, continued: true }).catch(() => {})}
+              usage={{
+                enabled: welcome.usageData,
+                onChange: (usageData) => saveWelcome({ usageData, continued: false }),
+              }}
+            />
+          </div>
+          {welcomeError && (
+            <p className="ob-native-error" role="alert">
+              {welcomeError}
+            </p>
+          )}
+        </OnboardingFrame>
+      </>
+    );
 
   const runtime = status.runtime;
   const failure =
@@ -169,7 +227,15 @@ function Startup() {
             <button
               type="button"
               disabled={busy}
-              onClick={() => void run(() => desktop.prepare({ retry: true }))}
+              onClick={() =>
+                void run(async () => {
+                  if (firstSetup && !welcome) {
+                    const settings = await desktop.getSettings();
+                    setWelcome(settings.welcome ?? { usageData: false, continued: false });
+                  }
+                  return desktop.prepare({ retry: true });
+                })
+              }
             >
               {busy ? 'Trying again…' : 'Try again'}
             </button>

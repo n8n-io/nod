@@ -382,7 +382,6 @@ export function createIntegrationAccess(options: {
   }
   return {
     status: accessStatus,
-    active: () => Boolean(current && live(current)),
     observedStatus: () => ({ ...observed }),
     start,
     progress: status,

@@ -12,6 +12,7 @@ export function createDesktopLifecycle({
   onRuntimeStatus,
 }) {
   let runtime;
+  let storage;
   let warming;
   let starting;
   let installing;
@@ -62,6 +63,22 @@ export function createDesktopLifecycle({
         report({ message: 'Preparing your local computer.' });
         const prepared = await prepareRuntime({
           signal: controller.signal,
+          onStorageReady: async (preparedStorage) => {
+            checkOpen(controller.signal);
+            await validateStart();
+            checkOpen(controller.signal);
+            engineStarting = true;
+            try {
+              await startEngine({
+                runtime: preparedStorage,
+                signal: controller.signal,
+                pending: true,
+              });
+              storage = preparedStorage;
+            } finally {
+              engineStarting = false;
+            }
+          },
           onStatus: (value) =>
             report({
               message: typeof value === 'string' ? value : value.message,
@@ -144,9 +161,10 @@ export function createDesktopLifecycle({
       try {
         await stopEngine();
       } finally {
-        if (runtime) await runtime.close?.();
+        if (runtime || storage) await (runtime || storage).close?.();
         else if (cleanupRequired) await stopRuntime?.();
         runtime = undefined;
+        storage = undefined;
         cleanupRequired = false;
       }
     })().catch((error) => {

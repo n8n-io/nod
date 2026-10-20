@@ -24,7 +24,7 @@ export function createAccountSession(options: {
   onboardingReady?(): Promise<boolean>;
   traces?: boolean;
   onTraces?(enabled: boolean): void;
-  desktopSetup?: boolean;
+  prepare?(signal: AbortSignal): Promise<void>;
 }) {
   const origin = new URL(options.origin).origin;
   const user = options.localUser;
@@ -66,7 +66,6 @@ export function createAccountSession(options: {
   async function response(): Promise<SessionResponse> {
     const account = await readAccount();
     return {
-      ...(options.desktopSetup ? { desktopSetup: true } : {}),
       user: { ...user, name: account.displayName ?? user.name },
       settings: {
         theme: account.theme,
@@ -93,8 +92,20 @@ export function createAccountSession(options: {
     }
     return true;
   }
+  async function prepare(reply: FastifyReply) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    reply.raw.once('close', abort);
+    try {
+      if (reply.raw.destroyed) controller.abort();
+      await options.prepare?.(controller.signal);
+    } finally {
+      reply.raw.off('close', abort);
+    }
+  }
   async function start(reply: FastifyReply, complete?: () => Promise<unknown>) {
     try {
+      await prepare(reply);
       await options.start?.(owner, (await options.accounts.read(owner)).displayName?.slice(0, 100));
       await complete?.();
       return true;
@@ -114,6 +125,7 @@ export function createAccountSession(options: {
         .strict()
         .parse(request.body ?? {});
       reply.header('cache-control', 'no-store');
+      await prepare(reply);
       return { ok: true };
     });
     app.patch('/api/account', async (request, reply) => {

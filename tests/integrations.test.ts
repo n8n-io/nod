@@ -60,12 +60,6 @@ import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
-import {
-  createSetupIntegrations,
-  importSetupIntegrations,
-  validateSetupIntegrations,
-} from '../src/server/setup-integrations.ts';
-import type { SetupJournal } from '../src/ports/setup.ts';
 import { noMailCheck } from '../src/server/integration-result.ts';
 import { cachedIcons } from '../src/server/link-previews.ts';
 import { createErrorRedactor } from '../src/server/redaction.ts';
@@ -75,6 +69,7 @@ import type { TrustEntry } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { createWorkAdmission } from '../src/server/work-admission.ts';
 import { integrationServiceIds } from '../src/shared/integrations.ts';
+import { connectedGmail } from '../src/shared/onboarding.ts';
 import { fileBytes } from '../src/shared/files.ts';
 import { fakeComputer, fakeExecution, fakeWorkspace } from './runtime-fixtures.ts';
 
@@ -102,608 +97,6 @@ function fakeProvider(session: IntegrationSession): IntegrationProvider {
     },
   };
 }
-
-async function earlyAppsFixture(t: TestContext, journal?: SetupJournal) {
-  const entries = new Map<string, unknown>();
-  const storage = journal ?? {
-    async read<T>(section: string): Promise<T | undefined> {
-      return structuredClone(entries.get(section)) as T | undefined;
-    },
-    async update<T>(section: string, change: (current: T | undefined) => T): Promise<T> {
-      const value = JSON.parse(
-        JSON.stringify(change(structuredClone(entries.get(section)) as T | undefined)),
-      ) as T;
-      entries.set(section, value);
-      return structuredClone(value);
-    },
-  };
-  const ownerId = randomUUID();
-  const calls: string[] = [];
-  let active = true;
-  let completingFails = false;
-  let ownKey: string | undefined;
-  let accountIndex = 0;
-  function provider(mode: 'otto' | 'own'): IntegrationProvider {
-    const result: IntegrationProvider = {
-      ...fakeProvider({
-        id: 'fixture',
-        authorize: async () => {
-          throw new Error('Unexpected session.');
-        },
-        search: async () => ({ tools: {}, suggestions: [] }),
-        execute: async () => {
-          throw new Error('No tools before setup completes.');
-        },
-      }),
-      id: 'composio',
-      get configured() {
-        return mode === 'otto' || Boolean(ownKey);
-      },
-      get configurationId() {
-        return mode === 'otto'
-          ? createHash('sha256').update('managed-fixture').digest('hex')
-          : ownKey
-            ? createHash('sha256').update(`direct:${ownKey}`).digest('hex')
-            : undefined;
-      },
-      supportedServices: ['gmail'],
-      supportsSubscriptions: [],
-      listServices: async () => [
-        { slug: 'gmail', name: 'Gmail', description: 'Synthetic mailbox' },
-      ],
-      setApiKey(value) {
-        ownKey = value;
-      },
-      verifyApiKey: async (value) => value === 'synthetic-project-key',
-      async createSession() {
-        calls.push(`${mode}:session`);
-        return {
-          id: 'setup-session',
-          async authorize(service, callback) {
-            calls.push(`${mode}:authorize:${service}`);
-            return {
-              accountId: `fixture-${++accountIndex}`,
-              url: `https://connect.composio.dev/fixture?state=${new URL(callback).searchParams.get('state')}`,
-            };
-          },
-          search: async () => ({ tools: {}, suggestions: [] }),
-          execute: async () => {
-            throw new Error('No tools during setup.');
-          },
-        };
-      },
-      async deleteSession() {
-        calls.push(`${mode}:delete-session`);
-      },
-      async parseCallback(raw) {
-        calls.push(`${mode}:complete`);
-        if (completingFails) throw new Error('Synthetic response lost after completion.');
-        const query = raw as Record<string, string>;
-        return {
-          state: query.state,
-          accountId: query.account_ref,
-          success: query.outcome === 'ok',
-        };
-      },
-      async inspectAccount(id, owner, inspection) {
-        calls.push(`${mode}:inspect:${id}`);
-        assert.equal(owner, ownerId);
-        assert.equal(inspection?.verifyOwner, true);
-        return { active, service: 'gmail', accountEmail: 'person@example.test' };
-      },
-      async deleteAccount(id, owner) {
-        assert.equal(owner, ownerId);
-        calls.push(`${mode}:delete:${id}`);
-      },
-    };
-    if (mode === 'otto')
-      result.authorize = async (_owner, service, callback) => {
-        calls.push(`${mode}:authorize:${service}`);
-        return {
-          accountId: `fixture-${++accountIndex}`,
-          url: `https://proxy.example.test/v1/connect/pair?state=${new URL(callback).searchParams.get('state')}`,
-          verificationSecret: randomBytes(32).toString('base64url'),
-        };
-      };
-    return result;
-  }
-  const managedProvider = provider('otto');
-  const ownProvider = provider('own');
-  const access = createIntegrationAccess({
-    origin: 'http://127.0.0.1:4310',
-    desktop: true,
-    proxy: {
-      origin: 'https://proxy.example.test',
-      accessStatus: async () => ({ state: 'enabled', email: 'person@example.test' }),
-      startAccess: async () => {
-        throw new Error('Unexpected sign-in request.');
-      },
-      pollAccess: async () => ({ status: 'authorized' }),
-      completeAccess: async () => ({ state: 'enabled', email: 'person@example.test' }),
-      cancelAccess: async () => ({ cancelled: true }),
-      revokeAccess: async () => ({ state: 'revoked', email: null }),
-    },
-  });
-  const settings = {
-    journal: storage,
-    ownerId,
-    baseUrl: 'http://127.0.0.1:4310',
-    access,
-    managedProvider,
-    ownProvider,
-  };
-  const service = await createSetupIntegrations(settings);
-  const app = Fastify();
-  service.register(app);
-  await app.ready();
-  t.after(async () => {
-    await service.close();
-    await app.close();
-  });
-  async function connect() {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/apps/gmail/connect',
-      payload: { returnTo: 'window' },
-    });
-    assert.equal(response.statusCode, 200, response.body);
-    const result = response.json<{ url: string; attempt: string }>();
-    const callback = `/api/apps/callback?${new URLSearchParams({ state: result.attempt, account_ref: `fixture-${accountIndex}`, outcome: 'ok' })}`;
-    return { ...result, callback };
-  }
-  return {
-    app,
-    service,
-    settings,
-    journal: storage,
-    ownerId,
-    calls,
-    connect,
-    setActive(value: boolean) {
-      active = value;
-    },
-    failCompletion() {
-      completingFails = true;
-    },
-  };
-}
-
-test('early app setup completes owned consent without a database and fences handoff and callback replay', async (t) => {
-  const f = await earlyAppsFixture(t);
-  const attempt = await f.connect();
-  assert.equal(await f.service.busy(), true);
-  await assert.rejects(f.service.transfer(), /Finish or cancel/);
-  const changed = await f.app.inject({
-    method: 'PUT',
-    url: '/api/integrations/key',
-    payload: { key: 'synthetic-project-key' },
-  });
-  assert.equal(changed.statusCode, 409);
-  const parseCallback = f.settings.managedProvider.parseCallback;
-  let release!: () => void;
-  let started!: () => void;
-  const blocked = new Promise<void>((resolve) => (release = resolve));
-  const claimed = new Promise<void>((resolve) => (started = resolve));
-  f.settings.managedProvider.parseCallback = async (...args) => {
-    started();
-    await blocked;
-    return parseCallback(...args);
-  };
-  const completing = f.app.inject(attempt.callback).then((response) => response);
-  await claimed;
-  let during;
-  try {
-    during = await f.app.inject({
-      method: 'POST',
-      url: '/api/apps/setup-status',
-      payload: {
-        hashes: [createHash('sha256').update(attempt.url).digest('hex')],
-        pairingUrl: attempt.url,
-      },
-    });
-  } finally {
-    release();
-  }
-  const first = await completing;
-  assert.equal(during.statusCode, 200);
-  assert.deepEqual(during.json().completed, []);
-  assert.deepEqual(
-    during.json().apps.map((app: { hash: string }) => app.hash),
-    [createHash('sha256').update(attempt.url).digest('hex')],
-  );
-  assert.equal(first.statusCode, 302);
-  assert.equal(new URL(first.headers.location!).searchParams.get('connection'), 'connected');
-  await f.app.inject(attempt.callback);
-  assert.equal(f.calls.filter((call) => call === 'otto:complete').length, 1);
-  assert.equal(
-    f.calls.some((call) => call.includes('session')),
-    false,
-  );
-  const setup = await f.app.inject({
-    method: 'POST',
-    url: '/api/apps/setup-status',
-    payload: {
-      hashes: [createHash('sha256').update(attempt.url).digest('hex')],
-      pairingUrl: attempt.url,
-    },
-  });
-  assert.equal(setup.json().completed.length, 1);
-  const transfer = await f.service.transfer();
-  assert.equal(transfer.connections.length, 1);
-  assert.equal(transfer.connections[0].accountEmail, 'person@example.test');
-  assert.equal(transfer.connections[0].verificationSecret, undefined);
-  assert.equal(
-    (await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect', payload: {} }))
-      .statusCode,
-    409,
-  );
-  assert.equal(
-    (
-      await f.app.inject({
-        method: 'POST',
-        url: '/api/integrations/access/start',
-        payload: { native: true },
-      })
-    ).statusCode,
-    409,
-  );
-  const invalid = { ...transfer, ownerId: 'another-profile' };
-  await assert.rejects(validateSetupIntegrations(invalid, f.settings), /different profile/);
-  await assert.rejects(
-    validateSetupIntegrations({ ...transfer, connections: [] }, f.settings),
-    /Connect Gmail/,
-  );
-  f.setActive(false);
-  await assert.rejects(validateSetupIntegrations(transfer, f.settings), /no longer available/);
-});
-
-test('early personal keys remain direct and failed key saves preserve existing connections', async (t) => {
-  const f = await earlyAppsFixture(t);
-  const save = await f.app.inject({
-    method: 'PUT',
-    url: '/api/integrations/key',
-    payload: { key: 'synthetic-project-key' },
-  });
-  assert.equal(save.statusCode, 200, save.body);
-  assert.equal(save.json().mode, 'own');
-  assert.equal(save.body.includes('synthetic-project-key'), false);
-  const attempt = await f.connect();
-  await f.app.inject(attempt.callback);
-  const before = await f.service.list();
-  const calls = [...f.calls];
-  const invalid = await f.app.inject({
-    method: 'PUT',
-    url: '/api/integrations/key',
-    payload: { key: 'invalid-synthetic-key' },
-  });
-  assert.equal(invalid.statusCode, 400);
-  assert.deepEqual(await f.service.list(), before);
-  assert.deepEqual(f.calls, calls);
-  assert.deepEqual(f.calls.slice(0, 3), [
-    'own:session',
-    'own:authorize:gmail',
-    'own:delete-session',
-  ]);
-  assert.equal(
-    f.calls.some((call) => call.startsWith('otto:')),
-    false,
-  );
-  const transfer = await f.service.transfer();
-  assert.equal(transfer.mode, 'own');
-  assert.equal(transfer.apiKey, 'synthetic-project-key');
-  assert.equal(transfer.connections.length, 1);
-});
-
-test('early uncertain disconnections retain owned accounts and require an inspected explicit retry', async (t) => {
-  for (const outcome of ['active', 'inactive', 'missing'] as const) {
-    await t.test(outcome, async (t) => {
-      const f = await earlyAppsFixture(t);
-      const attempt = await f.connect();
-      await f.app.inject(attempt.callback);
-      const connected = (await f.service.list()).find((row) => row.status === 'connected')!;
-      const provider = f.settings.managedProvider;
-      let deletes = 0;
-      provider.deleteAccount = async (accountId, ownerId) => {
-        assert.equal(accountId, connected.accountId);
-        assert.equal(ownerId, f.ownerId);
-        deletes++;
-        if (deletes === 1) throw new Error('Synthetic response lost after deletion.');
-      };
-      const disconnect = () =>
-        f.app.inject({
-          method: 'POST',
-          url: `/api/apps/gmail/accounts/${connected.connectionId}/disconnect`,
-        });
-      assert.equal(
-        (
-          await f.app.inject({
-            method: 'POST',
-            url: `/api/apps/googlecalendar/accounts/${connected.connectionId}/disconnect`,
-          })
-        ).statusCode,
-        404,
-      );
-      assert.equal(deletes, 0);
-      assert.equal((await disconnect()).statusCode, 502);
-      const pending = (await f.service.list()).find(
-        (row) => row.connectionId === connected.connectionId,
-      );
-      assert.equal(pending?.disconnectPending, true);
-      assert.equal(pending?.status, 'disconnected');
-      assert.equal(deletes, 1);
-      await assert.rejects(f.service.transfer(), /pending disconnection/);
-      assert.equal(
-        (await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect', payload: {} }))
-          .statusCode,
-        409,
-      );
-      provider.inspectAccount = async () => {
-        throw new Error('Synthetic inspection unavailable.');
-      };
-      assert.equal((await disconnect()).statusCode, 502);
-      assert.equal(deletes, 1);
-      provider.inspectAccount = async () => ({ active: true, service: 'googlecalendar' });
-      assert.equal((await disconnect()).statusCode, 409);
-      assert.equal(deletes, 1);
-      provider.inspectAccount = async (accountId, ownerId, inspection) => {
-        assert.equal(accountId, connected.accountId);
-        assert.equal(ownerId, f.ownerId);
-        assert.equal(inspection?.verifyOwner, true);
-        if (outcome === 'missing')
-          throw Object.assign(new Error('Synthetic account absent.'), { status: 404 });
-        return { active: outcome === 'active', service: 'gmail' };
-      };
-      assert.equal((await disconnect()).statusCode, 200);
-      assert.equal((await disconnect()).statusCode, 200);
-      assert.equal(deletes, outcome === 'active' ? 2 : 1);
-      assert.equal(
-        (await f.service.list()).some((row) => row.connectionId === connected.connectionId),
-        false,
-      );
-      assert.equal((await f.service.transfer()).connections.length, 0);
-    });
-  }
-});
-
-test('early project changes retain an uncertain disconnection until the original provider confirms it', async (t) => {
-  const f = await earlyAppsFixture(t);
-  const attempt = await f.connect();
-  await f.app.inject(attempt.callback);
-  let deletes = 0;
-  f.settings.managedProvider.deleteAccount = async () => {
-    deletes++;
-    throw new Error('Synthetic deletion response lost.');
-  };
-  const change = () =>
-    f.app.inject({
-      method: 'PUT',
-      url: '/api/integrations/key',
-      payload: { key: 'synthetic-project-key' },
-    });
-  assert.equal((await change()).statusCode, 502);
-  assert.equal((await f.service.keyStatus()).mode, 'otto');
-  assert.equal(
-    (await f.service.list()).find((row) => row.slug === 'gmail')?.disconnectPending,
-    true,
-  );
-  f.settings.managedProvider.inspectAccount = async () => {
-    throw new Error('Synthetic inspection unavailable.');
-  };
-  assert.equal((await change()).statusCode, 502);
-  assert.equal(deletes, 1);
-  assert.equal((await f.service.keyStatus()).mode, 'otto');
-  f.settings.managedProvider.inspectAccount = async () => ({ active: false, service: 'gmail' });
-  assert.equal((await change()).statusCode, 200);
-  assert.equal(deletes, 1);
-  assert.equal((await f.service.keyStatus()).mode, 'own');
-  assert.equal((await f.service.transfer()).connections.length, 0);
-});
-
-test('early setup refuses the aggregate account limit before authorization without corrupting saved connections', async (t) => {
-  const f = await earlyAppsFixture(t);
-  const attempt = await f.connect();
-  await f.app.inject(attempt.callback);
-  const saved = (await f.journal.read<{ connections: Record<string, unknown>[] }>('integrations'))!;
-  await f.journal.update('integrations', () => ({
-    ...saved,
-    connections: Array.from({ length: 100 }, (_, index) => ({
-      ...saved.connections[0],
-      id: randomUUID(),
-      slug: `fixture_${Math.floor(index / 10)}`,
-      accountId: `fixture-limit-${index}`,
-    })),
-  }));
-  const before = await f.journal.read('integrations');
-  const calls = [...f.calls];
-  assert.equal(
-    (await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect', payload: {} }))
-      .statusCode,
-    409,
-  );
-  assert.deepEqual(f.calls, calls);
-  assert.deepEqual(await f.journal.read('integrations'), before);
-  assert.equal((await f.service.list()).filter((row) => row.status === 'connected').length, 100);
-  assert.equal((await f.service.transfer()).connections.length, 100);
-});
-
-test('early completion failures and cancelled attempts never exchange their callback again', async (t) => {
-  const f = await earlyAppsFixture(t);
-  const attempt = await f.connect();
-  f.failCompletion();
-  const failed = await f.app.inject(attempt.callback);
-  assert.equal(new URL(failed.headers.location!).searchParams.get('connection'), 'failed');
-  const status = await f.app.inject({
-    method: 'POST',
-    url: '/api/apps/setup-status',
-    payload: { hashes: [createHash('sha256').update(attempt.url).digest('hex')] },
-  });
-  assert.deepEqual(status.json(), { completed: [], apps: [] });
-  await f.app.inject(attempt.callback);
-  const restarted = await createSetupIntegrations(f.settings);
-  const app = Fastify();
-  restarted.register(app);
-  await app.ready();
-  t.after(async () => {
-    await restarted.close();
-    await app.close();
-  });
-  await app.inject(attempt.callback);
-  assert.equal(f.calls.filter((call) => call === 'otto:complete').length, 1);
-  assert.equal((await restarted.transfer()).connections.length, 0);
-  const second = await earlyAppsFixture(t);
-  const cancelled = await second.connect();
-  await second.service.cancelPending();
-  await second.app.inject(cancelled.callback);
-  assert.equal(
-    second.calls.some((call) => call.endsWith(':complete')),
-    false,
-  );
-  assert.equal(await second.service.busy(), false);
-});
-
-test('early callback substitution cannot attach an account other than the pending owned account', async (t) => {
-  const f = await earlyAppsFixture(t);
-  const attempt = await f.connect();
-  const substituted = new URL(attempt.callback, 'http://127.0.0.1:4310');
-  substituted.searchParams.set('account_ref', 'another-account');
-  const result = await f.app.inject(substituted.pathname + substituted.search);
-  assert.equal(new URL(result.headers.location!).searchParams.get('connection'), 'failed');
-  assert.equal(
-    f.calls.some((call) => call.includes(':inspect:')),
-    false,
-  );
-  assert.equal((await f.service.transfer()).connections.length, 0);
-});
-
-test(
-  'early connection handoff imports keys and accounts atomically without replaying remote writes',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const fixture = await earlyAppsFixture(t);
-    assert.equal(
-      (
-        await fixture.app.inject({
-          method: 'PUT',
-          url: '/api/integrations/key',
-          payload: { key: 'synthetic-project-key' },
-        })
-      ).statusCode,
-      200,
-    );
-    const attempt = await fixture.connect();
-    await fixture.app.inject(attempt.callback);
-    const transfer = await validateSetupIntegrations(
-      await fixture.service.transfer(),
-      fixture.settings,
-    );
-    const db = await hostedDatabase();
-    t.after(() => db.close());
-    const normal = await createIntegrations(db.pool, {
-      ownerId: fixture.ownerId,
-      provider: fixture.settings.ownProvider,
-      wake: async () => {
-        throw new Error('No watches during setup.');
-      },
-      baseUrl: fixture.settings.baseUrl,
-    });
-    const app = Fastify();
-    normal.registerRoutes(app);
-    await app.ready();
-    await app.close();
-    await db.pool.query(
-      'CREATE TABLE integration_keys(owner_id text PRIMARY KEY,vault_id uuid NOT NULL)',
-    );
-    const vaultKey = randomBytes(32);
-    const vault = await createAppGrantVault(db.pool, {
-      ownerId: fixture.ownerId,
-      keyStore: { id: 'synthetic', configured: true, getKey: async () => vaultKey },
-    });
-    const client = await db.pool.connect();
-    const remoteCalls = [...fixture.calls];
-    try {
-      await client.query('BEGIN');
-      await assert.rejects(
-        importSetupIntegrations(client, transfer, {
-          ...fixture.settings,
-          putKey: async () => {
-            throw new Error('Synthetic durable write failure.');
-          },
-        }),
-        /durable write failure/,
-      );
-      await client.query('ROLLBACK');
-      assert.equal((await client.query('SELECT * FROM app_connections')).rowCount, 0);
-      assert.equal((await client.query('SELECT * FROM app_setup_completions')).rowCount, 0);
-      await client.query('BEGIN');
-      await importSetupIntegrations(client, transfer, { ...fixture.settings, putKey: vault.put });
-      await client.query('COMMIT');
-      await client.query('BEGIN');
-      await importSetupIntegrations(client, transfer, { ...fixture.settings, putKey: vault.put });
-      await client.query('COMMIT');
-      const rows = (await client.query('SELECT * FROM app_connections')).rows;
-      assert.equal(rows.length, 1);
-      assert.equal(rows[0].id, transfer.connections[0].id);
-      assert.equal(rows[0].owner_id, fixture.ownerId);
-      assert.equal(rows[0].account_id, transfer.connections[0].accountId);
-      assert.equal(rows[0].triggers_enabled, false);
-      assert.equal((await vault.read(transfer.keyId!)).value, 'synthetic-project-key');
-      assert.equal((await vault.read(transfer.keyId!)).version, 0);
-      assert.equal((await client.query('SELECT * FROM app_setup_completions')).rowCount, 1);
-      assert.deepEqual(fixture.calls, remoteCalls);
-      const subscriptions: string[] = [];
-      const polled: string[] = [];
-      const provider = fixture.settings.ownProvider;
-      provider.supportsSubscriptions = ['gmail'];
-      provider.subscribe = async (owner, slug, accountId) => {
-        assert.equal(owner, fixture.ownerId);
-        assert.equal(slug, 'gmail');
-        subscriptions.push(accountId);
-        return { id: 'imported-gmail-trigger' };
-      };
-      provider.pollInbox = async (accountId) => {
-        polled.push(accountId);
-        return { cursor: 'imported-inbox-cursor', messages: [], hasMore: false };
-      };
-      const recovered = await createIntegrations(db.pool, {
-        ownerId: fixture.ownerId,
-        provider,
-        wake: async () => assert.fail('Import must not create an event turn.'),
-        baseUrl: fixture.settings.baseUrl,
-      });
-      const recoveredApp = Fastify();
-      recovered.registerRoutes(recoveredApp);
-      await recoveredApp.ready();
-      try {
-        await recovered.syncWatches();
-        await recovered.syncWatches();
-        await recovered.pollInboxes();
-        await recovered.pollInboxes();
-        assert.deepEqual(subscriptions, [transfer.connections[0].accountId]);
-        assert.deepEqual(polled, [transfer.connections[0].accountId]);
-        const saved = (await client.query('SELECT * FROM app_connections')).rows[0];
-        assert.equal(saved.trigger_id, 'imported-gmail-trigger');
-        assert.equal(saved.inbox_cursor, 'imported-inbox-cursor');
-        assert.deepEqual(fixture.calls, remoteCalls);
-      } finally {
-        await recoveredApp.close();
-      }
-      await client.query('UPDATE app_connections SET revoked=true');
-      await assert.rejects(
-        importSetupIntegrations(client, transfer, { ...fixture.settings, putKey: vault.put }),
-        /changed before setup finished/,
-      );
-      fixture.settings.ownProvider.setApiKey?.('different-synthetic-project');
-      await assert.rejects(
-        importSetupIntegrations(client, transfer, { ...fixture.settings, putKey: vault.put }),
-        /provider changed/,
-      );
-      assert.deepEqual(fixture.calls, remoteCalls);
-    } finally {
-      await client.query('ROLLBACK');
-      client.release();
-    }
-  },
-);
 
 test('installation identity persistence failures withhold signatures and preserve the published key across restart', async (t) => {
   for (const target of ['file', 'directory', 'ancestor']) {
@@ -6635,6 +6028,7 @@ test(
         assert.equal(saved.canReconnect, true);
         assert.equal(saved.reconnectRequired, true);
         assert.equal(saved.status, active ? 'connected' : 'disconnected');
+        assert.equal(connectedGmail(saved), active);
         const response = await f.reconnect();
         assert.equal(response.statusCode, 200, response.body);
         assert.doesNotMatch(response.body, /original-gmail-auth|work@example|private/);
@@ -8656,6 +8050,7 @@ test('Composio key changes bind configuration identity to the active SDK and fen
   const keys = ['synthetic-rotation-key-a', 'synthetic-rotation-key-b'];
   const calls: Array<{ path: string; key: string }> = [];
   let created = 0;
+  const configurations: Record<string, string>[] = [];
   t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
@@ -8690,6 +8085,7 @@ test('Composio key changes bind configuration identity to the active SDK and fen
     if (request.method === 'POST' && url.pathname === '/api/v3.1/tool_router/session') {
       const body = await request.json();
       assert.equal(body.user_id, 'fixture-owner');
+      configurations.push(body.auth_configs ?? {});
       const id = `trs_rotation_${++created}`;
       return Response.json({
         session_id: id,
@@ -8750,6 +8146,33 @@ test('Composio key changes bind configuration identity to the active SDK and fen
     calls.filter((call) => call.path.endsWith('/auth_configs')).map((call) => call.key),
     [keys[0], keys[1], keys[1], keys[0]],
   );
+  const configured = createComposioProvider({
+    apiKey: keys[0],
+    authConfigs: { gmail: 'environment-gmail', slack: 'environment-slack' },
+  });
+  configured.setApiKey!(keys[0], { gmail: 'legacy-gmail', custom_native: 'legacy-native' });
+  await configured.createSession('fixture-owner', {});
+  assert.deepEqual(configurations.at(-1), {
+    gmail: 'legacy-gmail',
+    slack: 'environment-slack',
+    custom_native: 'legacy-native',
+  });
+  configured.setApiKey!(keys[1], {});
+  await configured.createSession('fixture-owner', {});
+  assert.deepEqual(configurations.at(-1), {
+    gmail: 'environment-gmail',
+    slack: 'environment-slack',
+  });
+  for (const slug of ['x'.repeat(81), 'invalid-toolkit']) {
+    const identity = configured.configurationId;
+    assert.throws(() => configured.setApiKey!(keys[0], { [slug]: 'invalid-configuration' }));
+    assert.equal(configured.configurationId, identity);
+  }
+  await configured.createSession('fixture-owner', {});
+  assert.deepEqual(configurations.at(-1), {
+    gmail: 'environment-gmail',
+    slack: 'environment-slack',
+  });
   const root = await mkdtemp(join(tmpdir(), 'otto-integration-key-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const proxy = createComposioProxy({
@@ -9223,6 +8646,85 @@ test(
       apiKey: 'synthetic-legacy-composio-project',
       authConfigs: { gmail: 'synthetic-legacy-gmail-config' },
     };
+    for (const importedFirst of [false, true]) {
+      await t.test(
+        `managed choice survives revocation after ${importedFirst ? 'import' : 'deferral'}`,
+        async () => {
+          const ownerId = randomUUID();
+          let managedState: 'sign_in_required' | 'enabled' | 'revoked' = importedFirst
+            ? 'sign_in_required'
+            : 'enabled';
+          const provider = {
+            ...fakeProvider({
+              id: 'unused',
+              authorize: async () => assert.fail('No remote authorization'),
+              search: async () => assert.fail('No remote calls'),
+              execute: async () => assert.fail('No remote tools'),
+            }),
+            setApiKey() {},
+            verifyApiKey: async (key: string) => key === 'synthetic-new-personal-project',
+          };
+          const create = () =>
+            createIntegrationKeyService({
+              ownerId,
+              database: db.pool,
+              keyStore,
+              provider,
+              managed: { status: async () => ({ state: managedState, email: null }) },
+            });
+          const service = create();
+          await service.initialize();
+          assert.equal(await service.importLegacy(legacy), importedFirst);
+          if (importedFirst) {
+            managedState = 'enabled';
+            const app = Fastify();
+            service.register(app, { changeProvider: async (_revoke, swap) => swap() });
+            try {
+              assert.equal(
+                (await app.inject({ method: 'DELETE', url: '/api/integrations/key' })).statusCode,
+                200,
+              );
+            } finally {
+              await app.close();
+            }
+          }
+          managedState = 'revoked';
+          const restarted = create();
+          await restarted.initialize();
+          assert.equal(await restarted.importLegacy(legacy), false);
+          assert.equal(restarted.mode, 'otto');
+          managedState = 'sign_in_required';
+          assert.equal(await restarted.importLegacy(legacy), false);
+          assert.equal(
+            (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
+              .rowCount,
+            0,
+          );
+          const app = Fastify();
+          restarted.register(app, { changeProvider: async (_revoke, swap) => swap() });
+          try {
+            const saved = await app.inject({
+              method: 'PUT',
+              url: '/api/integrations/key',
+              payload: { key: 'synthetic-new-personal-project' },
+            });
+            assert.equal(saved.statusCode, 200);
+            assert.equal(saved.json().mode, 'own');
+          } finally {
+            await app.close();
+          }
+          const personal = create();
+          await personal.initialize();
+          assert.equal(personal.mode, 'own');
+          assert.equal(await personal.importLegacy(legacy), false);
+          assert.equal(
+            (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
+              .rowCount,
+            1,
+          );
+        },
+      );
+    }
     for (const scenario of [
       'import',
       'new-key',
@@ -9321,7 +8823,7 @@ test(
             'DROP TRIGGER reject_legacy_import ON integration_keys; DROP FUNCTION reject_legacy_import()',
           );
         }
-        const expected = ['import', 'other-owner', 'rollback', 'managed-denied'].includes(scenario);
+        const expected = ['import', 'other-owner', 'rollback'].includes(scenario);
         const before = await db.pool.query(
           'SELECT * FROM vault_app_grants WHERE owner_id=$1 ORDER BY id',
           [ownerId],
@@ -9341,6 +8843,13 @@ test(
             accessChecks,
             scenario.startsWith('managed-') && scenario !== 'managed-binding' ? 1 : 0,
           );
+          if (scenario === 'managed-binding') {
+            await db.pool.query('DELETE FROM app_connections WHERE owner_id=$1', [ownerId]);
+            const restarted = create();
+            await restarted.initialize();
+            assert.equal(await restarted.importLegacy(legacy), false);
+            assert.equal(restarted.mode, 'otto');
+          }
           return;
         }
         assert.equal(activeKey, legacy.apiKey);
@@ -9383,7 +8892,7 @@ test(
   },
 );
 
-test('legacy native handoff accepts only its owner and one startup challenge and waits for cleanup', async () => {
+test('legacy native handoff binds cleanup replies and defers unavailable cleanup after import', async () => {
   const parent = Object.assign(new EventEmitter(), { postMessage: (_message: unknown) => {} });
   const ownerId = randomUUID();
   const messages: Array<Record<string, unknown>> = [];
@@ -9431,6 +8940,21 @@ test('legacy native handoff accepts only its owner and one startup challenge and
   assert.equal(cleaned, false);
   parent.emit('message', { data: final });
   await acknowledgement;
+  assert.equal(parent.listenerCount('message'), 0);
+  let deferred = false;
+  const deferral = migration.acknowledge().then(() => {
+    deferred = true;
+  });
+  const failure = { ...final, type: 'otto-legacy-integration-cleanup-deferred' };
+  parent.emit('message', { data: { ...failure, nonce: randomUUID() } });
+  parent.emit('message', { data: { ...failure, ownerId: randomUUID() } });
+  parent.emit('message', { data: { ...failure, receipt: 'b'.repeat(64) } });
+  await delay(0);
+  assert.equal(deferred, false);
+  parent.emit('message', { data: failure });
+  await deferral;
+  assert.equal(parent.listenerCount('message'), 0);
+  await migration.acknowledge();
   assert.equal(parent.listenerCount('message'), 0);
   assert.ok(messages.every((value) => !JSON.stringify(value).includes(payload.apiKey)));
   await assert.rejects(receiveLegacyIntegration({ ownerId, parent, timeout: 5 }), /restore/);

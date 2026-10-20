@@ -24,7 +24,6 @@ import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shar
 import { useSession } from './hooks/use-session';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
-import { DesktopSetup } from './pages/onboarding/desktop-setup';
 import { AccountSettings } from './components/account-settings';
 import { capturePageview } from './lib/analytics';
 import type { AccountControls, AccountTab } from './components/account-menu';
@@ -33,6 +32,7 @@ import { resolveBrowserRegion, setDateFormat } from './lib/date-format';
 import { useBrowserTimeZone } from './hooks/use-browser-time-zone';
 import {
   desktopSettingsAvailable,
+  saveDesktopSettings,
   onFeedbackRequested,
   subscribeDesktopFocusMessage,
   subscribeDesktopSettings,
@@ -410,6 +410,8 @@ function AuthenticatedApp({
           onComplete={async () => {
             if (!session.settings!.onboardingCompleted)
               await onAccountUpdate({ onboardingCompleted: true });
+            if (desktopSettingsAvailable())
+              await saveDesktopSettings({ onboardingCompleted: true });
             if (replayingOnboarding(path)) navigate('/');
           }}
         />
@@ -532,8 +534,6 @@ function AccountApp({
       </main>
     );
   const key = `${session.user.id}:${sessionState.epoch}`;
-  if (session.desktopSetup)
-    return <DesktopSetup key={key} session={session} onAccountUpdate={sessionState.update} />;
   return (
     <AuthenticatedApp
       key={key}

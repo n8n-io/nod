@@ -15,8 +15,10 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
+import { createDesktopLifecycle } from '../main/lifecycle.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { create } from 'tar';
@@ -1477,6 +1479,450 @@ test('runtime replaces owned containers even with unchanged images and retains t
       ),
     );
     assert.ok(!commands.some(([command]) => command === 'stop' || command === 'rm'));
+  }
+});
+
+test('native runtime wrapper preserves handed-off storage through failed preparation and explicit retry until quit', async () => {
+  const source = await readFile(new URL('../runtime/index.mjs', import.meta.url), 'utf8');
+  const wrapper = source
+    .slice(
+      source.indexOf('export function prepareRuntime('),
+      source.indexOf('async function stopComputer('),
+    )
+    .replaceAll('export ', '');
+  for (const terminal of ['retry', 'quit', 'abort']) {
+    let attempts = 0;
+    let stops = 0;
+    let engineStops = 0;
+    let retired = false;
+    const pending = [];
+    let handed;
+    const storageHanded = new Promise((accept) => {
+      handed = accept;
+    });
+    const storage = {
+      env: {},
+      close: () => runtime.stopRuntime({ dataRoot: resolve('synthetic-profile') }),
+    };
+    const runtime = runInNewContext(`${wrapper}; ({ prepareRuntime, stopRuntime })`, {
+      resolve,
+      preparing: new Map(),
+      storageReady: new Set(),
+      prepare: async (options, started) => {
+        started();
+        attempts++;
+        if (retired) throw new Error('Synthetic new attempt before storage');
+        if (attempts === 2) throw new Error('Synthetic retry before storage handshake');
+        await options.onStorageReady(storage);
+        handed();
+        if (terminal === 'abort')
+          await new Promise((_, reject) =>
+            options.signal.addEventListener('abort', () => reject(new Error('Synthetic abort')), {
+              once: true,
+            }),
+          );
+        if (attempts === 1) throw new Error('Synthetic workspace startup failure');
+        return storage;
+      },
+      stopComputer: async () => {
+        stops++;
+      },
+    });
+    const lifecycle = createDesktopLifecycle({
+      prepareRuntime: (options) =>
+        runtime.prepareRuntime({ ...options, dataRoot: resolve('synthetic-profile') }),
+      validateStart: async () => {},
+      startEngine: async ({ pending: waiting }) => pending.push(waiting === true),
+      stopEngine: async () => {
+        engineStops++;
+      },
+      onRuntimeStatus() {},
+    });
+    if (terminal === 'abort') {
+      const starting = assert.rejects(lifecycle.start(), /Synthetic abort/);
+      await storageHanded;
+      await lifecycle.close();
+      await starting;
+      assert.equal(engineStops, 1);
+      assert.equal(stops, 1);
+      continue;
+    }
+    await assert.rejects(lifecycle.start(), /Synthetic workspace startup failure/);
+    assert.equal(stops, 0, `${terminal}: storage must remain usable after workspace failure`);
+    assert.deepEqual(pending, [true]);
+    if (terminal === 'retry') {
+      await assert.rejects(lifecycle.start());
+      assert.equal(attempts, 1);
+      await assert.rejects(
+        lifecycle.start({ retry: true }),
+        /Synthetic retry before storage handshake/,
+      );
+      assert.equal(stops, 0);
+      await lifecycle.start({ retry: true });
+      assert.equal(attempts, 3);
+      assert.deepEqual(pending, [true, true, false]);
+    }
+    await lifecycle.close();
+    assert.equal(engineStops, 1);
+    assert.equal(stops, 1, `${terminal}: quit must close retained storage exactly once`);
+    retired = true;
+    await assert.rejects(
+      runtime.prepareRuntime({
+        dataRoot: resolve('synthetic-profile'),
+        onStorageReady: async () => {},
+      }),
+      /Synthetic new attempt/,
+    );
+    assert.equal(stops, 2);
+  }
+});
+
+async function windowsImageFixture(t) {
+  const root = await mkdtemp(join(tmpdir(), 'otto-windows-image-order-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'images'));
+  const images = await Promise.all(
+    ['postgres', 'workspace', 'browser'].map(async (name) => {
+      const bytes = Buffer.from(`synthetic-${name}-image`);
+      const digest = createHash('sha256').update(bytes).digest('hex');
+      await writeFile(join(root, 'images', `${name}.tar.gz`), bytes);
+      return {
+        name,
+        id: `sha256:${digest}`,
+        sha256: digest,
+        reference: `synthetic:${name}`,
+        file: `images/${name}.tar.gz`,
+      };
+    }),
+  );
+  await writeFile(join(root, 'manifest.json'), JSON.stringify({ images }));
+  await writeFile(join(root, 'state.json'), JSON.stringify({ images: {}, commands: [] }));
+  const runner = join(root, 'run.py');
+  await writeFile(
+    runner,
+    `import builtins, json, os, subprocess, sys
+source, root, command = sys.argv[1:]
+original_open = builtins.open
+original_exists = os.path.exists
+source_code = original_open(source).read()
+state_path = os.path.join(root, 'state.json')
+state = json.load(original_open(state_path))
+manifest = json.load(original_open(os.path.join(root, 'manifest.json')))
+def mapped(path):
+    path = os.fspath(path)
+    for prefix in ['/opt/otto-assets/', '/var/lib/otto/']:
+        if path.startswith(prefix): return os.path.join(root, path[len(prefix):])
+    if path == '/var/lib/otto': return root
+    raise RuntimeError('Unexpected fixture path')
+def run(args, **kwargs):
+    state['commands'].append(args[1:])
+    if args[1:] == ['info']: return subprocess.CompletedProcess(args, 0)
+    if args[1:3] == ['image', 'inspect']:
+        value = state['images'].get(args[-1])
+        result = subprocess.CompletedProcess(args, 0 if value else 1, stdout=value or '')
+    elif args[1:3] == ['load', '--input']:
+        image = next(image for image in manifest['images'] if args[-1].endswith('/' + image['file']))
+        state['images'][image['reference']] = 'sha256:' + '0' * 64 if state.get('wrong') == image['name'] else image['id']
+        result = subprocess.CompletedProcess(args, 0)
+    else: raise RuntimeError('Unexpected Docker command')
+    if kwargs.get('check') and result.returncode: raise subprocess.CalledProcessError(result.returncode, args)
+    return result
+builtins.open = lambda path, *args, **kwargs: original_open(mapped(path), *args, **kwargs)
+os.path.exists = lambda path: original_exists(mapped(path))
+def makedirs(path, **kwargs):
+    assert mapped(path) == root
+os.makedirs = makedirs
+subprocess.run = run
+sys.argv = [source, command]
+try:
+    exec(compile(source_code, source, 'exec'), {'__name__': '__main__'})
+finally:
+    with original_open(state_path, 'w') as target: json.dump(state, target)
+`,
+  );
+  return {
+    root,
+    async read() {
+      return JSON.parse(await readFile(join(root, 'state.json'), 'utf8'));
+    },
+    async wrong(name) {
+      const state = JSON.parse(await readFile(join(root, 'state.json'), 'utf8'));
+      await writeFile(join(root, 'state.json'), JSON.stringify({ ...state, wrong: name }));
+    },
+    run(command, name) {
+      return execFileSync(
+        process.platform === 'win32' ? 'python' : 'python3',
+        [
+          runner,
+          fileURLToPath(new URL('../runtime/windows-guest.py', import.meta.url)),
+          root,
+          command,
+        ],
+        {
+          input: JSON.stringify({ identity: '123456abcdef', name }),
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      );
+    },
+  };
+}
+
+test('runtime hands off verified storage before browser readiness and fences failed or aborted handoffs', async (t) => {
+  const { finishRuntime } = await import('../runtime/index.mjs');
+  const { default: pg } = await import('pg');
+  for (const outcome of [
+    'ready',
+    'callback-failed',
+    'aborted-handoff',
+    'aborted',
+    'windows-ready',
+    'windows-failed',
+    'windows-damaged',
+  ]) {
+    await t.test(outcome, async (t) => {
+      const root = await mkdtemp(join(tmpdir(), 'otto-storage-ready-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const signal = new AbortController();
+      const windows = outcome.startsWith('windows-') ? await windowsImageFixture(t) : undefined;
+      if (windows) {
+        windows.run('start');
+        assert.deepEqual((await windows.read()).images, {});
+        if (outcome === 'windows-failed') await windows.wrong('browser');
+        if (outcome === 'windows-damaged')
+          await writeFile(join(windows.root, 'images/browser.tar.gz'), 'corrupt synthetic archive');
+      }
+      const calls = [];
+      let storage;
+      let callbacks = 0;
+      let verified = false;
+      let release;
+      let blocked;
+      let continueSetup;
+      let handedOff;
+      const handoff = new Promise((resolve) => {
+        continueSetup = resolve;
+      });
+      const handed = new Promise((resolve) => {
+        handedOff = resolve;
+      });
+      const browser = new Promise((resolve) => {
+        release = resolve;
+      });
+      const waiting = new Promise((resolve) => {
+        blocked = resolve;
+      });
+      t.mock.method(pg.Client.prototype, 'connect', async () => {
+        calls.push('database-connect');
+      });
+      t.mock.method(pg.Client.prototype, 'query', async (query) => {
+        assert.equal(query, 'SELECT 1');
+        verified = true;
+      });
+      t.mock.method(pg.Client.prototype, 'end', async () => {
+        calls.push('database-end');
+      });
+      const runDocker = async (args) => {
+        signal.signal.throwIfAborted();
+        calls.push(args);
+        if (args[0] === 'network' && args[1] === 'inspect') {
+          const role = args[2].split('-')[1];
+          const index = ['control', 'workspace', 'browser'].indexOf(role);
+          return JSON.stringify([
+            {
+              Driver: 'bridge',
+              Scope: 'local',
+              EnableIPv6: false,
+              Internal: false,
+              IPAM: { Config: [{ Subnet: `172.31.${80 + index}.0/24` }] },
+              Options: {
+                'com.docker.network.bridge.name': `otto-${role}`,
+                'com.docker.network.bridge.enable_icc': 'false',
+              },
+            },
+          ]);
+        }
+        if (args[0] === 'container' && args[1] === 'inspect')
+          throw new Error('Absent fixture container');
+        if (args[0] === 'inspect') return 'true';
+        if (args[0] === 'exec' && args[1] === 'otto-browser-fixture') {
+          blocked();
+          if (outcome === 'callback-failed') release();
+          await Promise.race([
+            browser,
+            new Promise((_, reject) =>
+              signal.signal.addEventListener('abort', () => reject(signal.signal.reason), {
+                once: true,
+              }),
+            ),
+          ]);
+        }
+        return '';
+      };
+      let settled = false;
+      const operation = finishRuntime({
+        dataRoot: root,
+        resourcesPath: root,
+        assets: root,
+        identity: 'fixture',
+        manifest: {
+          images: ['postgres', 'workspace', 'browser'].map((name) => ({
+            name,
+            id: `sha256:${name}`,
+          })),
+        },
+        saved: { port: 54329, password: 'synthetic-fixture-password' },
+        controlRoot: root,
+        docker: join(root, 'docker-fixture'),
+        path: process.env.PATH,
+        dockerEnvironment: {
+          DOCKER_HOST: 'unix://synthetic-docker',
+          DOCKER_CONFIG: join(root, 'docker-config'),
+        },
+        runDocker,
+        runGuest: async () => {},
+        signal: signal.signal,
+        status() {},
+        prepareImage: async (name) => {
+          calls.push(['prepare-image', name]);
+          windows?.run('image', name);
+        },
+        async onStorageReady(runtime) {
+          callbacks++;
+          if (windows)
+            assert.deepEqual(Object.keys((await windows.read()).images), ['synthetic:postgres']);
+          assert.equal(verified, true);
+          assert.ok(calls.includes('database-end'));
+          assert.equal(
+            calls.some(
+              (command) =>
+                Array.isArray(command) &&
+                command[0] === 'run' &&
+                command.includes('otto-workspace-fixture'),
+            ),
+            false,
+          );
+          assert.equal(runtime.env, runtime.environment);
+          assert.equal(new URL(runtime.env.DATABASE_URL).port, '54329');
+          assert.equal(runtime.env.WORKSPACE_CONTAINER, 'otto-workspace-fixture');
+          if (process.platform !== 'win32')
+            assert.ok((await stat(join(root, 'bin/docker'))).isFile());
+          storage = runtime;
+          handedOff();
+          if (outcome === 'callback-failed') throw new Error('Synthetic engine startup failed');
+          await handoff;
+        },
+      }).then(
+        (runtime) => {
+          settled = true;
+          return runtime;
+        },
+        (error) => {
+          settled = true;
+          throw error;
+        },
+      );
+      const result = operation.then(
+        (runtime) => ({ runtime }),
+        (error) => ({ error }),
+      );
+      try {
+        if (outcome === 'callback-failed') {
+          const failed = await result;
+          assert.match(failed.error?.message ?? '', /Synthetic engine startup failed/);
+          assert.equal(
+            calls.some(
+              (command) =>
+                Array.isArray(command) &&
+                command[0] === 'run' &&
+                command.includes('otto-browser-fixture'),
+            ),
+            false,
+          );
+        } else {
+          await Promise.race([
+            handed,
+            waiting.then(() => {
+              throw new Error('Browser started before storage handoff');
+            }),
+            result.then((value) => {
+              throw value.error ?? new Error('Runtime completed before storage handoff');
+            }),
+          ]);
+          assert.deepEqual(
+            calls.filter((command) => Array.isArray(command) && command[0] === 'prepare-image'),
+            [['prepare-image', 'postgres']],
+          );
+          if (outcome === 'aborted-handoff') {
+            signal.abort(new Error('Synthetic setup cancelled during handoff'));
+            continueSetup();
+            assert.equal((await result).error, signal.signal.reason);
+            assert.equal(
+              calls.some(
+                (command) =>
+                  Array.isArray(command) &&
+                  command[0] === 'run' &&
+                  command.includes('otto-workspace-fixture'),
+              ),
+              false,
+            );
+            return;
+          }
+          continueSetup();
+          if (outcome === 'windows-failed' || outcome === 'windows-damaged') {
+            assert.ok((await result).error);
+            assert.ok(storage);
+            assert.equal(callbacks, 1);
+            if (outcome === 'windows-damaged')
+              assert.equal(
+                (await windows.read()).commands.some(
+                  (command) => command[0] === 'load' && command.at(-1).endsWith('/browser.tar.gz'),
+                ),
+                false,
+              );
+            assert.equal(
+              calls.some(
+                (command) =>
+                  Array.isArray(command) &&
+                  command[0] === 'run' &&
+                  command.includes('otto-browser-fixture'),
+              ),
+              false,
+            );
+            return;
+          }
+          await Promise.race([
+            waiting,
+            result.then((value) => {
+              throw value.error ?? new Error('Runtime completed before browser gate');
+            }),
+          ]);
+          assert.equal(callbacks, 1);
+          assert.ok(storage);
+          assert.equal(settled, false);
+          if (outcome === 'aborted') signal.abort(new Error('Synthetic setup cancelled'));
+          else release();
+          const finished = await result;
+          if (outcome === 'aborted') {
+            assert.equal(finished.error?.name, 'AbortError');
+            assert.equal(finished.error?.cause, signal.signal.reason);
+          } else assert.equal(finished.runtime, storage);
+        }
+        assert.equal(callbacks, 1);
+        assert.equal(
+          calls.some(
+            (command) =>
+              Array.isArray(command) &&
+              ['volume', 'network'].includes(command[0]) &&
+              command[1] === 'rm',
+          ),
+          false,
+        );
+      } finally {
+        continueSetup();
+        release();
+        await result;
+      }
+    });
   }
 });
 

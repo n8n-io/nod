@@ -1,17 +1,21 @@
-import { useEffect, useRef, useState, type ComponentType, type ReactNode, type Ref } from 'react';
-import { MessageSquare } from 'lucide-react';
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import type { AccountPreparationResponse, AccountUser } from '../../../shared/account';
 import type { ModelsResponse } from '../../../shared/models';
 import {
   onboardingSteps,
   onboardingVersion,
-  type DesktopSetupState,
-  type DesktopSetupUpdate,
-  type OnboardingInterview,
   type OnboardingStep,
 } from '../../../shared/onboarding';
-import { OttoGlyph } from '../../components/motion';
 import { Button, Notice } from '../../components/ui';
+import { SetupProgress } from '../../components/setup-progress';
+import {
+  desktopSettingsAvailable,
+  desktopStatus,
+  subscribeDesktopStatus,
+  retryDesktopRuntime,
+  type DesktopStatus,
+} from '../../lib/desktop';
+import { DesktopPreferencesSetup } from './steps/desktop-preferences';
 import { useBrowserTimeZone } from '../../hooks/use-browser-time-zone';
 import { api, errorMessage } from '../../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../../lib/analytics';
@@ -22,6 +26,7 @@ import { About } from './steps/about';
 import { Email } from './steps/email';
 import { Telegram } from './steps/telegram';
 import { OpenSource } from './steps/open-source';
+import { desktopOnboardingSteps, OnboardingFrame } from './frame';
 
 export type StepProps = {
   arrived: 'forward' | 'back';
@@ -32,7 +37,6 @@ export type StepProps = {
   preparing?: boolean;
   notice?: ReactNode;
   usage?: { enabled: boolean; onChange(enabled: boolean): Promise<void> };
-  interview?: { state?: OnboardingInterview; save(value: OnboardingInterview): Promise<void> };
 };
 
 const screens: Record<OnboardingStep, ComponentType<StepProps>> = {
@@ -44,47 +48,42 @@ const screens: Record<OnboardingStep, ComponentType<StepProps>> = {
   open: OpenSource,
 };
 
-type DisplayStep = OnboardingStep | 'notifications' | 'launchAtLogin';
-
-export const desktopOnboardingSteps: readonly DisplayStep[] = onboardingSteps.flatMap<DisplayStep>(
-  (step) => (step === 'open' ? ['notifications', 'launchAtLogin', step] : [step]),
-);
-
 export function Onboarding({
   user,
   onComplete,
   onFeedback,
   usageData = false,
   onUsageData,
-  desktop,
 }: {
   user: AccountUser;
   onComplete(): Promise<void>;
   onFeedback?(): void;
   usageData?: boolean;
   onUsageData?(enabled: boolean): Promise<void>;
-  desktop?: {
-    state: DesktopSetupState;
-    save(value: DesktopSetupUpdate): Promise<void>;
-    retry(): Promise<void>;
-  };
 }) {
   useBrowserTimeZone();
+  const desktop = desktopSettingsAvailable();
   const [position, setPosition] = useState(() => {
-    if (desktop) return { step: desktop.state.step, arrived: 'forward' as StepProps['arrived'] };
     const url = new URL(window.location.href);
-    if (url.searchParams.get('replay') === '1') {
+    const replay = url.searchParams.get('replay') === '1';
+    const welcomed = desktop && url.searchParams.get('welcome') === 'complete' && !replay;
+    if (replay) {
       clearStored();
       url.searchParams.delete('replay');
-      window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     }
+    if (welcomed) url.searchParams.delete('welcome');
+    if (replay || welcomed)
+      window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     const stored = readStep<{ owner: string; step: OnboardingStep; version?: number }>();
-    const step =
+    const step: OnboardingStep =
       stored?.owner === user.id &&
       stored.version === onboardingVersion &&
-      onboardingSteps.includes(stored.step)
+      onboardingSteps.includes(stored.step) &&
+      stored.step !== 'welcome'
         ? stored.step
-        : 'welcome';
+        : welcomed
+          ? 'brain'
+          : 'welcome';
     if (step === 'welcome') clearStored();
     return { step, arrived: 'forward' as StepProps['arrived'] };
   });
@@ -93,14 +92,16 @@ export function Onboarding({
   const [preparation, setPreparation] = useState<'pending' | 'ready' | 'failed'>('pending');
   const [finishing, setFinishing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [preferencesReady, setPreferencesReady] = useState(!desktop);
+  const [runtimeError, setRuntimeError] = useState('');
   const [error, setError] = useState('');
   const preparationRequest = useRef<AbortController | null>(null);
   const active = useRef(false);
+  const retrying = useRef(false);
   const main = useRef<HTMLElement>(null);
-  const moving = useRef(false);
 
   useEffect(() => {
-    if (!desktop) writeStep({ owner: user.id, step, version: onboardingVersion });
+    writeStep({ owner: user.id, step, version: onboardingVersion });
     captureAnalytics('otto_onboarding_step_viewed', {
       step: step === 'open' ? 'open_source' : step,
       direction: arrived,
@@ -109,7 +110,7 @@ export function Onboarding({
   }, [step, user.id]);
 
   useEffect(() => {
-    if (desktop || index <= onboardingSteps.indexOf('brain')) return;
+    if (index <= onboardingSteps.indexOf('brain')) return;
     let current = true;
     void api<ModelsResponse>('/api/models')
       .then((models) => {
@@ -124,8 +125,7 @@ export function Onboarding({
 
   useEffect(() => {
     active.current = true;
-    if (desktop) setPreparation('ready');
-    else void prepare();
+    void prepare();
     return () => {
       active.current = false;
       preparationRequest.current?.abort();
@@ -141,7 +141,7 @@ export function Onboarding({
     const capture = analyticsForCurrentSession();
     onComplete()
       .then(() => {
-        if (!desktop) clearStored();
+        clearStored();
       })
       .catch((cause) => {
         capture('otto_ui_error', { area: 'onboarding', action: 'save' });
@@ -151,6 +151,34 @@ export function Onboarding({
         if (active.current) setFinishing(false);
       });
   }, [finishing, preparation]);
+
+  useEffect(() => {
+    if (!desktop) return;
+    let current = true;
+    let received = false;
+    function accept(status: DesktopStatus) {
+      if (!current) return;
+      const failure =
+        status.error ||
+        (status.phase === 'error' ? status.message : undefined) ||
+        status.runtime?.error ||
+        (status.runtime?.phase === 'error' ? status.runtime.message : undefined);
+      setRuntimeError(failure || '');
+    }
+    const stop = subscribeDesktopStatus((status) => {
+      received = true;
+      accept(status);
+    });
+    void desktopStatus()
+      ?.then((status) => {
+        if (!received) accept(status);
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+      stop();
+    };
+  }, [desktop]);
 
   async function prepare() {
     const capture = analyticsForCurrentSession();
@@ -176,23 +204,34 @@ export function Onboarding({
     }
   }
 
-  async function go(offset: 1 | -1) {
-    const next = onboardingSteps[index + offset];
-    if (!next || moving.current) return;
-    moving.current = true;
+  async function retry() {
+    if (retrying.current) return;
+    retrying.current = true;
     setSaving(true);
     setError('');
     try {
-      if (desktop) {
-        if (step === 'welcome' && offset === 1) await onUsageData?.(usageData);
-        await desktop.save({ step: next });
+      if (runtimeError) await retryDesktopRuntime();
+      if (active.current) {
+        setRuntimeError('');
+        void prepare();
       }
-      if (active.current) setPosition({ step: next, arrived: offset > 0 ? 'forward' : 'back' });
     } catch (cause) {
-      if (active.current) setError(errorMessage(cause));
+      if (active.current) {
+        const message = errorMessage(cause);
+        setError(message);
+        if (runtimeError) setRuntimeError(message);
+      }
     } finally {
-      moving.current = false;
+      retrying.current = false;
       if (active.current) setSaving(false);
+    }
+  }
+
+  function go(offset: 1 | -1) {
+    const next = onboardingSteps[index + offset];
+    if (next) {
+      setError('');
+      setPosition({ step: next, arrived: offset > 0 ? 'forward' : 'back' });
     }
   }
 
@@ -208,6 +247,37 @@ export function Onboarding({
     setFinishing(true);
   }
 
+  if (finishing) {
+    const failure = runtimeError || error;
+    return (
+      <SetupProgress
+        title={failure ? 'Setup needs another try.' : 'Finishing setting up your environment…'}
+        description={failure ? 'Your progress is saved.' : undefined}
+        error={failure || undefined}
+      >
+        {failure && (
+          <Button variant="outline" disabled={saving} onClick={() => void retry()}>
+            Try again
+          </Button>
+        )}
+      </SetupProgress>
+    );
+  }
+
+  const recovery = desktop && (runtimeError || error || saving || preparation === 'failed') && (
+    <div className="ob-runtime">
+      <Notice>
+        {runtimeError || error || (saving ? 'Trying setup again…' : 'Setup needs another try.')}{' '}
+        <Button variant="ghost" disabled={saving} onClick={() => void retry()}>
+          Try again
+        </Button>
+      </Notice>
+    </div>
+  );
+
+  if (desktop && step === 'open' && !preferencesReady)
+    return <DesktopPreferencesSetup notice={recovery} onReady={() => setPreferencesReady(true)} />;
+
   const Screen = screens[step];
   return (
     <OnboardingFrame
@@ -216,7 +286,7 @@ export function Onboarding({
       onFeedback={onFeedback}
       mainRef={main}
     >
-      <div className="ob-screen" inert={saving || desktop?.state.completed}>
+      <div className="ob-screen">
         <Screen
           key={step}
           arrived={arrived}
@@ -224,8 +294,9 @@ export function Onboarding({
           onBack={() => void go(-1)}
           onSkip={skipped}
           busy={step === 'open' && finishing}
-          preparing={desktop ? desktop.state.runtime.phase !== 'ready' : preparation !== 'ready'}
+          preparing={preparation !== 'ready'}
           notice={
+            !desktop &&
             step === 'open' &&
             (preparation === 'failed' || !!error) && (
               <Notice>
@@ -243,102 +314,10 @@ export function Onboarding({
               ? { enabled: usageData, onChange: onUsageData }
               : undefined
           }
-          interview={
-            desktop
-              ? { state: desktop.state.about, save: (about) => desktop.save({ about }) }
-              : undefined
-          }
         />
       </div>
-      {step !== 'open' && error && <Notice>{error}</Notice>}
-      {desktop && desktop.state.runtime.phase !== 'ready' && (
-        <div className="ob-runtime" role="status" data-analytics-private>
-          <span>{desktop.state.runtime.message}</span>
-          {desktop.state.runtime.phase === 'error' && (
-            <Button
-              variant="ghost"
-              disabled={saving}
-              onClick={async () => {
-                setSaving(true);
-                setError('');
-                try {
-                  await desktop.retry();
-                } catch (cause) {
-                  if (active.current) setError(errorMessage(cause));
-                } finally {
-                  if (active.current) setSaving(false);
-                }
-              }}
-            >
-              Try again
-            </Button>
-          )}
-        </div>
-      )}
+      {recovery}
+      {!desktop && step !== 'open' && error && <Notice>{error}</Notice>}
     </OnboardingFrame>
-  );
-}
-
-export function OnboardingFrame({
-  step,
-  steps = onboardingSteps,
-  onFeedback,
-  mainRef,
-  children,
-}: {
-  step: DisplayStep;
-  steps?: readonly DisplayStep[];
-  onFeedback?(): void;
-  mainRef?: Ref<HTMLElement>;
-  children: ReactNode;
-}) {
-  const welcome = step === 'welcome';
-  const index = steps.indexOf(step);
-  return (
-    <div className="ob" data-step={step}>
-      <header className="ob-header">
-        <div className="ob-brand" data-analytics-public>
-          {!welcome && (
-            <>
-              <OttoGlyph mode="still" />
-              <span>otto</span>
-            </>
-          )}
-        </div>
-        <div
-          className="ob-dots"
-          role={welcome ? undefined : 'img'}
-          aria-label={welcome ? undefined : `Step ${index} of ${steps.length - 1}`}
-        >
-          {!welcome &&
-            steps
-              .slice(1)
-              .map((dot, at) => (
-                <span
-                  key={dot}
-                  data-state={at + 1 < index ? 'done' : at + 1 === index ? 'current' : 'next'}
-                />
-              ))}
-        </div>
-        <div className="ob-header-end" data-analytics-public>
-          {!welcome && onFeedback && (
-            <Button
-              id="feedback-launcher"
-              variant="ghost"
-              size="sm"
-              className="ob-feedback"
-              onClick={onFeedback}
-              aria-label="Feedback"
-            >
-              <MessageSquare size={16} aria-hidden="true" />
-              <span className="ob-header-label">Feedback</span>
-            </Button>
-          )}
-        </div>
-      </header>
-      <main className="ob-main" ref={mainRef}>
-        {children}
-      </main>
-    </div>
   );
 }

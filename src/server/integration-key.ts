@@ -41,7 +41,7 @@ export function createIntegrationKeyService(options: {
   const observers = new Set<(values: string[]) => void>();
   async function savedId() {
     return (
-      await database.query<{ vault_id: string }>(
+      await database.query<{ vault_id: string | null }>(
         'SELECT vault_id FROM integration_keys WHERE owner_id=$1',
         [ownerId],
       )
@@ -96,7 +96,7 @@ export function createIntegrationKeyService(options: {
       ).rows[0]?.auth_config_vault_id;
       await vault.put(id, key, client);
       await client.query(
-        'INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,$2) ON CONFLICT(owner_id) DO UPDATE SET auth_config_vault_id=NULL',
+        'INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,$2) ON CONFLICT(owner_id) DO UPDATE SET vault_id=EXCLUDED.vault_id,auth_config_vault_id=NULL',
         [ownerId, id],
       );
       if (previous) await vault.remove(previous, client);
@@ -104,18 +104,20 @@ export function createIntegrationKeyService(options: {
     use(key, {});
   }
   async function remove() {
-    const id = await savedId();
-    if (id)
-      await transaction(async (client) => {
-        const previous = (
-          await client.query<{ auth_config_vault_id: string | null }>(
-            'DELETE FROM integration_keys WHERE owner_id=$1 RETURNING auth_config_vault_id',
-            [ownerId],
-          )
-        ).rows[0]?.auth_config_vault_id;
-        if (previous) await vault.remove(previous, client);
-        await vault.remove(id, client);
-      }, database);
+    await transaction(async (client) => {
+      const previous = (
+        await client.query<{ vault_id: string | null; auth_config_vault_id: string | null }>(
+          'SELECT vault_id,auth_config_vault_id FROM integration_keys WHERE owner_id=$1 FOR UPDATE',
+          [ownerId],
+        )
+      ).rows[0];
+      await client.query(
+        'INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,NULL) ON CONFLICT(owner_id) DO UPDATE SET vault_id=NULL,auth_config_vault_id=NULL',
+        [ownerId],
+      );
+      if (previous?.auth_config_vault_id) await vault.remove(previous.auth_config_vault_id, client);
+      if (previous?.vault_id) await vault.remove(previous.vault_id, client);
+    }, database);
     use(undefined, {});
   }
   return {
@@ -126,7 +128,7 @@ export function createIntegrationKeyService(options: {
       if (fixed) return;
       vault = await createAppGrantVault(database, { ownerId, keyStore: options.keyStore });
       await database.query(
-        'CREATE TABLE IF NOT EXISTS integration_keys(owner_id text PRIMARY KEY, vault_id uuid NOT NULL); ALTER TABLE integration_keys ADD COLUMN IF NOT EXISTS auth_config_vault_id uuid',
+        'CREATE TABLE IF NOT EXISTS integration_keys(owner_id text PRIMARY KEY, vault_id uuid); ALTER TABLE integration_keys ALTER COLUMN vault_id DROP NOT NULL; ALTER TABLE integration_keys ADD COLUMN IF NOT EXISTS auth_config_vault_id uuid',
       );
       const id = await savedId();
       if (!id) return;
@@ -148,7 +150,7 @@ export function createIntegrationKeyService(options: {
         .object({
           apiKey: z.string().min(1).max(16384),
           authConfigs: z.record(
-            z.string().regex(/^[a-z][a-z0-9_]*$/),
+            z.string().regex(/^[a-z][a-z0-9_]{0,79}$/),
             z.string().min(1).max(16384),
           ),
         })
@@ -160,12 +162,13 @@ export function createIntegrationKeyService(options: {
           'LOCK TABLE integration_keys, app_connections IN SHARE ROW EXCLUSIVE MODE',
         );
         const existing = (
-          await client.query<{ vault_id: string; auth_config_vault_id: string | null }>(
+          await client.query<{ vault_id: string | null; auth_config_vault_id: string | null }>(
             'SELECT vault_id,auth_config_vault_id FROM integration_keys WHERE owner_id=$1',
             [ownerId],
           )
         ).rows[0];
         if (existing) {
+          if (!existing.vault_id) return false;
           try {
             if ((await vault.read(existing.vault_id, client)).value !== parsed.apiKey) return false;
             const configs = existing.auth_config_vault_id
@@ -186,11 +189,21 @@ export function createIntegrationKeyService(options: {
           'SELECT 1 FROM app_connections WHERE owner_id=$1 AND configuration_id IS NOT NULL AND configuration_id<>$2 LIMIT 1',
           [ownerId, configurationId],
         );
-        if (bindings.rowCount) return false;
+        if (bindings.rowCount) {
+          await client.query('INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,NULL)', [
+            ownerId,
+          ]);
+          return false;
+        }
         if (options.managed) {
           const access = await options.managed.status().catch(() => undefined);
-          if (!access || !['sign_in_required', 'revoked', 'denied'].includes(access.state))
+          if (!access || access.state === 'unavailable') return false;
+          if (access.state !== 'sign_in_required') {
+            await client.query('INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,NULL)', [
+              ownerId,
+            ]);
             return false;
+          }
         }
         const id = randomUUID();
         const configuration = Object.keys(parsed.authConfigs).length ? randomUUID() : null;
@@ -298,7 +311,10 @@ export async function receiveLegacyIntegration(options: {
       nonce: z.literal(nonce),
       receipt: z.string().regex(/^[a-f0-9]{64}$/),
       apiKey: z.string().min(1).max(16384),
-      authConfigs: z.record(z.string().regex(/^[a-z][a-z0-9_]*$/), z.string().min(1).max(16384)),
+      authConfigs: z.record(
+        z.string().regex(/^[a-z][a-z0-9_]{0,79}$/),
+        z.string().min(1).max(16384),
+      ),
     })
     .strict();
   const message = await new Promise<z.infer<typeof envelope>>((resolve, reject) => {
@@ -323,15 +339,16 @@ export async function receiveLegacyIntegration(options: {
   return {
     input: { apiKey: message.apiKey, authConfigs: message.authConfigs },
     acknowledge: () =>
-      new Promise<void>((resolve, reject) => {
+      new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
           options.parent.removeListener('message', receive);
-          reject(new Error('Otto could not finish restoring its saved app connection.'));
+          resolve();
         }, options.timeout ?? 30000);
         function receive(event: { data: unknown }) {
           const result = event.data as Record<string, unknown> | null;
           if (
-            result?.type !== 'otto-legacy-integration-cleaned' ||
+            (result?.type !== 'otto-legacy-integration-cleaned' &&
+              result?.type !== 'otto-legacy-integration-cleanup-deferred') ||
             result.ownerId !== options.ownerId ||
             result.nonce !== nonce ||
             result.receipt !== message.receipt

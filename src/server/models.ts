@@ -19,12 +19,7 @@ import type {
 import { modelSource } from '../shared/models.ts';
 import { signInPage } from '../shared/sign-in-page.ts';
 import { agentModels, memoryModels } from '../shared/model-defaults.ts';
-import {
-  createDatabaseModelStore,
-  type ModelRecord,
-  type ModelState,
-  type ModelStore,
-} from './model-store.ts';
+import { createDatabaseModelStore, type ModelRecord, type ModelState } from './model-store.ts';
 import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
 
 const providerSchema = z.enum(['openai', 'anthropic', 'openrouter']);
@@ -58,8 +53,7 @@ export function endpointAddress(address: string) {
   return url.href.replace(/\/+$/, '');
 }
 export function createModelService(options: {
-  database?: Pool;
-  store?: ModelStore;
+  database: Pool;
   ownerId: string;
   keyStore: CredentialKeyStore;
   backend: ModelBackend;
@@ -72,15 +66,12 @@ export function createModelService(options: {
   changed?(): void;
 }) {
   const { backend } = options;
-  const store =
-    options.store ??
-    createDatabaseModelStore({
-      database: options.database!,
-      ownerId: options.ownerId,
-      keyStore: options.keyStore,
-    });
+  const store = createDatabaseModelStore({
+    database: options.database,
+    ownerId: options.ownerId,
+    keyStore: options.keyStore,
+  });
   let analytics: CaptureAnalytics | undefined;
-  let operations = 0;
   function connectionChanged(
     provider: ModelProvider,
     method: ModelMethod,
@@ -92,7 +83,6 @@ export function createModelService(options: {
     });
   }
   async function tracked<T>(provider: ModelProvider, method: ModelMethod, save: () => Promise<T>) {
-    operations++;
     try {
       const result = await save();
       connectionChanged(provider, method, 'connected');
@@ -100,8 +90,6 @@ export function createModelService(options: {
     } catch (error) {
       connectionChanged(provider, method, 'failed');
       throw error;
-    } finally {
-      operations--;
     }
   }
   let rows: ModelRecord[] = [];
@@ -403,8 +391,7 @@ export function createModelService(options: {
       : complete(callback));
   }
   function start(provider: 'openai' | 'openrouter', connectionId?: string) {
-    operations++;
-    const result = starting.then(() => begin(provider, connectionId)).finally(() => operations--);
+    const result = starting.then(() => begin(provider, connectionId));
     starting = result.catch(() => {});
     return result;
   }
@@ -477,13 +464,6 @@ export function createModelService(options: {
     }
   }
   const service = {
-    busy() {
-      return (
-        operations > 0 ||
-        pendingControllers.size > 0 ||
-        [...attempts.values()].some((attempt) => ['waiting', 'completing'].includes(attempt.status))
-      );
-    },
     get configured() {
       return (
         !!selection &&
@@ -647,7 +627,6 @@ export function createModelService(options: {
       });
     },
     refreshCatalog,
-    reload,
     async resolve(auxiliary = false): Promise<ModelAccess> {
       const selected = selection && { ...selection };
       const row = rows.find(

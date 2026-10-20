@@ -281,14 +281,18 @@ export function createComposioProvider(options: {
   const files = createComposioFiles(options.fileDownload);
   const identities = new Map<string, AccountIdentity>();
   const pendingIdentities = new Map<string, Promise<AccountIdentity>>();
-  let authConfigs = Object.fromEntries(
-    Object.entries(options.proxy ? {} : (options.authConfigs ?? {}))
-      .filter(
-        (entry): entry is [string, string] =>
-          typeof entry[1] === 'string' && entry[1].trim().length > 0,
-      )
-      .map(([slug, id]) => [schemaToolkit.parse(slug), id]),
-  );
+  function configuredAuthConfigs(value: Partial<Record<IntegrationService, string>>) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(
+          (entry): entry is [string, string] =>
+            typeof entry[1] === 'string' && entry[1].trim().length > 0,
+        )
+        .map(([slug, id]) => [schemaToolkit.parse(slug), id]),
+    );
+  }
+  const defaults = configuredAuthConfigs(options.proxy ? {} : (options.authConfigs ?? {}));
+  let authConfigs = defaults;
   let catalog: { services: IntegrationServiceInfo[]; expiresAt: number } | undefined;
   let catalogRequest: Promise<IntegrationServiceInfo[]> | undefined;
   let catalogRetryAfter = 0;
@@ -841,13 +845,7 @@ export function createComposioProvider(options: {
     },
     setApiKey(apiKey, configuration) {
       if (options.proxy) throw new Error('The integration provider is managed by Otto.');
-      if (configuration)
-        authConfigs = Object.fromEntries(
-          Object.entries(configuration).filter(
-            (entry): entry is [string, string] =>
-              typeof entry[1] === 'string' && entry[1].trim().length > 0,
-          ),
-        );
+      authConfigs = { ...defaults, ...configuredAuthConfigs(configuration ?? {}) };
       client = connect(apiKey);
       currentApiKey = apiKey;
       catalog = undefined;

@@ -132,81 +132,6 @@ import { createVaultAccess } from './vault-access.ts';
 import { createPayments } from './payments.ts';
 import { createBrowserConnections } from './browser-connections.ts';
 import { cachedIcons, createLinkPreviews } from './link-previews.ts';
-import type { SetupJournal } from '../ports/setup.ts';
-import { createSetupModels } from './setup-models.ts';
-import { createSetupIntegrations } from './setup-integrations.ts';
-import { importDesktopSetup } from './setup-import.ts';
-import { createSetupChannels } from './setup-channels.ts';
-import { createSetupTelegram } from '../providers/chat-sdk/setup.ts';
-
-export function createDesktopSetupKeyStore() {
-  return createEnvironmentKeyStore(process.env.OTTO_VAULT_KEY);
-}
-export async function createDesktopSetupAdapters(journal: SetupJournal, resuming = false) {
-  const keyStore = createEnvironmentKeyStore(process.env.OTTO_VAULT_KEY);
-  const models = createSetupModels({
-    journal,
-    ownerId,
-    keyStore,
-    origin: publicOrigin,
-    backend: createPiModelBackend(),
-  });
-  await models.initialize();
-  const proxy = createComposioProxy({
-    dataRoot,
-    ownerId,
-    url: process.env.OTTO_DESKTOP_USER_DATA ? process.env.OTTO_COMPOSIO_PROXY_URL : undefined,
-  });
-  await proxy.initialize();
-  const access = createIntegrationAccess({ proxy, origin: publicOrigin, desktop: true });
-  const managedProvider = createComposioProvider({ proxy });
-  const ownProvider = createComposioProvider({});
-  const integrations = await createSetupIntegrations({
-    journal,
-    ownerId,
-    baseUrl: publicOrigin,
-    access,
-    managedProvider,
-    ownProvider,
-  });
-  const traces = createModelTraces(
-    createN8nTraces({
-      url: process.env.OTTO_TRACES_URL ?? 'https://internal.users.n8n.cloud/webhook/otto/traces',
-      token: process.env.OTTO_TRACES_TOKEN,
-    }),
-  );
-  const curator = createPiMemoryCurator({
-    get provider() {
-      return models.current.provider;
-    },
-    configured: () => models.configured,
-    resolve: async () => {
-      const value = await models.resolve();
-      return { ...value, effort: lightestEffort(value.definition.choice.efforts) };
-    },
-    traces,
-  });
-  let channels: Awaited<ReturnType<typeof createSetupChannels>>;
-  const telegram = createSetupTelegram({ journal, pair: (request) => channels.pair(request) });
-  channels = await createSetupChannels({
-    journal,
-    ownerId,
-    keyStore,
-    verifier: createChatSdkSetupVerifier(),
-    apply: telegram.apply,
-  });
-  if (!resuming) await telegram.apply(await channels.environment());
-  return {
-    models,
-    integrations,
-    channels,
-    telegram,
-    curator,
-    traces,
-    analytics: analyticsEnabled(process.env) ? createPostHogAnalytics() : undefined,
-  };
-}
-
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
   initialize?(): Promise<void>;
@@ -453,7 +378,7 @@ export function createDefaultAdapters(
 
 export async function createApplication(
   adapters: ApplicationAdapters,
-  options: { workers?: boolean; channels?: boolean } = {},
+  options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> } = {},
 ) {
   try {
     return await initializeApplication(adapters, options);
@@ -467,7 +392,7 @@ export async function createApplication(
 
 async function initializeApplication(
   adapters: ApplicationAdapters,
-  options: { workers?: boolean; channels?: boolean },
+  options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> },
 ) {
   const analytics = await createAnalytics({
     provider: adapters.analytics,
@@ -495,30 +420,33 @@ async function initializeApplication(
   const websiteVisited = createWebsiteVisits(analytics, ownerId);
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
+  const closing = new AbortController();
+  if (options.runtimeReady) await consumers.pause();
+  const runtimeReady =
+    options.runtimeReady?.then(() => {
+      if (!closing.signal.aborted) return consumers.resume();
+    }) ?? Promise.resolve();
+  void runtimeReady.catch(() => {});
+  async function prepareRuntime(signal: AbortSignal) {
+    const lifetime = AbortSignal.any([signal, closing.signal]);
+    lifetime.throwIfAborted();
+    let aborted: () => void;
+    try {
+      await Promise.race([
+        runtimeReady,
+        new Promise<never>((_, reject) => {
+          aborted = () => reject(lifetime.reason);
+          lifetime.addEventListener('abort', aborted, { once: true });
+        }),
+      ]);
+    } finally {
+      lifetime.removeEventListener('abort', aborted!);
+    }
+  }
   const privacyNotice = await loadPrivacyNoticeFile(process.env.OTTO_PRIVACY_NOTICE_FILE);
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   await initializeDatabase();
   await adapters.initialize?.();
-  let desktopSetupId: string | undefined;
-  if (desktopMode && process.env.OTTO_DESKTOP_SETUP_PENDING === 'true') {
-    const [ownProvider, managedProvider] = adapters.standbyIntegrations ?? [];
-    if (!ownProvider || !managedProvider || !adapters.models || !adapters.integrationKey)
-      throw new Error('Desktop setup providers are unavailable.');
-    await createAccountStore(pool).initialize();
-    await createPostgresObjectStore({ database: pool, ownerId }).initialize();
-    await initializeChannelSettings(pool);
-    await initializeIntegrationSchema(pool);
-    desktopSetupId = await importDesktopSetup({
-      root: dataRoot,
-      ownerId,
-      database: pool,
-      keyStore: adapters.keyStore,
-      ownProvider,
-      managedProvider,
-    });
-    await adapters.models.reload();
-    await adapters.integrationKey.initialize();
-  }
   await initializeThreads();
   const artifacts = localArtifacts;
   const secrets = Object.entries(process.env)
@@ -1459,6 +1387,7 @@ async function initializeApplication(
     localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
     developerIds: desktopMode ? new Set() : new Set([ownerId]),
     start: (_owner, name) => welcome(name),
+    prepare: prepareRuntime,
     onboardingReady: async () =>
       adapters.model.configured &&
       (await integrations.list(ownerId, { refresh: false })).some(connectedGmail),
@@ -1593,9 +1522,9 @@ async function initializeApplication(
     await channelSettings?.recover();
   }
   await onboardingSuggestions.initialize();
-  if (desktopSetupId) await welcome();
   let closingConsumers: Promise<void> | undefined;
   app.addHook('preClose', async () => {
+    closing.abort();
     admission.close();
     closingConsumers = consumers.close();
     void closingConsumers.catch(() => {});
@@ -1634,7 +1563,6 @@ async function initializeApplication(
   });
   return {
     app,
-    desktopSetupId,
     runtime,
     personal,
     memory,

@@ -97,6 +97,10 @@ test(
         }));
       return options.tools.find((tool) => tool.name === step.tool)!.execute(step.args);
     };
+    let storageReady!: () => void;
+    const runtimeReady = new Promise<void>((resolve) => {
+      storageReady = resolve;
+    });
     const application = await createApplication(
       {
         agent: {
@@ -156,7 +160,7 @@ test(
         keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) },
         model: { provider: 'fixture', name: 'fixture', configured: true },
       },
-      { channels: false },
+      { channels: false, runtimeReady },
     );
     const headers = {
       host: `localhost:${port}`,
@@ -235,6 +239,50 @@ test(
         await application.app.inject({ method: 'GET', url: '/api/memory', headers })
       ).json() as MemoryView;
     try {
+      await t.test(
+        'one backend serves setup while queued turns wait for the computer',
+        async () => {
+          const session = await application.app.inject({
+            method: 'GET',
+            url: '/api/session',
+            headers,
+          });
+          assert.equal(session.statusCode, 200);
+          const choice = await application.app.inject({
+            method: 'PATCH',
+            url: '/api/account',
+            headers,
+            payload: { usageData: false },
+          });
+          assert.equal(choice.statusCode, 200);
+          let prepared = false;
+          const preparation = application.app
+            .inject({
+              method: 'POST',
+              url: '/api/account/prepare',
+              headers,
+              payload: {},
+            })
+            .then((response) => {
+              prepared = true;
+              return response;
+            });
+          const turn = await send({ text: 'Synthetic runtime startup probe.' });
+          await delay(100);
+          assert.equal(prepared, false);
+          assert.equal((await turnStatus(turn)).status, 'queued');
+          assert.equal(contexts.length, 0);
+          storageReady();
+          assert.equal((await preparation).statusCode, 200);
+          await settle(turn, 'succeeded');
+          assert.ok(contexts.length > 0);
+          assert.equal(
+            (await application.app.inject({ method: 'GET', url: '/api/session', headers })).json()
+              .user.id,
+            session.json().user.id,
+          );
+        },
+      );
       const assertSilent = async (
         turnId: string,
         finalText = 'Synthetic memory request handled.',

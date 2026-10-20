@@ -43,12 +43,10 @@ export function createDatabaseModelStore(options: {
         [ownerId],
       )
     ).rows;
-    const credentials = await vault
-      .readMany(
-        connections.filter((row) => !row.managed).map((row) => row.id),
-        client,
-      )
-      .catch(() => new Map<string, { value: string; version: number }>());
+    const credentials = await vault.readMany(
+      connections.filter((row) => !row.managed).map((row) => row.id),
+      client,
+    );
     for (const row of connections) {
       const saved = credentials.get(row.id);
       if (!saved) continue;

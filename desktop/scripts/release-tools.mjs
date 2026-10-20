@@ -370,26 +370,6 @@ console.log('Otto engine imports verified.');`;
   );
   if (result !== 'Otto engine imports verified.')
     throw new Error('The signed Electron engine import check failed.');
-  await verifyDesktopSetupEntry(join(application, 'Contents/MacOS/Otto'), engine);
-}
-
-export async function verifyDesktopSetupEntry(executable, engine) {
-  const environment = Object.fromEntries(
-    ['HOME', 'USERPROFILE', 'LOCALAPPDATA', 'SYSTEMROOT', 'PATH', 'TMPDIR', 'TEMP', 'TMP', 'LANG']
-      .filter((name) => process.env[name])
-      .map((name) => [name, process.env[name]]),
-  );
-  const script = `import assert from 'node:assert/strict';
-import { pathToFileURL } from 'node:url';
-import { resolve } from 'node:path';
-await assert.rejects(import(pathToFileURL(resolve('desktop/main/setup.mjs')).href), { message: 'Desktop setup requires Otto.' });
-console.log('Otto setup entry verified.');`;
-  const result = await run(executable, ['--input-type=module', '-e', script], {
-    cwd: engine,
-    env: { ...environment, ELECTRON_RUN_AS_NODE: '1' },
-  });
-  if (result !== 'Otto setup entry verified.')
-    throw new Error('The packaged setup entry check failed.');
 }
 
 export async function notarize(artifact, configuration, evidencePath) {

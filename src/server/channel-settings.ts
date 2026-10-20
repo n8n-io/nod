@@ -75,42 +75,12 @@ const fields: Record<ChannelProvider, Set<string>> = {
     'WHATSAPP_VERIFY_TOKEN',
   ]),
 };
-export type ChannelSettingsRow = {
+type ChannelSettingsRow = {
   provider: ChannelProvider;
   enabled: boolean;
   ciphertext: string | null;
   summary: ChannelSetupSummary;
 };
-
-export function validateChannelSettingsRow(value: unknown): ChannelSettingsRow {
-  const parsed = z
-    .object({
-      provider: providerSchema,
-      enabled: z.boolean(),
-      ciphertext: z.string().min(1).max(65536).nullable(),
-      summary: summarySchema,
-    })
-    .strict()
-    .parse(value);
-  if (
-    parsed.enabled !== parsed.summary.enabled ||
-    parsed.provider !== parsed.summary.provider ||
-    (parsed.enabled && !parsed.ciphertext)
-  )
-    throw new Error('Invalid channel configuration.');
-  return { ...parsed, summary: JSON.parse(JSON.stringify(parsed.summary)) };
-}
-
-export interface ChannelSettingsStore {
-  read(): Promise<ChannelSettingsRow[]>;
-  save(row: ChannelSettingsRow, beforeCommit?: () => Promise<void>): Promise<void>;
-  activate(provider: ChannelProvider): Promise<ChannelSetupSummary | undefined>;
-  replace(
-    previous: ChannelSettingsRow,
-    next: ChannelSettingsRow,
-    beforeCommit: (client?: PoolClient) => Promise<(() => void) | undefined>,
-  ): Promise<(() => void) | undefined>;
-}
 
 export async function initializeChannelSettings(pool: Pick<Pool, 'query'>) {
   await pool.query(
@@ -118,7 +88,7 @@ export async function initializeChannelSettings(pool: Pick<Pool, 'query'>) {
   );
 }
 
-async function databaseStore(pool: Pool, owner: string): Promise<ChannelSettingsStore> {
+async function databaseStore(pool: Pool, owner: string) {
   await initializeChannelSettings(pool);
   return {
     async read() {
@@ -128,7 +98,7 @@ async function databaseStore(pool: Pool, owner: string): Promise<ChannelSettings
         ])
       ).rows;
     },
-    async save(row, beforeCommit) {
+    async save(row: ChannelSettingsRow, beforeCommit?: () => Promise<void>) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -146,7 +116,7 @@ async function databaseStore(pool: Pool, owner: string): Promise<ChannelSettings
         client.release();
       }
     },
-    async activate(provider) {
+    async activate(provider: ChannelProvider) {
       return (
         await pool.query<Pick<ChannelSettingsRow, 'summary'>>(
           `UPDATE channel_settings SET summary=jsonb_set(summary,'{webhookStatus}','"registered"'),updated_at=now() WHERE owner_id=$1 AND provider=$2 AND enabled=true RETURNING summary`,
@@ -154,7 +124,11 @@ async function databaseStore(pool: Pool, owner: string): Promise<ChannelSettings
         )
       ).rows[0]?.summary;
     },
-    async replace(previous, next, beforeCommit) {
+    async replace(
+      previous: ChannelSettingsRow,
+      next: ChannelSettingsRow,
+      beforeCommit: (client: PoolClient) => Promise<(() => void) | undefined>,
+    ) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -237,32 +211,19 @@ export function openChannelSettings(key: Buffer, owner: string, row: ChannelSett
 }
 
 export async function createChannelSettings(
-  pool: Pool | ChannelSettingsStore,
+  pool: Pool,
   options: {
     ownerId: string;
     keyStore: CredentialKeyStore;
     verifier: ChannelSetupVerifier;
     apply(environment: Record<string, string>): Promise<void>;
-    pairingChanged?(): Promise<void>;
     paired?(candidate: TelegramPairingCandidate, client: PoolClient): Promise<() => void>;
   },
 ) {
   const owner = z.string().min(1).max(200).parse(options.ownerId);
-  const store = 'query' in pool ? await databaseStore(pool, owner) : pool;
-  let operations = 0;
-  function trackedLock() {
-    const lock = createLock();
-    return async <T>(action: () => Promise<T>) => {
-      operations++;
-      try {
-        return await lock(action);
-      } finally {
-        operations--;
-      }
-    };
-  }
-  const exclusive = trackedLock();
-  const pairingExclusive = trackedLock();
+  const store = await databaseStore(pool, owner);
+  const exclusive = createLock();
+  const pairingExclusive = createLock();
   let key: Promise<Buffer> | undefined;
   function encryptionKey() {
     if (!options.keyStore.configured) throw new Error('The secure key store is not configured.');
@@ -551,7 +512,6 @@ export async function createChannelSettings(
           pairingUrl: pairing.pairingUrl,
         };
       });
-      if ('pairingUrl' in result) await options.pairingChanged?.();
       return result;
     });
   }
@@ -612,7 +572,6 @@ export async function createChannelSettings(
     });
   }
   return {
-    busy: () => operations > 0,
     registerRoutes,
     environment,
     status,

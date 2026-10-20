@@ -13,7 +13,6 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
   getPreferences: () => ipcRenderer.invoke('otto:preferences:get'),
   setTheme: (theme) => ipcRenderer.invoke('otto:preferences:theme', theme),
   prepare: (options) => ipcRenderer.invoke('otto:prepare', options),
-  warmRuntime: (options) => ipcRenderer.invoke('otto:runtime:warm', options),
   replayOnboarding: () => ipcRenderer.invoke('otto:onboarding:replay'),
   importRuntime: () => ipcRenderer.invoke('otto:runtime:import'),
   installWsl: () => ipcRenderer.invoke('otto:runtime:install-wsl'),
