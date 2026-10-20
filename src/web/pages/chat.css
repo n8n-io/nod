@@ -38,6 +38,14 @@
 .message-link-preview-active {
   background: var(--secondary);
 }
+.message-link-preview:focus-visible {
+  outline-offset: -2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .message-link-preview {
+    transition: none;
+  }
+}
 .message-link-preview-image {
   display: block;
   flex: 0 0 104px;
@@ -170,6 +178,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  width: max-content;
   max-width: min(420px, calc(100vw - 16px));
   padding: 5px 8px;
   border: 1px solid var(--border);
@@ -197,9 +206,10 @@
   color: var(--foreground);
 }
 .message-link-tooltip span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  min-width: 0;
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
 }
 .message-link-tooltip svg {
   flex-shrink: 0;
