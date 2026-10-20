@@ -188,7 +188,9 @@ export function parseLinkMetadata(html: string, url: string): PublicLinkMetadata
     if (node.nodeName === 'title' && 'childNodes' in node)
       title = node.childNodes.map((child) => ('value' in child ? child.value : '')).join('');
   }
-  const published = clean(meta.get('og:title') ?? meta.get('twitter:title') ?? title, 200);
+  const published = [meta.get('og:title'), meta.get('twitter:title'), title]
+    .map((value) => clean(value, 200))
+    .find(Boolean);
   const media = (value: string | undefined, secure = false) => {
     try {
       const resolved = value && publicMediaUrl(new URL(value, url).href);
