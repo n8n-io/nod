@@ -39,7 +39,7 @@ function connectionMessage(result?: string) {
   return '';
 }
 
-export function Email({ arrived, onNext, onBack }: StepProps) {
+export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const configuration = usePageData<Configuration>('/api/configuration');
   const apps = usePageData<Connection[]>('/api/apps');
@@ -235,6 +235,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   async function connect() {
     if (request.current || !canConnect) return;
     const capture = analyticsForCurrentSession();
+    capture('otto_app_connect_clicked', { entry: 'onboarding', result: 'opened' });
     const external = desktopLinksAvailable();
     const popup = external
       ? null
@@ -487,7 +488,14 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
       <Footer
         show={revealed >= 4}
         onBack={onBack}
-        onSkip={connected && showGmail ? undefined : onNext}
+        onSkip={
+          connected && showGmail
+            ? undefined
+            : () => {
+                onSkip?.();
+                onNext();
+              }
+        }
         onNext={onNext}
         nextDisabled={!connected || !showGmail}
       />

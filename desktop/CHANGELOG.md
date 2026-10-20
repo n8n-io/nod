@@ -1,5 +1,58 @@
 # Desktop changelog
 
+## 0.1.17 - 2026-10-20
+
+### Breaking changes
+
+- Remove E2B and hosted mode so Otto runs locally only. [#345](https://github.com/n8n-io/otto/pull/345) (2f193f2)
+- **vault:** Never store card security codes. [#336](https://github.com/n8n-io/otto/pull/336) (5d95a26)
+
+### Features
+
+- **analytics:** Complete product analytics coverage and fix recording leaks. [#361](https://github.com/n8n-io/otto/pull/361) (3c8635b)
+- **traces:** Opt-in conversation traces to LangSmith with on-device PII scrubbing. [#359](https://github.com/n8n-io/otto/pull/359) (19cb8ab)
+- **tasks:** Show what a task is doing, post light updates and ask for email at sign-in. [#352](https://github.com/n8n-io/otto/pull/352) (e5e0e5d)
+
+### Fixes
+
+- Preserve app permission errors and browser handoff input. [#362](https://github.com/n8n-io/otto/pull/362) (963e3e1)
+- **desktop:** Clean up old runtimes, stage updates in the background and recover from failed checks. [#357](https://github.com/n8n-io/otto/pull/357) (30d4769)
+- **chat:** Show time, reaction and controls under each message. [#342](https://github.com/n8n-io/otto/pull/342) (4b50df2)
+- **vault:** Show the full username when choosing a saved login. [#340](https://github.com/n8n-io/otto/pull/340) (9a75c30)
+- **apps:** Explain how to create a Composio key with the right permissions. [#344](https://github.com/n8n-io/otto/pull/344) (3f3cc42)
+- **vault:** Keep Sign in buttons clickable and post action links with their waiting turn. [#339](https://github.com/n8n-io/otto/pull/339) (b8da2e4)
+- **sandbox:** Run find without RTK so it sees .otto files. [#338](https://github.com/n8n-io/otto/pull/338) (503294a)
+
+### Documentation
+
+- **contribute:** Keep the default workflow token read-only. [#337](https://github.com/n8n-io/otto/pull/337) (634ef20)
+
+<details>
+<summary>Maintenance (10 changes)</summary>
+
+- **deps:** Bump @radix-ui/react-popover from 1.2.0 to 1.3.1. [#353](https://github.com/n8n-io/otto/pull/353) (66c680e)
+- **deps-dev:** Bump jsdom from 30.1.2 to 30.1.3. [#356](https://github.com/n8n-io/otto/pull/356) (7d9ef00)
+- **deps-dev:** Bump prettier from 3.9.9 to 3.9.10. [#348](https://github.com/n8n-io/otto/pull/348) (bc4a74c)
+- **deps:** Bump posthog-node from 5.55.1 to 5.56.1. [#354](https://github.com/n8n-io/otto/pull/354) (1de48b5)
+- Drop hosted leftovers in analytics, feedback and object storage. [#358](https://github.com/n8n-io/otto/pull/358) (82abd44)
+- **deps:** Bump pg-boss from 12.37.1 to 12.38.0. [#355](https://github.com/n8n-io/otto/pull/355) (f0409e3)
+- **deps-dev:** Bump fake-indexeddb from 6.2.5 to 6.2.6. [#349](https://github.com/n8n-io/otto/pull/349) (3cffbde)
+- **deps:** Bump undici to 8.12.2 and wrap its dispatchers for Node's fetch. [#334](https://github.com/n8n-io/otto/pull/334) (977431a)
+- **security:** Clear known vulnerabilities, pin base images and fuzz redaction. [#335](https://github.com/n8n-io/otto/pull/335) (c7996aa)
+- Delete Git notes refs on every CI run. [#333](https://github.com/n8n-io/otto/pull/333) (0bd5626)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/otto/compare/desktop-v0.1.16...3c8635be1f257f490a091db122299d0e9e15117d)
+
+<details>
+<summary>Build details</summary>
+
+Source: `3c8635be1f257f490a091db122299d0e9e15117d`
+Previous release: `desktop-v0.1.16`
+
+</details>
+
 ## 0.1.16 - 2026-10-19
 
 ### Features

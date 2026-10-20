@@ -13,7 +13,7 @@ import { memoryObjectStore } from './fixtures/object-store.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
-import { createAnalytics } from '../src/server/analytics.ts';
+import { analyticsRoutes, createAnalytics } from '../src/server/analytics.ts';
 import { gunzipSync } from 'node:zlib';
 
 test('analytics drops revoked owner queues while preserving another owner and rechecks dispatch consent', async (t) => {
@@ -37,13 +37,15 @@ test('analytics drops revoked owner queues while preserving another owner and re
   t.after(() => analytics.shutdown());
   for (const owner of ['alex', 'sam', 'never']) {
     if (owner !== 'never') analytics.setUsageData(owner, true);
-    analytics.capture(owner, { event: 'otto_chat_stopped' });
+    analytics.capture(owner, {
+      event: owner === 'sam' ? 'otto_chat_stopped' : 'otto_conversation_reset',
+    });
   }
   analytics.setUsageData('alex', false);
   await analytics.shutdown();
   assert.deepEqual(
-    received.map((event) => event.distinct_id),
-    [local],
+    received.map((event) => [event.distinct_id, event.event]),
+    [[local, 'otto_chat_stopped']],
   );
 
   received.length = 0;
@@ -219,6 +221,25 @@ test(
       cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
     };
     try {
+      const { createModelService } = await import('../src/server/models.ts');
+      const { createIntegrationKeyService } = await import('../src/server/integration-key.ts');
+      createModelService({
+        database: pool,
+        ownerId: 'route-fixture',
+        keyStore,
+        backend: {} as never,
+        origin: headers.origin,
+      }).register(application.app);
+      createIntegrationKeyService({
+        ownerId: 'route-fixture',
+        keyStore,
+        provider: {} as never,
+      }).register(application.app, {} as never);
+      await application.app.ready();
+      for (const route of analyticsRoutes.keys()) {
+        const [method, url] = route.split(' ');
+        assert.ok(application.app.hasRoute({ method: method as 'GET', url }), route);
+      }
       assert.equal(applied[0].TELEGRAM_BOT_TOKEN, '42:private-fixture');
       const send = async (id: number, text: string) =>
         application.app.inject({

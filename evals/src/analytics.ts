@@ -11,7 +11,9 @@ import {
 import type { Model } from './stack.ts';
 
 type Classification = z.infer<typeof conversationAnalyticsClassification>;
-type Task = Classification['tasks'][number];
+type ClassifiedTask = Classification['tasks'][number];
+type Dimensions = Pick<ClassifiedTask, 'use_case' | 'context' | 'collaboration'>;
+type Task = Omit<ClassifiedTask, keyof Dimensions> & Partial<Dimensions>;
 type Frustration = NonNullable<Classification['frustration']>;
 type Message = { id: string; role: 'user' | 'assistant'; text: string; current: boolean };
 export interface AnalyticsCase {
@@ -22,17 +24,19 @@ export interface AnalyticsCase {
     runtime_status: string;
     messages: Message[];
     scheduled_request?: string;
-    tasks: Array<{
-      id: string;
-      task_type: Task['task_type'];
-      task_action: Task['task_action'];
-      task_subject: Task['task_subject'];
-      task_activities: Task['task_activities'];
-      outcome: Task['outcome'];
-      request: string;
-    }>;
+    tasks: Array<
+      {
+        id: string;
+        task_type: Task['task_type'];
+        task_action: Task['task_action'];
+        task_subject: Task['task_subject'];
+        task_activities: Task['task_activities'];
+        outcome: Task['outcome'];
+        request: string;
+      } & Partial<Dimensions>
+    >;
   };
-  expected: Classification;
+  expected: { tasks: Task[]; frustration: Classification['frustration'] };
   acceptedFrustrationSignals?: Frustration['signal'][];
 }
 
@@ -76,6 +80,7 @@ const known = (
   task_subject: Task['task_subject'],
   outcome: Task['outcome'],
   request: string,
+  dimensions?: Dimensions,
 ): Pick<AnalyticsCase['input'], 'tasks'> => ({
   tasks: [
     {
@@ -86,9 +91,15 @@ const known = (
       task_activities: [`${task_action}:${task_subject}`],
       outcome,
       request,
+      ...dimensions,
     },
   ],
 });
+const dimensions = (
+  use_case: Dimensions['use_case'],
+  context: Dimensions['context'],
+  collaboration: Dimensions['collaboration'],
+): Dimensions => ({ use_case, context, collaboration });
 const frustration = (
   signal: Frustration['signal'],
   reason: Frustration['reason'],
@@ -116,17 +127,17 @@ export const analyticsCases: AnalyticsCase[] = [
       message(
         1,
         'user',
-        'Draft a short meeting invitation email. Separately, create a weekly meal plan document.',
+        'Draft a short meeting invitation email. Separately, create a one-page welcome guide document for new volunteers.',
       ),
       message(
         2,
         'assistant',
-        'Invitation draft: Please join our planning meeting on Friday at 10. I also created meal-plan.md with meals for all seven days.',
+        'Invitation draft: Please join our planning meeting on Friday at 10. I also created welcome-guide.md with the first-day steps and contacts.',
       ),
     ],
     [
       task('communication', 'draft', 'email', 'completed'),
-      task('document_creation', 'create', 'document', 'completed'),
+      task('content_creation', 'create', 'document', 'completed'),
     ],
   ),
   fixture(
@@ -211,12 +222,12 @@ export const analyticsCases: AnalyticsCase[] = [
     ],
     [
       {
-        ...task('document_creation', 'create', 'document', 'completed', 1, 100),
+        ...task('content_creation', 'create', 'document', 'completed', 1, 100),
         task_activities: ['create:document', 'edit:document'],
       },
     ],
     known(
-      'document_creation',
+      'content_creation',
       'create',
       'document',
       'completed',
@@ -234,18 +245,18 @@ export const analyticsCases: AnalyticsCase[] = [
       ],
       [
         {
-          ...task('document_creation', 'create', 'document', 'active', 3, 100),
+          ...task('content_creation', 'create', 'document', 'active', 3, 100),
           task_activities: ['create:document', 'edit:document'],
         },
       ],
       known(
-        'document_creation',
+        'content_creation',
         'create',
         'document',
         'completed',
         'Create a monthly spending report in EUR.',
       ),
-      frustration('repeated_correction', 'ignored_instruction', 'document_creation', [1, 3]),
+      frustration('repeated_correction', 'ignored_instruction', 'content_creation', [1, 3]),
     ),
     acceptedFrustrationSignals: ['repeated_correction', 'repeated_request'],
   },
@@ -445,7 +456,7 @@ export const analyticsCases: AnalyticsCase[] = [
     ],
     [task('file_management', 'delete', 'document', 'completed')],
     known(
-      'document_creation',
+      'content_creation',
       'create',
       'document',
       'completed',
@@ -483,6 +494,18 @@ export const analyticsCases: AnalyticsCase[] = [
     ],
   ),
   fixture(
+    'holdout-general-question',
+    [
+      message(1, 'user', 'How does compound interest work?'),
+      message(
+        2,
+        'assistant',
+        'Compound interest adds each period’s interest to the balance, so later interest is earned on earlier interest too.',
+      ),
+    ],
+    [task('advice', 'explain', 'knowledge', 'completed')],
+  ),
+  fixture(
     'holdout-independent-find-analyze-send',
     [
       message(
@@ -502,12 +525,120 @@ export const analyticsCases: AnalyticsCase[] = [
       task('communication', 'send', 'email', 'completed'),
     ],
   ),
+  fixture(
+    'dimension-cancel-subscription',
+    [
+      message(1, 'user', 'Cancel my streaming subscription on the provider website.'),
+      message(2, 'assistant', 'I cancelled the subscription. It stays active until the 30th.'),
+    ],
+    [
+      {
+        ...task('transaction', 'cancel', 'finance', 'completed'),
+        ...dimensions('subscription_management', 'personal', 'directive'),
+      },
+    ],
+  ),
+  fixture(
+    'dimension-food-order',
+    [
+      message(1, 'user', 'Order a pizza for delivery to my home tonight.'),
+      message(2, 'assistant', 'I placed the order. It should arrive around 20:00.'),
+    ],
+    [
+      {
+        ...task('transaction', 'order', 'product', 'completed'),
+        ...dimensions('food_ordering', 'personal', 'directive'),
+      },
+    ],
+  ),
+  fixture(
+    'dimension-meeting-notes',
+    [
+      message(1, 'user', 'Summarize the transcript of today’s team standup into action items.'),
+      message(
+        2,
+        'assistant',
+        'Action items: update the release checklist, book the review room and send the test report.',
+      ),
+    ],
+    [
+      {
+        ...task('research', 'summarize', 'meeting', 'completed'),
+        ...dimensions('meeting_notes', 'work', 'directive'),
+      },
+    ],
+  ),
+  fixture(
+    'dimension-learning',
+    [
+      message(1, 'user', 'I am learning Spanish. Teach me when to use ser and when to use estar.'),
+      message(
+        2,
+        'assistant',
+        'Use ser for lasting traits and identity, and estar for states and locations.',
+      ),
+    ],
+    [
+      {
+        ...task('advice', 'explain', 'knowledge', 'completed'),
+        ...dimensions('learning_and_tutoring', 'personal', 'learning'),
+      },
+    ],
+  ),
+  fixture(
+    'dimension-validation',
+    [
+      message(
+        1,
+        'user',
+        'Check my quarterly report draft for calculation errors before I send it to my manager.',
+      ),
+      message(
+        2,
+        'assistant',
+        'The second quarter total should be 1,240, not 1,420. The other totals add up.',
+      ),
+    ],
+    [
+      {
+        ...task('data_analysis', 'analyze', 'document', 'completed'),
+        ...dimensions('document_analysis', 'work', 'validation'),
+      },
+    ],
+  ),
+  fixture(
+    'dimension-iteration',
+    [
+      message(1, 'user', 'Make the intro punchier and cut the whole post to 100 words.'),
+      message(2, 'assistant', 'Here is the shorter announcement with a new opening line.'),
+    ],
+    [
+      {
+        ...task('content_creation', 'create', 'document', 'completed', 1, 100),
+        task_activities: ['create:document', 'edit:document'],
+        ...dimensions('writing_and_editing', 'work', 'iteration'),
+      },
+    ],
+    known(
+      'content_creation',
+      'create',
+      'document',
+      'completed',
+      'Write a product launch announcement for our company blog.',
+      dimensions('writing_and_editing', 'work', 'directive'),
+    ),
+  ),
 ];
 
 const referenceLabels = (expected: Task, actual: Task) => ({
   typeDisagreements: Number(expected.task_type !== actual.task_type),
   actionDisagreements: Number(expected.task_action !== actual.task_action),
   subjectDisagreements: Number(expected.task_subject !== actual.task_subject),
+  useCaseDisagreements: Number(!!expected.use_case && expected.use_case !== actual.use_case),
+  contextDisagreements: Number(!!expected.context && expected.context !== actual.context),
+  collaborationDisagreements: Number(
+    !!expected.collaboration && expected.collaboration !== actual.collaboration,
+  ),
   missingActivities: expected.task_activities.filter(
     (activity) => !actual.task_activities.includes(activity),
   ).length,
@@ -558,6 +689,9 @@ function matchTasks(item: AnalyticsCase, actual: Task[]) {
         labels.typeDisagreements * 256 +
         labels.actionDisagreements * 256 +
         labels.subjectDisagreements * 256 +
+        labels.useCaseDisagreements * 64 +
+        labels.contextDisagreements * 64 +
+        labels.collaborationDisagreements * 64 +
         labels.missingActivities * 9 +
         labels.extraActivities * 9;
       const pairs: Match['pairs'] = [pair, ...next.pairs];
@@ -594,6 +728,9 @@ export function scoreAnalytics(item: AnalyticsCase, output: unknown) {
     typeDisagreements: 0,
     actionDisagreements: 0,
     subjectDisagreements: 0,
+    useCaseDisagreements: 0,
+    contextDisagreements: 0,
+    collaborationDisagreements: 0,
     missingActivities: errors.missingActivities,
     extraActivities: errors.extraActivities,
     frustrationTypeDisagreements: Number(
@@ -657,7 +794,8 @@ export function scoreAnalytics(item: AnalyticsCase, output: unknown) {
   return {
     schemaValid: parsed.success,
     valid,
-    unknownLabels: parsed.success ? unknownAnalyticsLabels(parsed.data) : 0,
+    unknownLabels: parsed.success ? unknownAnalyticsLabels(parsed.data).unknown : 0,
+    otherLabels: parsed.success ? unknownAnalyticsLabels(parsed.data).other : 0,
     ambiguousOutcomeMatching: ambiguous,
     lifecycleCorrect:
       valid &&
@@ -684,6 +822,9 @@ export function scoreAnalytics(item: AnalyticsCase, output: unknown) {
                   task.task_action,
                   task.task_subject,
                   [...task.task_activities].sort(),
+                  task.use_case,
+                  task.context,
+                  task.collaboration,
                 ]),
               )
               .sort(),
@@ -775,6 +916,7 @@ export function summarizeAnalytics(attempts: AnalyticsAttempt[]) {
     schemaInvalid: sum((score) => Number(!score.schemaValid)),
     invalid: sum((score) => Number(!score.valid)),
     unknownLabels: sum((score) => score.unknownLabels),
+    otherLabels: sum((score) => score.otherLabels),
     unknownLabelRate: ratio(
       sum((score) => Number(score.valid && score.unknownLabels > 0)),
       sum((score) => Number(score.valid)),
@@ -793,6 +935,9 @@ export function summarizeAnalytics(attempts: AnalyticsAttempt[]) {
       typeDisagreements: sum((score) => score.referenceLabels.typeDisagreements),
       actionDisagreements: sum((score) => score.referenceLabels.actionDisagreements),
       subjectDisagreements: sum((score) => score.referenceLabels.subjectDisagreements),
+      useCaseDisagreements: sum((score) => score.referenceLabels.useCaseDisagreements),
+      contextDisagreements: sum((score) => score.referenceLabels.contextDisagreements),
+      collaborationDisagreements: sum((score) => score.referenceLabels.collaborationDisagreements),
       missingActivities: sum((score) => score.referenceLabels.missingActivities),
       extraActivities: sum((score) => score.referenceLabels.extraActivities),
       frustrationTypeDisagreements: sum(

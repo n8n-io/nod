@@ -103,6 +103,7 @@ export function createAgentRuntime(dependencies: {
   skills?: SkillLibrary;
   redactError?(text: string): string;
   observe?(turnId: string, event: RuntimeObservation): void;
+  pageVisited?(url: string, subagent: boolean): void;
 }) {
   const { agent, computer, skills } = dependencies;
   const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
@@ -445,6 +446,7 @@ export function createAgentRuntime(dependencies: {
             context.manage(action, args, admissions.getStore()?.admit),
         },
         computer: browser,
+        pageVisited: dependencies.pageVisited,
         reply,
         pause,
         confirm,

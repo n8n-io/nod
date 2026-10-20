@@ -7730,7 +7730,9 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
     sessionId: 'fixture-session',
     execute: async () => result,
   }));
-  const session = await createComposioProvider({ client }).createSession('local-development', {});
+  const session = await createComposioProvider({ client }).createSession('local-development', {
+    slackbot: 'fixture-slackbot-account',
+  });
   for (const failure of [
     { data: {}, error: 'Fixture rate limit', logId: 'log-fixture', resultType: 'failed' },
     { data: {}, error: null, logId: 'log-fixture', resultType: 'failed' },
@@ -7743,6 +7745,73 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
     result = failure;
     await assert.rejects(session.execute('GMAIL_SEND_EMAIL', {}, 'fixture-account'));
   }
+  const missingScope = {
+    ok: false,
+    error: 'missing_scope',
+    needed: 'canvases:write',
+    provided: 'chat:write,channels:read',
+  };
+  for (const [name, action, failure] of [
+    [
+      'Composio failure',
+      'SLACK_CREATE_CANVAS',
+      { data: missingScope, error: 'missing_scope', resultType: 'failed' },
+    ],
+    [
+      'Slack failure',
+      'SLACK_CREATE_CANVAS',
+      { data: missingScope, error: null, resultType: 'completed' },
+    ],
+    [
+      'Slackbot failure',
+      'SLACKBOT_CREATE_CANVAS',
+      { data: missingScope, error: null, resultType: 'completed' },
+    ],
+  ] as const) {
+    await t.test(`${name} preserves the missing and granted permissions`, async () => {
+      result = failure;
+      await assert.rejects(session.execute(action, {}, 'fixture-account'), (error: Error) => {
+        assert.match(error.message, /missing_scope/);
+        assert.match(error.message, /canvases:write/);
+        assert.match(error.message, /chat:write,channels:read/);
+        return true;
+      });
+    });
+  }
+  result = {
+    error: `Permission denied. ${'x'.repeat(5000)}`,
+    data: {
+      ok: false,
+      needed: `canvases:write,${'y'.repeat(5000)}`,
+      provided: `chat:write,channels:read,${'z'.repeat(5000)}`,
+    },
+    resultType: 'failed',
+  };
+  await assert.rejects(
+    session.execute('SLACK_CREATE_CANVAS', {}, 'fixture-account'),
+    (error: Error) => {
+      assert.match(error.message, /needed: canvases:write/);
+      assert.match(error.message, /provided: chat:write,channels:read/);
+      assert.match(error.message, /Permission denied/);
+      assert.ok(error.message.length < 5000);
+      return true;
+    },
+  );
+  result = { data: { ok: false, error: 'invalid_auth' }, error: null, resultType: 'completed' };
+  await assert.rejects(
+    session.execute('SLACK_SEND_MESSAGE', {}, 'fixture-account'),
+    /invalid_auth/,
+  );
+  result = { data: { ok: false }, error: null, resultType: 'completed' };
+  await assert.rejects(session.execute('SLACK_SEND_MESSAGE', {}, 'fixture-account'));
+  result = {
+    data: { ok: true, canvas_id: 'fixture-canvas' },
+    error: null,
+    resultType: 'completed',
+  };
+  assert.deepEqual(await session.execute('SLACK_CREATE_CANVAS', {}, 'fixture-account'), result);
+  result = { data: { ok: false }, error: null, resultType: 'completed' };
+  assert.deepEqual(await session.execute('GMAIL_GET_PROFILE', {}, 'fixture-account'), result);
   result = {
     data: { successful: true, id: 'fixture-message' },
     error: null,

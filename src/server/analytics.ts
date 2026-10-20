@@ -1,13 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { link, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { posthogConfig, type AnalyticsConfiguration } from '../shared/analytics.ts';
 
-import { analyticsEvent, analyticsVersion, type AnalyticsEvent } from './analytics-events.ts';
+import {
+  analyticsEvent,
+  analyticsModelProvider,
+  analyticsTool,
+  analyticsVersion,
+  type AnalyticsEvent,
+} from './analytics-events.ts';
+import type { RuntimeObservation } from '../ports/agent.ts';
 
 export type { AnalyticsEvent } from './analytics-events.ts';
 export interface AnalyticsDelivery {
@@ -16,8 +23,10 @@ export interface AnalyticsDelivery {
   appVersion?: string;
   consentRevision?: string;
   runId?: string;
+  replaySessionId?: string;
 }
 export type CaptureAnalytics = (event: AnalyticsEvent, delivery?: AnalyticsDelivery) => void;
+export type MemoryChange = Extract<AnalyticsEvent, { event: 'otto_memory_changed' }>['properties'];
 
 export function analyticsEnabled(env: Record<string, string | undefined>) {
   const production = env.NODE_ENV === 'production';
@@ -31,7 +40,9 @@ export function analyticsEnvironment(
 ): AnalyticsConfiguration['environment'] {
   const explicit = z.enum(['development', 'production']).safeParse(env.OTTO_ANALYTICS_ENVIRONMENT);
   if (explicit.success) return explicit.data;
-  return env.NODE_ENV === 'production' ? 'production' : 'development';
+  return env.NODE_ENV === 'production' && !/^\d+\.\d+\.\d+-/.test(env.OTTO_APP_VERSION ?? '')
+    ? 'production'
+    : 'development';
 }
 
 async function installationId(root: string, supplied?: string) {
@@ -62,6 +73,74 @@ async function installationId(root: string, supplied?: string) {
     .toLowerCase();
 }
 
+const hostedProviders: Record<string, 'openai' | 'anthropic' | 'openrouter' | 'typesafe'> = {
+  openai: 'openai',
+  'openai-codex': 'openai',
+  anthropic: 'anthropic',
+  openrouter: 'openrouter',
+  typesafe: 'typesafe',
+};
+
+export function analyticsModel(provider: string, model?: string) {
+  const hosted = Object.hasOwn(hostedProviders, provider) ? hostedProviders[provider] : undefined;
+  return {
+    provider: hosted ?? (provider === 'compatible' ? ('compatible' as const) : ('other' as const)),
+    ...(model
+      ? { model: hosted && /^[a-z0-9][a-z0-9._:/-]{0,119}$/.test(model) ? model : 'custom' }
+      : {}),
+  };
+}
+
+export type TurnModel = { model_provider: z.infer<typeof analyticsModelProvider>; model?: string };
+
+function turnModel(provider: TurnModel['model_provider'], model?: string): TurnModel {
+  return { model_provider: provider, ...(model ? { model } : {}) };
+}
+
+const readVerbs = new Set([
+  'get',
+  'list',
+  'fetch',
+  'search',
+  'find',
+  'read',
+  'retrieve',
+  'query',
+  'lookup',
+  'view',
+  'describe',
+  'download',
+]);
+
+function sideEffecting(action: string) {
+  if (action === 'OTTO_vault_allow' || action === 'SEARCH_TOOLS') return false;
+  if (action.startsWith('OTTO_')) return true;
+  return !action
+    .split(/[^a-zA-Z0-9]+|(?<=[a-z0-9])(?=[A-Z])/)
+    .some((word) => readVerbs.has(word.toLowerCase()));
+}
+
+const workspaceTools = new Set(['read', 'bash', 'edit', 'write', 'find', 'ls', 'grep']);
+const webTools = new Set(['web_search', 'fetch_content', 'get_search_content', 'code_search']);
+
+export function toolUsed(event: Extract<RuntimeObservation, { type: 'tool_end' }>): AnalyticsEvent {
+  return {
+    event: 'otto_tool_used',
+    properties: {
+      tool: workspaceTools.has(event.name)
+        ? 'workspace'
+        : webTools.has(event.name)
+          ? 'web'
+          : (analyticsTool.safeParse(event.name).data ?? 'other'),
+      outcome: event.status,
+      duration_ms: Number.isFinite(event.durationMs)
+        ? Math.max(0, Math.round(event.durationMs))
+        : 0,
+      subagent: Boolean(event.execution?.parentRunId),
+    },
+  };
+}
+
 export async function createAnalytics(options: {
   provider?: ProductAnalytics;
   environment: AnalyticsConfiguration['environment'];
@@ -70,7 +149,7 @@ export async function createAnalytics(options: {
   appVersion?: string;
 }) {
   const appVersion = analyticsVersion.safeParse(options.appVersion).data;
-  const localId = options.provider
+  let localId = options.provider
     ? await installationId(options.dataRoot, options.installationId).catch(() => null)
     : null;
   const available = Boolean(options.provider && localId);
@@ -82,8 +161,16 @@ export async function createAnalytics(options: {
   const runs = new AsyncLocalStorage<{
     owner: string;
     id: string;
+    turnId?: string;
     consent: ReturnType<typeof consent>;
+    model?: TurnModel;
   }>();
+  const replaySessions = new Map<string, string>();
+  const actedRuns = new Set<string>();
+  function acted(runId: string) {
+    if (actedRuns.size >= 1000) actedRuns.delete(actedRuns.values().next().value!);
+    actedRuns.add(runId);
+  }
   let closed = false;
   function state(owner: string) {
     let value = states.get(owner);
@@ -131,8 +218,31 @@ export async function createAnalytics(options: {
     if (run && delivery.runId !== undefined && delivery.runId !== run.id) return;
     if (delivery.consentRevision !== undefined && delivery.consentRevision !== current.revision)
       return;
+    const replaySession = z
+      .uuid()
+      .safeParse(
+        delivery.replaySessionId ?? (run?.turnId ? replaySessions.get(run.turnId) : undefined),
+      ).data;
     const parsed = analyticsEvent.safeParse(event);
     if (!parsed.success) return;
+    if (
+      runId &&
+      parsed.data.event === 'otto_secure_entry_changed' &&
+      parsed.data.properties.kind === 'payment' &&
+      parsed.data.properties.status === 'submitted'
+    )
+      acted(runId);
+    if (run) {
+      const { data } = parsed;
+      if (data.event === 'otto_turn_started' && data.properties.model_provider)
+        run.model ??= turnModel(data.properties.model_provider, data.properties.model);
+      if (data.event === 'otto_model_used' && data.properties.purpose === 'agent')
+        run.model = turnModel(data.properties.provider, data.properties.model);
+      if (data.event === 'otto_turn_completed' && run.model) {
+        const { model_provider: _, model: __, ...properties } = data.properties;
+        data.properties = { ...properties, ...run.model };
+      }
+    }
     const version = analyticsVersion.safeParse(delivery.appVersion ?? appVersion).data;
     try {
       options.provider?.capture(
@@ -148,6 +258,7 @@ export async function createAnalytics(options: {
             capture_source: 'server',
             ...(version ? { app_version: version } : {}),
             ...(runId ? { run_id: runId } : {}),
+            ...(replaySession ? { $session_id: replaySession } : {}),
             ...('properties' in parsed.data ? parsed.data.properties : {}),
           },
         },
@@ -155,9 +266,14 @@ export async function createAnalytics(options: {
       );
     } catch {}
   }
-  function setUsageData(owner: string, enabled: boolean, revision = state(owner).revision) {
+  function setUsageData(
+    owner: string,
+    enabled: boolean,
+    revision = state(owner).revision,
+    force = false,
+  ) {
     const current = state(owner);
-    if (current.enabled === enabled && current.revision === revision) return;
+    if (!force && current.enabled === enabled && current.revision === revision) return;
     current.controller.abort();
     const controller = new AbortController();
     if (!enabled) controller.abort();
@@ -171,8 +287,23 @@ export async function createAnalytics(options: {
   return {
     configuration,
     consent,
-    withRun<T>(owner: string, operation: () => T): T {
-      return runs.run({ owner, id: randomUUID(), consent: consent(owner) }, operation);
+    withRun<T>(owner: string, operation: () => T, turnId?: string): T {
+      return runs.run({ owner, id: randomUUID(), turnId, consent: consent(owner) }, operation);
+    },
+    linkReplay(turnId: string, sessionId: string) {
+      if (!z.uuid().safeParse(sessionId).success) return;
+      if (replaySessions.size >= 1000) replaySessions.delete(replaySessions.keys().next().value!);
+      replaySessions.set(turnId, sessionId.toLowerCase());
+    },
+    replaySession(turnId: string) {
+      return replaySessions.get(turnId);
+    },
+    actionSucceeded(runId: string) {
+      return actedRuns.has(runId);
+    },
+    actionExecuted(owner: string, action: string) {
+      const run = runs.getStore();
+      if (run?.owner === owner && run.consent.enabled && sideEffecting(action)) acted(run.id);
     },
     currentRun(owner: string) {
       const run = runs.getStore();
@@ -192,6 +323,20 @@ export async function createAnalytics(options: {
       };
     },
     setUsageData,
+    async resetInstallation() {
+      if (!available || options.installationId !== undefined)
+        throw new Error('The analytics installation ID cannot be reset here.');
+      const id = randomUUID();
+      const temporary = join(options.dataRoot, `.analytics-${id}`);
+      try {
+        await writeFile(temporary, id, { flag: 'wx', mode: 0o600 });
+        await rename(temporary, join(options.dataRoot, 'analytics-id'));
+      } finally {
+        await rm(temporary, { force: true });
+      }
+      localId = id;
+      for (const [owner, current] of states) setUsageData(owner, current.enabled, undefined, true);
+    },
     forOwner:
       (owner: string): CaptureAnalytics =>
       (event, delivery) =>
@@ -207,78 +352,72 @@ export async function createAnalytics(options: {
 
 export type Analytics = Awaited<ReturnType<typeof createAnalytics>>;
 
+type SettingsSection = Extract<
+  AnalyticsEvent,
+  { event: 'otto_settings_updated' }
+>['properties']['section'];
+type SettingsOperation = Extract<
+  AnalyticsEvent,
+  { event: 'otto_settings_updated' }
+>['properties']['operation'];
+const settings = (section: SettingsSection, operation: SettingsOperation): AnalyticsEvent => ({
+  event: 'otto_settings_updated',
+  properties: { section, operation },
+});
+const channel =
+  (operation: SettingsOperation | ((provider: 'telegram' | 'whatsapp') => SettingsOperation)) =>
+  (request: FastifyRequest): AnalyticsEvent | undefined => {
+    const provider = z
+      .enum(['telegram', 'whatsapp'])
+      .safeParse(
+        (request.params as { provider?: string }).provider ??
+          (request.routeOptions.url?.includes('/telegram/') ? 'telegram' : undefined),
+      ).data;
+    if (!provider) return;
+    return {
+      event: 'otto_settings_updated',
+      properties: {
+        section: 'channels',
+        operation: typeof operation === 'function' ? operation(provider) : operation,
+        channel: provider,
+      },
+    };
+  };
+
+export const analyticsRoutes = new Map<
+  string,
+  AnalyticsEvent | ((request: FastifyRequest) => AnalyticsEvent | undefined)
+>([
+  ['POST /api/conversation/reset', { event: 'otto_conversation_reset' }],
+  ['POST /api/thread/stop', { event: 'otto_chat_stopped' }],
+  ['POST /api/tasks/:id/stop', { event: 'otto_task_stopped' }],
+  ['PATCH /api/preferences', settings('preferences', 'update')],
+  [
+    'PUT /api/channel-settings/:provider',
+    channel((provider) => (provider === 'telegram' ? 'connect_started' : 'update')),
+  ],
+  ['POST /api/channel-settings/telegram/pairing', channel('connect_started')],
+  ['POST /api/channel-settings/telegram/confirm', channel('update')],
+  ['POST /api/channel-settings/telegram/user', channel('update')],
+  ['DELETE /api/channel-settings/:provider', channel('disconnect')],
+  ['POST /api/models/keys', settings('models', 'update')],
+  ['POST /api/models/endpoints', settings('models', 'update')],
+  ['POST /api/models/oauth', settings('models', 'connect_started')],
+  ['POST /api/models/oauth/complete', settings('models', 'update')],
+  ['POST /api/models/connections/:id/refresh', settings('models', 'update')],
+  ['PUT /api/models/selection', settings('models', 'update')],
+  ['DELETE /api/models/connections/:id', settings('models', 'disconnect')],
+  ['PUT /api/trust/limit', settings('trust', 'update')],
+  ['PATCH /api/memory', settings('memory', 'update')],
+  ['PUT /api/integrations/key', settings('apps', 'update')],
+  ['DELETE /api/integrations/key', settings('apps', 'disconnect')],
+]);
+
 export function registerAnalyticsRoutes(app: FastifyInstance, capture: CaptureAnalytics) {
-  const actions = new Map<string, AnalyticsEvent>([
-    ['POST /api/conversation/reset', { event: 'otto_conversation_reset' }],
-    ['POST /api/thread/stop', { event: 'otto_chat_stopped' }],
-    [
-      'PATCH /api/preferences',
-      {
-        event: 'otto_settings_updated',
-        properties: { section: 'preferences', operation: 'update' },
-      },
-    ],
-    [
-      'PUT /api/channel-settings/:provider',
-      { event: 'otto_settings_updated', properties: { section: 'channels', operation: 'update' } },
-    ],
-    [
-      'POST /api/channel-settings/telegram/pairing',
-      { event: 'otto_settings_updated', properties: { section: 'channels', operation: 'update' } },
-    ],
-    [
-      'POST /api/channel-settings/telegram/confirm',
-      { event: 'otto_settings_updated', properties: { section: 'channels', operation: 'update' } },
-    ],
-    [
-      'POST /api/channel-settings/telegram/user',
-      { event: 'otto_settings_updated', properties: { section: 'channels', operation: 'update' } },
-    ],
-    [
-      'DELETE /api/channel-settings/:provider',
-      {
-        event: 'otto_settings_updated',
-        properties: { section: 'channels', operation: 'disconnect' },
-      },
-    ],
-    [
-      'POST /api/models/keys',
-      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
-    ],
-    [
-      'POST /api/models/endpoints',
-      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
-    ],
-    [
-      'POST /api/models/oauth',
-      {
-        event: 'otto_settings_updated',
-        properties: { section: 'models', operation: 'connect_started' },
-      },
-    ],
-    [
-      'POST /api/models/oauth/complete',
-      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
-    ],
-    [
-      'POST /api/models/connections/:id/refresh',
-      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
-    ],
-    [
-      'PUT /api/models/selection',
-      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
-    ],
-    [
-      'DELETE /api/models/connections/:id',
-      {
-        event: 'otto_settings_updated',
-        properties: { section: 'models', operation: 'disconnect' },
-      },
-    ],
-  ]);
   app.addHook('onResponse', async (request, reply) => {
     if (reply.statusCode < 200 || reply.statusCode >= 300) return;
-    const event = actions.get(`${request.method} ${request.routeOptions.url}`);
+    const action = analyticsRoutes.get(`${request.method} ${request.routeOptions.url}`);
+    const event = typeof action === 'function' ? action(request) : action;
     if (event) capture(event);
   });
 }

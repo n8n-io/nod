@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import Markdown from 'react-markdown';
 import {
   CalendarClock,
@@ -21,6 +21,7 @@ import { NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
 import { Button, Loading, Notice } from '../components/ui';
 import { MessageText } from '../components/message';
 import { usePageData } from '../hooks/use-page-data';
+import { captureAnalytics } from '../lib/analytics';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { post, errorMessage } from '../lib/api';
@@ -141,7 +142,10 @@ export function TaskCard({
           className="task-preview-head"
           aria-expanded={expanded}
           aria-controls={`${headingId}-body`}
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => {
+            if (!expanded) captureAnalytics('otto_task_action', { action: 'expand' });
+            setExpanded(!expanded);
+          }}
         >
           <span className="task-preview-top">
             <span className="task-preview-title" id={headingId}>
@@ -254,7 +258,14 @@ export function TaskCard({
         )}
         <div className="task-preview-actions">
           {onReply && (
-            <Button variant="ghost" size="sm" onClick={onReply}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                captureAnalytics('otto_task_action', { action: 'reply' });
+                onReply();
+              }}
+            >
               Reply
             </Button>
           )}
@@ -262,13 +273,14 @@ export function TaskCard({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() =>
+              onClick={() => {
+                captureAnalytics('otto_task_action', { action: 'show_in_chat' });
                 window.dispatchEvent(
                   new window.CustomEvent('otto:focus-message', {
                     detail: { messageId: task.messageId },
                   }),
-                )
-              }
+                );
+              }}
             >
               <MessageSquare size={16} aria-hidden="true" />
               Show in chat
@@ -278,7 +290,10 @@ export function TaskCard({
             variant="ghost"
             size="sm"
             aria-expanded={showActivity}
-            onClick={() => setShowActivity(!showActivity)}
+            onClick={() => {
+              if (!showActivity) captureAnalytics('otto_task_action', { action: 'show_activity' });
+              setShowActivity(!showActivity);
+            }}
           >
             {showActivity ? 'Hide activity' : 'Show activity'}
           </Button>
@@ -288,6 +303,7 @@ export function TaskCard({
               size="sm"
               disabled={stopping}
               onClick={async () => {
+                captureAnalytics('otto_task_action', { action: 'stop' });
                 setStopping(true);
                 setError('');
                 try {
@@ -352,6 +368,11 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
   const schedules = usePageData<Schedule[]>('/api/schedules');
   const history = useScheduleHistory();
   const [view, setView] = useState<(typeof views)[number]>('current');
+  useEffect(() => captureAnalytics('otto_tab_viewed', { page: 'tasks', tab: view }), []);
+  const selectView = (next: typeof view) => {
+    if (next !== view) captureAnalytics('otto_tab_viewed', { page: 'tasks', tab: next });
+    setView(next);
+  };
   const tabsId = useId();
   const open = (tasks.data ?? [])
     .filter((task) => !closed(task))
@@ -412,7 +433,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
                   ? views.length - 1
                   : (index + step) % views.length
             ];
-          setView(next);
+          selectView(next);
           event.currentTarget.querySelector<HTMLButtonElement>(`[data-view="${next}"]`)?.focus();
         }}
       >
@@ -425,7 +446,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
             tabIndex={view === item ? 0 : -1}
             aria-selected={view === item}
             aria-controls={`${tabsId}-panel`}
-            onClick={() => setView(item)}
+            onClick={() => selectView(item)}
           >
             {viewLabels[item]}
             {counts[item] !== null && <span>{counts[item]}</span>}

@@ -264,6 +264,11 @@ test(
     const dependencies: ThreadDependencies = {
       browserStep: async () => 'run',
       analytics: captureAnalytics,
+      currentModel: () => ({
+        provider: 'compatible',
+        name: 'synthetic-private-endpoint-model',
+        configured: true,
+      }),
       present: (...input) => presentInterruption(...input),
       observeTurn: (_turnId, operation) => analytics.withRun(ownerId, operation),
       executeConfirmation: async () => undefined,
@@ -3057,7 +3062,18 @@ test(
       });
       await t.test('turn analytics exclude prompts, raw failures and private identifiers', () => {
         assert.ok(analyticsEvents.some((event) => event.event === 'otto_turn_completed'));
-        for (const privateValue of ['runtime-failure', 'first message', firstThreadId, root])
+        for (const event of analyticsEvents.filter((event) => event.event.startsWith('otto_turn_')))
+          assert.deepEqual(
+            [event.properties.model_provider, event.properties.model],
+            ['compatible', 'custom'],
+          );
+        for (const privateValue of [
+          'runtime-failure',
+          'first message',
+          'synthetic-private-endpoint-model',
+          firstThreadId,
+          root,
+        ])
           assert.ok(!JSON.stringify(analyticsEvents).includes(privateValue), privateValue);
       });
     } finally {
@@ -4040,6 +4056,9 @@ test(
               task_action: 'translate',
               task_subject: 'audio',
               task_activities: ['translate:audio'],
+              use_case: 'question_answering',
+              context: 'unclear',
+              collaboration: 'directive',
               outcome: 'active',
             },
           ],
@@ -4054,6 +4073,344 @@ test(
     const text = input?.messages.find((message) => message.role === 'user')?.text;
     assert.equal(text, 'x'.repeat(1190) + '[redacted]');
     assert.ok(!JSON.stringify(input).includes(secret.slice(0, 10)));
+  },
+);
+
+test(
+  'conversation analytics keeps messages with numbers, masks the digits and drops verification codes',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const priced = await f.turn({
+      prompt: 'My budget for a laptop is 1500 EUR, suggest two',
+      reply: 'Model A costs 1299 EUR with 512 GB',
+    });
+    const code = await f.turn({ prompt: '482913', at: Date.parse('2026-10-14T12:01:00.000Z') });
+    const grouped = await f.turn({
+      prompt: 'My verification code is 12 34 56 please',
+      reply: 'Try 123-456 or 98.76.54',
+      at: Date.parse('2026-10-14T12:02:00.000Z'),
+    });
+    const inputs: Array<{ messages: Array<{ id: string; text: string }> }> = [];
+    const processor = await f.processor(async (request) => {
+      inputs.push(request.input as (typeof inputs)[number]);
+      return { tasks: [], frustration: null };
+    });
+    processor.start(priced.id)();
+    processor.start(code.id)();
+    processor.start(grouped.id)();
+    await processor.drain();
+    const [first, second, third] = inputs.map(
+      (input) => new Map(input.messages.map((m) => [m.id, m.text])),
+    );
+    assert.equal(first!.get(priced.messageId), 'My budget for a laptop is # EUR, suggest two');
+    assert.equal(first!.get(priced.replyId), 'Model A costs # EUR with # GB');
+    assert.equal(second!.has(code.messageId), false);
+    assert.equal(third!.get(grouped.messageId), 'My verification code is # please');
+    assert.equal(third!.get(grouped.replyId), 'Try # or #');
+    assert.ok(!JSON.stringify(inputs).match(/1500|1299|482913|12 34|123-456|98\.76/));
+  },
+);
+
+test(
+  'conversation analytics keeps a task whose dimensions fall outside the vocabulary as other and unclear',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const turn = await f.turn();
+    const processor = await f.processor(async () => ({
+      tasks: [
+        {
+          task_id: null,
+          request_message_id: turn.messageId,
+          task_type: 'research',
+          task_action: 'find',
+          task_subject: 'web',
+          task_activities: ['find:web'],
+          use_case: 'synthetic_private_family',
+          context: 'synthetic_context',
+          collaboration: 'synthetic_mode',
+          outcome: 'active',
+        },
+      ],
+      frustration: null,
+    }));
+    processor.start(turn.id)();
+    await processor.drain();
+    const started = f.events.find((event) => event.event === 'otto_task_started')!;
+    assert.equal(started.properties.use_case, 'other');
+    assert.equal(started.properties.context, 'unclear');
+    assert.equal(started.properties.collaboration, 'unclear');
+    assert.ok(!JSON.stringify(f.events).includes('synthetic_'));
+    const health = f.events.find((event) => event.event === 'otto_task_analysis')!;
+    assert.equal(health.properties.other_label_count, 3);
+  },
+);
+
+test(
+  'conversation analytics lets a completed task replace other and unclear defaults but keeps known labels',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const answers = [
+      { use_case: 'other', context: 'unclear', collaboration: 'unclear' },
+      { use_case: 'question_answering', context: 'personal', collaboration: 'directive' },
+      { use_case: 'other', context: 'work', collaboration: 'unclear' },
+    ];
+    const processor = await f.processor(async ({ input }) => {
+      const { tasks, messages } = input as {
+        tasks: Array<{ id: string }>;
+        messages: Array<{ id: string; current: boolean }>;
+      };
+      return {
+        tasks: [
+          {
+            task_id: tasks[0]?.id ?? null,
+            request_message_id: tasks[0] ? null : messages.find((m) => m.current)!.id,
+            task_type: 'research',
+            task_action: 'find',
+            task_subject: 'web',
+            task_activities: ['find:web'],
+            ...answers.shift()!,
+            outcome: 'completed',
+          },
+        ],
+        frustration: null,
+      };
+    });
+    for (const minute of [0, 1, 2]) {
+      const turn = await f.turn({ at: Date.parse(`2026-10-14T12:0${minute}:00.000Z`) });
+      processor.start(turn.id)();
+      await processor.drain();
+    }
+    const { rows } = await f.pool.query(
+      'SELECT use_case,context,collaboration FROM analytics_tasks',
+    );
+    assert.deepEqual(rows, [
+      { use_case: 'question_answering', context: 'personal', collaboration: 'directive' },
+    ]);
+  },
+);
+
+test(
+  'web turns carry the recording session id on turn and classifier events; other turns carry none',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const recording = '01890a5d-ac96-774b-bcce-b302099a8057';
+    const web = await f.turn();
+    const telegram = await f.turn({ channel: 'telegram:fixture', session: randomUUID() });
+    const malformed = await f.turn({ session: randomUUID() });
+    f.analytics.linkReplay(web.id, recording);
+    f.analytics.linkReplay(malformed.id, 'not-a-session"}');
+    const processor = await f.processor(async ({ input }) => {
+      const current = (
+        input as { messages: Array<{ id: string; current: boolean }> }
+      ).messages.find((message) => message.current)!.id;
+      return {
+        tasks: [
+          {
+            task_id: null,
+            request_message_id: current,
+            task_type: 'research',
+            task_action: 'find',
+            task_subject: 'web',
+            task_activities: ['find:web'],
+            use_case: 'question_answering',
+            context: 'unclear',
+            collaboration: 'directive',
+            outcome: 'completed',
+          },
+        ],
+        frustration: {
+          signal: 'explicit_complaint',
+          reason: 'output_quality',
+          task_type: 'research',
+          message_ids: [current],
+        },
+      };
+    });
+    for (const turn of [web, telegram, malformed]) {
+      const before = f.events.length;
+      await processor.observe(turn.id, async () => {
+        f.analytics.capture(f.ownerId, {
+          event: 'otto_turn_started',
+          properties: { source: 'user', channel: 'web', background: false },
+        });
+      });
+      await processor.drain();
+      const events = f.events.slice(before);
+      assert.deepEqual(
+        new Set(events.map((event) => event.event)),
+        new Set([
+          'otto_turn_started',
+          'otto_task_linked',
+          'otto_task_started',
+          'otto_task_updated',
+          'otto_frustration_signal',
+          'otto_task_analysis',
+        ]),
+      );
+      for (const event of events)
+        assert.equal(
+          event.properties.$session_id,
+          turn === web ? recording : undefined,
+          `${event.event}`,
+        );
+    }
+  },
+);
+
+test(
+  'turn and task events carry the model the turn used, falling back to the selection at turn start',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const processor = await f.processor(async ({ input }) => ({
+      tasks: [
+        {
+          task_id: null,
+          request_message_id: (
+            input as { messages: Array<{ id: string; current: boolean }> }
+          ).messages.find((message) => message.current)!.id,
+          task_type: 'research',
+          task_action: 'find',
+          task_subject: 'web',
+          task_activities: ['find:web'],
+          use_case: 'question_answering',
+          context: 'unclear',
+          collaboration: 'directive',
+          outcome: 'completed',
+        },
+      ],
+      frustration: null,
+    }));
+    const selected = {
+      source: 'user',
+      channel: 'web',
+      background: false,
+      model_provider: 'openai',
+      model: 'gpt-selected',
+    } as const;
+    for (const used of [true, false]) {
+      const turn = await f.turn({ session: randomUUID() });
+      const before = f.events.length;
+      await processor.observe(turn.id, async () => {
+        f.analytics.capture(f.ownerId, { event: 'otto_turn_started', properties: selected });
+        if (used)
+          f.analytics.capture(f.ownerId, {
+            event: 'otto_model_used',
+            properties: {
+              provider: 'anthropic',
+              model: 'claude-used',
+              purpose: 'agent',
+              outcome: 'succeeded',
+              input_tokens: 1,
+              output_tokens: 1,
+              pricing: 'api',
+            },
+          });
+        f.analytics.capture(f.ownerId, {
+          event: 'otto_turn_completed',
+          properties: { ...selected, outcome: 'succeeded', duration_ms: 1 },
+        });
+      });
+      await processor.drain();
+      const expected = used ? ['anthropic', 'claude-used'] : ['openai', 'gpt-selected'];
+      const events = f.events
+        .slice(before)
+        .filter((event) =>
+          [
+            'otto_turn_completed',
+            'otto_task_started',
+            'otto_task_linked',
+            'otto_task_updated',
+          ].includes(event.event),
+        );
+      assert.equal(events.length, 4);
+      for (const event of events)
+        assert.deepEqual(
+          [event.properties.model_provider, event.properties.model],
+          expected,
+          event.event,
+        );
+    }
+  },
+);
+
+test(
+  'a completed task counts as action_succeeded only when its turn ran a side-effecting action or submitted a payment',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const processor = await f.processor(async ({ input }) => ({
+      tasks: [
+        {
+          task_id: null,
+          request_message_id: (
+            input as { messages: Array<{ id: string; current: boolean }> }
+          ).messages.find((message) => message.current)!.id,
+          task_type: 'transaction',
+          task_action: 'cancel',
+          task_subject: 'finance',
+          task_activities: ['cancel:finance'],
+          use_case: 'subscription_management',
+          context: 'personal',
+          collaboration: 'directive',
+          outcome: 'completed',
+        },
+      ],
+      frustration: null,
+    }));
+    const evidence = [];
+    for (const acted of [
+      'GMAIL_SEND_EMAIL',
+      'OTTO_schedule_create',
+      {
+        event: 'otto_secure_entry_changed',
+        properties: { kind: 'payment', status: 'submitted', currency: 'EUR', amount: 12 },
+      },
+      'GMAIL_FETCH_EMAILS',
+      'searchIssues',
+      'OTTO_vault_allow',
+      {
+        event: 'otto_confirmation_changed',
+        properties: { status: 'executed', action_kind: 'sign_in', source: 'user' },
+      },
+      {
+        event: 'otto_secure_entry_changed',
+        properties: { kind: 'sign_in', status: 'submitted' },
+      },
+      undefined,
+    ] as const) {
+      const turn = await f.turn({ session: randomUUID() });
+      const before = f.events.length;
+      await processor.observe(turn.id, async () => {
+        if (typeof acted === 'string') f.analytics.actionExecuted(f.ownerId, acted);
+        else if (acted) f.analytics.capture(f.ownerId, acted);
+      });
+      await processor.drain();
+      const updated = f.events.slice(before).find((event) => event.event === 'otto_task_updated');
+      assert.equal(updated?.properties.use_case, 'subscription_management');
+      evidence.push(updated?.properties.completion_evidence);
+    }
+    assert.deepEqual(evidence, [
+      'action_succeeded',
+      'action_succeeded',
+      'action_succeeded',
+      'inferred',
+      'inferred',
+      'inferred',
+      'inferred',
+      'inferred',
+      'inferred',
+    ]);
   },
 );
 
@@ -4101,6 +4458,9 @@ test(
             task_action: 'find',
             task_subject: 'web',
             task_activities: ['find:web'],
+            use_case: 'question_answering',
+            context: 'unclear',
+            collaboration: 'directive',
             outcome: 'completed',
           },
         ],
@@ -4137,6 +4497,9 @@ test(
             task_action: 'find',
             task_subject: 'web',
             task_activities: ['find:web'],
+            use_case: 'question_answering',
+            context: 'unclear',
+            collaboration: 'directive',
             outcome: 'completed',
           },
         ],
@@ -4163,6 +4526,68 @@ test(
 );
 
 test(
+  'conversation analytics links a background task turn to the task its chat turn started',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const parent = await f.turn({ prompt: 'Synthetic background task request' });
+    const task = await f.turn({
+      session: randomUUID(),
+      source: 'task',
+      prompt: 'Synthetic background task request',
+      at: Date.parse('2026-10-14T12:01:00.000Z'),
+    });
+    let input:
+      { source?: string; task_request?: string; tasks?: Array<{ id: string }> } | undefined;
+    const processor = await f.processor(async (request) => {
+      input = request.input as typeof input;
+      const known = input?.tasks?.[0]?.id;
+      return {
+        tasks: [
+          {
+            task_id: known ?? null,
+            request_message_id: known ? null : parent.messageId,
+            task_type: 'research',
+            task_action: 'find',
+            task_subject: 'web',
+            task_activities: ['find:web'],
+            use_case: 'question_answering',
+            context: 'unclear',
+            collaboration: 'directive',
+            outcome: known ? 'completed' : 'active',
+          },
+        ],
+        frustration: null,
+      };
+    });
+    processor.start(parent.id)();
+    processor.start(task.id)();
+    await processor.drain();
+    assert.equal(input?.source, 'task');
+    assert.equal(input?.task_request, 'Synthetic background task request');
+    assert.equal(input?.tasks?.length, 1);
+    assert.equal(f.events.filter((event) => event.event === 'otto_task_started').length, 1);
+    assert.ok(
+      f.events.some(
+        (event) =>
+          event.event === 'otto_task_updated' &&
+          event.properties.outcome === 'completed' &&
+          event.properties.task_id === input?.tasks?.[0]?.id,
+      ),
+    );
+    assert.ok(
+      f.events.some(
+        (event) =>
+          event.event === 'otto_task_analysis' &&
+          event.properties.outcome === 'analyzed' &&
+          event.properties.source === 'task',
+      ),
+    );
+  },
+);
+
+test(
   'conversation analytics rejects hostile classifier fields and requires distinct owned frustration evidence',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
@@ -4182,6 +4607,9 @@ test(
       task_action: 'find',
       task_subject: 'web',
       task_activities: ['find:web'],
+      use_case: 'question_answering',
+      context: 'unclear',
+      collaboration: 'directive',
       outcome: 'active',
     });
     answer = { tasks: [task(seed.messageId)], frustration: null };
@@ -4250,6 +4678,9 @@ test(
           task_action: 'find',
           task_subject: 'web',
           task_activities: ['find:web'],
+          use_case: 'question_answering',
+          context: 'unclear',
+          collaboration: 'directive',
           outcome: 'active',
         },
       ],
@@ -4342,6 +4773,9 @@ test(
           task_action: 'find',
           task_subject: 'web',
           task_activities: ['find:web'],
+          use_case: 'question_answering',
+          context: 'unclear',
+          collaboration: 'directive',
           outcome: 'completed',
         },
       ],
@@ -4375,6 +4809,9 @@ test(
             task_action: 'find',
             task_subject: 'web',
             task_activities: ['find:web'],
+            use_case: 'question_answering',
+            context: 'unclear',
+            collaboration: 'directive',
             outcome: 'active',
           },
         ],

@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import { Globe2, KeyRound, Link2, MonitorSmartphone } from 'lucide-react';
 import type { AppSetupStatus } from '../../shared/contracts';
 import { api } from '../lib/api';
+import { captureAnalytics } from '../lib/analytics';
 import type { SetupKind } from '../lib/message-links';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
@@ -101,7 +102,10 @@ function SetupAction({
       <button
         type="button"
         data-setup={setup}
-        onClick={(event) => onConnect(href, event.currentTarget)}
+        onClick={(event) => {
+          captureAnalytics('otto_setup_link_clicked', { setup });
+          onConnect(href, event.currentTarget);
+        }}
       >
         {app ? (
           <ServiceLogo slug={app.slug} logoUrl={app.logoUrl} size={18} />
@@ -122,6 +126,7 @@ function SetupAction({
           : 'noopener noreferrer'
       }
       referrerPolicy="no-referrer"
+      onClick={() => captureAnalytics('otto_setup_link_clicked', { setup })}
       title={href.startsWith('https://') ? new URL(href).host : undefined}
     >
       <Icon size={16} aria-hidden="true" />
@@ -167,11 +172,13 @@ export function SetupActions({
     if (signIn?.url && completed.has(signIn.url)) close();
   }, [completed, signIn?.url]);
   async function connect(href: string) {
-    if (appLink.test(href)) {
+    const navigate = appLink.test(href);
+    if (!navigate && request.current) return;
+    captureAnalytics('otto_app_connect_clicked', { entry: 'chat', result: 'opened' });
+    if (navigate) {
       window.location.assign(href);
       return;
     }
-    if (request.current) return;
     const controller = new AbortController();
     request.current = controller;
     const current = () => request.current === controller && !controller.signal.aborted;

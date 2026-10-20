@@ -16,9 +16,10 @@ import {
   analyticsEnabled,
   analyticsEnvironment,
   createAnalytics,
+  toolUsed,
   type CaptureAnalytics,
 } from './analytics.ts';
-import { captureConnectionInventory } from './analytics-connections.ts';
+import { captureConnectionInventory, createWebsiteVisits } from './analytics-connections.ts';
 import { createConversationAnalytics } from './conversation-analytics.ts';
 import {
   BrowserActionError,
@@ -391,16 +392,22 @@ async function initializeApplication(
     appVersion:
       process.env.OTTO_APP_VERSION || process.env.OTTO_IMAGE_RELEASE || process.env.OTTO_RELEASE,
   });
-  let observeConnections: (() => Promise<void>) | undefined;
+  let observeConnections: ((only?: 'apps' | 'models') => Promise<void>) | undefined;
   const captureAnalytics: CaptureAnalytics = (event, delivery) => {
     analytics.capture(ownerId, event, delivery);
     if (
       event.event === 'otto_connection_changed' &&
       ['connected', 'disconnected'].includes(event.properties.status)
     )
-      void observeConnections?.();
+      void observeConnections?.('apps');
+    if (
+      (event.event === 'otto_model_connection_changed' && event.properties.status !== 'failed') ||
+      (event.event === 'otto_settings_updated' && event.properties.section === 'models')
+    )
+      void observeConnections?.('models');
   };
   const analyticsConsent = () => analytics.consent(ownerId);
+  const websiteVisited = createWebsiteVisits(analytics, ownerId);
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
   const privacyNotice = await loadPrivacyNoticeFile(process.env.OTTO_PRIVACY_NOTICE_FILE);
@@ -427,7 +434,7 @@ async function initializeApplication(
   adapters.integrationKey?.onSecrets((values) => secrets.push(...values));
   const memoryCurator =
     adapters.memoryCurator ?? createPiMemoryCurator({ provider: adapters.model.provider });
-  const ledger = createLedger({ pool, ownerId });
+  const ledger = createLedger({ pool, ownerId, analytics: captureAnalytics });
   await ledger.initialize();
   const { computer, workspace } = adapters;
   const curator = ledger.curator(memoryCurator);
@@ -495,13 +502,39 @@ async function initializeApplication(
     fileURLToPath(new URL('../runtime/skills/', import.meta.url)),
     coreSkills,
   );
+  const fetches = new Map<string, string[]>();
   const runtime = createAgentRuntime({
     agent: ledger.agent(adapters.agent),
     skills: skillLibrary,
     computer,
     workspace,
     redactError: createErrorRedactor(secrets),
-    observe: adapters.observe,
+    pageVisited: (url, subagent) => websiteVisited(url, 'browser', subagent),
+    observe: (turnId, event) => {
+      if (event.type === 'tool_end') {
+        captureAnalytics(toolUsed(event));
+        const fetched = fetches.get(event.id);
+        fetches.delete(event.id);
+        if (fetched && event.status === 'succeeded')
+          for (const address of fetched)
+            websiteVisited(address, 'fetch', Boolean(event.execution?.parentRunId));
+      }
+      if (
+        event.type === 'tool_start' &&
+        ['fetch_content', 'get_search_content'].includes(event.name) &&
+        event.input &&
+        typeof event.input === 'object'
+      ) {
+        const { url, urls } = event.input as { url?: unknown; urls?: unknown };
+        fetches.set(
+          event.id,
+          [url, ...(Array.isArray(urls) ? urls.slice(0, 20) : [])].filter(
+            (address): address is string => typeof address === 'string',
+          ),
+        );
+      }
+      adapters.observe?.(turnId, event);
+    },
   });
   const speech = createSpeech(adapters.speech);
   const memoryStore = createPostgresObjectStore({ database: pool, ownerId });
@@ -522,12 +555,19 @@ async function initializeApplication(
         )
         .map((entry) => entry.text),
   });
-  const learning = createMemoryLearning({ pool, ownerId, memory, curator });
+  const learning = createMemoryLearning({
+    pool,
+    ownerId,
+    memory,
+    curator,
+    analytics: captureAnalytics,
+  });
   const learnedSkills = createLearnedSkills({
     memory,
     curator,
     builtIn: [...skillLibrary.catalog.map((skill) => skill.name), ...coreSkills],
     redact: createErrorRedactor(secrets),
+    analytics: captureAnalytics,
   });
   const personal = createPersonalService({
     analytics: captureAnalytics,
@@ -727,8 +767,8 @@ async function initializeApplication(
     }
   };
   const approvals = await createApprovals(
-    (action, args, provenance) =>
-      action === 'OTTO_browser'
+    async (action, args, provenance) => {
+      const result = await (action === 'OTTO_browser'
         ? replayBrowserStep(args, provenance)
         : action === 'OTTO_vault_allow'
           ? vaultAccess.allow(args)
@@ -764,7 +804,10 @@ async function initializeApplication(
                       ).value,
                       mailCheck,
                     );
-                  })(),
+                  })());
+      analytics.actionExecuted(ownerId, action);
+      return result;
+    },
     async (action, args, expectedRevision) => {
       if (['OTTO_browser', 'OTTO_vault_allow'].includes(action)) return;
       if (action === 'OTTO_limits_update') limitsInput.parse(args);
@@ -781,6 +824,7 @@ async function initializeApplication(
     },
     (reply) => trust.answer(reply),
     communication.describe,
+    captureAnalytics,
   );
   let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
   const reactions = createAgentReactionService({
@@ -836,17 +880,23 @@ async function initializeApplication(
     },
   });
   let pendingInventory = Promise.resolve();
-  observeConnections = () =>
+  observeConnections = (only) =>
     (pendingInventory = pendingInventory
       .then(() =>
-        captureConnectionInventory(analytics, ownerId, async () =>
-          (
-            await Promise.all([
-              integrations.analyticsConnections(),
-              discovered.analyticsConnections(),
-              browserConnections.analyticsConnections(),
-            ])
-          ).flat(),
+        captureConnectionInventory(
+          analytics,
+          ownerId,
+          async () =>
+            only === 'models'
+              ? []
+              : (
+                  await Promise.all([
+                    integrations.analyticsConnections(),
+                    discovered.analyticsConnections(),
+                    browserConnections.analyticsConnections(),
+                  ])
+                ).flat(),
+          () => (only === 'apps' ? [] : (adapters.models?.analyticsConnections() ?? [])),
         ),
       )
       .catch(() => {}));
@@ -900,6 +950,7 @@ async function initializeApplication(
   });
   payments = await createPayments(pool, {
     ownerId,
+    analytics: captureAnalytics,
     present: (turn, input) => communication.present(turn.threadId, input),
     uses: vault.uses,
     inOtto: trust.inOtto,
@@ -922,6 +973,7 @@ async function initializeApplication(
     await startThreadWorkers({
       present: communication.present,
       analytics: captureAnalytics,
+      currentModel: () => adapters.model,
       observeTurn: conversationAnalytics.observe,
       consumers,
       artifacts,
@@ -1220,6 +1272,7 @@ async function initializeApplication(
         }
         const result = await integrations.execute(ownerId, action, args, turn, options?.signal);
         if (action !== 'SEARCH_TOOLS') await ledger.action(turn.turnId, action);
+        analytics.actionExecuted(ownerId, action);
         return result;
       },
     });
@@ -1229,6 +1282,7 @@ async function initializeApplication(
   };
   const app = await createApp({
     analytics: captureAnalytics,
+    linkReplay: analytics.linkReplay,
     admission,
     artifacts,
     submitMessage: userMessages.submit,
@@ -1246,7 +1300,7 @@ async function initializeApplication(
         integrationsReady: adapters.integrations.configured,
       }),
   });
-  adapters.models?.register(app);
+  adapters.models?.register(app, captureAnalytics);
   adapters.integrationKey?.register(app, integrations);
   adapters.integrationAccess?.register(app);
   app.addHook('preClose', async () => {
@@ -1279,10 +1333,12 @@ async function initializeApplication(
       status: async (submissionId) => ({ submissionId, status: 'rejected' }),
     },
     buildReport: () => buildFeedbackReport(feedbackReportOptions),
+    analytics: captureAnalytics,
   });
   registerPrivacyNotice(app, privacyNotice);
   createAccountSession({
     analytics,
+    model: () => adapters.model,
     accounts: localAccounts,
     origin: publicOrigin,
     localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },

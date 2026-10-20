@@ -1,14 +1,19 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { access, chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { cpus as hostCpus, homedir, totalmem } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pipeline } from 'node:stream/promises';
 import { guestConfiguration, protectNetworks } from './guest-config.mjs';
-import { ensureRuntimeAssets, findRuntimeAssets } from './assets.mjs';
+import {
+  assetHash,
+  ensureRuntimeAssets,
+  findRuntimeAssets,
+  removeUnusedRuntimes,
+} from './assets.mjs';
 
 export { installRuntimeArchive } from './assets.mjs';
 
@@ -266,14 +271,10 @@ async function prepare(options, onComputerStart) {
   status('starting', 'Starting your private computer…', 0.18);
   onComputerStart();
   await runLima(['start', '--tty=false', vm], { timeout: 600_000 });
+  await removeUnmountedRuntimes(assets).catch(() => {});
   await waitFor(() => runDocker(['info', '--format', '{{.ServerVersion}}']), { signal });
   for (let index = 0; index < manifest.images.length; index++) {
-    const item = manifest.images[index];
-    if (
-      !['workspace', 'browser', 'postgres'].includes(item.name) ||
-      !/^sha256:[a-f0-9]{64}$/.test(item.id)
-    )
-      throw new Error('The Otto computer image is invalid.');
+    const item = validImage(manifest.images[index]);
     let installed = '';
     try {
       installed = await runDocker(['image', 'inspect', '--format', '{{.Id}}', item.reference]);
@@ -317,6 +318,69 @@ async function prepare(options, onComputerStart) {
     signal,
     status,
   });
+}
+
+function validImage(item) {
+  if (
+    !['workspace', 'browser', 'postgres'].includes(item.name) ||
+    !/^sha256:[a-f0-9]{64}$/.test(item.id) ||
+    !/^images\/(workspace|browser|postgres)\.tar\.gz$/.test(item.file)
+  )
+    throw new Error('The Otto computer image is invalid.');
+  return item;
+}
+
+export async function preloadRuntimeImages({ dataRoot, assets, signal }) {
+  const root = resolve(dataRoot);
+  const identity = createHash('sha256').update(root).digest('hex').slice(0, 12);
+  const env = {
+    PATH: ['/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter),
+    HOME: homedir(),
+    DOCKER_HOST: `unix://${join(homedir(), '.otto-desktop', identity, 'otto/sock/docker.sock')}`,
+    DOCKER_CONFIG: join(root, 'desktop-runtime/docker-config'),
+  };
+  const runDocker = (args, extra = {}) =>
+    execute(join(assets, 'docker-host/docker/docker'), args, { env, signal, ...extra });
+  const manifest = JSON.parse(await readFile(join(assets, 'manifest.json'), 'utf8'));
+  const loaded = [];
+  for (const item of manifest.images.map(validImage)) {
+    const installed = await runDocker([
+      'image',
+      'inspect',
+      '--format',
+      '{{.Id}}',
+      item.reference,
+    ]).catch(() => '');
+    if (installed === item.id) continue;
+    if ((await assetHash(join(assets, item.file), signal)) !== item.sha256)
+      throw new Error('An Otto computer image is damaged. Reinstall this build.');
+    await runDocker(['load', '--input', join(assets, item.file)], { timeout: 600_000 });
+    loaded.push(item.name);
+  }
+  return loaded;
+}
+
+async function removeUnmountedRuntimes(assets) {
+  const homes = join(homedir(), '.otto-desktop');
+  const keep = [];
+  for (const name of await readdir(homes)) {
+    const config = await readFile(join(homes, name, 'otto/lima.yaml'), 'utf8').catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+    if (config) keep.push(...JSON.parse(config).mounts.map((mount) => mount.location));
+  }
+  await removeUnusedRuntimes({ current: assets, keep });
+}
+
+export async function removeStaleImages(runDocker, runGuest, manifest) {
+  const keep = new Set(manifest.images.map((item) => item.id));
+  const images = new Set(
+    (await runDocker(['image', 'ls', '--quiet', '--no-trunc'])).split('\n').filter(Boolean),
+  );
+  const stale = [...images].filter((id) => !keep.has(id));
+  for (const id of stale) await runDocker(['image', 'rm', id]).catch(() => {});
+  if (stale.length) await runGuest('fstrim / || true\n').catch(() => {});
+  return stale;
 }
 
 export async function ensureNetwork(runDocker, { name, subnet, bridge }) {
@@ -551,6 +615,7 @@ export async function finishRuntime({
     },
     { signal },
   );
+  await removeStaleImages(runDocker, runGuest, manifest).catch(() => {});
   const wrapperRoot = join(controlRoot, 'bin');
   if (process.platform !== 'win32') {
     await mkdir(wrapperRoot, { recursive: true, mode: 0o700 });

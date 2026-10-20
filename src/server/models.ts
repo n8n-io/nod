@@ -22,6 +22,7 @@ import { agentModels, memoryModels } from '../shared/model-defaults.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
 import { transaction } from './transaction.ts';
 import { lockKey, locksTable } from './locks.ts';
+import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
 
 const providerSchema = z.enum(['openai', 'anthropic', 'openrouter']);
 const selectionSchema = z
@@ -77,6 +78,27 @@ export function createModelService(options: {
   changed?(): void;
 }) {
   const { database, ownerId, backend } = options;
+  let analytics: CaptureAnalytics | undefined;
+  function connectionChanged(
+    provider: ModelProvider,
+    method: ModelMethod,
+    status: 'connected' | 'disconnected' | 'failed',
+  ) {
+    analytics?.({
+      event: 'otto_model_connection_changed',
+      properties: { provider, method, status },
+    });
+  }
+  async function tracked<T>(provider: ModelProvider, method: ModelMethod, save: () => Promise<T>) {
+    try {
+      const result = await save();
+      connectionChanged(provider, method, 'connected');
+      return result;
+    } catch (error) {
+      connectionChanged(provider, method, 'failed');
+      throw error;
+    }
+  }
   let vault: Awaited<ReturnType<typeof createAppGrantVault>>;
   let rows: Row[] = [];
   let selection: ModelSelection | null = null;
@@ -411,11 +433,11 @@ export function createModelService(options: {
     attempt: NonNullable<ReturnType<typeof attempts.get>>,
     result: Promise<ModelCredential>,
   ) {
+    const method = attempt.provider === 'openai' ? 'subscription' : 'oauth';
     try {
       const value = await result;
       active(attempt);
       attempt.status = 'completing';
-      const method = attempt.provider === 'openai' ? 'subscription' : 'oauth';
       const id = await save(attempt.provider, method, value, [], attempt.connectionId, {
         replace: !!attempt.connectionId,
         status: 'loading',
@@ -434,7 +456,9 @@ export function createModelService(options: {
       }
       active(attempt);
       attempt.status = 'connected';
+      connectionChanged(attempt.provider, method, 'connected');
     } catch (error) {
+      if (!attempt.controller.signal.aborted) connectionChanged(attempt.provider, method, 'failed');
       attempt.status = 'failed';
       attempt.error =
         error instanceof ConnectionError || error instanceof ModelAuthError
@@ -628,7 +652,9 @@ export function createModelService(options: {
         );
       const value: ModelCredential = { type: 'api_key', key };
       remember(value);
-      return save(provider, 'api_key', value, await catalog(provider, 'api_key', value));
+      return tracked(provider, 'api_key', async () =>
+        save(provider, 'api_key', value, await catalog(provider, 'api_key', value)),
+      );
     },
     async addEndpoint(address: string, key?: string) {
       if (!options.keyStore.configured)
@@ -640,27 +666,29 @@ export function createModelService(options: {
         throw new ConnectionError('Enter a server address such as http://localhost:11434/v1.');
       const value: ModelCredential = { type: 'endpoint', url, ...(key ? { key } : {}) };
       remember(value);
-      const definitions = await backend.catalog('compatible', 'api_key', value).catch(() => {
-        throw new ConnectionError(
-          'Otto couldn’t list this server’s models. Check the address, the API key and that the server is running.',
-        );
+      return tracked('compatible', 'api_key', async () => {
+        const definitions = await backend.catalog('compatible', 'api_key', value).catch(() => {
+          throw new ConnectionError(
+            'Otto couldn’t list this server’s models. Check the address, the API key and that the server is running.',
+          );
+        });
+        if (!definitions.length)
+          throw new ConnectionError(
+            'This server has no models Otto can use. Otto needs models with tool support.',
+          );
+        await reload();
+        const same = (
+          await Promise.all(
+            rows
+              .filter((row) => row.provider === 'compatible' && !row.managed)
+              .map(async (row) => ({
+                id: row.id,
+                value: await credential(row.id).catch(() => undefined),
+              })),
+          )
+        ).find((row) => row.value?.type === 'endpoint' && row.value.url === url)?.id;
+        return save('compatible', 'api_key', value, definitions, same, { replace: !!same });
       });
-      if (!definitions.length)
-        throw new ConnectionError(
-          'This server has no models Otto can use. Otto needs models with tool support.',
-        );
-      await reload();
-      const same = (
-        await Promise.all(
-          rows
-            .filter((row) => row.provider === 'compatible' && !row.managed)
-            .map(async (row) => ({
-              id: row.id,
-              value: await credential(row.id).catch(() => undefined),
-            })),
-        )
-      ).find((row) => row.value?.type === 'endpoint' && row.value.url === url)?.id;
-      return save('compatible', 'api_key', value, definitions, same, { replace: !!same });
     },
     async select(input: ModelSelection) {
       const value = selectionSchema.parse(input);
@@ -685,10 +713,10 @@ export function createModelService(options: {
     },
     async remove(id: string) {
       for (const [state, attempt] of attempts) if (attempt.connectionId === id) await cancel(state);
-      await locked(id, async (client) => {
+      const removed = await locked(id, async (client) => {
         const row = (
           await client.query<Row>(
-            'SELECT managed FROM model_connections WHERE id=$1 AND owner_id=$2',
+            'SELECT provider,method,managed FROM model_connections WHERE id=$1 AND owner_id=$2',
             [id, ownerId],
           )
         ).rows[0];
@@ -703,8 +731,27 @@ export function createModelService(options: {
           "UPDATE model_settings SET selection=NULL WHERE owner_id=$1 AND selection->>'connectionId'=$2",
           [ownerId, id],
         );
+        return row;
       });
       await reload();
+      if (removed) connectionChanged(removed.provider, removed.method, 'disconnected');
+    },
+    analyticsConnections() {
+      return rows.map((row) => {
+        const selected = row.id === selection?.connectionId;
+        return {
+          provider: row.provider,
+          method: row.method,
+          selected,
+          ...(selected && selection
+            ? {
+                ...analyticsModel(row.provider, selection.modelId),
+                provider: row.provider,
+                effort: selection.effort,
+              }
+            : {}),
+        };
+      });
     },
     refreshCatalog,
     async resolve(auxiliary = false): Promise<ModelAccess> {
@@ -735,7 +782,8 @@ export function createModelService(options: {
     cancel,
     complete,
     signInStatus,
-    register(app: FastifyInstance) {
+    register(app: FastifyInstance, capture?: CaptureAnalytics) {
+      analytics = capture;
       void app.register(async (routes) => {
         routes.setErrorHandler((error, _request, reply) =>
           reply.code(400).send({

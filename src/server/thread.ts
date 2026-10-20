@@ -25,7 +25,7 @@ import { formattingLocale, timeZoneRegion } from '../shared/date-locale.ts';
 import type { AgentReactionInput } from './agent-reactions.ts';
 import type { ChatConfirmationInput, ChatConfirmationResult } from './approvals.ts';
 import type { WorkConsumers } from './work-admission.ts';
-import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
+import { analyticsModel, type AnalyticsEvent, type CaptureAnalytics } from './analytics.ts';
 import { inlineAppResult, noMailCheck, type MailCheck } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
@@ -82,6 +82,7 @@ type ConfirmAction = {
 
 export interface ThreadDependencies {
   analytics?: CaptureAnalytics;
+  currentModel?: () => { provider: string; name: string; configured: boolean };
   present?: (threadId: string, input: { kind: 'interrupted' }) => Promise<string>;
   observeTurn?: (turnId: string, operation: () => Promise<void>) => Promise<void>;
   consumers?: WorkConsumers;
@@ -1041,16 +1042,24 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
 async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const startedAt = Date.now();
   const providerChannel = String(turn.channel).split(':')[0];
+  const selectedModel = dependencies.currentModel?.();
+  const model = selectedModel?.configured
+    ? analyticsModel(selectedModel.provider, selectedModel.name)
+    : undefined;
   const analyticsProperties = {
     source: turn.source as TurnSource,
     channel: (['web', 'telegram', 'whatsapp'].includes(providerChannel)
       ? providerChannel
       : 'other') as 'web' | 'telegram' | 'whatsapp' | 'other',
     background: Boolean(turn.background),
+    ...(model
+      ? { model_provider: model.provider, ...(model.model ? { model: model.model } : {}) }
+      : {}),
   };
   let outcome: Extract<AnalyticsEvent, { event: 'otto_turn_completed' }>['properties']['outcome'] =
     'failed';
   let waitingReason: 'question' | 'approval' | 'credentials' | undefined;
+  let limited = false;
   dependencies.analytics?.({ event: 'otto_turn_started', properties: analyticsProperties });
   const turnId = turn.id as string;
   const threadId = turn.thread_id as string;
@@ -1085,7 +1094,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   try {
     if (turn.source_id && (await dependencies.skipTurn?.(turn.source_id))) {
       await current((client) => finishTurn(client, turnId, 'cancelled'));
-      outcome = 'cancelled';
+      outcome = 'skipped';
       return;
     }
     await dependencies.startTurn?.(ref);
@@ -1217,6 +1226,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     };
     const { reactToMessage, connections, browserConnection } = dependencies;
     if (await dependencies.spendingLimitReached?.()) {
+      limited = true;
       await current((client) =>
         finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
       );
@@ -1402,11 +1412,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return;
     }
     if (signal.aborted) outcome = 'cancelled';
-    if (!signal.aborted && error instanceof Error && error.message === spendingLimitReached)
+    if (!signal.aborted && error instanceof Error && error.message === spendingLimitReached) {
+      limited = true;
       await current((client) =>
         finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
       );
-    else if (await interruptTurn(turnId, dependencies.present))
+    } else if (await interruptTurn(turnId, dependencies.present))
       console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
   } finally {
     dependencies.analytics?.({
@@ -1417,6 +1428,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         duration_ms: Math.max(0, Date.now() - startedAt),
         queue_duration_ms: Math.max(0, startedAt - new Date(turn.created_at).getTime()),
         ...(waitingReason ? { waiting_reason: waitingReason } : {}),
+        ...(outcome === 'failed'
+          ? { failure_reason: limited ? ('spending_limit' as const) : ('unknown' as const) }
+          : {}),
       },
     });
     running.delete(turnId);

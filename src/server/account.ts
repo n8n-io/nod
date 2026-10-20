@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AccountUpdate, AccountUser, SessionResponse } from '../shared/account.ts';
 import type { AccountStore } from './account-store.ts';
-import type { Analytics } from './analytics.ts';
+import { analyticsModel, type Analytics } from './analytics.ts';
 
 const accountUpdate = z
   .object({
@@ -19,6 +19,7 @@ export function createAccountSession(options: {
   localUser: AccountUser;
   developerIds?: ReadonlySet<string>;
   analytics?: Analytics;
+  model?(): { provider: string; name: string; configured: boolean };
   start?(ownerId: string, name?: string): Promise<void>;
   traces?: boolean;
   onTraces?(enabled: boolean): void;
@@ -127,13 +128,35 @@ export function createAccountSession(options: {
         )
           return;
       } else await updateAccount(input);
-      if (onboardingCompletedNow)
-        options.analytics?.capture(owner, { event: 'otto_onboarding_completed' });
+      if (onboardingCompletedNow) {
+        const model = options.model?.();
+        options.analytics?.capture(owner, {
+          event: 'otto_onboarding_completed',
+          ...(model?.configured
+            ? { properties: { model_provider: analyticsModel(model.provider).provider } }
+            : {}),
+        });
+      }
       if (input.theme !== undefined)
         options.analytics?.capture(owner, {
           event: 'otto_settings_updated',
           properties: { section: 'account', operation: 'update' },
         });
+      reply.header('cache-control', 'no-store');
+      return response();
+    });
+    app.post('/api/account/analytics-id', async (request, reply) => {
+      if (!guard(request, reply)) return;
+      z.object({})
+        .strict()
+        .parse(request.body ?? {});
+      if (!options.analytics?.consent(owner).enabled)
+        return reply.code(409).send({ error: 'Turn on Share usage data first.' });
+      try {
+        await options.analytics.resetInstallation();
+      } catch {
+        return reply.code(409).send({ error: 'This installation ID can’t be reset here.' });
+      }
       reply.header('cache-control', 'no-store');
       return response();
     });

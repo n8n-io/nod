@@ -10,7 +10,7 @@ import { Bubble, Footer, Messages, useReveal } from '../motion';
 
 const sequence = [{ typing: 450 }, { wait: 300, typing: 550 }, { wait: 200 }, { wait: 300 }];
 
-export function Telegram({ arrived, onNext, onBack }: StepProps) {
+export function Telegram({ arrived, onNext, onBack, onSkip }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const {
     settings,
@@ -115,7 +115,14 @@ export function Telegram({ arrived, onNext, onBack }: StepProps) {
       <Footer
         show={revealed >= 4}
         onBack={onBack}
-        onSkip={state.paired ? undefined : onNext}
+        onSkip={
+          state.paired
+            ? undefined
+            : () => {
+                onSkip?.();
+                onNext();
+              }
+        }
         onNext={onNext}
         nextDisabled={!state.paired}
       />

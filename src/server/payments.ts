@@ -9,7 +9,8 @@ import type {
   VaultPaymentCard,
   PaymentRequest,
 } from '../shared/contracts.ts';
-import { type createVaultUses, VaultUseError } from './vault-use.ts';
+import { captureSecureEntry, type createVaultUses, VaultUseError } from './vault-use.ts';
+import type { CaptureAnalytics } from './analytics.ts';
 import type { TurnRef } from './thread.ts';
 import { browserOf, supersededSql } from './turn-chain.ts';
 import { credentialOrigin } from './vault.ts';
@@ -91,6 +92,7 @@ export async function createPayments(
   pool: Pool,
   options: {
     ownerId: string;
+    analytics?: CaptureAnalytics;
     uses: Awaited<ReturnType<typeof createVaultUses>>;
     inOtto(turn: TurnRef): Promise<boolean>;
     present(turn: TurnRef, input: { kind: string; [key: string]: unknown }): Promise<string>;
@@ -201,6 +203,7 @@ export async function createPayments(
         origin: row.origin,
         kind: 'card',
         itemId: card.id,
+        payment: spent(row),
       },
       {
         prepare: async (client) => {
@@ -220,6 +223,11 @@ export async function createPayments(
           value = await options.card(row.card_id, row.card_version, client);
         },
         perform: async () => {
+          captureSecureEntry(
+            options.analytics,
+            { kind: 'payment', origin: row.origin, payment: spent(row) },
+            'approved',
+          );
           await options.fill({
             threadId: row.browser_id ?? row.thread_id,
             fields: row.fields,
@@ -251,6 +259,13 @@ export async function createPayments(
       },
     );
     return message;
+  }
+
+  function spent(row: Pick<Row, 'amount_minor' | 'currency'>) {
+    return {
+      amount: Number(row.amount_minor) / 10 ** digits(row.currency),
+      currency: row.currency,
+    };
   }
 
   async function fail(row: Row, error: unknown) {
@@ -325,7 +340,7 @@ export async function createPayments(
     const question = await options.present({ ...turn }, structuredClone(details));
     if (typeof question !== 'string' || !question.trim() || question.length > 12_000)
       throw new PaymentError('The payment model did not produce a valid question.');
-    await uses.transaction(async (client) => {
+    const closed = await uses.transaction(async (client) => {
       const active = await client.query(
         `SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
          WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3 AND th.archived_at IS NULL
@@ -333,9 +348,9 @@ export async function createPayments(
         [row.turn_id, ownerId, row.thread_id],
       );
       if (!active.rowCount) throw new PaymentError('This payment task is no longer active.');
-      await client.query(
+      const superseded = await client.query<Row>(
         `UPDATE vault_payments SET status='superseded' WHERE owner_id=$1 AND thread_id=$2 AND turn_id=$3
-       AND status='pending'`,
+       AND status='pending' RETURNING *`,
         [ownerId, turn.threadId, turn.turnId],
       );
       await client.query(
@@ -370,7 +385,19 @@ export async function createPayments(
         },
         client,
       );
+      return superseded.rows;
     });
+    for (const previous of closed)
+      captureSecureEntry(
+        options.analytics,
+        { kind: 'payment', origin: previous.origin, payment: spent(previous) },
+        'superseded',
+      );
+    captureSecureEntry(
+      options.analytics,
+      { kind: 'payment', origin, payment: spent(row) },
+      'requested',
+    );
     return { image, question, ...(!inOtto ? { url: `/payments/${row.id}` } : {}) };
   }
 

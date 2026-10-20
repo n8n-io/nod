@@ -323,12 +323,12 @@ export function createMemoryService(options: {
     const at = path.parse(target);
     const input = changeInput.parse(raw);
     safe(input.text);
-    await owned((tree, now) => {
+    return owned((tree, now) => {
       const entry = locate(tree, at) ?? fail('This note is no longer in memory.', 404);
       const text = input.text ?? entry.text;
       const expires = input.expires === undefined ? entry.expires : (input.expires ?? undefined);
       const rewritten = text !== entry.text;
-      if (!rewritten && expires === entry.expires && !input.confirm) return;
+      if (!rewritten && expires === entry.expires && !input.confirm) return false;
       if (rewritten) {
         duplicate(tree, entry.area, text, entry);
         archive(tree, entry, 'superseded', now);
@@ -347,6 +347,7 @@ export function createMemoryService(options: {
           ...(expires ? { expires } : {}),
         },
       ];
+      return true;
     });
   }
 

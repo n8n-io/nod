@@ -11,6 +11,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1635,4 +1636,65 @@ test('a different verified runtime downloads into its own cache, survives corrup
     (await readdir(current.cacheRoot)).sort(),
     [current.release.id, next.release.id].sort(),
   );
+});
+
+test('runtime cleanup removes only old unmounted packs and leftovers inside the managed cache', async (t) => {
+  const { removeUnusedRuntimes } = await import('../runtime/assets.mjs');
+  const cacheRoot = await realpath(await mkdtemp(join(tmpdir(), 'otto-runtime-cleanup-')));
+  t.after(() => rm(cacheRoot, { recursive: true, force: true }));
+  const id = (letter) => letter.repeat(64);
+  const names = {
+    current: id('a'),
+    mounted: id('b'),
+    old: id('c'),
+    recent: id('d'),
+    download: `${id('e')}.${'1'.repeat(12)}.download`,
+    install: `${id('f')}.install-${'2'.repeat(12)}`,
+    other: 'notes',
+  };
+  for (const name of Object.values(names)) await mkdir(join(cacheRoot, name));
+  const past = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  for (const name of Object.values(names))
+    if (name !== names.recent) await utimes(join(cacheRoot, name), past, past);
+  const elsewhere = join(cacheRoot, 'outside', id('a'));
+  assert.deepEqual(await removeUnusedRuntimes({ current: elsewhere, cacheRoot }), []);
+  const removed = await removeUnusedRuntimes({
+    current: join(cacheRoot, names.current),
+    keep: [join(cacheRoot, names.mounted)],
+    cacheRoot,
+  });
+  assert.deepEqual(removed.sort(), [names.old, names.download, names.install].sort());
+  assert.deepEqual(
+    (await readdir(cacheRoot)).sort(),
+    [names.current, names.mounted, names.recent, names.other].sort(),
+  );
+});
+
+test('runtime removes images outside its manifest without touching current images', async () => {
+  const { removeStaleImages } = await import('../runtime/index.mjs');
+  const current = `sha256:${'a'.repeat(64)}`;
+  const stale = [`sha256:${'b'.repeat(64)}`, `sha256:${'c'.repeat(64)}`];
+  const removed = [];
+  const guest = [];
+  const runDocker = async (args) => {
+    if (args[1] === 'ls') return [current, ...stale, stale[0]].join('\n');
+    removed.push(args[2]);
+    if (args[2] === stale[1]) throw new Error('in use');
+    return '';
+  };
+  const manifest = { images: [{ id: current }] };
+  assert.deepEqual(
+    await removeStaleImages(runDocker, async (input) => guest.push(input), manifest),
+    stale,
+  );
+  assert.deepEqual(removed, stale);
+  assert.equal(guest.length, 1);
+  removed.length = 0;
+  await removeStaleImages(
+    async () => current,
+    async (input) => guest.push(input),
+    manifest,
+  );
+  assert.deepEqual(removed, []);
+  assert.equal(guest.length, 1);
 });

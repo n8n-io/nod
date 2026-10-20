@@ -28,6 +28,7 @@ import {
   removeConnection,
 } from '../lib/secondary-pages';
 import { usePageData } from '../hooks/use-page-data';
+import { analyticsForCurrentSession, captureAnalytics } from '../lib/analytics';
 import {
   Button,
   Checkbox,
@@ -304,6 +305,7 @@ export function Apps({
   const {
     data: catalog,
     error: catalogError,
+    status: catalogStatus,
     loading: catalogLoading,
     refreshing: catalogRefreshing,
     refresh: refreshCatalog,
@@ -311,6 +313,15 @@ export function Apps({
   const connectionSetup = usePageData<IntegrationKeyStatus>('/api/integrations/key');
   const tabsId = useId();
   const [view, setView] = useState<'all' | 'connected'>('all');
+  useEffect(() => captureAnalytics('otto_tab_viewed', { page: 'apps', tab: view }), []);
+  const selectView = (next: typeof view) => {
+    if (next !== view) captureAnalytics('otto_tab_viewed', { page: 'apps', tab: next });
+    setView(next);
+  };
+  useEffect(() => {
+    if (loadError || (catalogError && catalogStatus !== 403))
+      captureAnalytics('otto_ui_error', { area: 'apps', action: 'load' });
+  }, [loadError, catalogError, catalogStatus]);
   const [query, setQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [categoryQuery, setCategoryQuery] = useState('');
@@ -674,18 +685,21 @@ export function Apps({
       }
     }
   }
-  async function connect(connection: Connection, addAccount = false) {
+  async function connect(connection: Connection, entry: 'apps' | 'manage', addAccount = false) {
     if (actionRequest.current || locked) return;
+    const capture = analyticsForCurrentSession();
     if (
       !connection.direct &&
       !connection.accessPaths?.length &&
       !integrationAccessReady(connectionSetup.data)
     ) {
+      capture('otto_app_connect_clicked', { entry, result: 'needs_access_setup' });
       onManageConnection(
         document.activeElement instanceof HTMLElement ? document.activeElement : undefined,
       );
       return;
     }
+    capture('otto_app_connect_clicked', { entry, result: 'opened' });
     const request = new AbortController();
     const external = desktopLinksAvailable();
     const popup = external
@@ -790,6 +804,7 @@ export function Apps({
       setSignIn(undefined);
       setConnectErrorService(connection.slug.replace(/_mcp$/, ''));
       setError(errorMessage(cause));
+      capture('otto_ui_error', { area: 'apps', action: 'connect' });
       setBusy('');
     } finally {
       if (actionRequest.current === request) actionRequest.current = null;
@@ -798,6 +813,7 @@ export function Apps({
   async function disconnect() {
     const connection = disconnectAccount;
     if (!connection?.connectionId || actionRequest.current || busy) return;
+    const capture = analyticsForCurrentSession();
     const request = new AbortController();
     actionRequest.current = request;
     setBusy(`disconnect:${connection.connectionId}`);
@@ -821,6 +837,7 @@ export function Apps({
     } catch (cause) {
       if (request.signal.aborted) return;
       setDisconnectError(errorMessage(cause));
+      capture('otto_ui_error', { area: 'apps', action: 'disconnect' });
       void refresh();
     } finally {
       if (actionRequest.current === request) actionRequest.current = null;
@@ -894,7 +911,7 @@ export function Apps({
                 aria-label={`Connect ${service.name}`}
                 aria-busy={busy === `connect:${service.slug}`}
                 disabled={service.status === 'not_configured' || locked}
-                onClick={() => void connect(service)}
+                onClick={() => void connect(service, 'apps')}
               >
                 {busy === `connect:${service.slug}` ? 'Opening…' : 'Connect'}
               </Button>
@@ -972,7 +989,7 @@ export function Apps({
                     : view === 'all'
                       ? 'connected'
                       : 'all';
-              setView(next);
+              selectView(next);
               setVisibleCount(24);
               event.currentTarget
                 .querySelector<HTMLButtonElement>(`[data-view="${next}"]`)
@@ -990,7 +1007,7 @@ export function Apps({
                 aria-selected={view === value}
                 aria-controls={`${tabsId}-panel`}
                 onClick={() => {
-                  setView(value);
+                  selectView(value);
                   setVisibleCount(24);
                 }}
               >
@@ -1290,7 +1307,7 @@ export function Apps({
                   setDisconnectError('');
                   setDisconnectAccount(account);
                 }}
-                onReconnect={() => void connect(account)}
+                onReconnect={() => void connect(account, 'manage')}
               />
             ))}
           </div>
@@ -1300,7 +1317,9 @@ export function Apps({
                 size="sm"
                 data-add-account
                 disabled={locked || addAccountConnection?.status === 'not_configured'}
-                onClick={() => addAccountConnection && void connect(addAccountConnection, true)}
+                onClick={() =>
+                  addAccountConnection && void connect(addAccountConnection, 'manage', true)
+                }
               >
                 {busy === `connect:${addAccountConnection?.slug}` ? (
                   <LoaderCircle size={16} className="spin" aria-hidden="true" />

@@ -14,7 +14,7 @@ const sequence: RevealStep[] = [
   { wait: 160 },
 ];
 
-export function Welcome({ arrived, onNext }: StepProps) {
+export function Welcome({ arrived, onNext, onSkip }: StepProps) {
   const section = useRef<HTMLElement>(null);
   const slot = useRef<HTMLSpanElement>(null);
   const [offset, setOffset] = useState({ dx: 0, dy: 0 });
@@ -24,10 +24,14 @@ export function Welcome({ arrived, onNext }: StepProps) {
     played,
     done,
     replay,
-    skip,
+    skip: skipReveal,
   } = useReveal(sequence, {
     enabled: arrived === 'forward',
   });
+  const skip = () => {
+    onSkip?.();
+    skipReveal();
+  };
   useEffect(() => {
     const press = (event: KeyboardEvent) => {
       if (event.key !== 'Enter' || event.target !== document.body || event.repeat) return;

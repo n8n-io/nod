@@ -4,6 +4,7 @@ import { ArrowUp, Paperclip, X, FileText, LoaderCircle, CornerUpLeft, Square } f
 import type { Artifact, Message } from '../../shared/contracts';
 import { fileBytes } from '../../shared/files';
 import { api, errorMessage } from '../lib/api';
+import { captureAnalytics } from '../lib/analytics';
 import { createComposerExtensions } from '../lib/composer-editor';
 import { EditorFormatting } from './editor-formatting';
 import { Button, Notice } from './ui';
@@ -67,12 +68,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const unsent = useRef<Array<{ sequence: number; text: string; attachments: DraftAttachment[] }>>(
     [],
   );
-  const actions = useRef({ submit: () => {}, upload: (_files: File[]) => {} });
+  const actions = useRef({
+    submit: () => {},
+    upload: (_files: File[], _method: 'paste') => {},
+  });
   const extensions = useMemo(
     () =>
       createComposerExtensions({
         submit: () => actions.current.submit(),
-        upload: (files) => actions.current.upload(files),
+        upload: (files) => actions.current.upload(files, 'paste'),
       }),
     [],
   );
@@ -134,12 +138,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     releasePreview(item);
     updateAttachments(attachmentValues.current.filter((value) => value.id !== item.id));
   }
-  async function upload(files: File[]) {
+  async function upload(files: File[], method: 'picker' | 'drop' | 'paste') {
     if (!files.length) return;
     if (files.some((file) => file.size > fileBytes)) {
       setError(`Each file must be ${fileBytes / 1024 / 1024} MB or smaller.`);
       return;
     }
+    const first = files[0];
+    captureAnalytics('otto_attachment_added', {
+      method,
+      kind: first.type.startsWith('image/')
+        ? 'image'
+        : first.type === 'application/pdf' || /\.pdf$/i.test(first.name)
+          ? 'pdf'
+          : 'other',
+      count: files.length === 1 ? '1' : files.length <= 5 ? '2-5' : '6+',
+    });
     const items: DraftAttachment[] = files.map((file) => {
       const controller = new AbortController();
       uploads.current.add(controller);
@@ -237,7 +251,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (mounted.current && !editor.isDestroyed) restoreFocus();
     }
   }
-  actions.current = { submit: () => void submit(), upload: (files) => void upload(files) };
+  actions.current = {
+    submit: () => void submit(),
+    upload: (files, method) => void upload(files, method),
+  };
   const pendingUploads = attachments.filter((item) => !item.artifact).length;
   const images = attachments.flatMap((item): ImagePreview[] => {
     const url =
@@ -296,7 +313,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           if (!event.dataTransfer.files.length) return;
           event.preventDefault();
           event.stopPropagation();
-          void upload(Array.from(event.dataTransfer.files));
+          void upload(Array.from(event.dataTransfer.files), 'drop');
         }}
       >
         {(attachments.length > 0 || pendingUploads > 0) && (
@@ -370,7 +387,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               multiple
               className="sr-only"
               aria-label="Choose files"
-              onChange={(event) => void upload(Array.from(event.target.files ?? []))}
+              onChange={(event) => void upload(Array.from(event.target.files ?? []), 'picker')}
             />
             <Button
               type="button"

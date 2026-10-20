@@ -15,6 +15,7 @@ import type { ModelConnection, ModelProvider, ModelsResponse } from '../../share
 import { modelProviderNames, modelSource } from '../../shared/models';
 import { agentModels } from '../../shared/model-defaults';
 import { BrandMark } from './brand';
+import { analyticsForCurrentSession } from '../lib/analytics';
 import { localServerAddress, modelSelection, useModelSignIn, useModels } from '../hooks/use-models';
 import {
   Button,
@@ -94,7 +95,7 @@ export function ModelSettings({
             <strong>Your model</strong>
             <span>Otto uses it for every reply</span>
           </div>
-          <ModelPicker manageConnections={false} />
+          <ModelPicker manageConnections={false} surface="settings" />
         </div>
       )}
       <p className="model-intro" data-analytics-public>
@@ -392,9 +393,11 @@ export function ModelSettings({
 export function ModelPicker({
   setup = false,
   manageConnections = true,
+  surface = 'chat',
 }: {
   setup?: boolean;
   manageConnections?: boolean;
+  surface?: 'chat' | 'settings' | 'onboarding';
 }) {
   const models = useModels();
   const [open, setOpen] = useState(false);
@@ -427,9 +430,17 @@ export function ModelPicker({
         a.item.name.localeCompare(b.item.name) ||
         modelSource(a.source).localeCompare(modelSource(b.source)),
     );
-  async function choose(source: ModelConnection, id: string) {
-    if (await models.change('/api/models/selection', 'PUT', modelSelection(source, id)))
+  async function choose(source: ModelConnection, id: string, recommended: boolean) {
+    if (models.busy) return;
+    const capture = analyticsForCurrentSession();
+    if (await models.change('/api/models/selection', 'PUT', modelSelection(source, id))) {
+      capture('otto_model_selected', {
+        provider: source.provider in modelProviderNames ? source.provider : 'other',
+        entry: surface,
+        recommended,
+      });
       setOpen(false);
+    } else capture('otto_ui_error', { area: 'models', action: 'save' });
   }
   return (
     <div className={`model-picker${setup ? ' model-picker-setup' : ''}`}>
@@ -490,7 +501,7 @@ export function ModelPicker({
                   className="model-option"
                   aria-pressed={active}
                   disabled={models.busy}
-                  onClick={() => void choose(source, item.id)}
+                  onClick={() => void choose(source, item.id, recommended)}
                 >
                   <span>
                     <strong>{item.name}</strong>

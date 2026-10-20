@@ -30,7 +30,8 @@ import {
 } from './ui';
 import { usePageData } from '../hooks/use-page-data';
 import { errorMessage } from '../lib/api';
-import { captureAnalytics } from '../lib/analytics';
+import { captureAnalytics, type AnalyticsProperties } from '../lib/analytics';
+import { posthogConfig } from '../../shared/analytics';
 import { SearchPicker, TimeZonePicker } from './time-zone-picker';
 import {
   dateFormatFrom,
@@ -367,6 +368,7 @@ export function AccountSettings({
   pending.current =
     modelDirty || preferencesDirty || connectionDirty || native.busy || account.saving;
   const [error, setError] = useState('');
+  const [resetting, setResetting] = useState(false);
   const active = useRef(false);
   const recordedTab = useRef<string | null>(null);
   function recordTab(value: AccountTab) {
@@ -374,7 +376,9 @@ export function AccountSettings({
     if (recordedTab.current === key) return;
     recordedTab.current = key;
     captureAnalytics('otto_settings_viewed', {
-      tab: value.toLowerCase() as Lowercase<AccountTab>,
+      tab: value
+        .toLowerCase()
+        .replace(' ', '_') as AnalyticsProperties<'otto_settings_viewed'>['tab'],
     });
   }
   const id = useId();
@@ -598,9 +602,40 @@ export function AccountSettings({
                     className="account-preference-hint"
                     data-analytics-public
                   >
-                    Share usage insights with the Otto team at n8n. Your model derives them from
-                    chats; messages, files and keys are not sent to PostHog.
+                    Sends the Otto team at n8n how you use Otto, the websites it visits, purchase
+                    amounts and task labels your model writes from your chats, never message
+                    content.{' '}
+                    <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
+                      What’s shared
+                    </a>
                   </p>
+                  {account.analyticsId && (
+                    <div className="account-preference-row">
+                      <span>
+                        <span data-analytics-public>Installation ID</span>
+                        <code className="account-analytics-id">{account.analyticsId}</code>
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={account.saving || resetting}
+                        onClick={() => {
+                          setError('');
+                          setResetting(true);
+                          void account
+                            .onResetAnalyticsId()
+                            .catch((cause) => {
+                              if (active.current) setError(errorMessage(cause));
+                            })
+                            .finally(() => {
+                              if (active.current) setResetting(false);
+                            });
+                        }}
+                      >
+                        <span data-analytics-public>Reset ID</span>
+                      </Button>
+                    </div>
+                  )}
                   {account.traces !== undefined && (
                     <>
                       <div className="account-preference-row">

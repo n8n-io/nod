@@ -178,10 +178,31 @@ export async function withServiceAnalytics<T>(
   }
 }
 
+export function createWebsiteVisits(analytics: Analytics, ownerId: string) {
+  const visits = new WeakMap<object, Set<string>>();
+  return (url: string, via: 'browser' | 'fetch', subagent: boolean) => {
+    const run = analytics.currentRun(ownerId);
+    const domain = analyticsDomain(url);
+    if (!run || !domain) return;
+    const seen = visits.get(run) ?? new Set<string>();
+    visits.set(run, seen);
+    if (seen.has(domain)) return;
+    seen.add(domain);
+    analytics.capture(ownerId, {
+      event: 'otto_website_visited',
+      properties: { domain, via, subagent },
+    });
+  };
+}
+
 export async function captureConnectionInventory(
   analytics: Analytics,
   ownerId: string,
   read: () => Promise<AnalyticsConnection[]>,
+  models: () => Extract<
+    AnalyticsEvent,
+    { event: 'otto_model_connection_observed' }
+  >['properties'][] = () => [],
 ) {
   const consent = analytics.consent(ownerId);
   if (!consent.enabled || !(await analytics.permitted(ownerId))) return;
@@ -202,4 +223,10 @@ export async function captureConnectionInventory(
       { consentRevision: consent.revision },
     );
   }
+  for (const properties of models())
+    analytics.capture(
+      ownerId,
+      { event: 'otto_model_connection_observed', properties },
+      { consentRevision: consent.revision },
+    );
 }

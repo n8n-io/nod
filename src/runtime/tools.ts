@@ -537,6 +537,7 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     step: { action: string; text?: string; key?: string },
     page: BrowserObservation,
   ) => {
+    turn.pageVisited?.(page.url, Boolean(turn.execution.parentRunId));
     turn.visited(browserId, page.url);
     const key = pageKey(page.url);
     const same = typedPage === key || !typedPage;

@@ -3,10 +3,18 @@ import type { PoolClient } from 'pg';
 import { pool } from './db.ts';
 import { ownerId } from './config.ts';
 import { refresh } from './events.ts';
-import { enqueueTurn, withTurnLock, type SubmitUserMessageResult, type TurnRef } from './thread.ts';
+import {
+  enqueueTurn,
+  withTurnLock,
+  type SubmitUserMessageResult,
+  type TurnRef,
+  type TurnSource,
+} from './thread.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { localTimestamp } from '../shared/date-locale.ts';
 import { lockKey, locksTable } from './locks.ts';
+import { afterCommit } from './transaction.ts';
+import type { CaptureAnalytics } from './analytics.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
@@ -154,7 +162,32 @@ export async function createApprovals(
   ) => Promise<void>,
   interpret?: (reply: string) => Promise<boolean | undefined>,
   describe?: (proposal: ApprovalDescription, signal?: AbortSignal) => Promise<string>,
+  analytics?: CaptureAnalytics,
 ) {
+  const changed = (
+    status: 'asked' | 'approved' | 'declined' | 'executed' | 'expired' | 'uncertain',
+    action: string,
+    source: string,
+  ) => {
+    if (!['user', 'schedule', 'event', 'resume', 'task'].includes(source)) return;
+    analytics?.({
+      event: 'otto_confirmation_changed',
+      properties: {
+        status,
+        action_kind:
+          action === 'OTTO_browser'
+            ? 'browser'
+            : action === 'OTTO_vault_allow'
+              ? 'sign_in'
+              : action.startsWith('OTTO_memory_')
+                ? 'memory'
+                : action.startsWith('OTTO_')
+                  ? 'settings'
+                  : 'app',
+        source: source as TurnSource,
+      },
+    });
+  };
   await pool.query(`${locksTable};
   CREATE TABLE IF NOT EXISTS approvals (
     id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id),
@@ -301,6 +334,7 @@ export async function createApprovals(
           previous.id,
           ownerId,
         ]);
+        afterCommit(client, () => changed('expired', action, current.source));
         previous = undefined;
       }
       if (previous) {
@@ -339,7 +373,7 @@ export async function createApprovals(
             question: pending.question as string,
           };
       }
-      return { authorMessageId };
+      return { authorMessageId, source: current.source };
     };
     let question: string | undefined;
     if (!allowed) {
@@ -393,10 +427,11 @@ export async function createApprovals(
         )
       ).rows[0];
       options.signal?.throwIfAborted();
-      return { cached: false as const, approval, question };
+      return { cached: false as const, approval, question, source: inspected.source };
     });
     if (proposal.cached) return proposal.result;
     if (proposal.question) {
+      if ('source' in proposal && proposal.source) changed('asked', action, proposal.source);
       refresh();
       return { requiresConfirmation: true, question: proposal.question };
     }
@@ -424,7 +459,7 @@ export async function createApprovals(
     if (!target) return undefined;
     return (
       await database.query(
-        `SELECT a.*,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt
+        `SELECT a.*,u.source AS turn_source,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt
        FROM approvals a JOIN turns u ON u.id=a.turn_id
        WHERE a.confirmation_message_id=COALESCE((SELECT m.reply_to_message_id FROM messages m
          WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.role='assistant' AND m.turn_id IS NULL),$1)
@@ -465,6 +500,7 @@ export async function createApprovals(
         approval.id,
         ownerId,
       ]);
+      afterCommit(client, () => changed('expired', approval.action, approval.turn_source));
       if (active && approval.turn_background && input.replyToMessageId)
         return {
           waiting: {
@@ -514,6 +550,9 @@ export async function createApprovals(
       approved ? 'confirmed' : 'declined',
       turnId,
     ]);
+    afterCommit(client, () =>
+      changed(approved ? 'approved' : 'declined', approval.action, approval.turn_source),
+    );
     return { threadId: input.threadId, turnId, messageId };
   }
 
@@ -522,7 +561,7 @@ export async function createApprovals(
     const approval = await withTurnLock(turnId, async (client) => {
       const selected = (
         await client.query(
-          "SELECT * FROM approvals WHERE execution_turn_id=$1 AND owner_id=$2 AND status='confirmed' FOR UPDATE",
+          "SELECT a.*,u.source AS turn_source FROM approvals a JOIN turns u ON u.id=a.turn_id WHERE a.execution_turn_id=$1 AND a.owner_id=$2 AND a.status='confirmed' FOR UPDATE OF a",
           [turnId, ownerId],
         )
       ).rows[0];
@@ -537,11 +576,13 @@ export async function createApprovals(
     try {
       result = await run(approval);
     } catch (error) {
+      changed(notRun(error) ? 'expired' : 'uncertain', approval.action, approval.turn_source);
       if (!notRun(error)) throw error;
       return {
         prompt: `The action the user confirmed did not run, so nothing was done: ${(error as Error).message} Do not report it as done.`,
       };
     }
+    changed('executed', approval.action, approval.turn_source);
     const prompt = `The exact action confirmed by the user was executed once by the trusted worker. Do not repeat it. Continue from its result.\n${untrustedBlock(`${approval.action} result`, JSON.stringify(result) ?? 'null')}`;
     signal.throwIfAborted();
     return { prompt };

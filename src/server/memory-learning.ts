@@ -8,6 +8,7 @@ import { localTimestamp } from '../shared/date-locale.ts';
 import { indexLayout, unsafe } from './memory-tree.ts';
 import type { MemoryService } from './memory.ts';
 import type { WorkConsumers } from './work-admission.ts';
+import type { CaptureAnalytics } from './analytics.ts';
 
 const queue = 'memory-maintenance';
 const nilId = '00000000-0000-0000-0000-000000000000';
@@ -27,6 +28,7 @@ export function createMemoryLearning(options: {
   ownerId: string;
   memory: MemoryService;
   curator: MemoryCurator;
+  analytics?: CaptureAnalytics;
 }) {
   async function ask(instructions: string, input: object) {
     const reply = await options.curator
@@ -91,13 +93,19 @@ export function createMemoryLearning(options: {
       }
       ops = proposed;
     }
-    return options.memory.edit((fresh) => {
+    const result = await options.memory.edit((fresh) => {
       if (fresh.reflected !== tree.reflected) return;
-      const applied = applyReflect(fresh, ops, messages, new Date().toISOString());
+      const operations = applyReflect(fresh, ops, messages, new Date().toISOString());
       fresh.reflected = mark;
       fresh.retries = 0;
-      return { applied, more: rows.length === batchSize };
+      return { operations, applied: operations.length, more: rows.length === batchSize };
     });
+    for (const operation of result?.operations ?? [])
+      options.analytics?.({
+        event: 'otto_memory_changed',
+        properties: { kind: 'note', operation, actor: 'background' },
+      });
+    return result;
   }
 
   async function reflect() {

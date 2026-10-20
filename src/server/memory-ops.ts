@@ -45,7 +45,7 @@ export function applyReflect(
   messages: Array<{ id: string; text: string }>,
   now: string,
 ) {
-  let applied = 0;
+  const applied: Array<'archive' | 'save'> = [];
   for (const item of raw) {
     const parsed = reflectOp.safeParse(item);
     if (!parsed.success) continue;
@@ -81,7 +81,7 @@ export function applyReflect(
         }
       }
     }
-    applied++;
+    applied.push(op.op === 'archive' ? 'archive' : 'save');
   }
   return applied;
 }

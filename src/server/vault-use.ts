@@ -2,6 +2,48 @@ import { transaction as inTransaction } from './transaction.ts';
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { logFailure } from './failure-log.ts';
+import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
+import { analyticsDomain } from './analytics-connections.ts';
+
+type SecureEntry = Extract<AnalyticsEvent, { event: 'otto_secure_entry_changed' }>['properties'];
+
+export interface SecureEntryUse {
+  kind: string;
+  origin?: string;
+  payment?: { amount: number; currency: string };
+}
+
+export function captureSecureEntry(
+  analytics: CaptureAnalytics | undefined,
+  use: SecureEntryUse,
+  status: SecureEntry['status'],
+) {
+  const kind =
+    use.kind === 'card' || use.kind === 'payment'
+      ? 'payment'
+      : use.kind === 'otp'
+        ? 'code'
+        : 'sign_in';
+  const domain = kind !== 'code' && use.origin ? analyticsDomain(use.origin) : undefined;
+  const amount = use.payment && Math.round(use.payment.amount * 1000) / 1000;
+  analytics?.({
+    event: 'otto_secure_entry_changed',
+    properties: {
+      kind,
+      status,
+      ...(domain ? { domain } : {}),
+      ...(kind === 'payment' &&
+      use.payment &&
+      /^[A-Z]{3}$/.test(use.payment.currency) &&
+      amount !== undefined &&
+      Number.isFinite(amount) &&
+      amount >= 0 &&
+      amount <= 1_000_000
+        ? { currency: use.payment.currency, amount }
+        : {}),
+    },
+  });
+}
 
 export class VaultUseError extends Error {
   constructor(
@@ -12,7 +54,7 @@ export class VaultUseError extends Error {
   }
 }
 
-export async function createVaultUses(pool: Pool, ownerId: string) {
+export async function createVaultUses(pool: Pool, ownerId: string, analytics?: CaptureAnalytics) {
   await pool.query(`CREATE TABLE IF NOT EXISTS vault_uses (
     id text PRIMARY KEY, owner_id text NOT NULL, root_turn_id uuid,
     origin text NOT NULL, kind text NOT NULL, item_id text, status text NOT NULL,
@@ -40,6 +82,7 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
       origin: string;
       kind: string;
       itemId?: string;
+      payment?: SecureEntryUse['payment'];
     },
     operation: {
       prepare?(client: PoolClient): Promise<void | false>;
@@ -77,7 +120,10 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
           "UPDATE vault_uses SET status='uncertain' WHERE id=$1 AND owner_id=$2 AND status='running' RETURNING id",
           [id, use.ownerId],
         );
-        if (recovered.rowCount) throw uncertain();
+        if (recovered.rowCount) {
+          captureSecureEntry(analytics, use, 'uncertain');
+          throw uncertain();
+        }
       } catch (recoveryError) {
         if (!(recoveryError instanceof VaultUseError))
           logFailure('vault_claim_recovery', recoveryError);
@@ -95,8 +141,10 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
           use.ownerId,
         ]);
       });
+      captureSecureEntry(analytics, use, 'submitted');
       return result;
     } catch {
+      captureSecureEntry(analytics, use, 'uncertain');
       await pool
         .query("UPDATE vault_uses SET status='uncertain' WHERE id=$1 AND owner_id=$2", [
           id,

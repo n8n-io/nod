@@ -88,6 +88,7 @@ export function createPiMemoryCurator(options: {
           messages: [{ role: 'user', content: JSON.stringify(input), timestamp: Date.now() }],
         };
         const startedAt = new Date().toISOString();
+        const started = performance.now();
         const reply = await runtime.completeSimple(model, context, {
           signal: AbortSignal.any([
             AbortSignal.timeout(task === 'analytics' ? 20_000 : 45_000),
@@ -96,6 +97,7 @@ export function createPiMemoryCurator(options: {
           maxTokens: task === 'analytics' ? 2048 : 8192,
           reasoning: effort === 'off' ? undefined : effort,
         });
+        const durationMs = performance.now() - started;
         if (task !== 'access' && options.traces?.active())
           options.traces.record(
             piModelTrace(
@@ -108,6 +110,7 @@ export function createPiMemoryCurator(options: {
             id: crypto.randomUUID(),
             provider: model.provider,
             model: model.id,
+            durationMs,
             ...piUsageMetrics(reply.usage),
             status:
               reply.stopReason === 'error'

@@ -12,6 +12,7 @@ import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
 import { transaction } from './transaction.ts';
+import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
 
 export const spendingLimitReached =
   'Paused because this month’s spending limit was reached. Raise the limit in Trust to resume.';
@@ -53,7 +54,42 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
   return { source: 'event', title: 'Woke for an email or app event' };
 }
 
-export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string }) {
+function modelUsed(usage: ProviderUsageEvent): Parameters<CaptureAnalytics>[0] {
+  const tokens = (value: number | undefined) =>
+    typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  const charged = cost(usage.costUsd);
+  const estimated = cost(usage.estimateUsd);
+  const spent = charged ?? estimated;
+  return {
+    event: 'otto_model_used',
+    properties: {
+      ...analyticsModel(usage.provider, usage.model),
+      purpose: usage.category,
+      outcome: usage.status,
+      input_tokens:
+        tokens(usage.inputTokens) + tokens(usage.cacheReadTokens) + tokens(usage.cacheWriteTokens),
+      output_tokens: tokens(usage.outputTokens),
+      ...(usage.cacheReadTokens !== undefined
+        ? { cached_input_tokens: tokens(usage.cacheReadTokens) }
+        : {}),
+      ...(spent !== null ? { cost_usd: Math.round(spent * 1e6) / 1e6 } : {}),
+      pricing: charged !== null ? 'api' : estimated !== null ? 'plan_estimate' : 'unavailable',
+      ...(usage.durationMs > 0 && Number.isFinite(usage.durationMs)
+        ? { duration_ms: Math.round(usage.durationMs) }
+        : {}),
+    },
+  };
+}
+
+export function createLedger({
+  pool,
+  ownerId,
+  analytics,
+}: {
+  pool: Pool;
+  ownerId: string;
+  analytics?: CaptureAnalytics;
+}) {
   const activeTurn = new AsyncLocalStorage<string>();
   const activeExecution = new AsyncLocalStorage<AgentSessionOptions>();
   async function initialize() {
@@ -130,6 +166,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
       (error) => console.error(`The ledger could not save usage: ${error?.name ?? 'error'}`),
     );
     pendingUsage.set(id, { values, pending });
+    analytics?.(modelUsed(usage));
   }
 
   function agent(base: Agent): Agent {
@@ -149,7 +186,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
                   category: 'agent',
                   operation: 'request',
                   status: value.status ?? 'succeeded',
-                  durationMs: 0,
+                  durationMs: Math.max(0, Date.now() - Date.parse(event.createdAt)) || 0,
                   pricing: costSource,
                 },
                 session,
@@ -191,7 +228,9 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
                   ? 'review'
                   : request.task === 'plan'
                     ? 'tasks'
-                    : 'memory',
+                    : request.task === 'analytics'
+                      ? 'analytics'
+                      : 'memory',
               operation: request.task,
               status: 'succeeded',
               durationMs: 0,

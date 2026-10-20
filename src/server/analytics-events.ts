@@ -15,7 +15,7 @@ const domain = z
 export const taskType = z.enum([
   'research',
   'communication',
-  'document_creation',
+  'content_creation',
   'data_analysis',
   'file_management',
   'scheduling',
@@ -24,6 +24,7 @@ export const taskType = z.enum([
   'translation',
   'software_development',
   'transaction',
+  'advice',
   'unknown',
 ]);
 export const taskAction = z.enum([
@@ -46,8 +47,13 @@ export const taskAction = z.enum([
   'extract',
   'convert',
   'run',
-  'purchase',
+  'pay',
   'book',
+  'submit',
+  'explain',
+  'plan',
+  'order',
+  'cancel',
   'unknown',
 ]);
 export const taskSubject = z.enum([
@@ -58,6 +64,7 @@ export const taskSubject = z.enum([
   'spreadsheet',
   'file',
   'calendar',
+  'meeting',
   'contact',
   'task',
   'automation',
@@ -67,7 +74,77 @@ export const taskSubject = z.enum([
   'audio',
   'video',
   'product',
+  'post',
+  'finance',
+  'travel',
+  'place',
+  'device',
+  'knowledge',
   'unknown',
+]);
+export const taskUseCase = z.enum([
+  'morning_briefing',
+  'news_digest',
+  'topic_monitoring',
+  'email_triage',
+  'reply_drafting',
+  'inbox_cleanup',
+  'message_sending',
+  'meeting_prep',
+  'meeting_notes',
+  'phone_calls',
+  'meeting_scheduling',
+  'calendar_management',
+  'reminders',
+  'task_planning',
+  'fact_checking',
+  'question_answering',
+  'how_to_advice',
+  'learning_and_tutoring',
+  'recommendations',
+  'product_research',
+  'price_tracking',
+  'online_shopping',
+  'food_ordering',
+  'returns_and_refunds',
+  'subscription_management',
+  'bill_payment',
+  'expense_tracking',
+  'finance_review',
+  'investment_monitoring',
+  'tax_paperwork',
+  'form_filling',
+  'trip_planning',
+  'travel_booking',
+  'reservations_and_tickets',
+  'home_search',
+  'local_search',
+  'contact_management',
+  'social_media',
+  'writing_and_editing',
+  'presentations',
+  'image_generation',
+  'video_creation',
+  'translation',
+  'document_analysis',
+  'data_analysis',
+  'file_organization',
+  'automation_setup',
+  'app_connection',
+  'coding_and_websites',
+  'device_control',
+  'sales_outreach',
+  'customer_support',
+  'recruiting',
+  'other',
+]);
+export const taskContext = z.enum(['work', 'personal', 'unclear']);
+export const taskCollaboration = z.enum([
+  'directive',
+  'iteration',
+  'learning',
+  'validation',
+  'unclear',
 ]);
 export const taskActivities = z
   .array(
@@ -113,24 +190,83 @@ const connectionProperties = z.object({
   connection_method: z.enum(['managed_app', 'browser', 'http', 'mcp', 'cli']),
 });
 const duration = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+export const analyticsTool = z.enum([
+  'apps',
+  'ask_user',
+  'browser',
+  'browser_session',
+  'create_audio',
+  'delegate',
+  'follow_up',
+  'manage_apps',
+  'manage_personal_context',
+  'pay',
+  'react_to_message',
+  'send_message',
+  'share_file',
+  'sign_in',
+  'skills',
+  'task',
+  'workspace',
+  'web',
+  'other',
+]);
+export const analyticsModelProvider = z.enum([
+  'openai',
+  'anthropic',
+  'openrouter',
+  'typesafe',
+  'compatible',
+  'other',
+]);
+const analyticsModel = z.string().regex(/^[a-z0-9][a-z0-9._:/-]{0,119}$/);
+const modelConnectionProperties = z.object({
+  provider: z.enum(['openai', 'anthropic', 'openrouter', 'compatible']),
+  method: z.enum(['api_key', 'subscription', 'oauth']),
+});
 const turnProperties = z.object({
   source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
   channel: z.enum(['web', 'telegram', 'whatsapp', 'other']),
   background: z.boolean(),
+  model_provider: analyticsModelProvider.optional(),
+  model: analyticsModel.optional(),
 });
 const taskProperties = z.object({
   task_id: z.uuid(),
+  model_provider: analyticsModelProvider.optional(),
+  model: analyticsModel.optional(),
   task_type: taskType,
   task_action: taskAction,
   task_subject: taskSubject,
   task_activities: taskActivities,
+  use_case: taskUseCase,
+  context: taskContext,
+  collaboration: taskCollaboration,
   source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
   channel: z.enum(['web', 'telegram', 'whatsapp', 'other']),
 });
 export const analyticsEvent = z.discriminatedUnion('event', [
-  z.object({ event: z.literal('otto_onboarding_completed') }).strict(),
+  z
+    .object({
+      event: z.literal('otto_onboarding_completed'),
+      properties: z.object({ model_provider: analyticsModelProvider }).strict().optional(),
+    })
+    .strict(),
   z.object({ event: z.literal('otto_conversation_reset') }).strict(),
   z.object({ event: z.literal('otto_chat_stopped') }).strict(),
+  z.object({ event: z.literal('otto_task_stopped') }).strict(),
+  z
+    .object({
+      event: z.literal('otto_feedback_sent'),
+      properties: z
+        .object({
+          category: z.enum(['bug', 'feature', 'other']).optional(),
+          has_attachments: z.boolean(),
+          has_report: z.boolean(),
+        })
+        .strict(),
+    })
+    .strict(),
   z.object({ event: z.literal('otto_turn_started'), properties: turnProperties.strict() }).strict(),
   z
     .object({
@@ -144,10 +280,12 @@ export const analyticsEvent = z.discriminatedUnion('event', [
             'failed',
             'cancelled',
             'interrupted',
+            'skipped',
           ]),
           duration_ms: duration,
           queue_duration_ms: duration.optional(),
           waiting_reason: z.enum(['question', 'approval', 'credentials']).optional(),
+          failure_reason: z.enum(['spending_limit', 'unknown']).optional(),
         })
         .strict(),
     })
@@ -157,8 +295,17 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       event: z.literal('otto_settings_updated'),
       properties: z
         .object({
-          section: z.enum(['account', 'preferences', 'channels', 'models']),
+          section: z.enum([
+            'account',
+            'preferences',
+            'channels',
+            'models',
+            'trust',
+            'memory',
+            'apps',
+          ]),
           operation: z.enum(['update', 'connect_started', 'disconnect']),
+          channel: z.enum(['telegram', 'whatsapp']).optional(),
         })
         .strict(),
     })
@@ -171,6 +318,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
           operation: z.enum(['create', 'update', 'delete']),
           schedule_kind: z.enum(['once', 'recurring']).optional(),
           cadence: z.enum(['once', 'hourly', 'daily', 'weekly', 'monthly', 'custom']).optional(),
+          actor: z.enum(['user', 'agent']).optional(),
         })
         .strict(),
     })
@@ -249,7 +397,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       properties: taskProperties
         .extend({
           outcome: taskOutcome,
-          completion_evidence: z.enum(['inferred', 'none']),
+          completion_evidence: z.enum(['action_succeeded', 'inferred', 'none']),
           elapsed_ms: duration,
           turn_count: z.number().int().positive(),
         })
@@ -271,6 +419,62 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
+      event: z.literal('otto_memory_changed'),
+      properties: z
+        .object({
+          kind: z.enum(['note', 'skill']),
+          operation: z.enum(['save', 'forget', 'archive', 'clear']),
+          actor: z.enum(['owner', 'agent', 'background']),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('otto_tool_used'),
+      properties: z
+        .object({
+          tool: analyticsTool,
+          outcome: z.enum(['succeeded', 'failed', 'cancelled']),
+          duration_ms: duration,
+          subagent: z.boolean(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('otto_confirmation_changed'),
+      properties: z
+        .object({
+          status: z.enum(['asked', 'approved', 'declined', 'executed', 'expired', 'uncertain']),
+          action_kind: z.enum(['app', 'browser', 'sign_in', 'settings', 'memory']),
+          source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('otto_model_used'),
+      properties: z
+        .object({
+          provider: analyticsModelProvider,
+          model: analyticsModel.optional(),
+          purpose: z.enum(['agent', 'memory', 'review', 'tasks', 'analytics']),
+          outcome: z.enum(['succeeded', 'failed', 'cancelled']),
+          input_tokens: duration,
+          output_tokens: duration,
+          cached_input_tokens: duration.optional(),
+          cost_usd: z.number().nonnegative().max(1_000_000).optional(),
+          pricing: z.enum(['api', 'plan_estimate', 'unavailable']),
+          duration_ms: duration.optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal('otto_task_analysis'),
       properties: z
         .object({
@@ -278,6 +482,59 @@ export const analyticsEvent = z.discriminatedUnion('event', [
           source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
           task_count: z.number().int().min(0).max(8).optional(),
           unknown_label_count: z.number().int().min(0).max(200).optional(),
+          other_label_count: z.number().int().min(0).max(200).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('otto_model_connection_changed'),
+      properties: modelConnectionProperties
+        .extend({ status: z.enum(['connected', 'disconnected', 'failed']) })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('otto_model_connection_observed'),
+      properties: modelConnectionProperties
+        .extend({
+          selected: z.boolean(),
+          model: analyticsModel.optional(),
+          effort: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('otto_website_visited'),
+      properties: z
+        .object({ domain, via: z.enum(['browser', 'fetch']), subagent: z.boolean() })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('otto_secure_entry_changed'),
+      properties: z
+        .object({
+          kind: z.enum(['sign_in', 'payment', 'code']),
+          status: z.enum([
+            'requested',
+            'superseded',
+            'approved',
+            'submitted',
+            'failed',
+            'uncertain',
+          ]),
+          domain: domain.optional(),
+          currency: z
+            .string()
+            .regex(/^[A-Z]{3}$/)
+            .optional(),
+          amount: z.number().nonnegative().max(1_000_000).optional(),
         })
         .strict(),
     })

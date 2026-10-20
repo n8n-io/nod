@@ -7,6 +7,7 @@ import type { MemoryUpdate, MemoryView } from '../shared/memory.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { activeThreadSql } from './thread.ts';
 import { createSchedules, type ScheduleDependencies } from './schedules.ts';
+import type { MemoryChange } from './analytics.ts';
 
 export function profileNotes(profile: Record<string, unknown>) {
   return Object.entries(profile).flatMap(([field, value]) => {
@@ -48,6 +49,15 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   const schedules = createSchedules(dependencies);
   const memory = dependencies.memory;
   const learnedSkills = dependencies.learnedSkills;
+  const remembered = (
+    operation: MemoryChange['operation'],
+    actor: MemoryChange['actor'],
+    kind: MemoryChange['kind'] = 'note',
+  ) =>
+    dependencies.analytics?.({
+      event: 'otto_memory_changed',
+      properties: { kind, operation, actor },
+    });
 
   async function initialize(options: { workers?: boolean } = {}) {
     if (memory && (await pool.query("SELECT to_regclass('profiles') AS name")).rows[0].name) {
@@ -151,22 +161,29 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     }
     if (action === 'memory_learn') {
       if (!memory) throw new Error('Memory is unavailable.');
-      return memory.learn(args, {
+      const result = await memory.learn(args, {
         sourceMessageId: provenance?.sourceMessageId ?? null,
         turnId: z.uuid().parse(provenance?.turnId),
       });
+      remembered('save', 'agent');
+      return result;
     }
     if (action === 'memory_control') {
       if (!memory) throw new Error('Memory is unavailable.');
       const result = await memory.control(args);
-      if (result.cleared) await pool.query('DROP TABLE IF EXISTS profiles');
+      if (result.cleared) {
+        await pool.query('DROP TABLE IF EXISTS profiles');
+        remembered('clear', 'agent');
+      }
       refresh();
       return result;
     }
     if (action === 'memory_forget') {
       if (!memory) throw new Error('Memory is unavailable.');
       const input = forgetReview.parse(args);
-      return memory.forget(input.path, input.note);
+      const result = await memory.forget(input.path, input.note);
+      remembered('forget', 'agent');
+      return result;
     }
     if (action === 'history_search') {
       const { query, before, from, to, around } = z
@@ -286,8 +303,12 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   }
 
   function registerRoutes(app: FastifyInstance) {
-    const changed = async (change: Promise<unknown> | undefined): Promise<MemoryUpdate> => {
+    const changed = async (
+      change: Promise<unknown> | undefined,
+      operation?: MemoryChange['operation'],
+    ): Promise<MemoryUpdate> => {
       const result = await change;
+      if (change && operation && result !== false) remembered(operation, 'owner');
       refresh();
       return { ...(await memoryView()), ...(typeof result === 'string' ? { path: result } : {}) };
     };
@@ -306,16 +327,18 @@ export function createPersonalService(dependencies: PersonalDependencies) {
         .send(memoryMarkdown(await memoryView(), now));
     });
     app.patch('/api/memory', (request) => changed(memory?.settings(request.body)));
-    app.post('/api/memory/notes', (request) => changed(memory?.add(request.body)));
+    app.post('/api/memory/notes', (request) => changed(memory?.add(request.body), 'save'));
     app.patch('/api/memory/notes/:area/:slug', (request) =>
-      changed(memory?.change(notePath(request.params), request.body)),
+      changed(memory?.change(notePath(request.params), request.body), 'save'),
     );
     app.delete('/api/memory/notes/:area/:slug', (request) =>
-      changed(memory?.forget(notePath(request.params))),
+      changed(memory?.forget(notePath(request.params)), 'forget'),
     );
-    app.post('/api/memory/archive/restore', (request) => changed(memory?.restore(request.body)));
+    app.post('/api/memory/archive/restore', (request) =>
+      changed(memory?.restore(request.body), 'save'),
+    );
     app.post('/api/memory/archive/forget', (request) =>
-      changed(memory?.forgetArchived(request.body)),
+      changed(memory?.forgetArchived(request.body), 'forget'),
     );
     const skillName = (params: unknown) => (params as { name: string }).name;
     app.patch('/api/memory/skills/:name', (request) =>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Chat } from './pages/chat';
 import { Trust } from './pages/trust';
@@ -21,6 +21,7 @@ import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
 import { useSession } from './hooks/use-session';
+import { sessionStore } from './lib/session';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
 import { AccountSettings } from './components/account-settings';
@@ -376,11 +377,16 @@ function AuthenticatedApp({
     user: session.user!,
     theme: session.settings!.theme,
     usageData: session.settings!.usageData,
+    analyticsId: session.analytics?.distinctId ?? undefined,
     traces: session.capabilities.traces ? session.settings!.traces : undefined,
     saving,
     onSettings: openSettings,
     onTheme: (theme) => onAccountUpdate({ theme }),
     onUsageData: (usageData) => onAccountUpdate({ usageData }),
+    onResetAnalyticsId: async () => {
+      await sessionStore.resetAnalyticsId();
+      window.dispatchEvent(new CustomEvent('otto:session-changed', { detail: 'analytics-id' }));
+    },
     onTraces: (traces) => onAccountUpdate({ traces }),
   };
   const allowed = path !== '/browser' || session.capabilities.developer;
@@ -474,9 +480,10 @@ function AccountApp({
   const sessionState = useSession();
   const { session } = sessionState;
   const legacyBrowserLink = /^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/.test(path);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (sessionState.loading || !session?.user) return;
     const secure = /^\/(?:vault|credentials|payments)\/[^/]+\/?$/.test(path) || path === '/browser';
+    if (path === '/memory' && session.settings?.onboardingCompleted) return;
     capturePageview(
       !session.settings?.onboardingCompleted && !secure
         ? '/onboarding'
@@ -484,7 +491,10 @@ function AccountApp({
           ? '/apps'
           : path === '/onboarding'
             ? '/'
-            : path,
+            : (path === '/browser' && !session.capabilities.developer) ||
+                /^\/(?:vault|credentials|payments)\/?$/.test(path)
+              ? '/not-found'
+              : path,
     );
   }, [path, sessionState.loading, session, legacyBrowserLink]);
   useEffect(() => {

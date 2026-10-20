@@ -23,11 +23,7 @@ import { hostname } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createSettingsStore } from './settings.mjs';
-import {
-  completeDesktopSetup,
-  createDesktopAnalytics,
-  trackDesktopAnalytics,
-} from './analytics.mjs';
+import { createDesktopAnalytics } from './analytics.mjs';
 import {
   assistantNotificationPreview,
   createReadinessNotice,
@@ -74,6 +70,8 @@ let updateSource;
 let updates;
 let checkingUpdates;
 let updatePhase = 'idle';
+let updateFailed = false;
+let pendingPreload;
 let stopUpdateChecks;
 let closingEngine = false;
 let tray;
@@ -489,7 +487,6 @@ function showSettings(section = 'general', _mode, reset = false) {
     },
   });
   const window = setupWindow;
-  trackDesktopAnalytics(window);
   protectWindow(window);
   window.on('closed', () => {
     if (setupWindow === window) setupWindow = undefined;
@@ -733,13 +730,13 @@ async function finishEnginePreparation() {
     if (pendingFeedback || foregroundWindow()) showEngine();
     const completedWindow = setupWindow;
     setupWindow = undefined;
-    await completeDesktopSetup(completedWindow);
+    if (completedWindow && !completedWindow.isDestroyed()) completedWindow.destroy();
   }
-  if (updates && !stopUpdateChecks)
-    stopUpdateChecks = startDesktopUpdateChecks({
-      check: () => checkForUpdates(false),
-      powerMonitor,
-    });
+  if (pendingPreload) {
+    const assets = pendingPreload;
+    pendingPreload = undefined;
+    void preloadUpdateImages(assets);
+  }
   return status;
 }
 
@@ -751,7 +748,7 @@ function refreshUpdateMenu() {
         checking: 'Checking for updates…',
         preparing: 'Preparing update…',
         downloading: 'Downloading update…',
-      }[updatePhase] || 'Check for Updates…';
+      }[updatePhase] || (updateFailed ? 'Update Failed. Try Again…' : 'Check for Updates…');
   const item = Menu.getApplicationMenu?.()?.getMenuItemById('desktop-update');
   if (item) {
     item.label = label;
@@ -777,15 +774,23 @@ function refreshUpdateMenu() {
 async function checkForUpdates(manual = true) {
   if (!updates || quitting || (!manual && updates.ready)) return;
   if (checkingUpdates) return checkingUpdates;
-  checkingUpdates = (async () => {
+  const release = () => {
+    if (checkingUpdates === checking) checkingUpdates = undefined;
+    refreshUpdateMenu();
+  };
+  const checking = (async () => {
     try {
       const candidate = await updates.check();
+      updateFailed = false;
       if (quitting) return;
       if (!candidate) {
+        release();
         if (manual)
           await dialog.showMessageBox({ message: 'Otto is up to date.', buttons: ['OK'] });
         return;
       }
+      if (!manual && (await notifyUpdate(candidate))) return;
+      release();
       const { response } = await dialog.showMessageBox({
         message: `Otto ${candidate.version} is ready.`,
         buttons: ['Restart', 'Later'],
@@ -796,23 +801,49 @@ async function checkForUpdates(manual = true) {
       if (response === 0 && !quitting) await updates.restart();
     } catch (error) {
       if (quitting) return;
+      if (!updates.ready) updateFailed = true;
       await writeDiagnostic(error.message).catch(() => {});
-      if (manual || updates.ready)
-        await dialog.showMessageBox({
-          type: 'warning',
-          message: updates.ready
-            ? 'Otto could not restart yet.'
-            : 'Otto could not check for updates.',
-          detail: bounded(error.message),
-          buttons: ['OK'],
-        });
+      if (!manual && !updates.ready) throw error;
+      release();
+      await dialog.showMessageBox({
+        type: 'warning',
+        message: updates.ready
+          ? 'Otto could not restart yet.'
+          : 'Otto could not check for updates.',
+        detail: bounded(error.message),
+        buttons: ['OK'],
+      });
     }
-  })().finally(() => {
-    checkingUpdates = undefined;
-    refreshUpdateMenu();
-  });
+  })().finally(release);
+  checkingUpdates = checking;
   refreshUpdateMenu();
-  return checkingUpdates;
+  return checking;
+}
+
+async function notifyUpdate(candidate) {
+  if (!preferences.notifications || !Notification.isSupported()) return false;
+  if (isQuietTime((await appPreferences.get()).preferences)) return true;
+  const notification = new Notification({
+    title: `Otto ${candidate.version} is ready`,
+    body: 'Restart Otto to use the new version.',
+  });
+  displayedNotifications.add(notification);
+  notification.on('click', () => {
+    if (!quitting && updates?.ready) void checkForUpdates();
+  });
+  notification.on('close', () => displayedNotifications.delete(notification));
+  notification.on('failed', () => displayedNotifications.delete(notification));
+  notification.show();
+  return true;
+}
+
+async function preloadUpdateImages(assets, signal) {
+  const { preloadRuntimeImages } = await import(
+    pathToFileURL(join(engineRoot, 'desktop/runtime/index.mjs')).href
+  );
+  await preloadRuntimeImages({ dataRoot: profileRoot, assets, signal }).catch(
+    (error) => void writeDiagnostic(error.message).catch(() => {}),
+  );
 }
 
 async function restartForUpdate() {
@@ -983,8 +1014,10 @@ async function startEngine({ runtime, signal }) {
     OTTO_DESKTOP_OWNER_ID: await profileOwner(),
     OTTO_DESKTOP_AUTH_TOKEN: authToken,
     OTTO_ANALYTICS_ENABLED: String(analytics.enabled),
-    ...(analytics.distinctId ? { OTTO_ANALYTICS_ID: analytics.distinctId.slice(6) } : {}),
-    OTTO_ANALYTICS_ENVIRONMENT: app.isPackaged ? 'production' : 'development',
+    OTTO_ANALYTICS_ENVIRONMENT:
+      app.isPackaged && ottoBuild?.release === true && /^\d+\.\d+\.\d+$/.test(app.getVersion())
+        ? 'production'
+        : 'development',
     OTTO_PUBLIC_URL: engineOrigin,
     OTTO_DATA_ROOT: profileRoot,
     OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),
@@ -1166,6 +1199,23 @@ else {
   void app
     .whenReady()
     .then(async () => {
+      if (app.isPackaged && process.platform === 'darwin' && !app.isInApplicationsFolder()) {
+        const { response } = await dialog.showMessageBox({
+          message: 'Move Otto to your Applications folder?',
+          detail: 'Otto can update itself only from Applications.',
+          buttons: ['Move to Applications', 'Not Now'],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (response === 0) {
+          try {
+            if (app.moveToApplicationsFolder()) return;
+          } catch (error) {
+            await writeDiagnostic(error.message).catch(() => {});
+          }
+        }
+      }
       if (app.isPackaged && ['darwin', 'win32'].includes(process.platform)) {
         const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
         const windows = process.platform === 'win32';
@@ -1189,17 +1239,23 @@ else {
             const { prepareRuntimeUpdate } = await import(
               pathToFileURL(join(engineRoot, 'desktop/runtime/assets.mjs')).href
             );
-            await prepareRuntimeUpdate(candidate.runtime, {
+            const assets = await prepareRuntimeUpdate(candidate.runtime, {
               resourcesPath: engineRoot,
               downloadUrl: candidate.downloadUrl,
               signal,
             });
+            if (!engine || closingEngine) pendingPreload = assets;
+            else await preloadUpdateImages(assets, signal);
           },
           restart: restartForUpdate,
           onStatus: (phase) => {
             updatePhase = phase;
             refreshUpdateMenu();
           },
+        });
+        stopUpdateChecks = startDesktopUpdateChecks({
+          check: () => checkForUpdates(false),
+          powerMonitor,
         });
       }
       nativeTheme.on('updated', publishPreferences);
@@ -1272,10 +1328,6 @@ else {
       ipcMain.handle('otto:settings:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         return readDesktopSettings();
-      });
-      ipcMain.handle('otto:analytics:configuration', async (event) => {
-        if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
-        return { ...(await analyticsConfiguration()), enabled: false };
       });
       ipcMain.handle('otto:feedback:context', (event) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');

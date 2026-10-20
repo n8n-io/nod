@@ -5,6 +5,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  readdir,
   readFile,
   rename,
   rm,
@@ -105,8 +106,34 @@ export function validateRuntimeRelease(release) {
   return release;
 }
 
+export const defaultRuntimeCache = join(homedir(), 'Library/Application Support/Otto/runtime');
+
 export function runtimeCacheRoot(release, cacheRoot) {
-  return join(cacheRoot || join(homedir(), 'Library/Application Support/Otto/runtime'), release.id);
+  return join(cacheRoot || defaultRuntimeCache, release.id);
+}
+
+export async function removeUnusedRuntimes({
+  current,
+  keep = [],
+  cacheRoot = defaultRuntimeCache,
+  olderThan = Date.now() - 24 * 60 * 60 * 1000,
+}) {
+  if (dirname(current) !== cacheRoot) return [];
+  const kept = new Set([current, ...keep]);
+  const removed = [];
+  for (const name of await readdir(cacheRoot).catch(() => [])) {
+    const path = join(cacheRoot, name);
+    if (
+      kept.has(path) ||
+      !/^[a-f0-9]{64}(\.install-[a-f0-9]{12}|\.[a-f0-9]{12}\.download)?$/.test(name)
+    )
+      continue;
+    const metadata = await lstat(path).catch(() => undefined);
+    if (!metadata || metadata.mtimeMs > olderThan) continue;
+    await rm(path, { recursive: true, force: true });
+    removed.push(name);
+  }
+  return removed;
 }
 
 async function verifiedCache(release, signal, cacheRoot) {

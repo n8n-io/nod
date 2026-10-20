@@ -5,17 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; connect-src https://eu.i.posthog.com https://eu-assets.i.posthog.com; style-src 'self'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     />
     <title>Otto</title>
     <link rel="stylesheet" href="./styles.css" />
-    <script src="./analytics.js" defer></script>
     <script src="./setup.js" defer></script>
   </head>
   <body>
     <div class="titlebar" aria-hidden="true"></div>
     <main>
-      <header data-analytics-public>
+      <header>
         <div class="brand">
           <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
             <circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4" />
@@ -32,28 +31,28 @@
       <div class="content">
         <form id="setup-form">
           <div class="setting-row">
-            <label for="launch-at-login" data-analytics-public>Open at login</label>
+            <label for="launch-at-login">Open at login</label>
             <label class="switch"
               ><input type="checkbox" id="launch-at-login" /><span aria-hidden="true"></span
             ></label>
           </div>
           <div class="setting-row">
-            <label for="notifications" data-analytics-public>Desktop notifications</label>
+            <label for="notifications">Desktop notifications</label>
             <label class="switch"
               ><input type="checkbox" id="notifications" /><span aria-hidden="true"></span
             ></label>
           </div>
-          <p class="hint" data-analytics-public>Next, connect your AI provider and apps.</p>
+          <p class="hint">Next, connect your AI provider and apps.</p>
           <p id="error" class="error" role="alert" hidden></p>
         </form>
         <section id="preparation" aria-labelledby="heading" hidden>
-          <p id="preparation-description" class="hint" data-analytics-public>
+          <p id="preparation-description" class="hint">
             Preparing your workspace and browser. The first launch can take a few minutes.
           </p>
           <div class="progress-track"><div id="progress-value" class="progress-value"></div></div>
           <p id="status" class="hint" role="status" aria-live="polite">Preparing…</p>
           <p id="preparation-error" class="error" role="alert" hidden></p>
-          <div class="recovery-actions" data-analytics-public>
+          <div class="recovery-actions">
             <button type="button" id="retry" class="primary" hidden>Try again</button>
             <button type="button" id="install-wsl" class="secondary" hidden>Install WSL</button>
             <button type="button" id="import-runtime" class="secondary" hidden>
@@ -63,7 +62,7 @@
           </div>
         </section>
       </div>
-      <footer id="actions" data-analytics-public>
+      <footer id="actions">
         <p id="keychain-notice" class="hint" hidden>
           macOS may ask for your keychain password to store or use your API keys.
         </p>

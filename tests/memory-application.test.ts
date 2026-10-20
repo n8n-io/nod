@@ -659,7 +659,13 @@ test('reflection ops need a verbatim quote from a cited message and cannot touch
     messages,
     when,
   );
-  assert.deepEqual([additions, removals], [2, 2]);
+  assert.deepEqual(
+    [additions, removals],
+    [
+      ['save', 'save'],
+      ['archive', 'save'],
+    ],
+  );
   assert.deepEqual(tree.entries.map((item) => [item.slug, item.origin, item.sources]).sort(), [
     ['ana', 'stated', [ids[0]]],
     ['ana-city', 'inferred', [ids[1]]],
@@ -673,14 +679,20 @@ test('reflection ops need a verbatim quote from a cited message and cannot touch
   const many = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'].map(
     (word) => add('about', `fact-${word}`, `Distinct ${word} fact.`, [1], 'bullet points'),
   );
-  assert.equal(applyReflect(treeOf(), many, messages, when), many.length);
+  assert.equal(applyReflect(treeOf(), many, messages, when).length, many.length);
   const sensitive = {
     ...add('about', 'health', 'Has asthma.', [1], 'bullet points'),
     sensitive: true,
   };
-  assert.equal(applyReflect(treeOf(), [sensitive], messages, when), 0);
-  assert.equal(applyReflect({ ...treeOf(), sensitive: true }, [sensitive], messages, when), 1);
-  assert.equal(applyReflect(treeOf(), [{ ...sensitive, sensitive: undefined }], messages, when), 0);
+  assert.equal(applyReflect(treeOf(), [sensitive], messages, when).length, 0);
+  assert.equal(
+    applyReflect({ ...treeOf(), sensitive: true }, [sensitive], messages, when).length,
+    1,
+  );
+  assert.equal(
+    applyReflect(treeOf(), [{ ...sensitive, sensitive: undefined }], messages, when).length,
+    0,
+  );
 });
 
 test('the onboarding interview sends answers only as data, caps the reply and saves three stated notes once', async (t) => {

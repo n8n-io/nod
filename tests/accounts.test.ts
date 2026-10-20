@@ -3,6 +3,7 @@ import test, { describe } from 'node:test';
 import Fastify from 'fastify';
 import type { AccountStore, StoredAccount } from '../src/server/account-store.ts';
 import { createAccountSession } from '../src/server/account.ts';
+import { accessKey, registerLocalAccess } from '../src/server/access.ts';
 import { randomUUID, randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { createKeychainKeyStore } from '../src/providers/keychain/key-store.ts';
@@ -24,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics, type Analytics } from '../src/server/analytics.ts';
+import { createLedger } from '../src/server/ledger.ts';
 import { createModelTraces } from '../src/server/traces.ts';
 import type { ModelTrace } from '../src/ports/traces.ts';
 
@@ -33,6 +35,7 @@ describe('account routes', () => {
     start?: (ownerId: string) => Promise<void>,
     analytics?: Analytics,
     onTraces?: (enabled: boolean) => void,
+    key?: string,
   ) {
     let record: StoredAccount = {
       theme: 'system',
@@ -66,6 +69,7 @@ describe('account routes', () => {
       },
     };
     const app = Fastify();
+    if (key) registerLocalAccess(app, 4399, { key });
     app.setErrorHandler((_error, _request, reply) =>
       reply.code(400).send({ error: 'Invalid account request.' }),
     );
@@ -250,6 +254,57 @@ describe('account routes', () => {
     assert.equal(delivered.length, 2);
   });
 
+  test('resetting the installation ID needs the owner key and links later events to a new ID only', async (t) => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'otto-analytics-id-'));
+    t.after(() => rm(dataRoot, { recursive: true, force: true }));
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'production',
+      dataRoot,
+    });
+    const key = await accessKey(dataRoot);
+    const f = await fixture(undefined, analytics, undefined, key);
+    t.after(() => f.app.close());
+    const headers = { origin, host: 'localhost:4399', cookie: `otto-access-4399=${key}` };
+    const reset = (extra: Record<string, string> = headers) =>
+      f.app.inject({
+        method: 'POST',
+        url: '/api/account/analytics-id',
+        headers: extra,
+        payload: {},
+      });
+    assert.equal((await reset()).statusCode, 409);
+    await f.app.inject({
+      method: 'PATCH',
+      url: '/api/account',
+      headers,
+      payload: { usageData: true },
+    });
+    const before = analytics.configuration('local-owner').distinctId;
+    assert.equal(
+      before,
+      `local:${(await readFile(join(dataRoot, 'analytics-id'), 'utf8')).trim()}`,
+    );
+    assert.equal((await reset({ origin, host: 'localhost:4399' })).statusCode, 401);
+    assert.equal(analytics.configuration('local-owner').distinctId, before);
+    const response = await reset();
+    assert.equal(response.statusCode, 200);
+    const after = response.json().analytics.distinctId;
+    assert.match(after, /^local:[0-9a-f-]{36}$/);
+    assert.notEqual(after, before);
+    assert.equal(after, `local:${(await readFile(join(dataRoot, 'analytics-id'), 'utf8')).trim()}`);
+    analytics.capture('local-owner', { event: 'otto_chat_stopped' });
+    assert.equal(captured.at(-1)?.distinctId, after);
+    const supplied = await createAnalytics({
+      provider: { capture: () => {}, shutdown: async () => {} },
+      environment: 'production',
+      dataRoot,
+      installationId: randomUUID(),
+    });
+    await assert.rejects(supplied.resetInstallation());
+  });
+
   test('account changes require the same origin and owner and never accept provider or owner input', async (t) => {
     const f = await fixture();
     t.after(() => f.app.close());
@@ -339,6 +394,216 @@ describe('analytics privacy', () => {
     });
     assert.equal(captured.length, 1);
     assert.equal(captured[0].distinctId, `local:${installationId}`);
+  });
+
+  test('visited websites and secure entries send only the registrable domain of an address', async () => {
+    const { createWebsiteVisits } = await import('../src/server/analytics-connections.ts');
+    const { captureSecureEntry } = await import('../src/server/vault-use.ts');
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'production',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    analytics.setUsageData('owner-fixture', true);
+    const capture = analytics.forOwner('owner-fixture');
+    const addresses = [
+      'https://checkout.shop.example.co.uk/orders/private-person?email=person%40example.com#card',
+      'https://www.example.co.uk/other',
+      'http://192.168.1.20/admin',
+      'http://localhost:4310/vault',
+      'https://printer.local/status',
+    ];
+    analytics.withRun('owner-fixture', () => {
+      const visited = createWebsiteVisits(analytics, 'owner-fixture');
+      for (const address of addresses) {
+        visited(address, 'browser', false);
+        visited(address, 'fetch', true);
+      }
+    });
+    for (const origin of addresses) {
+      captureSecureEntry(capture, { kind: 'password', origin }, 'requested');
+      captureSecureEntry(
+        capture,
+        { kind: 'card', origin, payment: { amount: 1234.5678, currency: 'EUR' } },
+        'submitted',
+      );
+      captureSecureEntry(capture, { kind: 'otp', origin }, 'requested');
+    }
+    const sent = captured.map(({ event, properties }) => {
+      const { analytics_schema, deployment, environment, capture_source, run_id, ...rest } =
+        properties;
+      return { event, ...rest };
+    });
+    assert.deepEqual(
+      sent.filter(({ event }) => event === 'otto_website_visited'),
+      [{ event: 'otto_website_visited', domain: 'example.co.uk', via: 'browser', subagent: false }],
+    );
+    const entries = sent.filter(({ event }) => event === 'otto_secure_entry_changed');
+    assert.equal(entries.length, 15);
+    assert.deepEqual(
+      new Set(entries.map((entry) => JSON.stringify(entry))),
+      new Set(
+        [
+          { kind: 'sign_in', status: 'requested', domain: 'example.co.uk' },
+          { kind: 'sign_in', status: 'requested' },
+          {
+            kind: 'payment',
+            status: 'submitted',
+            domain: 'example.co.uk',
+            currency: 'EUR',
+            amount: 1234.568,
+          },
+          { kind: 'payment', status: 'submitted', currency: 'EUR', amount: 1234.568 },
+          { kind: 'code', status: 'requested' },
+        ].map((properties) =>
+          JSON.stringify({ event: 'otto_secure_entry_changed', ...properties }),
+        ),
+      ),
+    );
+    for (const value of [
+      'checkout',
+      'shop.',
+      'private-person',
+      'person%40',
+      '192.168',
+      'localhost',
+    ])
+      assert.ok(!JSON.stringify(captured).includes(value), value);
+  });
+
+  test('agent model usage analytics carry the request duration and cached input', async () => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'production',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    analytics.setUsageData('owner-fixture', true);
+    const ledger = createLedger({
+      pool: { query: async () => ({ rows: [] }) } as never,
+      ownerId: 'owner-fixture',
+      analytics: analytics.forOwner('owner-fixture'),
+    });
+    const agent = ledger.agent({
+      open: async (session) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () =>
+          session.onEvent({
+            type: 'model_usage',
+            id: randomUUID(),
+            provider: 'openai',
+            model: 'gpt-6-luna',
+            inputTokens: 20,
+            outputTokens: 5,
+            cacheReadTokens: 2000,
+            cacheWriteTokens: 0,
+            totalTokens: 2025,
+            costUsd: 0.001,
+            costSource: 'sdk_estimate',
+            createdAt: new Date(Date.now() - 1_500).toISOString(),
+          }),
+      }),
+      dispose() {},
+    });
+    const opened = await agent.open({ turnId: randomUUID(), onEvent() {} } as never);
+    await opened.prompt('Synthetic', []);
+    const used = captured.find((event) => event.event === 'otto_model_used')!;
+    assert.equal(used.properties.input_tokens, 2020);
+    assert.equal(used.properties.cached_input_tokens, 2000);
+    assert.ok(Number(used.properties.duration_ms) >= 1_500);
+  });
+
+  test('model usage analytics never send custom endpoint or unbounded model names', async () => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'production',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    analytics.setUsageData('owner-fixture', true);
+    const ledger = createLedger({
+      pool: { query: async () => ({ rows: [] }) } as never,
+      ownerId: 'owner-fixture',
+      analytics: analytics.forOwner('owner-fixture'),
+    });
+    const usage = { category: 'review', operation: 'review', status: 'succeeded' } as const;
+    await ledger
+      .decisions({
+        check: async (_request, _signal, report) => {
+          report?.({
+            ...usage,
+            id: randomUUID(),
+            provider: 'compatible',
+            model: 'private-finance-model',
+            durationMs: 12.4,
+            inputTokens: 10,
+            cacheReadTokens: 30,
+            outputTokens: 5,
+            costUsd: 0.0000123456,
+          });
+          report?.({
+            ...usage,
+            id: randomUUID(),
+            provider: 'openrouter',
+            model: 'acme/Private Person',
+            durationMs: 0,
+          });
+          report?.({
+            ...usage,
+            id: randomUUID(),
+            provider: 'openai-codex',
+            model: 'gpt-5.1-codex',
+            durationMs: 0,
+            costUsd: null,
+            estimateUsd: 0.5,
+          });
+          return {};
+        },
+      })
+      .check({ instructions: '', input: {}, question: { name: 'answer', choices: [] } });
+    const shared = { purpose: 'review', outcome: 'succeeded' };
+    assert.deepEqual(
+      captured.map(({ properties }) => {
+        const { analytics_schema, deployment, environment, capture_source, ...rest } = properties;
+        return rest;
+      }),
+      [
+        {
+          ...shared,
+          provider: 'compatible',
+          model: 'custom',
+          input_tokens: 40,
+          output_tokens: 5,
+          cached_input_tokens: 30,
+          cost_usd: 0.000012,
+          pricing: 'api',
+          duration_ms: 12,
+        },
+        {
+          ...shared,
+          provider: 'openrouter',
+          model: 'custom',
+          input_tokens: 0,
+          output_tokens: 0,
+          pricing: 'unavailable',
+        },
+        {
+          ...shared,
+          provider: 'openai',
+          model: 'gpt-5.1-codex',
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: 0.5,
+          pricing: 'plan_estimate',
+        },
+      ],
+    );
   });
 });
 
@@ -726,11 +991,49 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
     const address = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
     const owner = await f.create('fixture-owner', createPiModelBackend());
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'production',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    analytics.setUsageData('fixture-owner', true);
+    owner.register(Fastify(), analytics.forOwner('fixture-owner'));
     const id = await owner.addEndpoint(
       `${address.slice('http://'.length)}/`,
       'fixture-endpoint-key',
     );
     await owner.select({ connectionId: id, modelId: 'fixture-local', effort: 'off' });
+    const { captureConnectionInventory } = await import('../src/server/analytics-connections.ts');
+    await captureConnectionInventory(
+      analytics,
+      'fixture-owner',
+      async () => [],
+      () => owner.analyticsConnections(),
+    );
+    assert.deepEqual(
+      captured.map(({ event, properties }) => {
+        const { analytics_schema, deployment, environment, capture_source, ...rest } = properties;
+        return { event, ...rest };
+      }),
+      [
+        {
+          event: 'otto_model_connection_changed',
+          provider: 'compatible',
+          method: 'api_key',
+          status: 'connected',
+        },
+        {
+          event: 'otto_model_connection_observed',
+          provider: 'compatible',
+          method: 'api_key',
+          selected: true,
+          model: 'custom',
+          effort: 'off',
+        },
+      ],
+    );
     const access = await owner.resolve();
     assert.equal(access.definition.spec.baseUrl, `${address}/v1`);
     assert.deepEqual(await access.read(), {

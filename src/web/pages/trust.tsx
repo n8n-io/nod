@@ -11,6 +11,7 @@ import type {
 import type { TrustView } from '../../shared/trust';
 import type { AccountPreferences } from '../../shared/account';
 import { usePageData } from '../hooks/use-page-data';
+import { captureAnalytics } from '../lib/analytics';
 import { usePhone } from '../hooks/use-phone';
 import { TrustActivity } from '../components/trust-activity';
 import { VaultDetails } from '../components/vault-details';
@@ -65,6 +66,11 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
         : null;
   const [view, setView] = useState<View>(addRequested ? 'saved' : 'activity');
   const [savedOpened, setSavedOpened] = useState(Boolean(addRequested));
+  useEffect(() => captureAnalytics('otto_tab_viewed', { page: 'trust', tab: view }), []);
+  const selectView = (next: View) => {
+    if (next !== view) captureAnalytics('otto_tab_viewed', { page: 'trust', tab: next });
+    setView(next);
+  };
   useEffect(() => {
     if (view === 'saved') setSavedOpened(true);
   }, [view]);
@@ -308,7 +314,7 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
                         : view === 'activity'
                           ? 'saved'
                           : 'activity';
-                  setView(next);
+                  selectView(next);
                   event.currentTarget
                     .querySelector<HTMLButtonElement>(`[data-view="${next}"]`)
                     ?.focus();
@@ -323,7 +329,7 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
                     tabIndex={view === item ? 0 : -1}
                     aria-selected={view === item}
                     aria-controls={`${tabsId}-panel`}
-                    onClick={() => setView(item)}
+                    onClick={() => selectView(item)}
                   >
                     {item === 'activity' ? 'Activity' : 'Saved'}
                     {item === 'saved' && entries && <span>{items.length}</span>}

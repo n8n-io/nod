@@ -4,37 +4,119 @@ import { desktopSettingsAvailable } from './desktop';
 import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
 
 type AnalyticsEvents = {
-  otto_onboarding_step_viewed: {
-    step: 'welcome' | 'brain' | 'about' | 'email' | 'telegram' | 'open_source';
+  otto_onboarding_recap: {
+    steps_viewed: Array<'welcome' | 'brain' | 'about' | 'email' | 'telegram' | 'open_source'>;
+    steps_skipped: Array<'welcome' | 'email' | 'telegram'>;
+    went_back: boolean;
   };
   otto_settings_viewed: {
-    tab: 'general' | 'appearance' | 'preferences' | 'models' | 'app connections' | 'memory';
+    tab: 'general' | 'appearance' | 'preferences' | 'models' | 'app_connections' | 'memory';
   };
-  otto_chat_message_sent: { has_attachments: boolean; is_reply: boolean };
+  otto_chat_message_sent: {
+    has_attachments: boolean;
+    is_reply: boolean;
+    source: 'composer' | 'task_card' | 'ask_otto' | 'task_reply';
+  };
   otto_chat_stop_requested: undefined;
+  otto_task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
+  otto_setup_link_clicked: { setup: 'app' | 'vault' | 'website' | 'browser' };
+  otto_browser_handoff_action: { action: 'done' | 'back' | 'reload' | 'expand' | 'collapse' };
+  otto_message_reaction_changed: {
+    operation: 'add' | 'remove' | 'change';
+    reaction: 'thumbs_up' | 'heart' | 'joy' | 'party' | 'wow' | 'pray' | 'thumbs_down' | 'other';
+    method: 'quick' | 'picker' | 'double_click' | 'menu' | 'pin';
+    role: 'assistant' | 'user';
+  };
+  otto_message_action: {
+    action: 'copy' | 'reply';
+    role: 'assistant' | 'user';
+    method: 'button' | 'context_menu';
+  };
+  otto_app_connect_clicked: {
+    entry: 'apps' | 'chat' | 'onboarding' | 'manage';
+    result: 'opened' | 'needs_access_setup';
+  };
+  otto_model_selected: {
+    provider: 'openai' | 'anthropic' | 'openrouter' | 'compatible' | 'other';
+    entry: 'chat' | 'settings' | 'onboarding';
+    recommended: boolean;
+  };
+  otto_attachment_added: {
+    method: 'picker' | 'drop' | 'paste';
+    kind: 'image' | 'pdf' | 'other';
+    count: '1' | '2-5' | '6+';
+  };
+  otto_task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
+  otto_tab_viewed:
+    | { page: 'tasks'; tab: 'current' | 'scheduled' | 'previous' }
+    | { page: 'trust'; tab: 'activity' | 'saved' }
+    | { page: 'apps'; tab: 'all' | 'connected' };
   otto_ui_error: {
     area: 'application' | 'onboarding' | 'chat' | 'settings' | 'apps' | 'models';
-    action: 'load' | 'save' | 'send' | 'connect' | 'prepare' | 'stop' | 'render';
+    action: 'load' | 'save' | 'send' | 'connect' | 'disconnect' | 'prepare' | 'stop' | 'render';
   };
-  otto_desktop_setup_step_viewed: { step: 'preferences' | 'preparing' | 'ready' | 'error' };
-  otto_desktop_setup_completed: undefined;
 };
 
-const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
-  otto_onboarding_step_viewed: {
-    step: ['welcome', 'brain', 'about', 'email', 'telegram', 'open_source'],
+export type AnalyticsProperties<Event extends keyof AnalyticsEvents> = NonNullable<
+  AnalyticsEvents[Event]
+>;
+
+const roles = ['assistant', 'user'];
+const eventProperties: Record<
+  keyof AnalyticsEvents,
+  Record<string, readonly unknown[] | { items: readonly unknown[] }>
+> = {
+  otto_onboarding_recap: {
+    steps_viewed: { items: ['welcome', 'brain', 'about', 'email', 'telegram', 'open_source'] },
+    steps_skipped: { items: ['welcome', 'email', 'telegram'] },
+    went_back: [true, false],
   },
   otto_settings_viewed: {
-    tab: ['general', 'appearance', 'preferences', 'models', 'app connections', 'memory'],
+    tab: ['general', 'appearance', 'preferences', 'models', 'app_connections', 'memory'],
   },
-  otto_chat_message_sent: { has_attachments: [true, false], is_reply: [true, false] },
+  otto_chat_message_sent: {
+    has_attachments: [true, false],
+    is_reply: [true, false],
+    source: ['composer', 'task_card', 'ask_otto', 'task_reply'],
+  },
   otto_chat_stop_requested: {},
+  otto_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2] },
+  otto_setup_link_clicked: { setup: ['app', 'vault', 'website', 'browser'] },
+  otto_browser_handoff_action: { action: ['done', 'back', 'reload', 'expand', 'collapse'] },
+  otto_message_reaction_changed: {
+    operation: ['add', 'remove', 'change'],
+    reaction: ['thumbs_up', 'heart', 'joy', 'party', 'wow', 'pray', 'thumbs_down', 'other'],
+    method: ['quick', 'picker', 'double_click', 'menu', 'pin'],
+    role: roles,
+  },
+  otto_message_action: {
+    action: ['copy', 'reply'],
+    role: roles,
+    method: ['button', 'context_menu'],
+  },
+  otto_app_connect_clicked: {
+    entry: ['apps', 'chat', 'onboarding', 'manage'],
+    result: ['opened', 'needs_access_setup'],
+  },
+  otto_model_selected: {
+    provider: ['openai', 'anthropic', 'openrouter', 'compatible', 'other'],
+    entry: ['chat', 'settings', 'onboarding'],
+    recommended: [true, false],
+  },
+  otto_attachment_added: {
+    method: ['picker', 'drop', 'paste'],
+    kind: ['image', 'pdf', 'other'],
+    count: ['1', '2-5', '6+'],
+  },
+  otto_task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
+  otto_tab_viewed: {
+    page: ['tasks', 'trust', 'apps'],
+    tab: ['current', 'scheduled', 'previous', 'activity', 'saved', 'all', 'connected'],
+  },
   otto_ui_error: {
     area: ['application', 'onboarding', 'chat', 'settings', 'apps', 'models'],
-    action: ['load', 'save', 'send', 'connect', 'prepare', 'stop', 'render'],
+    action: ['load', 'save', 'send', 'connect', 'disconnect', 'prepare', 'stop', 'render'],
   },
-  otto_desktop_setup_step_viewed: { step: ['preferences', 'preparing', 'ready', 'error'] },
-  otto_desktop_setup_completed: {},
 };
 
 let configuration: AnalyticsConfiguration | undefined;
@@ -166,8 +248,13 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
       .filter((key) => key in event.properties)
       .map((key) => [key, event.properties[key]]),
   );
-  for (const [key, values] of Object.entries(allowed ?? {}))
-    if (values.includes(event.properties[key])) properties[key] = event.properties[key];
+  for (const [key, values] of Object.entries(allowed ?? {})) {
+    const value: unknown = event.properties[key];
+    if (!('items' in values)) {
+      if (values.includes(value)) properties[key] = value;
+    } else if (Array.isArray(value))
+      properties[key] = [...new Set(value.filter((item) => values.items.includes(item)))];
+  }
   for (const [key, values] of Object.entries(replayProperties))
     if (values.includes(event.properties[key])) properties[key] = event.properties[key];
   for (const key of [
@@ -267,15 +354,7 @@ function applyConfiguration(
       save_referrer: false,
       save_campaign_params: false,
       ip: false,
-      session_recording: {
-        ...recordingOptions,
-        maskCapturedNetworkRequestFn: (request) => {
-          const masked = recordingOptions.maskCapturedNetworkRequestFn!(request);
-          return masked && surface === 'desktop' && window.location.protocol === 'file:'
-            ? { ...masked, name: sanitizedAnalyticsUrl('/desktop/setup') }
-            : masked;
-        },
-      },
+      session_recording: recordingOptions,
       bootstrap: next.distinctId ? { distinctID: next.distinctId, isIdentifiedID: true } : {},
       loaded: () => posthog && guardRetryQueue(posthog),
       before_send: sanitizeEvent,
@@ -306,6 +385,14 @@ export function captureAnalytics<Event extends keyof AnalyticsEvents>(
   try {
     if (configuration?.enabled) posthog?.capture(event, args[0]);
   } catch {}
+}
+
+export function analyticsReplaySession() {
+  try {
+    return (configuration?.enabled && posthog?.get_session_id()) || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function analyticsForCurrentSession(): typeof captureAnalytics {

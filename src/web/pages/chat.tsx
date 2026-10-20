@@ -31,7 +31,11 @@ import { ModelPicker, ModelSetup } from '../components/models';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
-import { analyticsForCurrentSession } from '../lib/analytics';
+import {
+  analyticsForCurrentSession,
+  analyticsReplaySession,
+  captureAnalytics,
+} from '../lib/analytics';
 import {
   collapseScreenshotMessages,
   hasVisibleChatActivity,
@@ -76,7 +80,7 @@ function TaskCards({
   suggestions: TaskSuggestions;
   status(task: SuggestedTask): 'idle' | 'working' | 'waiting' | 'done';
   disabled: boolean;
-  onStart(task: SuggestedTask): void;
+  onStart(task: SuggestedTask, position: number): void;
 }) {
   const [shown, setShown] = useState(false);
   useEffect(() => {
@@ -128,7 +132,7 @@ function TaskCards({
                       type="button"
                       className="task-start"
                       disabled={disabled}
-                      onClick={() => onStart(task)}
+                      onClick={() => onStart(task, index)}
                     >
                       {task.kind === 'ongoing' ? 'Set it up' : 'Do it'}
                     </button>
@@ -215,6 +219,7 @@ export function Chat({
     kind: 'success' | 'error';
   } | null>(null);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const taskReply = useRef<string | null>(null);
   const [focusTarget, setFocusTarget] = useState<{ id: string; pages: number } | null>(() =>
     initialFocusMessageId ? { id: initialFocusMessageId, pages: 0 } : null,
   );
@@ -446,6 +451,10 @@ export function Chat({
     value: string,
     attachments: Artifact[],
     reply: Message | null = replyTo,
+    source: 'composer' | 'task_card' | 'ask_otto' | 'task_reply' = reply &&
+    reply.id === taskReply.current
+      ? 'task_reply'
+      : 'composer',
   ): Promise<ComposerSendResult> {
     if (resetLock.current || welcoming || spendingPaused) return { sent: false, restoreText: true };
     const captureAnalytics = analyticsForCurrentSession();
@@ -487,7 +496,10 @@ export function Chat({
     pendingSends.current++;
     outstandingSends.current++;
     let failed = false;
-    if (reply) setReplyTo(null);
+    if (reply) {
+      taskReply.current = null;
+      setReplyTo(null);
+    }
     const message: Message = {
       id,
       role: 'user',
@@ -519,10 +531,14 @@ export function Chat({
         setOptimistic((current) => current.filter((item) => item.message.id !== id));
         return { sent: false, restoreText: !privateVerification || !explicitVerification };
       }
+      const replaySession = analyticsReplaySession();
       const response = await apiResponse('/api/messages', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(replaySession ? { 'x-otto-replay-session': replaySession } : {}),
+        },
         body: JSON.stringify({
           threadId: sentThread,
           clientMessageId: id,
@@ -550,6 +566,7 @@ export function Chat({
         captureAnalytics('otto_chat_message_sent', {
           has_attachments: attachments.length > 0,
           is_reply: Boolean(replyId),
+          source,
         });
       const messageText =
         typeof result.messageText === 'string'
@@ -624,7 +641,7 @@ export function Chat({
       text: requestedMessage.text,
     };
     requestedSends.current.push(request);
-    void send(requestedMessage.text, [], null).then((result) => {
+    void send(requestedMessage.text, [], null, 'ask_otto').then((result) => {
       if (threadRef.current !== requestedThread) return;
       request.result = result;
       if (requestedSends.current.some((item) => !item.result)) return;
@@ -913,7 +930,15 @@ export function Chat({
                     disabled={
                       !state.configuration.llmReady || resetting || welcoming || spendingPaused
                     }
-                    onStart={(task) => void send(task.title, [], null)}
+                    onStart={(task, position) => {
+                      captureAnalytics('otto_task_card_started', {
+                        ...(task.kind
+                          ? { kind: task.kind === 'ongoing' ? 'ongoing' : 'immediate' }
+                          : {}),
+                        position,
+                      });
+                      void send(task.title, [], null, 'task_card');
+                    }}
                   />
                 ) : state.tasks?.some((task) => task.messageId === message.id) ? (
                   state.tasks
@@ -923,10 +948,11 @@ export function Chat({
                         key={task.id}
                         task={task}
                         onReply={() => {
-                          setReplyTo(
+                          const target =
                             allMessages.find((item) => item.id === task.questionMessageId) ??
-                              message,
-                          );
+                            message;
+                          taskReply.current = target.id;
+                          setReplyTo(target);
                           composer.current?.focus();
                         }}
                       />
@@ -946,6 +972,7 @@ export function Chat({
                     onReply={
                       message.turnId || persistedIds.has(message.id)
                         ? () => {
+                            taskReply.current = null;
                             setReplyTo(message);
                             composer.current?.focus();
                           }
@@ -1035,7 +1062,10 @@ export function Chat({
             text={text}
             setText={setText}
             replyTo={replyTo}
-            clearReply={() => setReplyTo(null)}
+            clearReply={() => {
+              taskReply.current = null;
+              setReplyTo(null);
+            }}
             onSend={send}
             onStop={
               working ||

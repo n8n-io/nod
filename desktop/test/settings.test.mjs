@@ -21,16 +21,16 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { JSDOM } from 'jsdom';
 import { createSettingsStore } from '../main/settings.mjs';
-import {
-  completeDesktopSetup,
-  createDesktopAnalytics,
-  trackDesktopAnalytics,
-} from '../main/analytics.mjs';
+import { createDesktopAnalytics } from '../main/analytics.mjs';
 import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
 import { saveArtifactDownload } from '../main/downloads.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from '../main/lifecycle.mjs';
-import { createDesktopUpdater, createUpdateSource } from '../main/updates.mjs';
+import {
+  createDesktopUpdater,
+  createUpdateSource,
+  startDesktopUpdateChecks,
+} from '../main/updates.mjs';
 import { stageWindowsUpdate } from '../runtime/windows.mjs';
 
 function deferred() {
@@ -393,8 +393,6 @@ async function runningDesktop(
     fetch: request,
     createSettingsStore: () => storage.store,
     createDesktopAnalytics,
-    completeDesktopSetup,
-    trackDesktopAnalytics,
     createAppPreferencesStore: () => ({ sync: async () => {} }),
     createChatReadCursorStore: () => ({}),
     saveArtifactDownload,
@@ -706,20 +704,17 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   const get = (target = event) => invoke('otto:settings:get', target);
   const save = (value, target = event) => invoke('otto:settings:save', target, value);
   assert.equal(f.handlers.has('otto:settings:reveal'), false);
-  const analytics = (target = event) => invoke('otto:analytics:configuration', target);
   for (const rejected of [
     { sender: { mainFrame: frame }, senderFrame: frame },
     { sender: window.webContents, senderFrame: { url: frame.url } },
   ]) {
     await assert.rejects(get(rejected));
     await assert.rejects(save({ composioApiKey: 'synthetic-injected-key' }, rejected));
-    await assert.rejects(analytics(rejected));
   }
   for (const url of ['https://example.test/', 'http://127.0.0.1:4310/api/files/synthetic']) {
     frame.url = url;
     await assert.rejects(get());
     await assert.rejects(save({ theme: 'dark' }));
-    await assert.rejects(analytics());
   }
   frame.url = 'http://127.0.0.1:4310/onboarding';
   const previous = await readFile(f.storage.path, 'utf8');
@@ -736,11 +731,9 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   const vaultCiphertext = JSON.parse(previous).secrets.vaultKey;
   assert.ok(vaultCiphertext);
   assert.notEqual(vaultCiphertext, vaultKey);
-  for (const returned of [await get(), await analytics()]) {
-    const serialized = JSON.stringify(returned);
-    assert.equal(serialized.includes(vaultKey), false);
-    assert.equal(serialized.includes(vaultCiphertext), false);
-  }
+  const serialized = JSON.stringify(await get());
+  assert.equal(serialized.includes(vaultKey), false);
+  assert.equal(serialized.includes(vaultCiphertext), false);
   await save({ theme: 'dark', launchAtLogin: true });
   assert.equal((await f.storage.store.get()).launchAtLogin, true);
   window.destroy();
@@ -1375,6 +1368,51 @@ test('desktop updates bind newer published releases and both source adapters to 
     f.release.assets[1].digest = `sha256:${f.manifest.update.sha256}`;
     f.release.assets.push({ ...f.release.assets[0], id: 999 });
     await assert.rejects(f.source.latest('0.1.0'));
+  }
+});
+
+test('an incomplete newest release falls back to the next newer complete release', async () => {
+  for (const sourceUrl of [undefined, 'https://updates.example.invalid/otto-desktop']) {
+    const f = updateReleaseFixture(sourceUrl);
+    const broken = { ...f.release, id: 15, tag_name: 'desktop-v0.3.0', assets: [] };
+    f.values.get(`${f.base}/releases${sourceUrl ? '' : '?per_page=100'}`).push(broken);
+    f.values.set(`${f.base}/releases/15`, broken);
+    assert.equal((await f.source.latest('0.1.0')).version, '0.2.0');
+    f.release.assets = [];
+    await assert.rejects(f.source.latest('0.1.0'), /incomplete/);
+  }
+});
+
+test('automatic update checks retry failures sooner and return to the normal interval', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const powerMonitor = new EventEmitter();
+  let calls = 0;
+  let failures = 3;
+  const stop = startDesktopUpdateChecks({
+    powerMonitor,
+    interval: 60_000,
+    retry: 5,
+    check: async () => {
+      calls++;
+      if (failures-- > 0) throw new Error('Desktop updates are unavailable.');
+    },
+  });
+  t.after(stop);
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  await settle();
+  for (const [wait, expected] of [
+    [4, 1],
+    [1, 2],
+    [9, 2],
+    [1, 3],
+    [19, 3],
+    [1, 4],
+    [59_999, 4],
+    [1, 5],
+  ]) {
+    t.mock.timers.tick(wait);
+    await settle();
+    assert.equal(calls, expected);
   }
 });
 

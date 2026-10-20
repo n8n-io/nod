@@ -11,6 +11,7 @@ import {
   type Tree,
 } from './memory-tree.ts';
 import type { MemoryService } from './memory.ts';
+import type { CaptureAnalytics, MemoryChange } from './analytics.ts';
 
 const maxSkills = 40;
 const day = 24 * 60 * 60 * 1000;
@@ -65,8 +66,14 @@ export function createLearnedSkills(options: {
   curator: MemoryCurator;
   builtIn: readonly string[];
   redact(text: string): string;
+  analytics?: CaptureAnalytics;
 }) {
   const { memory } = options;
+  const remembered = (operation: MemoryChange['operation'], actor: MemoryChange['actor']) =>
+    options.analytics?.({
+      event: 'otto_memory_changed',
+      properties: { kind: 'skill', operation, actor },
+    });
 
   async function prepare(
     draft: { name: string; description: string; body: string },
@@ -125,7 +132,7 @@ export function createLearnedSkills(options: {
     const skill = await prepare(draft, tree.sensitive);
     if (!skill)
       return { status: 'not_saved', reason: 'Nothing reusable remained without personal details.' };
-    return commit(() =>
+    const saved = await commit(() =>
       memory.edit((fresh) => {
         const now = new Date().toISOString();
         const existing = fresh.skills.find((item) => item.name === input.name);
@@ -148,6 +155,8 @@ export function createLearnedSkills(options: {
         return { status: existing ? 'updated' : 'saved', name: next.name };
       }),
     );
+    remembered('save', 'agent');
+    return saved;
   }
 
   async function read(name: string) {
@@ -188,6 +197,7 @@ export function createLearnedSkills(options: {
       },
       { allowDisabled: true },
     );
+    remembered('save', 'owner');
   }
 
   async function forget(name: string) {
@@ -200,6 +210,7 @@ export function createLearnedSkills(options: {
       },
       { allowDisabled: true },
     );
+    remembered('forget', 'owner');
   }
 
   return { learn, read, index, change, forget };

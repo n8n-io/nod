@@ -12,4 +12,5 @@ export interface Turn {
   visited(browserId: string, url: string): void;
   delegate?(title: string, instruction: string): Promise<string>;
   followUp?(text: string): string;
+  pageVisited?(url: string, subagent: boolean): void;
 }

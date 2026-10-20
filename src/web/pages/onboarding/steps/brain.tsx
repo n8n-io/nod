@@ -80,7 +80,7 @@ function Spinner() {
 
 function Problem({ children }: { children: string }) {
   return children ? (
-    <p className="ob-brain-error" role="alert">
+    <p className="ob-brain-error" role="alert" data-analytics-private>
       {children}
     </p>
   ) : null;
@@ -213,7 +213,9 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
     panel = (
       <div className="ob-brain-status" data-analytics-public>
         <Spinner />
-        <p className="ob-brain-wait">{models.error || 'Loading providers…'}</p>
+        <p className="ob-brain-wait">
+          {models.error ? <span data-analytics-private>{models.error}</span> : 'Loading providers…'}
+        </p>
       </div>
     );
   else if (shown)
@@ -224,7 +226,10 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
         </span>
         <div className="ob-brain-status-text" data-analytics-public>
           <p className="ob-brain-title">
-            Connected to {shown.provider === 'compatible' ? shown.label : modelSource(shown)}
+            Connected to{' '}
+            <span data-analytics-private>
+              {shown.provider === 'compatible' ? shown.label : modelSource(shown)}
+            </span>
           </p>
           <p className="ob-brain-note">
             {shown.status === 'loading'
@@ -232,7 +237,9 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
               : 'You can add more later in Settings.'}
           </p>
         </div>
-        {shown.provider === 'compatible' && ready && <ModelPicker manageConnections={false} />}
+        {shown.provider === 'compatible' && ready && (
+          <ModelPicker manageConnections={false} surface="onboarding" />
+        )}
         {(shown.status === 'loading' || (!ready && !recommendation) || models.error) && (
           <Button
             variant="outline"

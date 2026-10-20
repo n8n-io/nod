@@ -112,7 +112,7 @@ sequenceDiagram
 
 - Each handoff identifies its waiting turn and browser. Input reaches only that browser while its question stays pending. Other sessions keep their own browsers.
 - **Done** continues the session that asked, including a background session, without posting a message for you. Pi looks at the page to see what you did.
-- One bridge call carries frames out, newest first, and your input in. Losing the connection disables input until it reconnects.
+- One bridge call carries frames out, newest first, and your input in. Each input is acknowledged after the browser applies it. Failures reach the view without retrying the input. Losing the connection rejects pending input and disables it until the view reconnects.
 - Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
 - An init script makes every passkey request fail at once and reports no passkey support, so a sign-in doesn't open a passkey prompt that the live view can't show.
 

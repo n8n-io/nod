@@ -11,7 +11,11 @@ import { OttoGlyph } from '../../components/motion';
 import { Button, Notice } from '../../components/ui';
 import { useBrowserTimeZone } from '../../hooks/use-browser-time-zone';
 import { api, errorMessage } from '../../lib/api';
-import { analyticsForCurrentSession, captureAnalytics } from '../../lib/analytics';
+import {
+  analyticsForCurrentSession,
+  captureAnalytics,
+  type AnalyticsProperties,
+} from '../../lib/analytics';
 import { clearStored, readStep, writeStep } from './storage';
 import { Welcome } from './steps/welcome';
 import { Brain } from './steps/brain';
@@ -24,6 +28,7 @@ export type StepProps = {
   arrived: 'forward' | 'back';
   onNext(): void;
   onBack(): void;
+  onSkip?(): void;
   busy?: boolean;
   notice?: ReactNode;
   usage?: { enabled: boolean; onChange(enabled: boolean): Promise<void> };
@@ -77,12 +82,17 @@ export function Onboarding({
   const preparationRequest = useRef<AbortController | null>(null);
   const active = useRef(false);
   const main = useRef<HTMLElement>(null);
+  const recap = useRef<AnalyticsProperties<'otto_onboarding_recap'> | null>({
+    steps_viewed: [],
+    steps_skipped: [],
+    went_back: false,
+  });
 
   useEffect(() => {
     writeStep({ owner: user.id, step, version: onboardingVersion });
-    captureAnalytics('otto_onboarding_step_viewed', {
-      step: step === 'open' ? 'open_source' : step,
-    });
+    const viewed = step === 'open' ? 'open_source' : step;
+    if (recap.current && !recap.current.steps_viewed.includes(viewed))
+      recap.current.steps_viewed.push(viewed);
     if (main.current) main.current.scrollTop = 0;
   }, [step, user.id]);
 
@@ -116,6 +126,10 @@ export function Onboarding({
       return;
     }
     const capture = analyticsForCurrentSession();
+    if (usageData && recap.current) {
+      capture('otto_onboarding_recap', recap.current);
+      recap.current = null;
+    }
     onComplete()
       .then(clearStored)
       .catch((cause) => {
@@ -153,7 +167,25 @@ export function Onboarding({
 
   function go(offset: 1 | -1) {
     const next = onboardingSteps[index + offset];
-    if (next) setPosition({ step: next, arrived: offset > 0 ? 'forward' : 'back' });
+    if (!next) return;
+    if (offset < 0 && recap.current) recap.current.went_back = true;
+    setPosition({ step: next, arrived: offset > 0 ? 'forward' : 'back' });
+  }
+
+  function skipped() {
+    if (
+      (step === 'welcome' || step === 'email' || step === 'telegram') &&
+      recap.current &&
+      !recap.current.steps_skipped.includes(step)
+    )
+      recap.current.steps_skipped.push(step);
+  }
+
+  async function changeUsage(enabled: boolean) {
+    await onUsageData!(enabled);
+    if (!enabled || !recap.current) return;
+    captureAnalytics('otto_onboarding_recap', recap.current);
+    recap.current = null;
   }
 
   function next() {
@@ -214,6 +246,7 @@ export function Onboarding({
           arrived={arrived}
           onNext={next}
           onBack={() => go(-1)}
+          onSkip={skipped}
           busy={step === 'open' && finishing}
           notice={
             step === 'open' &&
@@ -230,7 +263,7 @@ export function Onboarding({
           }
           usage={
             step === 'open' && onUsageData
-              ? { enabled: usageData, onChange: onUsageData }
+              ? { enabled: usageData, onChange: changeUsage }
               : undefined
           }
         />

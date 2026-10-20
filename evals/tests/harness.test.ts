@@ -108,7 +108,21 @@ test('decision results keep unsafe answers, model errors, and incomplete repeats
     );
 });
 
-const analyticsCase = (name: string) => analyticsCases.find((item) => item.id === name)!;
+const analyticsCase = (name: string) => {
+  const item = analyticsCases.find((found) => found.id === name)!;
+  return {
+    ...item,
+    expected: {
+      ...item.expected,
+      tasks: item.expected.tasks.map((task) => ({
+        use_case: 'other' as const,
+        context: 'unclear' as const,
+        collaboration: 'unclear' as const,
+        ...task,
+      })),
+    },
+  };
+};
 const analyticsAttempt = (name: string, output: unknown, attempt = 1) => ({
   case: name,
   equivalenceGroup: analyticsCase(name).equivalenceGroup,

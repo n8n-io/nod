@@ -173,6 +173,7 @@ configuration.ottoBuild = {
   ...(release ? { runtime: release.id } : {}),
   ...(updateSourceUrl ? { updateSourceUrl } : {}),
   ...(tracesToken ? { tracesToken } : {}),
+  ...(process.env.OTTO_RELEASE_BUILD === 'true' ? { release: true } : {}),
 };
 delete configuration.devDependencies;
 delete configuration.scripts;
