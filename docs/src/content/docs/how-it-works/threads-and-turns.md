@@ -79,11 +79,11 @@ A secure form closes when a newer turn starts in its session, and a payment requ
 
 ## Sessions
 
-| Session                | Key                                                             | Reports to the conversation                                                                                                          |
-| ---------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Main chat              | The thread ID.                                                  | Streams its opening line, then posts its final reply. Other text between tool calls is posted only when a turn ends without a reply. |
-| Task started from chat | The task ID, stored in `tasks.session_id`.                      | Sends questions, files and its final reply to the task's message.                                                                    |
-| Schedule or event      | Its first turn. A task record created there keeps that session. | Uses explicit delivery tools; a linked task also delivers its final reply.                                                           |
+| Session                | Key                                                             | Reports to the conversation                                                                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Main chat              | The thread ID.                                                  | Streams its opening line, posts a short update after a quiet stretch (1 minute on web, 3 in chat apps), then its final reply. Other text between tool calls is posted only when a turn ends without a reply. |
+| Task started from chat | The task ID, stored in `tasks.session_id`.                      | Sends questions, files and its final reply to the task's message.                                                                                                                                            |
+| Schedule or event      | Its first turn. A task record created there keeps that session. | Uses explicit delivery tools; a linked task also delivers its final reply.                                                                                                                                   |
 
 Every session saves its Pi history and opens its own browser on first use. Each runs one turn at a time; different sessions run in parallel.
 

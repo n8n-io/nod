@@ -1315,7 +1315,7 @@ test('delegated subagents run in parallel, each in its own browser, and answer a
   }
 });
 
-test('a turn posts its opening line and final reply, never the narration between tool calls', async (t) => {
+test('a turn posts its opening line, an update after a quiet stretch and its final reply, never other narration', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-narration-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const runtime = createAgentRuntime({
@@ -1335,6 +1335,7 @@ test('a turn posts its opening line and final reply, never the narration between
             await input.tools
               .find((item) => item.name === 'manage_personal_context')!
               .execute({ action: 'memory_find', args: { query: 'synthetic' } });
+            if (/after a quiet minute/.test(text)) t.mock.timers.tick(61_000);
           }
           const answer = /without an answer/.test(text) ? '' : 'The synthetic summary is ready.';
           input.onEvent({ type: 'message_start' });
@@ -1355,6 +1356,7 @@ test('a turn posts its opening line and final reply, never the narration between
     doneWhen: 'The summary is delivered.',
     revision: 1,
   };
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   try {
     for (const [prompt, taskContext, expected] of [
       [
@@ -1368,6 +1370,20 @@ test('a turn posts its opening line and final reply, never the narration between
         ['Reading the synthetic comments.', 'Found three synthetic threads.'],
       ],
       ['Summarize the synthetic comments', task, ['The synthetic summary is ready.']],
+      [
+        'Summarize the synthetic comments after a quiet minute',
+        undefined,
+        [
+          'Reading the synthetic comments.',
+          'Found three synthetic threads.',
+          'The synthetic summary is ready.',
+        ],
+      ],
+      [
+        'Summarize the synthetic comments after a quiet minute on telegram',
+        undefined,
+        ['Reading the synthetic comments.', 'The synthetic summary is ready.'],
+      ],
     ] as const) {
       const replies: string[] = [];
       const result = await runtime.runTurn({
@@ -1375,6 +1391,7 @@ test('a turn posts its opening line and final reply, never the narration between
         turnId: randomUUID(),
         prompt,
         ...(taskContext ? { taskContext, background: true } : {}),
+        ...(prompt.endsWith('on telegram') ? { channel: 'telegram' } : {}),
         reply: async (text) => {
           replies.push(text);
         },

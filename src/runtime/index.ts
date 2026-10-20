@@ -166,6 +166,7 @@ export function createAgentRuntime(dependencies: {
     let streamedText = '';
     let streamSubmitted = false;
     let firstMessage = true;
+    let lastSpoke = Date.now();
     let answered = false;
     let lastNote = '';
     let reported = false;
@@ -200,6 +201,7 @@ export function createAgentRuntime(dependencies: {
       await context.reply(trimmed, id, replyToMessageId);
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
+      lastSpoke = Date.now();
     };
     const reply = deliverReply;
     const pause = async (reason: 'question' | 'approval' | 'credentials', message?: string) => {
@@ -640,9 +642,16 @@ export function createAgentRuntime(dependencies: {
               !modelFailed &&
               (event.status === undefined || event.status === 'succeeded')
             ) {
-              if (firstMessage && !context.taskContext)
+              if (
+                !context.taskContext &&
+                (firstMessage ||
+                  Date.now() - lastSpoke >=
+                    (!context.channel || context.channel === 'web' ? 60_000 : 180_000))
+              ) {
                 queueStreamReply(text, streamId ?? randomUUID());
-              else lastNote = text;
+                lastSpoke = Date.now();
+                lastNote = '';
+              } else lastNote = text;
             }
             firstMessage = false;
             completeStream();
