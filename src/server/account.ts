@@ -21,6 +21,7 @@ export function createAccountSession(options: {
   analytics?: Analytics;
   model?(): { provider: string; name: string; configured: boolean };
   start?(ownerId: string, name?: string): Promise<void>;
+  onboardingReady?(): Promise<boolean>;
   traces?: boolean;
   onTraces?(enabled: boolean): void;
   desktopSetup?: boolean;
@@ -122,6 +123,16 @@ export function createAccountSession(options: {
         return reply.code(400).send({ error: 'Conversation traces are not available here.' });
       let onboardingCompletedNow = false;
       if (input.onboardingCompleted) {
+        if (options.onboardingReady && !(await options.accounts.read(owner)).onboardingCompleted) {
+          try {
+            if (!(await options.onboardingReady()))
+              return reply
+                .code(409)
+                .send({ error: 'Connect an AI provider and Gmail before finishing setup.' });
+          } catch {
+            return reply.code(503).send({ error: 'Could not verify setup. Try again.' });
+          }
+        }
         if (
           !(await start(reply, async () => {
             const account = await updateAccount(input);

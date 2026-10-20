@@ -115,7 +115,9 @@ export async function createSetupIntegrations(options: {
   }
   const read = async () => checked(await options.journal.read<State>(section));
   const update = async (change: (state: State) => State) => {
-    const result = await options.journal.update<State>(section, (value) => change(checked(value)));
+    const result = await options.journal.update<State>(section, (value) =>
+      checked(change(checked(value))),
+    );
     options.changed?.();
     return result;
   };
@@ -148,6 +150,8 @@ export async function createSetupIntegrations(options: {
   }
   const pending = (row: Pending) =>
     ['starting', 'pending', 'claimed'].includes(row.state) && row.expiresAt > Date.now();
+  const savedAccount = (row: Pending) =>
+    row.state === 'connected' || (row.state === 'uncertain' && Boolean(row.accountId));
   async function keyStatus(): Promise<IntegrationKeyStatus> {
     const state = await read();
     return {
@@ -196,7 +200,8 @@ export async function createSetupIntegrations(options: {
     const provider = providerFor(state);
     const rows = state.connections.filter(
       (row) =>
-        row.state === 'connected' &&
+        provider.configured &&
+        savedAccount(row) &&
         row.providerId === provider.id &&
         row.configurationId === provider.configurationId,
     );
@@ -205,13 +210,19 @@ export async function createSetupIntegrations(options: {
       const accounts = rows.filter((row) => row.slug === name);
       return (accounts.length ? accounts : [undefined]).map((row): Connection => ({
         ...info(name),
-        status: row ? 'connected' : provider.configured ? 'disconnected' : 'not_configured',
+        status:
+          row?.state === 'connected'
+            ? 'connected'
+            : provider.configured
+              ? 'disconnected'
+              : 'not_configured',
         ...(row
           ? {
               connectionId: row.id,
               accountId: row.accountId,
               accountName: row.accountName,
               accountEmail: row.accountEmail,
+              ...(row.state === 'uncertain' ? { disconnectPending: true } : {}),
             }
           : {}),
         triggersEnabled: false,
@@ -236,15 +247,7 @@ export async function createSetupIntegrations(options: {
         );
       if (state.apiKey === value && state.mode === (value ? 'own' : 'otto')) return keyStatus();
       const provider = providerFor(state);
-      for (const row of state.connections.filter((row) => row.state === 'connected')) {
-        await update((current) => ({
-          ...current,
-          connections: current.connections.map((entry) =>
-            entry.id === row.id ? { ...entry, state: 'uncertain' } : entry,
-          ),
-        }));
-        await provider.deleteAccount(row.accountId!, options.ownerId);
-      }
+      for (const row of state.connections.filter(savedAccount)) await removeAccount(row, provider);
       await update((current) => ({
         ...current,
         mode: value ? 'own' : 'otto',
@@ -273,6 +276,13 @@ export async function createSetupIntegrations(options: {
         throw new IntegrationError('This app is unavailable with the configured provider.', 503);
       if (state.connections.some(pending))
         throw new IntegrationError('Finish or cancel the current app sign-in first.', 409);
+      if (state.connections.some((row) => row.state === 'uncertain' && row.accountId))
+        throw new IntegrationError(
+          'Finish the pending disconnection before connecting again.',
+          409,
+        );
+      if (state.connections.filter(savedAccount).length >= 100)
+        throw new IntegrationError('Disconnect an account before adding another.', 409);
       if (
         state.connections.filter((row) => row.slug === service && row.state === 'connected')
           .length >= 10
@@ -293,7 +303,7 @@ export async function createSetupIntegrations(options: {
       };
       await update((current) => ({
         ...current,
-        connections: [...current.connections.filter((entry) => entry.state === 'connected'), row],
+        connections: [...current.connections.filter(savedAccount), row],
       }));
       let sessionId: string | undefined;
       try {
@@ -479,28 +489,53 @@ export async function createSetupIntegrations(options: {
       return { cancelled: true };
     });
   }
+  async function removeAccount(row: Pending, provider: IntegrationProvider) {
+    const currentProvider = () => {
+      if (row.providerId !== provider.id || row.configurationId !== provider.configurationId)
+        throw new IntegrationError('Your connection setup changed.', 409);
+    };
+    currentProvider();
+    let active = true;
+    if (row.state === 'uncertain') {
+      try {
+        const remote = await provider.inspectAccount(row.accountId!, options.ownerId, {
+          verifyOwner: true,
+        });
+        currentProvider();
+        if (remote.service !== row.slug)
+          throw new IntegrationError('This app connection changed. Try again.', 409);
+        active = remote.active;
+      } catch (error) {
+        currentProvider();
+        if (error && typeof error === 'object' && 'status' in error && error.status === 404)
+          active = false;
+        else throw error;
+      }
+    }
+    if (active) {
+      await update((current) => ({
+        ...current,
+        connections: current.connections.map((entry) =>
+          entry.id === row.id ? { ...entry, state: 'uncertain' } : entry,
+        ),
+      }));
+      await provider.deleteAccount(row.accountId!, options.ownerId);
+      currentProvider();
+    }
+    await update((current) => ({
+      ...current,
+      connections: current.connections.filter((entry) => entry.id !== row.id),
+    }));
+  }
   async function disconnect(service: string, id: string) {
     return serialize(async () => {
       const state = await read();
       writable(state);
-      const row = state.connections.find(
-        (entry) => entry.id === id && entry.slug === service && entry.state === 'connected',
-      );
-      if (!row) throw new IntegrationError('This account is unavailable.', 404);
-      const provider = providerFor(state);
-      if (row.providerId !== provider.id || row.configurationId !== provider.configurationId)
-        throw new IntegrationError('Your connection setup changed.', 409);
-      await update((current) => ({
-        ...current,
-        connections: current.connections.map((entry) =>
-          entry.id === id ? { ...entry, state: 'uncertain' } : entry,
-        ),
-      }));
-      await provider.deleteAccount(row.accountId!, options.ownerId);
-      await update((current) => ({
-        ...current,
-        connections: current.connections.filter((entry) => entry.id !== id),
-      }));
+      const row = state.connections.find((entry) => entry.id === id);
+      if (!row) return { disconnected: true };
+      if (row.slug !== service || !savedAccount(row))
+        throw new IntegrationError('This account is unavailable.', 404);
+      await removeAccount(row, providerFor(state));
       return { disconnected: true };
     });
   }
@@ -526,6 +561,8 @@ export async function createSetupIntegrations(options: {
         const state = await read();
         if (accessRequests > 0 || options.access.active() || state.connections.some(pending))
           throw new IntegrationError('Finish or cancel sign-in before continuing.', 409);
+        if (state.connections.some((row) => row.state === 'uncertain' && row.accountId))
+          throw new IntegrationError('Finish the pending disconnection before continuing.', 409);
         const saved = await update((current) => ({ ...current, sealed: true }));
         const provider = providerFor(saved);
         return transferSchema.parse({
@@ -647,6 +684,8 @@ export async function validateSetupIntegrations(input: unknown, options: ImportO
     throw new IntegrationError('This setup belongs to a different profile.', 409);
   if (parsed.mode === 'own') options.ownProvider.setApiKey?.(parsed.apiKey);
   const { value, provider } = checkedTransfer(parsed, options);
+  if (!provider.configured || !value.connections.some((row) => row.slug === 'gmail'))
+    throw new IntegrationError('Connect Gmail before continuing.', 409);
   const connections = [];
   for (const row of value.connections) {
     const remote = await provider.inspectAccount(row.accountId, options.ownerId, {
@@ -709,7 +748,7 @@ export async function importSetupIntegrations(
     await client.query(
       `INSERT INTO app_connections
       (id,owner_id,slug,account_id,provider_id,configuration_id,account_name,account_email,account_active,account_checked_at,watch_requested)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true,now(),false) ON CONFLICT(id) DO NOTHING`,
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true,now(),true) ON CONFLICT(id) DO NOTHING`,
       [
         row.id,
         options.ownerId,

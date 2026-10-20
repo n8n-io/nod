@@ -50,6 +50,28 @@ export async function createAppGrantVault(
     if (!row) throw new Error('This app grant is unavailable.');
     return { value: open(await key(), owner, validId, row.ciphertext), version: row.version };
   }
+  async function readMany(ids: string[], client: Pool | PoolClient = pool) {
+    const validIds = z.array(z.uuid()).parse(ids);
+    const values = new Map<string, { value: string; version: number }>();
+    if (!validIds.length) return values;
+    const rows = (
+      await client.query<{ id: string; ciphertext: string; version: number }>(
+        'SELECT id,ciphertext,version FROM vault_app_grants WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND (expires_at IS NULL OR expires_at>now())',
+        [validIds, owner],
+      )
+    ).rows;
+    if (!rows.length) return values;
+    const secret = await key();
+    for (const row of rows) {
+      try {
+        values.set(row.id, {
+          value: open(secret, owner, row.id, row.ciphertext),
+          version: row.version,
+        });
+      } catch {}
+    }
+    return values;
+  }
   async function replace(id: string, version: number, value: string) {
     const validId = z.uuid().parse(id);
     const result = await pool.query(
@@ -65,5 +87,5 @@ export async function createAppGrantVault(
       owner,
     ]);
   }
-  return { put, read, replace, remove };
+  return { put, read, readMany, replace, remove };
 }

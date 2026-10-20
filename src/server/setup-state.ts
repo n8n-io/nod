@@ -30,6 +30,51 @@ export const setupProgressSchema = z
     completing: z.boolean(),
   })
   .strict();
+const previousProgressSchema = z.union([
+  setupProgressSchema.extend({ version: z.literal(1) }),
+  setupProgressSchema.extend({
+    version: z.union([z.literal(1), z.literal(2)]),
+    about: z
+      .object({
+        answers: z.array(z.string().max(4000)).max(3),
+        turns: z
+          .array(
+            z
+              .object({
+                ack: z.array(z.string().max(1000)).max(8),
+                question: z.string().max(2000),
+              })
+              .strict(),
+          )
+          .max(4),
+      })
+      .strict()
+      .optional(),
+  }),
+]);
+export function readSetupProgress(raw: unknown) {
+  const current = setupProgressSchema.safeParse(raw);
+  if (current.success) return current.data;
+  const previous = previousProgressSchema.parse(raw);
+  const about = previous.about;
+  const converted =
+    about && 'done' in about
+      ? about
+      : about && {
+          answers: about.answers,
+          turns: about.turns.map(({ ack, question }) => [...ack, question].filter(Boolean)),
+          done: about.answers.length === 3,
+        };
+  const interview = setupProgressSchema.shape.about.safeParse(converted);
+  return setupProgressSchema.parse({
+    ...previous,
+    version: onboardingVersion,
+    about: interview.success ? interview.data : undefined,
+    ...(previous.version === 1 && !previous.completing
+      ? { step: 'welcome', visited: ['welcome'] }
+      : {}),
+  });
+}
 export const initialSetupProgress = () => ({
   version: onboardingVersion,
   step: 'welcome' as const,

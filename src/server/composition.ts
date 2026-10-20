@@ -88,6 +88,7 @@ import { createAccountStore } from './account-store.ts';
 import { createModelTraces, type ModelTraceGate } from './traces.ts';
 import { runtimeAccount } from './account-profile.ts';
 import { createAccountSession } from './account.ts';
+import { connectedGmail } from '../shared/onboarding.ts';
 import { createPostgresObjectStore } from './object-storage.ts';
 import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
 import { createPool, initializeDatabase, pool } from './db.ts';
@@ -237,6 +238,10 @@ export interface ApplicationAdapters {
 
 export function createDefaultAdapters(
   env: Record<string, string | undefined> = process.env,
+  legacyIntegration?: {
+    input: import('./integration-key.ts').LegacyIntegration;
+    acknowledge(): Promise<void>;
+  },
 ): ApplicationAdapters {
   const defaultFeedbackUrl = 'https://internal.users.n8n.cloud/webhook/otto/feedback';
   const feedbackUrl = env.OTTO_FEEDBACK_URL ?? defaultFeedbackUrl;
@@ -391,6 +396,12 @@ export function createDefaultAdapters(
       await models.initialize();
       await integrationProxy?.initialize();
       await integrationKey.initialize();
+      if (
+        desktopMode &&
+        legacyIntegration &&
+        (await integrationKey.importLegacy(legacyIntegration.input))
+      )
+        await legacyIntegration.acknowledge();
     },
     models,
     agent: createPiAgent({
@@ -1448,6 +1459,9 @@ async function initializeApplication(
     localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
     developerIds: desktopMode ? new Set() : new Set([ownerId]),
     start: (_owner, name) => welcome(name),
+    onboardingReady: async () =>
+      adapters.model.configured &&
+      (await integrations.list(ownerId, { refresh: false })).some(connectedGmail),
     traces: adapters.traces?.available ?? false,
     onTraces: (enabled) => adapters.traces?.configure({ enabled }),
   }).register(app);

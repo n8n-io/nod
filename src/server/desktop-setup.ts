@@ -2,12 +2,13 @@ import Fastify from 'fastify';
 import { z } from 'zod';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { DesktopSetupState } from '../shared/onboarding.ts';
-import { onboardingSteps, onboardingVersion } from '../shared/onboarding.ts';
+import { connectedGmail, onboardingSteps, onboardingVersion } from '../shared/onboarding.ts';
 import { registerLocalAccess } from './access.ts';
 import { createAccountSession } from './account.ts';
 import {
   createSetupAccount,
   initialSetupProgress,
+  readSetupProgress,
   setupProgressSchema,
   setupAccountSchema,
 } from './setup-state.ts';
@@ -38,10 +39,23 @@ export async function createDesktopSetup(options: {
     keyStore: options.keyStore,
   });
   const snapshot = await journal.snapshot();
+  let saved: ReturnType<typeof readSetupProgress>;
+  try {
+    saved = readSetupProgress(snapshot.sections.progress ?? initialSetupProgress());
+    if (
+      !snapshot.frozen &&
+      snapshot.sections.progress &&
+      JSON.stringify(saved) !== JSON.stringify(snapshot.sections.progress)
+    ) {
+      await journal.update('progress-previous', () => snapshot.sections.progress);
+      await journal.update('progress', () => saved);
+    }
+  } catch (error) {
+    await journal.close();
+    throw error;
+  }
   let frozen = snapshot.frozen;
-  let transferring =
-    frozen ||
-    setupProgressSchema.parse(snapshot.sections.progress ?? initialSetupProgress()).completing;
+  let transferring = frozen || saved.completing;
   let completed = false;
   let closing = false;
   let finishing: Promise<void> | undefined;
@@ -120,7 +134,7 @@ export async function createDesktopSetup(options: {
   }).register(app);
   registerAnalyticsRoutes(app, analytics.forOwner(options.ownerId));
   const progress = async () =>
-    setupProgressSchema.parse((await journal.read('progress')) ?? initialSetupProgress());
+    readSetupProgress((await journal.read('progress')) ?? initialSetupProgress());
   async function state(): Promise<DesktopSetupState> {
     const value = await progress();
     return {
@@ -161,6 +175,11 @@ export async function createDesktopSetup(options: {
           throw Object.assign(new Error('Finish or cancel sign-in before continuing.'), {
             statusCode: 409,
           });
+        if (
+          current.step === 'email' &&
+          !(await adapters?.integrations.list())?.some(connectedGmail)
+        )
+          throw Object.assign(new Error('Connect Gmail before continuing.'), { statusCode: 409 });
         if (current.step === 'about' && !(await journal.read('interview-saved')))
           throw Object.assign(new Error('Finish the introduction before continuing.'), {
             statusCode: 409,
@@ -258,6 +277,8 @@ export async function createDesktopSetup(options: {
         (await adapters.integrations.busy())
       )
         throw Object.assign(new Error('Finish or cancel sign-in first.'), { statusCode: 409 });
+      if (!(await adapters.integrations.list()).some(connectedGmail))
+        throw Object.assign(new Error('Connect Gmail before continuing.'), { statusCode: 409 });
       await journal.update('progress', () => ({ ...current, completing: true }));
       intentSaved = true;
       await adapters.telegram.close();

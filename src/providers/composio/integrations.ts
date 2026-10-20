@@ -281,7 +281,7 @@ export function createComposioProvider(options: {
   const files = createComposioFiles(options.fileDownload);
   const identities = new Map<string, AccountIdentity>();
   const pendingIdentities = new Map<string, Promise<AccountIdentity>>();
-  const authConfigs = Object.fromEntries(
+  let authConfigs = Object.fromEntries(
     Object.entries(options.proxy ? {} : (options.authConfigs ?? {}))
       .filter(
         (entry): entry is [string, string] =>
@@ -839,8 +839,15 @@ export function createComposioProvider(options: {
           : undefined)
       );
     },
-    setApiKey(apiKey) {
+    setApiKey(apiKey, configuration) {
       if (options.proxy) throw new Error('The integration provider is managed by Otto.');
+      if (configuration)
+        authConfigs = Object.fromEntries(
+          Object.entries(configuration).filter(
+            (entry): entry is [string, string] =>
+              typeof entry[1] === 'string' && entry[1].trim().length > 0,
+          ),
+        );
       client = connect(apiKey);
       currentApiKey = apiKey;
       catalog = undefined;

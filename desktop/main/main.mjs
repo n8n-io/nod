@@ -786,6 +786,15 @@ async function stopEarlySetup() {
   stoppingSetup = false;
 }
 
+function analyticsEnvironment(metadata) {
+  return !testInstall &&
+    app.isPackaged &&
+    metadata?.release === true &&
+    /^\d+\.\d+\.\d+$/.test(app.getVersion())
+    ? 'production'
+    : 'development';
+}
+
 function startEarlySetup() {
   if (startingSetup) return startingSetup;
   if (setupEngine || quitting) return Promise.resolve();
@@ -834,7 +843,7 @@ async function openEarlySetup() {
       OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),
       OTTO_APP_VERSION: app.getVersion(),
       OTTO_ANALYTICS_ENABLED: String(!testInstall && analytics.enabled),
-      OTTO_ANALYTICS_ENVIRONMENT: testInstall || !app.isPackaged ? 'development' : 'production',
+      OTTO_ANALYTICS_ENVIRONMENT: analyticsEnvironment(metadata),
       ...(metadata?.tracesToken ? { OTTO_TRACES_TOKEN: metadata.tracesToken } : {}),
       PI_CODING_AGENT_DIR: join(profileRoot, 'pi'),
     },
@@ -1024,40 +1033,54 @@ async function checkForUpdates(manual = true) {
     refreshUpdateMenu();
   };
   const checking = (async () => {
-    try {
-      const candidate = await updates.check();
-      updateFailed = false;
-      if (quitting) return;
-      if (!candidate) {
-        release();
-        if (manual)
-          await dialog.showMessageBox({ message: 'Otto is up to date.', buttons: ['OK'] });
+    let restarting = false;
+    while (!quitting) {
+      try {
+        if (restarting) {
+          await updates.restart();
+          return;
+        }
+        const candidate = updates.ready ?? (await updates.check());
+        updateFailed = false;
+        if (quitting) return;
+        if (!candidate) {
+          if (manual)
+            await dialog.showMessageBox({ message: 'Otto is up to date.', buttons: ['OK'] });
+          return;
+        }
+        if (!manual) {
+          await notifyUpdate(candidate);
+          return;
+        }
+        const { response } = await dialog.showMessageBox({
+          message: `Otto ${candidate.version} is ready.`,
+          buttons: ['Restart', 'Later'],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (response !== 0 || quitting) return;
+        restarting = true;
+        await updates.restart();
         return;
+      } catch (error) {
+        if (quitting) return;
+        if (!updates.ready) updateFailed = true;
+        await writeDiagnostic(error.message).catch(() => {});
+        if (!manual && !restarting) throw error;
+        const ready = Boolean(updates.ready);
+        const { response } = await dialog.showMessageBox({
+          type: 'info',
+          message: ready ? 'Couldn’t restart Otto' : 'Couldn’t check for updates',
+          detail: 'You can keep using Otto and try again later.',
+          buttons: [ready ? 'Retry restart' : 'Try again', 'Not now'],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (response !== 0 || quitting) return;
+        restarting = ready;
       }
-      if (!manual && (await notifyUpdate(candidate))) return;
-      release();
-      const { response } = await dialog.showMessageBox({
-        message: `Otto ${candidate.version} is ready.`,
-        buttons: ['Restart', 'Later'],
-        defaultId: 1,
-        cancelId: 1,
-        noLink: true,
-      });
-      if (response === 0 && !quitting) await updates.restart();
-    } catch (error) {
-      if (quitting) return;
-      if (!updates.ready) updateFailed = true;
-      await writeDiagnostic(error.message).catch(() => {});
-      if (!manual && !updates.ready) throw error;
-      release();
-      await dialog.showMessageBox({
-        type: 'warning',
-        message: updates.ready
-          ? 'Otto could not restart yet.'
-          : 'Otto could not check for updates.',
-        detail: bounded(error.message),
-        buttons: ['OK'],
-      });
     }
   })().finally(release);
   checkingUpdates = checking;
@@ -1239,6 +1262,12 @@ async function startEngine({ runtime, signal }) {
   await new Promise((accept) => setTimeout(accept, 50));
   if (quitting || signal.aborted) throw new Error('Otto is closing.');
   const providerEnvironment = await settings.environment();
+  let legacyIntegration = earlyCompleting
+    ? undefined
+    : await settings.legacyIntegration().catch(() => undefined);
+  if (legacyIntegration) knownSecrets.add(legacyIntegration.apiKey);
+  const legacyOwner = await profileOwner();
+  let legacyNonce;
   if (providerEnvironment.OTTO_VAULT_KEY) knownSecrets.add(providerEnvironment.OTTO_VAULT_KEY);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
   if (process.env.OTTO_FEEDBACK_TOKEN) knownSecrets.add(process.env.OTTO_FEEDBACK_TOKEN);
@@ -1257,17 +1286,12 @@ async function startEngine({ runtime, signal }) {
     PORT: String(port),
     OTTO_DESKTOP: 'true',
     OTTO_APP_VERSION: app.getVersion(),
-    OTTO_DESKTOP_OWNER_ID: await profileOwner(),
+    OTTO_DESKTOP_OWNER_ID: legacyOwner,
     OTTO_DESKTOP_AUTH_TOKEN: authToken,
     ...(earlyCompleting ? { OTTO_DESKTOP_SETUP_PENDING: 'true' } : {}),
+    ...(legacyIntegration ? { OTTO_DESKTOP_LEGACY_INTEGRATION: 'true' } : {}),
     OTTO_ANALYTICS_ENABLED: String(!testInstall && analytics.enabled),
-    OTTO_ANALYTICS_ENVIRONMENT:
-      !testInstall &&
-      app.isPackaged &&
-      ottoBuild?.release === true &&
-      /^\d+\.\d+\.\d+$/.test(app.getVersion())
-        ? 'production'
-        : 'development',
+    OTTO_ANALYTICS_ENVIRONMENT: analyticsEnvironment(ottoBuild),
     OTTO_PUBLIC_URL: engineOrigin,
     OTTO_DATA_ROOT: profileRoot,
     OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),
@@ -1290,6 +1314,43 @@ async function startEngine({ runtime, signal }) {
   });
   engine = child;
   child.on('message', (message) => {
+    if (engine === child && legacyIntegration && message?.ownerId === legacyOwner) {
+      if (
+        message.type === 'otto-legacy-integration-request' &&
+        !legacyNonce &&
+        typeof message.nonce === 'string' &&
+        /^[a-f0-9-]{36}$/.test(message.nonce)
+      ) {
+        legacyNonce = message.nonce;
+        child.postMessage({
+          type: 'otto-legacy-integration',
+          ownerId: legacyOwner,
+          nonce: legacyNonce,
+          ...legacyIntegration,
+        });
+      }
+      if (
+        message.type === 'otto-legacy-integration-ack' &&
+        legacyNonce &&
+        message.nonce === legacyNonce &&
+        message.receipt === legacyIntegration.receipt
+      ) {
+        const receipt = legacyIntegration.receipt;
+        void settings
+          .acknowledgeLegacyIntegration(receipt)
+          .then(() => {
+            legacyIntegration = undefined;
+            if (engine === child)
+              child.postMessage({
+                type: 'otto-legacy-integration-cleaned',
+                ownerId: legacyOwner,
+                nonce: legacyNonce,
+                receipt,
+              });
+          })
+          .catch(() => {});
+      }
+    }
     if (engine === child && message?.type === 'otto-ready' && message.port === port) {
       engineBound = true;
       if (typeof message.setupId === 'string') importedSetupId = message.setupId;

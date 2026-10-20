@@ -74,10 +74,8 @@ export function createOnboardingInterview(options: {
 
   async function remember(raw: unknown) {
     const { answers } = saveInput.parse(raw);
-    if (answers.some((text) => unsafe(text)))
-      throw new Error(
-        'Passwords, codes, card numbers and instructions to Otto can’t be saved as notes.',
-      );
+    if (answers.some((text) => unsafe(text)) || unsafe(answers.join('')))
+      throw new Error('Passwords, codes and card numbers can’t be saved as notes.');
     await options.memory.restate([
       { area: 'about', slug: 'onboarding', text: `Told Otto during setup: ${answers.join(' / ')}` },
     ]);

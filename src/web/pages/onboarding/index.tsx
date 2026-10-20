@@ -197,8 +197,7 @@ export function Onboarding({
   }
 
   function skipped() {
-    if (step === 'email' || step === 'telegram')
-      captureAnalytics('otto_onboarding_step_skipped', { step });
+    if (step === 'telegram') captureAnalytics('otto_onboarding_step_skipped', { step });
   }
 
   function next() {
@@ -225,6 +224,7 @@ export function Onboarding({
           onBack={() => void go(-1)}
           onSkip={skipped}
           busy={step === 'open' && finishing}
+          preparing={desktop ? desktop.state.runtime.phase !== 'ready' : preparation !== 'ready'}
           notice={
             step === 'open' &&
             (preparation === 'failed' || !!error) && (

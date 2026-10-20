@@ -90,7 +90,7 @@ export function useConnectionChoice(
         .filter(
           (app) =>
             app.connectionId &&
-            app.status === 'connected' &&
+            (app.status === 'connected' || app.disconnectPending) &&
             !app.direct &&
             !app.accessPaths?.length,
         )

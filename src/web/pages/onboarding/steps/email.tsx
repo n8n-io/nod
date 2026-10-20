@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Check, KeyRound, LoaderCircle } from 'lucide-react';
 import type { AppSetupStatus, Configuration, Connection } from '../../../../shared/contracts';
+import { connectedGmail } from '../../../../shared/onboarding';
 import {
   ConnectionChoice,
   connectionRoutes,
@@ -39,12 +40,13 @@ function connectionMessage(result?: string) {
   return '';
 }
 
-export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
+export function Email({ arrived, onNext, onBack }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const configuration = usePageData<Configuration>('/api/configuration');
   const apps = usePageData<Connection[]>('/api/apps');
   const refreshApps = apps.refresh;
   const [reloading, setReloading] = useState(false);
+  const [recovering, setRecovering] = useState<string>();
   const [pending, setPending] = useState<'opening' | 'waiting'>();
   const [pairingConfirmed, setPairingConfirmed] = useState(false);
   const [signInUrl, setSignInUrl] = useState<string>();
@@ -201,7 +203,8 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
   }, [signInUrl, refreshApps]);
 
   const gmail = apps.data?.filter((connection) => connection.slug === 'gmail') ?? [];
-  const account = gmail.find((connection) => connection.status === 'connected');
+  const disconnections = gmail.filter((connection) => connection.disconnectPending);
+  const account = gmail.find(connectedGmail);
   const connected = !!account;
   const keyNeeded = !!keyStatus && choice.mode !== keyStatus.mode;
   const personalSetup = !!keyStatus?.switchable;
@@ -215,10 +218,11 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
     !choice.view.notice &&
     !choice.loadError;
   const showGmail =
-    !!keyStatus &&
-    (!personalSetup ||
-      !!pending ||
-      (choice.ready && !keyNeeded && !choice.dirty && !choice.view.editing));
+    disconnections.length > 0 ||
+    (!!keyStatus &&
+      (!personalSetup ||
+        !!pending ||
+        (choice.ready && !keyNeeded && !choice.dirty && !choice.view.editing)));
   const loading = (!configuration.data && !configuration.error) || (!apps.data && !apps.error);
   const unavailable: keyof typeof unavailableReasons | undefined = loading
     ? undefined
@@ -230,6 +234,8 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
           ? undefined
           : 'gmail';
   const canConnect =
+    !disconnections.length &&
+    !recovering &&
     !loading &&
     !unavailable &&
     !keyNeeded &&
@@ -322,6 +328,26 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
     }
   }
 
+  async function retryDisconnection(id: string) {
+    if (request.current || recovering) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setRecovering(id);
+    setError('');
+    try {
+      await api(`/api/apps/gmail/accounts/${encodeURIComponent(id)}/disconnect`, {
+        method: 'POST',
+        signal: controller.signal,
+      });
+      await refreshApps();
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(errorMessage(cause));
+    } finally {
+      if (request.current === controller) request.current = null;
+      if (active.current) setRecovering(undefined);
+    }
+  }
+
   function cancel() {
     request.current?.abort();
     request.current = null;
@@ -337,7 +363,30 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
 
   const gmailState = connected ? 'connected' : (pending ?? 'idle');
   let status;
-  if (account)
+  if (disconnections.length)
+    status = (
+      <div className="ob-email-notes">
+        <p>Disconnection wasn’t confirmed. Retry to check its status and finish disconnecting.</p>
+        {disconnections.map((connection) => (
+          <div className="ob-email-retry" key={connection.connectionId ?? connection.accountId}>
+            {connection.accountEmail && (
+              <p className="ob-email-muted" data-analytics-private>
+                {connection.accountEmail}
+              </p>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!!recovering || !!pending || !connection.connectionId}
+              onClick={() => void retryDisconnection(connection.connectionId!)}
+            >
+              {recovering === connection.connectionId ? 'Checking…' : 'Retry disconnection'}
+            </Button>
+          </div>
+        ))}
+      </div>
+    );
+  else if (account)
     status = personalSetup ? null : (
       <p className="ob-email-done">
         {account.accountEmail ? (
@@ -426,7 +475,11 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
         className={personalSetup ? 'ob-email-card ob-email-card-personal' : 'ob-email-card'}
       >
         {(!personalSetup || !compactSetup || setupExpanded) && (
-          <ConnectionChoice state={choice} disabled={!!pending} className="ob-email-choice" />
+          <ConnectionChoice
+            state={choice}
+            disabled={!!pending || !!recovering}
+            className="ob-email-choice"
+          />
         )}
         {showGmail && (
           <div className="ob-email-gmail" data-gmail={gmailState}>
@@ -511,7 +564,7 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
               }}
               type="button"
               className="connection-link"
-              disabled={!!pending}
+              disabled={!!pending || !!recovering}
               aria-expanded={setupExpanded}
               onClick={() => setSetupExpanded((value) => !value)}
             >
@@ -523,16 +576,8 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
       <Footer
         show={revealed >= 4}
         onBack={onBack}
-        onSkip={
-          connected && showGmail
-            ? undefined
-            : () => {
-                onSkip?.();
-                onNext();
-              }
-        }
         onNext={onNext}
-        nextDisabled={!connected || !showGmail}
+        nextDisabled={!connected || !showGmail || !!disconnections.length || !!recovering}
       />
     </section>
   );

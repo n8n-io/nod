@@ -178,7 +178,7 @@ export interface IntegrationProvider {
   id: string;
   configured: boolean;
   configurationId?: string;
-  setApiKey?(apiKey?: string): void;
+  setApiKey?(apiKey?: string, authConfigs?: Partial<Record<IntegrationService, string>>): void;
   verifyApiKey?(apiKey: string): Promise<boolean>;
   supportedServices?: readonly IntegrationService[];
   listServices?(): Promise<IntegrationServiceInfo[]>;

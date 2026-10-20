@@ -135,6 +135,7 @@ test('early Telegram pairing preserves ordinary updates and never acknowledges t
 });
 
 test('early Telegram full backlog preserves messages and recovers through manual pairing', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const journal = setupTelegramJournal();
   const queue = Array.from({ length: 100 }, (_, index) => ({
     update_id: index + 1,
@@ -195,11 +196,12 @@ test('early Telegram full backlog preserves messages and recovers through manual
     message: { ...queue[0].message, message_id: 101, text: `/start ${code}` },
   });
   for (let attempt = 0; attempt < 100 && !telegram.error; attempt++)
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise<void>((resolve) => setImmediate(resolve));
   assert.ok(telegram.error);
   assert.equal((await settings.status()).channels[0].pairingCandidate, undefined);
   assert.equal(await journal.read('telegram-pairing'), undefined);
-  await new Promise((resolve) => setTimeout(resolve, 1600));
+  t.mock.timers.tick(60000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(requests.length, 1);
   assert.ok(requests.every((body) => !Object.hasOwn(body, 'offset')));
   const paired = await app.inject({

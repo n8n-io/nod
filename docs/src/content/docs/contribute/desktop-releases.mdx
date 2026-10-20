@@ -160,6 +160,7 @@ Use the isolated test installer to try onboarding without changing your normal O
 Build the current source first. The helper verifies and reuses the runtime already cached by `/Applications/Otto.app`, so it doesn't copy or download another runtime:
 
 ```sh title="Terminal"
+pnpm --dir desktop install --frozen-lockfile
 pnpm run build
 node desktop/scripts/test-install.mjs build
 node desktop/scripts/test-install.mjs fresh first-run

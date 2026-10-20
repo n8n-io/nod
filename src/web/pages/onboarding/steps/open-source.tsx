@@ -33,8 +33,8 @@ export function OpenSource({ arrived, onNext, onBack, busy, notice, preparing }:
             and your feedback shapes what I become.
           </Bubble>,
           <Bubble>
-            If something breaks or you have an idea, send us feedback. There’s a button for it in
-            the app. A screenshot helps a lot, and we read every message.
+            Once Otto opens, use Feedback in the app to report a problem or share an idea. A
+            screenshot helps, and we read every message.
           </Bubble>,
         ]}
       />
@@ -45,7 +45,7 @@ export function OpenSource({ arrived, onNext, onBack, busy, notice, preparing }:
       )}
       <Footer
         show={revealed >= sequence.length}
-        onBack={preparing ? undefined : onBack}
+        onBack={onBack}
         onNext={onNext}
         nextLabel={busy ? 'Opening Otto…' : 'Start chatting'}
         busy={busy}

@@ -337,15 +337,19 @@ async function runningDesktop(
     setupReady = true,
     fastSetupTimeout = false,
     initialState = 'running',
+    legacyKey,
     prepareRuntime,
     nativePageLoaded,
     protectNativeProfile = async () => {},
     setupCleanup,
     notificationsSupported = false,
+    webPreferences = { quietHoursEnabled: false },
     openFile = open,
     environment = {},
     platform = process.platform === 'win32' ? 'win32' : 'darwin',
     packaged = false,
+    buildMetadata,
+    version = '0.0.0-test',
     argv = [],
     prompt = () => assert.fail('No restart prompt is needed.'),
     reveal = () => assert.fail('No file should be revealed.'),
@@ -355,11 +359,24 @@ async function runningDesktop(
   await storage.store.save({
     onboardingCompleted: initialState !== 'fresh',
   });
+  if (legacyKey) {
+    await storage.store.environment();
+    const saved = JSON.parse(await readFile(storage.path, 'utf8'));
+    saved.secrets.composioApiKey = storage.encryption.encryptString(legacyKey).toString('base64');
+    saved.keyMetadata.composioApiKey = {
+      suffix: legacyKey.slice(-4),
+      source: 'manual',
+      updatedAt: '2026-10-08T00:00:00.000Z',
+    };
+    await writeFile(storage.path, JSON.stringify(saved));
+    storage.store = storage.reopen();
+  }
   const windows = [];
   const children = [];
   const paths = new Map();
   const handlers = new Map();
   const notifications = [];
+  const updateMenu = {};
   const ipc = Object.assign(new EventEmitter(), {
     handle: (name, handler) => handlers.set(name, handler),
   });
@@ -379,7 +396,7 @@ async function runningDesktop(
       setName() {},
       setPath: (name, path) => paths.set(name, path),
       getPath: (name) => paths.get(name) || dirname(storage.path),
-      getVersion: () => '0.0.0-test',
+      getVersion: () => version,
       requestSingleInstanceLock: () => false,
       getLoginItemSettings: () => ({ openAtLogin }),
       setLoginItemSettings: (value) => {
@@ -396,6 +413,7 @@ async function runningDesktop(
     ipcMain: ipc,
     session: { fromPartition: () => appSession },
     dialog: { showMessageBox: async (options) => prompt(options) },
+    Menu: { getApplicationMenu: () => ({ getMenuItemById: () => updateMenu }) },
     shell: { showItemInFolder: reveal },
     URL,
     dirname,
@@ -406,7 +424,10 @@ async function runningDesktop(
     pathToFileURL,
     mkdir,
     appendFile,
-    readFile,
+    readFile: (file, ...args) =>
+      buildMetadata && file === fileURLToPath(new URL('../package.json', import.meta.url))
+        ? Promise.resolve(JSON.stringify({ ottoBuild: buildMetadata }))
+        : readFile(file, ...args),
     open: openFile,
     rename,
     stat,
@@ -436,7 +457,7 @@ async function runningDesktop(
     createDesktopAnalytics,
     createAppPreferencesStore: () => ({
       sync: async () => {},
-      get: async () => ({ preferences: { quietHoursEnabled: false } }),
+      get: async () => ({ preferences: webPreferences }),
     }),
     createChatReadCursorStore: () => ({}),
     saveArtifactDownload,
@@ -563,6 +584,7 @@ async function runningDesktop(
     },
   };
   const source = (await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8'))
+    .replaceAll('\r\n', '\n')
     .replace(/^import[\s\S]*?;\n/gm, '')
     .replaceAll(
       'import.meta.url',
@@ -601,6 +623,7 @@ async function runningDesktop(
       setReady: (ready) => { status.phase = ready ? 'ready' : 'starting'; },
       status: () => status,
       notifyReady: updateReadinessNotice,
+      checkUpdates: (updater, manual = true) => { updates = updater; return checkForUpdates(manual); },
       crash: () => { engine = undefined; enginePreferencesReady = false; },
     };
     })()`,
@@ -620,9 +643,68 @@ async function runningDesktop(
     storage,
     handlers,
     notifications,
+    updateMenu,
     headers: (details) => new Promise((resolve) => requestHeaders(details, resolve)),
   };
 }
+
+test('early setup and the full engine use the same release boundary for analytics', async (t) => {
+  for (const scenario of [
+    {
+      name: 'stable release',
+      buildMetadata: { release: true },
+      version: '0.1.17',
+      expected: 'production',
+    },
+    {
+      name: 'staging build',
+      buildMetadata: { release: false },
+      version: '0.1.17',
+      expected: 'development',
+    },
+    {
+      name: 'prerelease',
+      buildMetadata: { release: true },
+      version: '0.1.17-test',
+      expected: 'development',
+    },
+    {
+      name: 'isolated test install',
+      buildMetadata: { release: true, testProfile: true },
+      version: '0.1.17',
+      expected: 'development',
+    },
+  ]) {
+    await t.test(scenario.name, async (t) => {
+      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+        initialState: 'frozen',
+        allowStart: true,
+        packaged: true,
+        buildMetadata: scenario.buildMetadata,
+        version: scenario.version,
+      });
+      try {
+        await f.launch();
+        await f.settle();
+        assert.deepEqual(
+          f.children.map((child) => child.kind),
+          ['setup', 'engine'],
+        );
+        assert.ok(
+          f.children.every(
+            (child) => child.environment.OTTO_ANALYTICS_ENVIRONMENT === scenario.expected,
+          ),
+        );
+        if (scenario.buildMetadata.testProfile)
+          assert.ok(
+            f.children.every((child) => child.environment.OTTO_ANALYTICS_ENABLED === 'false'),
+          );
+      } finally {
+        await f.close();
+      }
+    });
+  }
+});
 
 test('Windows early setup protects its profile before unlocking keys even without WSL', async (t) => {
   for (const failure of [false, true]) {
@@ -1065,6 +1147,7 @@ test('native frozen setup resumes handoff while completed upgrades skip early se
     await t.test(initialState, async (t) => {
       const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
         initialState,
+        legacyKey: initialState === 'frozen' ? 'synthetic-older-incomplete-project' : undefined,
         allowStart: true,
         argv: initialState === 'replay' ? ['--onboarding'] : [],
       });
@@ -1082,6 +1165,8 @@ test('native frozen setup resumes handoff while completed upgrades skip early se
           f.children.at(-1).environment.OTTO_DESKTOP_SETUP_PENDING,
           initialState === 'frozen' ? 'true' : undefined,
         );
+        assert.equal(f.children.at(-1).environment.OTTO_DESKTOP_LEGACY_INTEGRATION, undefined);
+        if (initialState === 'frozen') assert.ok(await f.storage.store.legacyIntegration());
         if (initialState === 'frozen') assert.equal(f.children[0].killed, true);
         else if (initialState === 'replay')
           assert.ok(f.windows.some((window) => window.url?.endsWith('/onboarding?replay=1')));
@@ -1099,6 +1184,89 @@ test('native frozen setup resumes handoff while completed upgrades skip early se
         await f.close();
       }
     });
+  }
+});
+
+test('native upgrade sends legacy credentials only to its current owned child and clears after exact acknowledgement', async (t) => {
+  const key = 'synthetic-private-upgrade-key';
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'upgrade',
+    allowStart: true,
+    legacyKey: key,
+  });
+  const before = await f.storage.store.environment();
+  try {
+    await f.launch();
+    await f.settle();
+    const child = f.children[0];
+    assert.equal(child.environment.OTTO_DESKTOP_LEGACY_INTEGRATION, 'true');
+    assert.equal(JSON.stringify(child.environment).includes(key), false);
+    assert.equal(JSON.stringify(await f.storage.store.get()).includes(key), false);
+    const ownerId = child.environment.OTTO_DESKTOP_OWNER_ID;
+    const nonce = randomUUID();
+    const request = { type: 'otto-legacy-integration-request', ownerId, nonce };
+    child.emit('message', { ...request, ownerId: randomUUID() });
+    child.emit('message', { ...request, nonce: 'invalid' });
+    assert.equal(child.sent.length, 0);
+    child.emit('message', request);
+    assert.equal(child.sent.length, 1);
+    const payload = child.sent[0];
+    assert.equal(payload.apiKey, key);
+    assert.equal(payload.ownerId, ownerId);
+    assert.equal(payload.nonce, nonce);
+    child.emit('message', request);
+    assert.equal(child.sent.length, 1);
+    const ack = { type: 'otto-legacy-integration-ack', ownerId, nonce, receipt: payload.receipt };
+    child.emit('message', { ...ack, ownerId: randomUUID() });
+    child.emit('message', { ...ack, nonce: randomUUID() });
+    child.emit('message', { ...ack, receipt: '0'.repeat(64) });
+    await new Promise(setImmediate);
+    assert.equal((await f.storage.store.legacyIntegration()).apiKey, key);
+    child.emit('message', ack);
+    for (let i = 0; i < 100 && child.sent.length < 2; i++)
+      await new Promise((accept) => setTimeout(accept, 10));
+    assert.equal(child.sent[1].type, 'otto-legacy-integration-cleaned');
+    assert.equal(await f.storage.store.legacyIntegration(), undefined);
+    assert.deepEqual(await f.storage.store.environment(), before);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+    assert.equal(f.children.length, 1);
+    assert.ok(f.windows.every((window) => !JSON.stringify(window.sent).includes(key)));
+    f.crash();
+    child.emit('message', request);
+    assert.equal(child.sent.length, 2);
+  } finally {
+    await f.close();
+  }
+});
+
+test('unreadable historical app ciphertext does not block a completed profile and remains recoverable', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'upgrade',
+    allowStart: true,
+    legacyKey: 'synthetic-older-key',
+  });
+  const before = await readFile(f.storage.path, 'utf8');
+  const ciphertext = JSON.parse(before).secrets.composioApiKey;
+  const decrypt = f.storage.encryption.decryptString;
+  f.storage.encryption.decryptString = (value) => {
+    if (value.toString('base64') === ciphertext) throw new Error('Synthetic old key cannot unlock');
+    return decrypt(value);
+  };
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.status().phase, 'ready');
+    assert.deepEqual(
+      f.children.map((child) => child.kind),
+      ['engine'],
+    );
+    assert.equal(f.children[0].environment.OTTO_DESKTOP_LEGACY_INTEGRATION, undefined);
+    assert.equal(await readFile(f.storage.path, 'utf8'), before);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+    f.storage.encryption.decryptString = decrypt;
+    assert.equal((await f.storage.store.legacyIntegration()).apiKey, 'synthetic-older-key');
+  } finally {
+    await f.close();
   }
 });
 
@@ -1618,7 +1786,7 @@ app.whenReady().then(async () => {
           `$ErrorActionPreference = 'Stop'
 $owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $expected = @($owner, 'S-1-5-18', 'S-1-5-32-544')
-$results = foreach ($path in @($env.OTTO_STORAGE_TEST_PROFILE, (Join-Path $env.OTTO_STORAGE_TEST_PROFILE 'settings.json'), (Join-Path $env.OTTO_STORAGE_TEST_PROFILE 'vault'))) {
+$results = foreach ($path in @($env:OTTO_STORAGE_TEST_PROFILE, (Join-Path $env:OTTO_STORAGE_TEST_PROFILE 'settings.json'), (Join-Path $env:OTTO_STORAGE_TEST_PROFILE 'vault'))) {
   $acl = Get-Acl -LiteralPath $path
   $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
   [pscustomobject]@{
@@ -1637,7 +1805,7 @@ ConvertTo-Json -InputObject @($results) -Compress`,
   },
 );
 
-test('legacy app keys never reach the desktop engine or renderer and its vault remains unchanged', async (t) => {
+test('legacy app keys migrate privately and remain encrypted until the exact durable acknowledgement', async (t) => {
   const f = await fixture(t);
   await f.store.environment();
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
@@ -1662,6 +1830,48 @@ test('legacy app keys never reach the desktop engine or renderer and its vault r
   assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).secrets, saved.secrets);
   assert.deepEqual(await f.reopen().environment(), { OTTO_VAULT_KEY: expectedVault });
   await assert.rejects(store.save({ composioApiKey: 'synthetic-replacement-key' }), /supported/);
+  const damaged = {
+    ...saved,
+    secrets: {
+      ...saved.secrets,
+      integrationConfiguration: f.encryption
+        .encryptString('synthetic-private-malformed-config')
+        .toString('base64'),
+    },
+  };
+  await writeFile(f.path, JSON.stringify(damaged));
+  await assert.rejects(
+    f.reopen().legacyIntegration(),
+    (error) => error.message === 'Otto could not open its saved app connection.',
+  );
+  await writeFile(f.path, JSON.stringify({ ...saved, theme: 'dark', notifications: true }));
+  const pending = await store.legacyIntegration();
+  assert.equal(pending.apiKey, secret);
+  assert.deepEqual(pending.authConfigs, { gmail: 'synthetic-retired-config' });
+  assert.deepEqual(await f.reopen().legacyIntegration(), pending);
+  await assert.rejects(store.acknowledgeLegacyIntegration('0'.repeat(64)), /changed/);
+  const replaced = {
+    ...saved,
+    secrets: {
+      ...saved.secrets,
+      composioApiKey: f.encryption
+        .encryptString('synthetic-replaced-legacy-key')
+        .toString('base64'),
+    },
+  };
+  await writeFile(f.path, JSON.stringify(replaced));
+  await assert.rejects(store.acknowledgeLegacyIntegration(pending.receipt), /changed/);
+  assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).secrets, replaced.secrets);
+  await writeFile(f.path, JSON.stringify({ ...saved, theme: 'dark', notifications: true }));
+  assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).secrets, saved.secrets);
+  await store.acknowledgeLegacyIntegration(pending.receipt);
+  assert.equal(await f.reopen().legacyIntegration(), undefined);
+  const migrated = JSON.parse(await readFile(f.path, 'utf8'));
+  assert.deepEqual(migrated.secrets, { vaultKey: saved.secrets.vaultKey });
+  assert.deepEqual(migrated.keyMetadata, {});
+  assert.equal(migrated.theme, 'dark');
+  assert.equal(migrated.notifications, true);
+  assert.deepEqual(await f.reopen().environment(), { OTTO_VAULT_KEY: expectedVault });
 });
 
 test('macOS settings unlock asynchronously without rewriting existing ciphertext or calling synchronous storage', async (t) => {
@@ -2306,6 +2516,7 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
   const calls = [];
   const source = createUpdateSource({
     sourceUrl,
+    os: 'darwin',
     arch,
     fetch: async (url, options) => {
       calls.push(url);
@@ -2363,6 +2574,200 @@ test('an incomplete newest release falls back to the next newer complete release
     assert.equal((await f.source.latest('0.1.0')).version, '0.2.0');
     f.release.assets = [];
     await assert.rejects(f.source.latest('0.1.0'), /incomplete/);
+  }
+});
+
+test(
+  'manual update failures fence concurrent requests and retry only after an explicit choice without exposing diagnostics',
+  { timeout: 10_000 },
+  async (t) => {
+    const failure = new Error(
+      'Synthetic updater transport failure https://updates.example.invalid/private',
+    );
+    const firstCheck = deferred();
+    const displayed = deferred();
+    const decision = deferred();
+    const prompts = [];
+    let checks = 0;
+    const updater = {
+      check: async () => {
+        checks++;
+        if (checks === 1) return firstCheck.promise;
+      },
+    };
+    const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+      prompt: (options) => {
+        prompts.push(options);
+        if (prompts.length === 1) {
+          displayed.resolve();
+          return decision.promise;
+        }
+        return { response: 0 };
+      },
+    });
+    const initial = f.checkUpdates(updater);
+    const duplicate = f.checkUpdates(updater);
+    firstCheck.reject(failure);
+    await displayed.promise;
+    const duringDialog = f.checkUpdates(updater);
+    try {
+      await new Promise(setImmediate);
+      assert.equal(checks, 1);
+      assert.equal(prompts.length, 1);
+      assert.equal(f.updateMenu.enabled, false);
+      assert.equal(JSON.stringify(prompts).includes('Synthetic updater transport failure'), false);
+      decision.resolve({ response: 0 });
+      await Promise.all([initial, duplicate, duringDialog]);
+      assert.equal(checks, 2);
+      assert.equal(prompts.length, 2);
+      assert.equal(f.updateMenu.enabled, true);
+      await f.checkUpdates(updater);
+      assert.equal(checks, 3);
+      const diagnostic = await readFile(join(f.profileRoot, 'logs/startup.log'), 'utf8');
+      assert.match(diagnostic, /Synthetic updater transport failure/);
+      assert.equal(diagnostic.includes('https://updates.example.invalid/private'), false);
+    } finally {
+      decision.resolve({ response: 1 });
+      await Promise.allSettled([initial, duplicate, duringDialog]);
+    }
+  },
+);
+
+test('declining a manual update retry and failed background checks never repeat work or show background errors', async (t) => {
+  for (const manual of [true, false]) {
+    let checks = 0;
+    const prompts = [];
+    const updater = {
+      check: async () => {
+        checks++;
+        throw new Error('Synthetic update service unavailable');
+      },
+    };
+    const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+      prompt: (options) => {
+        prompts.push(options);
+        return { response: 1 };
+      },
+    });
+    if (manual) await f.checkUpdates(updater);
+    else
+      await assert.rejects(f.checkUpdates(updater, false), /Synthetic update service unavailable/);
+    assert.equal(checks, 1);
+    assert.equal(prompts.length, manual ? 1 : 0);
+    assert.equal(JSON.stringify(prompts).includes('Synthetic update service unavailable'), false);
+    assert.equal(f.updateMenu.enabled, true);
+  }
+});
+
+test(
+  'explicit restart retries retain the verified update and never download it again',
+  { timeout: 10_000 },
+  async (t) => {
+    for (const retry of [true, false]) {
+      const candidate = { version: '0.2.0', feedUrl: 'https://updates.example.invalid/pinned' };
+      let selections = 0;
+      let preparations = 0;
+      let downloads = 0;
+      let restarts = 0;
+      const native = new EventEmitter();
+      native.setFeedURL = () => {};
+      native.checkForUpdates = () => {
+        downloads++;
+        queueMicrotask(() => native.emit('update-downloaded', {}, '', 'Otto 0.2.0'));
+      };
+      const updater = createDesktopUpdater({
+        source: {
+          latest: async () => {
+            selections++;
+            return candidate;
+          },
+        },
+        currentVersion: '0.1.0',
+        native,
+        prepareRuntime: async () => {
+          preparations++;
+        },
+        restart: async () => {
+          restarts++;
+          if (restarts === 1) throw new Error('Synthetic native restart failure');
+        },
+      });
+      t.after(() => updater.dispose());
+      const prompts = [];
+      const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+        prompt: (options) => {
+          prompts.push(options);
+          return { response: prompts.length === 2 && !retry ? 1 : 0 };
+        },
+      });
+      await f.checkUpdates(updater);
+      assert.equal(restarts, retry ? 2 : 1);
+      assert.equal(prompts.length, 2);
+      assert.equal(updater.ready, candidate);
+      assert.equal(JSON.stringify(prompts).includes('Synthetic native restart failure'), false);
+      if (!retry) {
+        await f.checkUpdates(updater);
+        assert.equal(restarts, 2);
+      }
+      assert.equal(selections, 1);
+      assert.equal(preparations, 1);
+      assert.equal(downloads, 1);
+      assert.equal(f.updateMenu.enabled, true);
+    }
+  },
+);
+
+test('background update readiness respects notification permission and quiet time without opening or repeating a dialog', async (t) => {
+  for (const scenario of [
+    { enabled: false, supported: true, quiet: false, expected: 0 },
+    { enabled: true, supported: false, quiet: false, expected: 0 },
+    { enabled: true, supported: true, quiet: true, expected: 0 },
+    { enabled: true, supported: true, quiet: false, expected: 1 },
+  ]) {
+    const candidate = { version: '0.2.0' };
+    let selections = 0;
+    const updater = createDesktopUpdater({
+      source: {
+        latest: async () => {
+          selections++;
+          return candidate;
+        },
+      },
+      currentVersion: '0.1.0',
+      prepareRuntime: async () => {},
+      restart: async () => assert.fail('Background readiness cannot restart Otto.'),
+    });
+    t.after(() => updater.dispose());
+    const prompts = [];
+    const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+      notificationsSupported: scenario.supported,
+      webPreferences: {
+        quietHoursEnabled: scenario.quiet,
+        timeZone: 'UTC',
+        quietStart: new Date(Date.now() - 3_600_000).toISOString().slice(11, 16),
+        quietEnd: new Date(Date.now() + 3_600_000).toISOString().slice(11, 16),
+      },
+      prompt: (options) => {
+        prompts.push(options);
+        return { response: 1 };
+      },
+    });
+    await f.showSettings();
+    const window = f.windows.at(-1);
+    await f.handlers.get('otto:settings:save')(
+      { sender: window.webContents, senderFrame: window.webContents.mainFrame },
+      { notifications: scenario.enabled },
+    );
+    await f.checkUpdates(updater, false);
+    await f.checkUpdates(updater, false);
+    assert.equal(prompts.length, 0);
+    assert.equal(f.notifications.length, scenario.expected);
+    assert.equal(updater.ready, candidate);
+    assert.equal(f.updateMenu.enabled, true);
+    if (scenario.expected) f.notifications[0].emit('click');
+    await f.checkUpdates(updater);
+    assert.equal(prompts.length, 1);
+    assert.equal(selections, 1);
   }
 });
 

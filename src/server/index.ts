@@ -1,11 +1,30 @@
 import { pool } from './db.ts';
-import { dataRoot, desktopMode, port, webRoot } from './config.ts';
+import { dataRoot, desktopMode, ownerId, port, webRoot } from './config.ts';
 import { accessKey } from './access.ts';
 import { createApplication, createDefaultAdapters } from './composition.ts';
+import { receiveLegacyIntegration } from './integration-key.ts';
 
 let stopping = false;
 let closeApplication: (() => Promise<void>) | undefined;
-const { app, desktopSetupId } = await createApplication(createDefaultAdapters());
+const parent = (
+  process as NodeJS.Process & {
+    parentPort?: Parameters<typeof receiveLegacyIntegration>[0]['parent'];
+  }
+).parentPort;
+const legacyIntegration =
+  desktopMode && process.env.OTTO_DESKTOP_LEGACY_INTEGRATION === 'true'
+    ? await receiveLegacyIntegration({
+        ownerId,
+        parent:
+          parent ??
+          (() => {
+            throw new Error('Desktop upgrade requires Otto.');
+          })(),
+      })
+    : undefined;
+const { app, desktopSetupId } = await createApplication(
+  createDefaultAdapters(process.env, legacyIntegration),
+);
 closeApplication = () => app.close();
 if (!desktopMode && process.env.NODE_ENV !== 'production') {
   const { createServer } = await import('vite');

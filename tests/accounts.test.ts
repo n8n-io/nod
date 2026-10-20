@@ -92,6 +92,7 @@ describe('account routes', () => {
     analytics?: Analytics,
     onTraces?: (enabled: boolean) => void,
     key?: string,
+    onboardingReady?: () => Promise<boolean>,
   ) {
     let record: StoredAccount = {
       theme: 'system',
@@ -141,10 +142,45 @@ describe('account routes', () => {
       },
       traces: onTraces !== undefined,
       onTraces,
+      onboardingReady,
     }).register(app);
     await app.ready();
     return { app, calls, record: () => record };
   }
+
+  test('first completion requires setup readiness without rechecking a completed profile', async (t) => {
+    let ready = false;
+    let failed = false;
+    let checked = 0;
+    const f = await fixture(undefined, undefined, undefined, undefined, async () => {
+      checked++;
+      if (failed) throw new Error('Synthetic provider outage');
+      return ready;
+    });
+    t.after(() => f.app.close());
+    const complete = () =>
+      f.app.inject({
+        method: 'PATCH',
+        url: '/api/account',
+        headers: { origin },
+        payload: { onboardingCompleted: true },
+      });
+    assert.equal((await complete()).statusCode, 409);
+    assert.equal(f.record().onboardingCompleted, false);
+    assert.equal(f.calls.writes, 0);
+    assert.equal(f.calls.started.length, 0);
+    failed = true;
+    assert.equal((await complete()).statusCode, 503);
+    assert.equal(f.record().onboardingCompleted, false);
+    failed = false;
+    ready = true;
+    assert.equal((await complete()).statusCode, 200);
+    assert.equal(f.record().onboardingCompleted, true);
+    const checks = checked;
+    ready = false;
+    assert.equal((await complete()).statusCode, 200);
+    assert.equal(checked, checks);
+  });
 
   test('usage data stays off until the owner opts in and the environment switch always wins', async (t) => {
     for (const available of [true, false]) {
@@ -1156,6 +1192,137 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     };
   }
 
+  test('model store batches owned credential reads with one key unlock and rejects unavailable grants', async (t) => {
+    const f = await fixture(t);
+    const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    const owner = await f.create('fixture-owner');
+    const ids = await Promise.all(
+      ['one', 'two', 'three'].map((name) => owner.addKey('openai', `fixture-${name}`)),
+    );
+    const other = await f.create('fixture-other');
+    const foreign = await other.addKey('openai', 'fixture-foreign');
+    const originalKey = f.keyStore.getKey;
+    let unlocks = 0;
+    f.keyStore.getKey = async () => {
+      unlocks++;
+      return originalKey();
+    };
+    const store = createDatabaseModelStore({
+      database: f.database,
+      ownerId: 'fixture-owner',
+      keyStore: f.keyStore,
+    });
+    await store.initialize();
+    const state = await store.read();
+    assert.equal(unlocks, 1);
+    assert.deepEqual(new Set(state.connections.map((row) => row.id)), new Set(ids));
+    assert.ok(state.connections.every((row) => row.credential?.type === 'api_key'));
+    unlocks = 0;
+    await store.change(() => {});
+    assert.equal(unlocks, 1);
+    await f.database.query('UPDATE vault_app_grants SET expires_at=now() WHERE id=$1', [ids[0]]);
+    await f.database.query(
+      'UPDATE vault_app_grants SET ciphertext=(SELECT ciphertext FROM vault_app_grants WHERE id=$2) WHERE id=$1',
+      [ids[1], foreign],
+    );
+    unlocks = 0;
+    const unavailable = await store.read();
+    assert.equal(unlocks, 1);
+    assert.equal(unavailable.connections.find((row) => row.id === ids[0])?.credential, undefined);
+    assert.equal(unavailable.connections.find((row) => row.id === ids[1])?.credential, undefined);
+    assert.equal(
+      unavailable.connections.find((row) => row.id === ids[2])?.credential?.type,
+      'api_key',
+    );
+    assert.ok(!JSON.stringify(unavailable).includes('fixture-foreign'));
+    f.keyStore.getKey = async () => {
+      throw new Error('Synthetic locked key store');
+    };
+    assert.ok((await store.read()).connections.every((row) => !row.credential));
+  });
+
+  test('catalog refresh releases the owner lock and rejects changed or removed model credentials', async (t) => {
+    for (const change of ['selection', 'credential', 'reconnect', 'remove'] as const) {
+      await t.test(change, async (t) => {
+        const f = await fixture(t);
+        const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+        let release!: () => void;
+        let entered!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const started = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        let waiting = false;
+        const owner = await f.create('fixture-owner', {
+          ...f.backend,
+          async catalog(...args: Parameters<typeof f.backend.catalog>) {
+            const models = await f.backend.catalog(args[0], args[1], args[2]);
+            if (waiting) {
+              entered();
+              await gate;
+            }
+            return models;
+          },
+        });
+        const id = await owner.addKey('openai', 'fixture-original-key');
+        const otherId = await owner.addKey('openai', 'fixture-second-key');
+        const store = createDatabaseModelStore({
+          database: f.database,
+          ownerId: 'fixture-owner',
+          keyStore: f.keyStore,
+        });
+        await store.initialize();
+        waiting = true;
+        const refreshing = owner.refreshCatalog(id);
+        const outcome = refreshing.then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        await started;
+        const client = await f.database.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query('SELECT key FROM otto_locks WHERE key=$1 FOR UPDATE NOWAIT', [
+            'models:fixture-owner',
+          ]);
+          await client.query('ROLLBACK');
+          if (change === 'selection') {
+            const model = owner.view().connections.find((row) => row.id === otherId)!.models[0];
+            await owner.select({
+              connectionId: otherId,
+              modelId: model.id,
+              effort: model.efforts[0],
+            });
+          } else if (change === 'remove') await owner.remove(id);
+          else
+            await store.change((state) => {
+              const row = state.connections.find((item) => item.id === id)!;
+              if (change === 'credential')
+                row.credential = { type: 'api_key', key: 'fixture-new-key' };
+              else row.status = 'reconnect';
+            });
+          const before = await store.read();
+          release();
+          const error = await outcome;
+          if (change === 'selection') {
+            assert.equal(error, undefined);
+            assert.equal(owner.view().selection?.connectionId, otherId);
+          } else {
+            assert.ok(error instanceof Error);
+            assert.deepEqual(await store.read(), before);
+          }
+        } finally {
+          await client.query('ROLLBACK');
+          client.release();
+          release();
+          await outcome;
+        }
+      });
+    }
+  });
+
   test('desktop model import is atomic, keeps existing selection and refuses stale credentials', async (t) => {
     const f = await fixture(t);
     const { createSetupModels, importSetupModels } = await import('../src/server/setup-models.ts');
@@ -1847,6 +2014,23 @@ describe('desktop setup handoff', () => {
     let adapterStarts = 0;
     let busyCheck = async () => false;
     let failTransfer = false;
+    const gmailId = randomUUID();
+    let gmail: import('../src/shared/contracts.ts').Connection[] = [];
+    const setGmail = (value?: Partial<import('../src/shared/contracts.ts').Connection>) => {
+      gmail = value
+        ? [
+            {
+              slug: 'gmail',
+              name: 'Gmail',
+              status: 'connected',
+              connectionId: gmailId,
+              accountId: 'fixture-gmail',
+              triggersEnabled: false,
+              ...value,
+            },
+          ]
+        : [];
+    };
     const resumed: boolean[] = [];
     let model!: ReturnType<typeof createSetupModels>;
     let channels!: Awaited<ReturnType<typeof createSetupChannels>>;
@@ -1937,9 +2121,26 @@ describe('desktop setup handoff', () => {
             integrations: {
               onSecrets: () => {},
               busy: () => busyCheck(),
+              list: async () => gmail,
               transfer: async () => {
                 if (failTransfer) throw new Error('Synthetic transfer failure');
-                return { ownerId, mode: 'otto', providerId: 'fixture', connections: [] };
+                return {
+                  ownerId,
+                  mode: 'otto',
+                  providerId: 'fixture',
+                  configurationId: 'a'.repeat(64),
+                  connections: gmail.map(() => ({
+                    id: gmailId,
+                    slug: 'gmail',
+                    providerId: 'fixture',
+                    configurationId: 'a'.repeat(64),
+                    state: 'connected',
+                    callbackHash: 'b'.repeat(64),
+                    expiresAt: Date.now() + 60000,
+                    accountId: 'fixture-gmail',
+                    linkHash: 'c'.repeat(64),
+                  })),
+                };
               },
               close: async () => {},
               register(app: import('fastify').FastifyInstance) {
@@ -2015,6 +2216,7 @@ describe('desktop setup handoff', () => {
         ).statusCode,
         200,
       );
+      setGmail({});
       for (const step of ['email', 'about'])
         assert.equal(
           (await request(setup, 'PATCH', '/api/desktop/setup', { step })).statusCode,
@@ -2084,8 +2286,149 @@ describe('desktop setup handoff', () => {
       failTransfer: (value: boolean) => {
         failTransfer = value;
       },
+      setGmail,
     };
   }
+
+  test('unfinished setup upgrades known progress formats without losing connections, consent or answers', async (t) => {
+    for (const scenario of [{ version: 1 }, { version: 2 }, { version: 2, longAnswer: true }]) {
+      const { version, longAnswer } = scenario;
+      await t.test(
+        `version ${version}${longAnswer ? ' with previous answer limit' : ''}`,
+        async (t) => {
+          const f = await fixture(t);
+          const setup = await f.create();
+          await f.complete(setup, false, true);
+          await setup.app.close();
+          const { createSetupJournal } = await import('../src/server/setup-journal.ts');
+          const journal = await createSetupJournal({
+            root: f.root,
+            ownerId: f.ownerId,
+            keyStore: f.keyStore,
+          });
+          const original = await journal.snapshot();
+          const about =
+            version === 1
+              ? { answers: ['Fixture project'], turns: [['Fixture question?']], done: false }
+              : {
+                  answers: [longAnswer ? 'A'.repeat(1500) : 'Fixture project'],
+                  turns: [{ ack: ['Fixture acknowledgement'], question: 'Fixture question?' }],
+                };
+          await journal.update('progress', () => ({
+            version,
+            step: 'about',
+            visited: ['welcome', 'brain', 'email', 'about'],
+            about,
+            completing: false,
+          }));
+          await journal.close();
+          const resumed = await f.create();
+          const state = (await f.request(resumed, 'GET', '/api/desktop/setup')).json();
+          assert.equal(state.version, 2);
+          assert.equal(state.step, version === 1 ? 'welcome' : 'about');
+          if (longAnswer) assert.equal(state.about, undefined);
+          else {
+            assert.deepEqual(state.about.answers, about.answers);
+            assert.ok(state.about.turns.every(Array.isArray));
+          }
+          assert.equal(state.completing, false);
+          assert.equal(f.model().configured, true);
+          await resumed.app.close();
+          const restored = await createSetupJournal({
+            root: f.root,
+            ownerId: f.ownerId,
+            keyStore: f.keyStore,
+          });
+          const next = await restored.snapshot();
+          assert.equal(next.id, original.id);
+          for (const [section, value] of Object.entries(original.sections))
+            if (section !== 'progress') assert.deepEqual(next.sections[section], value);
+          assert.deepEqual((next.sections['progress-previous'] as { about: unknown }).about, about);
+          const migrated = next.sections.progress;
+          await restored.close();
+          const again = await f.create();
+          assert.deepEqual((await f.request(again, 'GET', '/api/desktop/setup')).json(), state);
+          await again.app.close();
+          const twice = await createSetupJournal({
+            root: f.root,
+            ownerId: f.ownerId,
+            keyStore: f.keyStore,
+          });
+          assert.deepEqual(await twice.read('progress'), migrated);
+          await twice.close();
+        },
+      );
+    }
+  });
+
+  test('frozen legacy setup resumes without changing its receipt and future progress is rejected', async (t) => {
+    const { openVaultValue, sealVaultValue } = await import('../src/server/vault-crypto.ts');
+    for (const version of [1, 3]) {
+      await t.test(`version ${version}`, async (t) => {
+        const f = await fixture(t);
+        const setup = await f.create();
+        await f.complete(setup);
+        await setup.app.close();
+        const path = join(f.root, 'onboarding', 'pending');
+        const key = await f.keyStore.getKey();
+        const binding = ['otto-desktop-setup-v1', f.ownerId];
+        const snapshot = JSON.parse(openVaultValue(key, binding, await readFile(path, 'utf8')));
+        snapshot.sections.progress.version = version;
+        const bytes = sealVaultValue(key, binding, JSON.stringify(snapshot));
+        await writeFile(path, bytes, { mode: 0o600 });
+        if (version === 3) await assert.rejects(f.create());
+        else {
+          const resumed = await f.create();
+          await resumed.resume();
+          assert.equal(f.adapterStarts(), 1);
+          assert.equal(f.finished(), 2);
+          const status = (await f.request(resumed, 'GET', '/api/desktop/setup')).json();
+          assert.equal(status.version, 2);
+          assert.equal(status.step, 'open');
+          assert.equal(status.completing, true);
+          await resumed.app.close();
+        }
+        assert.equal(await readFile(path, 'utf8'), bytes);
+      });
+    }
+  });
+
+  test('Gmail is required at the email step and rechecked before freezing setup', async (t) => {
+    const f = await fixture(t);
+    const setup = await f.create();
+    await f.complete(setup, false);
+    f.setGmail();
+    assert.equal((await f.request(setup, 'POST', '/api/desktop/setup/complete')).statusCode, 409);
+    assert.equal((await f.request(setup, 'GET', '/api/desktop/setup')).json().completing, false);
+    assert.equal(f.finished(), 0);
+    for (const step of ['telegram', 'about', 'email'])
+      assert.equal(
+        (await f.request(setup, 'PATCH', '/api/desktop/setup', { step })).statusCode,
+        200,
+      );
+    for (const invalid of [
+      undefined,
+      { status: 'disconnected' as const },
+      { reconnectRequired: true },
+      { slug: 'slack' },
+      { accountId: undefined },
+    ]) {
+      f.setGmail(invalid);
+      assert.equal(
+        (await f.request(setup, 'PATCH', '/api/desktop/setup', { step: 'about' })).statusCode,
+        409,
+      );
+      assert.equal((await f.request(setup, 'GET', '/api/desktop/setup')).json().step, 'email');
+    }
+    f.setGmail({});
+    for (const step of ['about', 'telegram', 'open'])
+      assert.equal(
+        (await f.request(setup, 'PATCH', '/api/desktop/setup', { step })).statusCode,
+        200,
+      );
+    assert.equal((await f.request(setup, 'POST', '/api/desktop/setup/complete')).statusCode, 202);
+    assert.equal(f.finished(), 1);
+  });
 
   test('the host setup API enforces desktop authentication and step prerequisites without database services', async (t) => {
     const f = await fixture(t);
@@ -2268,6 +2611,13 @@ describe('desktop setup handoff', () => {
       const verifiedChannelCalls = [...f.channelCalls];
       assert.deepEqual(verifiedChannelCalls, ['getMe', 'getWebhookInfo']);
       await setup.app.close();
+      const { openVaultValue, sealVaultValue } = await import('../src/server/vault-crypto.ts');
+      const journalKey = await f.keyStore.getKey();
+      const binding = ['otto-desktop-setup-v1', f.ownerId];
+      const legacy = JSON.parse(openVaultValue(journalKey, binding, encrypted));
+      legacy.sections.progress.version = 1;
+      const legacyBytes = sealVaultValue(journalKey, binding, JSON.stringify(legacy));
+      await writeFile(pendingPath, legacyBytes, { mode: 0o600 });
       const schema = `test_setup_receipt_${randomUUID().replaceAll('-', '')}`;
       const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
       await admin.query(`CREATE SCHEMA ${schema}`);
@@ -2286,8 +2636,10 @@ describe('desktop setup handoff', () => {
       const { createPostgresObjectStore } = await import('../src/server/object-storage.ts');
       const { initializeIntegrationSchema } = await import('../src/server/integrations.ts');
       const { importDesktopSetup } = await import('../src/server/setup-import.ts');
-      const { openChannelSettings } = await import('../src/server/channel-settings.ts');
+      const { openChannelSettings, initializeChannelSettings } =
+        await import('../src/server/channel-settings.ts');
       await createAccountStore(database).initialize();
+      await initializeChannelSettings(database);
       const models = createModelService({
         database,
         ownerId: f.ownerId,
@@ -2304,7 +2656,18 @@ describe('desktop setup handoff', () => {
       );
       let calls = 0;
       const provider = new Proxy(
-        { id: 'fixture', configurationId: undefined },
+        {
+          id: 'fixture',
+          configured: true,
+          configurationId: 'a'.repeat(64),
+          async inspectAccount(id: string, owner: string, inspection: { verifyOwner?: boolean }) {
+            calls++;
+            assert.equal(id, 'fixture-gmail');
+            assert.equal(owner, f.ownerId);
+            assert.equal(inspection.verifyOwner, true);
+            return { active: true, service: 'gmail' };
+          },
+        },
         {
           get(target, key) {
             if (key in target) return target[key as keyof typeof target];
@@ -2341,6 +2704,15 @@ describe('desktop setup handoff', () => {
         );
       await database.query('ALTER TABLE preferences DROP CONSTRAINT fixture_failure');
       const id = await importDesktopSetup(options);
+      assert.equal(await readFile(pendingPath, 'utf8'), legacyBytes);
+      assert.deepEqual(
+        (
+          await database.query('SELECT id,revision FROM desktop_setup_receipts WHERE owner_id=$1', [
+            f.ownerId,
+          ])
+        ).rows[0],
+        { id: legacy.id, revision: legacy.revision },
+      );
       assert.equal(
         (await database.query('SELECT count(*)::int AS count FROM model_connections')).rows[0]
           .count,
@@ -2387,7 +2759,7 @@ describe('desktop setup handoff', () => {
         (await database.query('SELECT count(*)::int AS count FROM channel_settings')).rows[0].count,
         0,
       );
-      assert.equal(calls, 0);
+      assert.equal(calls, 2);
       assert.deepEqual(f.channelCalls, verifiedChannelCalls);
       const resumed = await f.create();
       assert.equal(f.adapterStarts(), 1);

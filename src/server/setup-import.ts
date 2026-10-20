@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { IntegrationProvider } from '../ports/integrations.ts';
 import { createSetupJournal } from './setup-journal.ts';
-import { setupAccountSchema, setupProgressSchema } from './setup-state.ts';
+import { setupAccountSchema, readSetupProgress } from './setup-state.ts';
 import { importSetupModels, validateSetupModels } from './setup-models.ts';
 import { importSetupIntegrations, validateSetupIntegrations } from './setup-integrations.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
@@ -45,7 +45,7 @@ export async function importDesktopSetup(options: {
         throw new Error('This profile already completed a different setup.');
       return snapshot.id;
     }
-    const progress = setupProgressSchema.parse(snapshot.sections.progress);
+    const progress = readSetupProgress(snapshot.sections.progress);
     const account = setupAccountSchema.parse(snapshot.sections.account);
     if (
       !progress.completing ||

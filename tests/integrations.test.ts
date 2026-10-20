@@ -33,6 +33,11 @@ import { fileURLToPath } from 'node:url';
 import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client';
 import { Composio } from '@composio/core';
 import Fastify from 'fastify';
+import { EventEmitter } from 'node:events';
+import {
+  createIntegrationKeyService,
+  receiveLegacyIntegration,
+} from '../src/server/integration-key.ts';
 import pg from 'pg';
 import type { Agent, AgentEvent, AgentToolResult, RuntimeContext } from '../src/ports/agent.ts';
 import { type DiscoveredOAuthState } from '../src/ports/discovered.ts';
@@ -344,6 +349,10 @@ test('early app setup completes owned consent without a database and fences hand
   );
   const invalid = { ...transfer, ownerId: 'another-profile' };
   await assert.rejects(validateSetupIntegrations(invalid, f.settings), /different profile/);
+  await assert.rejects(
+    validateSetupIntegrations({ ...transfer, connections: [] }, f.settings),
+    /Connect Gmail/,
+  );
   f.setActive(false);
   await assert.rejects(validateSetupIntegrations(transfer, f.settings), /no longer available/);
 });
@@ -383,6 +392,138 @@ test('early personal keys remain direct and failed key saves preserve existing c
   assert.equal(transfer.mode, 'own');
   assert.equal(transfer.apiKey, 'synthetic-project-key');
   assert.equal(transfer.connections.length, 1);
+});
+
+test('early uncertain disconnections retain owned accounts and require an inspected explicit retry', async (t) => {
+  for (const outcome of ['active', 'inactive', 'missing'] as const) {
+    await t.test(outcome, async (t) => {
+      const f = await earlyAppsFixture(t);
+      const attempt = await f.connect();
+      await f.app.inject(attempt.callback);
+      const connected = (await f.service.list()).find((row) => row.status === 'connected')!;
+      const provider = f.settings.managedProvider;
+      let deletes = 0;
+      provider.deleteAccount = async (accountId, ownerId) => {
+        assert.equal(accountId, connected.accountId);
+        assert.equal(ownerId, f.ownerId);
+        deletes++;
+        if (deletes === 1) throw new Error('Synthetic response lost after deletion.');
+      };
+      const disconnect = () =>
+        f.app.inject({
+          method: 'POST',
+          url: `/api/apps/gmail/accounts/${connected.connectionId}/disconnect`,
+        });
+      assert.equal(
+        (
+          await f.app.inject({
+            method: 'POST',
+            url: `/api/apps/googlecalendar/accounts/${connected.connectionId}/disconnect`,
+          })
+        ).statusCode,
+        404,
+      );
+      assert.equal(deletes, 0);
+      assert.equal((await disconnect()).statusCode, 502);
+      const pending = (await f.service.list()).find(
+        (row) => row.connectionId === connected.connectionId,
+      );
+      assert.equal(pending?.disconnectPending, true);
+      assert.equal(pending?.status, 'disconnected');
+      assert.equal(deletes, 1);
+      await assert.rejects(f.service.transfer(), /pending disconnection/);
+      assert.equal(
+        (await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect', payload: {} }))
+          .statusCode,
+        409,
+      );
+      provider.inspectAccount = async () => {
+        throw new Error('Synthetic inspection unavailable.');
+      };
+      assert.equal((await disconnect()).statusCode, 502);
+      assert.equal(deletes, 1);
+      provider.inspectAccount = async () => ({ active: true, service: 'googlecalendar' });
+      assert.equal((await disconnect()).statusCode, 409);
+      assert.equal(deletes, 1);
+      provider.inspectAccount = async (accountId, ownerId, inspection) => {
+        assert.equal(accountId, connected.accountId);
+        assert.equal(ownerId, f.ownerId);
+        assert.equal(inspection?.verifyOwner, true);
+        if (outcome === 'missing')
+          throw Object.assign(new Error('Synthetic account absent.'), { status: 404 });
+        return { active: outcome === 'active', service: 'gmail' };
+      };
+      assert.equal((await disconnect()).statusCode, 200);
+      assert.equal((await disconnect()).statusCode, 200);
+      assert.equal(deletes, outcome === 'active' ? 2 : 1);
+      assert.equal(
+        (await f.service.list()).some((row) => row.connectionId === connected.connectionId),
+        false,
+      );
+      assert.equal((await f.service.transfer()).connections.length, 0);
+    });
+  }
+});
+
+test('early project changes retain an uncertain disconnection until the original provider confirms it', async (t) => {
+  const f = await earlyAppsFixture(t);
+  const attempt = await f.connect();
+  await f.app.inject(attempt.callback);
+  let deletes = 0;
+  f.settings.managedProvider.deleteAccount = async () => {
+    deletes++;
+    throw new Error('Synthetic deletion response lost.');
+  };
+  const change = () =>
+    f.app.inject({
+      method: 'PUT',
+      url: '/api/integrations/key',
+      payload: { key: 'synthetic-project-key' },
+    });
+  assert.equal((await change()).statusCode, 502);
+  assert.equal((await f.service.keyStatus()).mode, 'otto');
+  assert.equal(
+    (await f.service.list()).find((row) => row.slug === 'gmail')?.disconnectPending,
+    true,
+  );
+  f.settings.managedProvider.inspectAccount = async () => {
+    throw new Error('Synthetic inspection unavailable.');
+  };
+  assert.equal((await change()).statusCode, 502);
+  assert.equal(deletes, 1);
+  assert.equal((await f.service.keyStatus()).mode, 'otto');
+  f.settings.managedProvider.inspectAccount = async () => ({ active: false, service: 'gmail' });
+  assert.equal((await change()).statusCode, 200);
+  assert.equal(deletes, 1);
+  assert.equal((await f.service.keyStatus()).mode, 'own');
+  assert.equal((await f.service.transfer()).connections.length, 0);
+});
+
+test('early setup refuses the aggregate account limit before authorization without corrupting saved connections', async (t) => {
+  const f = await earlyAppsFixture(t);
+  const attempt = await f.connect();
+  await f.app.inject(attempt.callback);
+  const saved = (await f.journal.read<{ connections: Record<string, unknown>[] }>('integrations'))!;
+  await f.journal.update('integrations', () => ({
+    ...saved,
+    connections: Array.from({ length: 100 }, (_, index) => ({
+      ...saved.connections[0],
+      id: randomUUID(),
+      slug: `fixture_${Math.floor(index / 10)}`,
+      accountId: `fixture-limit-${index}`,
+    })),
+  }));
+  const before = await f.journal.read('integrations');
+  const calls = [...f.calls];
+  assert.equal(
+    (await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect', payload: {} }))
+      .statusCode,
+    409,
+  );
+  assert.deepEqual(f.calls, calls);
+  assert.deepEqual(await f.journal.read('integrations'), before);
+  assert.equal((await f.service.list()).filter((row) => row.status === 'connected').length, 100);
+  assert.equal((await f.service.transfer()).connections.length, 100);
 });
 
 test('early completion failures and cancelled attempts never exchange their callback again', async (t) => {
@@ -504,12 +645,48 @@ test(
       assert.equal(rows[0].id, transfer.connections[0].id);
       assert.equal(rows[0].owner_id, fixture.ownerId);
       assert.equal(rows[0].account_id, transfer.connections[0].accountId);
-      assert.equal(rows[0].watch_requested, false);
       assert.equal(rows[0].triggers_enabled, false);
       assert.equal((await vault.read(transfer.keyId!)).value, 'synthetic-project-key');
       assert.equal((await vault.read(transfer.keyId!)).version, 0);
       assert.equal((await client.query('SELECT * FROM app_setup_completions')).rowCount, 1);
       assert.deepEqual(fixture.calls, remoteCalls);
+      const subscriptions: string[] = [];
+      const polled: string[] = [];
+      const provider = fixture.settings.ownProvider;
+      provider.supportsSubscriptions = ['gmail'];
+      provider.subscribe = async (owner, slug, accountId) => {
+        assert.equal(owner, fixture.ownerId);
+        assert.equal(slug, 'gmail');
+        subscriptions.push(accountId);
+        return { id: 'imported-gmail-trigger' };
+      };
+      provider.pollInbox = async (accountId) => {
+        polled.push(accountId);
+        return { cursor: 'imported-inbox-cursor', messages: [], hasMore: false };
+      };
+      const recovered = await createIntegrations(db.pool, {
+        ownerId: fixture.ownerId,
+        provider,
+        wake: async () => assert.fail('Import must not create an event turn.'),
+        baseUrl: fixture.settings.baseUrl,
+      });
+      const recoveredApp = Fastify();
+      recovered.registerRoutes(recoveredApp);
+      await recoveredApp.ready();
+      try {
+        await recovered.syncWatches();
+        await recovered.syncWatches();
+        await recovered.pollInboxes();
+        await recovered.pollInboxes();
+        assert.deepEqual(subscriptions, [transfer.connections[0].accountId]);
+        assert.deepEqual(polled, [transfer.connections[0].accountId]);
+        const saved = (await client.query('SELECT * FROM app_connections')).rows[0];
+        assert.equal(saved.trigger_id, 'imported-gmail-trigger');
+        assert.equal(saved.inbox_cursor, 'imported-inbox-cursor');
+        assert.deepEqual(fixture.calls, remoteCalls);
+      } finally {
+        await recoveredApp.close();
+      }
       await client.query('UPDATE app_connections SET revoked=true');
       await assert.rejects(
         importSetupIntegrations(client, transfer, { ...fixture.settings, putKey: vault.put }),
@@ -9030,6 +9207,235 @@ async function hostedDatabase(options: pg.PoolConfig = {}) {
     },
   };
 }
+
+test(
+  'legacy native Composio migration preserves ownership, durable configuration and stronger choices',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const db = await hostedDatabase();
+    t.after(() => db.close());
+    const keyStore = {
+      id: 'legacy-fixture',
+      configured: true,
+      getKey: async () => Buffer.alloc(32, 31),
+    };
+    const legacy = {
+      apiKey: 'synthetic-legacy-composio-project',
+      authConfigs: { gmail: 'synthetic-legacy-gmail-config' },
+    };
+    for (const scenario of [
+      'import',
+      'new-key',
+      'unreadable-key',
+      'managed-binding',
+      'other-owner',
+      'rollback',
+      'managed-enabled',
+      'managed-unavailable',
+      'managed-failed',
+      'managed-denied',
+    ]) {
+      await t.test(scenario, async () => {
+        const ownerId = randomUUID();
+        let activeKey: string | undefined;
+        let activeConfigs: unknown;
+        const provider = {
+          ...fakeProvider({
+            id: 'unused',
+            authorize: async () => assert.fail('No remote authorization'),
+            search: async () => assert.fail('No remote calls'),
+            execute: async () => assert.fail('No remote tools'),
+          }),
+          id: 'composio',
+          setApiKey(key?: string, configs?: unknown) {
+            activeKey = key;
+            activeConfigs = configs;
+          },
+          verifyApiKey: async () => assert.fail('Migration must not verify a live key'),
+        };
+        let accessChecks = 0;
+        const create = () =>
+          createIntegrationKeyService({
+            ownerId,
+            database: db.pool,
+            keyStore,
+            provider,
+            managed: {
+              async status() {
+                accessChecks++;
+                if (scenario === 'managed-failed') throw new Error('Synthetic admission outage');
+                return {
+                  state:
+                    scenario === 'managed-enabled'
+                      ? 'enabled'
+                      : scenario === 'managed-unavailable'
+                        ? 'unavailable'
+                        : scenario === 'managed-denied'
+                          ? 'denied'
+                          : 'sign_in_required',
+                  email: null,
+                };
+              },
+            },
+          });
+        const service = create();
+        await service.initialize();
+        const vault = await createAppGrantVault(db.pool, { ownerId, keyStore });
+        const id = randomUUID();
+        if (scenario === 'new-key' || scenario === 'unreadable-key') {
+          await vault.put(id, 'synthetic-newer-project-key');
+          await db.pool.query('INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,$2)', [
+            ownerId,
+            id,
+          ]);
+          if (scenario === 'unreadable-key')
+            await db.pool.query("UPDATE vault_app_grants SET ciphertext='unreadable' WHERE id=$1", [
+              id,
+            ]);
+          await service.initialize();
+        }
+        if (scenario === 'managed-binding' || scenario === 'other-owner') {
+          const { initializeIntegrationSchema } = await import('../src/server/integrations.ts');
+          await initializeIntegrationSchema(db.pool);
+          await db.pool.query(
+            "INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id) VALUES($1,$2,'composio','gmail',$3,$4)",
+            [
+              id,
+              scenario === 'other-owner' ? randomUUID() : ownerId,
+              'synthetic-existing-account',
+              'f'.repeat(64),
+            ],
+          );
+        }
+        if (scenario === 'rollback') {
+          await db.pool.query(
+            `CREATE FUNCTION reject_legacy_import() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.owner_id='${ownerId}' THEN RAISE EXCEPTION 'synthetic storage failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_legacy_import BEFORE INSERT ON integration_keys FOR EACH ROW EXECUTE FUNCTION reject_legacy_import()`,
+          );
+          await assert.rejects(service.importLegacy(legacy), /synthetic storage failure/);
+          assert.equal(
+            (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
+              .rowCount,
+            0,
+          );
+          await db.pool.query(
+            'DROP TRIGGER reject_legacy_import ON integration_keys; DROP FUNCTION reject_legacy_import()',
+          );
+        }
+        const expected = ['import', 'other-owner', 'rollback', 'managed-denied'].includes(scenario);
+        const before = await db.pool.query(
+          'SELECT * FROM vault_app_grants WHERE owner_id=$1 ORDER BY id',
+          [ownerId],
+        );
+        assert.equal(await service.importLegacy(legacy), expected);
+        if (!expected) {
+          assert.deepEqual(
+            (
+              await db.pool.query('SELECT * FROM vault_app_grants WHERE owner_id=$1 ORDER BY id', [
+                ownerId,
+              ])
+            ).rows,
+            before.rows,
+          );
+          assert.notEqual(activeKey, legacy.apiKey);
+          assert.equal(
+            accessChecks,
+            scenario.startsWith('managed-') && scenario !== 'managed-binding' ? 1 : 0,
+          );
+          return;
+        }
+        assert.equal(activeKey, legacy.apiKey);
+        assert.deepEqual(activeConfigs, legacy.authConfigs);
+        assert.equal(service.mode, 'own');
+        const stored = (
+          await db.pool.query('SELECT ciphertext FROM vault_app_grants WHERE owner_id=$1', [
+            ownerId,
+          ])
+        ).rows;
+        assert.equal(stored.length, 2);
+        assert.ok(
+          stored.every(
+            (row) =>
+              !row.ciphertext.includes(legacy.apiKey) &&
+              !row.ciphertext.includes(legacy.authConfigs.gmail),
+          ),
+        );
+        activeKey = undefined;
+        const restarted = create();
+        await restarted.initialize();
+        assert.equal(activeKey, legacy.apiKey);
+        assert.deepEqual(activeConfigs, legacy.authConfigs);
+        assert.equal(await restarted.importLegacy(legacy), true);
+        assert.equal(
+          (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
+            .rowCount,
+          2,
+        );
+        assert.equal(
+          await restarted.importLegacy({ ...legacy, apiKey: 'synthetic-different-old-project' }),
+          false,
+        );
+        assert.equal(
+          await restarted.importLegacy({ ...legacy, authConfigs: { gmail: 'different' } }),
+          false,
+        );
+      });
+    }
+  },
+);
+
+test('legacy native handoff accepts only its owner and one startup challenge and waits for cleanup', async () => {
+  const parent = Object.assign(new EventEmitter(), { postMessage: (_message: unknown) => {} });
+  const ownerId = randomUUID();
+  const messages: Array<Record<string, unknown>> = [];
+  parent.postMessage = (message) => {
+    messages.push(message as Record<string, unknown>);
+  };
+  const receiving = receiveLegacyIntegration({ ownerId, parent, timeout: 1000 });
+  const nonce = messages[0].nonce;
+  const payload = {
+    type: 'otto-legacy-integration',
+    ownerId,
+    nonce,
+    receipt: 'a'.repeat(64),
+    apiKey: 'synthetic-private-legacy-key',
+    authConfigs: { gmail: 'synthetic-private-config' },
+  };
+  let received = false;
+  void receiving.then(() => {
+    received = true;
+  });
+  for (const invalid of [
+    { ...payload, ownerId: randomUUID() },
+    { ...payload, nonce: randomUUID() },
+    { ...payload, apiKey: undefined },
+  ])
+    parent.emit('message', { data: invalid });
+  await delay(0);
+  assert.equal(received, false);
+  parent.emit('message', { data: payload });
+  const migration = await receiving;
+  assert.deepEqual(migration.input, { apiKey: payload.apiKey, authConfigs: payload.authConfigs });
+  let cleaned = false;
+  const acknowledgement = migration.acknowledge().then(() => {
+    cleaned = true;
+  });
+  const final = {
+    type: 'otto-legacy-integration-cleaned',
+    ownerId,
+    nonce,
+    receipt: payload.receipt,
+  };
+  parent.emit('message', { data: { ...final, receipt: 'b'.repeat(64) } });
+  parent.emit('message', { data: { ...final, ownerId: randomUUID() } });
+  await delay(0);
+  assert.equal(cleaned, false);
+  parent.emit('message', { data: final });
+  await acknowledgement;
+  assert.equal(parent.listenerCount('message'), 0);
+  assert.ok(messages.every((value) => !JSON.stringify(value).includes(payload.apiKey)));
+  await assert.rejects(receiveLegacyIntegration({ ownerId, parent, timeout: 5 }), /restore/);
+  assert.equal(parent.listenerCount('message'), 0);
+});
 
 test(
   'hosted app consent returns to its owned screen and tenant event workers cannot consume each other',

@@ -324,6 +324,16 @@ test(
         PRIMARY KEY(owner_id,object_key)
       )`);
       await Promise.all([first.initialize(), second.initialize()]);
+      const borrowed = await f.database.connect();
+      try {
+        await borrowed.query('BEGIN');
+        await borrowed.query("SET LOCAL lock_timeout='2s'");
+        await createPostgresObjectStore({ database: borrowed, ownerId: 'owner-one' }).initialize();
+        assert.equal((await borrowed.query('SHOW lock_timeout')).rows[0].lock_timeout, '2s');
+      } finally {
+        await borrowed.query('ROLLBACK');
+        borrowed.release();
+      }
       const large = Buffer.alloc(20 * 1024 * 1024, 7);
       const artifact = `artifacts/${randomUUID()}`;
       await first.write(artifact, large, { expectedVersion: null });

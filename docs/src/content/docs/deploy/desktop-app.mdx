@@ -48,7 +48,7 @@ The workspace and browser have separate networks, no access to your home folder,
 
 ## Onboarding during startup
 
-On a new desktop profile, a small host process serves the same chat onboarding while the private computer starts. It handles model sign-in, app connections, Telegram pairing, preferences, and the introduction without PostgreSQL or the containers. Every screen is visited; a model is required, while email, Telegram and analytics sharing remain optional. A source web install keeps onboarding in the ordinary app.
+On a new desktop profile, a small host process serves the same chat onboarding while the private computer starts. It handles model sign-in, app connections, Telegram pairing, preferences, and the introduction without PostgreSQL or the containers. Every screen is visited; a model and Gmail are required, while Telegram, analytics sharing and desktop preferences remain optional. A source web install keeps onboarding in the ordinary app.
 
 Pending setup is encrypted with the profile's Vault key, bound to its owner, and written atomically in the private profile directory. Only Otto's own window receives the temporary server token. Keys are submitted through the private forms and are never returned by a read endpoint or sent to the workspace or browser containers. OS permissions and the key store protect stored data; this does not isolate Otto from a compromised OS user session.
 
@@ -126,9 +126,11 @@ flowchart TD
 
 Restarting stops a running reply, scheduled task or background check, and you can ask Otto to continue afterwards. Queued messages, schedules and app checks resume. Unsent text in the message box isn't kept.
 
-Otto downloads the new app or installer and, when it changed, the new runtime pack in the background before it offers the restart. On a Mac, it also loads the new container images into the running computer, so Otto is ready soon after the restart. An update found by an automatic check shows a notification when notifications are on, and the menu offers **Restart to update**. On a Mac, an update must be signed by n8n, and Otto refuses one with a lower version number, so an update feed can't roll Otto back to an older build. On Windows, the restart runs the installer in the background and opens Otto again.
+Otto downloads the new app or installer and, when it changed, the new runtime pack in the background before it offers the restart. On a Mac, it also loads the new container images into the running computer, so Otto is ready soon after the restart. An update found by an automatic check shows a notification when notifications are on and quiet hours allow it. The menu offers **Restart to update**, and background checks never open a dialog. On a Mac, an update must be signed by n8n, and Otto refuses one with a lower version number, so an update feed can't roll Otto back to an older build. On Windows, the restart runs the installer in the background and opens Otto again.
 
 Otto keeps its profile, credentials and container volumes. A runtime update replaces tools and images without resetting the database.
+
+If a manual update check fails, choose **Try again** or **Not now** and keep using Otto. Background check failures stay quiet. If restarting fails before shutdown begins, **Retry restart** uses the update already downloaded. Once shutdown begins, Otto keeps its separate shutdown recovery prompt.
 
 ## Windows preview
 

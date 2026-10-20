@@ -293,16 +293,20 @@ export function createModelService(options: {
     }
   }
   async function updateCatalog(id: string, signal?: AbortSignal) {
-    await store.change(async (state) => {
+    signal?.throwIfAborted();
+    const snapshot = (await store.read()).connections.find((item) => item.id === id);
+    if (!snapshot) throw new ConnectionError('This model connection is unavailable.');
+    if (!snapshot.managed && snapshot.status === 'reconnect')
+      throw new ConnectionError('Reconnect the selected account in Models.');
+    const value = credential(snapshot);
+    if (!value) throw new ConnectionError('This model connection is unavailable.');
+    const previous = JSON.stringify(snapshot);
+    const definitions = await catalog(snapshot.provider, snapshot.method, value);
+    if (!definitions.length) throw new ConnectionError('This connection has no supported models.');
+    await store.change((state) => {
       const row = state.connections.find((item) => item.id === id);
-      if (!row) throw new ConnectionError('This model connection is unavailable.');
-      if (!row.managed && row.status === 'reconnect')
-        throw new ConnectionError('Reconnect the selected account in Models.');
-      const value = credential(row);
-      if (!value) throw new ConnectionError('This model connection is unavailable.');
-      const definitions = await catalog(row.provider, row.method, value);
-      if (!definitions.length)
-        throw new ConnectionError('This connection has no supported models.');
+      if (!row || JSON.stringify(row) !== previous)
+        throw new ConnectionError('This model connection changed. Refresh its models again.');
       signal?.throwIfAborted();
       row.models = definitions;
       row.status = 'connected';

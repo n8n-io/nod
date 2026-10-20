@@ -827,6 +827,10 @@ test('the onboarding interview follows its skill with the chat and inbox brief o
     interview.remember({ answers: ['My bank card is 4111 1111 1111 1111.'] }),
     /can’t be saved as notes/,
   );
+  await assert.rejects(
+    interview.remember({ answers: ['4111 1111', '1111 1111'] }),
+    /can’t be saved as notes/,
+  );
   await assert.rejects(interview.remember({ answers: ['A.', 'B.', 'C.', 'D.'] }));
   assert.deepEqual(await memory.load(), tree);
 });
