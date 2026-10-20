@@ -1,19 +1,12 @@
 import {
+  areaLabels,
   memoryAreas,
   type MemoryArchived,
-  type MemoryArea,
   type MemoryNote,
   type MemoryStatus,
   type MemoryView,
 } from './memory.ts';
 
-const areaLabels: Record<MemoryArea, string> = {
-  about: 'About you',
-  preferences: 'Preferences',
-  people: 'People',
-  routines: 'Routines',
-  lessons: 'Lessons',
-};
 const statuses: Array<{ status: MemoryStatus; label: string; meaning: string }> = [
   {
     status: 'stated',

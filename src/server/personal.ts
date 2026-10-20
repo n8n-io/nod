@@ -328,6 +328,12 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     });
     app.patch('/api/memory', (request) => changed(memory?.settings(request.body)));
     app.post('/api/memory/notes', (request) => changed(memory?.add(request.body), 'save'));
+    app.post('/api/memory/import', async (request): Promise<MemoryUpdate> => {
+      const imported = await memory?.importNotes(request.body);
+      if (imported?.added) remembered('save', 'owner');
+      refresh();
+      return { ...(await memoryView()), imported };
+    });
     app.patch('/api/memory/notes/:area/:slug', (request) =>
       changed(memory?.change(notePath(request.params), request.body), 'save'),
     );

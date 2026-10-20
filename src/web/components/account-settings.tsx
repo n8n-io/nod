@@ -365,9 +365,14 @@ export function AccountSettings({
   const [preferencesDirty, setPreferencesDirty] = useState(false);
   const [connectionDirty, setConnectionDirty] = useState(false);
   const pending = useRef(false);
+  const continuing = useRef(false);
   pending.current =
     modelDirty || preferencesDirty || connectionDirty || native.busy || account.saving;
   const [error, setError] = useState('');
+  const close = () => {
+    if (pending.current) setError('Save or cancel your changes first.');
+    else onOpenChange(false);
+  };
   const [resetting, setResetting] = useState(false);
   const active = useRef(false);
   const recordedTab = useRef<string | null>(null);
@@ -412,13 +417,7 @@ export function AccountSettings({
   const theme = desktop ? native.settings?.theme : account.theme;
   const themeSaving = desktop ? native.busy || !native.settings : account.saving;
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(value) => {
-        if (!value && pending.current) setError('Save or cancel your changes first.');
-        else onOpenChange(value);
-      }}
-    >
+    <Dialog open={open} onOpenChange={(value) => (value ? onOpenChange(true) : close())}>
       <DialogContent
         className="account-settings"
         aria-describedby={undefined}
@@ -427,7 +426,11 @@ export function AccountSettings({
           (event.currentTarget as HTMLElement).focus();
         }}
         onCloseAutoFocus={(event) => {
-          const target = returnFocus();
+          const composer =
+            continuing.current &&
+            document.querySelector<HTMLElement>('.composer-editor[contenteditable="true"]');
+          continuing.current = false;
+          const target = composer || returnFocus();
           if (target?.isConnected) {
             event.preventDefault();
             target.focus({ preventScroll: true });
@@ -671,7 +674,14 @@ export function AccountSettings({
                 </>
               )}
               {tab === 'Preferences' && <PreferencesForm onDirtyChange={setPreferencesDirty} />}
-              {tab === 'Memory' && <Memory />}
+              {tab === 'Memory' && (
+                <Memory
+                  onDone={() => {
+                    continuing.current = !pending.current;
+                    close();
+                  }}
+                />
+              )}
               {tab === 'App connections' && (
                 <ConnectionSettings onDirtyChange={setConnectionDirty} />
               )}
