@@ -11,8 +11,7 @@ export function useSession() {
       typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('otto.auth');
     if (channel)
       channel.onmessage = ({ data }: MessageEvent<unknown>) => {
-        if (data === 'analytics-id') void sessionStore.refresh();
-        else if (
+        if (
           data &&
           typeof data === 'object' &&
           'type' in data &&

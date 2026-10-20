@@ -15,7 +15,7 @@ Otto never sends what you write, what Otto replies, what your apps return, or wh
 
 You turn on **Share usage data** in the first onboarding step, or later in **Settings → General**. Nothing is collected before you opt in. The desktop setup window sends nothing, because it runs before you choose.
 
-Next to the switch, Otto says: "Sends the Otto team at n8n how you use Otto, the websites it visits, purchase amounts and task labels your model writes from your chats, never message content." It links to this page.
+Next to the switch, Otto says: "Help us make Otto better by sharing how you use it. Never your messages." It links to this page, which lists everything that is sent.
 
 The deployment has a switch too. Otto collects only when both are on, and `OTTO_ANALYTICS_ENABLED=false` always wins.
 
@@ -47,11 +47,9 @@ Otto counts installations, not people. Two installations count as two, and a sha
 
 "Available" still needs the owner's opt-in. PostHog creates no person profile and doesn't look up your location from your IP address.
 
-### Reset your installation ID or delete past data
+### Stop sharing or delete past data
 
-While sharing is on, **Settings → General** shows your installation ID, such as `local:4f0c…`, under **Share usage data**. Select **Reset ID** to replace it with a new random one in `<OTTO_DATA_ROOT>/analytics-id`, which is the desktop profile in the desktop app. Later events use the new ID, so they can't be linked to earlier ones. Unsent events and task links from before the reset are dropped. Reset is not available when `OTTO_ANALYTICS_ID` sets the ID.
-
-Reset doesn't delete data PostHog already has. To ask for that, copy your installation ID before you reset it, then send it with **Send feedback** in the app and ask for your analytics data to be deleted. The Otto team deletes the events and recordings for that ID.
+Turn off **Share usage data** in **Settings → General** to stop sending. Turning it off doesn't delete data PostHog already has. To ask for that, use **Send feedback** in the app and ask for your analytics data to be deleted. The Otto team handles the request.
 
 ## Internal builds
 

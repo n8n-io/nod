@@ -3,7 +3,7 @@ import test, { describe } from 'node:test';
 import Fastify from 'fastify';
 import type { AccountStore, StoredAccount } from '../src/server/account-store.ts';
 import { createAccountSession } from '../src/server/account.ts';
-import { accessKey, registerLocalAccess } from '../src/server/access.ts';
+import { registerLocalAccess } from '../src/server/access.ts';
 import { randomUUID, randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { createKeychainKeyStore } from '../src/providers/keychain/key-store.ts';
@@ -252,57 +252,6 @@ describe('account routes', () => {
     traces.record(trace('After opting out'));
     await settle(3);
     assert.equal(delivered.length, 2);
-  });
-
-  test('resetting the installation ID needs the owner key and links later events to a new ID only', async (t) => {
-    const dataRoot = await mkdtemp(join(tmpdir(), 'otto-analytics-id-'));
-    t.after(() => rm(dataRoot, { recursive: true, force: true }));
-    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
-    const analytics = await createAnalytics({
-      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
-      environment: 'production',
-      dataRoot,
-    });
-    const key = await accessKey(dataRoot);
-    const f = await fixture(undefined, analytics, undefined, key);
-    t.after(() => f.app.close());
-    const headers = { origin, host: 'localhost:4399', cookie: `otto-access-4399=${key}` };
-    const reset = (extra: Record<string, string> = headers) =>
-      f.app.inject({
-        method: 'POST',
-        url: '/api/account/analytics-id',
-        headers: extra,
-        payload: {},
-      });
-    assert.equal((await reset()).statusCode, 409);
-    await f.app.inject({
-      method: 'PATCH',
-      url: '/api/account',
-      headers,
-      payload: { usageData: true },
-    });
-    const before = analytics.configuration('local-owner').distinctId;
-    assert.equal(
-      before,
-      `local:${(await readFile(join(dataRoot, 'analytics-id'), 'utf8')).trim()}`,
-    );
-    assert.equal((await reset({ origin, host: 'localhost:4399' })).statusCode, 401);
-    assert.equal(analytics.configuration('local-owner').distinctId, before);
-    const response = await reset();
-    assert.equal(response.statusCode, 200);
-    const after = response.json().analytics.distinctId;
-    assert.match(after, /^local:[0-9a-f-]{36}$/);
-    assert.notEqual(after, before);
-    assert.equal(after, `local:${(await readFile(join(dataRoot, 'analytics-id'), 'utf8')).trim()}`);
-    analytics.capture('local-owner', { event: 'otto_chat_stopped' });
-    assert.equal(captured.at(-1)?.distinctId, after);
-    const supplied = await createAnalytics({
-      provider: { capture: () => {}, shutdown: async () => {} },
-      environment: 'production',
-      dataRoot,
-      installationId: randomUUID(),
-    });
-    await assert.rejects(supplied.resetInstallation());
   });
 
   test('account changes require the same origin and owner and never accept provider or owner input', async (t) => {

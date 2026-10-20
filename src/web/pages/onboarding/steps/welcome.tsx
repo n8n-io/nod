@@ -142,9 +142,7 @@ export function Welcome({ arrived, onNext, onSkip, usage }: StepProps) {
             ? [
                 <Bubble className="ob-usage" onClick={(event) => event.stopPropagation()}>
                   <p id={`${id}-usage-data`}>
-                    Sends the Otto team at n8n how you use Otto, the websites it visits, purchase
-                    amounts and task labels your model writes from your chats, never message
-                    content.{' '}
+                    Help us make Otto better by sharing how you use it. Never your messages.{' '}
                     <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
                       What’s shared
                     </a>

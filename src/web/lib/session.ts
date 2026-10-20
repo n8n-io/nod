@@ -205,30 +205,6 @@ export function createSessionStore(
       }
     }
   }
-  async function resetAnalyticsId() {
-    if (mutation) throw new Error('Wait for your changes to finish saving.');
-    const controller = new AbortController();
-    mutation = controller;
-    const epoch = snapshot.epoch;
-    publish({ mutating: true });
-    try {
-      const session = await request<SessionResponse>('/api/account/analytics-id', {
-        method: 'POST',
-        body: '{}',
-        signal: controller.signal,
-        cache: 'no-store',
-      });
-      if (controller.signal.aborted || epoch !== snapshot.epoch || !validSession(session)) return;
-      read?.abort();
-      version++;
-      accept(session);
-    } finally {
-      if (mutation === controller) {
-        mutation = undefined;
-        publish({ mutating: false });
-      }
-    }
-  }
   return {
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -239,7 +215,6 @@ export function createSessionStore(
     getSnapshot: () => snapshot,
     refresh,
     revokeUsageData,
-    resetAnalyticsId,
     update,
     invalidate,
   };

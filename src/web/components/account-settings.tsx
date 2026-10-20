@@ -366,7 +366,6 @@ export function AccountSettings({
   pending.current =
     modelDirty || preferencesDirty || connectionDirty || native.busy || account.saving;
   const [error, setError] = useState('');
-  const [resetting, setResetting] = useState(false);
   const active = useRef(false);
   const recordedTab = useRef<string | null>(null);
   function recordTab(value: AccountTab) {
@@ -599,40 +598,11 @@ export function AccountSettings({
                       />
                     </div>
                     <p id={`${id}-usage-data`} className="field-hint" data-analytics-public>
-                      Sends the Otto team at n8n how you use Otto, the websites it visits, purchase
-                      amounts and task labels your model writes from your chats, never message
-                      content.{' '}
+                      Help us make Otto better by sharing how you use it. Never your messages.{' '}
                       <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
                         What’s shared
                       </a>
                     </p>
-                    {account.analyticsId && (
-                      <div className="account-preference-row">
-                        <span>
-                          <span data-analytics-public>Installation ID</span>
-                          <code className="account-analytics-id">{account.analyticsId}</code>
-                        </span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={account.saving || resetting}
-                          onClick={() => {
-                            setError('');
-                            setResetting(true);
-                            void account
-                              .onResetAnalyticsId()
-                              .catch((cause) => {
-                                if (active.current) setError(errorMessage(cause));
-                              })
-                              .finally(() => {
-                                if (active.current) setResetting(false);
-                              });
-                          }}
-                        >
-                          <span data-analytics-public>Reset ID</span>
-                        </Button>
-                      </div>
-                    )}
                     {account.traces !== undefined && (
                       <>
                         <div className="account-preference-row">
