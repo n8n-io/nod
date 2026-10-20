@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { ChevronLeft, Download, Plus } from 'lucide-react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { Check, ChevronLeft, Copy, Download, Plus, Undo2, Upload, X } from 'lucide-react';
 import {
+  areaLabels,
   memoryAreas,
   noteChars,
   skillChars,
@@ -8,16 +9,19 @@ import {
   type LearnedSkill,
   type MemoryArchived,
   type MemoryArea,
+  type MemoryImported,
   type MemoryNote,
   type MemorySource,
   type MemoryStatus,
   type MemoryUpdate,
   type MemoryView,
 } from '../../shared/memory';
+import { memoryImportPrompt, parseMemoryImport, type ImportedNote } from '../lib/memory-import';
 import {
   Button,
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogTitle,
   Field,
   Loading,
@@ -28,7 +32,13 @@ import {
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
 import { exportMemory } from '../lib/memory-export';
-import { dayKey, formatCalendarDate, formatDayLabel, useDateFormat } from '../lib/date-format';
+import {
+  dayKey,
+  formatCalendarDate,
+  formatDayLabel,
+  formatNumber,
+  useDateFormat,
+} from '../lib/date-format';
 import { cn } from '../lib/utils';
 
 type Stage = MemoryStatus | 'archive' | 'skills';
@@ -57,13 +67,6 @@ const stageLabel = Object.fromEntries(stages.map((stage) => [stage.id, stage.lab
   Stage,
   string
 >;
-const areaLabels: Record<MemoryArea, string> = {
-  about: 'About you',
-  preferences: 'Preferences',
-  people: 'People',
-  routines: 'Routines',
-  lessons: 'Lessons',
-};
 const reasons: Record<MemoryArchived['reason'], string> = {
   superseded: 'Replaced',
   merged: 'Merged',
@@ -80,6 +83,7 @@ const channels: Record<string, string> = {
 };
 
 const archivedKey = (item: MemoryArchived) => `${item.path}@${item.archived}`;
+const noteCount = (count: number) => (count === 1 ? '1 note' : `${formatNumber(count)} notes`);
 const skillTitle = (name: string) =>
   `${name[0]!.toUpperCase()}${name.slice(1).replaceAll('-', ' ')}`;
 function useCompact() {
@@ -567,7 +571,212 @@ function AddNote({
   );
 }
 
-export function Memory() {
+function ImportNotes({
+  onClose,
+  onFinish,
+  onImport,
+}: {
+  onClose(): void;
+  onFinish(): void;
+  onImport(notes: ImportedNote[]): Promise<MemoryImported | undefined>;
+}) {
+  const answer = useRef<HTMLTextAreaElement>(null);
+  const prompt = useRef<HTMLPreElement>(null);
+  const copyButton = useRef<HTMLButtonElement>(null);
+  const [text, setText] = useState('');
+  const [reviewing, setReviewing] = useState(false);
+  const [removed, setRemoved] = useState<ReadonlySet<number>>(new Set());
+  const [copied, setCopied] = useState(false);
+  const [result, setResult] = useState<MemoryImported>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const notes = parseMemoryImport(text);
+  const kept = notes.filter((_, index) => !removed.has(index));
+  async function copy() {
+    setError('');
+    try {
+      await navigator.clipboard.writeText(memoryImportPrompt);
+      setCopied(true);
+      answer.current?.focus();
+    } catch {
+      if (prompt.current) window.getSelection()?.selectAllChildren(prompt.current);
+      setError('Could not copy to the clipboard. The prompt is selected, so copy it yourself.');
+    }
+  }
+  function change(event: ChangeEvent<HTMLTextAreaElement>) {
+    const value = event.target.value;
+    setText(value);
+    setRemoved(new Set());
+    if (
+      (event.nativeEvent as InputEvent).inputType === 'insertFromPaste' &&
+      parseMemoryImport(value).length
+    )
+      setReviewing(true);
+  }
+  function toggle(index: number) {
+    const next = new Set(removed);
+    if (!next.delete(index)) next.add(index);
+    setRemoved(next);
+  }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!reviewing) return setReviewing(true);
+    setBusy(true);
+    setError('');
+    try {
+      setResult(await onImport(kept));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
+      <DialogContent
+        className="memory-dialog memory-import"
+        data-analytics-private
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          copyButton.current?.focus();
+        }}
+      >
+        <DialogTitle>
+          {!result ? 'Import memory' : result.added ? 'Memory imported' : 'Nothing new to add'}
+        </DialogTitle>
+        <DialogDescription>
+          {result
+            ? [
+                result.added
+                  ? `Otto now knows ${formatNumber(result.added)} more ${result.added === 1 ? 'thing' : 'things'} about you.`
+                  : '',
+                result.existing
+                  ? `${formatNumber(result.existing)} ${result.existing === 1 ? 'was' : 'were'} already saved.`
+                  : '',
+                result.skipped
+                  ? `${formatNumber(result.skipped)} looked like a password or card number, so Otto left ${result.skipped === 1 ? 'it' : 'them'} out.`
+                  : '',
+              ]
+                .filter(Boolean)
+                .join(' ')
+            : reviewing
+              ? 'Remove anything you don’t want Otto to keep.'
+              : 'Copy this prompt into ChatGPT, Claude or Gemini, then paste its answer below.'}
+        </DialogDescription>
+        {result ? (
+          <div className="memory-form">
+            <Button autoFocus onClick={onFinish}>
+              Continue using Otto
+            </Button>
+          </div>
+        ) : (
+          <form className="memory-form" onSubmit={submit}>
+            {reviewing ? (
+              <div className="memory-import-review">
+                {memoryAreas.map((area) => {
+                  const group = notes.flatMap((note, index) =>
+                    note.area === area ? [{ ...note, index }] : [],
+                  );
+                  return group.length ? (
+                    <section key={area} className="memory-group">
+                      <h3>{areaLabels[area]}</h3>
+                      <ul>
+                        {group.map((note) => {
+                          const gone = removed.has(note.index);
+                          return (
+                            <li
+                              key={note.index}
+                              className={cn('memory-import-note', gone && 'is-removed')}
+                            >
+                              <span>{note.text}</span>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                disabled={busy}
+                                aria-label={`${gone ? 'Keep' : 'Remove'} “${note.text}”`}
+                                title={gone ? 'Keep' : 'Remove'}
+                                onClick={() => toggle(note.index)}
+                              >
+                                {gone ? (
+                                  <Undo2 size={14} aria-hidden="true" />
+                                ) : (
+                                  <X size={14} aria-hidden="true" />
+                                )}
+                              </Button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </section>
+                  ) : null;
+                })}
+              </div>
+            ) : (
+              <>
+                <div className="memory-import-prompt">
+                  <pre ref={prompt} tabIndex={0} role="region" aria-label="Prompt">
+                    {memoryImportPrompt}
+                  </pre>
+                  <Button
+                    ref={copyButton}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void copy()}
+                  >
+                    {copied ? (
+                      <Check size={16} aria-hidden="true" />
+                    ) : (
+                      <Copy size={16} aria-hidden="true" />
+                    )}
+                    {copied ? 'Copied' : 'Copy prompt'}
+                  </Button>
+                </div>
+                <textarea
+                  ref={answer}
+                  className="input"
+                  value={text}
+                  rows={4}
+                  placeholder="Paste the answer here"
+                  aria-label="Answer"
+                  onChange={change}
+                />
+              </>
+            )}
+            {error && <Notice>{error}</Notice>}
+            {(reviewing || text.trim()) && (
+              <div className="memory-import-actions">
+                {reviewing && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => {
+                      setReviewing(false);
+                      requestAnimationFrame(() => answer.current?.focus());
+                    }}
+                  >
+                    Back
+                  </Button>
+                )}
+                <Button type="submit" disabled={busy || !kept.length}>
+                  {!kept.length
+                    ? reviewing
+                      ? 'Import'
+                      : 'Review notes'
+                    : `${reviewing ? 'Import' : 'Review'} ${noteCount(kept.length)}`}
+                </Button>
+              </div>
+            )}
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function Memory({ onDone }: { onDone(): void }) {
   const { data: view, error: loadError, loading, update } = usePageData<MemoryView>('/api/memory');
   const format = useDateFormat();
   const [compact, panelRef] = useCompact();
@@ -575,6 +784,8 @@ export function Memory() {
   const [query, setQuery] = useState('');
   const [chosen, setChosen] = useState<Selection | undefined>(undefined);
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importButton = useRef<HTMLButtonElement>(null);
   const [settingError, setSettingError] = useState('');
   const [exporting, setExporting] = useState(false);
 
@@ -720,9 +931,17 @@ export function Memory() {
       })
     ) : (
       <p className="memory-empty">
-        {search || stage
-          ? 'Nothing here.'
-          : 'Nothing yet. Tell Otto something to remember, or add a note.'}
+        {search || stage ? (
+          'Nothing here.'
+        ) : (
+          <>
+            Nothing yet. Tell Otto something to remember, add a note or{' '}
+            <button type="button" onClick={() => setImporting(true)}>
+              import from another assistant
+            </button>
+            .
+          </>
+        )}
       </p>
     );
 
@@ -797,8 +1016,21 @@ export function Memory() {
               onChange={(event) => setQuery(event.target.value)}
             />
             <Button
+              ref={importButton}
               variant="ghost"
               size="sm"
+              aria-label="Import"
+              title="Import"
+              onClick={() => setImporting(true)}
+            >
+              <Upload size={16} aria-hidden="true" />
+              <span className="memory-bar-label">Import</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="Export"
+              title="Export"
               disabled={exporting}
               onClick={() => {
                 setExporting(true);
@@ -809,7 +1041,7 @@ export function Memory() {
               }}
             >
               <Download size={16} aria-hidden="true" />
-              Export
+              <span className="memory-bar-label">Export</span>
             </Button>
             <Button size="sm" onClick={() => setAdding(true)}>
               <Plus size={16} aria-hidden="true" />
@@ -850,6 +1082,25 @@ export function Memory() {
             setStage(null);
             setQuery('');
             setChosen(next.path ? { note: next.path } : undefined);
+          }}
+        />
+      )}
+      {importing && (
+        <ImportNotes
+          onClose={() => {
+            setImporting(false);
+            requestAnimationFrame(() => importButton.current?.focus());
+          }}
+          onFinish={() => {
+            setImporting(false);
+            onDone();
+          }}
+          onImport={async (notes) => {
+            const next = await send('/api/memory/import', 'POST', { notes });
+            setStage(null);
+            setQuery('');
+            setChosen(undefined);
+            return next.imported;
           }}
         />
       )}

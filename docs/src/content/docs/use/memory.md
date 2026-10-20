@@ -21,7 +21,7 @@ You can see everything Otto remembers, where it learned it, and change or forget
 
 ## Where Otto learns from
 
-Notes come only from your own messages. Otto never takes a note from its own replies, web pages, emails or tool results. Text from the web gets in only if you paste it into a short message yourself.
+Notes come only from your own messages and what you write or paste in **Settings → Memory**. Otto never takes a note from its own replies, web pages, emails or tool results. Text from the web gets in only if you paste it yourself, into a short message or **Settings → Memory**.
 
 - **When you tell it.** Say "remember that I'm vegetarian" or state a lasting fact, and Otto saves your message as you wrote it, with line breaks turned into spaces. Messages longer than 4,000 characters can't be saved this way; add a shorter note yourself.
 - **In the background.** About once an hour, Otto looks through your recent messages for what you said about your life: people, places, plans, things you bought, events with their dates and what you like. It skips messages with attachments and messages over 4,000 characters.
@@ -64,6 +64,19 @@ Otto doesn't learn about health, religion, politics, sexuality, gender identity,
 
 When you connect Gmail, Otto reads your own text from recent sent emails. It removes quoted, forwarded and automated mail first. It saves only how you write, with no facts, names or quotes, as one **Preferences** note labelled **Learned from your sent email**. A newer version replaces the old one.
 
+## Bring memory from another assistant
+
+1. In **Settings → Memory**, select **Import**, then **Copy prompt**.
+2. Paste the prompt into ChatGPT, Claude, Gemini or any other assistant, and copy its answer.
+3. Paste the answer into Otto. Otto lists the notes it found under **About you**, **Preferences**, **People** and **Routines**.
+4. Remove anything you don't want Otto to keep, then select **Import**.
+
+![Import memory with the notes found in a pasted answer, grouped under About you and Preferences, above Back and Import 14 notes.](../../../assets/screens/memory-import.png)
+
+Each note is saved as written and marked **Confirmed**. Otto skips notes you already have and lines that look like a password, code or card number.
+
+Imported notes are like notes you add yourself: they help Otto understand you and never let it act.
+
 ## Review and change memory
 
 Open **Settings → Memory**. Filter by **All**, **Mentioned once**, **Learned**, **Confirmed**, **Let go** or **Skills**, or search. Notes from chat show the messages they came from, and skills show the task they came from.
@@ -77,6 +90,7 @@ Open **Settings → Memory**. Filter by **All**, **Mentioned once**, **Learned**
 | Fix or remove a skill        | Open it under **Skills**, then **Edit** or **Forget** |
 | Restore an older note        | Open it under **Let go**, then **Bring back**         |
 | Add something yourself       | Select **Add note**                                   |
+| Bring notes from ChatGPT     | Select **Import**                                     |
 | Download everything          | Select **Export** for a Markdown file                 |
 | Stop saving new notes        | Turn off **Save new notes**                           |
 

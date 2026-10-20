@@ -33,6 +33,10 @@ What Otto sends and when is listed in [Analytics and recordings](/deploy/analyti
 4. Nothing is sent before the owner opts in, so an event fired before consent is lost. Onboarding asks for consent in its first step for this reason.
 5. For a new page, add its path to `routes` in [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/otto/blob/main/src/web/lib/analytics-privacy.ts). Map paths with IDs to one route, like `/credentials/:id` to `/credentials`. Unknown paths report `/not-found`.
 
+## Count real jobs
+
+A real job is the product's main measure: the latest `otto_task_updated` of an owner-started task (`source` `user` or `task`, `starter=false`) with `outcome=completed` and `completion_evidence=action_succeeded`. Only app actions, confirmed browser steps and payments set `action_succeeded`; Otto's own settings, memory and schedules set `settings_changed` only when the turn had no successful app action, browser step or payment. Keep that split when you add a new kind of action. The full definition is in [Analytics and recordings](/deploy/analytics/#real-jobs).
+
 ## Evolve the task vocabulary
 
 The task labels, `use_case`, `context` and `collaboration` values are one list each in [`src/server/analytics-events.ts`](https://github.com/n8n-io/otto/blob/main/src/server/analytics-events.ts). The event schema and the classifier prompt in `src/server/conversation-analytics.ts` both read them, so a value exists in one place.

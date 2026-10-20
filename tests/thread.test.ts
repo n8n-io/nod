@@ -3932,7 +3932,7 @@ async function conversationAnalyticsFixture(t: TestContext) {
       session_id uuid NOT NULL,source text NOT NULL,source_id text,prompt text NOT NULL,channel text NOT NULL,
       status text NOT NULL,created_at timestamptz NOT NULL,finished_at timestamptz);
     CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),
-      turn_id uuid NOT NULL REFERENCES turns(id),role text NOT NULL,text text NOT NULL,created_at timestamptz NOT NULL)
+      turn_id uuid NOT NULL REFERENCES turns(id),role text NOT NULL,text text NOT NULL,created_at timestamptz NOT NULL,suggestions jsonb)
   `);
   const { createConversationAnalytics } = await import('../src/server/conversation-analytics.ts');
   const ownerId = randomUUID();
@@ -4344,7 +4344,7 @@ test(
 );
 
 test(
-  'a completed task counts as action_succeeded only when its turn ran a side-effecting action or submitted a payment',
+  'a completed task counts as action_succeeded only when its turn acted in an app or website, and settings_changed for Otto settings',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await conversationAnalyticsFixture(t);
@@ -4371,6 +4371,7 @@ test(
     const evidence = [];
     for (const acted of [
       'GMAIL_SEND_EMAIL',
+      'OTTO_browser',
       'OTTO_schedule_create',
       {
         event: 'otto_secure_entry_changed',
@@ -4403,6 +4404,7 @@ test(
     assert.deepEqual(evidence, [
       'action_succeeded',
       'action_succeeded',
+      'settings_changed',
       'action_succeeded',
       'inferred',
       'inferred',
@@ -4411,6 +4413,91 @@ test(
       'inferred',
       'inferred',
     ]);
+  },
+);
+
+test(
+  'conversation analytics marks a task requested by a first-chat task card as a starter',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const offer = await f.turn({ prompt: 'Hi', at: Date.parse('2026-10-14T11:00:00.000Z') });
+    await f.pool.query('UPDATE messages SET suggestions=$2 WHERE id=$1', [
+      offer.replyId,
+      { tasks: [{ title: 'Find synthetic public bicycle specifications' }] },
+    ]);
+    const curate: MemoryCurator['curate'] = async ({ input }) => {
+      const { tasks, messages } = input as {
+        tasks: Array<{ id: string }>;
+        messages: Array<{ id: string; current: boolean }>;
+      };
+      return {
+        tasks: [
+          {
+            task_id: tasks[0]?.id ?? null,
+            request_message_id: tasks[0] ? null : messages.find((m) => m.current)!.id,
+            task_type: 'research',
+            task_action: 'find',
+            task_subject: 'web',
+            task_activities: ['find:web'],
+            use_case: 'other',
+            context: 'unclear',
+            collaboration: 'unclear',
+            outcome: tasks[0] ? 'completed' : 'active',
+          },
+        ],
+        frustration: null,
+      };
+    };
+    const processor = await f.processor(curate);
+    const starter = [];
+    const tappedSession = randomUUID();
+    for (const [session, prompt] of [
+      [tappedSession, 'Find synthetic public bicycle specifications'],
+      [randomUUID(), 'Find synthetic public tram timetables'],
+    ] as const) {
+      const before = f.events.length;
+      const tapped = await f.turn({ session, prompt });
+      processor.start(tapped.id)();
+      await processor.drain();
+      const followUp = await f.turn({
+        session,
+        prompt: 'Thanks',
+        at: Date.parse('2026-10-14T13:00:00.000Z'),
+      });
+      processor.start(followUp.id)();
+      await processor.drain();
+      starter.push(
+        f.events
+          .slice(before)
+          .filter(
+            (event) => event.event.startsWith('otto_task_') && event.event !== 'otto_task_analysis',
+          )
+          .map((event) => event.properties?.starter),
+      );
+    }
+    assert.deepEqual(starter, [
+      [true, true, true, true, true],
+      [false, false, false, false, false],
+    ]);
+    await f.pool.query('UPDATE analytics_tasks SET starter=false WHERE owner_id=$1', [f.ownerId]);
+    const upgraded = await f.processor(curate);
+    const before = f.events.length;
+    const later = await f.turn({
+      session: tappedSession,
+      prompt: 'Thanks again',
+      at: Date.parse('2026-10-14T14:00:00.000Z'),
+    });
+    upgraded.start(later.id)();
+    await upgraded.drain();
+    assert.deepEqual(
+      f.events
+        .slice(before)
+        .filter((event) => event.event === 'otto_task_linked')
+        .map((event) => event.properties?.starter),
+      [true],
+    );
   },
 );
 
