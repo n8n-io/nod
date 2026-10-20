@@ -428,3 +428,11 @@
 .desktop-options .account-preference-row {
   border: 0;
 }
+.account-settings-body .field-hint a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.account-settings-body .field-hint a:hover {
+  color: var(--link-hover);
+}

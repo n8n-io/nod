@@ -8,7 +8,7 @@ type AnalyticsEvents = {
     step: 'welcome' | 'brain' | 'email' | 'about' | 'telegram' | 'open_source';
     direction: 'forward' | 'back';
   };
-  otto_onboarding_step_skipped: { step: 'welcome' | 'email' | 'telegram' };
+  otto_onboarding_step_skipped: { step: 'email' | 'telegram' };
   otto_settings_viewed: {
     tab: 'general' | 'models' | 'app_connections' | 'memory';
   };
@@ -67,7 +67,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     step: ['welcome', 'brain', 'email', 'about', 'telegram', 'open_source'],
     direction: ['forward', 'back'],
   },
-  otto_onboarding_step_skipped: { step: ['welcome', 'email', 'telegram'] },
+  otto_onboarding_step_skipped: { step: ['email', 'telegram'] },
   otto_settings_viewed: {
     tab: ['general', 'models', 'app_connections', 'memory'],
   },

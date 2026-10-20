@@ -62,10 +62,10 @@ export function Onboarding({
     }
     const stored = readStep<{ owner: string; step: OnboardingStep; version?: number }>();
     const step =
-      stored?.owner === user.id && onboardingSteps.includes(stored.step)
-        ? stored.version === undefined && stored.step === 'about'
-          ? 'email'
-          : stored.step
+      stored?.owner === user.id &&
+      stored.version === onboardingVersion &&
+      onboardingSteps.includes(stored.step)
+        ? stored.step
         : 'welcome';
     if (step === 'welcome') clearStored();
     return { step, arrived: 'forward' as StepProps['arrived'] };
@@ -160,7 +160,7 @@ export function Onboarding({
   }
 
   function skipped() {
-    if (step === 'welcome' || step === 'email' || step === 'telegram')
+    if (step === 'email' || step === 'telegram')
       captureAnalytics('otto_onboarding_step_skipped', { step });
   }
 
