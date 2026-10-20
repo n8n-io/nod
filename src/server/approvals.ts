@@ -10,6 +10,7 @@ import {
   type TurnRef,
   type TurnSource,
 } from './thread.ts';
+import { appConfirmation } from '../ports/agent.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { localTimestamp } from '../shared/date-locale.ts';
 import { lockKey, locksTable } from './locks.ts';
@@ -344,7 +345,7 @@ export async function createApprovals(
       const existing = await withTurnLock(turn.turnId, inspect);
       if ('cached' in existing) {
         if (existing.cached) return existing.result;
-        return { requiresConfirmation: true, question: existing.question };
+        return { [appConfirmation]: existing.question as string };
       }
       if (!describe) throw new Error('The confirmation model is unavailable.');
       question = await describe(
@@ -394,7 +395,7 @@ export async function createApprovals(
     if ('question' in proposal) {
       if ('source' in proposal && proposal.source) changed('asked', action, proposal.source);
       refresh();
-      return { requiresConfirmation: true, question: proposal.question };
+      return { [appConfirmation]: proposal.question as string };
     }
     if (options.run) return options.run();
     return execute(action, snapshot, {
@@ -589,12 +590,15 @@ export async function createApprovals(
       return {
         prompt: `The exact action confirmed by the user was executed once by the trusted worker. Do not repeat it. Continue from its result.\n${untrustedBlock(`${approval.action} result`, JSON.stringify(outcome.result))}`,
       };
-    const reason = outcome.error instanceof Error ? outcome.error.message : String(outcome.error);
+    const failure = untrustedBlock(
+      `${approval.action} error`,
+      outcome.error instanceof Error ? outcome.error.message : String(outcome.error),
+    );
     return {
       prompt:
         outcome.status === 'expired'
-          ? `The action the user confirmed did not run, so nothing was done: ${reason} Do not report it as done.`
-          : `The action the user confirmed failed and will not be retried. Its outcome is uncertain: ${reason} Check the app before trying it again. Do not report it as done.`,
+          ? `The action the user confirmed did not run, so nothing was done. Do not report it as done.\n${failure}`
+          : `The action the user confirmed failed and will not be retried. Its outcome is uncertain, so check the app before trying it again. Do not report it as done.\n${failure}`,
     };
   }
 

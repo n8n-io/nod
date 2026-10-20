@@ -19,6 +19,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
+import { appConfirmation } from '../src/ports/agent.ts';
 import type { ApprovalDescription, ApprovalExecutionContext } from '../src/server/approvals.ts';
 test('localhost access requires the owner key and rejects foreign Host, Origin and cross-site requests', async () => {
   const root = await mkdtemp(join(tmpdir(), 'otto-access-'));
@@ -430,8 +431,7 @@ test(
       args: Record<string, unknown>,
     ) {
       const result = await approvals.request(turn, action, args);
-      assert.ok(result && typeof result === 'object' && 'requiresConfirmation' in result);
-      assert.equal(result.requiresConfirmation, true);
+      assert.ok(result && typeof result === 'object' && appConfirmation in result);
       assert.equal('url' in result, false);
       const record = (
         await db.pool.query(
@@ -610,7 +610,7 @@ test(
             args.recipient_email = 'caller-substitution@example.test';
             details.account.email = 'caller-account@example.test';
             release();
-            assert.deepEqual(await result, { requiresConfirmation: true, question });
+            assert.deepEqual(await result, { [appConfirmation]: question });
             const saved = await proposal(turn.turnId);
             assert.deepEqual(saved.args, frozen);
             assert.equal(
@@ -1584,8 +1584,8 @@ test(
           const results = await Promise.all(
             turns.map((turn) => approvals.request(turn, 'OTTO_schedule_cancel', args)),
           );
-          for (const result of results) assert.equal(result.requiresConfirmation, true);
-          assert.equal(results[0].question, results[1].question);
+          for (const result of results) assert.ok(result[appConfirmation]);
+          assert.equal(results[0][appConfirmation], results[1][appConfirmation]);
           const records = (
             await db.pool.query(
               'SELECT * FROM approvals WHERE owner_id=$1 AND thread_id=$2 AND action=$3 AND args=$4::jsonb',
@@ -2139,7 +2139,7 @@ test(
           try {
             assert.match(
               (await execute(failed))?.prompt ?? '',
-              /will not be retried\. Its outcome is uncertain: Fixture provider detail/,
+              /will not be retried\. Its outcome is uncertain[\s\S]*Fixture provider detail/,
             );
           } finally {
             failExecution = false;

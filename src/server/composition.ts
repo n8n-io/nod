@@ -934,8 +934,8 @@ async function initializeApplication(
     const result = await approvals.request(turn, 'OTTO_vault_allow', access.args, {
       details: access.details,
     });
-    if (result && typeof result === 'object' && 'requiresConfirmation' in result)
-      return { question: String(result.question) };
+    if (result && typeof result === 'object' && appConfirmation in result)
+      return { question: result[appConfirmation] };
     return { reason: 'allowed' };
   }
   const trust = createTrust({
@@ -1047,8 +1047,8 @@ async function initializeApplication(
               : {}),
           },
         });
-        return result && typeof result === 'object' && 'requiresConfirmation' in result
-          ? { [appConfirmation]: String(result.question) }
+        return result && typeof result === 'object' && appConfirmation in result
+          ? result
           : { result };
       },
       browserConnection: async (request, turn, signal, launch) => {
@@ -1283,9 +1283,7 @@ async function initializeApplication(
               : {}),
           },
         });
-        return result && typeof result === 'object' && 'requiresConfirmation' in result
-          ? { [appConfirmation]: result.question }
-          : result;
+        return result;
       },
     });
   }
