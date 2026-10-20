@@ -164,8 +164,8 @@ export function TaskCard({
           <span className="task-preview-line">
             {task.activity ? (
               <>
-                {task.activity.site && <Globe2 size={14} aria-hidden="true" />}
-                {task.activity.site ?? task.activity.tool}
+                <Globe2 size={14} aria-hidden="true" />
+                {task.activity.site}
               </>
             ) : (
               <Markdown allowedElements={[]} unwrapDisallowed>

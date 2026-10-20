@@ -370,17 +370,6 @@
   border-radius: var(--radius-full);
   background: var(--surface-subtle);
 }
-.chat-page .thinking-step {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.chat-page .thinking-step svg {
-  display: inline;
-  margin-right: 4px;
-  vertical-align: -2px;
-}
 .chat-page .thinking-dots i {
   width: 5px;
   height: 5px;

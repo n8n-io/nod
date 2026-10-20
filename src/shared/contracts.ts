@@ -51,7 +51,6 @@ export interface Turn {
   finishedAt?: string | null;
   error?: string | null;
   showTyping?: boolean;
-  activity?: { tool: string; site?: string } | null;
 }
 export interface TurnEvent {
   id: string;
@@ -267,7 +266,7 @@ export interface Task {
   stepIndex?: number;
   revision?: number;
   appliedRevision?: number;
-  activity?: { tool: string; site?: string };
+  activity?: { site: string };
 }
 export interface TaskDetail {
   task: Task;
