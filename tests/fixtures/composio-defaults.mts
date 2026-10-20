@@ -297,6 +297,7 @@ globalThis.fetch = async (resource, options) => {
               : { labels: [{ id: 'INBOX', name: 'Inbox' }] },
           error: null,
           log_id: 'fixture-log',
+          result_type: 'completed',
         });
       }
       if (sessionMatch[2] === 'link' && request.method === 'POST') {

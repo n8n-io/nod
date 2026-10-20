@@ -295,6 +295,7 @@ export function createComposioProvider(options: {
   }
   let currentApiKey = options.apiKey;
   let client = options.proxy?.client ?? options.client ?? connect(currentApiKey);
+  const instant = options.proxy ? {} : { instant: false as const };
   function userId(ownerId: string) {
     if (options.proxy && ownerId !== options.proxy.ownerId)
       throw new Error('This connected account owner is unavailable.');
@@ -521,7 +522,7 @@ export function createComposioProvider(options: {
             },
             manageConnections: false,
             sandbox: { enable: false },
-            premiumUsage: false,
+            ...instant,
           },
           { signal: AbortSignal.timeout(15_000) },
         );
@@ -749,7 +750,7 @@ export function createComposioProvider(options: {
         signal?.throwIfAborted();
         if (
           result.error != null ||
-          ('successful' in result && result.successful === false) ||
+          result.resultType !== 'completed' ||
           (result.data &&
             typeof result.data === 'object' &&
             'successful' in result.data &&
@@ -1157,7 +1158,7 @@ export function createComposioProvider(options: {
             ...(Object.keys(authConfigs).length ? { authConfigs } : {}),
             manageConnections: false,
             sandbox: { enable: false },
-            premiumUsage: false,
+            ...instant,
           },
           requestOptions,
         )
@@ -1200,7 +1201,7 @@ export function createComposioProvider(options: {
             connectedAccounts: {},
             manageConnections: false,
             sandbox: { enable: false },
-            premiumUsage: false,
+            ...instant,
           },
           requestOptions,
         )
