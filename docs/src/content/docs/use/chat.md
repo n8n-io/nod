@@ -52,6 +52,16 @@ To react to one of Otto's replies, double-click it to add 👍, or select **Reac
 
 Otto sometimes reacts to your messages too, such as ✅ when you say yes to something it offered or ❤️ when you thank it. It reacts only now and then, and a reaction never replaces its reply.
 
+## Open links in replies
+
+Hover over a link in one of Otto's replies, or focus it with the keyboard, to see its full address. Select the address to open the page, or press Enter on the focused link. Press Escape to dismiss the address.
+
+Under a reply, Otto lists the linked pages that publish a preview image, one row per page, in the order the links appear. Each row shows the link text, the page title when the page has one, and the full address as written in the reply. Hovering or focusing a link highlights its row, and hovering or focusing a row highlights its link. Rows appear as their images load. The first five rows show; select **Show more** for the rest. Links to pages without a preview image get no row, and links Otto recognises as sign-in, Vault or payment pages are never previewed.
+
+When a video page offers a player, such as YouTube or Vimeo, select the play button on its row to watch it in the chat. Your browser doesn't load the player until you select play.
+
+Otto's server reads the start of each linked page and its image, so your browser doesn't contact the site until you open or play it. Telegram and WhatsApp show their own previews.
+
 ## Replies go back where you wrote
 
 Otto answers each request in the app you sent it from. A message from Telegram gets its reply on Telegram. Everything also appears in the chat in Otto's own app. See [Telegram and WhatsApp](/use/channels/).

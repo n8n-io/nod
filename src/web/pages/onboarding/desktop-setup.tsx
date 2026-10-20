@@ -11,6 +11,7 @@ import { Splash } from '../../components/startup';
 import { Button, Notice } from '../../components/ui';
 import { api, errorMessage } from '../../lib/api';
 import { Onboarding } from '.';
+import { DesktopPreferencesSetup } from './steps/desktop-preferences';
 
 function valid(value: DesktopSetupState) {
   return (
@@ -35,6 +36,7 @@ export function DesktopSetup({
   const [retry, setRetry] = useState(0);
   const [retrying, setRetrying] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const panel = useRef<HTMLElement>(null);
   const active = useRef(false);
   const revision = useRef(0);
@@ -174,6 +176,9 @@ export function DesktopSetup({
       </main>
     );
   }
+
+  if (state.step === 'open' && !preferencesReady)
+    return <DesktopPreferencesSetup onReady={() => setPreferencesReady(true)} />;
 
   return (
     <Onboarding

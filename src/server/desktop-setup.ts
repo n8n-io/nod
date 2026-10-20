@@ -208,6 +208,7 @@ export async function createDesktopSetup(options: {
     }));
     const interview = createOnboardingInterview({
       curator: adapters.curator,
+      brief: async () => undefined,
       memory: {
         restate: async (notes) => {
           await journal.update('interview-notes', () => notes);
@@ -215,16 +216,12 @@ export async function createDesktopSetup(options: {
       },
     });
     app.post('/api/onboarding/interview', async (request, reply) => {
-      const input = z
-        .object({ answers: z.array(z.string()).min(1).max(2) })
-        .strict()
-        .parse(request.body);
-      const cache = await journal.read<{ answers: string[]; reply: unknown }>('interview-reply');
-      if (cache && JSON.stringify(cache.answers) === JSON.stringify(input.answers))
-        return cache.reply;
+      const input = request.body;
+      const cache = await journal.read<{ input: unknown; reply: unknown }>('interview-reply');
+      if (cache && JSON.stringify(cache.input) === JSON.stringify(input)) return cache.reply;
       const result = await interview.next(input);
       if (!result) return reply.code(503).send({ error: 'Otto could not write a reply.' });
-      await journal.update('interview-reply', () => ({ answers: input.answers, reply: result }));
+      await journal.update('interview-reply', () => ({ input, reply: result }));
       return result;
     });
     app.put('/api/onboarding/interview', async (request) => {

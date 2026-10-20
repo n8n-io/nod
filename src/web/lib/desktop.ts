@@ -7,10 +7,12 @@ export type DesktopPreferences = {
   launchAtLogin: boolean;
 };
 
-export type DesktopSettings = DesktopPreferences;
+export type DesktopSettings = DesktopPreferences & {
+  onboardingPreferenceStep: 'notifications' | 'launchAtLogin' | 'complete';
+};
 
 export type DesktopSettingsChange = Partial<
-  Pick<DesktopPreferences, 'theme' | 'notifications' | 'launchAtLogin'>
+  Pick<DesktopSettings, 'theme' | 'notifications' | 'launchAtLogin' | 'onboardingPreferenceStep'>
 >;
 
 export type DesktopSettingsSection = 'general' | 'models' | 'preferences';

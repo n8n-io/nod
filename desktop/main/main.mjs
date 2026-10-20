@@ -202,14 +202,15 @@ function foregroundWindow() {
 }
 
 function updateReadinessNotice() {
+  const setupFinished = !setupEngine && !earlyCompleting;
   void readinessNotice.update({
-    runtimePhase: status.runtime.phase,
+    runtimePhase: setupFinished ? status.runtime.phase : 'preparing',
     guided: guidedStartup,
     enabled: preferences.notifications,
     foreground: foregroundWindow(),
     quitting,
     completed: onboardingCompleted && !replayingOnboarding,
-    engineReady: Boolean(engine) && status.phase === 'ready',
+    engineReady: setupFinished && Boolean(engine) && status.phase === 'ready',
   });
 }
 
@@ -979,6 +980,7 @@ async function finishEnginePreparation() {
     pendingPreload = undefined;
     void preloadUpdateImages(assets);
   }
+  updateReadinessNotice();
   return status;
 }
 
@@ -1613,6 +1615,8 @@ else {
       ipcMain.handle('otto:settings:save', async (event, value) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         const allowed = ['theme', 'notifications', 'launchAtLogin'];
+        if (isEngine(event) && earlyBound && !earlyCompleting && !onboardingCompleted)
+          allowed.push('onboardingPreferenceStep');
         if (isSetup(event) && onboardingCompleted) allowed.push('onboardingCompleted');
         if (
           !value ||
@@ -1727,7 +1731,7 @@ else {
           },
         );
         const onboarding = replayingOnboarding || !saved.onboardingCompleted;
-        guidedStartup = onboarding;
+        guidedStartup = onboarding || pendingSetup;
         if (pendingSetup || !saved.onboardingCompleted) {
           void warmRuntime();
           await startEarlySetup();

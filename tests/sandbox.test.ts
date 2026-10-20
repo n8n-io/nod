@@ -79,6 +79,8 @@ test('public web validation rejects local, private, rebinding and credential URL
     '172.20.1.2',
     '192.168.1.2',
     '169.254.169.254',
+    '192.0.0.8',
+    '192.0.2.1',
     '100.100.100.200',
     '0.0.0.0',
     '::1',
@@ -88,13 +90,19 @@ test('public web validation rejects local, private, rebinding and credential URL
     '2002:7f00:1::',
     '3fff::1',
     '3fff:fff::1',
+    '2::1',
+    '64:ff9b::127.0.0.1',
+    '64:ff9b::10.0.0.1',
+    '64:ff9b:1::93.184.216.34',
   ])
     assert.equal(isPublicAddress(address), false, address);
   for (const address of [
     '93.184.216.34',
+    '192.0.66.239',
     '1.1.1.1',
     '2001:4860:4860::8888',
     '2606:4700:4700::1111',
+    '64:ff9b::93.184.216.34',
   ])
     assert.equal(isPublicAddress(address), true, address);
   for (const url of [

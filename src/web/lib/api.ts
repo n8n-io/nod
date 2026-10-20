@@ -12,6 +12,10 @@ let requestAccount: string | null = null;
 let accountGeneration = 0;
 const privateRequests = new Set<AbortController>();
 
+export function requestAccountVersion() {
+  return accountGeneration;
+}
+
 export function setRequestAccount(id: string | null) {
   if (id === requestAccount) return;
   requestAccount = id;

@@ -1,5 +1,32 @@
 # Desktop changelog
 
+## 0.1.18 - 2026-10-20
+
+### Features
+
+- **chat:** Preview linked pages with images and play videos inline. [#375](https://github.com/n8n-io/otto/pull/375) (e289a3e)
+- **onboarding:** Run the setup interview from one skill file. [#374](https://github.com/n8n-io/otto/pull/374) (b9dca01)
+- **settings:** One General tab and ask about usage data at the start of setup. [#368](https://github.com/n8n-io/otto/pull/368) (1d3edce)
+- **web:** Open every file in a side panel next to the chat. [#371](https://github.com/n8n-io/otto/pull/371) (9ec1014)
+- **analytics:** Define real jobs and count weekly installations. [#369](https://github.com/n8n-io/otto/pull/369) (c94ba33)
+- **memory:** Import memory from another assistant. [#370](https://github.com/n8n-io/otto/pull/370) (afe0b24)
+
+### Fixes
+
+- **analytics:** Link What's shared to the live docs site. [#373](https://github.com/n8n-io/otto/pull/373) (5f1eefc)
+- **integrations:** Stop a false sign-in error after Easy Connect succeeds. [#372](https://github.com/n8n-io/otto/pull/372) (a4a11f6)
+- **approvals:** Return approved-action failures to the task and record only questions. [#367](https://github.com/n8n-io/otto/pull/367) (4cf52a5)
+
+[Full changelog](https://github.com/n8n-io/otto/compare/desktop-v0.1.17...e289a3e31a59589cd89b945efb55e1e554d5ad08)
+
+<details>
+<summary>Build details</summary>
+
+Source: `e289a3e31a59589cd89b945efb55e1e554d5ad08`
+Previous release: `desktop-v0.1.17`
+
+</details>
+
 ## 0.1.17 - 2026-10-20
 
 ### Breaking changes

@@ -22,13 +22,8 @@ export const setupProgressSchema = z
     about: z
       .object({
         answers: z.array(z.string().max(interviewAnswerChars)).max(3),
-        turns: z
-          .array(
-            z
-              .object({ ack: z.array(z.string().max(1000)).max(8), question: z.string().max(2000) })
-              .strict(),
-          )
-          .max(4),
+        turns: z.array(z.array(z.string().max(1000)).max(3)).max(4),
+        done: z.boolean(),
       })
       .strict()
       .optional(),

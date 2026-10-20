@@ -11,13 +11,13 @@ This page walks you through Otto's onboarding, your first tasks and what to do w
 
 ## Onboarding at a glance
 
-Otto opens onboarding the first time you use it. In the desktop app, it starts once Otto has prepared its computer. It's a short chat, and you can skip Gmail and Telegram until later.
+Otto opens onboarding the first time you use it. In the desktop app, you can answer and connect accounts while Otto prepares its computer. It's a short chat, and you can skip Gmail and Telegram until later.
 
 ```mermaid
 flowchart LR
   hi[Welcome and<br/>usage data] --> model[Connect<br/>a model]:::accent
   model --> gmail[Gmail]:::muted
-  gmail --> q[Three<br/>questions]
+  gmail --> q[A few<br/>questions]
   q --> tg[Telegram]:::muted
   tg --> cards([First tasks<br/>in chat]):::go
 ```
@@ -28,15 +28,17 @@ flowchart LR
 
 1. **Say hi.** Otto introduces itself and asks whether to **Share usage data**. It's off unless you turn it on, and you can change it later in **Settings → General**. Select **Let's go**.
 
-2. **Connect a model.** Pick OpenAI, Anthropic or OpenRouter. Select **Sign in with ChatGPT** or **Connect OpenRouter** to use your account, or paste an API key. In the desktop app or a source install, you can instead pick **OpenAI-compatible** to use a [local model](/connect/local-models/): check the server address, then select **Connect**. Your key is encrypted and never shown to the model. Otto uses your provider’s default model when available. You can change it later in **Models**. Select **Continue**.
+2. **Connect a model.** Pick OpenAI, Anthropic or OpenRouter. Select **Sign in with ChatGPT** or **Connect OpenRouter** to use your account, or paste an API key. In the desktop app or a source install, you can instead pick **OpenAI-compatible** to use a [local model](/connect/local-models/): check the server address, then select **Connect**. Your key is encrypted and never shown to the model. Otto uses your provider’s default model when available. You can change it later in **Models**. Setup moves on once the new connection and model are ready; if a model choice is still needed, select one and then **Continue**.
 
 3. **Connect Gmail (optional).** On desktop or a personal web install, choose **Easy Connect** and sign in with an allowed Google account, or save your own Composio key. Then select **Connect** for Gmail and approve its separate permissions. You can also select **Skip for now**.
 
-4. **Answer three questions.** Otto asks what you're working on, what you're aiming for and what it can take off your plate. Type a short answer to each. Otto shows a summary and saves it to its memory. Select **Continue**, or **Change my answers** to start again.
+4. **Answer a few questions.** Otto says hello, then asks what you're working on and what it can take off your plate, and sometimes what you're aiming for. If you connected Gmail and its inbox summary is ready, it also mentions what it noticed in your inbox. It asks at most three questions, skips what you've already told it and saves your answers to its memory. Select **Continue**, or **Change my answers** to start again.
 
 5. **Connect Telegram (optional).** Follow the numbered steps. Scan the code or select **Open Telegram** to open BotFather, send `/newbot`, and choose a name and a username ending in `bot`. Select **I have my token**, paste BotFather's reply, and select **Connect bot**. In **Open your bot**, scan the new code or open Telegram, then press **Start**. Check your account details and select **Confirm**.
 
-6. Select **Start chatting** to finish setup.
+6. **Choose desktop preferences.** In the desktop app, choose whether Otto can notify you when work finishes or needs your attention, and whether it should open when you sign in to your computer. Both are optional.
+
+7. Select **Start chatting** to finish setup. If the computer is still preparing, Otto shows its progress and opens chat when ready. If you enabled notifications and switched away, it notifies you when setup finishes.
 
 </Steps>
 

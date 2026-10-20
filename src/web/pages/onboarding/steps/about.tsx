@@ -3,10 +3,9 @@ import { ArrowUp, Mic } from 'lucide-react';
 import type { Connection } from '../../../../shared/contracts';
 import {
   interviewAnswerChars,
-  interviewLabels,
-  lastQuestion,
+  interviewQuestions,
+  type InterviewMessage,
   type InterviewResponse,
-  type InterviewSave,
   type OnboardingInterview,
 } from '../../../../shared/onboarding';
 import { OttoGlyph, prefersReducedMotion, Rise } from '../../../components/motion';
@@ -17,49 +16,30 @@ import type { StepProps } from '..';
 import { Bubble, Footer, Messages, UserBubble, useReveal } from '../motion';
 import { prepareSuggestions, readStep, readStored, writeStored } from '../storage';
 
-type Turn = { ack: string[]; question: string };
 type Talk = OnboardingInterview;
 
-const first: Turn = {
-  ack: [
-    'I’d love to get to know you a little, so I’ve got three quick questions.',
-    'I can help you launch a side project, grow your business, or take the busywork off your hands.',
-  ],
-  question: 'What are you working on these days? What’s your story?',
-};
-const scripted: Turn[] = [
-  first,
-  {
-    ack: ['Sounds cool!'],
-    question: 'What are you aiming for with it? A launch, a milestone, a first group of users?',
-  },
-  { ack: ['Love it, that’s a good one to chase.'], question: lastQuestion },
-];
+const opening = ['I’d love to get to know you a little.', 'What are you working on these days?'];
+const handOff = 'What’s one thing you’d love to take off your plate?';
 const still = (
   <span className="ob-avatar">
     <OttoGlyph mode="still" />
   </span>
 );
-const wrapUp: Turn = { ack: [], question: '' };
 const owner = () => readStep<{ owner: string }>()?.owner;
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function restore(): Talk {
   const saved = readStored<(Talk & { owner?: string }) | null>('about');
-  if (
-    !saved ||
-    saved.owner !== owner() ||
-    !Array.isArray(saved.answers) ||
-    !Array.isArray(saved.turns)
-  )
-    return { answers: [], turns: [first] };
-  const answers = saved.answers.slice(0, 3);
-  return { answers, turns: [first, ...saved.turns.slice(0, answers.length)] };
+  const answers = Array.isArray(saved?.answers) ? saved.answers.slice(0, interviewQuestions) : [];
+  const turns = Array.isArray(saved?.turns) ? saved.turns.slice(0, answers.length + 1) : [];
+  if (saved?.owner !== owner() || turns.length < answers.length || !turns.every(Array.isArray))
+    return { answers: [], turns: [], done: false };
+  return { answers, turns, done: saved?.done === true && turns.length > answers.length };
 }
 
 export function About({ arrived, onNext, onBack, interview }: StepProps) {
-  const [{ answers, turns }, setTalk] = useState(() =>
-    interview ? (interview.state ?? { answers: [], turns: [first] }) : restore(),
+  const [{ answers, turns, done }, setTalk] = useState(() =>
+    interview ? (interview.state ?? { answers: [], turns: [], done: false }) : restore(),
   );
   const { data: apps } = usePageData<Connection[]>('/api/apps');
   const gmail = apps?.some((app) => app.slug === 'gmail' && app.status === 'connected');
@@ -73,50 +53,57 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const pendingTurn = useRef<{ count: number; reply: InterviewResponse } | null>(null);
+  const savingAnswer = useRef(false);
   const input = useRef<HTMLInputElement>(null);
   const chat = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const stuck = useRef(true);
-  const pendingTurn = useRef<{ count: number; turn: Turn } | null>(null);
-  const savingAnswer = useRef(false);
   const index = turns.length - 1;
   const thinking = turns.length === answers.length;
-  const wrapped = turns.length === 4;
 
   useEffect(() => {
-    if (!interview) writeStored('about', { owner: owner(), answers, turns: turns.slice(1) });
-  }, [answers, turns]);
+    if (!interview) writeStored('about', { owner: owner(), answers, turns, done });
+  }, [answers, turns, done]);
 
   useEffect(() => {
     const count = answers.length;
-    if (!count || turns.length > count) return;
+    if (turns.length > count) return;
     const controller = new AbortController();
     const started = Date.now();
-    const next: Promise<Turn> =
+    const talk: InterviewMessage[] = turns.flatMap((said, at) => [
+      ...said.map((text) => ({ from: 'otto' as const, text })),
+      { from: 'owner' as const, text: answers[at] },
+    ]);
+    const next =
       pendingTurn.current?.count === count
-        ? Promise.resolve(pendingTurn.current.turn)
-        : count === 3
-          ? wait(1000).then(() => wrapUp)
-          : api<InterviewResponse>('/api/onboarding/interview', {
-              method: 'POST',
-              body: JSON.stringify({ answers }),
-              signal: controller.signal,
-            })
-              .then((reply) => ({ ack: reply.ack ? [reply.ack] : [], question: reply.question }))
-              .catch((cause) => {
-                if (interview) throw cause;
-                return scripted[count];
-              });
+        ? Promise.resolve(pendingTurn.current.reply)
+        : api<InterviewResponse>('/api/onboarding/interview', {
+            method: 'POST',
+            body: JSON.stringify({ talk }),
+            signal: controller.signal,
+          }).catch((cause): InterviewResponse => {
+            if (interview) throw cause;
+            return !count
+              ? { messages: opening, done: false }
+              : count < interviewQuestions && !turns.flat().includes(handOff)
+                ? { messages: [handOff], done: false }
+                : { messages: [], done: true };
+          });
     void next
-      .then(async (turn) => {
+      .then(async (reply) => {
         await wait(Math.max(0, 700 - (Date.now() - started)));
         if (controller.signal.aborted) return;
-        pendingTurn.current = { count, turn };
-        const talk = { answers, turns: [...turns.slice(0, count), turn] };
-        await interview?.save(talk);
+        pendingTurn.current = { count, reply };
+        const value = {
+          answers,
+          turns: [...turns.slice(0, count), reply.messages],
+          done: reply.done,
+        };
+        await interview?.save(value);
         if (controller.signal.aborted) return;
         pendingTurn.current = null;
-        setTalk((current) => (current.answers.length === count ? talk : current));
+        setTalk((current) => (current.answers.length === count ? value : current));
       })
       .catch((cause) => {
         if (!controller.signal.aborted) setError(errorMessage(cause));
@@ -125,7 +112,7 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
   }, [answers, retry]);
 
   useEffect(() => {
-    if (introDone && !thinking && !wrapped) input.current?.focus({ preventScroll: true });
+    if (introDone && !thinking && !done) input.current?.focus({ preventScroll: true });
   }, [introDone, index]);
 
   useEffect(() => {
@@ -151,12 +138,12 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
   async function submit(event: FormEvent) {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || thinking || wrapped || savingAnswer.current) return;
+    if (!text || thinking || done || savingAnswer.current) return;
     savingAnswer.current = true;
     setSaving(true);
     setError('');
-    const talk = { answers: [...answers, text], turns };
     try {
+      const talk = { answers: [...answers, text], turns, done };
       await interview?.save(talk);
       setDraft('');
       setShown(false);
@@ -177,7 +164,7 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
     setSaving(true);
     setError('');
     try {
-      const talk = { answers: [], turns: [first] };
+      const talk = { answers: [], turns: [], done: false };
       await interview?.save(talk);
       setShown(false);
       setFresh(true);
@@ -198,8 +185,7 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
     setSaving(true);
     setError('');
     try {
-      const body: InterviewSave = { answers: answers as InterviewSave['answers'] };
-      await api('/api/onboarding/interview', { method: 'PUT', body: JSON.stringify(body) });
+      await api('/api/onboarding/interview', { method: 'PUT', body: JSON.stringify({ answers }) });
       void prepareSuggestions();
       onNext();
     } catch (cause) {
@@ -209,38 +195,26 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
     }
   }
 
-  const said = (turn: Turn, at: number) => [
-    ...turn.ack.map((text) => (
-      <Bubble data-analytics-private={!!interview || at > 0 || undefined}>{text}</Bubble>
-    )),
-    <Bubble
-      className="ob-about-question"
-      data-analytics-private={!!interview || at > 0 || undefined}
-    >
-      {turn.question}
-    </Bubble>,
-  ];
-  const lines: ReactNode[] = wrapped
-    ? [
-        <Bubble>
-          Thanks, that helps. Here’s what I’ve got so far:
-          <span className="ob-about-summary" data-analytics-private>
-            {interviewLabels.map((label, at) => (
-              <span key={label}>
-                <span>{label}</span>
-                <strong>{answers[at]}</strong>
-              </span>
-            ))}
-          </span>
-        </Bubble>,
-        <Bubble>
-          {gmail
-            ? 'I’ll keep this in mind and look through your inbox for things I can take off your plate.'
-            : 'I’ll keep this in mind.'}{' '}
-          Next, let’s set up <strong>Telegram</strong> so you can reach me from anywhere.
-        </Bubble>,
-      ]
-    : said(turns[index], index);
+  const said = (messages: string[], asking: boolean) =>
+    messages.map((text, at) => (
+      <Bubble
+        className={asking && at === messages.length - 1 ? 'ob-about-question' : undefined}
+        data-analytics-private
+      >
+        {text}
+      </Bubble>
+    ));
+  const lines: ReactNode[] = thinking
+    ? []
+    : done
+      ? [
+          ...said(turns[index], false),
+          <Bubble>
+            {gmail && 'I’ll look through your inbox for things I can take off your plate. '}
+            Next, let’s set up <strong>Telegram</strong> so you can reach me from anywhere.
+          </Bubble>,
+        ]
+      : said(turns[index], true);
 
   return (
     <section className="ob-step" data-analytics-public>
@@ -248,7 +222,7 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
         <div className="ob-about-log" ref={log}>
           {answers.map((answer, at) => (
             <Fragment key={at}>
-              <Messages items={said(turns[at], at)} avatar={still} />
+              <Messages items={said(turns[at], true)} avatar={still} />
               <div className="ob-about-sent" data-new={waited && at === answers.length - 1}>
                 <div>
                   <UserBubble>{answer}</UserBubble>
@@ -272,7 +246,7 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
           )}
         </div>
       </div>
-      {!wrapped && (
+      {!done && (
         <Rise show={introDone} className="ob-about-compose">
           <form className="composer ob-composer" onSubmit={(event) => void submit(event)}>
             <input
@@ -308,12 +282,9 @@ export function About({ arrived, onNext, onBack, interview }: StepProps) {
               </Button>
             </div>
           </form>
-          <p className="ob-about-hint">
-            Question {Math.min(turns.length, 3)} of 3 · type your answer
-          </p>
         </Rise>
       )}
-      {wrapped ? (
+      {done ? (
         <Footer
           show={shown}
           onBack={() => void restart()}

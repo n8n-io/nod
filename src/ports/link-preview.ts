@@ -1,9 +1,10 @@
 export interface PublicLinkMetadata {
   url: string;
-  title: string;
+  title?: string;
   description?: string;
   siteName?: string;
   image?: string;
+  player?: string;
 }
 
 export interface PreviewImage {

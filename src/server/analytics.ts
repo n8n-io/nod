@@ -15,6 +15,7 @@ import {
   type AnalyticsEvent,
 } from './analytics-events.ts';
 import type { RuntimeObservation } from '../ports/agent.ts';
+import { analyticsDomain } from './analytics-connections.ts';
 
 export type { AnalyticsEvent } from './analytics-events.ts';
 export interface AnalyticsDelivery {
@@ -396,6 +397,27 @@ export const analyticsRoutes = new Map<
   ['PUT /api/trust/limit', settings('trust', 'update')],
   ['PATCH /api/memory', settings('memory', 'update')],
   ['PUT /api/integrations/key', settings('apps', 'update')],
+  [
+    'POST /api/link-preview/opened',
+    (request) => {
+      const body = request.body as {
+        url: string;
+        source: 'text' | 'preview' | 'tooltip' | 'player';
+        position?: number;
+      };
+      const domain = analyticsDomain(body.url);
+      return domain
+        ? {
+            event: 'otto_link_opened',
+            properties: {
+              domain,
+              source: body.source,
+              ...(body.position && body.position <= 20 ? { position: body.position } : {}),
+            },
+          }
+        : undefined;
+    },
+  ],
   ['DELETE /api/integrations/key', settings('apps', 'disconnect')],
 ]);
 

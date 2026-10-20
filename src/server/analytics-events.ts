@@ -510,6 +510,18 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
+      event: z.literal('otto_link_opened'),
+      properties: z
+        .object({
+          domain,
+          source: z.enum(['text', 'preview', 'tooltip', 'player']),
+          position: z.number().int().min(1).max(20).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal('otto_website_visited'),
       properties: z
         .object({ domain, via: z.enum(['browser', 'fetch']), subagent: z.boolean() })

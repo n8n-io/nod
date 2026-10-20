@@ -67,7 +67,7 @@ Events say `environment=development` unless they come from a release build:
 - Message text, Otto's replies, task titles, summaries and quotes.
 - Tool arguments, tool results, app data, web pages and files.
 - Names, email addresses, account names, phone numbers and IDs of your threads, turns or messages.
-- Full page addresses, paths, queries, subdomains, private hostnames and IP addresses. For websites Otto visits, signs in to or buys from, only the registrable domain leaves, such as `example.co.uk` for `shop.example.co.uk/cart?id=42`.
+- Full page addresses, paths, queries, subdomains, private hostnames and IP addresses. For websites Otto visits, signs in to or buys from, and links you open from a reply, only the registrable domain leaves, such as `example.co.uk` for `shop.example.co.uk/cart?id=42`.
 - Raw error text, console output, request headers and bodies.
 - Vault values, card details, codes, keys, order details and shop accounts. A payment sends only its amount, currency, status and the shop's registrable domain.
 - Model names from an OpenAI-compatible server you run yourself. They're sent as `custom`.
@@ -97,6 +97,7 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 | `otto_chat_stop_requested`      | You select stop                                    | None                                                                                                                                                                                                |
 | `otto_task_card_started`        | You start a first-chat task card                   | `kind`: `immediate`, `ongoing`; `position`: `0`, `1`, `2`                                                                                                                                           |
 | `otto_setup_link_clicked`       | You open a setup link in a reply                   | `setup`: `app`, `vault`, `website`, `browser`                                                                                                                                                       |
+| `otto_link_opened`              | You open or play a link from a reply               | Registrable `domain`; `source`: `text`, `preview`, `tooltip`, `player`; for `preview` and `player`, the row's `position`, 1 to 20. Never the address                                                |
 | `otto_browser_handoff_action`   | You use a control on a browser Otto handed to you  | `action`: `done`, `back`, `reload`, `expand`, `collapse`                                                                                                                                            |
 | `otto_message_reaction_changed` | You add, change or remove a reaction               | `operation`: `add`, `remove`, `change`; `reaction`: `thumbs_up`, `heart`, `joy`, `party`, `wow`, `pray`, `thumbs_down`, `other`; `method`: `quick`, `picker`, `double_click`, `menu`, `pin`; `role` |
 | `otto_message_action`           | You copy or reply to a message                     | `action`: `copy`, `reply`; `role`: `assistant`, `user`; `method`: `button`, `context_menu`                                                                                                          |

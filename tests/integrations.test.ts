@@ -1754,7 +1754,7 @@ test('managed proxy access binds browser enrollment to the installation and a pr
           'otto-proxy-access-v1',
           id,
           scenario === 'wrong-origin' ? 'https://attacker.example.test' : origin,
-          randomBytes(32).toString('base64url'),
+          randomBytes(32).toString('hex'),
           randomBytes(32).toString('base64url'),
         ].join('\n');
         const fragment =

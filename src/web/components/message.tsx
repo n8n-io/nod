@@ -82,7 +82,7 @@ export const MessageText = memo(function MessageText({
                 return <strong className="setup-phrase">{setup.label}</strong>;
               return (
                 <a
-                  href={link.href}
+                  href={link.kind === 'external' ? href : link.href}
                   target={
                     setup?.href.startsWith('/apps?connect=') ||
                     link.href.startsWith('/e2e/connect/')

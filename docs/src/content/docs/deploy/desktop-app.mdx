@@ -52,7 +52,9 @@ On a new desktop profile, a small host process serves the same chat onboarding w
 
 Pending setup is encrypted with the profile's Vault key, bound to its owner, and written atomically in the private profile directory. Only Otto's own window receives the temporary server token. Keys are submitted through the private forms and are never returned by a read endpoint or sent to the workspace or browser containers. OS permissions and the key store protect stored data; this does not isolate Otto from a compromised OS user session.
 
-After the last step, setup stops accepting edits and freezes the saved state. Once the computer is ready, the ordinary server imports connections, preferences, consent and introduction notes in one database transaction before starting background workers. It records a receipt so a restarted handoff cannot import the same credentials twice. After acknowledgment, Otto deletes the temporary journal, stops the setup process and opens chat in the same window.
+Desktop setup also asks whether to enable notifications and open Otto at login. Each choice is saved before continuing. Completed installations keep their choices on upgrades.
+
+After the last step, setup stops accepting edits and freezes the saved state. Once the computer is ready, the ordinary server imports connections, preferences, consent and introduction notes in one database transaction before starting background workers. It records a receipt so a restarted handoff cannot import the same credentials twice. After acknowledgment, Otto deletes the temporary journal, stops the setup process and opens chat in the same window. While waiting, an animated Otto logo shows that the computer is still preparing. If notifications are enabled and Otto is not focused, a single notification announces that setup is ready after the handoff and cleanup succeed.
 
 If startup fails, the encrypted progress remains for a retry. Updates reuse the existing profile and do not repeat completed onboarding.
 

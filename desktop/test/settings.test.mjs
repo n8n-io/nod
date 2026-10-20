@@ -26,6 +26,7 @@ import { createSettingsStore } from '../main/settings.mjs';
 import { createDesktopAnalytics } from '../main/analytics.mjs';
 import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
+import { createReadinessNotice, isQuietTime } from '../main/notifications.mjs';
 import { saveArtifactDownload } from '../main/downloads.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from '../main/lifecycle.mjs';
 import {
@@ -336,6 +337,8 @@ async function runningDesktop(
     initialState = 'running',
     prepareRuntime,
     nativePageLoaded,
+    setupCleanup,
+    notificationsSupported = false,
     openFile = open,
     environment = {},
     platform = 'darwin',
@@ -352,6 +355,7 @@ async function runningDesktop(
   const children = [];
   const paths = new Map();
   const handlers = new Map();
+  const notifications = [];
   const ipc = Object.assign(new EventEmitter(), {
     handle: (name, handler) => handlers.set(name, handler),
   });
@@ -425,10 +429,15 @@ async function runningDesktop(
     fetch: request,
     createSettingsStore: () => storage.store,
     createDesktopAnalytics,
-    createAppPreferencesStore: () => ({ sync: async () => {} }),
+    createAppPreferencesStore: () => ({
+      sync: async () => {},
+      get: async () => ({ preferences: { quietHoursEnabled: false } }),
+    }),
     createChatReadCursorStore: () => ({}),
     saveArtifactDownload,
-    createReadinessNotice: () => ({ update() {} }),
+    createReadinessNotice,
+    isQuietTime,
+    watchAssistantMessages: () => () => {},
     createDesktopLifecycle: (options) =>
       createDesktopLifecycle({
         ...options,
@@ -440,7 +449,14 @@ async function runningDesktop(
     desktopSetupMode,
     nativeTheme: { shouldUseDarkColors: false },
     safeStorage: storage.encryption,
-    Notification: { isSupported: () => false },
+    Notification: class extends EventEmitter {
+      static isSupported() {
+        return notificationsSupported;
+      }
+      show() {
+        notifications.push(this);
+      }
+    },
     utilityProcess: {
       fork(file, _args, options) {
         assert.ok(allowStart, 'The healthy engine must not restart.');
@@ -452,7 +468,9 @@ async function runningDesktop(
         child.postMessage = (message) => {
           child.sent.push(message);
           if (message.type === 'otto-setup-ack')
-            setImmediate(() => child.emit('message', { type: 'otto-setup-cleaned' }));
+            void Promise.resolve(setupCleanup).then(() =>
+              setImmediate(() => child.emit('message', { type: 'otto-setup-cleaned' })),
+            );
         };
         child.environment = options.env;
         child.port = options.env.PORT;
@@ -576,6 +594,7 @@ async function runningDesktop(
       saveEngineDownload,
       setReady: (ready) => { status.phase = ready ? 'ready' : 'starting'; },
       status: () => status,
+      notifyReady: updateReadinessNotice,
       crash: () => { engine = undefined; enginePreferencesReady = false; },
     };
     })()`,
@@ -594,6 +613,7 @@ async function runningDesktop(
     children,
     storage,
     handlers,
+    notifications,
     headers: (details) => new Promise((resolve) => requestHeaders(details, resolve)),
   };
 }
@@ -2382,4 +2402,122 @@ test('Intel updates use their own app assets and an official Otto runtime releas
   f.manifest.platform = 'darwin-x64';
   f.runtime.platform = 'darwin-arm64';
   await assert.rejects(f.source.latest('0.1.0'));
+});
+
+test('desktop preference choices resume durably and cannot skip or regress explicit consent', async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.store.get()).onboardingPreferenceStep, 'notifications');
+  await assert.rejects(f.store.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' }));
+  await assert.rejects(f.store.save({ onboardingPreferenceStep: 'launchAtLogin' }));
+  await f.store.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
+  const reopened = f.reopen();
+  assert.equal((await reopened.get()).notifications, false);
+  assert.equal((await reopened.get()).onboardingPreferenceStep, 'launchAtLogin');
+  await reopened.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
+  await assert.rejects(
+    reopened.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' }),
+  );
+  await reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' });
+  await reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' });
+  assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
+  const saved = JSON.parse(await readFile(f.path, 'utf8'));
+  delete saved.onboardingPreferenceStep;
+  saved.onboardingCompleted = true;
+  await writeFile(f.path, JSON.stringify(saved));
+  assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
+  assert.equal((await f.reopen().get()).notifications, false);
+  assert.equal((await f.reopen().get()).launchAtLogin, false);
+});
+
+test('early desktop preference writes require the owned setup frame and stop after handoff freezes', async (t) => {
+  const runtime = deferred();
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'fresh',
+    allowStart: true,
+    prepareRuntime: () => runtime.promise,
+  });
+  try {
+    await f.launch();
+    const window = f.windows.at(-1);
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    const save = f.handlers.get('otto:settings:save');
+    await assert.rejects(
+      save(
+        { ...event, senderFrame: { url: window.url } },
+        { notifications: true, onboardingPreferenceStep: 'launchAtLogin' },
+      ),
+    );
+    await save(event, { notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
+    assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
+    await save(event, { launchAtLogin: false, onboardingPreferenceStep: 'complete' });
+    f.children[0].emit('message', { type: 'otto-setup-complete' });
+    await new Promise(setImmediate);
+    await assert.rejects(
+      save(event, { notifications: true, onboardingPreferenceStep: 'launchAtLogin' }),
+    );
+    assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
+  } finally {
+    runtime.resolve({ env: {} });
+    await f.settle();
+    await f.close();
+  }
+});
+
+test('native setup-ready notification waits for cleanup acknowledgement and only reaches opted-in background users once', async (t) => {
+  for (const scenario of [
+    { enabled: true, focused: false, supported: true, expected: 1 },
+    { enabled: false, focused: false, supported: true, expected: 0 },
+    { enabled: true, focused: true, supported: true, expected: 0 },
+    { enabled: true, focused: false, supported: false, expected: 0 },
+  ]) {
+    await t.test(JSON.stringify(scenario), async (t) => {
+      const runtime = deferred();
+      const cleanup = deferred();
+      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+        initialState: 'fresh',
+        allowStart: true,
+        prepareRuntime: () => runtime.promise,
+        setupCleanup: cleanup.promise,
+        notificationsSupported: scenario.supported,
+      });
+      try {
+        await f.storage.store.save({ notifications: scenario.enabled });
+        await f.launch();
+        const setup = f.children[0];
+        const window = f.windows.at(-1);
+        window.focused = scenario.focused;
+        setup.emit('message', { type: 'otto-setup-complete' });
+        runtime.resolve({ env: {} });
+        const deadline = Date.now() + 3000;
+        while (
+          !setup.sent.some((message) => message.type === 'otto-setup-ack') &&
+          Date.now() < deadline
+        )
+          await new Promise(setImmediate);
+        assert.ok(setup.sent.some((message) => message.type === 'otto-setup-ack'));
+        await new Promise(setImmediate);
+        assert.equal(f.notifications.length, 0);
+        assert.equal(setup.killed, undefined);
+        cleanup.resolve();
+        await f.settle();
+        await new Promise(setImmediate);
+        assert.equal(setup.killed, true);
+        assert.equal(f.notifications.length, scenario.expected);
+        f.notifyReady();
+        f.notifyReady();
+        await new Promise(setImmediate);
+        assert.equal(f.notifications.length, scenario.expected);
+        if (scenario.expected) {
+          assert.equal(window.focused, false);
+          f.notifications[0].emit('click');
+          assert.equal(window.focused, true);
+        }
+      } finally {
+        runtime.resolve({ env: {} });
+        cleanup.resolve();
+        await f.settle();
+        await f.close();
+      }
+    });
+  }
 });

@@ -3881,7 +3881,7 @@ const { TaskCard } = await import('./src/web/pages/tasks.tsx');
 const now = new Date().toISOString();
 document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(MessageBubble, {message:{id:'synthetic-message',role:'user',text:'synthetic-private-message',turnId:null,createdAt:now,attachments:[{id:'22222222-2222-4222-8222-222222222222',name:'synthetic-private-file.pdf',mimeType:'application/pdf',size:12,url:'/api/artifacts/22222222-2222-4222-8222-222222222222'}],replyTo:{id:'synthetic-quoted',role:'assistant',text:'synthetic-private-quote'}}, onReply() {}})));
 document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(TaskCard, {task:{id:'synthetic-task',title:'synthetic-private-task',doneWhen:'synthetic-private-done',now:'synthetic-private-now',result:'',status:'working',question:null,waitingFor:[],nextCheck:null,createdAt:now,updatedAt:now,closedAt:null,steps:['synthetic-private-step'],stepIndex:0}})));
-document.body.insertAdjacentHTML('beforeend', '<div class="chat-turn-preview">synthetic-private-turn</div><div class="message-link-previews">synthetic-private-preview</div><div class="pending-attachments">synthetic-private-pending</div><div class="reply-context composer-reply">synthetic-private-draft-reply</div><p class="statement-summary trust-sentence">synthetic-private-rule</p><span class="vault-use-text">synthetic-private-site</span><span class="vault-item-text">synthetic-private-login</span><span class="compact-account-details">synthetic-private-account</span><aside class="artifact-drawer" style="width: 480px"><h2 title="synthetic-private-file.pdf">synthetic-private-file.pdf</h2><table><td title="synthetic-private-cell">synthetic-private-cell</td></table></aside>');
+document.body.insertAdjacentHTML('beforeend', '<div class="chat-turn-preview">synthetic-private-turn</div><div class="message-link-previews">synthetic-private-preview</div><a class="message-link-tooltip" href="https://example.org/synthetic-private-tooltip">synthetic-private-tooltip</a><div class="pending-attachments">synthetic-private-pending</div><div class="reply-context composer-reply">synthetic-private-draft-reply</div><p class="statement-summary trust-sentence">synthetic-private-rule</p><span class="vault-use-text">synthetic-private-site</span><span class="vault-item-text">synthetic-private-login</span><span class="compact-account-details">synthetic-private-account</span><aside class="artifact-drawer" style="width: 480px"><h2 title="synthetic-private-file.pdf">synthetic-private-file.pdf</h2><table><td title="synthetic-private-cell">synthetic-private-cell</td></table></aside>');
 const pairingPaths = [...document.querySelectorAll('.telegram-setup-qr path')].map(path => path.getAttribute('d'));
 assert.ok(pairingPaths.length > 0);
 const stylesheet = document.createElement('style');
@@ -3912,7 +3912,7 @@ const badgeTextIds = new Set(badges.map(node => node.childNodes[0].id));
 const badgeUpdates = events.filter(event => event.type === 3).flatMap(event => event.data.texts ?? []).filter(text => badgeTextIds.has(text.id));
 assert.equal(badgeUpdates.length, badges.length);
 assert.deepEqual(badgeUpdates.map(text => text.value), Array(badges.length).fill('**'));
-for (const name of ['message-reply-quote','message-attachments','task-preview-title','task-preview-line','task-preview-steps','chat-turn-preview','message-link-previews','pending-attachments','reply-context','trust-sentence','vault-use-text','vault-item-text','compact-account-details','artifact-drawer']) {
+for (const name of ['message-reply-quote','message-attachments','task-preview-title','task-preview-line','task-preview-steps','chat-turn-preview','message-link-previews','message-link-tooltip','pending-attachments','reply-context','trust-sentence','vault-use-text','vault-item-text','compact-account-details','artifact-drawer']) {
   const blocked = recordedNodes.filter(node => node.attributes?.class?.split(' ').includes(name));
   assert.ok(blocked.length > 0, name);
   for (const node of blocked) assert.deepEqual(node.childNodes, [], name);
@@ -4194,11 +4194,13 @@ HTMLElement.prototype.scrollIntoView = function () {};
 window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
 let events = 0;
 globalThis.EventSource = window.EventSource = class { static CLOSED = 2; constructor() { events++; } close() {} addEventListener() {} };
+window.ottoDesktop = { getSettings: async () => ({ onboardingPreferenceStep: 'complete' }), onPreferences: () => () => {} };
 const owner = { id: 'synthetic-setup-owner', name: '', email: null, avatarUrl: null };
 const settings = { theme: 'system', onboardingCompleted: false, usageData: false, traces: false };
 let journal = { version: 2, step: 'welcome', runtime: { phase: 'preparing', message: 'Preparing synthetic runtime' }, completed: false };
 let failSave = true;
 let finishCalls = 0;
+const rememberedAnswers = [];
 let interviewUnavailable = false;
 let setupUnavailable = false;
 let models = {connections:[],selection:null};
@@ -4234,9 +4236,13 @@ window.fetch = globalThis.fetch = async (url, options = {}) => {
   if (path === '/api/apps') return Response.json([]);
   if (path === '/api/channel-settings') return Response.json({ready:false,channels:[]});
   if (path === '/api/onboarding/suggestions') return Response.json({ok:true});
+  if (path === '/api/onboarding/interview' && options.method === 'PUT') {
+    rememberedAnswers.push(body.answers);
+    return Response.json({ok:true});
+  }
   if (path === '/api/onboarding/interview') return interviewUnavailable
     ? Response.json({error:'Synthetic model needs reconnecting'}, {status:503})
-    : Response.json({ack:'Synthetic acknowledgement',question:'Synthetic follow-up question?'});
+    : Response.json({messages: ['Synthetic follow-up question?'], done: body.talk.filter(message => message.from === 'owner').length === 3});
   if (path === '/api/models/keys') {
     assert.deepEqual(body, {provider:'anthropic',key:'synthetic-replacement-key'});
     interviewUnavailable = false;
@@ -4271,7 +4277,7 @@ assert.equal(calls.includes('/api/account/prepare'), false);
 assert.equal(events, 0);
 assert.equal(calls.some(path => ['/api/state','/api/tasks','/api/trust','/api/vault'].includes(path)), false);
 await act(async () => root.unmount());
-journal = { ...journal, step:'about', about:{ answers:['Synthetic saved answer'], turns:[{ack:['Synthetic saved intro'],question:'Synthetic saved first question?'},{ack:['Synthetic saved reply'],question:'Synthetic saved second question?'}] } };
+journal = { ...journal, step:'about', about:{ answers:['Synthetic saved answer'], turns:[['Synthetic saved intro','Synthetic saved first question?'],['Synthetic saved reply','Synthetic saved second question?']],done:false } };
 root = createRoot(document.getElementById('root'));
 await act(async () => root.render(createElement(App)));
 await waitFor(() => document.body.textContent.includes('Synthetic saved second question?'));
@@ -4310,14 +4316,15 @@ assert.match(document.body.textContent, /Synthetic second answer/);
 await waitFor(() => journal.about.answers.length === 2 && journal.about.turns.length === 3);
 input = document.querySelector('input[aria-label="Your answer"]');
 assert.deepEqual(journal.about.answers, ['Synthetic saved answer','Synthetic second answer']);
-assert.equal(journal.about.turns[2].question, 'Synthetic follow-up question?');
+assert.deepEqual(journal.about.turns[2], ['Synthetic follow-up question?']);
 await act(async () => {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Synthetic third answer');
   input.dispatchEvent(new Event('input',{bubbles:true}));
 });
 await act(async () => document.querySelector('button[aria-label="Send"]').click());
 await waitFor(() => journal.about.answers.length === 3 && journal.about.turns.length === 4);
-assert.deepEqual(journal.about.turns[3], {ack:[],question:''});
+assert.deepEqual(journal.about.turns[3], ['Synthetic follow-up question?']);
+assert.equal(journal.about.done, true);
 await act(async () => root.unmount());
 journal = {...journal,step:'open'};
 root = createRoot(document.getElementById('root'));
@@ -4369,6 +4376,106 @@ assert.equal(calls.filter(path => path === '/api/desktop/setup/retry').length, r
 assert.equal(finishCalls, 1);
 assert.equal(events, 0);
 await act(async () => root.unmount());
+dom.window.close();
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
+test('desktop onboarding persists explicit native choices and resumes without repeating them', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {JSDOM} from 'jsdom';
+import {createSettingsStore} from './desktop/main/settings.mjs';
+const directory=await mkdtemp(join(tmpdir(),'otto-native-preferences-'));
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/onboarding',pretendToBeVisual:true});
+for(const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage']) Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location=window.location;
+globalThis.ResizeObserver=class{observe(){}disconnect(){}};
+HTMLElement.prototype.scrollIntoView=function(){};
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+let store=createSettingsStore(join(directory,'settings.json'),{});
+let failSave=true;
+let saves=0;
+let reads=0;
+window.ottoDesktop={
+  getSettings:async()=>{reads++;return store.get()},
+  saveSettings:async change=>{saves++;if(failSave)throw new Error('Synthetic native save failed');return store.save(change)},
+};
+let journal={version:2,step:'open',runtime:{phase:'preparing',message:'Synthetic runtime pending'},completed:false};
+const calls=[];
+window.fetch=globalThis.fetch=async(url,options={})=>{
+ const path=new URL(url,window.location.href).pathname;calls.push(path);
+ if(path==='/api/desktop/setup')return Response.json(journal);
+ if(path==='/api/preferences')return Response.json({timeZone:'Europe/Lisbon'});
+ if(path==='/api/onboarding/suggestions')return Response.json({ok:true});
+ throw new Error('Unexpected request '+path);
+};
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {DesktopSetup}=await import('./src/web/pages/onboarding/desktop-setup.tsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+const session={desktopSetup:true,user:{id:'synthetic-native-owner',name:'',email:null,avatarUrl:null},settings:{usageData:false,onboardingCompleted:false}};
+let root=createRoot(document.getElementById('root'));
+const render=()=>act(async()=>root.render(createElement(DesktopSetup,{session,onAccountUpdate:async()=>assert.fail('No account changes expected')})));
+const settle=()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,20))});
+const waitFor=async condition=>{for(let at=0;at<100&&!condition();at++)await settle();assert.ok(condition())};
+const button=text=>[...document.querySelectorAll('button')].find(value=>value.textContent.trim()===text);
+await render();
+await waitFor(()=>button('Enable notifications'));
+assert.equal((await store.get()).notifications,false);
+assert.equal(saves,0);
+await act(async()=>{button('Enable notifications').click();button('Enable notifications').click()});
+await waitFor(()=>document.body.textContent.includes('Synthetic native save failed'));
+assert.equal(saves,1);
+assert.equal((await store.get()).onboardingPreferenceStep,'notifications');
+assert.ok(button('Enable notifications'));
+failSave=false;
+await act(async()=>button('Not now').click());
+await waitFor(()=>button('Open at login'));
+assert.equal((await store.get()).notifications,false);
+assert.equal((await store.get()).onboardingPreferenceStep,'launchAtLogin');
+await act(async()=>root.unmount());
+store=createSettingsStore(join(directory,'settings.json'),{});
+root=createRoot(document.getElementById('root'));
+await render();
+await waitFor(()=>button('Open at login'));
+assert.equal(button('Enable notifications'),undefined);
+await act(async()=>button('Not now').click());
+await waitFor(()=>button('Start chatting'));
+assert.equal((await store.get()).launchAtLogin,false);
+assert.equal((await store.get()).onboardingPreferenceStep,'complete');
+assert.equal(saves,3);
+await act(async()=>root.unmount());
+store=createSettingsStore(join(directory,'settings.json'),{});
+root=createRoot(document.getElementById('root'));
+await render();
+await waitFor(()=>button('Start chatting'));
+assert.equal(button('Not now'),undefined);
+assert.equal(saves,3);
+await act(async()=>root.unmount());
+for(const completed of [false,true]) {
+ journal={...journal,completed,completing:true};
+ const readAt=reads,callAt=calls.length;
+ root=createRoot(document.getElementById('root'));
+ await render();
+ await waitFor(()=>document.querySelector('main [role="status"]'));
+ assert.equal(reads,readAt);
+ assert.deepEqual(new Set(calls.slice(callAt)),new Set(['/api/desktop/setup']));
+ assert.equal(document.querySelector('button'),null);
+ await act(async()=>root.unmount());
+}
+assert.equal(calls.includes('/api/desktop/setup/complete'),false);
+await rm(directory,{recursive:true,force:true});
 dom.window.close();
 process.exit(0);
 `,

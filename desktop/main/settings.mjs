@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 
 const secretFields = ['composioApiKey'];
 const preferenceFields = ['launchAtLogin', 'notifications', 'onboardingCompleted'];
+const onboardingPreferenceSteps = ['notifications', 'launchAtLogin', 'complete'];
 
 export function createSettingsStore(path, encryption, platform = process.platform) {
   let current;
@@ -72,10 +73,19 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         value.version !== 1 ||
         Object.keys(value).some(
           (field) =>
-            !['version', 'theme', ...preferenceFields, 'secrets', 'keyMetadata'].includes(field),
+            ![
+              'version',
+              'theme',
+              ...preferenceFields,
+              'onboardingPreferenceStep',
+              'secrets',
+              'keyMetadata',
+            ].includes(field),
         ) ||
         !['system', 'light', 'dark'].includes(value.theme) ||
         preferenceFields.some((field) => typeof value[field] !== 'boolean') ||
+        (value.onboardingPreferenceStep !== undefined &&
+          !onboardingPreferenceSteps.includes(value.onboardingPreferenceStep)) ||
         !record(value.secrets) ||
         Object.entries(value.secrets).some(
           ([field, secret]) =>
@@ -167,6 +177,9 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       notifications: value.notifications,
       theme: value.theme,
       onboardingCompleted: value.onboardingCompleted,
+      onboardingPreferenceStep: value.onboardingCompleted
+        ? 'complete'
+        : (value.onboardingPreferenceStep ?? 'notifications'),
     };
   }
   return {
@@ -177,7 +190,11 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       return exclusive(async () => {
         if (!input || typeof input !== 'object' || Array.isArray(input))
           throw new Error('Check your settings and try again.');
-        if (Object.keys(input).some((key) => !['theme', ...preferenceFields].includes(key)))
+        if (
+          Object.keys(input).some(
+            (key) => !['theme', ...preferenceFields, 'onboardingPreferenceStep'].includes(key),
+          )
+        )
           throw new Error('These settings are not supported.');
         const previous = await read();
         const value = {
@@ -194,6 +211,29 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           if (input[field] === undefined) continue;
           if (typeof input[field] !== 'boolean') throw new Error('Check your preferences.');
           value[field] = input[field];
+        }
+        if (input.onboardingPreferenceStep !== undefined) {
+          const step = redacted(previous).onboardingPreferenceStep;
+          const next = step === 'notifications' ? 'launchAtLogin' : 'complete';
+          const answered =
+            input.onboardingPreferenceStep === 'launchAtLogin'
+              ? 'notifications'
+              : input.onboardingPreferenceStep === 'complete'
+                ? 'launchAtLogin'
+                : undefined;
+          const repeated =
+            answered &&
+            !previous.onboardingCompleted &&
+            input.onboardingPreferenceStep === step &&
+            input[answered] === previous[answered];
+          if (
+            !repeated &&
+            (step === 'complete' ||
+              input.onboardingPreferenceStep !== next ||
+              typeof input[step] !== 'boolean')
+          )
+            throw new Error('Choose your desktop preference before continuing.');
+          value.onboardingPreferenceStep = input.onboardingPreferenceStep;
         }
         await write(value);
         return redacted(value);

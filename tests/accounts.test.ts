@@ -28,6 +28,62 @@ import { createAnalytics, type Analytics } from '../src/server/analytics.ts';
 import { createLedger } from '../src/server/ledger.ts';
 import { createModelTraces } from '../src/server/traces.ts';
 import type { ModelTrace } from '../src/ports/traces.ts';
+import { setRequestAccount } from '../src/web/lib/api.ts';
+import { loadLinkPreview } from '../src/web/lib/link-previews.ts';
+
+test('queued and cached link previews cannot cross an owner change', async (t) => {
+  const calls: Array<{ url: string; account: string | null; respond(): void }> = [];
+  const requests: ReturnType<typeof loadLinkPreview>[] = [];
+  let automatic = false;
+  t.mock.method(globalThis, 'fetch', async (_path: string, options: RequestInit) => {
+    const url = JSON.parse(String(options.body)).url as string;
+    const account = new Headers(options.headers).get('X-Otto-Account');
+    const imageUrl = `/api/link-preview/image/${randomUUID()}`;
+    return new Promise<Response>((resolve) => {
+      const respond = () => resolve(Response.json({ preview: { url, imageUrl } }));
+      calls.push({ url, account, respond });
+      if (automatic) respond();
+    });
+  });
+  const load = (url: string) => {
+    const pending = loadLinkPreview(url);
+    requests.push(pending);
+    return pending;
+  };
+  t.after(async () => {
+    automatic = true;
+    for (const call of calls) call.respond();
+    await Promise.all(requests);
+    setRequestAccount(null);
+  });
+  setRequestAccount('fixture-first-owner');
+  const cachedUrl = 'https://example.com/cached';
+  const firstCached = load(cachedUrl);
+  calls[0].respond();
+  const cached = await firstCached;
+  const urls = Array.from({ length: 5 }, (_, index) => `https://example.com/queued-${index}`);
+  const firstOwner = urls.map(load);
+  setRequestAccount('fixture-next-owner');
+  const nextOwner = load(urls[0]);
+  const nextCached = load(cachedUrl);
+  for (const call of calls.slice(1)) call.respond();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    calls.filter((call) => call.account === 'fixture-next-owner').map((call) => call.url),
+    [urls[0], cachedUrl],
+  );
+  assert.deepEqual(
+    await Promise.all(firstOwner),
+    urls.map(() => null),
+  );
+  const repeated = load(urls[0]);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 7);
+  for (const call of calls.filter((call) => call.account === 'fixture-next-owner')) call.respond();
+  assert.ok(await nextOwner);
+  assert.deepEqual(await repeated, await nextOwner);
+  assert.notEqual((await nextCached)?.imageUrl, cached?.imageUrl);
+});
 
 describe('account routes', () => {
   const origin = 'http://localhost:4399';
@@ -1786,6 +1842,7 @@ describe('desktop setup handoff', () => {
     const port = 4387;
     let finished = 0;
     let callbacks = 0;
+    let interviewCalls = 0;
     let adapterStarts = 0;
     let busyCheck = async () => false;
     let failTransfer = false;
@@ -1875,10 +1932,13 @@ describe('desktop setup handoff', () => {
             curator: {
               id: 'fixture',
               configured: true,
-              curate: async () => ({
-                ack: 'Fixture acknowledgement',
-                question: 'Fixture question?',
-              }),
+              curate: async ({ input }: { input: { talk: Array<{ from: string }> } }) => {
+                interviewCalls++;
+                return {
+                  messages: ['Fixture question?'],
+                  done: input.talk.some((message) => message.from === 'owner'),
+                };
+              },
             },
             traces: createModelTraces(),
             analytics: undefined,
@@ -1961,6 +2021,7 @@ describe('desktop setup handoff', () => {
       backend,
       model: () => model,
       callbacks: () => callbacks,
+      interviewCalls: () => interviewCalls,
       finished: () => finished,
       adapterStarts: () => adapterStarts,
       resumed,
@@ -2042,6 +2103,46 @@ describe('desktop setup handoff', () => {
     await restored.resume();
     assert.equal(f.finished(), 2);
     assert.equal((await f.request(restored, 'GET', '/api/desktop/setup')).json().completing, true);
+  });
+
+  test('desktop interview resumes cached conversational replies without repeating model requests', async (t) => {
+    const f = await fixture(t);
+    let setup = await f.create();
+    const opening = await f.request(setup, 'POST', '/api/onboarding/interview', { talk: [] });
+    assert.equal(opening.statusCode, 200);
+    assert.deepEqual(opening.json(), { messages: ['Fixture question?'], done: false });
+    await setup.app.close();
+    setup = await f.create();
+    assert.deepEqual(
+      (await f.request(setup, 'POST', '/api/onboarding/interview', { talk: [] })).json(),
+      opening.json(),
+    );
+    assert.equal(f.interviewCalls(), 1);
+    const closing = await f.request(setup, 'POST', '/api/onboarding/interview', {
+      talk: [
+        { from: 'otto', text: 'Fixture question?' },
+        { from: 'owner', text: 'A synthetic project' },
+      ],
+    });
+    assert.equal(closing.json().done, true);
+    assert.equal(f.interviewCalls(), 2);
+    assert.equal(
+      (
+        await f.request(setup, 'PUT', '/api/onboarding/interview', {
+          answers: ['A synthetic project'],
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(
+      (
+        await f.request(setup, 'POST', '/api/onboarding/interview', {
+          talk: [{ from: 'tool', text: 'Unowned fixture' }],
+        })
+      ).statusCode,
+      400,
+    );
+    assert.equal(f.interviewCalls(), 2);
   });
 
   test('completion fences new writes before waiting for an in-flight status check', async (t) => {
