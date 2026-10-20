@@ -1,4 +1,4 @@
-import { isPublicIpv4Address } from './public-address';
+import { isPublicIpv4Address } from './public-address.ts';
 
 export interface LinkPreview {
   url: string;
