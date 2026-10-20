@@ -49,13 +49,18 @@ export function createLinkPreviews(
       previews.delete(key);
       if (entry.imageId) images.delete(entry.imageId);
     }
-    let bytes = 0;
-    for (const entry of images.values()) bytes += entry.value?.bytes.byteLength ?? 0;
-    while (images.size > 128 || bytes > 32 * 1024 * 1024) {
-      bytes -= images.values().next().value!.value?.bytes.byteLength ?? 0;
+    while (images.size > 128) {
       const imageId = images.keys().next().value!;
       images.delete(imageId);
       for (const [url, entry] of previews) if (entry.imageId === imageId) previews.delete(url);
+    }
+    let bytes = 0;
+    for (const entry of images.values()) bytes += entry.value?.bytes.byteLength ?? 0;
+    for (const entry of images.values()) {
+      if (bytes <= 32 * 1024 * 1024) break;
+      if (!entry.value) continue;
+      bytes -= entry.value.bytes.byteLength;
+      entry.value = undefined;
     }
   }
   function acceptable(value: PreviewImage) {
@@ -120,6 +125,8 @@ export function createLinkPreviews(
     prune();
     const cached = images.get(id);
     if (!cached) return null;
+    images.delete(id);
+    images.set(id, cached);
     if (cached.value !== undefined) return cached.value;
     if (cached.pending) return cached.pending;
     cached.pending = run(() => provider.image(cached.url))
@@ -130,6 +137,7 @@ export function createLinkPreviews(
       .catch(() => null)
       .finally(() => {
         cached.pending = undefined;
+        prune();
       });
     return cached.pending;
   }
