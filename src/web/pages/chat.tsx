@@ -1,6 +1,14 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, Check, LoaderCircle, MessageSquarePlus, Trash2, User } from 'lucide-react';
+import {
+  ArrowDown,
+  Check,
+  Globe2,
+  LoaderCircle,
+  MessageSquarePlus,
+  Trash2,
+  User,
+} from 'lucide-react';
 import type {
   AppState,
   Artifact,
@@ -280,6 +288,9 @@ export function Chat({
       .map((item) => item.message),
   ];
   const working = hasVisibleChatActivity(state.turns);
+  const step = state.turns.find(
+    (turn) => turn.status === 'running' && turn.showTyping !== false && turn.activity,
+  )?.activity;
   const [welcoming, setWelcoming] = useState(
     () => allMessages.length === 0 && !working && state.configuration.llmReady,
   );
@@ -1015,6 +1026,12 @@ export function Chat({
                     <i />
                     <i />
                   </span>
+                  {step && (
+                    <span className="thinking-step">
+                      {step.site && <Globe2 size={14} aria-hidden="true" />}
+                      {step.site ?? step.tool}
+                    </span>
+                  )}
                 </div>
               )
             )}

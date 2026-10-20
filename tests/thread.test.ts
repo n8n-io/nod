@@ -1776,7 +1776,7 @@ test(
             ],
           );
           assert.equal('inbox' in planInputs.at(-1)!.input, false);
-          assert.match(rejected.intro, /^Thanks for telling me about your work\. Here’s one thing/);
+          assert.match(rejected.intro, /^Here’s one thing/);
           const repairInput = planInputs.at(-1)!.input as { previous: unknown; problems: string[] };
           assert.ok(repairInput.previous);
           assert.deepEqual(repairInput.problems, [
@@ -1857,6 +1857,20 @@ test(
             repaired.tasks.map((task) => task.title),
             [
               'Find the best Yamaha XT 600 for sale in Czechia',
+              'Check Czech XT 600 listings every morning',
+              'Track the scrambler rebuild every Friday',
+            ],
+          );
+          attempts = 0;
+          const once = planAnswer;
+          planAnswer = (owner) => {
+            if (attempts) throw new Error('Synthetic curator failure');
+            return once(owner);
+          };
+          assert.deepEqual(
+            (await ruleBreaking.prepare(true)).tasks.map((task) => task.title),
+            [
+              'Plan my next two weeks',
               'Check Czech XT 600 listings every morning',
               'Track the scrambler rebuild every Friday',
             ],

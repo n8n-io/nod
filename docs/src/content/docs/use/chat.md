@@ -20,7 +20,7 @@ Type in the message box and press Enter. Press Shift+Enter for a new line.
 
 ## Keep talking while Otto works
 
-You don't have to wait. The message box stays open while Otto works.
+You don't have to wait. The message box stays open while Otto works. Next to the typing dots, Otto shows its latest step: the website it's on, or the tool it's using.
 
 Reply to a task's message to continue that task. A message without a reply target goes to the main chat. If it clearly changes an existing task, Otto sends your message to that task. If the target is unclear, Otto asks which task you mean.
 

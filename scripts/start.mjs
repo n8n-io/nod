@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
@@ -24,13 +24,11 @@ const run = (command, args, env = process.env) =>
 try {
   const [major, minor] = process.versions.node.split('.').map(Number);
   if (major < 24 || (major === 24 && minor < 21)) throw new Error('Use Node.js 24.21.0 or newer.');
-  try {
-    await Promise.all(
-      ['tsx', 'tsc', 'vite'].map((command) => access(`node_modules/.bin/${command}`)),
-    );
-  } catch {
-    await run('pnpm', ['install', '--frozen-lockfile', '--prod=false']);
-  }
+  const [wanted, installed] = await Promise.all([
+    readFile('pnpm-lock.yaml', 'utf8'),
+    readFile('node_modules/.pnpm/lock.yaml', 'utf8').catch(() => ''),
+  ]);
+  if (wanted !== installed) await run('pnpm', ['install', '--frozen-lockfile', '--prod=false']);
   if (production) await run('pnpm', ['run', 'build']);
   const environment = await withLocalDatabase(process.cwd(), async (database) => {
     const settings = parseEnv(await readFile('.env', 'utf8'));

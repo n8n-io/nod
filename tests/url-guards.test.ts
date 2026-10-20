@@ -374,7 +374,25 @@ test('setup links omit tokens and fragments and approval paths never become link
     const document = JSDOM.fragment(render(`[Connect Calendar](${href})`));
     assert.ok(document.querySelector('button[data-setup="app"]'));
     assert.equal(document.querySelector('a'), null);
+    const sentence = JSDOM.fragment(
+      render(`[Connect your calendar, then I'll continue.](${href})`),
+    );
+    assert.equal(sentence.querySelector('button[data-setup="app"]')?.textContent, 'Connect app');
+    assert.equal(
+      sentence.querySelector('.setup-phrase')?.textContent,
+      "Connect your calendar, then I'll continue.",
+    );
+    assert.equal(sentence.querySelector('a'), null);
   }
+  const discovered = JSDOM.fragment(
+    render(
+      '[Connect your calendar, then I will continue.](/apps?connect=00000000-0000-4000-8000-000000000000)',
+    ),
+  );
+  assert.equal(
+    discovered.querySelector('.setup-phrase')?.textContent,
+    'Connect your calendar, then I will continue.',
+  );
   for (const href of [
     'https://connect.composio.dev.example.test/link/synthetic',
     'https://connect.composio.dev:8443/link/synthetic',
@@ -382,9 +400,11 @@ test('setup links omit tokens and fragments and approval paths never become link
     'https://outside.example/v1/connect/pairing?ticket=synthetic',
     'https://outside.example/other/v1/connect/pair?ticket=synthetic',
   ]) {
-    const document = JSDOM.fragment(render(`[Connect Calendar](${href})`));
-    assert.equal(document.querySelector('button[data-setup="app"]'), null);
-    assert.equal(document.querySelector('a')?.getAttribute('href'), href);
+    for (const text of ['Connect Calendar', "Connect your calendar, then I'll continue."]) {
+      const document = JSDOM.fragment(render(`[${text}](${href})`));
+      assert.equal(document.querySelector('button[data-setup="app"]'), null);
+      assert.equal(document.querySelector('a')?.getAttribute('href'), href);
+    }
   }
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });

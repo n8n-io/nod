@@ -33,10 +33,6 @@ sed -i.bak "s|^OTTO_VAULT_KEY=.*|OTTO_VAULT_KEY=$(openssl rand -base64 32)|" .en
 
 Keep a copy of the key somewhere safe. Saved credentials can't be read without it.
 
-### Missing modules after git pull
-
-The update changed dependencies. Run `pnpm install --frozen-lockfile`, then `pnpm start`.
-
 ### The port is in use
 
 Another program uses port `4310`. Set another `PORT` in `.env` and restart. Otto's database container also needs port `54329` on `127.0.0.1`.

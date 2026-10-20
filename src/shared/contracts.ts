@@ -51,6 +51,7 @@ export interface Turn {
   finishedAt?: string | null;
   error?: string | null;
   showTyping?: boolean;
+  activity?: { tool: string; site?: string } | null;
 }
 export interface TurnEvent {
   id: string;

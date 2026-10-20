@@ -6,6 +6,7 @@ import type { InboxSnippet, InboxThread } from '../ports/integrations.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { SuggestedTask } from '../shared/onboarding.ts';
 import { pool } from './db.ts';
+import { logFailure } from './failure-log.ts';
 import { transaction } from './transaction.ts';
 import { refresh } from './events.ts';
 import { mailCheckText, type MailCheck } from './integration-result.ts';
@@ -272,13 +273,10 @@ const extraTasks: Task[] = [
   { kind: 'ongoing', title: 'Scan news in my field every Monday', source: 'web' },
 ];
 
-function fallbackSuggestions(options: {
-  told: boolean;
-  gmail: boolean;
-  telegram: boolean;
-}): PreparedSuggestions {
+function fallbackSuggestions(options: { gmail: boolean; telegram: boolean }): PreparedSuggestions {
   return {
-    intro: `${options.told ? 'Thanks for telling me about your work. ' : ''}Here’s one thing I can do right now, and two I can keep doing for you. Tap one and I’ll get going.`,
+    intro:
+      'Here’s one thing I can do right now, and two I can keep doing for you. Tap one and I’ll get going.',
     tasks: [
       options.gmail
         ? { kind: 'now', title: 'Draft replies waiting on me', source: 'gmail' }
@@ -376,7 +374,7 @@ export function createOnboardingSuggestions(options: {
       'web',
       ...(telegram ? (['telegram'] as const) : []),
     ];
-    const fallback = fallbackSuggestions({ told: answers.length > 0, gmail, telegram });
+    const fallback = fallbackSuggestions({ gmail, telegram });
     if (!options.curator.configured) return fallback;
     try {
       const brief = gmail ? await savedBrief().catch(() => undefined) : undefined;
@@ -411,7 +409,8 @@ export function createOnboardingSuggestions(options: {
           )
           .catch(() => undefined);
         const repaired = checkedCards(retry, sources);
-        if (repaired.problems.length <= checked.problems.length) checked = repaired;
+        const kept = (cards: Checked) => cards.picks.filter(Boolean).length;
+        if (kept(repaired) >= kept(checked)) checked = repaired;
       }
       const { suggestions, replaced } = assembled(checked, fallback, sources);
       if (reasons.length)
@@ -419,7 +418,8 @@ export function createOnboardingSuggestions(options: {
           `First tasks: asked the model to fix ${[...new Set(reasons)].join(', ')}; ${replaced} of 3 cards replaced.`,
         );
       return suggestions;
-    } catch {
+    } catch (error) {
+      logFailure('first_tasks_fallback', error);
       return fallback;
     }
   }

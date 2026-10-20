@@ -122,6 +122,9 @@ export async function createApp(dependencies: AppDependencies = {}) {
       return { running: result.rows };
     });
   const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",NOT u.background AS "showTyping",
+    CASE WHEN u.status='running' AND NOT u.background
+      THEN (SELECT json_strip_nulls(json_build_object('tool',e.summary,'site',e.site)) FROM turn_events e
+        WHERE e.turn_id=u.id AND e.type IN ('tool_start','tool_complete','tool_failed') ORDER BY e.created_at DESC,e.id DESC LIMIT 1) END AS activity,
     CASE WHEN ${activeHandoffSql}
       THEN (SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id AND m.role='assistant' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS "handoffMessageId"`;
   async function messageTurns(threadId: string, ids: string[]): Promise<Turn[]> {

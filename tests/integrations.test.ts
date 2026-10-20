@@ -4292,6 +4292,8 @@ test(
       keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 1) },
     });
     const states: string[] = [];
+    const issuer = 'https://auth.fixture.example';
+    let issSupported = true;
     let finished = 0;
     let finishStarted: () => void = () => {};
     let finishRelease: () => void = () => {};
@@ -4317,7 +4319,20 @@ test(
           states.push(state);
           return {
             url: `https://fixture.example/authorize?state=${state}`,
-            saved: { redirectUri, verifier: 'synthetic-private-verifier' },
+            saved: {
+              redirectUri,
+              verifier: 'synthetic-private-verifier',
+              discovery: {
+                authorizationServerUrl: issuer,
+                authorizationServerMetadata: {
+                  issuer,
+                  authorization_endpoint: `${issuer}/authorize`,
+                  token_endpoint: `${issuer}/token`,
+                  response_types_supported: ['code'],
+                  authorization_response_iss_parameter_supported: issSupported,
+                },
+              },
+            },
           };
         },
         finish: async (_endpoint: string, saved: DiscoveredOAuthState, code: string) => {
@@ -4380,9 +4395,9 @@ test(
       assert.ok(!response.body.includes('synthetic-private'));
       return response.json();
     };
-    const callback = async (state: string, result: string) => {
+    const callback = async (state: string, result: string, iss = issuer) => {
       const response = await app.inject({
-        url: `/api/apps/callback?state=${state}&${result}`,
+        url: `/api/apps/callback?state=${state}&${result}${iss ? `&iss=${encodeURIComponent(iss)}` : ''}`,
         headers: { host: headers.host },
       });
       assert.equal(response.statusCode, 302, response.body);
@@ -4441,14 +4456,21 @@ test(
     assert.equal(await interrupted, 'failed');
     assert.equal((await status()).oauthStatus, 'pending');
     assert.equal(await callback(states[2], 'code=fixture-code'), 'expired');
-    assert.equal(await callback(states[3], 'code=fixture-code'), 'connected');
+    assert.equal(await callback(states[3], 'code=fixture-code', ''), 'failed');
+    issSupported = false;
+    assert.equal((await authorize()).statusCode, 200);
+    assert.equal(await callback(states[4], 'code=fixture-code', 'https://other.example'), 'failed');
+    assert.equal((await authorize()).statusCode, 200);
+    assert.equal(states.length, 6);
+    assert.equal(finished, 2);
+    assert.equal(await callback(states[5], 'code=fixture-code'), 'connected');
     assert.equal((await status()).oauthStatus, 'connected');
     assert.deepEqual(await setupStatus(), { completed: [setupHash], apps: [] });
     await createDiscoveredConnections(f.pool, options);
     assert.equal((await recovered.inject(path)).json().oauthStatus, 'connected');
     assert.equal((await status()).authorizationUrl, undefined);
     assert.equal((await authorize()).statusCode, 409);
-    assert.equal(await callback(states[3], 'code=fixture-code'), 'expired');
+    assert.equal(await callback(states[5], 'code=fixture-code'), 'expired');
     assert.equal(finished, 3);
     assert.equal((await discovered.list()).length, 1);
     await assert.rejects(grantVault.read(id!));

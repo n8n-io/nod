@@ -77,9 +77,14 @@ export const MessageText = memo(function MessageText({
             a: ({ href, children, node }) => {
               const link = safeMessageLink(href ?? '', origin);
               if (!link) return <span>{children}</span>;
-              const setup = setupLink(link, messageLinkText(node?.children ?? []));
+              const linkText = messageLinkText(node?.children ?? []);
+              const setup = setupLink(link, linkText);
               if (setup && actions.some((action) => action.href === setup.href))
-                return <strong className="setup-phrase">{setup.label}</strong>;
+                return (
+                  <strong className="setup-phrase">
+                    {linkText.trim() && !linkText.includes(setup.href) ? children : setup.label}
+                  </strong>
+                );
               return (
                 <a
                   href={link.kind === 'external' ? href : link.href}

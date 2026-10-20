@@ -21,7 +21,7 @@ Run Otto from its source code on macOS or Linux. Choose this if you use Linux or
 
 ## What `pnpm start` runs
 
-`pnpm start` installs dependencies, builds the web app and starts three Docker containers. Then it starts the Otto server, which serves the web app on `127.0.0.1`.
+`pnpm start` installs dependencies when they changed, builds the web app and starts three Docker containers. Then it starts the Otto server, which serves the web app on `127.0.0.1`.
 
 ```mermaid
 flowchart LR
@@ -86,7 +86,7 @@ Otto serves one person on `127.0.0.1` with no account login. Don't expose it to 
 | To             | Do this                                                                                                                                                                               |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Stop Otto      | Press Ctrl-C, then run `docker compose stop` to stop the containers.                                                                                                                  |
-| Update Otto    | Stop it, run `git pull` and `pnpm install --frozen-lockfile`, then `pnpm start`.                                                                                                      |
+| Update Otto    | Stop it, run `git pull`, then `pnpm start`.                                                                                                                                           |
 | Get a new link | Delete `access-key` in your data folder (`.local/` by default) and restart. Otherwise the key stays the same across restarts.                                                         |
 | Find your data | `.local/` (or `OTTO_DATA_ROOT`) and the Docker volumes. The Vault key is in `vault/master-key` on Linux, the macOS Keychain item `dev.otto.vault`, or your explicit `OTTO_VAULT_KEY`. |
 | Back up        | Stop Otto, then copy your data folder (`.local/` or `OTTO_DATA_ROOT`), the Docker volumes and the Vault key.                                                                          |
@@ -104,7 +104,6 @@ Settings live in `.env`, and you need to restart after you change them. See [Con
 | `Use Node.js 24.21.0 or newer.`               | Install a newer Node.js and run `pnpm start` again.                                                                            |
 | Docker errors on start                        | Make sure Docker is running and `docker compose version` reports v2.                                                           |
 | `Configure OTTO_VAULT_KEY…` when saving a key | Set `OTTO_VAULT_KEY` as shown in [Set up the Vault key](/get-started/install-from-source/#set-up-the-vault-key), then restart. |
-| Missing modules after `git pull`              | Run `pnpm install --frozen-lockfile`, then `pnpm start`.                                                                       |
 | The port is in use                            | Set another `PORT` in `.env`. The default is `4310`.                                                                           |
 
 ## Related resources
