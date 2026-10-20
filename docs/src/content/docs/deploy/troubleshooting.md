@@ -115,14 +115,14 @@ Scheduled tasks run only while Otto is open and your computer is awake. Closing 
 
 ### An action shows as uncertain
 
-Otto was interrupted after it started an action, so it can't tell whether the action ran. Otto never runs it again on its own. For a sign-in or payment, **Trust → Activity** shows "Result unknown".
+An action Otto started failed or was interrupted, so Otto can't tell whether it ran. Otto never runs it again on its own. For a sign-in or payment, **Trust → Activity** shows "Result unknown".
 
 ```mermaid
 stateDiagram-v2
   direction LR
   [*] --> Running: approved
   Running --> Done: result known
-  Running --> Uncertain: interrupted
+  Running --> Uncertain: failed or interrupted
   Uncertain --> Checked: Otto checks the result
 ```
 
