@@ -494,10 +494,10 @@ async function runningDesktop(
       },
     },
     BrowserWindow: class extends EventEmitter {
-      constructor() {
+      constructor(options = {}) {
         super();
         this.sent = [];
-        this.visible = true;
+        this.visible = options.show !== false;
         this.webContents = Object.assign(new EventEmitter(), {
           id: windows.length + 1,
           setWindowOpenHandler(handler) {
@@ -510,7 +510,7 @@ async function runningDesktop(
           },
         });
         windows.push(this);
-        this.focus();
+        if (this.visible) this.focus();
       }
       isDestroyed() {
         return this.destroyed === true;
@@ -539,6 +539,10 @@ async function runningDesktop(
       show() {
         this.visible = true;
         this.focus();
+      }
+      showInactive() {
+        this.inactiveShows = (this.inactiveShows ?? 0) + 1;
+        this.visible = true;
       }
       focus() {
         for (const window of windows) window.focused = false;
@@ -951,6 +955,7 @@ test('native key-store failure needs an explicit retry and never completes onboa
 });
 
 test('native onboarding starts one normal backend at storage readiness and keeps its origin through full runtime readiness', async (t) => {
+  const storage = deferred();
   const resources = deferred();
   const connected = deferred();
   let writes = 0;
@@ -970,6 +975,7 @@ test('native onboarding starts one normal backend at storage readiness and keeps
       initialState: 'fresh',
       allowStart: true,
       prepareRuntime: async ({ onStorageReady }) => {
+        await storage.promise;
         const runtime = { env: { DATABASE_URL: 'postgresql://synthetic.invalid/test' } };
         await onStorageReady(runtime);
         connected.resolve();
@@ -980,14 +986,6 @@ test('native onboarding starts one normal backend at storage readiness and keeps
   );
   try {
     await f.launch();
-    await connected.promise;
-    assert.equal(f.children.length, 1);
-    const engine = f.children[0];
-    assert.equal(engine.environment.OTTO_DESKTOP_RUNTIME_PENDING, 'true');
-    assert.equal(
-      engine.sent.some((message) => message.type === 'otto-runtime-ready'),
-      false,
-    );
     const shell = f.windows[0];
     await f.handlers.get('otto:settings:save')(
       { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
@@ -997,8 +995,20 @@ test('native onboarding starts one normal backend at storage readiness and keeps
       sender: shell.webContents,
       senderFrame: shell.webContents.mainFrame,
     });
-    for (let i = 0; !shell.isDestroyed() && i < 100; i++)
-      await new Promise((r) => setTimeout(r, 10));
+    await new Promise(setImmediate);
+    assert.equal(f.status().phase, 'preparing');
+    assert.equal(f.status().error, undefined);
+    assert.equal(f.children.length, 0);
+    assert.equal(writes, 0);
+    storage.resolve();
+    await connected.promise;
+    assert.equal(f.children.length, 1);
+    const engine = f.children[0];
+    assert.equal(engine.environment.OTTO_DESKTOP_RUNTIME_PENDING, 'true');
+    assert.equal(
+      engine.sent.some((message) => message.type === 'otto-runtime-ready'),
+      false,
+    );
     const window = f.windows.at(-1);
     const origin = new URL(window.url).origin;
     assert.equal(new URL(window.url).searchParams.get('welcome'), 'complete');
@@ -1035,8 +1045,76 @@ test('native onboarding starts one normal backend at storage readiness and keeps
     assert.equal((await f.storage.store.get()).onboardingCompleted, false);
     assert.equal(f.status().phase, 'ready');
   } finally {
+    storage.resolve();
     resources.resolve();
     await f.close();
+  }
+});
+
+test('runtime readiness respects closed, minimized and background windows after the initial handoff', async (t) => {
+  for (const scenario of [
+    'closed',
+    'minimized',
+    'background',
+    'welcome-closed',
+    'upgrade-closed',
+  ]) {
+    await t.test(scenario, async (t) => {
+      const storage = deferred();
+      const connected = deferred();
+      const resources = deferred();
+      const f = await runningDesktop(
+        t,
+        async (url) =>
+          Response.json(
+            url.endsWith('/api/account') ? { settings: { usageData: true } } : { ok: true },
+          ),
+        {
+          initialState: scenario === 'upgrade-closed' ? 'upgrade' : 'fresh',
+          allowStart: true,
+          prepareRuntime: async ({ onStorageReady }) => {
+            await storage.promise;
+            const runtime = { env: {} };
+            await onStorageReady(runtime);
+            connected.resolve();
+            await resources.promise;
+            return runtime;
+          },
+        },
+      );
+      if (scenario !== 'upgrade-closed')
+        await f.storage.store.save({ welcome: { usageData: true, continued: true } });
+      try {
+        await f.launch();
+        const shell = f.windows[0];
+        if (scenario.endsWith('-closed')) shell.destroy();
+        storage.resolve();
+        await connected.promise;
+        const window = f.windows.find((window) => window.url);
+        if (scenario.endsWith('-closed')) assert.equal(window, undefined);
+        else {
+          assert.ok(window);
+          window.focused = false;
+          if (scenario === 'closed') window.destroy();
+          if (scenario === 'minimized') window.visible = false;
+        }
+        const count = f.windows.length;
+        const inactiveShows = window?.inactiveShows ?? 0;
+        resources.resolve();
+        await f.settle();
+        assert.equal(f.status().phase, 'ready');
+        assert.equal(f.windows.length, count);
+        assert.equal(window?.inactiveShows ?? 0, inactiveShows);
+        if (window) {
+          assert.equal(Boolean(window.isFocused()), false);
+          assert.equal(window.isVisible(), scenario === 'background');
+        }
+      } finally {
+        storage.resolve();
+        resources.resolve();
+        await f.close();
+      }
+    });
   }
 });
 
@@ -1109,17 +1187,186 @@ test('failed Welcome transfer preserves the saved answer and retries without a s
     failing = false;
     shell.focused = false;
     await f.handlers.get('otto:prepare')(event, { retry: true });
-    assert.equal(
-      f.windows.some((window) => window.url),
-      false,
-    );
-    f.showEngine();
+    const background = f.windows.find((window) => window.url);
+    assert.ok(background);
+    assert.equal(background.isVisible(), true);
+    assert.equal(Boolean(background.isFocused()), false);
+    assert.equal(shell.isDestroyed(), true);
     assert.equal(writes, 2);
     assert.equal(f.children.length, 1);
     assert.equal((await f.storage.store.get()).welcome.acknowledged, true);
     assert.ok(f.windows.some((window) => window.url?.endsWith('/onboarding?welcome=complete')));
   } finally {
     await f.close();
+  }
+});
+
+test('a failed saved Welcome transfer leaves storage and the normal backend ready for explicit retry', async (t) => {
+  let failing = true;
+  let writes = 0;
+  let attempts = 0;
+  let stopped = 0;
+  let handedOff = false;
+  const f = await runningDesktop(
+    t,
+    async (url) => {
+      if (url.endsWith('/api/account')) {
+        writes++;
+        if (failing) throw new Error('Synthetic consent save unavailable');
+        return Response.json({ settings: { usageData: true } });
+      }
+      return Response.json({ ok: true });
+    },
+    {
+      initialState: 'fresh',
+      allowStart: true,
+      prepareRuntime: async ({ onStorageReady }) => {
+        attempts++;
+        const runtime = {
+          env: {},
+          close: async () => {
+            stopped++;
+          },
+        };
+        await onStorageReady(runtime);
+        handedOff = true;
+        return runtime;
+      },
+    },
+  );
+  await f.storage.store.save({ welcome: { usageData: true, continued: true } });
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(handedOff, true);
+    assert.equal(attempts, 1);
+    assert.equal(writes, 1);
+    assert.equal(stopped, 0);
+    assert.equal(f.children.length, 1);
+    assert.equal(f.status().phase, 'error');
+    assert.equal(f.windows[0].isDestroyed(), false);
+    failing = false;
+    const shell = f.windows[0];
+    await f.handlers.get('otto:prepare')(
+      { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
+      { retry: true },
+    );
+    assert.equal(writes, 2);
+    assert.equal(attempts, 1);
+    assert.equal(f.children.length, 1);
+    assert.equal(f.status().phase, 'ready');
+    assert.equal((await f.storage.store.get()).welcome.acknowledged, true);
+  } finally {
+    await f.close();
+  }
+  assert.equal(stopped, 1);
+});
+
+test('one explicit retry after an engine exit also retries the saved Welcome choice', async (t) => {
+  let failing = true;
+  let writes = 0;
+  const f = await runningDesktop(
+    t,
+    async (url) => {
+      if (url.endsWith('/api/account')) {
+        writes++;
+        if (failing) throw new Error('Synthetic consent save unavailable');
+        return Response.json({ settings: { usageData: true } });
+      }
+      return Response.json({ ok: true });
+    },
+    { initialState: 'fresh', allowStart: true },
+  );
+  await f.storage.store.save({ welcome: { usageData: true, continued: true } });
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(writes, 1);
+    assert.equal(f.status().phase, 'error');
+    f.children[0].emit('exit', 1);
+    await new Promise(setImmediate);
+    assert.equal(writes, 1);
+    assert.equal(f.children.length, 1);
+    failing = false;
+    const shell = f.windows.find((window) => !window.isDestroyed() && window.path);
+    await f.handlers.get('otto:prepare')(
+      { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
+      { retry: true },
+    );
+    assert.equal(writes, 2);
+    assert.equal(f.children.length, 2);
+    assert.equal(f.status().phase, 'ready');
+    assert.equal((await f.storage.store.get()).welcome.acknowledged, true);
+    assert.ok(f.windows.some((window) => window.url));
+  } finally {
+    await f.close();
+  }
+});
+
+test('session reconciliation retries after runtime startup without rebuilding the computer or engine', async (t) => {
+  for (const failure of ['session', 'settings']) {
+    await t.test(failure, async (t) => {
+      let failing = true;
+      let reads = 0;
+      let attempts = 0;
+      let stopped = 0;
+      const f = await runningDesktop(
+        t,
+        async (url) => {
+          if (url.endsWith('/api/session')) {
+            reads++;
+            if (reads > 1 && failing && failure === 'session')
+              throw new Error('Synthetic session unavailable');
+            return Response.json({ settings: { onboardingCompleted: reads > 1 } });
+          }
+          return Response.json({ ok: true });
+        },
+        {
+          initialState: 'fresh',
+          allowStart: true,
+          prepareRuntime: async ({ onStorageReady }) => {
+            attempts++;
+            const runtime = { env: {}, close: async () => stopped++ };
+            await onStorageReady(runtime);
+            return runtime;
+          },
+        },
+      );
+      const save = f.storage.store.save;
+      f.storage.store.save = async (value) => {
+        if (value.onboardingCompleted && failing && failure === 'settings')
+          throw new Error('Synthetic settings unavailable');
+        return save(value);
+      };
+      try {
+        await f.launch();
+        await f.settle();
+        assert.equal(f.status().phase, 'error');
+        assert.equal(reads, 2);
+        assert.equal(attempts, 1);
+        assert.equal(stopped, 0);
+        assert.equal(f.children.length, 1);
+        failing = false;
+        const shell = f.windows[0];
+        const result = await f.handlers.get('otto:prepare')(
+          { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
+          { retry: true },
+        );
+        assert.equal(result.phase, 'ready');
+        assert.equal(reads, 3);
+        assert.equal(attempts, 1);
+        assert.equal(stopped, 0);
+        assert.equal(f.children.length, 1);
+        assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+        assert.equal(
+          f.children[0].sent.filter((message) => message.type === 'otto-runtime-ready').length,
+          1,
+        );
+      } finally {
+        await f.close();
+      }
+      assert.equal(stopped, 1);
+    });
   }
 });
 
@@ -1223,6 +1470,16 @@ test('workspace failure leaves the pending backend intact and an explicit retry 
     assert.equal(f.status().phase, 'error');
     assert.equal(f.children.length, 1);
     assert.equal(f.children[0].sent.length, 0);
+    assert.equal(f.windows[0].isDestroyed(), false);
+    assert.equal(
+      f.windows.some((window) => window.url),
+      false,
+    );
+    f.showEngine();
+    assert.equal(
+      f.windows.some((window) => window.url),
+      false,
+    );
     await f.prepare();
     assert.equal(attempts, 1);
     await f.prepare({ retry: true });
@@ -1232,6 +1489,8 @@ test('workspace failure leaves the pending backend intact and an explicit retry 
       { type: 'otto-runtime-ready' },
     ]);
     assert.equal(f.status().phase, 'ready');
+    assert.equal(f.windows[0].isDestroyed(), true);
+    assert.ok(f.windows.some((window) => window.url));
   } finally {
     await f.close();
   }
@@ -1803,14 +2062,16 @@ app.whenReady().then(async () => {
           '-NonInteractive',
           '-Command',
           `$ErrorActionPreference = 'Stop'
-$owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$owner = $identity.User.Value
 $expected = @($owner, 'S-1-5-18', 'S-1-5-32-544')
 $results = foreach ($path in @($env:OTTO_STORAGE_TEST_PROFILE, (Join-Path $env:OTTO_STORAGE_TEST_PROFILE 'settings.json'), (Join-Path $env:OTTO_STORAGE_TEST_PROFILE 'vault'))) {
   $acl = Get-Acl -LiteralPath $path
+  $expectedOwner = if ($path -eq $env:OTTO_STORAGE_TEST_PROFILE) { $owner } else { $identity.Owner.Value }
   $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
   [pscustomobject]@{
     private = ($rules.Count -eq 3 -and @($rules | Where-Object { $_.IdentityReference.Value -notin $expected -or $_.AccessControlType -ne 'Allow' -or $_.FileSystemRights -ne 'FullControl' }).Count -eq 0)
-    owner = ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -eq $owner)
+    owner = ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -eq $expectedOwner)
     protected = $acl.AreAccessRulesProtected
   }
 }
@@ -1820,7 +2081,10 @@ ConvertTo-Json -InputObject @($results) -Compress`,
       ),
     );
     assert.equal(acl.length, 3);
-    assert.ok(acl.every((value) => value.private && value.owner));
+    assert.ok(
+      acl.every((value) => value.private && value.owner),
+      JSON.stringify(acl),
+    );
     assert.equal(acl[0].protected, true);
   },
 );

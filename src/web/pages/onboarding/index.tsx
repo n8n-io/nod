@@ -91,6 +91,7 @@ export function Onboarding({
   const index = onboardingSteps.indexOf(step);
   const [preparation, setPreparation] = useState<'pending' | 'ready' | 'failed'>('pending');
   const [finishing, setFinishing] = useState(false);
+  const [completionFailed, setCompletionFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(!desktop);
   const [runtimeError, setRuntimeError] = useState('');
@@ -99,15 +100,28 @@ export function Onboarding({
   const active = useRef(false);
   const retrying = useRef(false);
   const main = useRef<HTMLElement>(null);
+  const viewed = useRef<{
+    owner: string;
+    step: OnboardingStep;
+    direction: StepProps['arrived'];
+  } | null>(null);
 
   useEffect(() => {
     writeStep({ owner: user.id, step, version: onboardingVersion });
-    captureAnalytics('otto_onboarding_step_viewed', {
-      step: step === 'open' ? 'open_source' : step,
-      direction: arrived,
-    });
+    if (
+      (step !== 'open' || preferencesReady) &&
+      (viewed.current?.owner !== user.id ||
+        viewed.current.step !== step ||
+        viewed.current.direction !== arrived)
+    ) {
+      viewed.current = { owner: user.id, step, direction: arrived };
+      captureAnalytics('otto_onboarding_step_viewed', {
+        step: step === 'open' ? 'open_source' : step,
+        direction: arrived,
+      });
+    }
     if (main.current) main.current.scrollTop = 0;
-  }, [step, user.id]);
+  }, [step, user.id, preferencesReady]);
 
   useEffect(() => {
     if (index <= onboardingSteps.indexOf('brain')) return;
@@ -145,7 +159,10 @@ export function Onboarding({
       })
       .catch((cause) => {
         capture('otto_ui_error', { area: 'onboarding', action: 'save' });
-        if (active.current) setError(errorMessage(cause));
+        if (active.current) {
+          setCompletionFailed(true);
+          setError(errorMessage(cause));
+        }
       })
       .finally(() => {
         if (active.current) setFinishing(false);
@@ -213,7 +230,11 @@ export function Onboarding({
       if (runtimeError) await retryDesktopRuntime();
       if (active.current) {
         setRuntimeError('');
-        void prepare();
+        if (completionFailed && step === 'open') {
+          setCompletionFailed(false);
+          setFinishing(true);
+          if (preparation !== 'ready') void prepare();
+        } else void prepare();
       }
     } catch (cause) {
       if (active.current) {
@@ -231,6 +252,7 @@ export function Onboarding({
     const next = onboardingSteps[index + offset];
     if (next) {
       setError('');
+      setCompletionFailed(false);
       setPosition({ step: next, arrived: offset > 0 ? 'forward' : 'back' });
     }
   }
@@ -243,6 +265,7 @@ export function Onboarding({
     if (step !== 'open') return void go(1);
     if (finishing) return;
     setError('');
+    setCompletionFailed(false);
     if (preparation === 'failed') void prepare();
     setFinishing(true);
   }
@@ -301,8 +324,8 @@ export function Onboarding({
             (preparation === 'failed' || !!error) && (
               <Notice>
                 {error || 'Something went wrong while I was getting set up.'}{' '}
-                {preparation === 'failed' && (
-                  <Button variant="ghost" onClick={() => void prepare()}>
+                {(preparation === 'failed' || completionFailed) && (
+                  <Button variant="ghost" disabled={saving} onClick={() => void retry()}>
                     Try again
                   </Button>
                 )}

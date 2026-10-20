@@ -779,6 +779,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           ...(row ? { connectionId: row.id, accountId: row.account_id! } : {}),
           ...(row
             ? {
+                disconnectPending: row.revoked,
                 reconnectRequired: changed || row.inbox_reconnect_required,
                 canReconnect: Boolean(
                   !row.revoked && provider.configured && provider.reconnectAccount,

@@ -18,7 +18,7 @@ import {
 export { installRuntimeArchive } from './assets.mjs';
 
 const preparing = new Map();
-const storageReady = new Set();
+const storageReady = new Map();
 const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 
 async function fileHash(path) {
@@ -423,8 +423,24 @@ export async function replaceContainer(
   name,
   imageId,
   args,
-  { command = [], ...extra } = {},
+  { command = [], reuse, remember = false, ...extra } = {},
 ) {
+  const configuration = createHash('sha256')
+    .update(JSON.stringify([imageId, args, command, extra.env]))
+    .digest('hex');
+  const identity = (value) =>
+    createHash('sha256')
+      .update(
+        JSON.stringify([
+          value.Id,
+          value.Image,
+          value.Config,
+          value.HostConfig,
+          value.Mounts,
+          value.NetworkSettings,
+        ]),
+      )
+      .digest('hex');
   const inspected = await runDocker(['container', 'inspect', name]).catch(() => undefined);
   if (inspected) {
     const [current] = JSON.parse(inspected);
@@ -441,6 +457,13 @@ export async function replaceContainer(
       )
         throw new Error('The Otto container storage needs recovery.');
     }
+    if (
+      reuse?.configuration === configuration &&
+      current.State?.Running === true &&
+      current.Image === imageId &&
+      identity(current) === reuse.identity
+    )
+      return reuse;
     await runDocker(['stop', '--time', '20', name]);
     await runDocker(['rm', name]);
   }
@@ -458,6 +481,10 @@ export async function replaceContainer(
     ],
     extra,
   );
+  if (remember) {
+    const [current] = JSON.parse(await runDocker(['container', 'inspect', name]));
+    return { configuration, identity: identity(current) };
+  }
 }
 
 export async function finishRuntime({
@@ -502,7 +529,7 @@ export async function finishRuntime({
   for (const volume of Object.values(volumes)) await runDocker(['volume', 'create', volume]);
   const image = (name) => manifest.images.find((item) => item.name === name).id;
   await prepareImage?.('postgres');
-  await replaceContainer(
+  const postgres = await replaceContainer(
     runDocker,
     names.postgres,
     image('postgres'),
@@ -524,7 +551,11 @@ export async function finishRuntime({
       '--volume',
       `${volumes.postgres}:/var/lib/postgresql/data`,
     ],
-    { env: { ...dockerEnvironment, POSTGRES_PASSWORD: saved.password } },
+    {
+      env: { ...dockerEnvironment, POSTGRES_PASSWORD: saved.password },
+      remember: true,
+      reuse: storageReady.get(resolve(dataRoot))?.postgres,
+    },
   );
   await waitFor(
     () => runDocker(['exec', names.postgres, 'pg_isready', '-U', 'otto', '-d', 'otto']),
@@ -602,7 +633,12 @@ exec "$docker" "$@"
     WORKSPACE_CONTAINER: names.workspace,
     DATABASE_URL: databaseUrl,
   };
-  const runtime = { env, environment: env, close: () => stopRuntime({ dataRoot, resourcesPath }) };
+  const runtime = {
+    env,
+    environment: env,
+    postgres,
+    close: () => stopRuntime({ dataRoot, resourcesPath }),
+  };
   signal?.throwIfAborted();
   await onStorageReady?.(runtime);
   signal?.throwIfAborted();
@@ -697,7 +733,7 @@ export function prepareRuntime(options) {
             ? {
                 onStorageReady: async (runtime) => {
                   await options.onStorageReady(runtime);
-                  storageReady.add(key);
+                  storageReady.set(key, runtime);
                 },
               }
             : {}),

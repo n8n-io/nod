@@ -28,6 +28,7 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { IDBFactory } from 'fake-indexeddb';
+import type { Connection as AppConnection } from '../src/shared/contracts.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client';
@@ -959,44 +960,77 @@ test('managed proxy access binds browser enrollment to the installation and a pr
 
   await t.test(
     'broker clock tolerance keeps web and native sign-in within the local lifetime',
-    async () => {
-      const now = Date.now();
-      const clock = t.mock.method(Date, 'now', () => now);
-      try {
-        for (const native of [
-          undefined,
-          { returnPath: `/${randomBytes(32).toString('base64url')}` },
-        ]) {
-          for (const lifetime of [10 * 60_000 + 17, 11 * 60_000, 10 * 60_000 - 5_000]) {
-            enrollmentLifetime = lifetime;
-            const started = await proxy.startAccess(
-              browserKey,
-              'http://127.0.0.1:58436',
-              randomBytes(32).toString('base64url'),
-              undefined,
-              native,
+    async (t) => {
+      for (const native of [false, true])
+        await t.test(native ? 'native' : 'web', async (t) => {
+          let now = Date.now();
+          const clock = t.mock.method(Date, 'now', () => now);
+          t.mock.timers.enable({ apis: ['setTimeout'] });
+          const advance = (milliseconds: number) => {
+            now += milliseconds;
+            t.mock.timers.tick(milliseconds);
+          };
+          async function start() {
+            const response = await route(
+              'POST',
+              '/start',
+              native ? { native: true } : { browserKey },
             );
-            assert.equal(started.expiresAt, now + Math.min(lifetime, 10 * 60_000));
-            await proxy.cancelAccess(started.id);
+            const started = response.json();
+            if (!native) return { code: response.statusCode, id: started.id, result: started };
+            assert.equal(response.statusCode, 200);
+            const url = new URL(started.url);
+            const html = await (await fetch(started.url)).text();
+            const bridgeKey = JSON.parse(html.match(/const bridgeKey=("[^"]+");/)![1]);
+            advance(30_000);
+            const enrolled = await fetch(`${url.origin}/start`, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                origin: url.origin,
+                'x-otto-bridge': bridgeKey,
+              },
+              body: JSON.stringify({ browserKey }),
+            });
+            return { code: enrolled.status, id: started.id, result: await enrolled.json() };
           }
-          for (const lifetime of [-1, 0, 11 * 60_000 + 1]) {
-            enrollmentLifetime = lifetime;
-            await assert.rejects(
-              proxy.startAccess(
-                browserKey,
-                'http://127.0.0.1:58436',
-                randomBytes(32).toString('base64url'),
-                undefined,
-                native,
-              ),
-              /The sign-in response is invalid/,
-            );
+          try {
+            for (const lifetime of [20 * 60_000, 60_000]) {
+              enrollmentLifetime = lifetime;
+              const began = now;
+              const started = await start();
+              assert.equal(started.code, 200);
+              const brokerAttempt = started.result as { id: string; expiresAt: number };
+              assert.equal(brokerAttempt.expiresAt, now + lifetime);
+              const deadline = Math.min(began + 10 * 60_000, brokerAttempt.expiresAt);
+              advance(deadline - now - 1);
+              assert.deepEqual((await route('GET', `/status?id=${started.id}`)).json(), {
+                status: 'pending',
+              });
+              enrollments.get(brokerAttempt.id)!.status = 'authorized';
+              const completions = calls.filter((path) => path === '/v1/access/complete').length;
+              advance(1);
+              assert.deepEqual((await route('GET', `/status?id=${started.id}`)).json(), {
+                status: 'cancelled',
+              });
+              assert.equal((await route('POST', '/complete', { id: started.id })).statusCode, 400);
+              assert.equal(
+                calls.filter((path) => path === '/v1/access/complete').length,
+                completions,
+              );
+              assert.equal(enrollments.get(brokerAttempt.id)!.status, 'cancelled');
+            }
+            for (const lifetime of [-1, 0, Number.NaN, 0.5]) {
+              enrollmentLifetime = lifetime;
+              const started = await start();
+              assert.equal(started.code, 400);
+              if (native) await route('POST', '/cancel', { id: started.id });
+            }
+          } finally {
+            enrollmentLifetime = 60_000;
+            clock.mock.restore();
           }
-        }
-      } finally {
-        enrollmentLifetime = 60_000;
-        clock.mock.restore();
-      }
+        });
     },
   );
 
@@ -3655,6 +3689,8 @@ test(
       [];
     const subscriptions: string[] = [];
     const deleted: string[] = [];
+    let deletionFails = false;
+    let deletionAttempts = 0;
     const accountSets: unknown[] = [];
     const session: IntegrationSession = {
       id: 'fixture-session',
@@ -3684,6 +3720,8 @@ test(
       return { id: `trigger-${accountId}` };
     };
     provider.deleteAccount = async (id) => {
+      deletionAttempts++;
+      if (deletionFails) throw new Error('Synthetic provider deletion failure.');
       deleted.push(id);
     };
     const delivered: string[] = [];
@@ -3804,6 +3842,26 @@ test(
       for (let index = 0; index < 200 && !delivered.length; index++) await delay(10);
       assert.equal(delivered.length, 1);
       assert.ok(delivered[0].includes(second.connectionId!));
+      deletionFails = true;
+      const failedDisconnect = await app.inject({
+        method: 'POST',
+        url: `/api/apps/gmail/accounts/${first.connectionId}/disconnect`,
+      });
+      assert.ok(failedDisconnect.statusCode >= 400);
+      const afterFailure = (await app.inject({ url: '/api/apps' })).json();
+      const pending = afterFailure.find(
+        (row: AppConnection) => row.connectionId === first.connectionId,
+      );
+      assert.equal(pending.status, 'disconnected');
+      assert.equal(pending.disconnectPending, true);
+      assert.equal(pending.canReconnect, false);
+      assert.equal(
+        afterFailure.find((row: AppConnection) => row.connectionId === second.connectionId)
+          .disconnectPending,
+        false,
+      );
+      assert.equal(deletionAttempts, 1);
+      deletionFails = false;
       assert.equal(
         (
           await app.inject({
@@ -3814,6 +3872,7 @@ test(
         200,
       );
       assert.deepEqual(deleted, ['account-1']);
+      assert.equal(deletionAttempts, 2);
       assert.equal((await integrations.list()).filter((row) => row.slug === 'gmail').length, 1);
       await assert.rejects(
         integrations.execute('local-development', 'GMAIL_SEND_EMAIL', {

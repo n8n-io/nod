@@ -5,10 +5,18 @@ import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analy
 
 type AnalyticsEvents = {
   otto_onboarding_step_viewed: {
-    step: 'welcome' | 'brain' | 'email' | 'about' | 'telegram' | 'open_source';
+    step:
+      | 'welcome'
+      | 'brain'
+      | 'email'
+      | 'about'
+      | 'telegram'
+      | 'notifications'
+      | 'launch_at_login'
+      | 'open_source';
     direction: 'forward' | 'back';
   };
-  otto_onboarding_step_skipped: { step: 'email' | 'telegram' };
+  otto_onboarding_step_skipped: { step: 'telegram' };
   otto_settings_viewed: {
     tab: 'general' | 'models' | 'app_connections' | 'memory';
   };
@@ -64,10 +72,19 @@ export type AnalyticsProperties<Event extends keyof AnalyticsEvents> = NonNullab
 const roles = ['assistant', 'user'];
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
   otto_onboarding_step_viewed: {
-    step: ['welcome', 'brain', 'email', 'about', 'telegram', 'open_source'],
+    step: [
+      'welcome',
+      'brain',
+      'email',
+      'about',
+      'telegram',
+      'notifications',
+      'launch_at_login',
+      'open_source',
+    ],
     direction: ['forward', 'back'],
   },
-  otto_onboarding_step_skipped: { step: ['email', 'telegram'] },
+  otto_onboarding_step_skipped: { step: ['telegram'] },
   otto_settings_viewed: {
     tab: ['general', 'models', 'app_connections', 'memory'],
   },

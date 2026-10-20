@@ -20,6 +20,12 @@ export function writeStored(key: string, value: unknown) {
   } catch {}
 }
 
+export function removeStored(key: string) {
+  try {
+    window.sessionStorage.removeItem(prefix + key);
+  } catch {}
+}
+
 export function clearStored() {
   try {
     for (const key of Object.keys(window.sessionStorage))

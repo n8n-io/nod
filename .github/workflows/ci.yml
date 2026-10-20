@@ -21,6 +21,7 @@ jobs:
     outputs:
       core: ${{ steps.scope.outputs.core }}
       desktop: ${{ steps.scope.outputs.desktop }}
+      native: ${{ steps.scope.outputs.native }}
       n8n: ${{ steps.scope.outputs.n8n }}
       evals: ${{ steps.scope.outputs.evals }}
       images: ${{ steps.scope.outputs.images }}
@@ -180,7 +181,7 @@ jobs:
   windows-setup:
     name: Windows setup and installer
     needs: scope
-    if: ${{ !cancelled() && (needs.scope.outputs.desktop == 'true' || needs.scope.outputs.n8n == 'true') }}
+    if: ${{ !cancelled() && (needs.scope.outputs.native == 'true' || needs.scope.outputs.n8n == 'true') }}
     runs-on: windows-2025
     timeout-minutes: 35
     env:
@@ -245,7 +246,7 @@ jobs:
   mac-setup:
     name: Mac setup and updates (${{ matrix.arch }})
     needs: scope
-    if: ${{ !cancelled() && needs.scope.outputs.desktop == 'true' }}
+    if: ${{ !cancelled() && needs.scope.outputs.native == 'true' }}
     strategy:
       fail-fast: false
       matrix:

@@ -330,7 +330,6 @@ export function createComposioProxy(options: {
           ),
         );
       const redirect = new URL(result.url);
-      const now = Date.now();
       if (
         redirect.origin !== origin ||
         redirect.pathname !== '/api/auth/enroll' ||
@@ -340,11 +339,10 @@ export function createComposioProxy(options: {
         redirect.hash ||
         redirect.username ||
         redirect.password ||
-        result.expiresAt <= now ||
-        result.expiresAt > now + 11 * 60_000
+        result.expiresAt <= Date.now()
       )
         throw new Error('The sign-in response is invalid.');
-      return { ...result, expiresAt: Math.min(result.expiresAt, now + 10 * 60_000) };
+      return result;
     },
     async pollAccess(id: string, signal?: AbortSignal) {
       return z

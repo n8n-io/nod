@@ -3,6 +3,7 @@ import { desktopOnboardingSteps, OnboardingFrame } from '../frame';
 import { SetupProgress } from '../../../components/setup-progress';
 import { Button } from '../../../components/ui';
 import { errorMessage } from '../../../lib/api';
+import { captureAnalytics } from '../../../lib/analytics';
 import {
   getDesktopSettings,
   saveDesktopSettings,
@@ -61,6 +62,14 @@ export function DesktopPreferencesSetup({
       current = false;
     };
   }, [retry]);
+
+  useEffect(() => {
+    if (step)
+      captureAnalytics('otto_onboarding_step_viewed', {
+        step: step === 'notifications' ? 'notifications' : 'launch_at_login',
+        direction: 'forward',
+      });
+  }, [step]);
 
   async function choose(enabled: boolean, advance = false) {
     if (!step || writing.current) return;

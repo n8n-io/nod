@@ -1482,6 +1482,115 @@ test('runtime replaces owned containers even with unchanged images and retains t
   }
 });
 
+test('runtime retries reuse only the same owned PostgreSQL container with unchanged storage, port and security', async () => {
+  const { replaceContainer } = await import('../runtime/index.mjs');
+  const name = 'otto-postgres-fixture';
+  const image = `sha256:${'a'.repeat(64)}`;
+  const args = [
+    '--network',
+    'otto-control-fixture',
+    '--publish',
+    '127.0.0.1:54329:5432',
+    '--volume',
+    `${name}:/var/lib/postgresql/data`,
+  ];
+  const original = {
+    Id: 'synthetic-postgres-container',
+    Image: image,
+    Config: { Labels: { 'dev.otto.desktop.experiment': 'true' }, Env: ['POSTGRES_DB=otto'] },
+    Mounts: [{ Type: 'volume', Name: name, Destination: '/var/lib/postgresql/data', RW: true }],
+    HostConfig: {
+      Privileged: false,
+      NetworkMode: 'otto-control-fixture',
+      PortBindings: { '5432/tcp': [{ HostIp: '127.0.0.1', HostPort: '54329' }] },
+    },
+    NetworkSettings: { Networks: { 'otto-control-fixture': { NetworkID: 'owned-control' } } },
+    State: { Running: true },
+  };
+  const reuse = await replaceContainer(
+    async (args) => (args[1] === 'inspect' ? JSON.stringify([original]) : ''),
+    name,
+    image,
+    args,
+    { remember: true },
+  );
+  for (const change of [
+    undefined,
+    (value) => {
+      value.Id = 'replacement';
+    },
+    (value) => {
+      value.Image = `sha256:${'b'.repeat(64)}`;
+    },
+    (value) => {
+      value.State.Running = false;
+    },
+    (value) => {
+      value.HostConfig.Privileged = true;
+    },
+    (value) => {
+      value.HostConfig.PortBindings['5432/tcp'][0].HostIp = '0.0.0.0';
+    },
+    (value) => {
+      value.HostConfig.PortBindings['5432/tcp'][0].HostPort = '54330';
+    },
+    (value) => {
+      value.HostConfig.NetworkMode = 'host';
+    },
+    (value) => {
+      value.Config.Env = ['POSTGRES_DB=foreign'];
+    },
+    (value) => {
+      value.NetworkSettings.Networks['otto-control-fixture'].NetworkID = 'foreign';
+    },
+  ]) {
+    const current = structuredClone(original);
+    change?.(current);
+    const commands = [];
+    await replaceContainer(
+      async (args) => {
+        commands.push(args);
+        return args[1] === 'inspect' ? JSON.stringify([current]) : '';
+      },
+      name,
+      image,
+      args,
+      { reuse },
+    );
+    if (!change) assert.deepEqual(commands, [['container', 'inspect', name]]);
+    else
+      assert.deepEqual(
+        commands.filter((args) => ['stop', 'rm', 'run'].includes(args[0])).map((args) => args[0]),
+        ['stop', 'rm', 'run'],
+      );
+  }
+  for (const change of [
+    (value) => {
+      value.Config.Labels = {};
+    },
+    (value) => {
+      value.Mounts[0].Name = 'foreign-data';
+    },
+  ]) {
+    const current = structuredClone(original);
+    change(current);
+    const commands = [];
+    await assert.rejects(
+      replaceContainer(
+        async (args) => {
+          commands.push(args);
+          return JSON.stringify([current]);
+        },
+        name,
+        image,
+        args,
+        { reuse },
+      ),
+    );
+    assert.equal(commands.length, 1);
+  }
+});
+
 test('native runtime wrapper preserves handed-off storage through failed preparation and explicit retry until quit', async () => {
   const source = await readFile(new URL('../runtime/index.mjs', import.meta.url), 'utf8');
   const wrapper = source
@@ -1507,7 +1616,7 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
     const runtime = runInNewContext(`${wrapper}; ({ prepareRuntime, stopRuntime })`, {
       resolve,
       preparing: new Map(),
-      storageReady: new Set(),
+      storageReady: new Map(),
       prepare: async (options, started) => {
         started();
         attempts++;
@@ -1721,6 +1830,7 @@ test('runtime hands off verified storage before browser readiness and fences fai
       t.mock.method(pg.Client.prototype, 'end', async () => {
         calls.push('database-end');
       });
+      const created = new Set();
       const runDocker = async (args) => {
         signal.signal.throwIfAborted();
         calls.push(args);
@@ -1741,8 +1851,25 @@ test('runtime hands off verified storage before browser readiness and fences fai
             },
           ]);
         }
-        if (args[0] === 'container' && args[1] === 'inspect')
-          throw new Error('Absent fixture container');
+        if (args[0] === 'run') created.add(args[args.indexOf('--name') + 1]);
+        if (args[0] === 'container' && args[1] === 'inspect') {
+          if (!created.has(args[2])) throw new Error('Absent fixture container');
+          return JSON.stringify([
+            {
+              Id: args[2],
+              Image: 'sha256:postgres',
+              State: { Running: true },
+              Config: { Labels: { 'dev.otto.desktop.experiment': 'true' } },
+              Mounts: [
+                {
+                  Type: 'volume',
+                  Name: 'otto-postgres-fixture',
+                  Destination: '/var/lib/postgresql/data',
+                },
+              ],
+            },
+          ]);
+        }
         if (args[0] === 'inspect') return 'true';
         if (args[0] === 'exec' && args[1] === 'otto-browser-fixture') {
           blocked();

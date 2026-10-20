@@ -9,7 +9,16 @@ import {
   X509Certificate,
 } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -35,6 +44,7 @@ async function packageFixtures(planPath) {
   for (const fixture of plan) {
     const directory = join(dirname(planPath), `source-${fixture.name}-${fixture.version}`);
     await mkdir(directory);
+    await copyFile(join(repository, 'desktop/main/settings.mjs'), join(directory, 'settings.mjs'));
     await writeFile(
       join(directory, 'package.json'),
       JSON.stringify({
@@ -54,11 +64,19 @@ app.setPath('userData', fixture.profile);
 const receipt = (event, fields = {}) => appendFileSync(fixture.events,
   JSON.stringify({ event, version: app.getVersion(), at: Date.now(), executable: process.execPath,
     dataHash: createHash('sha256').update(readFileSync(fixture.data)).digest('hex'), ...fields }) + '\\n');
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!safeStorage.isEncryptionAvailable()) throw new Error('Fixture encryption is unavailable.');
   if (app.getVersion() === fixture.installed)
     writeFileSync(fixture.encrypted, safeStorage.encryptString(fixture.sentinel), { mode: 0o600, flag: 'wx' });
   const encrypted = readFileSync(fixture.encrypted);
+  if (app.getVersion() === fixture.installed)
+    writeFileSync(fixture.settings, JSON.stringify({
+      version: 1, theme: 'dark', launchAtLogin: true, notifications: false, onboardingCompleted: true,
+      secrets: { vaultKey: encrypted.toString('base64') }, keyMetadata: {},
+    }), { mode: 0o600, flag: 'wx' });
+  const settingsBefore = readFileSync(fixture.settings);
+  const { createSettingsStore } = await import('./settings.mjs');
+  const environment = await createSettingsStore(fixture.settings, safeStorage).environment();
   const owner = JSON.parse(readFileSync(fixture.ownerFile)).ownerId;
   const identityBytes = readFileSync(fixture.identityFile);
   const identity = createPrivateKey(identityBytes);
@@ -66,6 +84,9 @@ app.whenReady().then(() => {
   receipt('ready', {
     encryptedHash: createHash('sha256').update(encrypted).digest('hex'),
     decryptedHash: createHash('sha256').update(safeStorage.decryptString(encrypted)).digest('hex'),
+    asyncDecryptedHash: createHash('sha256').update(environment.OTTO_VAULT_KEY).digest('hex'),
+    settingsBeforeHash: createHash('sha256').update(settingsBefore).digest('hex'),
+    settingsHash: createHash('sha256').update(readFileSync(fixture.settings)).digest('hex'),
     owner,
     identityHash: createHash('sha256').update(identityBytes).digest('hex'),
     managedOwner: 'otto_' + createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex'),
@@ -182,6 +203,7 @@ async function main() {
   const report = {
     source: (await run('git', ['rev-parse', 'HEAD'], { cwd: repository })).trim(),
     fixtureHash: sha256(await readFile(source)),
+    settingsModuleHash: sha256(await readFile(join(repository, 'desktop/main/settings.mjs'))),
     electron: configuration.devDependencies.electron,
     startedAt: new Date().toISOString(),
     root,
@@ -224,7 +246,8 @@ async function main() {
         events: join(root, `${kind}.jsonl`),
         data: join(root, `${kind}-profile`, 'saved.json'),
         encrypted: join(root, `${kind}-profile`, 'encrypted.bin'),
-        sentinel: `Synthetic encrypted update fixture ${randomUUID()}`,
+        settings: join(integrationRoot, 'settings.json'),
+        sentinel: randomBytes(32).toString('base64'),
         ownerFile: join(integrationRoot, 'profile.json'),
         identityFile: join(identityDirectory, `${sha256(owner)}.pem`),
         challenge: randomBytes(32).toString('base64url'),
@@ -427,6 +450,17 @@ async function main() {
               event.encryptedHash === readyEvents[0].encryptedHash,
           ) &&
           sha256(await readFile(fixture.encrypted)) === readyEvents[0].encryptedHash,
+      );
+      check(
+        'UPD-ASYNC-KEYS',
+        readyEvents.length === (fixture.kind === 'install' ? 2 : 1) &&
+          readyEvents.every(
+            (event) =>
+              event.asyncDecryptedHash === sha256(fixture.sentinel) &&
+              event.settingsBeforeHash === event.settingsHash &&
+              event.settingsHash === readyEvents[0].settingsHash,
+          ) &&
+          sha256(await readFile(fixture.settings)) === readyEvents[0].settingsHash,
       );
       check(
         'UPD-INTEGRATION-IDENTITY',

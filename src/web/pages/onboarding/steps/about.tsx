@@ -11,12 +11,12 @@ import {
 import { OttoGlyph, prefersReducedMotion, Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
-import { api, errorMessage } from '../../../lib/api';
+import { api, ApiError, errorMessage } from '../../../lib/api';
 import type { StepProps } from '..';
 import { Bubble, Footer, Messages, UserBubble, useReveal } from '../motion';
-import { prepareSuggestions, readStep, readStored, writeStored } from '../storage';
+import { prepareSuggestions, readStep, readStored, removeStored, writeStored } from '../storage';
 
-type Talk = OnboardingInterview;
+type Talk = Pick<OnboardingInterview, 'answers' | 'turns' | 'done'>;
 
 const opening = ['I’d love to get to know you a little.', 'What are you working on these days?'];
 const handOff = 'What’s one thing you’d love to take off your plate?';
@@ -25,20 +25,47 @@ const still = (
     <OttoGlyph mode="still" />
   </span>
 );
-const owner = () => readStep<{ owner: string }>()?.owner;
+const scope = () => readStep<{ owner: string; version: number }>();
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function restore(): Talk {
-  const saved = readStored<(Talk & { owner?: string }) | null>('about');
-  const answers = Array.isArray(saved?.answers) ? saved.answers.slice(0, interviewQuestions) : [];
-  const turns = Array.isArray(saved?.turns) ? saved.turns.slice(0, answers.length + 1) : [];
-  if (saved?.owner !== owner() || turns.length < answers.length || !turns.every(Array.isArray))
-    return { answers: [], turns: [], done: false };
-  return { answers, turns, done: saved?.done === true && turns.length > answers.length };
+function restoreCompleted(generation: string): Talk | undefined {
+  const saved = readStored<
+    Talk & { owner?: string; version?: number; generation?: string; completed?: boolean }
+  >('about');
+  const current = scope();
+  if (
+    !current?.owner ||
+    typeof current.version !== 'number' ||
+    !saved ||
+    !saved.completed ||
+    saved.generation !== generation ||
+    saved.owner !== current?.owner ||
+    saved.version !== current?.version
+  )
+    return;
+  const answers = Array.isArray(saved.answers) ? saved.answers.slice(0, interviewQuestions) : [];
+  const turns = Array.isArray(saved.turns) ? saved.turns.slice(0, answers.length + 1) : [];
+  if (
+    !saved.done ||
+    !answers.length ||
+    turns.length <= answers.length ||
+    !answers.every((answer) => typeof answer === 'string') ||
+    !turns.every((turn) => Array.isArray(turn) && turn.every((text) => typeof text === 'string'))
+  )
+    return;
+  return { answers, turns, done: true };
 }
 
 export function About({ arrived, onNext, onBack }: StepProps) {
-  const [{ answers, turns, done }, setTalk] = useState(restore);
+  const [{ answers, turns, done }, setTalk] = useState<Talk>({
+    answers: [],
+    turns: [],
+    done: false,
+  });
+  const [receipt, setReceipt] = useState({ generation: '', completed: false });
+  const [loaded, setLoaded] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [needsReload, setNeedsReload] = useState(false);
   const { data: apps } = usePageData<Connection[]>('/api/apps');
   const gmail = apps?.some((app) => app.slug === 'gmail' && app.status === 'connected');
   const [draft, setDraft] = useState('');
@@ -58,15 +85,35 @@ export function About({ arrived, onNext, onBack }: StepProps) {
   const log = useRef<HTMLDivElement>(null);
   const stuck = useRef(true);
   const index = turns.length - 1;
-  const thinking = turns.length === answers.length;
+  const thinking = !loaded || turns.length === answers.length;
 
   useEffect(() => {
-    writeStored('about', { owner: owner(), answers, turns, done });
-  }, [answers, turns, done]);
+    const controller = new AbortController();
+    setLoaded(false);
+    void api<OnboardingInterview>('/api/onboarding/interview', { signal: controller.signal })
+      .then((saved) => {
+        if (controller.signal.aborted) return;
+        const talk = saved.completed
+          ? (restoreCompleted(saved.generation) ?? { answers: [], turns: [[]], done: true })
+          : saved;
+        if (!saved.completed) removeStored('about');
+        setReceipt({ generation: saved.generation, completed: saved.completed });
+        pendingTurn.current = null;
+        setTalk(talk);
+        if (talk.answers.length) setIntroDone(true);
+        setNeedsReload(false);
+        setError('');
+        setLoaded(true);
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) setError(errorMessage(cause));
+      });
+    return () => controller.abort();
+  }, [loadAttempt]);
 
   useEffect(() => {
     const count = answers.length;
-    if (turns.length > count) return;
+    if (!loaded || turns.length > count) return;
     const controller = new AbortController();
     const started = Date.now();
     const talk: InterviewMessage[] = turns.flatMap((said, at) => [
@@ -78,9 +125,10 @@ export function About({ arrived, onNext, onBack }: StepProps) {
         ? Promise.resolve(pendingTurn.current.reply)
         : api<InterviewResponse>('/api/onboarding/interview', {
             method: 'POST',
-            body: JSON.stringify({ talk }),
+            body: JSON.stringify({ generation: receipt.generation, talk }),
             signal: controller.signal,
-          }).catch((): InterviewResponse => {
+          }).catch((cause): InterviewResponse => {
+            if (!(cause instanceof ApiError) || cause.status !== 503) throw cause;
             return !count
               ? { messages: opening, done: false }
               : count < interviewQuestions && !turns.flat().includes(handOff)
@@ -102,10 +150,17 @@ export function About({ arrived, onNext, onBack }: StepProps) {
         setTalk((current) => (current.answers.length === count ? value : current));
       })
       .catch((cause) => {
-        if (!controller.signal.aborted) setError(errorMessage(cause));
+        if (!controller.signal.aborted) {
+          setNeedsReload(cause instanceof ApiError && cause.status === 409);
+          if (cause instanceof ApiError && cause.status === 400 && count) {
+            setDraft(answers[count - 1]);
+            setTalk({ answers: answers.slice(0, -1), turns, done: false });
+          }
+          setError(errorMessage(cause));
+        }
       });
     return () => controller.abort();
-  }, [answers, retry]);
+  }, [answers, loaded, retry, receipt.generation]);
 
   useEffect(() => {
     if (introDone && !thinking && !done) input.current?.focus({ preventScroll: true });
@@ -159,7 +214,12 @@ export function About({ arrived, onNext, onBack }: StepProps) {
     setSaving(true);
     setError('');
     try {
-      const talk = { answers: [], turns: [], done: false };
+      const talk = await api<OnboardingInterview>('/api/onboarding/interview', {
+        method: 'DELETE',
+        body: JSON.stringify({ generation: receipt.generation }),
+      });
+      removeStored('about');
+      setReceipt({ generation: talk.generation, completed: talk.completed });
       setShown(false);
       setFresh(true);
       setWaited(false);
@@ -168,6 +228,7 @@ export function About({ arrived, onNext, onBack }: StepProps) {
       writeStored('suggestions', false);
       setTalk(talk);
     } catch (cause) {
+      setNeedsReload(cause instanceof ApiError && cause.status === 409);
       setError(errorMessage(cause));
     } finally {
       savingAnswer.current = false;
@@ -179,10 +240,29 @@ export function About({ arrived, onNext, onBack }: StepProps) {
     setSaving(true);
     setError('');
     try {
-      await api('/api/onboarding/interview', { method: 'PUT', body: JSON.stringify({ answers }) });
+      if (receipt.completed) {
+        const current = await api<OnboardingInterview>('/api/onboarding/interview');
+        if (!current.completed || current.generation !== receipt.generation)
+          throw new ApiError('Your setup answers changed. Reload them before continuing.', 409);
+      } else {
+        await api('/api/onboarding/interview', {
+          method: 'PUT',
+          body: JSON.stringify({ generation: receipt.generation, answers }),
+        });
+        setReceipt({ ...receipt, completed: true });
+        writeStored('about', {
+          ...scope(),
+          generation: receipt.generation,
+          answers,
+          turns,
+          done,
+          completed: true,
+        });
+      }
       void prepareSuggestions();
       onNext();
     } catch (cause) {
+      setNeedsReload(cause instanceof ApiError && cause.status === 409);
       setError(errorMessage(cause));
     } finally {
       setSaving(false);
@@ -251,7 +331,7 @@ export function About({ arrived, onNext, onBack }: StepProps) {
               aria-label="Your answer"
               autoComplete="off"
               maxLength={interviewAnswerChars}
-              disabled={saving}
+              disabled={saving || !loaded}
               data-analytics-private
             />
             <div className="composer-tools">
@@ -290,7 +370,7 @@ export function About({ arrived, onNext, onBack }: StepProps) {
       {error && (
         <p className="ob-about-error" role="alert" data-analytics-private>
           {error}
-          {thinking && (
+          {(thinking || needsReload) && (
             <>
               <Button variant="ghost" disabled={saving} onClick={onBack}>
                 Back
@@ -299,7 +379,8 @@ export function About({ arrived, onNext, onBack }: StepProps) {
                 variant="ghost"
                 onClick={() => {
                   setError('');
-                  setRetry((value) => value + 1);
+                  if (!loaded || needsReload) setLoadAttempt((value) => value + 1);
+                  else setRetry((value) => value + 1);
                 }}
               >
                 Try again

@@ -91,11 +91,30 @@ export default scenario({
   },
   async play(session, world) {
     const { state } = world;
-    state.saved = (await session.api('PUT', '/api/onboarding/interview', { answers })).status;
-    await session.api('POST', '/api/onboarding/suggestions', {});
-    await session.api('PATCH', '/api/account', { onboardingCompleted: true, name: owner.name });
+    const api = async (method: string, path: string, body?: unknown, accepted = [200]) => {
+      const response = await session.api(method, path, body);
+      if (!accepted.includes(response.status))
+        throw new Error(`${method} ${path} failed (${response.status}).`);
+      return response;
+    };
+    const { generation } = (await api('GET', '/api/onboarding/interview')).body;
+    if (typeof generation !== 'string' || !generation)
+      throw new Error('The onboarding interview did not return a generation.');
+    const questions = [
+      'What are you working on?',
+      'What are you aiming for this year?',
+      'What would you like to take off your plate?',
+    ];
+    const talk = answers.flatMap((text, index) => [
+      { from: 'otto', text: questions[index] },
+      { from: 'owner', text },
+    ]);
+    await api('POST', '/api/onboarding/interview', { generation, talk }, [200, 503]);
+    state.saved = (await api('PUT', '/api/onboarding/interview', { generation, answers })).status;
+    await api('POST', '/api/onboarding/suggestions', {}, [202]);
+    await api('PATCH', '/api/account', { onboardingCompleted: true, name: owner.name });
     for (let tries = 0; tries < 240 && !state.suggestions; tries++) {
-      const view = await session.api('GET', '/api/state');
+      const view = await api('GET', '/api/state');
       state.suggestions = view.body.messages?.find(
         (message: { suggestions?: unknown }) => message.suggestions,
       )?.suggestions;

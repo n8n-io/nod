@@ -77,6 +77,7 @@ let engine;
 let welcomePassed = false;
 let welcomeNavigation = false;
 let transferringWelcome;
+let welcomeTransferError;
 let engineRuntimeReady = false;
 let enginePreferencesReady = false;
 let preparing;
@@ -152,7 +153,12 @@ const lifecycle = createDesktopLifecycle({
   },
   onRuntimeStatus: (value) => {
     const runtime = { ...value, message: bounded(value.message) };
-    if (preparing && status.phase !== 'starting' && value.phase !== 'error')
+    if (
+      preparing &&
+      !welcomeTransferError &&
+      status.phase !== 'starting' &&
+      value.phase !== 'error'
+    )
       update({
         runtime,
         phase: 'preparing',
@@ -526,9 +532,14 @@ function showSettings(section = 'general', requestedMode, reset = false) {
   return setupWindowLoaded;
 }
 
-function showEngine() {
+function showEngine({ focus = true } = {}) {
   if (quitting) return;
-  if (!enginePreferencesReady || !engineOrigin || (!onboardingCompleted && !welcomePassed)) {
+  if (
+    !enginePreferencesReady ||
+    !engineOrigin ||
+    (onboardingCompleted && !engineRuntimeReady) ||
+    (!onboardingCompleted && !welcomePassed)
+  ) {
     showSettings(setupNavigation.section, setupNavigation.mode);
     return;
   }
@@ -537,12 +548,15 @@ function showEngine() {
       replayingProductOnboarding = false;
       void engineWindow.loadURL(`${engineOrigin}/onboarding?replay=1`);
     }
-    engineWindow.show();
-    engineWindow.focus();
+    if (focus) {
+      engineWindow.show();
+      engineWindow.focus();
+    } else engineWindow.showInactive();
     deliverFeedbackRequest(engineWindow);
     return;
   }
   engineWindow = new BrowserWindow({
+    show: focus,
     width: 1200,
     height: 860,
     minWidth: 700,
@@ -575,6 +589,7 @@ function showEngine() {
   welcomeNavigation = false;
   replayingProductOnboarding = false;
   void engineWindow.loadURL(destination);
+  if (!focus) engineWindow.showInactive();
 }
 
 function showFeedback() {
@@ -813,21 +828,30 @@ async function transferWelcome() {
     }
     welcomeNavigation = true;
     welcomePassed = true;
+    welcomeTransferError = undefined;
+    update({
+      phase: engineRuntimeReady ? 'ready' : 'preparing',
+      message: engineRuntimeReady ? 'Otto is running on your computer.' : status.runtime.message,
+      error: undefined,
+    });
     if (pendingFeedback || foregroundWindow()) showEngine();
+    else if (setupWindow && !setupWindow.isDestroyed()) showEngine({ focus: false });
     if (setupWindow && !setupWindow.isDestroyed()) setupWindow.destroy();
-  })().finally(() => {
-    transferringWelcome = undefined;
-  });
+  })()
+    .catch((error) => {
+      welcomeTransferError = bounded(error.message);
+      update({ phase: 'error', error: welcomeTransferError, message: welcomeTransferError });
+      throw error;
+    })
+    .finally(() => {
+      transferringWelcome = undefined;
+    });
   return transferringWelcome;
 }
 
 async function finishEnginePreparation(pending = false) {
   await appPreferences.sync();
   if (quitting || !engine) throw new Error('Otto is closing.');
-  if (!pending && !engineRuntimeReady) {
-    engine.postMessage({ type: 'otto-runtime-ready' });
-    engineRuntimeReady = true;
-  }
   if (!onboardingCompleted) {
     const response = await engineRequest('/api/session');
     if (response.ok && (await response.json()).settings?.onboardingCompleted === true) {
@@ -835,15 +859,22 @@ async function finishEnginePreparation(pending = false) {
       onboardingCompleted = true;
     }
   }
+  if (!pending && !engineRuntimeReady) {
+    engine.postMessage({ type: 'otto-runtime-ready' });
+    engineRuntimeReady = true;
+  }
   update({
     phase: pending ? 'preparing' : 'ready',
     message: pending ? status.runtime.message : 'Otto is running on your computer.',
     progress: pending ? status.runtime.progress : undefined,
     engineReady: true,
   });
-  await transferWelcome();
-  if (onboardingCompleted || welcomePassed) {
+  if (!welcomeTransferError) await transferWelcome().catch(() => {});
+  if (welcomeTransferError)
+    update({ phase: 'error', error: welcomeTransferError, message: welcomeTransferError });
+  if ((!pending && onboardingCompleted) || welcomePassed) {
     if (pendingFeedback || foregroundWindow()) showEngine();
+    else if (setupWindow && !setupWindow.isDestroyed()) showEngine({ focus: false });
     const completedWindow = setupWindow;
     setupWindow = undefined;
     if (completedWindow && !completedWindow.isDestroyed()) completedWindow.destroy();
@@ -1574,6 +1605,7 @@ else {
       });
       ipcMain.handle('otto:prepare', async (event, options) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
+        if (options?.retry === true && !enginePreferencesReady) welcomeTransferError = undefined;
         await transferWelcome();
         if (engineRuntimeReady) return status;
         return prepare(options);

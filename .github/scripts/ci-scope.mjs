@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 const scope = Object.fromEntries(
-  ['core', 'desktop', 'n8n', 'evals', 'images', 'network'].map((name) => [name, false]),
+  ['core', 'desktop', 'native', 'n8n', 'evals', 'images', 'network'].map((name) => [name, false]),
 );
 const full = () =>
   Object.keys(scope).forEach((name) => {
@@ -52,15 +52,25 @@ else {
       )
     ) {
       core();
+      scope.native = true;
       scope.n8n = true;
       continue;
     }
     if (/^(src|public|tests)\//.test(path)) {
       core();
+      if (
+        [
+          'src/server/vault-crypto.ts',
+          'src/server/composition.ts',
+          'src/providers/composio/proxy.ts',
+        ].includes(path)
+      )
+        scope.native = true;
       continue;
     }
     if (path.startsWith('desktop/')) {
       scope.desktop = true;
+      scope.native = true;
       if (/^desktop\/runtime\/|^desktop\/test\/runtime-assets\.test\.mjs$/.test(path))
         scope.network = true;
       if (path === 'desktop/main/updates.mjs') scope.n8n = true;
@@ -81,6 +91,7 @@ else {
       )
     ) {
       scope.desktop = true;
+      scope.native = true;
       continue;
     }
     if (

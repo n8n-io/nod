@@ -1409,8 +1409,10 @@ async function initializeApplication(
   integrations.registerRoutes(app);
   personal.registerRoutes(app);
   createOnboardingInterview({
+    ownerId,
+    pool,
+    keyStore: adapters.keyStore,
     curator: onboardingCurator,
-    memory,
     brief: onboardingSuggestions.currentBrief,
   }).registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);

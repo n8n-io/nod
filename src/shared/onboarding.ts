@@ -16,6 +16,8 @@ export const interviewAnswerChars = 1200;
 export type InterviewMessage = { from: 'otto' | 'owner'; text: string };
 export type InterviewResponse = { messages: string[]; done: boolean };
 export type OnboardingInterview = {
+  generation: string;
+  completed: boolean;
   answers: string[];
   turns: string[][];
   done: boolean;

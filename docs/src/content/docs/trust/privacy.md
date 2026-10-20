@@ -20,6 +20,8 @@ The desktop app checks n8n's update service for new versions, which sees your IP
 | Data folder                  | `~/Library/Application Support/Otto/` and `~/.otto-desktop/` on a Mac. `%APPDATA%\Otto\` and the `Otto-` WSL distribution on Windows | `.local/` (`OTTO_DATA_ROOT`) and Docker volumes |
 | Who can read it              | You                                                                                                                                  | You                                             |
 
+Unfinished setup interviews are encrypted in your installation’s private storage. Continuing saves your answers to memory and removes the draft text; **Change my answers** discards it without saving. An encrypted completion marker contains only a random interview identifier and expiry, so returning through setup does not save old answers again. Drafts and completion markers expire after 30 days and are discarded the next time Otto reads them. A completed interview can remain in the current tab while you go back through setup; that temporary copy is shown only while its completion marker is current and is cleared when onboarding finishes.
+
 For what Otto stores and how long it keeps it, see the [Security review guide](/trust/security-review/#what-otto-stores).
 
 ## What leaves your computer
