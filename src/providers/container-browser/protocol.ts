@@ -233,7 +233,14 @@ export type BrowserCall = BrowserRequest extends infer R
 export const browserFrame = z.discriminatedUnion('type', [
   z.object({ type: z.literal('request'), request: browserRequest }).strict(),
   z.object({ type: z.literal('cancel'), id: z.uuid() }).strict(),
-  z.object({ type: z.literal('input'), id: z.uuid(), input: browserHandoffInput }).strict(),
+  z
+    .object({
+      type: z.literal('input'),
+      id: z.uuid(),
+      inputId: z.uuid(),
+      input: browserHandoffInput,
+    })
+    .strict(),
   z.object({ type: z.literal('data'), id: z.uuid(), data: transferData }).strict(),
 ]);
 export const chunkFrame = z.object({ id: z.uuid(), chunk: transferData }).strict();
@@ -246,6 +253,18 @@ export const viewFrame = z
       .regex(/^[A-Za-z0-9+/]*={0,2}$/),
   })
   .strict();
+export const browserInputResult = z.discriminatedUnion('ok', [
+  z.object({ id: z.uuid(), inputId: z.uuid(), ok: z.literal(true) }).strict(),
+  z
+    .object({
+      id: z.uuid(),
+      inputId: z.uuid(),
+      ok: z.literal(false),
+      error: z.enum(browserErrorCodes).optional(),
+    })
+    .strict(),
+]);
+export const browserViewResult = z.union([viewFrame, browserInputResult]);
 export const browserMetadata = z
   .object({
     status: z.string().max(256),

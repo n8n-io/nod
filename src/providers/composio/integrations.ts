@@ -113,7 +113,16 @@ function providerFailure(action: string, result: Record<string, unknown>) {
   const detail = [result.error, data.error, data.message].find(
     (value) => value != null && value !== '',
   );
-  const text = typeof detail === 'string' ? detail : JSON.stringify(detail ?? result);
+  const permissions = ['needed', 'provided'].flatMap((field) => {
+    const value = data[field] ?? result[field];
+    return typeof value === 'string' && value
+      ? [`${field}: ${value.length > 1000 ? `${value.slice(0, 1000)}…` : value}`]
+      : [];
+  });
+  const text = [
+    ...permissions,
+    typeof detail === 'string' ? detail : JSON.stringify(detail ?? result),
+  ].join('; ');
   const log = typeof result.logId === 'string' ? ` (Composio log ${result.logId})` : '';
   return `Composio could not complete ${action}: ${text.slice(0, 4000)}${log}`;
 }
@@ -729,7 +738,7 @@ export function createComposioProvider(options: {
       },
       async execute(action, args, accountId, signal) {
         signal?.throwIfAborted();
-        actionToolkit(action);
+        const toolkit = actionToolkit(action);
         const result = await value
           .execute(action, args, accountId ? { account: accountId } : undefined, {
             signal,
@@ -753,7 +762,12 @@ export function createComposioProvider(options: {
           (result.data &&
             typeof result.data === 'object' &&
             'successful' in result.data &&
-            result.data.successful === false)
+            result.data.successful === false) ||
+          ((toolkit === 'slack' || toolkit === 'slackbot') &&
+            result.data &&
+            typeof result.data === 'object' &&
+            'ok' in result.data &&
+            result.data.ok === false)
         )
           throw new Error(providerFailure(action, result as Record<string, unknown>));
         return files(result, signal ?? new AbortController().signal);
