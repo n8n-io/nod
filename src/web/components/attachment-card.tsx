@@ -1,24 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  Download,
-  File,
-  FileArchive,
-  FileAudio,
-  FileCode,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
-  FileVideo,
-} from 'lucide-react';
-import type { Artifact } from '../../shared/contracts';
+import { Download } from 'lucide-react';
+import type { Artifact, Message } from '../../shared/contracts';
+import { attachmentKind, fileSize, fileType } from '../lib/attachment-kind';
 import { Button } from './ui';
+import { FileGlyph } from './attachment-glyph';
+import { useArtifactDrawer } from './artifact-context';
 import {
-  artifactPreview,
-  attachmentKind,
   ImageGallery,
-  ImageViewer,
   ownedArtifactUrl,
-  restoreAttachmentFocus,
   type AttachmentTrigger,
   type ImagePreview,
 } from './attachment-images';
@@ -31,40 +20,10 @@ import {
 
 type LoadPdf = typeof loadPreviewPdf;
 
-export function fileSize(bytes: number) {
-  return bytes < 1024 * 1024
-    ? `${Math.max(1, Math.round(bytes / 1024))} KB`
-    : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-export function fileType(name: string) {
-  return /\.([a-z0-9]{1,5})$/i.exec(name)?.[1].toUpperCase() ?? 'File';
-}
-
-function FileGlyph({ name, mimeType }: { name: string; mimeType: string }) {
-  const type = mimeType.split(';', 1)[0].trim().toLowerCase();
-  const Icon = type.startsWith('image/')
-    ? FileImage
-    : type.startsWith('audio/')
-      ? FileAudio
-      : type.startsWith('video/')
-        ? FileVideo
-        : /zip|tar|compressed|rar/.test(type) || /\.(zip|tar|gz|tgz|7z|rar)$/i.test(name)
-          ? FileArchive
-          : /csv|spreadsheet|excel/.test(type)
-            ? FileSpreadsheet
-            : /json|javascript|html|xml|x-sh/.test(type)
-              ? FileCode
-              : /pdf|^text\/|document|msword/.test(type)
-                ? FileText
-                : File;
-  return <Icon className="attachment-card-glyph" size={24} aria-hidden="true" />;
-}
-
 function CardDetails({ name, mimeType, meta }: { name: string; mimeType: string; meta: string }) {
   return (
     <span className="attachment-card-details">
-      <FileGlyph name={name} mimeType={mimeType} />
+      <FileGlyph name={name} mimeType={mimeType} size={24} className="attachment-card-glyph" />
       <span className="attachment-card-text">
         <span className="attachment-card-name">{name}</span>
         <span className="attachment-card-meta">{meta}</span>
@@ -154,10 +113,12 @@ function PdfThumbnail({
 
 function DocumentCard({
   item,
+  selected,
   onOpen,
   loadDocument,
 }: {
   item: ImagePreview;
+  selected: boolean;
   onOpen(trigger: AttachmentTrigger): void;
   loadDocument: LoadPdf;
 }) {
@@ -172,10 +133,13 @@ function DocumentCard({
     .filter(Boolean)
     .join(' · ');
   return (
-    <div className={`attachment-card is-${attachmentKind(mimeType, item.name)}`}>
+    <div
+      className={`attachment-card is-${attachmentKind(mimeType, item.name) ?? 'file'}${selected ? ' is-selected' : ''}`}
+    >
       <button
         type="button"
         className="attachment-card-open"
+        aria-current={selected || undefined}
         onClick={(event) => onOpen({ element: event.currentTarget, keyboard: event.detail === 0 })}
       >
         {thumbnail && (
@@ -199,23 +163,21 @@ function DocumentCard({
   );
 }
 
-function FileAttachment({ artifact }: { artifact: Artifact }) {
-  if (!ownedArtifactUrl(artifact.url)) return null;
-  return (
-    <a
-      className="attachment-card attachment-file"
-      href={artifact.url}
-      download={artifact.name}
-      aria-label={`Download ${artifact.name}`}
-    >
-      <CardDetails
-        name={artifact.name}
-        mimeType={artifact.mimeType}
-        meta={`${fileType(artifact.name)} · ${fileSize(artifact.size)}`}
-      />
-      <Download className="attachment-file-action" size={16} aria-hidden="true" />
-    </a>
+function messageFiles(attachments: Artifact[]) {
+  const owned = attachments
+    .filter((artifact) => ownedArtifactUrl(artifact.url))
+    .map((artifact): ImagePreview => ({ ...artifact, downloadUrl: artifact.url }));
+  const visual = owned.filter((item) =>
+    ['image', 'video'].includes(attachmentKind(item.mimeType ?? '', item.name) ?? ''),
   );
+  return { visual, rest: owned.filter((item) => !visual.includes(item)) };
+}
+
+export function conversationFiles(messages: Pick<Message, 'attachments'>[]) {
+  return messages.flatMap((message) => {
+    const { visual, rest } = messageFiles(message.attachments);
+    return [...visual, ...rest];
+  });
 }
 
 export function MessageAttachments({
@@ -225,49 +187,38 @@ export function MessageAttachments({
   attachments: Artifact[];
   loadDocument?: LoadPdf;
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const trigger = useRef<AttachmentTrigger | null>(null);
-  const owned = attachments.filter((artifact) => ownedArtifactUrl(artifact.url));
-  const previews = owned.flatMap((artifact) => {
-    const preview = artifactPreview(artifact);
-    return preview ? [preview] : [];
-  });
-  const visual = previews.filter((item) =>
-    ['image', 'video'].includes(attachmentKind(item.mimeType ?? '', item.name) ?? ''),
-  );
-  const documents = previews.filter((item) => !visual.includes(item));
-  const rest = owned.filter((artifact) => !visual.some((item) => item.id === artifact.id));
-  if (!owned.length) return null;
+  const drawer = useArtifactDrawer();
+  const container = useRef<HTMLDivElement>(null);
+  const { visual, rest } = messageFiles(attachments);
+  const selected = [...visual, ...rest].some((item) => item.id === drawer.selectedId)
+    ? drawer.selectedId
+    : null;
+  useEffect(() => {
+    if (!selected) return;
+    container.current?.querySelector('[aria-current="true"]')?.scrollIntoView({
+      block: 'nearest',
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'instant'
+        : 'smooth',
+    });
+  }, [selected]);
+  if (!visual.length && !rest.length) return null;
   return (
-    <div className="message-attachments">
+    <div className="message-attachments" ref={container}>
       {visual.length > 0 && <ImageGallery images={visual} />}
       {rest.length > 0 && (
         <div className="attachment-cards">
-          {rest.map((artifact) => {
-            const item = documents.find((document) => document.id === artifact.id);
-            return item ? (
-              <DocumentCard
-                key={artifact.id}
-                item={item}
-                loadDocument={loadDocument}
-                onOpen={(button) => {
-                  trigger.current = button;
-                  setSelectedId(item.id);
-                }}
-              />
-            ) : (
-              <FileAttachment key={artifact.id} artifact={artifact} />
-            );
-          })}
+          {rest.map((item) => (
+            <DocumentCard
+              key={item.id}
+              item={item}
+              selected={drawer.selectedId === item.id}
+              loadDocument={loadDocument}
+              onOpen={(trigger) => drawer.open(item.id, trigger)}
+            />
+          ))}
         </div>
       )}
-      <ImageViewer
-        images={documents}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-        onClose={() => setSelectedId(null)}
-        restoreFocus={() => restoreAttachmentFocus(trigger.current)}
-      />
     </div>
   );
 }

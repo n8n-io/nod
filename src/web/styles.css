@@ -772,8 +772,18 @@ input[type='range']:disabled {
   display: none;
 }
 .chat-page {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.chat-page > * {
+  grid-column: 1;
+}
+.chat-page > .conversation-scroll {
+  grid-row: 2;
+}
+.chat-page > .chat-bottom {
+  grid-row: 3;
 }
 .conversation-scroll {
   flex: 1;

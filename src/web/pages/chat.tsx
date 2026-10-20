@@ -16,6 +16,8 @@ import { classifyVerificationReply, securityCodeIn } from '../../shared/verifica
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { TaskCard } from './tasks';
 import { MessageBubble } from '../components/message';
+import { conversationFiles } from '../components/attachment-card';
+import { ArtifactWorkspace } from '../components/artifact-drawer';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
 import {
@@ -310,6 +312,10 @@ export function Chat({
       };
     }),
   ]);
+  const fileKey = visibleMessages
+    .map((message) => message.attachments.map((file) => file.id).join(','))
+    .join(';');
+  const files = useMemo(() => conversationFiles(visibleMessages), [fileKey]);
   const planning =
     state.planningTasks === true && !allMessages.some((message) => message.suggestions);
   function taskStatus(task: SuggestedTask, after: number) {
@@ -826,7 +832,7 @@ export function Chat({
     </>
   );
   return (
-    <div className="chat-page">
+    <ArtifactWorkspace className="chat-page" files={files}>
       {desktopSettingsAvailable() ? (
         <>
           <h1 className="sr-only">Chat</h1>
@@ -1096,6 +1102,6 @@ export function Chat({
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </ArtifactWorkspace>
   );
 }

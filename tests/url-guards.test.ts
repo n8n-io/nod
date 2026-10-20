@@ -13,6 +13,8 @@ import {
 } from '../src/providers/public-web/link-preview.ts';
 import { previewableUrl } from '../src/shared/link-preview.ts';
 import { artifactImage, artifactPreview } from '../src/web/components/attachment-images.tsx';
+import { sandboxedDocument } from '../src/web/components/attachment-frame.tsx';
+import { localPreviewable } from '../src/web/lib/attachment-kind.ts';
 import { MessageText } from '../src/web/components/message.tsx';
 import type { Artifact } from '../src/shared/contracts.ts';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
@@ -348,7 +350,7 @@ test('plain browser connection paths hide their token behind one fixed action', 
     assert.deepEqual(messageSetupLinks(`/browser-connect/${token}`, origin), []);
 });
 
-test('attachment previews and gallery sources accept only owned artifact URLs and inert types', () => {
+test('file previews accept only owned artifact URLs and keep active content out of the app origin', () => {
   const picture: Artifact = {
     id: '00000000-0000-4000-8000-000000000000',
     name: 'Picture.png',
@@ -356,8 +358,6 @@ test('attachment previews and gallery sources accept only owned artifact URLs an
     size: 2048,
     url: '/api/artifacts/00000000-0000-4000-8000-000000000000',
   };
-  for (const mimeType of ['text/html', 'application/xhtml+xml', 'video/not-real'])
-    assert.equal(artifactPreview({ ...picture, mimeType }), null);
   for (const mimeType of [
     'application/pdf',
     'audio/mp4',
@@ -365,6 +365,7 @@ test('attachment previews and gallery sources accept only owned artifact URLs an
     'image/svg+xml',
     'text/plain',
     'application/json',
+    'text/html',
   ]) {
     assert.ok(artifactPreview({ ...picture, mimeType }));
     for (const url of [
@@ -375,12 +376,20 @@ test('attachment previews and gallery sources accept only owned artifact URLs an
     ])
       assert.equal(artifactPreview({ ...picture, mimeType, url }), null);
   }
-  for (const name of ['notes.txt', 'report.md', 'data.csv', 'report.pdf', 'table.xlsx']) {
+  for (const name of [
+    'notes.txt',
+    'report.md',
+    'data.csv',
+    'report.pdf',
+    'table.xlsx',
+    'brief.docx',
+    'deck.pptx',
+    'page.html',
+  ]) {
     const file = { ...picture, name, mimeType: 'application/octet-stream' };
     assert.ok(artifactPreview(file));
     assert.equal(artifactImage(file), null);
     assert.equal(artifactPreview({ ...file, url: 'https://example.com/file' }), null);
-    assert.equal(artifactPreview({ ...file, mimeType: 'text/html' }), null);
   }
   assert.ok(artifactImage(picture));
   for (const url of [
@@ -390,6 +399,35 @@ test('attachment previews and gallery sources accept only owned artifact URLs an
     '/api/artifacts/abc?token=private',
   ])
     assert.equal(artifactImage({ ...picture, url }), null);
+  for (const [mimeType, name] of [
+    ['text/html', 'page.png'],
+    ['application/xhtml+xml', 'page'],
+    ['image/svg+xml', 'logo'],
+    ['application/xml', 'feed'],
+    ['application/rss+xml', 'feed'],
+    ['text/plain', 'page.html'],
+    ['', 'logo.svg'],
+    ['application/octet-stream', 'feed.xml'],
+  ])
+    assert.equal(localPreviewable(mimeType, name), false, `${mimeType} ${name}`);
+  for (const [mimeType, name] of [
+    ['image/png', 'photo.png'],
+    ['text/csv', 'data.csv'],
+    ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'table.xlsx'],
+    ['application/pdf', 'report.pdf'],
+  ])
+    assert.equal(localPreviewable(mimeType, name), true, `${mimeType} ${name}`);
+  const { document } = new JSDOM(
+    sandboxedDocument(
+      '<!doctype html><head><meta http-equiv="Content-Security-Policy" content="default-src *"><base target="_self"></head><script>fetch("https://example.com")</script>',
+    ),
+  ).window;
+  const [policy, ...rest] = Array.from(document.head.children);
+  assert.equal(policy.getAttribute('http-equiv'), 'Content-Security-Policy');
+  assert.match(policy.getAttribute('content') ?? '', /^default-src 'none';/);
+  assert.doesNotMatch(policy.getAttribute('content') ?? '', /https?:|\*|connect-src/);
+  assert.equal(document.querySelector('base')?.getAttribute('target'), '_blank');
+  assert.ok(rest.length >= 3);
 });
 
 test('web tool connections use a DNS answer only when every address in it is public', async () => {

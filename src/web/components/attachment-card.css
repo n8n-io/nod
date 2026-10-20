@@ -32,7 +32,20 @@
   background: transparent;
   color: inherit;
   text-align: left;
-  cursor: zoom-in;
+  cursor: pointer;
+}
+
+.attachment-card:hover {
+  border-color: var(--input);
+}
+
+.message-attachments [aria-current='true'] {
+  scroll-margin-block: 72px 96px;
+}
+
+.attachment-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .attachment-card-open:focus-visible {
@@ -108,19 +121,4 @@
   position: absolute;
   right: 8px;
   bottom: 12px;
-}
-
-.attachment-file {
-  flex-direction: row;
-  align-items: center;
-}
-
-.attachment-file .attachment-card-details {
-  flex: 1;
-  padding-right: 8px;
-}
-
-.attachment-file-action {
-  margin-right: 16px;
-  color: var(--muted-foreground);
 }

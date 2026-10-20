@@ -19,6 +19,7 @@ import './pages/plan-controls.css';
 import './components/emoji-picker.css';
 import './components/attachment-images.css';
 import './components/attachment-card.css';
+import './components/artifact-drawer.css';
 import './components/vault-details.css';
 import './pages/browser.css';
 import './pages/privacy.css';

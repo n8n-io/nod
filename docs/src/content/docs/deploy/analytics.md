@@ -245,7 +245,7 @@ These are pseudonymous, opt-in measurements. Installation IDs and service domain
 Recordings show navigation, layout, controls, scrolling and clicks, with private content removed.
 
 - **Masked:** all input values and all text, except product labels marked as public.
-- **Blocked:** chat messages and drafts, reply quotes, link previews, attachments, task titles, steps and results, Trust activity, connected account and channel names, model connection labels and errors, credential and model-key forms, Vault values, the remote browser view, images, media, iframes and canvases.
+- **Blocked:** chat messages and drafts, reply quotes, link previews, attachments and file previews, task titles, steps and results, Trust activity, connected account and channel names, model connection labels and errors, credential and model-key forms, Vault values, the remote browser view, images, media, iframes and canvases.
 - **Replaced:** every URL becomes a fixed `https://otto.invalid` route, without query strings, fragments or external destinations.
 - **Never collected:** console output, request headers and bodies, network payloads, autocapture, automatic exceptions, feature-flag events and person profiles.
 
