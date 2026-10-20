@@ -28,18 +28,19 @@ function opened(url: string, source: Source, position?: number) {
 
 function externalAnchor(target: EventTarget | null) {
   const anchor = target instanceof Element ? target.closest<HTMLAnchorElement>('a[href]') : null;
-  const link = anchor && safeMessageLink(anchor.getAttribute('href') ?? '', window.location.origin);
-  return anchor && link?.kind === 'external' ? { anchor, url: link.href } : null;
+  const url = anchor?.getAttribute('href') ?? '';
+  const link = safeMessageLink(url, window.location.origin);
+  return anchor && link?.kind === 'external' ? { anchor, url } : null;
 }
 
 function messageLinks(content: HTMLDivElement | null): Link[] {
   if (!content || content.querySelector('[data-setup]')) return [];
   const links = new Map<string, Link>();
   for (const anchor of content.querySelectorAll<HTMLAnchorElement>('a[href]')) {
-    const link = safeMessageLink(anchor.getAttribute('href') ?? '', window.location.origin);
+    const url = anchor.getAttribute('href') ?? '';
+    const link = safeMessageLink(url, window.location.origin);
     if (link?.kind === 'setup') return [];
-    const url = link?.kind === 'external' ? previewableUrl(link.href) : null;
-    if (url && !links.has(url))
+    if (link?.kind === 'external' && previewableUrl(url) && !links.has(url))
       links.set(url, { url, label: anchor.textContent?.trim().replace(/\s+/g, ' ') || url });
   }
   return [...links.values()];
@@ -183,7 +184,7 @@ export function MessageLinkPreviews({
       const link = externalAnchor(event.target);
       if (!link) return;
       window.clearTimeout(timer);
-      setActive(previewableUrl(link.url));
+      setActive(link.url);
       timer = window.setTimeout(() => {
         const rect = link.anchor.getBoundingClientRect();
         const below = rect.top < 72;
@@ -235,10 +236,7 @@ export function MessageLinkPreviews({
     const over = (event: Event) => {
       const url = (event.target as Element).closest<HTMLElement>('[data-url]')?.dataset.url;
       for (const item of anchors())
-        item.anchor.classList.toggle(
-          'message-link-highlight',
-          Boolean(url && item.url && previewableUrl(item.url) === url),
-        );
+        item.anchor.classList.toggle('message-link-highlight', Boolean(url && item.url === url));
     };
     const leave = () => {
       for (const item of anchors()) item.anchor.classList.remove('message-link-highlight');

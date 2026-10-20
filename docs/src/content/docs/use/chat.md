@@ -56,7 +56,7 @@ Otto sometimes reacts to your messages too, such as ✅ when you say yes to some
 
 Hover over a link in one of Otto's replies to see its full address. Select the address to open the page.
 
-Under a reply, Otto lists the linked pages that publish a preview image, in the order the links appear. Each row shows the link text, the page title and the full address. Hovering a link highlights its row, and hovering a row highlights its link. The first five rows show; select **Show more** for the rest. Links to pages without a preview image get no row, and sign-in, Vault and payment links are never previewed.
+Under a reply, Otto lists the linked pages that publish a preview image, in the order the links appear. Each row shows the link text, the page title and the full address, including any link to a section of the page. Hovering a link highlights its row, and hovering a row highlights its link. The first five rows show; select **Show more** for the rest. Links to pages without a preview image get no row, and sign-in, Vault and payment links are never previewed.
 
 When a video page offers a player, such as YouTube or Vimeo, select the play button on its row to watch it in the chat. Nothing from the video site loads until you select play.
 
