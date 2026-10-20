@@ -693,6 +693,7 @@ function ImportNotes({
                                 type="button"
                                 variant="ghost"
                                 size="icon"
+                                disabled={busy}
                                 aria-label={`${gone ? 'Keep' : 'Remove'} “${note.text}”`}
                                 title={gone ? 'Keep' : 'Remove'}
                                 onClick={() => toggle(note.index)}
@@ -750,6 +751,7 @@ function ImportNotes({
                   <Button
                     type="button"
                     variant="ghost"
+                    disabled={busy}
                     onClick={() => {
                       setReviewing(false);
                       requestAnimationFrame(() => answer.current?.focus());

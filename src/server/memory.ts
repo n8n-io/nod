@@ -272,10 +272,13 @@ export function createMemoryService(options: {
     });
     return owned((tree, now) => {
       let added = 0;
+      let confirmed = 0;
       for (const note of valid) {
         const match = areaEntries(tree, note.area).find((entry) => same(entry.text, note.text));
-        if (match?.origin === 'inferred')
+        if (match?.origin === 'inferred') {
           Object.assign(match, { origin: 'stated', updated: now, edited: now });
+          confirmed++;
+        }
         if (match) continue;
         tree.entries.push({
           area: note.area,
@@ -288,7 +291,12 @@ export function createMemoryService(options: {
         });
         added++;
       }
-      return { added, existing: valid.length - added, skipped: notes.length - valid.length };
+      return {
+        added,
+        existing: valid.length - added,
+        skipped: notes.length - valid.length,
+        saved: added + confirmed > 0,
+      };
     });
   }
 

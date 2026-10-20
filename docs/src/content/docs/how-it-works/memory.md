@@ -7,7 +7,7 @@ sidebar:
 
 Otto keeps one private memory document per owner. This page explains how it's stored, how the model reads and writes it, and what the hourly maintenance job does. To see and edit memory in the app, read [Memory](/use/memory/).
 
-The short version: memory notes hold only the owner's own words: what they said in their messages, what they write or paste in Settings → Memory, and one style note learned from their own sent email. Otto saves the owner's message word for word, and an hourly job archives entries instead of deleting them. Next to the notes, memory keeps [learned skills](#learned-skills): procedures Otto writes itself after a task, without personal data.
+The short version: memory notes hold the owner's own words from their messages and Settings → Memory, what they choose to import from another assistant, and one style note learned from their own sent email. Otto saves the owner's message word for word, and an hourly job archives entries instead of deleting them. Next to the notes, memory keeps [learned skills](#learned-skills): procedures Otto writes itself after a task, without personal data.
 
 ## Where memory lives
 

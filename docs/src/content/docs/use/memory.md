@@ -21,7 +21,7 @@ You can see everything Otto remembers, where it learned it, and change or forget
 
 ## Where Otto learns from
 
-Notes come only from your own messages and what you write or paste in **Settings → Memory**. Otto never takes a note from its own replies, web pages, emails or tool results. Text from the web gets in only if you paste it into a short message yourself.
+Notes come only from your own messages and what you write or paste in **Settings → Memory**. Otto never takes a note from its own replies, web pages, emails or tool results. Text from the web gets in only if you paste it yourself, into a short message or **Settings → Memory**.
 
 - **When you tell it.** Say "remember that I'm vegetarian" or state a lasting fact, and Otto saves your message as you wrote it, with line breaks turned into spaces. Messages longer than 4,000 characters can't be saved this way; add a shorter note yourself.
 - **In the background.** About once an hour, Otto looks through your recent messages for what you said about your life: people, places, plans, things you bought, events with their dates and what you like. It skips messages with attachments and messages over 4,000 characters.
