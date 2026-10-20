@@ -842,7 +842,7 @@ async function initializeApplication(
     mailCheck,
     answers: async () =>
       (await memory.load()).entries
-        .filter((entry) => entry.origin === 'stated' && entry.slug.startsWith('onboarding-'))
+        .filter((entry) => entry.origin === 'stated' && entry.slug === 'onboarding')
         .map((entry) => entry.text),
     gmail: async () =>
       (await integrations.connectedApps()).some(
@@ -1371,7 +1371,11 @@ async function initializeApplication(
   browserConnections.registerRoutes(app);
   integrations.registerRoutes(app);
   personal.registerRoutes(app);
-  createOnboardingInterview({ curator: onboardingCurator, memory }).registerRoutes(app);
+  createOnboardingInterview({
+    curator: onboardingCurator,
+    memory,
+    brief: onboardingSuggestions.currentBrief,
+  }).registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
   tasks.registerRoutes(app);
   triage.registerRoutes(app);
