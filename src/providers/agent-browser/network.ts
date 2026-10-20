@@ -28,8 +28,13 @@ export function isPublicAddress(address: string): boolean {
   } catch {
     return false;
   }
+  const nat64 = /^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(normal);
+  if (nat64) {
+    const [high, low] = [parseInt(nat64[1], 16), parseInt(nat64[2], 16)];
+    return isPublicAddress([high >> 8, high & 255, low >> 8, low & 255].join('.'));
+  }
   return (
-    /^[23][0-9a-f]{0,3}:/.test(normal) &&
+    /^[23][0-9a-f]{3}:/.test(normal) &&
     !/^2002:/.test(normal) &&
     !/^2001:(?::|0:|db8:|2:|10:|20:)/.test(normal) &&
     !/^3fff:[0-9a-f]{0,3}:/.test(normal)
