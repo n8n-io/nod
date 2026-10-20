@@ -32,6 +32,7 @@ import { resolveBrowserRegion, setDateFormat } from './lib/date-format';
 import { useBrowserTimeZone } from './hooks/use-browser-time-zone';
 import {
   desktopSettingsAvailable,
+  desktopRendererReady,
   saveDesktopSettings,
   onFeedbackRequested,
   subscribeDesktopFocusMessage,
@@ -130,24 +131,16 @@ function Workspace({
     return () => window.removeEventListener('otto:focus-message', focusMessage);
   }, [state]);
   const currentPath = path === '/you' ? '/' : path;
-  const loaded = !!state;
   const hasMessages = state ? state.messages.length > 0 : null;
   useEffect(() => {
     if (hasMessages !== null)
       writeUiPreference('otto.chat-layout', hasMessages ? 'conversation' : 'welcome');
   }, [hasMessages]);
-  const [handoff, setHandoff] = useState(false);
   const [entering, setEntering] = useState(true);
   useEffect(() => {
     const timer = setTimeout(() => setEntering(false), 600);
     return () => clearTimeout(timer);
   }, []);
-  useEffect(() => {
-    if (!loaded) return;
-    setHandoff(true);
-    const timer = setTimeout(() => setHandoff(false), 700);
-    return () => clearTimeout(timer);
-  }, [loaded]);
   useEffect(() => {
     prefetchPageData([
       '/api/vault',
@@ -195,10 +188,7 @@ function Workspace({
         <div className="workspace-frame">
           <div className="workspace-body">
             <main id="workspace" className="main-workspace" tabIndex={-1}>
-              <div
-                className={`chat-route ${handoff ? 'chat-entering' : ''}`}
-                hidden={currentPath !== '/'}
-              >
+              <div className="chat-route" hidden={currentPath !== '/'}>
                 {state ? (
                   <Chat
                     ownerId={session.user!.id}
@@ -225,11 +215,6 @@ function Workspace({
                   </div>
                 ) : (
                   <ChatSkeleton />
-                )}
-                {handoff && (
-                  <div className="startup-leaving" aria-hidden="true">
-                    <ChatSkeleton />
-                  </div>
                 )}
               </div>
               {currentPath === '/trust' && <Trust onAsk={askInChat} />}
@@ -473,6 +458,9 @@ function AccountApp({
 }) {
   const sessionState = useSession();
   const { session } = sessionState;
+  useEffect(() => {
+    if (!sessionState.loading) desktopRendererReady();
+  }, [sessionState.loading]);
   const legacyBrowserLink = /^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/.test(path);
   useLayoutEffect(() => {
     if (sessionState.loading || !session?.user) return;

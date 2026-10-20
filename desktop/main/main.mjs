@@ -72,6 +72,7 @@ const analyticsConfiguration = createDesktopAnalytics(join(profileRoot, 'analyti
 let setupWindow;
 let setupWindowLoaded;
 let engineWindow;
+let engineFocusRequested = false;
 let pendingFeedback = false;
 let engine;
 let welcomePassed = false;
@@ -114,6 +115,7 @@ let status = {
 };
 const knownSecrets = new Set();
 const engineWindows = new Set();
+const pendingRenderers = new Map();
 const appPreferences = createAppPreferencesStore(join(profileRoot, 'preferences.json'), {
   request: (path, options) => engineRequest(path, options),
   isReady: () => Boolean(engine) && enginePreferencesReady && !closingEngine && !quitting,
@@ -466,6 +468,19 @@ function protectWindow(window, origin) {
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
 }
 
+function waitForRenderer(window, present, failed) {
+  const timeout = setTimeout(failed, 30_000);
+  timeout.unref?.();
+  pendingRenderers.set(window, () => {
+    clearTimeout(timeout);
+    present();
+  });
+  window.once('closed', () => {
+    clearTimeout(timeout);
+    pendingRenderers.delete(window);
+  });
+}
+
 function showSettings(section = 'general', loading = false) {
   if (quitting) return;
   if (!loading && onboardingCompleted && engine && status.phase === 'ready') {
@@ -481,14 +496,17 @@ function showSettings(section = 'general', loading = false) {
   }
   if (setupWindow && !setupWindow.isDestroyed()) {
     const window = setupWindow;
-    window.show();
-    window.focus();
+    if (!pendingRenderers.has(window)) {
+      window.show();
+      window.focus();
+    }
     return setupWindowLoaded.then(() => {
       if (window.isDestroyed()) return;
       window.webContents.send('otto:status', status);
     });
   }
   setupWindow = new BrowserWindow({
+    show: false,
     width: 1200,
     height: 860,
     minWidth: 700,
@@ -506,16 +524,46 @@ function showSettings(section = 'general', loading = false) {
     },
   });
   const window = setupWindow;
+  let presented;
+  const ready = new Promise((resolve) => {
+    presented = resolve;
+  });
+  const failed = () => {
+    if (quitting || window.isDestroyed() || !pendingRenderers.has(window)) return;
+    window.destroy();
+    update({ windowError: 'Otto could not open setup. Try again.' });
+    void dialog.showMessageBox({
+      type: 'error',
+      message: 'Otto could not open setup.',
+      detail: 'Close and reopen Otto to try again. Your progress is saved.',
+      buttons: ['OK'],
+    });
+  };
+  waitForRenderer(
+    window,
+    () => {
+      if (!quitting && !window.isDestroyed()) window.show();
+      presented();
+    },
+    failed,
+  );
   protectWindow(window);
   window.on('closed', () => {
+    pendingRenderers.delete(window);
+    presented();
     if (setupWindow === window) setupWindow = undefined;
   });
-  setupWindowLoaded = window.loadFile(setupPath, {
-    query: {
-      firstSetup: String(!onboardingCompleted),
-      ...(status.unlockingKeys ? { unlocking: process.platform } : {}),
-    },
-  });
+  setupWindowLoaded = Promise.all([
+    window
+      .loadFile(setupPath, {
+        query: {
+          firstSetup: String(!onboardingCompleted),
+          ...(status.unlockingKeys ? { unlocking: process.platform } : {}),
+        },
+      })
+      .catch(failed),
+    ready,
+  ]);
   return setupWindowLoaded;
 }
 
@@ -531,6 +579,11 @@ function showEngine({ focus = true } = {}) {
     return;
   }
   if (engineWindow && !engineWindow.isDestroyed()) {
+    if (pendingRenderers.has(engineWindow)) {
+      if (focus && setupWindow) void showSettings('general', true);
+      else if (focus) engineFocusRequested = true;
+      return;
+    }
     if (replayingProductOnboarding) {
       replayingProductOnboarding = false;
       void engineWindow.loadURL(`${engineOrigin}/onboarding?replay=1`);
@@ -542,8 +595,13 @@ function showEngine({ focus = true } = {}) {
     deliverFeedbackRequest(engineWindow);
     return;
   }
+  const previousSetup = setupWindow;
+  const initialWelcome = welcomeNavigation;
+  const initialReplay = replayingProductOnboarding;
+  engineFocusRequested = false;
+  update({ windowError: undefined });
   engineWindow = new BrowserWindow({
-    show: focus,
+    show: false,
     ...(setupWindow && !setupWindow.isDestroyed()
       ? setupWindow.getNormalBounds()
       : { width: 1200, height: 860 }),
@@ -564,10 +622,44 @@ function showEngine({ focus = true } = {}) {
   engineWindows.add(engineWindow);
   protectWindow(engineWindow, engineOrigin);
   const window = engineWindow;
+  const failed = () => {
+    if (quitting || window.isDestroyed() || !pendingRenderers.has(window)) return;
+    welcomeNavigation ||= initialWelcome;
+    replayingProductOnboarding ||= initialReplay;
+    window.destroy();
+    update({ windowError: 'Otto could not open. Try again.' });
+    if (!setupWindow && (!previousSetup || engineFocusRequested))
+      void showSettings('general', true);
+  };
+  waitForRenderer(
+    window,
+    () => {
+      if (quitting || window.isDestroyed()) return;
+      const startup = setupWindow;
+      if (startup && !startup.isDestroyed()) {
+        window.setBounds(startup.getNormalBounds());
+        const waiting = pendingRenderers.has(startup);
+        if (!startup.isMinimized() && (startup.isVisible() || waiting)) {
+          if (startup.isFocused() || waiting) window.show();
+          else window.showInactive();
+        }
+        startup.destroy();
+      } else if (!previousSetup || engineFocusRequested) {
+        if (focus || engineFocusRequested) window.show();
+        else window.showInactive();
+      }
+      deliverFeedbackRequest(window);
+      void loaded.then(() => {
+        if (!quitting && !window.isDestroyed() && replayingProductOnboarding) showEngine();
+      });
+    },
+    failed,
+  );
   window.webContents.on('did-finish-load', () => deliverFeedbackRequest(window));
   engineWindow.on('closed', () => {
+    pendingRenderers.delete(window);
     engineWindows.delete(window);
-    engineWindow = undefined;
+    if (engineWindow === window) engineWindow = undefined;
   });
   const destination = welcomeNavigation
     ? `${engineOrigin}/onboarding?welcome=complete`
@@ -576,8 +668,7 @@ function showEngine({ focus = true } = {}) {
       : engineOrigin;
   welcomeNavigation = false;
   replayingProductOnboarding = false;
-  void engineWindow.loadURL(destination);
-  if (!focus) engineWindow.showInactive();
+  const loaded = window.loadURL(destination).catch(failed);
 }
 
 function showFeedback() {
@@ -824,7 +915,6 @@ async function transferWelcome() {
     });
     if (pendingFeedback || foregroundWindow()) showEngine();
     else if (setupWindow && !setupWindow.isDestroyed()) showEngine({ focus: false });
-    if (setupWindow && !setupWindow.isDestroyed()) setupWindow.destroy();
   })()
     .catch((error) => {
       welcomeTransferError = bounded(error.message);
@@ -863,9 +953,6 @@ async function finishEnginePreparation(pending = false) {
   if ((!pending && onboardingCompleted) || welcomePassed) {
     if (pendingFeedback || foregroundWindow()) showEngine();
     else if (setupWindow && !setupWindow.isDestroyed()) showEngine({ focus: false });
-    const completedWindow = setupWindow;
-    setupWindow = undefined;
-    if (completedWindow && !completedWindow.isDestroyed()) completedWindow.destroy();
   }
   synchronizeNotifications();
   if (!pending && pendingPreload) {
@@ -1305,6 +1392,7 @@ async function prepare(options = {}) {
   if (preparing) return preparing;
   update({
     phase: 'preparing',
+    windowError: undefined,
     message: status.runtime.message,
     progress: status.runtime.progress,
     needsRuntimeArchive: false,
@@ -1522,6 +1610,17 @@ else {
         ]),
       );
       refreshUpdateMenu();
+      ipcMain.handle('otto:renderer-ready', (event) => {
+        const window = isSetup(event)
+          ? setupWindow
+          : isEngine(event)
+            ? [...engineWindows].find((candidate) => candidate.webContents === event.sender)
+            : undefined;
+        if (!window) throw new Error('This action is unavailable.');
+        const present = pendingRenderers.get(window);
+        pendingRenderers.delete(window);
+        present?.();
+      });
       ipcMain.handle('otto:status', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         return status;
@@ -1595,6 +1694,7 @@ else {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         if (options?.retry === true && !enginePreferencesReady) welcomeTransferError = undefined;
         await transferWelcome();
+        if (options?.retry === true && status.windowError) showEngine();
         if (engineRuntimeReady) return status;
         return prepare(options);
       });
@@ -1654,7 +1754,7 @@ else {
         applyPreferences(saved);
         guidedStartup = !saved.onboardingCompleted;
         await showSettings('general', true);
-        void prepare();
+        if (setupWindow && !setupWindow.isDestroyed()) void prepare();
       } catch (error) {
         showSettings('general', true);
         update({ phase: 'error', message: bounded(error.message), error: bounded(error.message) });

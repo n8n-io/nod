@@ -1872,11 +1872,6 @@ input[type='range']:disabled {
     transform: translateY(6px);
   }
 }
-@keyframes startup-leave {
-  to {
-    opacity: 0;
-  }
-}
 @keyframes startup-unghost {
   from {
     opacity: 0.4;
@@ -1972,20 +1967,6 @@ input[type='range']:disabled {
 }
 .shell-entering .sidebar :is(.main-nav, .mobile-top-bar, .sidebar-bottom) {
   animation: startup-unghost 0.4s ease-out backwards;
-}
-.startup-leaving {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  background: var(--canvas);
-  pointer-events: none;
-  animation: startup-leave 0.28s ease-in forwards;
-}
-.startup-leaving .skeleton-note {
-  visibility: hidden;
-}
-.chat-entering > .chat-page:not(.chat-skeleton) :is(.messages, .welcome) {
-  animation: startup-fade 180ms ease-out;
 }
 .ghost-bubble {
   height: 44px;

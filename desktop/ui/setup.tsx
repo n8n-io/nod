@@ -20,6 +20,7 @@ type RuntimeStatus = {
 };
 
 type Status = RuntimeStatus & {
+  windowError?: string;
   unlockingKeys?: boolean;
   platform?: string;
   runtime?: RuntimeStatus;
@@ -33,6 +34,7 @@ type Preferences = {
 type WelcomeChoice = { usageData: boolean; continued: boolean };
 
 type Desktop = {
+  ready?(): Promise<void>;
   getSettings(): Promise<{ welcome?: WelcomeChoice }>;
   saveSettings(change: { welcome: WelcomeChoice }): Promise<{ welcome?: WelcomeChoice }>;
   status(): Promise<Status>;
@@ -68,6 +70,8 @@ function Startup() {
         : { phase: 'preparing' },
   );
   const [busy, setBusy] = useState(false);
+  const [initialized, setInitialized] = useState(false);
+  const [settingsError, setSettingsError] = useState('');
   const [welcome, setWelcome] = useState<WelcomeChoice | null>(null);
   const [welcomeError, setWelcomeError] = useState('');
   const pending = useRef(false);
@@ -81,26 +85,38 @@ function Startup() {
       if (active) setStatus(value);
     });
     const stopPreferences = desktop.onPreferences(applyPreferences);
-    void Promise.all([desktop.getPreferences(), desktop.status(), desktop.getSettings()])
-      .then(([preferences, value, settings]) => {
-        if (!active) return;
-        applyPreferences(preferences);
-        if (firstSetup) setWelcome(settings.welcome ?? { usageData: false, continued: false });
-        if (!receivedStatus) setStatus(value);
-      })
-      .catch(() => {
-        if (active && !receivedStatus)
-          setStatus({
-            phase: 'error',
-            error: 'Your saved settings could not be opened. Try again.',
-          });
-      });
+    void Promise.all([
+      desktop.status().then(
+        (value) => {
+          if (active && !receivedStatus) setStatus(value);
+        },
+        () => {
+          if (active && !receivedStatus)
+            setStatus({ phase: 'error', error: 'Otto could not start. Try again.' });
+        },
+      ),
+      Promise.all([desktop.getPreferences(), desktop.getSettings()])
+        .then(([preferences, settings]) => {
+          if (!active) return;
+          applyPreferences(preferences);
+          if (firstSetup) setWelcome(settings.welcome ?? { usageData: false, continued: false });
+        })
+        .catch(() => {
+          if (active) setSettingsError('Your saved settings could not be opened. Try again.');
+        }),
+    ]).then(() => {
+      if (active) setInitialized(true);
+    });
     return () => {
       active = false;
       stopStatus?.();
       stopPreferences?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (initialized) void desktop?.ready?.();
+  }, [initialized]);
 
   async function run(action: () => Promise<Status | undefined>) {
     if (pending.current) return;
@@ -169,12 +185,15 @@ function Startup() {
     );
 
   const runtime = status.runtime;
-  const failure =
-    status.phase === 'error' || status.error
-      ? status
-      : runtime?.phase === 'error'
-        ? runtime
-        : undefined;
+  const failure: RuntimeStatus | undefined = settingsError
+    ? { phase: 'error', error: settingsError }
+    : status.windowError
+      ? { phase: 'error', error: status.windowError }
+      : status.phase === 'error' || status.error
+        ? status
+        : runtime?.phase === 'error'
+          ? runtime
+          : undefined;
   const active =
     runtime && runtime.phase !== 'ready' && !['starting', 'ready'].includes(status.phase || '')
       ? runtime
@@ -229,9 +248,15 @@ function Startup() {
               disabled={busy}
               onClick={() =>
                 void run(async () => {
-                  if (firstSetup && !welcome) {
-                    const settings = await desktop.getSettings();
-                    setWelcome(settings.welcome ?? { usageData: false, continued: false });
+                  if (settingsError || (firstSetup && !welcome)) {
+                    const [preferences, settings] = await Promise.all([
+                      desktop.getPreferences(),
+                      desktop.getSettings(),
+                    ]);
+                    applyPreferences(preferences);
+                    if (firstSetup)
+                      setWelcome(settings.welcome ?? { usageData: false, continued: false });
+                    setSettingsError('');
                   }
                   return desktop.prepare({ retry: true });
                 })

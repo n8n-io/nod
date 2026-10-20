@@ -27,6 +27,7 @@ ipcRenderer.on('otto:feedback:open', () => {
 });
 
 contextBridge.exposeInMainWorld('ottoDesktop', {
+  ready: () => ipcRenderer.invoke('otto:renderer-ready'),
   status: () => ipcRenderer.invoke('otto:status'),
   prepare: (options) => ipcRenderer.invoke('otto:prepare', options),
   onStatus: (listener) => {

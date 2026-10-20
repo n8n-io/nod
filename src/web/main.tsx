@@ -1,6 +1,7 @@
 import { Component, StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './app';
+import { desktopRendererReady } from './lib/desktop';
 import { initializeTheme } from './lib/theme';
 import { captureAnalytics, configureAnalytics } from './lib/analytics-client';
 import { claimAccess, sessionStore } from './lib/session';
@@ -45,6 +46,7 @@ class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }
     return { failed: true };
   }
   componentDidCatch() {
+    desktopRendererReady();
     captureAnalytics('otto_ui_error', { area: 'application', action: 'render' });
   }
   render() {

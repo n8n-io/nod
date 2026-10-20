@@ -333,6 +333,8 @@ async function runningDesktop(
     legacyKey,
     prepareRuntime,
     nativePageLoaded,
+    enginePageLoaded,
+    readyRenderers = true,
     notificationsSupported = false,
     webPreferences = { quietHoursEnabled: false },
     openFile = open,
@@ -369,6 +371,11 @@ async function runningDesktop(
   const children = [];
   const paths = new Map();
   const handlers = new Map();
+  const rendererReady = (window) =>
+    handlers.get('otto:renderer-ready')?.({
+      sender: window.webContents,
+      senderFrame: window.webContents.mainFrame,
+    });
   const notifications = [];
   const externalURLs = [];
   const updateMenu = {};
@@ -527,6 +534,9 @@ async function runningDesktop(
       isVisible() {
         return this.visible && !this.destroyed;
       }
+      isMinimized() {
+        return this.minimized === true;
+      }
       loadURL(url) {
         this.url = url;
         this.loading = true;
@@ -535,12 +545,23 @@ async function runningDesktop(
           routingId: this.webContents.id,
           processId: this.webContents.id + 100,
         };
+        return Promise.resolve(
+          typeof enginePageLoaded === 'function' ? enginePageLoaded() : enginePageLoaded,
+        ).then(async () => {
+          this.loading = false;
+          this.webContents.emit('did-finish-load');
+          if (readyRenderers && !this.isDestroyed()) await rendererReady(this);
+        });
       }
       loadFile(path, options) {
         this.path = path;
         this.query = options?.query;
         this.webContents.mainFrame = { url: pathToFileURL(path).href };
-        return nativePageLoaded ?? Promise.resolve();
+        return Promise.resolve(
+          typeof nativePageLoaded === 'function' ? nativePageLoaded() : nativePageLoaded,
+        ).then(async () => {
+          if (readyRenderers && !this.isDestroyed()) await rendererReady(this);
+        });
       }
       show() {
         this.visible = true;
@@ -559,6 +580,9 @@ async function runningDesktop(
       }
       getNormalBounds() {
         return this.normalBounds ?? this.bounds;
+      }
+      setBounds(bounds) {
+        this.bounds = { ...bounds };
       }
       setBackgroundColor() {}
       destroy() {
@@ -588,7 +612,7 @@ async function runningDesktop(
     status.phase = 'ready';
     ${initialState === 'running' ? '' : "engine = undefined; enginePreferencesReady = false; engineRuntimeReady = false; engineOrigin = ''; engineBound = false; onboardingCompleted = false; status.phase = 'idle';"}
     ${source.slice(source.indexOf('      const appSession ='), source.indexOf('      const image = nativeImage'))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:get'"), source.indexOf("      ipcMain.handle('otto:feedback:context'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:renderer-ready'"), source.indexOf("      ipcMain.handle('otto:feedback:context'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:feedback:context'"), source.indexOf("      ipcMain.handle('otto:preferences:get'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:preferences:get'"), source.indexOf("      ipcMain.handle('otto:prepare'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:prepare'"), source.indexOf("      ipcMain.handle('otto:runtime:import'"))}
@@ -623,6 +647,7 @@ async function runningDesktop(
     handlers,
     notifications,
     externalURLs,
+    rendererReady,
     updateMenu,
     headers: (details) => new Promise((resolve) => requestHeaders(details, resolve)),
   };
@@ -863,6 +888,77 @@ test('native startup recovery keeps current status and serializes retry, prerequ
       await settle(() => calls.filter(([name]) => name === 'prepare').length === 2);
       assert.deepEqual(calls.at(-1), ['prepare', undefined]);
       await settle(() => !page.window.document.querySelector('[role="alert"]'));
+    });
+  }
+});
+
+test('native startup preserves saved metadata failures until retry without replaying acknowledged consent', async (t) => {
+  for (const failedMethod of ['getSettings', 'getPreferences']) {
+    await t.test(failedMethod, async (t) => {
+      const output = await mkdtemp(join(tmpdir(), 'otto-native-metadata-'));
+      t.after(() => rm(output, { recursive: true, force: true }));
+      await buildDesktopUI(output);
+      const page = new JSDOM(await readFile(join(output, 'index.html'), 'utf8'), {
+        url: 'file:///synthetic/setup.html?firstSetup=true',
+        runScripts: 'outside-only',
+      });
+      t.after(() => page.window.close());
+      const metadata = deferred();
+      let publish;
+      let reads = 0;
+      let prepares = 0;
+      let acknowledgments = 0;
+      let consentRendered = false;
+      const observer = new page.window.MutationObserver(() => {
+        consentRendered ||= Boolean(page.window.document.querySelector('[role="switch"]'));
+      });
+      observer.observe(page.window.document, { childList: true, subtree: true });
+      t.after(() => observer.disconnect());
+      const values = {
+        getSettings: { welcome: { usageData: false, continued: true, acknowledged: true } },
+        getPreferences: { theme: 'light' },
+      };
+      page.window.ottoDesktop = {
+        onStatus(listener) {
+          publish = listener;
+        },
+        onPreferences() {},
+        status: async () => ({ phase: 'preparing' }),
+        ...Object.fromEntries(
+          Object.entries(values).map(([method, value]) => [
+            method,
+            () =>
+              method === failedMethod && reads++ === 0 ? metadata.promise : Promise.resolve(value),
+          ]),
+        ),
+        ready: async () => {
+          acknowledgments++;
+        },
+        prepare: async () => {
+          prepares++;
+          return { phase: 'starting' };
+        },
+        saveSettings: () => assert.fail('Acknowledged consent must not be resubmitted.'),
+      };
+      page.window.eval(await readFile(join(output, 'setup.js'), 'utf8'));
+      const settle = async (predicate) => {
+        for (let attempt = 0; attempt < 100 && !predicate(); attempt++)
+          await new Promise((accept) => setTimeout(accept, 10));
+        assert.ok(predicate());
+      };
+      await settle(() => publish);
+      publish({ phase: 'ready' });
+      assert.equal(acknowledgments, 0);
+      metadata.reject(new page.window.Error('Synthetic saved metadata failure'));
+      await settle(() => page.window.document.querySelector('[role="alert"]'));
+      publish({ phase: 'preparing' });
+      await new Promise((accept) => setTimeout(accept, 20));
+      assert.ok(page.window.document.querySelector('[role="alert"]'));
+      await settle(() => acknowledgments > 0);
+      page.window.document.querySelector('button').click();
+      await settle(() => prepares === 1 && !page.window.document.querySelector('[role="alert"]'));
+      assert.equal(reads, 2);
+      assert.equal(consentRendered, false);
     });
   }
 });
@@ -1132,6 +1228,298 @@ test('runtime handoff and readiness respect closed, minimized and background win
       } finally {
         storage.resolve();
         resources.resolve();
+        await f.close();
+      }
+    });
+  }
+});
+
+test('native windows wait for owned renderer readiness before replacing startup', async (t) => {
+  for (const scenario of [
+    'foreground',
+    'background',
+    'minimized',
+    'closed',
+    'resized',
+    'late-load-failure',
+    'early-load-failure',
+    'load-failure',
+    'upgrade-load-failure',
+    'upgrade-replay-load-failure',
+    'reopen-load-failure',
+    'closed-activate-load-failure',
+  ]) {
+    await t.test(scenario, async (t) => {
+      const storage = deferred();
+      const connected = deferred();
+      const loaded = deferred();
+      const runtimeFinished = deferred();
+      let retried = false;
+      const f = await runningDesktop(
+        t,
+        async (url) =>
+          Response.json(
+            url.endsWith('/api/account') ? { settings: { usageData: false } } : { ok: true },
+          ),
+        {
+          initialState: scenario.startsWith('upgrade-') ? 'upgrade' : 'fresh',
+          argv: scenario.includes('replay') ? ['--onboarding'] : [],
+          allowStart: true,
+          readyRenderers: false,
+          enginePageLoaded: () => (retried ? Promise.resolve() : loaded.promise),
+          prepareRuntime: async ({ onStorageReady }) => {
+            await storage.promise;
+            const runtime = { env: {} };
+            await onStorageReady(runtime);
+            connected.resolve();
+            if (scenario === 'early-load-failure') await runtimeFinished.promise;
+            return runtime;
+          },
+        },
+      );
+      if (!scenario.startsWith('upgrade-'))
+        await f.storage.store.save({ welcome: { usageData: false, continued: true } });
+      try {
+        const launched = f.launch();
+        for (let i = 0; !f.windows.length && i < 50; i++) await new Promise(setImmediate);
+        const setup = f.windows[0];
+        assert.ok(setup);
+        assert.equal(setup.isVisible(), false);
+        await f.rendererReady(setup);
+        await launched;
+        assert.equal(setup.isVisible(), true);
+        storage.resolve();
+        await connected.promise;
+        if (scenario !== 'early-load-failure') await f.settle();
+        const engine = f.windows.find((window) => window.url);
+        assert.ok(engine);
+        assert.equal(engine.isVisible(), false);
+        assert.equal(setup.isDestroyed(), false);
+        if (scenario !== 'early-load-failure') await f.settle();
+        assert.equal(engine.isVisible(), false);
+        const frame = engine.webContents.mainFrame;
+        const ready = f.handlers.get('otto:renderer-ready');
+        for (const event of [
+          { sender: { mainFrame: frame }, senderFrame: frame },
+          { sender: engine.webContents, senderFrame: { ...frame } },
+        ])
+          await assert.rejects(
+            Promise.resolve().then(() => ready(event)),
+            /unavailable/,
+          );
+        assert.equal(engine.isVisible(), false);
+        if (scenario === 'late-load-failure') {
+          await f.rendererReady(engine);
+          assert.equal(engine.isVisible(), true);
+          loaded.reject(new Error('Synthetic initial navigation abort'));
+          await new Promise(setImmediate);
+          assert.equal(engine.isDestroyed(), false);
+          assert.equal(f.status().phase, 'ready');
+          assert.equal(f.status().windowError, undefined);
+          return;
+        }
+        if (scenario.endsWith('load-failure')) {
+          if (scenario === 'closed-activate-load-failure') {
+            setup.destroy();
+            f.showEngine();
+          }
+          loaded.reject(new Error('Synthetic page failure'));
+          await new Promise(setImmediate);
+          assert.equal(engine.isDestroyed(), true);
+          const recovery = f.windows.find((window) => window.path && !window.isDestroyed());
+          assert.ok(recovery);
+          if (recovery !== setup) await f.rendererReady(recovery);
+          assert.equal(recovery.isVisible(), true);
+          assert.equal(f.status().phase, scenario === 'early-load-failure' ? 'preparing' : 'ready');
+          assert.ok(f.status().windowError);
+          const backend = f.children[0];
+          retried = true;
+          let retry;
+          if (scenario === 'reopen-load-failure') f.showEngine();
+          else
+            retry = f.handlers.get('otto:prepare')(
+              { sender: recovery.webContents, senderFrame: recovery.webContents.mainFrame },
+              { retry: true },
+            );
+          if (scenario === 'early-load-failure') await new Promise(setImmediate);
+          else await retry;
+          const replacement = f.windows.find((window) => window.url && !window.isDestroyed());
+          assert.ok(replacement);
+          assert.notEqual(replacement, engine);
+          assert.equal(replacement.url, engine.url);
+          assert.equal(replacement.isVisible(), false);
+          assert.equal(recovery.isDestroyed(), false);
+          await new Promise(setImmediate);
+          await f.rendererReady(replacement);
+          assert.equal(replacement.isVisible(), true);
+          assert.equal(recovery.isDestroyed(), true);
+          assert.equal(f.status().phase, scenario === 'early-load-failure' ? 'preparing' : 'ready');
+          assert.equal(f.status().windowError, undefined);
+          assert.equal(f.children.length, 1);
+          assert.equal(f.children[0], backend);
+          runtimeFinished.resolve();
+          await retry;
+          return;
+        }
+        loaded.resolve();
+        await new Promise(setImmediate);
+        assert.equal(engine.isVisible(), false);
+        if (!['foreground', 'resized'].includes(scenario)) setup.focused = false;
+        if (scenario === 'resized') setup.bounds = { x: 150, y: 75, width: 1300, height: 900 };
+        if (scenario === 'minimized') {
+          setup.minimized = true;
+          setup.visible = false;
+        }
+        if (scenario === 'closed') setup.destroy();
+        await f.rendererReady(engine);
+        assert.equal(
+          engine.isVisible(),
+          ['foreground', 'background', 'resized'].includes(scenario),
+        );
+        assert.equal(Boolean(engine.isFocused()), ['foreground', 'resized'].includes(scenario));
+        if (scenario === 'resized') assert.deepEqual(engine.getBounds(), setup.getNormalBounds());
+        assert.equal(setup.isDestroyed(), true);
+        if (scenario === 'foreground') {
+          const child = new engine.constructor({ show: false });
+          engine.webContents.emit('did-create-window', child);
+          await child.loadURL(`${new URL(engine.url).origin}/payments/synthetic-request`);
+          await f.rendererReady(child);
+          assert.equal(child.isVisible(), false);
+          child.destroy();
+        }
+        engine.focused = false;
+        engine.visible = false;
+        await f.rendererReady(engine);
+        assert.equal(engine.isVisible(), false);
+      } finally {
+        storage.resolve();
+        loaded.resolve();
+        runtimeFinished.resolve();
+        await f.settle();
+        await f.close();
+      }
+    });
+  }
+});
+
+test('a missing native setup renderer offers explicit recovery without hidden key access or automatic retry', async (t) => {
+  for (const failure of ['timeout', 'load-failure']) {
+    await t.test(failure, async (t) => {
+      const prompts = [];
+      const loaded = deferred();
+      let reopened = false;
+      let retryAllowed = false;
+      let keyReads = 0;
+      let keyAccessFailed = true;
+      let unlocking;
+      const wait = setTimeout;
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const f = await runningDesktop(
+        t,
+        async (url) => {
+          assert.ok(retryAllowed);
+          return Response.json(
+            url.endsWith('/api/account') ? { settings: { usageData: false } } : { ok: true },
+          );
+        },
+        {
+          initialState: failure === 'timeout' ? 'upgrade' : 'fresh',
+          allowStart: true,
+          readyRenderers: false,
+          nativePageLoaded: () => (reopened ? Promise.resolve() : loaded.promise),
+          prepareRuntime: async ({ onStorageReady }) => {
+            assert.ok(retryAllowed, 'Runtime startup must wait for explicit retry.');
+            const runtime = { env: {} };
+            await onStorageReady(runtime);
+            return runtime;
+          },
+          prompt: (value) => {
+            prompts.push(value);
+            return { response: 0 };
+          },
+        },
+      );
+      if (failure === 'load-failure')
+        await f.storage.store.save({ welcome: { usageData: false, continued: true } });
+      const environment = f.storage.store.environment;
+      f.storage.store.environment = () => {
+        assert.ok(retryAllowed, 'No hidden Keychain request is allowed.');
+        assert.ok(f.windows.some((window) => window.path && window.isVisible()));
+        keyReads++;
+        unlocking = { active: f.status().unlockingKeys, windowError: f.status().windowError };
+        if (keyAccessFailed) throw new Error('Synthetic key access unavailable');
+        return environment();
+      };
+      try {
+        const launched = f.launch();
+        for (let attempt = 0; !f.windows.length && attempt < 100; attempt++)
+          await new Promise(setImmediate);
+        const window = f.windows[0];
+        assert.ok(window);
+        assert.equal(window.isVisible(), false);
+        if (failure === 'timeout') {
+          loaded.resolve();
+          t.mock.timers.tick(30_000);
+        } else {
+          loaded.reject(new Error('Synthetic setup page failure'));
+          await new Promise(setImmediate);
+          assert.equal(prompts.length, 1);
+        }
+        await launched;
+        assert.equal(prompts.length, 1);
+        assert.equal(window.isDestroyed(), true);
+        assert.equal(f.children.length, 0);
+        t.mock.timers.tick(30_000);
+        assert.equal(prompts.length, 1);
+        assert.equal(f.windows.length, 1);
+        reopened = true;
+        f.showEngine();
+        const recovery = f.windows.at(-1);
+        assert.notEqual(recovery, window);
+        await f.rendererReady(recovery);
+        assert.equal(recovery.isVisible(), true);
+        assert.ok(f.status().windowError);
+        assert.equal(f.children.length, 0);
+        assert.equal(keyReads, 0);
+        retryAllowed = true;
+        const retry = async () => {
+          let retried = false;
+          const result = f.handlers
+            .get('otto:prepare')(
+              { sender: recovery.webContents, senderFrame: recovery.webContents.mainFrame },
+              { retry: true },
+            )
+            .then(() => {
+              retried = true;
+            });
+          for (let attempt = 0; !retried && attempt < 100; attempt++) {
+            await new Promise((resolve) => wait(resolve, 5));
+            t.mock.timers.tick(100);
+          }
+          assert.equal(retried, true);
+          await result;
+        };
+        await retry();
+        assert.equal(f.status().phase, 'error');
+        assert.match(f.status().error, /Synthetic key access unavailable/);
+        assert.equal(f.status().windowError, undefined);
+        assert.deepEqual(unlocking, { active: true, windowError: undefined });
+        assert.equal(f.children.length, 0);
+        assert.equal(recovery.isVisible(), true);
+        keyAccessFailed = false;
+        await retry();
+        const engine = f.windows.find((window) => window.url);
+        assert.ok(engine);
+        assert.equal(engine.isVisible(), false);
+        await f.rendererReady(engine);
+        assert.equal(engine.isVisible(), true);
+        assert.equal(recovery.isDestroyed(), true);
+        assert.equal(f.status().phase, 'ready');
+        assert.equal(f.status().windowError, undefined);
+        assert.equal(f.children.length, 1);
+        assert.ok(keyReads > 0);
+      } finally {
+        loaded.resolve();
         await f.close();
       }
     });
@@ -2307,6 +2695,7 @@ test('native onboarding replay reaches product onboarding without restarting or 
   f.showEngine();
   const chat = f.windows.at(-1);
   f.replayOnboarding();
+  await new Promise(setImmediate);
   assert.equal(f.windows.length, 1);
   assert.equal(chat.url, 'http://127.0.0.1:4310/onboarding?replay=1');
   assert.equal(chat.isDestroyed(), false);
