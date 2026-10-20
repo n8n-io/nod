@@ -237,8 +237,8 @@ export function parseLinkMetadata(html: string, url: string): PublicLinkMetadata
 export function decodeHtml(body: Uint8Array, contentType = '') {
   const start = Buffer.from(body.subarray(0, 2048)).toString('latin1');
   const label =
-    /charset=["']?([\w-]+)/i.exec(contentType)?.[1] ??
-    /<meta[^>]+charset=["']?([\w-]+)/i.exec(start)?.[1] ??
+    /charset\s*=\s*["']?\s*([\w-]+)/i.exec(contentType)?.[1] ??
+    /<meta[^>]+charset\s*=\s*["']?\s*([\w-]+)/i.exec(start)?.[1] ??
     'utf-8';
   try {
     return new TextDecoder(label).decode(body);
