@@ -187,6 +187,7 @@ test('managed integration requests bind SDK calls to a private persisted install
       assert.equal(body.user_id, expectedUser);
       assert.equal(body.manage_connections.enable, false);
       assert.equal(body.workbench.enable, false);
+      assert.equal(body.instant, false);
       return Response.json({
         session_id: 'trs_fixture_proxy',
         mcp: { type: 'http', url: 'https://proxy.example.test/unsupported-mcp' },
