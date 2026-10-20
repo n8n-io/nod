@@ -393,7 +393,7 @@
   }
 }
 .account-region {
-  padding-bottom: 16px;
+  padding-block: 16px;
 }
 .account-region h4 {
   margin: 0 0 4px;

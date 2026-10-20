@@ -3742,7 +3742,7 @@ test('analytics routes collapse private paths to known pages', async () => {
   );
 });
 
-test('the onboarding recap is sent once, only after the owner opts in', async () => {
+test('onboarding step events are sent only after the owner opts in on the first step', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: String.raw`
@@ -3759,7 +3759,7 @@ window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventLi
 window.fetch = globalThis.fetch = async (url) => {
   const path = new URL(url, window.location.href).pathname;
   if (path === '/api/account/prepare') return Response.json({ ok: true });
-  if (path === '/api/models') return Response.json({ connections: [{ status: 'connected' }] });
+  if (path === '/api/models') return Response.json({ connections: [{ id: 'synthetic', status: 'connected', models: [] }], selection: null });
   if (path === '/api/channel-settings') return Response.json({ ready: false, channels: [] });
   return Response.json({ error: 'Synthetic route unavailable.' }, { status: 404 });
 };
@@ -3776,16 +3776,18 @@ analytics.setAnalyticsClient({
 });
 const enabled = { enabled: true, distinctId: 'local:11111111-1111-4111-8111-111111111111', environment: 'production' };
 analytics.configureAnalytics(enabled, 'web');
-analytics.captureAnalytics('otto_onboarding_recap', { steps_viewed: ['welcome', 'synthetic-private-step', 'welcome', 3], steps_skipped: 'email', went_back: 'yes' });
-assert.deepEqual(captured.map(event => [event.event, event.properties.steps_viewed, 'steps_skipped' in event.properties, 'went_back' in event.properties]), [['otto_onboarding_recap', ['welcome'], false, false]]);
+analytics.captureAnalytics('otto_onboarding_step_viewed', { step: 'synthetic-private-step', direction: 'forward' });
+analytics.captureAnalytics('otto_onboarding_recap', { steps_viewed: ['welcome'] });
+analytics.captureAnalytics('otto_settings_viewed', { tab: 'appearance' });
+analytics.captureAnalytics('otto_settings_viewed', { tab: 'general' });
+assert.deepEqual(captured.map(event => [event.event, event.properties.step, event.properties.direction, event.properties.tab]), [['otto_onboarding_step_viewed', undefined, 'forward', undefined], ['otto_settings_viewed', undefined, undefined, undefined], ['otto_settings_viewed', undefined, undefined, 'general']]);
 captured.length = 0;
 analytics.configureAnalytics(undefined, 'web');
-sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 1 }));
 const { createElement, act } = await import('react');
 const { createRoot } = await import('react-dom/client');
 const { Onboarding } = await import('./src/web/pages/onboarding/index.tsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const root = createRoot(document.getElementById('root'));
+let root = createRoot(document.getElementById('root'));
 let sharing = false;
 const render = () => root.render(createElement(Onboarding, {
   user: { id: 'synthetic-owner', name: 'Synthetic', email: null, avatarUrl: null },
@@ -3796,20 +3798,29 @@ const render = () => root.render(createElement(Onboarding, {
 }));
 const settle = (ms = 50) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
 const button = (text) => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === text);
+const steps = () => captured.map(event => [event.event, event.properties.step, event.properties.direction]);
+await act(async () => render());
+for (let attempt = 0; attempt < 80 && !(document.querySelector('[role=switch]') && button('Let’s go')); attempt++) await settle();
+assert.deepEqual(captured, []);
+await act(async () => document.querySelector('[role=switch]').click());
+await settle();
+assert.equal(sharing, true);
+assert.deepEqual(captured, []);
+await act(async () => button('Let’s go').click());
+await settle();
+assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'brain', 'forward']]);
+await act(async () => root.unmount());
+captured.length = 0;
+sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 1 }));
+root = createRoot(document.getElementById('root'));
 await act(async () => render());
 for (let attempt = 0; attempt < 80 && !button('Back'); attempt++) await settle();
 await act(async () => button('Back').click());
 for (let attempt = 0; attempt < 80 && !button('Skip for now'); attempt++) await settle();
 await act(async () => button('Skip for now').click());
-for (let attempt = 0; attempt < 80 && !document.querySelector('[role=switch]'); attempt++) await settle();
-assert.deepEqual(captured, []);
-const toggle = async () => { await act(async () => document.querySelector('[role=switch]').click()); await settle(); };
-await toggle();
-await toggle();
-await toggle();
-const recaps = captured.filter(event => event.event === 'otto_onboarding_recap');
-assert.equal(recaps.length, 1);
-assert.deepEqual([recaps[0].properties.steps_viewed, recaps[0].properties.steps_skipped, recaps[0].properties.went_back], [['open_source', 'telegram'], ['telegram'], true]);
+await settle();
+assert.deepEqual(steps().slice(0, 3), [['otto_onboarding_step_viewed', 'open_source', 'forward'], ['otto_onboarding_step_viewed', 'telegram', 'back'], ['otto_onboarding_step_skipped', 'telegram', undefined]]);
+assert.equal(captured.some(event => event.event === 'otto_onboarding_recap'), false);
 await act(async () => root.unmount());
 dom.window.close();
 process.exit(0);

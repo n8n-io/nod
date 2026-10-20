@@ -28,7 +28,6 @@ import './pages/onboarding/steps/brain.css';
 import './pages/onboarding/steps/about.css';
 import './pages/onboarding/steps/email.css';
 import './pages/onboarding/steps/telegram.css';
-import './pages/onboarding/steps/open-source.css';
 import './components/account-settings.css';
 import './components/feedback.css';
 import './components/editor-formatting.css';

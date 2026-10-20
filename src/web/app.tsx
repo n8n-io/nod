@@ -307,9 +307,7 @@ function AuthenticatedApp({
   }, [feedbackRequest, onFeedbackHandled]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsRequest, setSettingsRequest] = useState(0);
-  const [settingsTab, setSettingsTab] = useState<AccountTab>(
-    desktopSettingsAvailable() ? 'General' : 'Appearance',
-  );
+  const [settingsTab, setSettingsTab] = useState<AccountTab>('General');
   const settingsTrigger = useRef<HTMLElement | null>(null);
   const lastPath = useRef('/');
   const settingsPath = path === '/memory' ? 'Memory' : undefined;
@@ -317,15 +315,13 @@ function AuthenticatedApp({
   const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
     setSettingsRequest((current) => current + 1);
     settingsTrigger.current = trigger ?? (document.activeElement as HTMLElement);
-    setSettingsTab(desktopSettingsAvailable() && tab === 'Appearance' ? 'General' : tab);
+    setSettingsTab(tab);
     setSettingsOpen(true);
   };
   useEffect(
     () =>
       subscribeDesktopSettings((section) =>
-        openSettings(
-          section === 'models' ? 'Models' : section === 'preferences' ? 'Preferences' : 'General',
-        ),
+        openSettings(section === 'models' ? 'Models' : 'General'),
       ),
     [],
   );
@@ -368,7 +364,7 @@ function AuthenticatedApp({
       )
         return;
       event.preventDefault();
-      if (!settingsOpen) openSettings('Appearance');
+      if (!settingsOpen) openSettings('General');
     };
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);

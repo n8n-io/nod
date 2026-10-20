@@ -13,7 +13,7 @@ Otto never sends what you write, what Otto replies, what your apps return, or wh
 
 ## Turn usage data on or off
 
-You turn on **Share usage data** in the last onboarding step, or later in **Settings → General** in the desktop app and **Settings → Appearance** on the web. Nothing is collected before you opt in. The desktop setup window sends nothing, because it runs before you choose.
+You turn on **Share usage data** in the first onboarding step, or later in **Settings → General**. Nothing is collected before you opt in. The desktop setup window sends nothing, because it runs before you choose.
 
 Next to the switch, Otto says: "Sends the Otto team at n8n how you use Otto, the websites it visits, purchase amounts and task labels your model writes from your chats, never message content." It links to this page.
 
@@ -49,7 +49,7 @@ Otto counts installations, not people. Two installations count as two, and a sha
 
 ### Reset your installation ID or delete past data
 
-While sharing is on, **Settings** shows your installation ID, such as `local:4f0c…`, under **Share usage data**. Select **Reset ID** to replace it with a new random one in `<OTTO_DATA_ROOT>/analytics-id`, which is the desktop profile in the desktop app. Later events use the new ID, so they can't be linked to earlier ones. Unsent events and task links from before the reset are dropped. Reset is not available when `OTTO_ANALYTICS_ID` sets the ID.
+While sharing is on, **Settings → General** shows your installation ID, such as `local:4f0c…`, under **Share usage data**. Select **Reset ID** to replace it with a new random one in `<OTTO_DATA_ROOT>/analytics-id`, which is the desktop profile in the desktop app. Later events use the new ID, so they can't be linked to earlier ones. Unsent events and task links from before the reset are dropped. Reset is not available when `OTTO_ANALYTICS_ID` sets the ID.
 
 Reset doesn't delete data PostHog already has. To ask for that, copy your installation ID before you reset it, then send it with **Send feedback** in the app and ask for your analytics data to be deleted. The Otto team deletes the events and recordings for that ID.
 
@@ -91,8 +91,9 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 | ------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `$pageview`                     | A page becomes visible                             | `route`: `/`, `/onboarding`, `/apps`, `/channels`, `/tasks`, `/trust`, `/browser`, `/credentials`, `/payments` or `/not-found`                                                                      |
 | `$snapshot`                     | Masked full or incremental recording               | PostHog replay metadata and masked snapshot data                                                                                                                                                    |
-| `otto_onboarding_recap`         | You turn on sharing during onboarding              | `steps_viewed`: `welcome`, `brain`, `about`, `email`, `telegram`, `open_source`, in the order first seen; `steps_skipped`: `welcome` (the intro animation), `email`, `telegram`; `went_back`        |
-| `otto_settings_viewed`          | A settings tab appears                             | `tab`: `general`, `appearance`, `preferences`, `models`, `app_connections`, `memory`                                                                                                                |
+| `otto_onboarding_step_viewed`   | An onboarding step appears                         | `step`: `welcome`, `brain`, `email`, `about`, `telegram`, `open_source`; `direction`: `forward`, `back`                                                                                             |
+| `otto_onboarding_step_skipped`  | You skip an onboarding step                        | `step`: `welcome` (the intro animation), `email`, `telegram`                                                                                                                                        |
+| `otto_settings_viewed`          | A settings tab appears                             | `tab`: `general`, `models`, `app_connections`, `memory`                                                                                                                                             |
 | `otto_tab_viewed`               | A tab inside a page appears or you switch to it    | `page`: `tasks`, `trust`, `apps`; `tab`: `current`, `scheduled`, `previous`, `activity`, `saved`, `all`, `connected`                                                                                |
 | `otto_chat_message_sent`        | The server accepts a message you sent from the app | `has_attachments`, `is_reply`; `source`: `composer`, `task_card`, `ask_otto`, `task_reply`                                                                                                          |
 | `otto_chat_stop_requested`      | You select stop                                    | None                                                                                                                                                                                                |
@@ -107,7 +108,7 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 | `otto_model_selected`           | A model choice you made is saved                   | `provider`: `openai`, `anthropic`, `openrouter`, `compatible`, `other`; `entry`: `chat`, `settings`, `onboarding`; `recommended`. Never the model name                                              |
 | `otto_ui_error`                 | An instrumented UI action or render fails          | `area`: `application`, `onboarding`, `chat`, `settings`, `apps`, `models`; `action`: `load`, `save`, `send`, `connect`, `disconnect`, `prepare`, `stop`, `render`. Never the error itself           |
 
-Onboarding runs before you choose, so nothing is sent while you go through its steps. The app keeps a list of the steps you saw and skipped in memory, never on disk. If you turn on sharing in the last step, it sends that list once as `otto_onboarding_recap` and then discards it. If you leave sharing off, it's discarded unsent. A page reload starts a new list.
+Onboarding asks about **Share usage data** in its first step. Step events are sent only after you turn it on, so the step where you choose is usually not recorded. If you leave it off, onboarding sends nothing.
 
 ### What Otto does
 

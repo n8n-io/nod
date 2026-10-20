@@ -60,7 +60,7 @@ Your model keys and your Composio key, if you use one, stay on your installation
 
 ## Usage analytics
 
-Usage analytics are off until you turn on **Share usage data** in onboarding or in **Settings**. They record which screens you open, how you move through them, and product events such as a task starting or a setting changing.
+Usage analytics are off until you turn on **Share usage data** in the first onboarding step or in **Settings → General**. They record which screens you open, how you move through them, and product events such as a task starting or a setting changing.
 
 The recipient is the Otto team at n8n, through its EU PostHog project. This also applies to source installations. Operators can disable collection for everyone with `OTTO_ANALYTICS_ENABLED=false`.
 

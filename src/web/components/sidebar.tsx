@@ -362,7 +362,7 @@ export function Sidebar({
             aria-label="Settings"
             aria-keyshortcuts="Meta+, Control+,"
             title="Settings"
-            onClick={(event) => account.onSettings('Appearance', event.currentTarget)}
+            onClick={(event) => account.onSettings('General', event.currentTarget)}
           >
             <Settings size={24} aria-hidden="true" />
             <span className="nav-label" data-analytics-public>

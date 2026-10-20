@@ -18,7 +18,7 @@ Ask in chat. For example:
 
 A schedule runs **One time** or is **Recurring**. Otto tells you when it's saved and when it runs next. When you hand Otto work that needs follow-up, it can also plan its own check-in, such as "I'll look for a reply on Friday". Check-ins are schedules too.
 
-Otto uses your time zone, saved from your browser the first time you use Otto. Change it in **Settings → Preferences**. If Otto doesn't know your time zone, it asks.
+Otto uses your time zone, saved from your browser the first time you use Otto. Change it in **Settings → General**. If Otto doesn't know your time zone, it asks.
 
 ## Change or cancel a schedule
 
@@ -67,7 +67,7 @@ The first time Otto messages you about something on its own, such as a calendar 
 
 ## Quiet hours
 
-Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → Preferences → Quiet hours**.
+Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → General → Quiet hours**.
 
 During quiet hours, Otto keeps working on new mail and app activity, but messages you only for something that can't wait until they end. Schedules you created still run and deliver on time.
 
