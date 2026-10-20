@@ -4463,7 +4463,7 @@ test(
     assert.equal((await authorize()).statusCode, 200);
     assert.equal(states.length, 6);
     assert.equal(finished, 2);
-    assert.equal(await callback(states[5], 'code=fixture-code'), 'connected');
+    assert.equal(await callback(states[5], 'code=fixture-code', ''), 'connected');
     assert.equal((await status()).oauthStatus, 'connected');
     assert.deepEqual(await setupStatus(), { completed: [setupHash], apps: [] });
     await createDiscoveredConnections(f.pool, options);

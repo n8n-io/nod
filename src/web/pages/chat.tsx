@@ -1027,8 +1027,8 @@ export function Chat({
                     <i />
                   </span>
                   {step && (
-                    <span className="thinking-step">
-                      {step.site && <Globe2 size={14} aria-hidden="true" />}
+                    <span className="thinking-step" aria-hidden="true">
+                      {step.site && <Globe2 size={14} />}
                       {step.site ?? step.tool}
                     </span>
                   )}
