@@ -16,7 +16,7 @@ import { unsafe } from './memory-tree.ts';
 type Source = SuggestedTask['source'];
 type Task = Omit<SuggestedTask, 'id'> & { kind: 'now' | 'ongoing' };
 type PreparedSuggestions = { intro: string; tasks: Task[] };
-type Brief = { summary: string; waiting: string[]; recurring: string[]; upcoming: string[] };
+export type Brief = { summary: string; waiting: string[]; recurring: string[]; upcoming: string[] };
 type Checked = {
   intro: string;
   picks: Array<Task | undefined>;
@@ -350,9 +350,9 @@ export function createOnboardingSuggestions(options: {
     return run;
   }
 
-  async function savedBrief() {
-    if (briefing)
-      await Promise.race([briefing, new Promise((resolve) => setTimeout(resolve, 60_000).unref())]);
+  async function savedBrief(wait = 60_000) {
+    if (briefing && wait)
+      await Promise.race([briefing, new Promise((resolve) => setTimeout(resolve, wait).unref())]);
     const row = await pool.query<{ brief: Brief | null }>(
       'SELECT brief FROM onboarding_suggestions WHERE owner_id=$1',
       [owner],
@@ -656,6 +656,7 @@ export function createOnboardingSuggestions(options: {
     initialize,
     prepare,
     briefInbox,
+    savedBrief,
     afterTurn,
     complete,
     delivered: () => delivering ?? Promise.resolve(),
