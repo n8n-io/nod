@@ -244,7 +244,34 @@ if (signing) {
       );
       await staple(application);
       await verifySignature(application, signing, { executable: true });
-      await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', application]);
+      await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', application]).catch(
+        async (error) => {
+          for (const [command, args] of [
+            [
+              '/usr/bin/codesign',
+              ['--verify', '--deep', '--strict', '--all-architectures', '--verbose=4', application],
+            ],
+            [
+              '/usr/bin/log',
+              [
+                'show',
+                '--last',
+                '10m',
+                '--style',
+                'compact',
+                '--predicate',
+                'process == "syspolicyd"',
+              ],
+            ],
+          ])
+            console.error(
+              (
+                await run(command, args).catch((failure) => failure.diagnostic ?? failure.message)
+              ).slice(-8192),
+            );
+          throw error;
+        },
+      );
     } finally {
       await rm(archive, { force: true });
     }
