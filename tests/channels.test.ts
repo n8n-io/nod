@@ -134,6 +134,87 @@ test('early Telegram pairing preserves ordinary updates and never acknowledges t
   assert.equal(body.length, 1);
 });
 
+test('early Telegram full backlog preserves messages and recovers through manual pairing', async (t) => {
+  const journal = setupTelegramJournal();
+  const queue = Array.from({ length: 100 }, (_, index) => ({
+    update_id: index + 1,
+    message: {
+      message_id: index + 1,
+      date: Math.floor(Date.now() / 1000),
+      from: { id: 123456, is_bot: false, first_name: 'Synthetic' },
+      chat: { id: 123456, type: 'private' },
+      text: `Synthetic pending message ${index + 1}`,
+    },
+  }));
+  const requests: Record<string, unknown>[] = [];
+  const fetcher = (async (input, options) => {
+    const url = String(input);
+    if (url.endsWith('/getMe'))
+      return Response.json({
+        ok: true,
+        result: { id: 987, is_bot: true, first_name: 'Fixture', username: 'fixture_bot' },
+      });
+    if (url.endsWith('/getWebhookInfo')) return Response.json({ ok: true, result: { url: '' } });
+    assert.ok(url.endsWith('/getUpdates'));
+    const body = JSON.parse(String(options?.body));
+    requests.push(body);
+    if (typeof body.offset === 'number')
+      queue.splice(
+        0,
+        queue.findIndex((update) => update.update_id >= body.offset),
+      );
+    return Response.json({ ok: true, result: queue.slice(0, body.limit) });
+  }) as typeof fetch;
+  const telegram = createSetupTelegram({
+    journal,
+    fetch: fetcher,
+    pair: (candidate) => settings.pair(candidate),
+  });
+  const settings = await createSetupChannels({
+    journal,
+    ownerId: 'fixture-owner',
+    keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) },
+    verifier: createChatSdkSetupVerifier({ fetch: fetcher }),
+    apply: telegram.apply,
+  });
+  const app = Fastify();
+  settings.registerRoutes(app);
+  t.after(async () => {
+    await telegram.close();
+    await app.close();
+  });
+  const saved = await app.inject({
+    method: 'PUT',
+    url: '/api/channel-settings/telegram',
+    payload: { botToken: fixtureEnv.TELEGRAM_BOT_TOKEN },
+  });
+  assert.equal(saved.statusCode, 200, saved.body);
+  const code = new URL(saved.json().pairingUrl).searchParams.get('start')!;
+  queue.push({
+    update_id: 101,
+    message: { ...queue[0].message, message_id: 101, text: `/start ${code}` },
+  });
+  for (let attempt = 0; attempt < 100 && !telegram.error; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(telegram.error);
+  assert.equal((await settings.status()).channels[0].pairingCandidate, undefined);
+  assert.equal(await journal.read('telegram-pairing'), undefined);
+  await new Promise((resolve) => setTimeout(resolve, 1600));
+  assert.equal(requests.length, 1);
+  assert.ok(requests.every((body) => !Object.hasOwn(body, 'offset')));
+  const paired = await app.inject({
+    method: 'POST',
+    url: '/api/channel-settings/telegram/user',
+    payload: { allowedUserId: '123456' },
+  });
+  assert.equal(paired.statusCode, 200, paired.body);
+  assert.equal((await settings.transfer()).rows[0].summary.allowedUserId, '123456');
+  assert.equal(telegram.error, null);
+  assert.equal(queue.length, 101);
+  assert.equal(queue[0].update_id, 1);
+  assert.equal(queue.at(-1)?.message.text, `/start ${code}`);
+});
+
 test('early Telegram close aborts pending network requests before handoff', async () => {
   let started!: () => void;
   const requested = new Promise<void>((resolve) => {

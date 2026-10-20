@@ -1165,6 +1165,7 @@ test('managed proxy access binds browser enrollment to the installation and a pr
   let holdPoll: (() => Promise<void>) | undefined;
   let holdComplete: (() => Promise<void>) | undefined;
   let denyCompletion = false;
+  let enrollmentLifetime = 60_000;
   const proxy = createComposioProxy({
     dataRoot: root,
     ownerId: 'synthetic-managed-access',
@@ -1234,7 +1235,7 @@ test('managed proxy access binds browser enrollment to the installation and a pr
         return Response.json({
           id,
           url: `${brokerOrigin}/api/auth/enroll?id=${id}${body.native ? '&handoff=synthetic-sealed-ticket' : ''}`,
-          expiresAt: Date.now() + 60_000,
+          expiresAt: Date.now() + enrollmentLifetime,
         });
       }
       if (url.pathname === '/v1/access/revoke') {
@@ -1383,6 +1384,49 @@ test('managed proxy access binds browser enrollment to the installation and a pr
           origin,
         );
       assert.equal(calls.length, before);
+    },
+  );
+
+  await t.test(
+    'broker clock tolerance keeps web and native sign-in within the local lifetime',
+    async () => {
+      const now = Date.now();
+      const clock = t.mock.method(Date, 'now', () => now);
+      try {
+        for (const native of [
+          undefined,
+          { returnPath: `/${randomBytes(32).toString('base64url')}` },
+        ]) {
+          for (const lifetime of [10 * 60_000 + 17, 11 * 60_000, 10 * 60_000 - 5_000]) {
+            enrollmentLifetime = lifetime;
+            const started = await proxy.startAccess(
+              browserKey,
+              'http://127.0.0.1:58436',
+              randomBytes(32).toString('base64url'),
+              undefined,
+              native,
+            );
+            assert.equal(started.expiresAt, now + Math.min(lifetime, 10 * 60_000));
+            await proxy.cancelAccess(started.id);
+          }
+          for (const lifetime of [-1, 0, 11 * 60_000 + 1]) {
+            enrollmentLifetime = lifetime;
+            await assert.rejects(
+              proxy.startAccess(
+                browserKey,
+                'http://127.0.0.1:58436',
+                randomBytes(32).toString('base64url'),
+                undefined,
+                native,
+              ),
+              /The sign-in response is invalid/,
+            );
+          }
+        }
+      } finally {
+        enrollmentLifetime = 60_000;
+        clock.mock.restore();
+      }
     },
   );
 

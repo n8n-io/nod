@@ -195,7 +195,7 @@ export async function createDesktopSetup(options: {
     adapters.channels.registerRoutes(app);
     app.get('/api/channels', async () => ({
       channels: adapters.telegram.channels(),
-      error: null,
+      error: adapters.telegram.error,
       inbox: [],
       deliveries: [],
     }));

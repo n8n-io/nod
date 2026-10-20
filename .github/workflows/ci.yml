@@ -169,12 +169,133 @@ jobs:
           --volume "$PWD/tests:/app/tests:ro"
           --volume "$PWD/scripts:/app/scripts:ro"
           --volume "$PWD/public:/app/public:ro"
+          --volume "$PWD/desktop/main:/app/desktop/main:ro"
           --volume "$PWD/desktop/ui:/app/desktop/ui:ro"
           --volume "$PWD/tsconfig.json:/app/tsconfig.json:ro"
           --volume "$PWD/dist/web:/app/dist/web:ro"
           --tmpfs /app/.local:uid=1000,gid=1000
           --init --entrypoint node otto-ci-integration
           scripts/test-integration.mjs --run
+
+  windows-setup:
+    name: Windows setup and installer
+    needs: scope
+    if: ${{ !cancelled() && (needs.scope.outputs.desktop == 'true' || needs.scope.outputs.n8n == 'true') }}
+    runs-on: windows-2025
+    timeout-minutes: 35
+    env:
+      CI: 'true'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - name: Set up Node.js 24.21.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Electron and desktop tooling
+        run: pnpm --dir desktop install --frozen-lockfile
+      - name: Install NSIS for native update acceptance
+        run: choco install nsis --yes --no-progress
+      - name: Check Windows source types
+        run: pnpm exec tsc --noEmit
+      - name: Prepare test reports and require PowerShell
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .local/windows-setup | Out-Null
+          pwsh -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check native setup, secure storage and preferences
+        shell: pwsh
+        run: >-
+          node --test
+          --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=junit --test-reporter-destination=.local/windows-setup/desktop.xml
+          desktop/test/settings.test.mjs desktop/test/notifications.test.mjs
+      - name: Execute the PowerShell installer fixtures
+        shell: pwsh
+        run: >-
+          node --test
+          --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=junit --test-reporter-destination=.local/windows-setup/installer.xml
+          --test-name-pattern="CLI-INSTALL: (the Windows script|Windows refuses)"
+          deployment/n8n/install.test.mjs
+      - name: Verify native Windows updates and profile preservation
+        run: node desktop/scripts/check-windows-updates.mjs
+      - name: Preserve Windows test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-setup-reports
+          path: |
+            .local/windows-setup/*.xml
+            .local/windows-update-acceptance/*.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  mac-setup:
+    name: Mac setup and updates (${{ matrix.arch }})
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.desktop == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    env:
+      CI: 'true'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - name: Set up Node.js 24.21.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Electron and desktop tooling
+        run: pnpm --dir desktop install --frozen-lockfile
+      - name: Check native setup and preferences
+        run: |
+          mkdir -p .local/mac-setup
+          node --test \
+            --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=junit --test-reporter-destination=.local/mac-setup/desktop.xml \
+            desktop/test/settings.test.mjs desktop/test/notifications.test.mjs
+      - name: Verify native updates, signature rejection and profile preservation
+        run: node desktop/scripts/check-native-updates.mjs
+      - name: Preserve Mac test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mac-setup-reports-${{ matrix.arch }}
+          path: |
+            .local/mac-setup/*.xml
+            .local/native-update-acceptance/*.json
+          include-hidden-files: true
+          if-no-files-found: ignore
 
   secrets:
     name: Secret scanning

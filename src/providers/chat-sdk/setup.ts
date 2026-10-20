@@ -25,6 +25,7 @@ export function createSetupTelegram(options: {
 }) {
   const request = options.fetch ?? fetch;
   let environment: Record<string, string | undefined> = {};
+  let error: string | null = null;
   let closed = false;
   let generation = 0;
   let stop = new AbortController();
@@ -56,6 +57,7 @@ export function createSetupTelegram(options: {
     interrupt();
     if (closed) return;
     environment = { ...next };
+    error = null;
     if (
       environment.TELEGRAM_ENABLED !== 'true' ||
       environment.TELEGRAM_MODE !== 'polling' ||
@@ -114,9 +116,12 @@ export function createSetupTelegram(options: {
           }));
           break;
         }
+        if (current() && !captured && updates.result.length === 100)
+          error =
+            'This bot has pending messages. Enter your Telegram user ID instead to finish connecting without deleting them.';
       } catch {
       } finally {
-        if (current() && !captured) {
+        if (current() && !captured && !error) {
           timer = setTimeout(() => {
             launch();
           }, 1500);
@@ -133,6 +138,9 @@ export function createSetupTelegram(options: {
   }
   return {
     channels,
+    get error() {
+      return error;
+    },
     apply(next: Record<string, string | undefined>) {
       const applied = changes.then(() => start(next));
       changes = applied.catch(() => {});

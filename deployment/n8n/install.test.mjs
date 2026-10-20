@@ -292,6 +292,9 @@ test('CLI-INSTALL: Intel metadata, installer and executable use the same archite
 });
 
 const powershell = spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0']).status === 0;
+if (process.platform === 'win32' && !powershell) {
+  throw new Error('PowerShell 7 is required to validate the Windows installer.');
+}
 
 async function windowsInstall(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'otto-windows-install-'));
@@ -410,7 +413,7 @@ function Start-Process { param($FilePath, $ArgumentList, $WorkingDirectory, [swi
     },
     timeout: 60_000,
   });
-  const calls = (await readFile(log, 'utf8')).trim().split('\n').filter(Boolean);
+  const calls = (await readFile(log, 'utf8')).trim().split(/\r?\n/).filter(Boolean);
   const staged = await readdir(temporary);
   await rm(directory, { recursive: true, force: true });
   return { result, calls, staged, target, output: result.stdout + result.stderr };

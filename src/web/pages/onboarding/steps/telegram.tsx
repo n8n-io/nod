@@ -13,6 +13,7 @@ const sequence = [{ typing: 450 }, { wait: 300, typing: 550 }, { wait: 200 }, { 
 export function Telegram({ arrived, onNext, onBack, onSkip }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const {
+    data,
     settings,
     telegram,
     error,
@@ -91,7 +92,7 @@ export function Telegram({ arrived, onNext, onBack, onSkip }: StepProps) {
           manual={manual}
           fields={fields}
           busy={busy}
-          error={error || loadError}
+          error={error || loadError || data?.error || ''}
           unavailable={!settings?.ready}
           onField={(name, value) => {
             setFields((current) => ({ ...current, [name]: value }));

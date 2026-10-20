@@ -34,7 +34,7 @@ import {
   createUpdateSource,
   startDesktopUpdateChecks,
 } from '../main/updates.mjs';
-import { stageWindowsUpdate } from '../runtime/windows.mjs';
+import { protectWindowsProfile, stageWindowsUpdate } from '../runtime/windows.mjs';
 import { buildDesktopUI } from '../scripts/build-ui.mjs';
 
 function deferred() {
@@ -101,7 +101,8 @@ test('artifact downloads publish complete bytes without replacing colliding file
     assert.equal(handled, true);
     assert.equal(event.prevented, undefined);
     assert.equal(dirname(dirname(item.savedPath)), f.directory);
-    assert.equal((await stat(dirname(item.savedPath))).mode & 0o777, 0o700);
+    if (process.platform !== 'win32')
+      assert.equal((await stat(dirname(item.savedPath))).mode & 0o777, 0o700);
     await writeFile(item.savedPath, `new file ${index}`);
   }
   assert.notEqual(downloads[0].item.savedPath, downloads[1].item.savedPath);
@@ -338,11 +339,12 @@ async function runningDesktop(
     initialState = 'running',
     prepareRuntime,
     nativePageLoaded,
+    protectNativeProfile = async () => {},
     setupCleanup,
     notificationsSupported = false,
     openFile = open,
     environment = {},
-    platform = 'darwin',
+    platform = process.platform === 'win32' ? 'win32' : 'darwin',
     packaged = false,
     argv = [],
     prompt = () => assert.fail('No restart prompt is needed.'),
@@ -430,6 +432,7 @@ async function runningDesktop(
     clearTimeout,
     fetch: request,
     createSettingsStore: () => storage.store,
+    protectNativeProfile,
     createDesktopAnalytics,
     createAppPreferencesStore: () => ({
       sync: async () => {},
@@ -581,6 +584,7 @@ async function runningDesktop(
     ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:save'"), source.indexOf("      ipcMain.handle('otto:prepare'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:prepare'"), source.indexOf("      ipcMain.handle('otto:runtime:warm'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:runtime:install-wsl'"), source.indexOf("      ipcMain.handle('otto:chat-read:get'"))}
+    if (typeof protectProfile === 'function') protectProfile = globalThis.protectNativeProfile;
     globalThis.running = {
       prepare,
       launch: async () => { ${source.slice(source.lastIndexOf('      try {\n        const saved = await settings.get();'), source.indexOf('    })', source.lastIndexOf('      try {\n        const saved = await settings.get();')))} },
@@ -619,6 +623,58 @@ async function runningDesktop(
     headers: (details) => new Promise((resolve) => requestHeaders(details, resolve)),
   };
 }
+
+test('Windows early setup protects its profile before unlocking keys even without WSL', async (t) => {
+  for (const failure of [false, true]) {
+    await t.test(failure ? 'refused permissions' : 'protected profile', async (t) => {
+      const gate = deferred();
+      let protecting = false;
+      let protectedProfile = false;
+      let unlocked = false;
+      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+        initialState: 'fresh',
+        platform: 'win32',
+        allowStart: true,
+        prepareRuntime: async () => {
+          throw Object.assign(new Error('Synthetic WSL missing'), { code: 'OTTO_WSL_REQUIRED' });
+        },
+        protectNativeProfile: async () => {
+          assert.ok(f.windows.some((window) => window.isVisible()));
+          protecting = true;
+          await gate.promise;
+          if (failure) throw new Error('Synthetic profile protection failed');
+          protectedProfile = true;
+        },
+      });
+      const environment = f.storage.store.environment;
+      f.storage.store.environment = async () => {
+        assert.ok(protectedProfile, 'Profile protection must finish before unlocking keys.');
+        unlocked = true;
+        return environment();
+      };
+      try {
+        const launching = f.launch();
+        for (let attempt = 0; !protecting && attempt < 50; attempt++)
+          await new Promise((accept) => setTimeout(accept, 10));
+        assert.ok(protecting);
+        assert.equal(unlocked, false);
+        assert.equal(f.children.length, 0);
+        gate.resolve();
+        await launching;
+        assert.equal(unlocked, !failure);
+        assert.deepEqual(
+          f.children.map((child) => child.kind),
+          failure ? [] : ['setup'],
+        );
+        if (failure) assert.match(f.status().error, /profile protection failed/);
+        else assert.equal(f.status().runtime.needsWsl, true);
+      } finally {
+        gate.resolve();
+        await f.close();
+      }
+    });
+  }
+});
 
 test('native first launch shows a loading window before unlocking its system key store', async (t) => {
   const loaded = deferred();
@@ -786,7 +842,7 @@ test('native startup recovery keeps current status and serializes retry, prerequ
 });
 
 test('native owner identity survives interrupted durable publication without inventing another owner', async (t) => {
-  for (const failure of ['file', 'directory']) {
+  for (const failure of process.platform === 'win32' ? ['file'] : ['file', 'directory']) {
     await t.test(failure, async (t) => {
       let failing = true;
       const f = await runningDesktop(
@@ -828,6 +884,7 @@ test('native owner identity survives interrupted durable publication without inv
 
 test('quitting while macOS keychain access is pending never forks a late setup process', async (t) => {
   const f = await runningDesktop(t, async () => assert.fail('The full engine must not run.'), {
+    platform: 'darwin',
     initialState: 'fresh',
     allowStart: true,
   });
@@ -901,7 +958,7 @@ test('native first-start key-store failure retries shared setup without completi
 });
 
 test('native first launch opens the shared web onboarding while runtime preparation is pending, then imports once', async (t) => {
-  for (const platform of ['darwin', 'win32']) {
+  for (const platform of process.platform === 'win32' ? ['win32'] : ['darwin', 'win32']) {
     await t.test(platform, async (t) => {
       const runtime = deferred();
       let preparations = 0;
@@ -1454,6 +1511,132 @@ async function fixture(t, platform = 'win32') {
   };
 }
 
+test(
+  'Windows DPAPI keeps the Vault and completed setup across real Electron restarts behind private ACLs',
+  { skip: process.platform !== 'win32', timeout: 120_000 },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-dpapi-restart-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const profile = join(directory, 'profile');
+    await mkdir(join(directory, 'electron'));
+    const engineRoot = fileURLToPath(new URL('../../', import.meta.url));
+    await protectWindowsProfile(profile, engineRoot);
+    const { transformWithEsbuild } = await import('vite');
+    const cryptoSource = fileURLToPath(
+      new URL('../../src/server/vault-crypto.ts', import.meta.url),
+    );
+    const vault = join(directory, 'vault-crypto.mjs');
+    await writeFile(
+      vault,
+      (await transformWithEsbuild(await readFile(cryptoSource, 'utf8'), cryptoSource)).code,
+    );
+    const script = join(directory, 'probe.mjs');
+    await writeFile(
+      script,
+      `import assert from 'node:assert/strict';
+import { app, safeStorage } from 'electron';
+import { createHash } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createSettingsStore } from ${JSON.stringify(new URL('../main/settings.mjs', import.meta.url).href)};
+import { sealVaultValue, openVaultValue } from ${JSON.stringify(pathToFileURL(vault).href)};
+app.setPath('userData', process.env.OTTO_STORAGE_TEST_USER_DATA);
+app.whenReady().then(async () => {
+  assert.equal(safeStorage.isEncryptionAvailable(), true);
+  const profile = process.env.OTTO_STORAGE_TEST_PROFILE;
+  const settingsPath = join(profile, 'settings.json');
+  const store = createSettingsStore(settingsPath, safeStorage);
+  if (process.argv.at(-1) === 'write')
+    await store.save({ notifications: false, launchAtLogin: true, onboardingCompleted: true });
+  const { OTTO_VAULT_KEY } = await store.environment();
+  const key = Buffer.from(OTTO_VAULT_KEY, 'base64');
+  const binding = ['synthetic-owner', 'synthetic-account'];
+  const secret = 'synthetic-private-provider-key';
+  const ciphertextPath = join(profile, 'vault');
+  if (process.argv.at(-1) === 'write')
+    await writeFile(ciphertextPath, sealVaultValue(key, binding, secret));
+  const ciphertext = await readFile(ciphertextPath, 'utf8');
+  assert.equal(openVaultValue(key, binding, ciphertext), secret);
+  assert.throws(() => openVaultValue(key, ['different-owner', binding[1]], ciphertext));
+  const settings = await readFile(settingsPath);
+  assert.equal(settings.includes(OTTO_VAULT_KEY), false);
+  assert.equal(ciphertext.includes(secret), false);
+  process.stdout.write('OTTO_STORAGE_RESULT=' + JSON.stringify({
+    keyHash: createHash('sha256').update(key).digest('hex'),
+    settingsHash: createHash('sha256').update(settings).digest('hex'),
+    preferences: await store.get(),
+  }) + '\\n');
+  app.exit(0);
+}).catch(async (error) => {
+  process.stderr.write(error.stack + '\\n');
+  app.exit(1);
+});
+`,
+    );
+    const environment = {
+      ...process.env,
+      OTTO_STORAGE_TEST_PROFILE: profile,
+      OTTO_STORAGE_TEST_USER_DATA: join(directory, 'electron'),
+    };
+    delete environment.ELECTRON_RUN_AS_NODE;
+    const execute = (file, args, env = environment) =>
+      new Promise((resolve, reject) => {
+        execFile(
+          file,
+          args,
+          { env, timeout: 45_000, windowsHide: true },
+          (error, stdout, stderr) => {
+            if (error) reject(new Error(`${error.message}\n${stderr}`));
+            else resolve(stdout);
+          },
+        );
+      });
+    const { default: electron } = await import('../node_modules/electron/index.js');
+    const run = async (mode) => {
+      const output = await execute(electron, [script, mode]);
+      const result = output.match(/OTTO_STORAGE_RESULT=([^\r\n]+)/);
+      assert.ok(result, 'The Electron process must return its storage receipt.');
+      return JSON.parse(result[1]);
+    };
+    const first = await run('write');
+    const restarted = await run('read');
+    assert.deepEqual(restarted, first);
+    assert.deepEqual(restarted.preferences, {
+      launchAtLogin: true,
+      notifications: false,
+      theme: 'system',
+      onboardingCompleted: true,
+      onboardingPreferenceStep: 'complete',
+    });
+    const acl = JSON.parse(
+      await execute(
+        join(process.env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `$ErrorActionPreference = 'Stop'
+$owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$expected = @($owner, 'S-1-5-18', 'S-1-5-32-544')
+$results = foreach ($path in @($env.OTTO_STORAGE_TEST_PROFILE, (Join-Path $env.OTTO_STORAGE_TEST_PROFILE 'settings.json'), (Join-Path $env.OTTO_STORAGE_TEST_PROFILE 'vault'))) {
+  $acl = Get-Acl -LiteralPath $path
+  $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+  [pscustomobject]@{
+    private = ($rules.Count -eq 3 -and @($rules | Where-Object { $_.IdentityReference.Value -notin $expected -or $_.AccessControlType -ne 'Allow' -or $_.FileSystemRights -ne 'FullControl' }).Count -eq 0)
+    owner = ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -eq $owner)
+    protected = $acl.AreAccessRulesProtected
+  }
+}
+ConvertTo-Json -InputObject @($results) -Compress`,
+        ],
+      ),
+    );
+    assert.equal(acl.length, 3);
+    assert.ok(acl.every((value) => value.private && value.owner));
+    assert.equal(acl[0].protected, true);
+  },
+);
+
 test('legacy app keys never reach the desktop engine or renderer and its vault remains unchanged', async (t) => {
   const f = await fixture(t);
   await f.store.environment();
@@ -1991,7 +2174,7 @@ test('offline native preferences retain explicit clears and synchronize only edi
   await f.store.save({ locale: null, timeZone: null });
   await f.store.save({ quietHoursEnabled: true, quietEnd: '07:15' });
   assert.equal(f.state.calls.length, 0);
-  assert.equal((await stat(f.path)).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal((await stat(f.path)).mode & 0o777, 0o600);
   const stored = JSON.parse(await readFile(f.path, 'utf8'));
   assert.equal(stored.cached, null);
   assert.deepEqual(stored.pending, {

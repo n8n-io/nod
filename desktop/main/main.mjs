@@ -704,6 +704,13 @@ function baseEnvironment() {
   );
 }
 
+async function protectProfile() {
+  const { protectWindowsProfile } = await import(
+    pathToFileURL(join(engineRoot, 'desktop/runtime/windows.mjs')).href
+  );
+  await protectWindowsProfile(profileRoot, engineRoot);
+}
+
 async function profileOwner() {
   const path = join(profileRoot, 'profile.json');
   async function published() {
@@ -802,6 +809,8 @@ async function openEarlySetup() {
   update({ phase: 'starting', message: 'Opening secure setup…', unlockingKeys: true });
   await showSettings('general', 'loading');
   await new Promise((accept) => setTimeout(accept, 50));
+  if (quitting) throw new Error('Otto is closing.');
+  if (process.platform === 'win32') await protectProfile();
   if (quitting) throw new Error('Otto is closing.');
   const environment = await settings.environment();
   if (quitting) throw new Error('Otto is closing.');
