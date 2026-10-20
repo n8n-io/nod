@@ -114,19 +114,22 @@ function clean(value: string | undefined, max: number) {
   );
 }
 
-function siteTitle(title: string | undefined, url: string) {
-  const site = domainWithoutSuffix(url)
-    ?.toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
-  if (!title || !site) return title;
-  const squash = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const end = /^(.*\S)\s+[:|\-–—]\s+(.+)$/.exec(title);
-  const trimmed = end && squash(end[2]).startsWith(site) ? end[1] : title;
-  const start = /^(.+?)\s+[:|\-–—]\s+(\S.*)$/.exec(trimmed);
-  const result = start && squash(start[1]) === site ? start[2] : trimmed;
-  return squash(result).length <= site.length + 3 && squash(result).startsWith(site)
-    ? undefined
-    : result;
+function siteTitle(title: string | undefined, url: string, siteName?: string) {
+  if (!title) return title;
+  const squash = (value: string) =>
+    value
+      .normalize('NFKD')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]/gu, '');
+  const sites = [siteName, domainWithoutSuffix(url)]
+    .map((value) => value && squash(value))
+    .filter(Boolean);
+  const matches = (value: string) => sites.includes(squash(value));
+  const end = /^(.*\S)\s*[:|\-–—]\s+(.+)$/.exec(title);
+  const trimmed = end && matches(end[2]) ? end[1] : title;
+  const start = /^(.+?)\s*[:|\-–—]\s+(\S.*)$/.exec(trimmed);
+  const result = start && matches(start[1]) ? start[2] : trimmed;
+  return matches(result) ? undefined : result;
 }
 
 function jsonLdImage(text: string): string | undefined {
@@ -216,7 +219,8 @@ export function parseLinkMetadata(html: string, url: string): PublicLinkMetadata
           true,
         )
       : undefined);
-  const resultTitle = siteTitle(published, url);
+  const siteName = clean(meta.get('og:site_name'), 100);
+  const resultTitle = siteTitle(published, url, siteName);
   return {
     url,
     ...(resultTitle ? { title: resultTitle } : {}),
@@ -224,7 +228,7 @@ export function parseLinkMetadata(html: string, url: string): PublicLinkMetadata
       meta.get('og:description') ?? meta.get('twitter:description') ?? meta.get('description'),
       400,
     ),
-    siteName: clean(meta.get('og:site_name'), 100),
+    siteName,
     ...(image ? { image } : {}),
     ...(player ? { player } : {}),
   };
