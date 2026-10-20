@@ -34,7 +34,12 @@ import { createAppPreferencesStore } from './app-preferences.mjs';
 import { createChatReadCursorStore } from './chat-read-cursors.mjs';
 import { saveArtifactDownload } from './downloads.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from './lifecycle.mjs';
-import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
+import {
+  createDesktopUpdater,
+  createUpdateSource,
+  createWeeklyId,
+  startDesktopUpdateChecks,
+} from './updates.mjs';
 import { windowsInstallCommand } from './windows-update.mjs';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -1220,7 +1225,10 @@ else {
         const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
         const windows = process.platform === 'win32';
         if (windows) await rm(windowsUpdates, { recursive: true, force: true }).catch(() => {});
-        updateSource = createUpdateSource({ sourceUrl: ottoBuild?.updateSourceUrl });
+        updateSource = createUpdateSource({
+          sourceUrl: ottoBuild?.updateSourceUrl,
+          weeklyId: createWeeklyId(join(profileRoot, 'update-week.json')),
+        });
         updates = createDesktopUpdater({
           source: updateSource,
           currentVersion: app.getVersion(),

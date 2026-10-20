@@ -66,6 +66,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - The workspace runs as an unprivileged user with no host home folder, Docker socket, provider keys, access key or browser profiles.
 - A connected command-line tool's token reaches only a sealed install of its declared source, run as its own user with a clean environment, apart from other tools.
 - Every query and route is scoped to one owner.
+- File previews never run a file in Otto's own page. An HTML file runs in a sandbox with an empty origin and no network, forms or pop-ups, and its preview closes if it tries to open a website. Other formats are read as data. Files that can run code get no local preview before they upload.
 
 ### Local access
 
@@ -85,6 +86,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - A standing instruction runs for any new email or update that matches it, including one that only claims to come from the sender you named.
 - Reads, drafts and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
 - A saved card can't make the issuer enforce the amount, and card support isn't a PCI DSS compliance claim.
+- A script in an HTML preview can still navigate its own frame to a website and take that page's contents with it, as it could if you opened the downloaded file in a browser. It can't read anything from Otto, and the preview closes when it navigates.
 - Tests cover known failure cases. They don't prove that every injection or browser exploit is blocked.
 
 :::
@@ -97,12 +99,13 @@ The team aims to acknowledge your report within 3 business days and to share a f
 
 ## Where this is enforced
 
-| Area                        | Source                                                                                                                                                                       |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Authority and confirmations | [`trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts), [`approvals.ts`](https://github.com/n8n-io/otto/blob/main/src/server/approvals.ts)               |
-| Vault and one use           | [`vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts), [`vault-use.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-use.ts) |
-| Browser entry and proxy     | [`agent-browser`](https://github.com/n8n-io/otto/tree/main/src/providers/agent-browser)                                                                                      |
-| Local access                | [`access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/access.ts)                                                                                                 |
+| Area                        | Source                                                                                                                                                                                                      |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authority and confirmations | [`trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts), [`approvals.ts`](https://github.com/n8n-io/otto/blob/main/src/server/approvals.ts)                                              |
+| Vault and one use           | [`vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts), [`vault-use.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-use.ts)                                |
+| Browser entry and proxy     | [`agent-browser`](https://github.com/n8n-io/otto/tree/main/src/providers/agent-browser)                                                                                                                     |
+| Local access                | [`access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/access.ts)                                                                                                                                |
+| File previews               | [`attachment-frame.tsx`](https://github.com/n8n-io/otto/blob/main/src/web/components/attachment-frame.tsx), [`attachment-kind.ts`](https://github.com/n8n-io/otto/blob/main/src/web/lib/attachment-kind.ts) |
 
 ## Related resources
 

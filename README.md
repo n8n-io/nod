@@ -52,7 +52,7 @@
 - **93.2% on LongMemEval**, the standard long-term memory benchmark. Asked 500 questions about months of earlier chats, Otto answered 93.2% in a fresh session that sees only the latest messages, finding the rest in its notes and its search. That's up from 79%, and among the best published memory systems.
 - **No email can plant a memory.** In 216 WhisperBench attacks (108 emails, each read in the background and on request), none got a false fact or rule into Otto's memory. The same attack succeeds on OpenClaw 87.5% of the time.
 - **It finds what you said.** Otto searches everything you've told it, ranks the best matches first and brings up what you said before about the topic at hand, so it can answer with the date you said it.
-- **Learns only from you.** Notes come from your own words: your messages, notes you add yourself, and one style note from email you sent. Never from web pages, emails you receive or Otto's replies. See and edit every one in Settings → Memory.
+- **Learns only from you.** Notes come from you: your messages, notes you add, what you choose to import from another assistant, and one style note from email you sent. Never from web pages, emails you receive or Otto's replies. See and edit every one in Settings → Memory.
 
 [How we test memory](docs/src/content/docs/contribute/evals.mdx#benchmark-memory-with-longmemeval) · [How memory works](docs/src/content/docs/how-it-works/memory.md)
 

@@ -46,6 +46,9 @@ const flat = (value: string) => value.replace(/\s+/g, ' ').trim();
 const findInput = z.object({ query: z.string().trim().min(1), area: area.optional() }).strict();
 const readInput = z.object({ path: z.union([area, path]) }).strict();
 const noteInput = z.object({ area, text: line(), expires: z.iso.date().optional() }).strict();
+const importInput = z
+  .object({ notes: z.array(z.object({ area, text: z.string() }).strict()) })
+  .strict();
 const restateInput = z.array(z.object({ area, slug, text: line() }).strict()).min(1);
 const changeInput = z
   .object({
@@ -261,17 +264,22 @@ export function createMemoryService(options: {
   }
 
   async function adopt(notes: Array<{ area: Area; text: string }>) {
-    const valid = notes.map((note) => ({
-      area: area.parse(note.area),
-      text: line().parse(note.text),
-    }));
-    return owned((tree, now) =>
-      valid.every((note) => {
-        if (unsafe(note.text)) return true;
+    const valid = notes.flatMap((note) => {
+      const text = line().safeParse(note.text);
+      return text.success && !unsafe(text.data)
+        ? [{ area: area.parse(note.area), text: text.data }]
+        : [];
+    });
+    return owned((tree, now) => {
+      let added = 0;
+      let confirmed = 0;
+      for (const note of valid) {
         const match = areaEntries(tree, note.area).find((entry) => same(entry.text, note.text));
-        if (match?.origin === 'inferred')
+        if (match?.origin === 'inferred') {
           Object.assign(match, { origin: 'stated', updated: now, edited: now });
-        if (match) return true;
+          confirmed++;
+        }
+        if (match) continue;
         tree.entries.push({
           area: note.area,
           slug: slugFor(tree, note.area, note.text),
@@ -281,9 +289,19 @@ export function createMemoryService(options: {
           edited: now,
           sources: [],
         });
-        return true;
-      }),
-    );
+        added++;
+      }
+      return {
+        added,
+        existing: valid.length - added,
+        skipped: notes.length - valid.length,
+        saved: added + confirmed > 0,
+      };
+    });
+  }
+
+  async function importNotes(raw: unknown) {
+    return adopt(importInput.parse(raw).notes);
   }
 
   async function restate(raw: unknown) {
@@ -447,6 +465,7 @@ export function createMemoryService(options: {
     edit,
     add,
     adopt,
+    importNotes,
     restate,
     style,
     change,

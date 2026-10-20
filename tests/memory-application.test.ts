@@ -36,7 +36,7 @@ type Step = {
 };
 
 test(
-  'memory keeps only the owner’s own current words, silently, and moves a saved profile into notes',
+  'memory keeps only the owner’s own current words, silently, and moves a saved profile or a pasted import into notes',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
@@ -275,6 +275,33 @@ test(
       ]);
       assert.equal(JSON.parse(await memoryFile()).entries.length, migrated.length);
       await assertSilent(unsupported);
+      const imported = await application.app.inject({
+        method: 'POST',
+        url: '/api/memory/import',
+        headers,
+        payload: {
+          notes: [
+            { area: 'about', text: 'Location: Lisbon' },
+            { area: 'people', text: 'Synthetic manager is Robin Example.' },
+            { area: 'people', text: 'Pays with card 4111 1111 1111 1111.' },
+            { area: 'about', text: 'Collects synthetic stamps.' },
+          ],
+        },
+      });
+      assert.equal(imported.statusCode, 200, imported.body);
+      assert.deepEqual(imported.json().imported, { added: 2, existing: 1, skipped: 1 });
+      const importedNotes = (await view()).notes;
+      assert.deepEqual(
+        ['Synthetic manager is Robin Example.', 'Collects synthetic stamps.'].map((text) => {
+          const note = importedNotes.find((item) => item.text === text);
+          return [note?.area, note?.status];
+        }),
+        [
+          ['people', 'stated'],
+          ['about', 'stated'],
+        ],
+      );
+      assert.ok(!(await memoryFile()).includes('4111'));
 
       const explicit = 'Remember that I prefer short synthetic reports.';
       const explicitTurn = await ask(explicit, [learn('preferences', explicit)]);

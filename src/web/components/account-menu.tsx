@@ -3,19 +3,16 @@ import { KeyRound, Monitor, Moon, Settings, Sun } from 'lucide-react';
 import type { AccountTheme, AccountUser } from '../../shared/account';
 import { desktopSettingsAvailable } from '../lib/desktop';
 
-export type AccountTab =
-  'General' | 'Appearance' | 'Preferences' | 'Models' | 'App connections' | 'Memory';
+export type AccountTab = 'General' | 'Models' | 'App connections' | 'Memory';
 export interface AccountControls {
   user: AccountUser;
   theme: AccountTheme;
   usageData: boolean;
-  analyticsId?: string;
   traces?: boolean;
   saving: boolean;
   onSettings(tab: AccountTab, trigger?: HTMLElement): void;
   onTheme(theme: AccountTheme): Promise<void>;
   onUsageData(usageData: boolean): Promise<void>;
-  onResetAnalyticsId(): Promise<void>;
   onTraces(traces: boolean): Promise<void>;
 }
 
@@ -43,7 +40,7 @@ export function AccountMenuItems({
         role={menu ? 'menuitem' : undefined}
         aria-keyshortcuts={shortcuts ? 'Meta+, Control+,' : undefined}
         data-analytics-public
-        onClick={(event) => openSettings(desktop ? 'General' : 'Appearance', event.currentTarget)}
+        onClick={(event) => openSettings('General', event.currentTarget)}
       >
         <Settings size={16} aria-hidden="true" />
         Settings

@@ -8,17 +8,9 @@ import { captureAnalytics } from '../lib/analytics';
 import { createComposerExtensions } from '../lib/composer-editor';
 import { EditorFormatting } from './editor-formatting';
 import { Button, Notice } from './ui';
-import {
-  ImageViewer,
-  AttachmentThumbnail,
-  attachmentKind,
-  localPreviewable,
-  ownedArtifactUrl,
-  previewableImage,
-  restoreAttachmentFocus,
-  type AttachmentTrigger,
-  type ImagePreview,
-} from './attachment-images';
+import { AttachmentThumbnail, ownedArtifactUrl, type ImagePreview } from './attachment-images';
+import { attachmentKind, localPreviewable, previewableImage } from '../lib/attachment-kind';
+import { useArtifactDrawer } from './artifact-context';
 
 interface DraftAttachment {
   id: string;
@@ -52,7 +44,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   ref,
 ) {
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
-  const [previewId, setPreviewId] = useState<string | null>(null);
+  const drawer = useArtifactDrawer();
   const [error, setError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
@@ -61,7 +53,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const uploads = useRef(new Set<AbortController>());
   const uploadQueue = useRef(Promise.resolve());
   const previewUrls = useRef(new Set<string>());
-  const previewTrigger = useRef<AttachmentTrigger | null>(null);
   const lastText = useRef(text);
   const sends = useRef(0);
   const pendingSends = useRef(0);
@@ -256,23 +247,32 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     upload: (files, method) => void upload(files, method),
   };
   const pendingUploads = attachments.filter((item) => !item.artifact).length;
-  const images = attachments.flatMap((item): ImagePreview[] => {
-    const url =
-      item.previewUrl ||
-      (item.artifact && ownedArtifactUrl(item.artifact.url) ? item.artifact.url : undefined);
-    return attachmentKind(item.mimeType, item.name) && url
-      ? [
-          {
-            id: item.id,
-            name: item.name,
-            size: item.size,
-            mimeType: item.mimeType,
-            url,
-            downloadUrl: item.artifact?.url,
-          },
-        ]
-      : [];
-  });
+  const images = useMemo(
+    () =>
+      attachments.flatMap((item): ImagePreview[] => {
+        const url =
+          item.previewUrl ||
+          (item.artifact && ownedArtifactUrl(item.artifact.url) ? item.artifact.url : undefined);
+        return attachmentKind(item.mimeType, item.name) && url
+          ? [
+              {
+                id: item.id,
+                name: item.name,
+                size: item.size,
+                mimeType: item.mimeType,
+                url,
+                downloadUrl: item.artifact?.url,
+              },
+            ]
+          : [];
+      }),
+    [attachments],
+  );
+  const { setDrafts } = drawer;
+  useEffect(() => {
+    setDrafts(images);
+    return () => setDrafts([]);
+  }, [images, setDrafts]);
   const previewLabel = images.every((image) =>
     previewableImage(image.mimeType ?? 'image/png', image.name),
   )
@@ -332,13 +332,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                         type="button"
                         className="pending-image-preview"
                         aria-label={`Preview ${previewLabel} ${imageIndex + 1} of ${images.length}`}
-                        onClick={(event) => {
-                          previewTrigger.current = {
-                            element: event.currentTarget,
-                            keyboard: event.detail === 0,
-                          };
-                          setPreviewId(item.id);
-                        }}
+                        aria-current={drawer.selectedId === item.id || undefined}
+                        onClick={(event) =>
+                          drawer.open(
+                            item.id,
+                            { element: event.currentTarget, keyboard: event.detail === 0 },
+                            'drafts',
+                          )
+                        }
                       >
                         <AttachmentThumbnail image={image} />
                       </button>
@@ -374,7 +375,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </div>
         )}
         <EditorContent editor={editor} />
-        <EditorFormatting editor={editor} active={!previewId} />
+        <EditorFormatting editor={editor} />
         <span className="sr-only" id="composer-keyboard-hint">
           Enter to send. Shift or Alt plus Enter for a new line or list item.
         </span>
@@ -427,16 +428,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </div>
         </div>
       </form>
-      <ImageViewer
-        images={images}
-        allowLocalPreviews
-        selectedId={previewId}
-        onSelect={setPreviewId}
-        onClose={() => setPreviewId(null)}
-        restoreFocus={() => {
-          if (!restoreAttachmentFocus(previewTrigger.current)) focus();
-        }}
-      />
     </div>
   );
 });

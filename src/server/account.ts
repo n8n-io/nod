@@ -145,21 +145,6 @@ export function createAccountSession(options: {
       reply.header('cache-control', 'no-store');
       return response();
     });
-    app.post('/api/account/analytics-id', async (request, reply) => {
-      if (!guard(request, reply)) return;
-      z.object({})
-        .strict()
-        .parse(request.body ?? {});
-      if (!options.analytics?.consent(owner).enabled)
-        return reply.code(409).send({ error: 'Turn on Share usage data first.' });
-      try {
-        await options.analytics.resetInstallation();
-      } catch {
-        return reply.code(409).send({ error: 'This installation ID can’t be reset here.' });
-      }
-      reply.header('cache-control', 'no-store');
-      return response();
-    });
     app.post('/api/account/welcome', async (request, reply) => {
       if (!guard(request, reply)) return;
       z.object({})

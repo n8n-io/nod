@@ -4,13 +4,13 @@ import { desktopSettingsAvailable } from './desktop';
 import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
 
 type AnalyticsEvents = {
-  otto_onboarding_recap: {
-    steps_viewed: Array<'welcome' | 'brain' | 'about' | 'email' | 'telegram' | 'open_source'>;
-    steps_skipped: Array<'welcome' | 'email' | 'telegram'>;
-    went_back: boolean;
+  otto_onboarding_step_viewed: {
+    step: 'welcome' | 'brain' | 'email' | 'about' | 'telegram' | 'open_source';
+    direction: 'forward' | 'back';
   };
+  otto_onboarding_step_skipped: { step: 'email' | 'telegram' };
   otto_settings_viewed: {
-    tab: 'general' | 'appearance' | 'preferences' | 'models' | 'app_connections' | 'memory';
+    tab: 'general' | 'models' | 'app_connections' | 'memory';
   };
   otto_chat_message_sent: {
     has_attachments: boolean;
@@ -62,17 +62,14 @@ export type AnalyticsProperties<Event extends keyof AnalyticsEvents> = NonNullab
 >;
 
 const roles = ['assistant', 'user'];
-const eventProperties: Record<
-  keyof AnalyticsEvents,
-  Record<string, readonly unknown[] | { items: readonly unknown[] }>
-> = {
-  otto_onboarding_recap: {
-    steps_viewed: { items: ['welcome', 'brain', 'about', 'email', 'telegram', 'open_source'] },
-    steps_skipped: { items: ['welcome', 'email', 'telegram'] },
-    went_back: [true, false],
+const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
+  otto_onboarding_step_viewed: {
+    step: ['welcome', 'brain', 'email', 'about', 'telegram', 'open_source'],
+    direction: ['forward', 'back'],
   },
+  otto_onboarding_step_skipped: { step: ['email', 'telegram'] },
   otto_settings_viewed: {
-    tab: ['general', 'appearance', 'preferences', 'models', 'app_connections', 'memory'],
+    tab: ['general', 'models', 'app_connections', 'memory'],
   },
   otto_chat_message_sent: {
     has_attachments: [true, false],
@@ -248,13 +245,8 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
       .filter((key) => key in event.properties)
       .map((key) => [key, event.properties[key]]),
   );
-  for (const [key, values] of Object.entries(allowed ?? {})) {
-    const value: unknown = event.properties[key];
-    if (!('items' in values)) {
-      if (values.includes(value)) properties[key] = value;
-    } else if (Array.isArray(value))
-      properties[key] = [...new Set(value.filter((item) => values.items.includes(item)))];
-  }
+  for (const [key, values] of Object.entries(allowed ?? {}))
+    if (values.includes(event.properties[key])) properties[key] = event.properties[key];
   for (const [key, values] of Object.entries(replayProperties))
     if (values.includes(event.properties[key])) properties[key] = event.properties[key];
   for (const key of [

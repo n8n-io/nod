@@ -1,7 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { OttoGlyph, Rise } from '../../../components/motion';
-import { Button } from '../../../components/ui';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { OttoGlyph, Rise, type GlyphReaction } from '../../../components/motion';
+import { Button, Switch } from '../../../components/ui';
 import type { StepProps } from '..';
+import { errorMessage } from '../../../lib/api';
+import { posthogConfig } from '../../../../shared/analytics';
 import { Bubble, Messages, useReveal, type RevealStep } from '../motion';
 
 const sequence: RevealStep[] = [
@@ -11,10 +13,16 @@ const sequence: RevealStep[] = [
   { wait: 450, typing: 400 },
   { wait: 120, typing: 300 },
   { wait: 120, typing: 250 },
+  { wait: 120, typing: 300 },
   { wait: 160 },
 ];
 
-export function Welcome({ arrived, onNext, onSkip }: StepProps) {
+export function Welcome({ arrived, onNext, usage }: StepProps) {
+  const id = useId();
+  const [saving, setSaving] = useState<boolean | null>(null);
+  const [error, setError] = useState('');
+  const [reaction, setReaction] = useState<GlyphReaction | null>(null);
+  const enabled = saving ?? usage?.enabled ?? false;
   const section = useRef<HTMLElement>(null);
   const slot = useRef<HTMLSpanElement>(null);
   const [offset, setOffset] = useState({ dx: 0, dy: 0 });
@@ -24,23 +32,32 @@ export function Welcome({ arrived, onNext, onSkip }: StepProps) {
     played,
     done,
     replay,
-    skip: skipReveal,
+    skip,
   } = useReveal(sequence, {
     enabled: arrived === 'forward',
   });
-  const skip = () => {
-    onSkip?.();
-    skipReveal();
-  };
   useEffect(() => {
     const press = (event: KeyboardEvent) => {
       if (event.key !== 'Enter' || event.target !== document.body || event.repeat) return;
-      if (done) onNext();
-      else skip();
+      if (!done) skip();
+      else if (saving === null) onNext();
     };
     window.addEventListener('keydown', press);
     return () => window.removeEventListener('keydown', press);
-  }, [done]);
+  }, [done, saving]);
+  async function change(value: boolean) {
+    if (!usage || saving !== null) return;
+    setSaving(value);
+    setError('');
+    setReaction((current) => ({ kind: value ? 'on' : 'off', count: (current?.count ?? 0) + 1 }));
+    try {
+      await usage.onChange(value);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSaving(null);
+    }
+  }
   useLayoutEffect(() => {
     if (stage !== 1 || !section.current || !slot.current) return;
     const area = section.current.getBoundingClientRect();
@@ -89,7 +106,7 @@ export function Welcome({ arrived, onNext, onSkip }: StepProps) {
                 replay();
               }}
             >
-              <OttoGlyph mode={typing ? 'thinking' : 'idle'} />
+              <OttoGlyph mode={typing ? 'thinking' : 'idle'} reaction={reaction} />
             </button>
           </span>
         }
@@ -117,10 +134,37 @@ export function Welcome({ arrived, onNext, onSkip }: StepProps) {
             I <strong>check with you before I send, post or delete</strong> anything you didn’t ask
             for.
           </Bubble>,
+          ...(usage
+            ? [
+                <Bubble className="ob-usage" onClick={(event) => event.stopPropagation()}>
+                  <p id={`${id}-usage-data`}>
+                    Help us make Otto better by sharing how you use it. Never your messages.{' '}
+                    <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
+                      What’s shared
+                    </a>
+                  </p>
+                  <div className="ob-usage-toggle">
+                    <Switch
+                      id={id}
+                      checked={enabled}
+                      aria-busy={saving !== null}
+                      aria-describedby={`${id}-usage-data`}
+                      onCheckedChange={(value) => void change(value)}
+                    />
+                    <label htmlFor={id}>Share usage data · you can change this in Settings</label>
+                  </div>
+                  {error && (
+                    <p className="ob-usage-error" role="alert">
+                      {error}
+                    </p>
+                  )}
+                </Bubble>,
+              ]
+            : []),
         ]}
       />
-      <Rise show={stage >= 7} className="ob-welcome-cta">
-        <Button className="ob-next" onClick={onNext}>
+      <Rise show={done} className="ob-welcome-cta">
+        <Button className="ob-next" disabled={saving !== null} onClick={onNext}>
           Let’s go
         </Button>
       </Rise>

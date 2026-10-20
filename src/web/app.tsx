@@ -21,7 +21,6 @@ import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
 import { useSession } from './hooks/use-session';
-import { sessionStore } from './lib/session';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
 import { AccountSettings } from './components/account-settings';
@@ -307,9 +306,7 @@ function AuthenticatedApp({
   }, [feedbackRequest, onFeedbackHandled]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsRequest, setSettingsRequest] = useState(0);
-  const [settingsTab, setSettingsTab] = useState<AccountTab>(
-    desktopSettingsAvailable() ? 'General' : 'Appearance',
-  );
+  const [settingsTab, setSettingsTab] = useState<AccountTab>('General');
   const settingsTrigger = useRef<HTMLElement | null>(null);
   const lastPath = useRef('/');
   const settingsPath = path === '/memory' ? 'Memory' : undefined;
@@ -317,15 +314,13 @@ function AuthenticatedApp({
   const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
     setSettingsRequest((current) => current + 1);
     settingsTrigger.current = trigger ?? (document.activeElement as HTMLElement);
-    setSettingsTab(desktopSettingsAvailable() && tab === 'Appearance' ? 'General' : tab);
+    setSettingsTab(tab);
     setSettingsOpen(true);
   };
   useEffect(
     () =>
       subscribeDesktopSettings((section) =>
-        openSettings(
-          section === 'models' ? 'Models' : section === 'preferences' ? 'Preferences' : 'General',
-        ),
+        openSettings(section === 'models' ? 'Models' : 'General'),
       ),
     [],
   );
@@ -368,7 +363,7 @@ function AuthenticatedApp({
       )
         return;
       event.preventDefault();
-      if (!settingsOpen) openSettings('Appearance');
+      if (!settingsOpen) openSettings('General');
     };
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);
@@ -377,16 +372,11 @@ function AuthenticatedApp({
     user: session.user!,
     theme: session.settings!.theme,
     usageData: session.settings!.usageData,
-    analyticsId: session.analytics?.distinctId ?? undefined,
     traces: session.capabilities.traces ? session.settings!.traces : undefined,
     saving,
     onSettings: openSettings,
     onTheme: (theme) => onAccountUpdate({ theme }),
     onUsageData: (usageData) => onAccountUpdate({ usageData }),
-    onResetAnalyticsId: async () => {
-      await sessionStore.resetAnalyticsId();
-      window.dispatchEvent(new CustomEvent('otto:session-changed', { detail: 'analytics-id' }));
-    },
     onTraces: (traces) => onAccountUpdate({ traces }),
   };
   const allowed = path !== '/browser' || session.capabilities.developer;

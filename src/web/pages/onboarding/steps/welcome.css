@@ -53,3 +53,22 @@
 .ob-welcome-reset :is(.ob-grow, .ob-bubble, .ob-rise) {
   transition: none;
 }
+.ob-usage-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+}
+.ob-usage-toggle > label {
+  cursor: pointer;
+}
+.ob-usage-toggle > .switch:disabled + label {
+  cursor: default;
+}
+.ob-usage-error {
+  margin-top: 4px;
+  color: var(--error);
+  font-size: var(--text-control);
+}

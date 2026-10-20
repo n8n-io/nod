@@ -60,11 +60,11 @@ A task delivers its result where you asked for it. When you ask for something a 
 
 ![A completed task with a Markdown document result in chat.](../../../assets/screens/task-sessions-result.png)
 
-Select the file to read the document in Otto. Select **Download** to save it. Press **Escape** to close the preview.
+Select the file to read it in a panel next to the chat. Select **Download** to save it. Press **Escape** to close the panel. See [Get files from Otto](/use/workspace/#get-files-from-otto) for every file type the panel opens.
 
 Otto previews Markdown files up to 4 MB. For a larger file, select **Download**.
 
-![A task result open as a Markdown document with headings, a comparison table and assumptions.](../../../assets/screens/task-sessions-document.png)
+![A task result open in the panel next to the chat, showing a Markdown document with a comparison table and assumptions.](../../../assets/screens/task-sessions-document.png)
 
 A finished card has **Schedule task**, which turns the same work into a [schedule](/use/schedules/).
 

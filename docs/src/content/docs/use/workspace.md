@@ -55,7 +55,21 @@ The workspace can reach the internet. Code that Otto runs there can download fil
 
 ## Get files from Otto
 
-When Otto shares a file, it appears as an attachment in the Otto app, up to 90 MB. Select it to preview or download it.
+When Otto shares a file, it appears as an attachment in the Otto app, up to 90 MB. Select it to open it in a panel next to the chat, so you can keep talking to Otto while you read. Press the arrow keys to move through every file in the conversation, drag the panel's edge to resize it, and press **Escape** to close it. Select **Download** to save a file.
+
+| File                                    | How it opens                                                       |
+| --------------------------------------- | ------------------------------------------------------------------ |
+| Images, video and audio                 | At full size. Select an image to zoom; audio shows its waveform    |
+| PDF                                     | Every page, with zoom                                              |
+| Word (`.docx`) and PowerPoint (`.pptx`) | As a page or slides. The layout is close to, not exactly, Office's |
+| Excel, CSV and TSV                      | As a table with its sheets, up to the first 200 rows               |
+| Markdown, HTML and SVG                  | Rendered, with a **Code** view                                     |
+| Code, JSON and text                     | With syntax highlighting                                           |
+| ZIP                                     | The list of files inside                                           |
+
+HTML files run in a sandbox, apart from Otto. Their scripts work, but they can't reach Otto or your accounts, load anything from the internet, send forms or open windows. If a page navigates to a website, its preview closes. Other files open without running any code.
+
+Previews have size limits: 4 MB for text, Markdown, HTML and spreadsheets, 25 MB for Word documents and 60 MB for presentations. Download larger files to open them.
 
 Files Otto saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents, up to 50 MB each. WhatsApp can't receive files from Otto, so open Otto to get them. See [Telegram and WhatsApp](/use/channels/).
 

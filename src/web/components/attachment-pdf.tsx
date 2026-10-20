@@ -3,6 +3,7 @@ import { FileText, Minus, Plus } from 'lucide-react';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import { localPreviewUrl, ownedArtifactUrl } from '../lib/attachment-url';
 import { Button } from './ui';
+import { PreviewLoading } from './attachment-data';
 
 export type PreviewPdfDocument = Pick<PDFDocumentProxy, 'numPages' | 'getPage'>;
 export type PreviewPdfLoading = {
@@ -172,17 +173,17 @@ export function PdfPage({
 
 export default function PdfPreview({
   url,
-  name,
+  onDetail,
   loadDocument = loadPreviewPdf,
 }: {
   url: string;
-  name: string;
+  onDetail(detail: string): void;
   loadDocument?: LoadPdf;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
   const [document, setDocument] = useState<PreviewPdfDocument | null>(null);
   const [size, setSize] = useState({ width: 720, height: 600 });
-  const [fit, setFit] = useState<'page' | 'width'>('page');
+  const [fit, setFit] = useState<'page' | 'width'>('width');
   const [zoom, setZoom] = useState(1);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -192,7 +193,7 @@ export default function PdfPreview({
     const controller = new AbortController();
     let task: PreviewPdfLoading | undefined;
     setDocument(null);
-    setFit('page');
+    setFit('width');
     setZoom(1);
     setFailed(false);
     void (async () => {
@@ -205,7 +206,9 @@ export default function PdfPreview({
         }
         task = loading;
         const pdf = await loading.promise;
-        if (!controller.signal.aborted) setDocument(pdf);
+        if (controller.signal.aborted) return;
+        setDocument(pdf);
+        onDetail(`${pdf.numPages} ${pdf.numPages === 1 ? 'page' : 'pages'}`);
       } catch {
         if (!controller.signal.aborted) setFailed(true);
       }
@@ -214,7 +217,7 @@ export default function PdfPreview({
       controller.abort();
       void task?.destroy().catch(() => {});
     };
-  }, [url, safe, attempt, loadDocument]);
+  }, [url, safe, attempt, loadDocument, onDetail]);
   useEffect(() => {
     const element = scroll.current;
     if (!element) return;
@@ -249,63 +252,22 @@ export default function PdfPreview({
       }}
     >
       {failed ? (
-        <div className="attachment-preview-unavailable" role="status">
+        <div className="artifact-empty" role="status">
           <FileText size={32} aria-hidden="true" />
           <span>PDF preview unavailable</span>
-          <a href={url} download={name}>
-            Download
-          </a>
-          <Button variant="ghost" size="sm" onClick={() => setAttempt((value) => value + 1)}>
+          <Button variant="outline" size="sm" onClick={() => setAttempt((value) => value + 1)}>
             Try again
           </Button>
         </div>
       ) : document ? (
         <>
-          <div className="attachment-pdf-controls" aria-label="PDF view">
-            <span>
-              {document.numPages} {document.numPages === 1 ? 'page' : 'pages'}
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-pressed={fit === 'page' && zoom === 1}
-              onClick={() => fitTo('page')}
-            >
-              Fit page
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-pressed={fit === 'width' && zoom === 1}
-              onClick={() => fitTo('width')}
-            >
-              Fit width
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Zoom out"
-              disabled={zoom <= 0.25}
-              onClick={() => setZoom((value) => Math.max(0.25, value - 0.25))}
-            >
-              <Minus size={16} aria-hidden="true" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Zoom in"
-              disabled={zoom >= 4}
-              onClick={() => setZoom((value) => Math.min(4, value + 0.25))}
-            >
-              <Plus size={16} aria-hidden="true" />
-            </Button>
-          </div>
           <div
             className="attachment-pdf-scroll"
             ref={scroll}
             tabIndex={0}
             role="region"
             aria-label="PDF document"
+            data-artifact-scroll=""
           >
             <div className="attachment-pdf-pages">
               {Array.from({ length: document.numPages }, (_, index) => (
@@ -322,11 +284,47 @@ export default function PdfPreview({
               ))}
             </div>
           </div>
+          <div className="artifact-zoom" role="group" aria-label="PDF view">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-pressed={fit === 'page' && zoom === 1}
+              onClick={() => fitTo('page')}
+            >
+              Fit page
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-pressed={fit === 'width' && zoom === 1}
+              onClick={() => fitTo('width')}
+            >
+              Fit width
+            </Button>
+            <span className="artifact-zoom-divider" aria-hidden="true" />
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Zoom out"
+              disabled={zoom <= 0.25}
+              onClick={() => setZoom((value) => Math.max(0.25, value - 0.25))}
+            >
+              <Minus size={16} aria-hidden="true" />
+            </Button>
+            <span className="artifact-zoom-value">{Math.round(zoom * 100)}%</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Zoom in"
+              disabled={zoom >= 4}
+              onClick={() => setZoom((value) => Math.min(4, value + 0.25))}
+            >
+              <Plus size={16} aria-hidden="true" />
+            </Button>
+          </div>
         </>
       ) : (
-        <div className="attachment-preview-unavailable" role="status">
-          Loading PDF…
-        </div>
+        <PreviewLoading />
       )}
     </div>
   );

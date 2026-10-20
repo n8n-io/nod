@@ -1,7 +1,7 @@
 import { noteChars } from './memory.ts';
 
 export const onboardingSteps = ['welcome', 'brain', 'email', 'about', 'telegram', 'open'] as const;
-export const onboardingVersion = 1;
+export const onboardingVersion = 2;
 export type OnboardingStep = (typeof onboardingSteps)[number];
 export const interviewLabels = ['Working on', 'Aiming for', 'Take off your plate'] as const;
 export const interviewAnswerChars =

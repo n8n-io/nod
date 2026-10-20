@@ -7,11 +7,11 @@ sidebar:
 
 Conversation traces let the Otto team at n8n see how Otto handles real requests, so they can find and fix problems. They're off until you turn them on, and Otto removes personal details on your computer before anything leaves.
 
-![Settings → Appearance with Share conversation traces turned on and its explanation underneath.](../../../assets/screens/conversation-traces-setting.png)
+![Settings → General, Privacy group, with Share conversation traces turned on and its explanation underneath.](../../../assets/screens/conversation-traces-setting.png)
 
 ## Turn traces on or off
 
-1. Open **Settings → Appearance**.
+1. Open **Settings → General**.
 2. Turn on **Share conversation traces**.
 
 Turn the switch off to stop sending at once. A trace that was already on its way can still arrive. Traces already sent are deleted when they expire, 14 days after they arrive.

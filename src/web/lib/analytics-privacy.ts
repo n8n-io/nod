@@ -47,6 +47,7 @@ const blocked = [
   '.message-link-tooltip',
   '.message-attachments',
   '.pending-attachments',
+  '.artifact-drawer',
   '.chat-turn-preview',
   '.task-preview-title',
   '.task-preview-line',

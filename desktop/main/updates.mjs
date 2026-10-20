@@ -1,3 +1,7 @@
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+
 const repository = 'n8n-io/otto';
 const hash = /^[a-f0-9]{64}$/;
 const sourceHash = /^[a-f0-9]{40}$/;
@@ -55,16 +59,39 @@ function published(release, tag) {
   return release;
 }
 
-async function json(url, request, signal, accept = 'application/json') {
+export function isoWeek(date = new Date()) {
+  const day = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  day.setUTCDate(day.getUTCDate() + 4 - (day.getUTCDay() || 7));
+  const week = Math.ceil(((day - Date.UTC(day.getUTCFullYear(), 0, 1)) / 86_400_000 + 1) / 7);
+  return `${day.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+export function createWeeklyId(path, now = () => new Date()) {
+  return async () => {
+    const week = isoWeek(now());
+    const saved = await readFile(path, 'utf8')
+      .then(JSON.parse)
+      .catch(() => undefined);
+    if (saved?.week === week && typeof saved.id === 'string') return saved.id;
+    const id = randomUUID();
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await writeFile(path, JSON.stringify({ week, id }), { mode: 0o600 });
+    return id;
+  };
+}
+
+async function json(url, request, signal, accept = 'application/json', headers = {}) {
   let address = https(url);
   for (let redirects = 0; redirects <= 3; redirects++) {
     const response = await request(address, {
       signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)]),
-      headers: { accept },
+      headers: { accept, ...headers },
       redirect: 'manual',
     });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
-      address = https(new URL(response.headers.get('location') || '', address).href);
+      const next = https(new URL(response.headers.get('location') || '', address).href);
+      if (new URL(next).origin !== new URL(address).origin) headers = {};
+      address = next;
       await response.body?.cancel();
       continue;
     }
@@ -86,6 +113,7 @@ export function createUpdateSource({
   os = process.platform === 'win32' ? 'win32' : 'darwin',
   arch = process.platform === 'darwin' ? process.arch : 'arm64',
   fetch: request = fetch,
+  weeklyId,
 } = {}) {
   if (os === 'darwin' && !['arm64', 'x64'].includes(arch))
     throw new Error('Unsupported Mac update architecture.');
@@ -143,10 +171,15 @@ export function createUpdateSource({
   };
   const newest = async (currentVersion, signal, resolve) => {
     versionParts(currentVersion);
+    const week = sourceUrl && (await weeklyId?.().catch(() => undefined));
     const releases = await json(
       `${base}/releases${sourceUrl ? '' : '?per_page=100'}`,
       request,
       signal,
+      'application/json',
+      week
+        ? { 'x-otto-week': week, 'x-otto-platform': platform, 'x-otto-version': currentVersion }
+        : {},
     );
     if (!Array.isArray(releases) || releases.length > (sourceUrl ? 500 : 100))
       throw new Error('The desktop release list is invalid.');

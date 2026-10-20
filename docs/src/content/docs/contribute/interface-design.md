@@ -105,7 +105,7 @@ Don't show a construction grid. Keep the existing reduced-motion behaviour. The 
 | Sign-in                   | Plain capability text, pink sign-in action, one inset story panel      |
 | Onboarding                | Clear connection steps, no decorative grid behind fields               |
 | Credentials and approvals | Clear action hierarchy; origin and expiry preserved                    |
-| File previews             | Clear captions and toolbars; local scrolling preserved                 |
+| File previews             | One panel beside the chat; quiet header actions; local scrolling       |
 | Native desktop setup      | Same palette and type scale as the web app                             |
 
 </details>

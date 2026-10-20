@@ -7,7 +7,7 @@ sidebar:
 
 Otto keeps one private memory document per owner. This page explains how it's stored, how the model reads and writes it, and what the hourly maintenance job does. To see and edit memory in the app, read [Memory](/use/memory/).
 
-The short version: memory notes hold only the owner's own words: what they said in their messages, what they write in Settings → Memory, and one style note learned from their own sent email. Otto saves the owner's message word for word, and an hourly job archives entries instead of deleting them. Next to the notes, memory keeps [learned skills](#learned-skills): procedures Otto writes itself after a task, without personal data.
+The short version: memory notes hold the owner's own words from their messages and Settings → Memory, what they choose to import from another assistant, and one style note learned from their own sent email. Otto saves the owner's message word for word, and an hourly job archives entries instead of deleting them. Next to the notes, memory keeps [learned skills](#learned-skills): procedures Otto writes itself after a task, without personal data.
 
 ## Where memory lives
 
@@ -82,12 +82,12 @@ A saved note never authorizes an action. For `memory_learn`, the sensitive-topic
 
 Every entry has an origin: `stated`, `inferred` or `email`. Its status comes from the origin and the number of source messages.
 
-| Status      | Label in **Settings → Memory** | Meaning                                                               | In the L0 index |
-| ----------- | ------------------------------ | --------------------------------------------------------------------- | --------------- |
-| `tentative` | **Mentioned once**             | Inferred from one owner message                                       | Yes, marked     |
-| `observed`  | **Learned**                    | Inferred from two or more messages, or the Gmail writing style        | Yes             |
-| `stated`    | **Confirmed**                  | Saved by `memory_learn`, or added, rewritten or confirmed in Settings | Yes             |
-| Archived    | **Let go**                     | Replaced, merged, expired or stale                                    | No              |
+| Status      | Label in **Settings → Memory** | Meaning                                                                         | In the L0 index |
+| ----------- | ------------------------------ | ------------------------------------------------------------------------------- | --------------- |
+| `tentative` | **Mentioned once**             | Inferred from one owner message                                                 | Yes, marked     |
+| `observed`  | **Learned**                    | Inferred from two or more messages, or the Gmail writing style                  | Yes             |
+| `stated`    | **Confirmed**                  | Saved by `memory_learn`, or added, imported, rewritten or confirmed in Settings | Yes             |
+| Archived    | **Let go**                     | Replaced, merged, expired or stale                                              | No              |
 
 ## Hourly maintenance
 
@@ -128,6 +128,8 @@ Sensitive topics are health, religion, politics, sexuality, gender identity, eth
 ## The Memory tab and API
 
 **Settings → Memory** reads `GET /api/memory`, and **Export** downloads `GET /api/memory/export` as one Markdown file. Quotes in the view come only from the owner's own messages. The add, edit, confirm, forget and restore routes are in [`src/server/personal.ts`](https://github.com/n8n-io/otto/blob/main/src/server/personal.ts).
+
+**Import** splits a pasted answer from another assistant into notes in the page, without a model: each `- ` line, or each line when the answer has no bullets, becomes a note in the area named by the heading above it (`## About you`, `## Preferences`, `## People`, `## Routines` or `## Lessons`), or `about` otherwise. The owner removes what they don't want, and `POST /api/memory/import` saves the rest as stated notes, word for word. Like the profile move, it skips notes already saved, lines over 4,000 characters and text that looks like a secret.
 
 Page changes post nothing to chat and work while saving is off. Rewriting a note archives the previous version and makes the note stated. On Telegram or WhatsApp, `/memory` or `/context` sends a short digest without a turn or a model call.
 

@@ -244,6 +244,7 @@ const taskProperties = z.object({
   collaboration: taskCollaboration,
   source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
   channel: z.enum(['web', 'telegram', 'whatsapp', 'other']),
+  starter: z.boolean(),
 });
 export const analyticsEvent = z.discriminatedUnion('event', [
   z
@@ -397,7 +398,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       properties: taskProperties
         .extend({
           outcome: taskOutcome,
-          completion_evidence: z.enum(['action_succeeded', 'inferred', 'none']),
+          completion_evidence: z.enum(['action_succeeded', 'settings_changed', 'inferred', 'none']),
           elapsed_ms: duration,
           turn_count: z.number().int().positive(),
         })

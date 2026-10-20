@@ -356,19 +356,21 @@ export function AccountSettings({
 }) {
   const desktop = desktopSettingsAvailable();
   const native = useDesktopSettings(desktop && open);
-  const tabs: AccountTab[] = desktop
-    ? ['General', 'Models', 'App connections', 'Preferences', 'Memory']
-    : ['Models', 'App connections', 'Appearance', 'Preferences', 'Memory'];
-  const selectedTab = tabs.includes(initialTab) ? initialTab : desktop ? 'General' : 'Appearance';
+  const tabs: AccountTab[] = ['General', 'Models', 'App connections', 'Memory'];
+  const selectedTab = tabs.includes(initialTab) ? initialTab : 'General';
   const [tab, setTab] = useState<AccountTab>(selectedTab);
   const [modelDirty, setModelDirty] = useState(false);
   const [preferencesDirty, setPreferencesDirty] = useState(false);
   const [connectionDirty, setConnectionDirty] = useState(false);
   const pending = useRef(false);
+  const continuing = useRef(false);
   pending.current =
     modelDirty || preferencesDirty || connectionDirty || native.busy || account.saving;
   const [error, setError] = useState('');
-  const [resetting, setResetting] = useState(false);
+  const close = () => {
+    if (pending.current) setError('Save or cancel your changes first.');
+    else onOpenChange(false);
+  };
   const active = useRef(false);
   const recordedTab = useRef<string | null>(null);
   function recordTab(value: AccountTab) {
@@ -412,13 +414,7 @@ export function AccountSettings({
   const theme = desktop ? native.settings?.theme : account.theme;
   const themeSaving = desktop ? native.busy || !native.settings : account.saving;
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(value) => {
-        if (!value && pending.current) setError('Save or cancel your changes first.');
-        else onOpenChange(value);
-      }}
-    >
+    <Dialog open={open} onOpenChange={(value) => (value ? onOpenChange(true) : close())}>
       <DialogContent
         className="account-settings"
         aria-describedby={undefined}
@@ -427,7 +423,11 @@ export function AccountSettings({
           (event.currentTarget as HTMLElement).focus();
         }}
         onCloseAutoFocus={(event) => {
-          const target = returnFocus();
+          const composer =
+            continuing.current &&
+            document.querySelector<HTMLElement>('.composer-editor[contenteditable="true"]');
+          continuing.current = false;
+          const target = composer || returnFocus();
           if (target?.isConnected) {
             event.preventDefault();
             target.focus({ preventScroll: true });
@@ -461,9 +461,7 @@ export function AccountSettings({
                     ? Plug
                     : value === 'Memory'
                       ? Brain
-                      : value === 'Appearance' || value === 'General'
-                        ? Sun
-                        : SlidersHorizontal;
+                      : SlidersHorizontal;
               return (
                 <button
                   key={value}
@@ -514,7 +512,7 @@ export function AccountSettings({
               <h3>{tab}</h3>
             </header>
             <div key={tab} className="account-settings-body" tabIndex={0}>
-              {(tab === 'Appearance' || tab === 'General') && (
+              {tab === 'General' && (
                 <>
                   {desktop && native.error && (
                     <Notice>
@@ -579,99 +577,74 @@ export function AccountSettings({
                       onChange={native.save}
                     />
                   )}
-                  <div className="account-preference-row">
-                    <span data-analytics-public>
-                      <ChartColumn size={16} aria-hidden="true" />
-                      Share usage data
-                    </span>
-                    <Switch
-                      checked={account.usageData}
-                      disabled={account.saving}
-                      aria-label="Share usage data"
-                      aria-describedby={`${id}-usage-data`}
-                      onCheckedChange={(usageData) => {
-                        setError('');
-                        void account.onUsageData(usageData).catch((cause) => {
-                          if (active.current) setError(errorMessage(cause));
-                        });
-                      }}
-                    />
-                  </div>
-                  <p
-                    id={`${id}-usage-data`}
-                    className="account-preference-hint"
-                    data-analytics-public
-                  >
-                    Sends the Otto team at n8n how you use Otto, the websites it visits or you open,
-                    purchase amounts and task labels your model writes from your chats, never
-                    message content.{' '}
-                    <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
-                      What’s shared
-                    </a>
-                  </p>
-                  {account.analyticsId && (
+                  <PreferencesForm onDirtyChange={setPreferencesDirty} />
+                  <section className="account-region" aria-labelledby={`${id}-privacy`}>
+                    <h4 id={`${id}-privacy`} data-analytics-public>
+                      Privacy
+                    </h4>
                     <div className="account-preference-row">
-                      <span>
-                        <span data-analytics-public>Installation ID</span>
-                        <code className="account-analytics-id">{account.analyticsId}</code>
+                      <span data-analytics-public>
+                        <ChartColumn size={16} aria-hidden="true" />
+                        Share usage data
                       </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={account.saving || resetting}
-                        onClick={() => {
+                      <Switch
+                        checked={account.usageData}
+                        disabled={account.saving}
+                        aria-label="Share usage data"
+                        aria-describedby={`${id}-usage-data`}
+                        onCheckedChange={(usageData) => {
                           setError('');
-                          setResetting(true);
-                          void account
-                            .onResetAnalyticsId()
-                            .catch((cause) => {
-                              if (active.current) setError(errorMessage(cause));
-                            })
-                            .finally(() => {
-                              if (active.current) setResetting(false);
-                            });
+                          void account.onUsageData(usageData).catch((cause) => {
+                            if (active.current) setError(errorMessage(cause));
+                          });
                         }}
-                      >
-                        <span data-analytics-public>Reset ID</span>
-                      </Button>
+                      />
                     </div>
-                  )}
-                  {account.traces !== undefined && (
-                    <>
-                      <div className="account-preference-row">
-                        <span data-analytics-public>
-                          <MessageSquareText size={16} aria-hidden="true" />
-                          Share conversation traces
-                        </span>
-                        <Switch
-                          checked={account.traces}
-                          disabled={account.saving}
-                          aria-label="Share conversation traces"
-                          aria-describedby={`${id}-traces`}
-                          onCheckedChange={(traces) => {
-                            setError('');
-                            void account.onTraces(traces).catch((cause) => {
-                              if (active.current) setError(errorMessage(cause));
-                            });
-                          }}
-                        />
-                      </div>
-                      <p
-                        id={`${id}-traces`}
-                        className="account-preference-hint"
-                        data-analytics-public
-                      >
-                        Send Otto’s conversations, including what it reads and does, to the Otto
-                        team at n8n to improve Otto. Your name, email addresses, phone numbers, card
-                        numbers and IBANs are removed first, and traces carry no account or device
-                        ID. Kept for 14 days and never used to train AI models.
-                      </p>
-                    </>
-                  )}
+                    <p id={`${id}-usage-data`} className="field-hint" data-analytics-public>
+                      Help us make Otto better by sharing how you use it. Never your messages.{' '}
+                      <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
+                        What’s shared
+                      </a>
+                    </p>
+                    {account.traces !== undefined && (
+                      <>
+                        <div className="account-preference-row">
+                          <span data-analytics-public>
+                            <MessageSquareText size={16} aria-hidden="true" />
+                            Share conversation traces
+                          </span>
+                          <Switch
+                            checked={account.traces}
+                            disabled={account.saving}
+                            aria-label="Share conversation traces"
+                            aria-describedby={`${id}-traces`}
+                            onCheckedChange={(traces) => {
+                              setError('');
+                              void account.onTraces(traces).catch((cause) => {
+                                if (active.current) setError(errorMessage(cause));
+                              });
+                            }}
+                          />
+                        </div>
+                        <p id={`${id}-traces`} className="field-hint" data-analytics-public>
+                          Send Otto’s conversations, including what it reads and does, to the Otto
+                          team at n8n to improve Otto. Your name, email addresses, phone numbers,
+                          card numbers and IBANs are removed first, and traces carry no account or
+                          device ID. Kept for 14 days and never used to train AI models.
+                        </p>
+                      </>
+                    )}
+                  </section>
                 </>
               )}
-              {tab === 'Preferences' && <PreferencesForm onDirtyChange={setPreferencesDirty} />}
-              {tab === 'Memory' && <Memory />}
+              {tab === 'Memory' && (
+                <Memory
+                  onDone={() => {
+                    continuing.current = !pending.current;
+                    close();
+                  }}
+                />
+              )}
               {tab === 'App connections' && (
                 <ConnectionSettings onDirtyChange={setConnectionDirty} />
               )}
@@ -680,7 +653,7 @@ export function AccountSettings({
                   <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />
                 </>
               )}
-              {onReplayOnboarding && tab === 'Appearance' && (
+              {onReplayOnboarding && tab === 'General' && (
                 <Button variant="outline" disabled={pending.current} onClick={onReplayOnboarding}>
                   Replay onboarding
                 </Button>

@@ -641,6 +641,7 @@ test('managed proxy access binds browser enrollment to the installation and a pr
   const calls: string[] = [];
   const identities = new Set<string>();
   let holdPoll: (() => Promise<void>) | undefined;
+  let holdComplete: (() => Promise<void>) | undefined;
   let denyCompletion = false;
   const proxy = createComposioProxy({
     dataRoot: root,
@@ -731,13 +732,13 @@ test('managed proxy access binds browser enrollment to the installation and a pr
       assert.equal(url.pathname, '/v1/access/complete');
       assert.equal(enrolled.status, 'authorized');
       assert.equal(body.challenge, enrolled.challenge);
-      if (denyCompletion) {
-        enrolled.status = 'denied';
-        return Response.json({ state: 'denied' });
-      }
-      enrolled.status = 'completed';
-      admission = 'enabled';
-      return Response.json({ state: admission, email: 'approved@example.test' });
+      const denied = denyCompletion;
+      enrolled.status = denied ? 'denied' : 'completed';
+      if (!denied) admission = 'enabled';
+      await holdComplete?.();
+      return Response.json(
+        denied ? { state: 'denied' } : { state: admission, email: 'approved@example.test' },
+      );
     },
   });
   await proxy.initialize();
@@ -1059,13 +1060,15 @@ test('managed proxy access binds browser enrollment to the installation and a pr
   );
 
   await t.test(
-    'native completion reaches an in-flight status request before the bridge closes',
+    'a native page status check while Otto completes sign-in cannot fail the completion',
     async () => {
       for (const denied of [false, true]) {
         const started = await access.start({ native: true });
         const origin = new URL(started.url).origin;
         const html = await (await fetch(started.url)).text();
         const bridgeKey = JSON.parse(html.match(/const bridgeKey=("[^"]+");/)![1]);
+        const bridgeStatus = async () =>
+          (await fetch(`${origin}/status`, { headers: { 'x-otto-bridge': bridgeKey } })).json();
         const enrolled = (await (
           await fetch(`${origin}/start`, {
             method: 'POST',
@@ -1083,33 +1086,28 @@ test('managed proxy access binds browser enrollment to the installation and a pr
           entered = resolve;
         });
         let release!: () => void;
-        holdPoll = () => {
-          holdPoll = undefined;
+        holdComplete = () => {
+          holdComplete = undefined;
           entered();
           return new Promise<void>((resolve) => {
             release = resolve;
           });
         };
-        const pending = fetch(`${origin}/status`, { headers: { 'x-otto-bridge': bridgeKey } }).then(
-          async (response) => ({ code: response.status, body: await response.json() }),
-          (error: unknown) => ({ error }),
-        );
-        await waiting;
         denyCompletion = denied;
         try {
-          assert.equal((await access.complete(started.id)).state, denied ? 'denied' : 'enabled');
+          const completion = access.complete(started.id);
+          await waiting;
+          const during = await bridgeStatus();
+          release();
+          assert.equal((await completion).state, denied ? 'denied' : 'enabled');
+          assert.deepEqual(during, { status: 'authorized' });
         } finally {
           denyCompletion = false;
-          release();
+          holdComplete = undefined;
         }
-        assert.deepEqual(await pending, {
-          code: 200,
-          body: { status: denied ? 'denied' : 'completed' },
-        });
+        assert.deepEqual(await bridgeStatus(), { status: denied ? 'denied' : 'completed' });
         await access.cancel(started.id);
-        await assert.rejects(
-          fetch(`${origin}/status`, { headers: { 'x-otto-bridge': bridgeKey } }),
-        );
+        await assert.rejects(bridgeStatus());
       }
     },
   );

@@ -15,19 +15,18 @@ Otto opens onboarding the first time you use it. In the desktop app, it starts o
 
 ```mermaid
 flowchart LR
-  hi[Welcome] --> model[Connect<br/>a model]:::accent
+  hi[Welcome and<br/>usage data] --> model[Connect<br/>a model]:::accent
   model --> gmail[Gmail]:::muted
   gmail --> q[Three<br/>questions]
   q --> tg[Telegram]:::muted
-  tg --> usage[Usage data]
-  usage --> cards([First tasks<br/>in chat]):::go
+  tg --> cards([First tasks<br/>in chat]):::go
 ```
 
 ## Go through onboarding
 
 <Steps>
 
-1. **Say hi.** Otto introduces itself. Select **Let's go**.
+1. **Say hi.** Otto introduces itself and asks whether to **Share usage data**. It's off unless you turn it on, and you can change it later in **Settings → General**. Select **Let's go**.
 
 2. **Connect a model.** Pick OpenAI, Anthropic or OpenRouter. Select **Sign in with ChatGPT** or **Connect OpenRouter** to use your account, or paste an API key. In the desktop app or a source install, you can instead pick **OpenAI-compatible** to use a [local model](/connect/local-models/): check the server address, then select **Connect**. Your key is encrypted and never shown to the model. Otto uses your provider’s default model when available. You can change it later in **Models**. Select **Continue**.
 

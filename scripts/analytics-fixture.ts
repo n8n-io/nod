@@ -19,6 +19,7 @@ function decode(value: unknown): unknown {
 }
 let completed = false;
 let usageData = false;
+let traces = false;
 let user = 'fixture-owner-one';
 const configuration = {
   provider: 'fixture',
@@ -30,8 +31,8 @@ const configuration = {
 const messages: unknown[] = [];
 const session = () => ({
   user: { id: user, name: privateText, email: `${privateText}@example.test`, avatarUrl: null },
-  settings: { theme: 'system', onboardingCompleted: completed, usageData, traces: false },
-  capabilities: { developer: true, traces: false },
+  settings: { theme: 'system', onboardingCompleted: completed, usageData, traces },
+  capabilities: { developer: true, traces: true },
   analytics: {
     enabled: usageData,
     distinctId: usageData ? `local:${user}` : null,
@@ -143,6 +144,7 @@ const server = createServer(async (request, response) => {
   if (url.pathname === '/__fixture__/switch') {
     user = 'fixture-owner-two';
     usageData = false;
+    traces = false;
     json({ ok: true });
     return;
   }
@@ -163,6 +165,7 @@ const server = createServer(async (request, response) => {
   else if (url.pathname === '/api/account') {
     completed = body.onboardingCompleted ?? completed;
     if (typeof body.usageData === 'boolean') usageData = body.usageData;
+    if (typeof body.traces === 'boolean') traces = body.traces;
     json(session());
   } else if (url.pathname === '/api/account/prepare') json({ ok: true });
   else if (url.pathname === '/api/account/welcome') json({ ok: true });

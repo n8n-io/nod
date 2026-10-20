@@ -4,6 +4,13 @@ export const skillDescriptionChars = 200;
 export const skillChars = 6000;
 
 export type MemoryArea = (typeof memoryAreas)[number];
+export const areaLabels: Record<MemoryArea, string> = {
+  about: 'About you',
+  preferences: 'Preferences',
+  people: 'People',
+  routines: 'Routines',
+  lessons: 'Lessons',
+};
 export type MemoryStatus = 'stated' | 'observed' | 'tentative';
 export type MemoryReason =
   'superseded' | 'merged' | 'duplicate' | 'expired' | 'stale' | 'obsolete' | 'contradicted';
@@ -55,6 +62,13 @@ export interface MemoryView {
   skills: LearnedSkill[];
 }
 
+export interface MemoryImported {
+  added: number;
+  existing: number;
+  skipped: number;
+}
+
 export interface MemoryUpdate extends MemoryView {
   path?: string;
+  imported?: MemoryImported;
 }

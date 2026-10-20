@@ -159,13 +159,22 @@ export function createConversationAnalytics(options: {
       );
       ALTER TABLE analytics_tasks ADD COLUMN IF NOT EXISTS use_case text NOT NULL DEFAULT 'other',
         ADD COLUMN IF NOT EXISTS context text NOT NULL DEFAULT 'unclear',
-        ADD COLUMN IF NOT EXISTS collaboration text NOT NULL DEFAULT 'unclear';
+        ADD COLUMN IF NOT EXISTS collaboration text NOT NULL DEFAULT 'unclear',
+        ADD COLUMN IF NOT EXISTS starter boolean NOT NULL DEFAULT false;
       CREATE INDEX IF NOT EXISTS analytics_tasks_owner_session ON analytics_tasks(owner_id,session_id,updated_at);
       CREATE TABLE IF NOT EXISTS analytics_turns(
         turn_id uuid PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
         owner_id text NOT NULL, epoch uuid NOT NULL
       );
     `);
+    await pool.query(
+      `UPDATE analytics_tasks a SET starter=true FROM messages m
+       WHERE a.owner_id=$1 AND NOT a.starter AND m.id=a.request_message_id AND m.owner_id=a.owner_id AND m.role='user' AND EXISTS(
+         SELECT 1 FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
+         WHERE offer.owner_id=m.owner_id AND offer.thread_id=m.thread_id AND task->>'title'=m.text
+       )`,
+      [ownerId],
+    );
     const consent = analytics.consent(ownerId);
     await saveConsent(consent.enabled, consent.revision, false);
     unsubscribe = analytics.subscribe(ownerId, (enabled) => {
@@ -240,7 +249,10 @@ export function createConversationAnalytics(options: {
     }
     const [messages, known] = await Promise.all([
       pool.query(
-        `SELECT m.id,m.role,m.text,m.created_at,m.turn_id FROM messages m
+        `SELECT m.id,m.role,m.text,m.created_at,m.turn_id,m.role='user' AND EXISTS(
+           SELECT 1 FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
+           WHERE offer.owner_id=m.owner_id AND offer.thread_id=m.thread_id AND task->>'title'=m.text
+         ) AS starter FROM messages m
          JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
          WHERE m.owner_id=$1 AND m.thread_id=$2 AND u.session_id=$3
          AND m.role IN ('user','assistant') AND m.created_at<=$4
@@ -407,6 +419,8 @@ export function createConversationAnalytics(options: {
           collaboration,
         };
         const firstChannel = String(previous?.request_channel ?? turn.channel).split(':')[0];
+        const request = messages.rows.find((m) => m.id === task.request_message_id);
+        const starter: boolean = previous?.starter ?? request?.starter ?? false;
         const properties = {
           task_id: id,
           ...model,
@@ -415,6 +429,7 @@ export function createConversationAnalytics(options: {
           channel: (['web', 'telegram', 'whatsapp'].includes(firstChannel)
             ? firstChannel
             : 'other') as typeof channel,
+          starter,
         };
         events.push({
           event: { event: 'otto_task_linked', properties },
@@ -433,15 +448,14 @@ export function createConversationAnalytics(options: {
             );
           continue;
         }
-        const request = messages.rows.find((m) => m.id === task.request_message_id);
         const requestedAt = new Date(
           previous?.requested_at ?? request?.created_at ?? turn.created_at,
         );
         const finishedAt = new Date(turn.finished_at);
         const turns = (previous?.turn_count ?? 0) + 1;
         await client.query(
-          `INSERT INTO analytics_tasks(id,owner_id,epoch,thread_id,session_id,request_message_id,request_turn_id,task_type,task_action,task_subject,task_activities,outcome,requested_at,updated_at,turn_count,use_case,context,collaboration)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+          `INSERT INTO analytics_tasks(id,owner_id,epoch,thread_id,session_id,request_message_id,request_turn_id,task_type,task_action,task_subject,task_activities,outcome,requested_at,updated_at,turn_count,use_case,context,collaboration,starter)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
            ON CONFLICT(id) DO UPDATE SET task_type=EXCLUDED.task_type,task_action=EXCLUDED.task_action,task_subject=EXCLUDED.task_subject,task_activities=EXCLUDED.task_activities,use_case=EXCLUDED.use_case,context=EXCLUDED.context,collaboration=EXCLUDED.collaboration,outcome=EXCLUDED.outcome,updated_at=EXCLUDED.updated_at,turn_count=EXCLUDED.turn_count`,
           [
             id,
@@ -462,6 +476,7 @@ export function createConversationAnalytics(options: {
             useCase,
             context,
             collaboration,
+            starter,
           ],
         );
         if (!previous)
@@ -475,9 +490,11 @@ export function createConversationAnalytics(options: {
               completion_evidence:
                 task.outcome !== 'completed'
                   ? 'none'
-                  : analytics.actionSucceeded(runId)
+                  : analytics.sideEffect(runId) === 'action'
                     ? 'action_succeeded'
-                    : 'inferred',
+                    : analytics.sideEffect(runId) === 'settings'
+                      ? 'settings_changed'
+                      : 'inferred',
               elapsed_ms: Math.max(0, finishedAt.getTime() - requestedAt.getTime()),
               turn_count: turns,
             },

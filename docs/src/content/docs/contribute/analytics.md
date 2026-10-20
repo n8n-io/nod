@@ -30,8 +30,12 @@ What Otto sends and when is listed in [Analytics and recordings](/deploy/analyti
 1. Add the event to the `AnalyticsEvents` type and to the `eventProperties` allowlist in `src/web/lib/analytics.ts`. `sanitizeEvent` strips any property or value that isn't in the allowlist. For a list of enum values, allow `{ items: [...] }`; `sanitizeEvent` keeps only allowed, unique items.
 2. Call `captureAnalytics(event, properties)`. In an async callback that can outlive the session, take `const capture = analyticsForCurrentSession()` first and call `capture` later.
 3. Don't name a property `surface` or `route`. `sanitizeEvent` sets those itself.
-4. Nothing is sent before the owner opts in, so an event fired before consent is lost. For a flow that runs before the choice, like onboarding, keep a bounded record in memory and send it once after consent is saved, as `otto_onboarding_recap` does.
+4. Nothing is sent before the owner opts in, so an event fired before consent is lost. Onboarding asks for consent in its first step for this reason.
 5. For a new page, add its path to `routes` in [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/otto/blob/main/src/web/lib/analytics-privacy.ts). Map paths with IDs to one route, like `/credentials/:id` to `/credentials`. Unknown paths report `/not-found`.
+
+## Count real jobs
+
+A real job is the product's main measure: the latest `otto_task_updated` of an owner-started task (`source` `user` or `task`, `starter=false`) with `outcome=completed` and `completion_evidence=action_succeeded`. Only app actions, confirmed browser steps and payments set `action_succeeded`; Otto's own settings, memory and schedules set `settings_changed` only when the turn had no successful app action, browser step or payment. Keep that split when you add a new kind of action. The full definition is in [Analytics and recordings](/deploy/analytics/#real-jobs).
 
 ## Evolve the task vocabulary
 

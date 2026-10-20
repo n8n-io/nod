@@ -3742,7 +3742,7 @@ test('analytics routes collapse private paths to known pages', async () => {
   );
 });
 
-test('the onboarding recap is sent once, only after the owner opts in', async () => {
+test('onboarding step events are sent only after the owner opts in on the first step', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: String.raw`
@@ -3759,7 +3759,7 @@ window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventLi
 window.fetch = globalThis.fetch = async (url) => {
   const path = new URL(url, window.location.href).pathname;
   if (path === '/api/account/prepare') return Response.json({ ok: true });
-  if (path === '/api/models') return Response.json({ connections: [{ status: 'connected' }] });
+  if (path === '/api/models') return Response.json({ connections: [{ id: 'synthetic', status: 'connected', models: [] }], selection: null });
   if (path === '/api/channel-settings') return Response.json({ ready: false, channels: [] });
   return Response.json({ error: 'Synthetic route unavailable.' }, { status: 404 });
 };
@@ -3776,16 +3776,18 @@ analytics.setAnalyticsClient({
 });
 const enabled = { enabled: true, distinctId: 'local:11111111-1111-4111-8111-111111111111', environment: 'production' };
 analytics.configureAnalytics(enabled, 'web');
-analytics.captureAnalytics('otto_onboarding_recap', { steps_viewed: ['welcome', 'synthetic-private-step', 'welcome', 3], steps_skipped: 'email', went_back: 'yes' });
-assert.deepEqual(captured.map(event => [event.event, event.properties.steps_viewed, 'steps_skipped' in event.properties, 'went_back' in event.properties]), [['otto_onboarding_recap', ['welcome'], false, false]]);
+analytics.captureAnalytics('otto_onboarding_step_viewed', { step: 'synthetic-private-step', direction: 'forward' });
+analytics.captureAnalytics('otto_onboarding_recap', { steps_viewed: ['welcome'] });
+analytics.captureAnalytics('otto_settings_viewed', { tab: 'appearance' });
+analytics.captureAnalytics('otto_settings_viewed', { tab: 'general' });
+assert.deepEqual(captured.map(event => [event.event, event.properties.step, event.properties.direction, event.properties.tab]), [['otto_onboarding_step_viewed', undefined, 'forward', undefined], ['otto_settings_viewed', undefined, undefined, undefined], ['otto_settings_viewed', undefined, undefined, 'general']]);
 captured.length = 0;
 analytics.configureAnalytics(undefined, 'web');
-sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 1 }));
 const { createElement, act } = await import('react');
 const { createRoot } = await import('react-dom/client');
 const { Onboarding } = await import('./src/web/pages/onboarding/index.tsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const root = createRoot(document.getElementById('root'));
+let root = createRoot(document.getElementById('root'));
 let sharing = false;
 const render = () => root.render(createElement(Onboarding, {
   user: { id: 'synthetic-owner', name: 'Synthetic', email: null, avatarUrl: null },
@@ -3796,20 +3798,35 @@ const render = () => root.render(createElement(Onboarding, {
 }));
 const settle = (ms = 50) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
 const button = (text) => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === text);
+const steps = () => captured.map(event => [event.event, event.properties.step, event.properties.direction]);
+await act(async () => render());
+for (let attempt = 0; attempt < 80 && !(document.querySelector('[role=switch]') && button('Let’s go')); attempt++) await settle();
+assert.deepEqual(captured, []);
+await act(async () => document.querySelector('[role=switch]').click());
+await settle();
+assert.equal(sharing, true);
+assert.deepEqual(captured, []);
+await act(async () => button('Let’s go').click());
+await settle();
+assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'brain', 'forward']]);
+await act(async () => root.unmount());
+captured.length = 0;
+sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 2 }));
+root = createRoot(document.getElementById('root'));
 await act(async () => render());
 for (let attempt = 0; attempt < 80 && !button('Back'); attempt++) await settle();
 await act(async () => button('Back').click());
 for (let attempt = 0; attempt < 80 && !button('Skip for now'); attempt++) await settle();
 await act(async () => button('Skip for now').click());
-for (let attempt = 0; attempt < 80 && !document.querySelector('[role=switch]'); attempt++) await settle();
-assert.deepEqual(captured, []);
-const toggle = async () => { await act(async () => document.querySelector('[role=switch]').click()); await settle(); };
-await toggle();
-await toggle();
-await toggle();
-const recaps = captured.filter(event => event.event === 'otto_onboarding_recap');
-assert.equal(recaps.length, 1);
-assert.deepEqual([recaps[0].properties.steps_viewed, recaps[0].properties.steps_skipped, recaps[0].properties.went_back], [['open_source', 'telegram'], ['telegram'], true]);
+await settle();
+assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'open_source', 'forward'], ['otto_onboarding_step_viewed', 'telegram', 'back'], ['otto_onboarding_step_skipped', 'telegram', undefined], ['otto_onboarding_step_viewed', 'open_source', 'forward']]);
+assert.equal(captured.some(event => event.event === 'otto_onboarding_recap'), false);
+await act(async () => root.unmount());
+sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 1 }));
+root = createRoot(document.getElementById('root'));
+await act(async () => render());
+for (let attempt = 0; attempt < 80 && !button('Let’s go'); attempt++) await settle();
+assert.ok(document.querySelector('[role=switch]'));
 await act(async () => root.unmount());
 dom.window.close();
 process.exit(0);
@@ -3864,7 +3881,7 @@ const { TaskCard } = await import('./src/web/pages/tasks.tsx');
 const now = new Date().toISOString();
 document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(MessageBubble, {message:{id:'synthetic-message',role:'user',text:'synthetic-private-message',turnId:null,createdAt:now,attachments:[{id:'22222222-2222-4222-8222-222222222222',name:'synthetic-private-file.pdf',mimeType:'application/pdf',size:12,url:'/api/artifacts/22222222-2222-4222-8222-222222222222'}],replyTo:{id:'synthetic-quoted',role:'assistant',text:'synthetic-private-quote'}}, onReply() {}})));
 document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(TaskCard, {task:{id:'synthetic-task',title:'synthetic-private-task',doneWhen:'synthetic-private-done',now:'synthetic-private-now',result:'',status:'working',question:null,waitingFor:[],nextCheck:null,createdAt:now,updatedAt:now,closedAt:null,steps:['synthetic-private-step'],stepIndex:0}})));
-document.body.insertAdjacentHTML('beforeend', '<div class="chat-turn-preview">synthetic-private-turn</div><div class="message-link-previews">synthetic-private-preview</div><a class="message-link-tooltip" href="https://example.org/synthetic-private-tooltip">synthetic-private-tooltip</a><div class="pending-attachments">synthetic-private-pending</div><div class="reply-context composer-reply">synthetic-private-draft-reply</div><p class="statement-summary trust-sentence">synthetic-private-rule</p><span class="vault-use-text">synthetic-private-site</span><span class="vault-item-text">synthetic-private-login</span><span class="compact-account-details">synthetic-private-account</span>');
+document.body.insertAdjacentHTML('beforeend', '<div class="chat-turn-preview">synthetic-private-turn</div><div class="message-link-previews">synthetic-private-preview</div><a class="message-link-tooltip" href="https://example.org/synthetic-private-tooltip">synthetic-private-tooltip</a><div class="pending-attachments">synthetic-private-pending</div><div class="reply-context composer-reply">synthetic-private-draft-reply</div><p class="statement-summary trust-sentence">synthetic-private-rule</p><span class="vault-use-text">synthetic-private-site</span><span class="vault-item-text">synthetic-private-login</span><span class="compact-account-details">synthetic-private-account</span><aside class="artifact-drawer" style="width: 480px"><h2 title="synthetic-private-file.pdf">synthetic-private-file.pdf</h2><table><td title="synthetic-private-cell">synthetic-private-cell</td></table></aside>');
 const pairingPaths = [...document.querySelectorAll('.telegram-setup-qr path')].map(path => path.getAttribute('d'));
 assert.ok(pairingPaths.length > 0);
 const stylesheet = document.createElement('style');
@@ -3895,7 +3912,7 @@ const badgeTextIds = new Set(badges.map(node => node.childNodes[0].id));
 const badgeUpdates = events.filter(event => event.type === 3).flatMap(event => event.data.texts ?? []).filter(text => badgeTextIds.has(text.id));
 assert.equal(badgeUpdates.length, badges.length);
 assert.deepEqual(badgeUpdates.map(text => text.value), Array(badges.length).fill('**'));
-for (const name of ['message-reply-quote','message-attachments','task-preview-title','task-preview-line','task-preview-steps','chat-turn-preview','message-link-previews','message-link-tooltip','pending-attachments','reply-context','trust-sentence','vault-use-text','vault-item-text','compact-account-details']) {
+for (const name of ['message-reply-quote','message-attachments','task-preview-title','task-preview-line','task-preview-steps','chat-turn-preview','message-link-previews','message-link-tooltip','pending-attachments','reply-context','trust-sentence','vault-use-text','vault-item-text','compact-account-details','artifact-drawer']) {
   const blocked = recordedNodes.filter(node => node.attributes?.class?.split(' ').includes(name));
   assert.ok(blocked.length > 0, name);
   for (const node of blocked) assert.deepEqual(node.childNodes, [], name);
