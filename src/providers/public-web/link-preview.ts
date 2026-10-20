@@ -144,12 +144,8 @@ function jsonLdImage(text: string): string | undefined {
       }
       const record = value as Record<string, unknown>;
       const image = Array.isArray(record.image) ? record.image[0] : record.image;
-      const url =
-        typeof image === 'string'
-          ? image
-          : image && typeof image === 'object'
-            ? (image as Record<string, unknown>).url
-            : undefined;
+      const source = image && typeof image === 'object' ? (image as Record<string, unknown>) : {};
+      const url = [image, source.contentUrl, source.url].find((value) => typeof value === 'string');
       if (typeof url === 'string') return url;
       if (record['@graph']) stack.push(record['@graph']);
     }
