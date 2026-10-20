@@ -76,7 +76,7 @@ The model picks the account and the fields. The server fills in the value.
 An approval isn't a general "go ahead". It binds one action with its exact arguments.
 
 - Changing a recipient, an amount or a payload needs new authority.
-- A saved claim makes sure an approved action can't run twice, even after a double tap or a crash.
+- A saved claim makes sure an approved action can't run twice, even after a double tap or a crash. If Otto tries the same action again for that request, it gets the first result.
 - No action is retried automatically. If the outcome is unclear, Otto says so, and you check before anyone tries again.
 
 [One use, one result →](/trust/outcomes/)

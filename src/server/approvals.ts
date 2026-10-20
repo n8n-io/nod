@@ -10,6 +10,7 @@ import {
   type TurnRef,
   type TurnSource,
 } from './thread.ts';
+import { appConfirmation } from '../ports/agent.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { localTimestamp } from '../shared/date-locale.ts';
 import { lockKey, locksTable } from './locks.ts';
@@ -208,49 +209,13 @@ export async function createApprovals(
     UPDATE approvals SET status='uncertain' WHERE status='executing';
   `);
 
-  async function run(approval: Record<string, any>) {
-    try {
-      const result = await execute(approval.action, approval.args, {
-        threadId: approval.thread_id,
-        turnId: approval.execution_turn_id,
-        sourceMessageId: approval.source_message_id,
-        ...(approval.expected_revision !== null && approval.expected_revision !== undefined
-          ? { expectedRevision: approval.expected_revision }
-          : {}),
-      });
-      const snapshot = JSON.parse(JSON.stringify(result ?? null));
-      await pool.query(
-        "UPDATE approvals SET status='completed',result=$2 WHERE id=$1 AND owner_id=$3 AND status='executing'",
-        [approval.id, JSON.stringify(snapshot), ownerId],
-      );
-      return snapshot;
-    } catch (error) {
-      if (notRun(error)) {
-        await pool.query(
-          "UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2 AND status='executing'",
-          [approval.id, ownerId],
-        );
-        throw error;
-      }
-      await pool.query(
-        "UPDATE approvals SET status='uncertain' WHERE id=$1 AND owner_id=$2 AND status='executing'",
-        [approval.id, ownerId],
-      );
-      throw Object.assign(
-        new Error(
-          `The action outcome is uncertain: ${error instanceof Error ? error.message : String(error)} Check the app before trying it again.`,
-        ),
-        { statusCode: 502 },
-      );
-    }
-  }
-
   async function request(
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
     options: {
       allowed?: boolean;
+      run?: () => Promise<unknown>;
       details?: Record<string, unknown>;
       signal?: AbortSignal;
       sourceMessageId?: string | null;
@@ -380,7 +345,7 @@ export async function createApprovals(
       const existing = await withTurnLock(turn.turnId, inspect);
       if ('cached' in existing) {
         if (existing.cached) return existing.result;
-        return { requiresConfirmation: true, question: existing.question };
+        return { [appConfirmation]: existing.question as string };
       }
       if (!describe) throw new Error('The confirmation model is unavailable.');
       question = await describe(
@@ -401,27 +366,24 @@ export async function createApprovals(
       if ('cached' in inspected) return inspected;
       await options.validate?.(client);
       options.signal?.throwIfAborted();
-      const id = randomUUID();
-      const messageId = question ? randomUUID() : null;
-      if (messageId)
-        await client.query(
-          "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant',$5)",
-          [messageId, ownerId, turn.threadId, turn.turnId, question],
-        );
+      if (!question) return { cached: false as const, authorMessageId: inspected.authorMessageId };
+      const messageId = randomUUID();
+      await client.query(
+        "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant',$5)",
+        [messageId, ownerId, turn.threadId, turn.turnId, question],
+      );
       const approval = (
         await client.query(
-          'INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,execution_turn_id,expected_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *',
+          "INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,expected_revision) VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9) RETURNING *",
           [
-            id,
+            randomUUID(),
             ownerId,
             turn.threadId,
             turn.turnId,
             action,
             snapshot,
-            allowed ? 'executing' : 'pending',
             inspected.authorMessageId,
             messageId,
-            allowed ? turn.turnId : null,
             expectedRevision ?? null,
           ],
         )
@@ -430,12 +392,18 @@ export async function createApprovals(
       return { cached: false as const, approval, question, source: inspected.source };
     });
     if (proposal.cached) return proposal.result;
-    if (proposal.question) {
+    if ('question' in proposal) {
       if ('source' in proposal && proposal.source) changed('asked', action, proposal.source);
       refresh();
-      return { requiresConfirmation: true, question: proposal.question };
+      return { [appConfirmation]: proposal.question as string };
     }
-    return run(proposal.approval);
+    if (options.run) return options.run();
+    return execute(action, snapshot, {
+      threadId: turn.threadId,
+      turnId: turn.turnId,
+      sourceMessageId: proposal.authorMessageId,
+      ...(expectedRevision === undefined ? {} : { expectedRevision }),
+    });
   }
 
   async function confirmationFor(
@@ -516,8 +484,6 @@ export async function createApprovals(
       return undefined;
     }
     if (!active) return undefined;
-    if (approved)
-      await preflight?.(approval.action, approval.args, approval.expected_revision ?? undefined);
     const prompt = approved
       ? 'The user confirmed the exact saved action. The trusted worker must execute that snapshot once before continuing. Do not substitute an action or execute it yourself.'
       : 'The user declined the saved action. Do not execute it or ask for it again. Continue only other already-authorized work, or finish quietly.';
@@ -566,26 +532,74 @@ export async function createApprovals(
         )
       ).rows[0];
       if (!selected) return undefined;
-      await preflight?.(selected.action, selected.args, selected.expected_revision ?? undefined);
+      const refused = await preflight?.(
+        selected.action,
+        selected.args,
+        selected.expected_revision ?? undefined,
+      ).then(
+        () => undefined,
+        (error: unknown) => ({ error }),
+      );
       signal.throwIfAborted();
-      await client.query("UPDATE approvals SET status='executing' WHERE id=$1", [selected.id]);
-      return selected;
+      await client.query('UPDATE approvals SET status=$2 WHERE id=$1', [
+        selected.id,
+        refused ? 'expired' : 'executing',
+      ]);
+      return { ...selected, refused };
     });
     if (!approval) return undefined;
-    let result: unknown;
-    try {
-      result = await run(approval);
-    } catch (error) {
-      changed(notRun(error) ? 'expired' : 'uncertain', approval.action, approval.turn_source);
-      if (!notRun(error)) throw error;
-      return {
-        prompt: `The action the user confirmed did not run, so nothing was done: ${(error as Error).message} Do not report it as done.`,
-      };
-    }
-    changed('executed', approval.action, approval.turn_source);
-    const prompt = `The exact action confirmed by the user was executed once by the trusted worker. Do not repeat it. Continue from its result.\n${untrustedBlock(`${approval.action} result`, JSON.stringify(result) ?? 'null')}`;
+    const outcome: {
+      status: 'completed' | 'expired' | 'uncertain';
+      result?: unknown;
+      error?: unknown;
+    } = approval.refused
+      ? { status: 'expired', error: approval.refused.error }
+      : await execute(approval.action, approval.args, {
+          threadId: approval.thread_id,
+          turnId,
+          sourceMessageId: approval.source_message_id,
+          ...(approval.expected_revision === null
+            ? {}
+            : { expectedRevision: approval.expected_revision }),
+        })
+          .then((result) => ({
+            status: 'completed' as const,
+            result: JSON.parse(JSON.stringify(result ?? null)),
+          }))
+          .catch((error: unknown) => ({
+            status: notRun(error) ? ('expired' as const) : ('uncertain' as const),
+            error,
+          }));
+    if (!approval.refused)
+      await pool.query(
+        "UPDATE approvals SET status=$2,result=$3 WHERE id=$1 AND owner_id=$4 AND status='executing'",
+        [
+          approval.id,
+          outcome.status,
+          outcome.status === 'completed' ? JSON.stringify(outcome.result) : null,
+          ownerId,
+        ],
+      );
+    changed(
+      outcome.status === 'completed' ? 'executed' : outcome.status,
+      approval.action,
+      approval.turn_source,
+    );
     signal.throwIfAborted();
-    return { prompt };
+    if (outcome.status === 'completed')
+      return {
+        prompt: `The exact action confirmed by the user was executed once by the trusted worker. Do not repeat it. Continue from its result.\n${untrustedBlock(`${approval.action} result`, JSON.stringify(outcome.result))}`,
+      };
+    const failure = untrustedBlock(
+      `${approval.action} error`,
+      outcome.error instanceof Error ? outcome.error.message : String(outcome.error),
+    );
+    return {
+      prompt:
+        outcome.status === 'expired'
+          ? `The action the user confirmed did not run, so nothing was done. Do not report it as done.\n${failure}`
+          : `The action the user confirmed failed and will not be retried. Its outcome is uncertain, so check the app before trying it again. Do not report it as done.\n${failure}`,
+    };
   }
 
   return { request, chat: { answer: answerChat, accept: acceptChat }, executeConfirmed };

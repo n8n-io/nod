@@ -33,7 +33,7 @@ stateDiagram-v2
 
 ## Confirmed app actions work the same way
 
-When you say yes to an app action, the server runs that saved action once. If it fails or is interrupted, it becomes uncertain, and Otto asks you to check the app before trying again. It never runs again on its own.
+When you say yes to an app action, the server runs that saved action once, and the task continues from the result. If the action can no longer run, for example because the account was disconnected after Otto asked, nothing is sent and the task continues knowing that. If it fails or is interrupted, it becomes uncertain, and Otto asks you to check the app before trying again. It never runs again on its own.
 
 ## Tasks and actions aren't retried
 

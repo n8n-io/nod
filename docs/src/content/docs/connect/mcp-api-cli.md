@@ -62,7 +62,7 @@ MCP servers, APIs and CLIs use their own upload methods.
 
 ## Every action goes through the trust check
 
-The [checker](/trust/approvals/) sees each call's arguments as Otto sends them: the method, path and body, the MCP tool and input, or the CLI arguments. For a saved API or MCP server it sees the path or tool, not the server's address. It runs reads and drafts, and anything else only when your words ask for it. Otherwise Otto asks you first.
+The [checker](/trust/approvals/) sees each call's arguments as Otto sends them: the method, path and body, the MCP tool and input, or the CLI arguments. For a saved API or MCP server it sees the path or tool, not the server's address. It runs reads and drafts, and anything else only when your words ask for it. Otherwise Otto asks you first. A call to an access path you haven't saved is refused before that, so Otto never asks you about it.
 
 ## Related resources
 

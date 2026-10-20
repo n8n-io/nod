@@ -16,6 +16,7 @@ import type {
   RuntimeResult,
   SkillLibrary,
 } from '../ports/agent.ts';
+import { appConfirmation } from '../ports/agent.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
@@ -206,9 +207,7 @@ export function createAgentRuntime(dependencies: {
       abortSession();
     };
     const confirm = async (result: unknown) => {
-      if (!(result && typeof result === 'object' && 'requiresConfirmation' in result))
-        return result;
-      if (!result.requiresConfirmation) return result;
+      if (!(result && typeof result === 'object' && appConfirmation in result)) return result;
       const gate = admissions.getStore();
       if (gate) gate.asked = true;
       await pause('approval');

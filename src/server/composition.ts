@@ -934,8 +934,8 @@ async function initializeApplication(
     const result = await approvals.request(turn, 'OTTO_vault_allow', access.args, {
       details: access.details,
     });
-    if (result && typeof result === 'object' && 'requiresConfirmation' in result)
-      return { question: String(result.question) };
+    if (result && typeof result === 'object' && appConfirmation in result)
+      return { question: result[appConfirmation] };
     return { reason: 'allowed' };
   }
   const trust = createTrust({
@@ -1047,8 +1047,8 @@ async function initializeApplication(
               : {}),
           },
         });
-        return result && typeof result === 'object' && 'requiresConfirmation' in result
-          ? { [appConfirmation]: String(result.question) }
+        return result && typeof result === 'object' && appConfirmation in result
+          ? result
           : { result };
       },
       browserConnection: async (request, turn, signal, launch) => {
@@ -1236,43 +1236,53 @@ async function initializeApplication(
         return vault.request(turn, ownerId, request);
       },
       integration: async (turn, action, args, options) => {
-        const verdict =
-          action === 'SEARCH_TOOLS'
-            ? ({ confirm: false } as const)
-            : await trust.check(turn, action, args);
-        await options.admit?.(verdict.confirm);
-        if (hasWorkspaceFiles(args))
-          args = await withTurnLock(turn.turnId, () =>
-            integrations.prepare(ownerId, action, args, turn, options.signal, verdict.confirm),
-          );
-        if (verdict.confirm) {
-          const prepared = await integrations.prepare(ownerId, action, args);
-          const account = (await integrations.list(ownerId, { refresh: false })).find(
-            (item) => item.connectionId === prepared.connectionId,
-          );
-          const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
-          const result = await approvals.request(turn, action, prepared, {
-            signal: options.signal,
-            details: {
-              reason: verdict.reason,
-              ...(account
-                ? {
-                    account: {
-                      name: account.name,
-                      identity: account.accountEmail ?? account.accountName,
-                      ...(path ? { method: path.kind, endpoint: path.endpoint } : {}),
-                    },
-                  }
-                : {}),
-            },
-          });
-          return result && typeof result === 'object' && 'requiresConfirmation' in result
-            ? { [appConfirmation]: result.question }
-            : result;
+        if (action === 'SEARCH_TOOLS') {
+          await options.admit?.(false);
+          const result = await integrations.execute(ownerId, action, args, turn, options.signal);
+          analytics.actionExecuted(ownerId, action);
+          return result;
         }
-        const result = await integrations.execute(ownerId, action, args, turn, options?.signal);
-        if (action !== 'SEARCH_TOOLS') await ledger.action(turn.turnId, action);
-        analytics.actionExecuted(ownerId, action);
+        const verdict = await trust.check(turn, action, args);
+        await options.admit?.(verdict.confirm);
+        const prepared = hasWorkspaceFiles(args)
+          ? await withTurnLock(turn.turnId, () =>
+              integrations.prepare(ownerId, action, args, turn, options.signal, true),
+            )
+          : await integrations.prepare(ownerId, action, args);
+        const account = verdict.confirm
+          ? (await integrations.list(ownerId, { refresh: false })).find(
+              (item) => item.connectionId === prepared.connectionId,
+            )
+          : undefined;
+        const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
+        const result = await approvals.request(turn, action, prepared, {
+          allowed: !verdict.confirm,
+          signal: options.signal,
+          run: async () => {
+            const result = await integrations.execute(
+              ownerId,
+              action,
+              prepared,
+              turn,
+              options.signal,
+            );
+            await ledger.action(turn.turnId, action);
+            analytics.actionExecuted(ownerId, action);
+            return result;
+          },
+          details: {
+            ...(verdict.confirm ? { reason: verdict.reason } : {}),
+            ...(account
+              ? {
+                  account: {
+                    name: account.name,
+                    identity: account.accountEmail ?? account.accountName,
+                    ...(path ? { method: path.kind, endpoint: path.endpoint } : {}),
+                  },
+                }
+              : {}),
+          },
+        });
         return result;
       },
     });

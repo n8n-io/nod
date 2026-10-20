@@ -922,13 +922,42 @@ export async function createDiscoveredConnections(
     );
     return { accounts };
   }
-  async function selected(args: Record<string, unknown>) {
-    const connectionId = z.uuid().parse(args.connectionId);
-    const pathId = z.uuid().parse(args.pathId);
-    const row = await account(connectionId);
-    const path = row.paths.find((item) => item.id === pathId);
-    if (!path) throw error('This access path is unavailable.', 404);
-    return { row, path };
+  async function selected(action: string, args: Record<string, unknown>) {
+    const connectionId = z.uuid().safeParse(args.connectionId);
+    const pathId = z.uuid().safeParse(args.pathId);
+    const row = connectionId.success
+      ? (
+          await pool.query<AccountRow>(
+            'SELECT * FROM discovered_connections WHERE owner_id=$1 AND id=$2',
+            [owner, connectionId.data],
+          )
+        ).rows[0]
+      : undefined;
+    const path = row?.paths.find((item) => pathId.success && item.id === pathId.data);
+    if (!row || !path)
+      throw error(
+        "This access path is unavailable. Use a connectionId and pathId listed under discovered by apps SEARCH_TOOLS, or the app's own action.",
+        404,
+      );
+    if (action === 'CONNECTED_HTTP') {
+      if (path.kind !== 'http') throw error('Choose an HTTP access path.');
+      const method = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).parse(args.method);
+      const url = target(path, z.string().parse(args.path));
+      return { row, call: { kind: 'http' as const, path, method, url } };
+    }
+    if (action === 'CONNECTED_CLI') {
+      if (path.kind !== 'cli') throw error('Choose a CLI access path.');
+      if (!path.source || !path.env)
+        throw error('Propose this CLI again with its install source and connectionId.', 409);
+      const argv = z.array(z.string().min(1)).min(1).parse(args.argv);
+      const timeoutSeconds = z.number().int().min(1).optional().parse(args.timeoutSeconds);
+      return { row, call: { kind: 'cli' as const, path, argv, timeoutSeconds } };
+    }
+    if (action !== 'CONNECTED_MCP_CALL' || path.kind !== 'mcp')
+      throw error('Choose an MCP access path.');
+    const tool = z.string().min(1).max(150).parse(args.tool);
+    const input = z.record(z.string(), z.unknown()).parse(args.input ?? {});
+    return { row, call: { kind: 'mcp' as const, path, tool, input } };
   }
   async function execute(
     action: string,
@@ -936,7 +965,8 @@ export async function createDiscoveredConnections(
     turn?: TurnRef,
     signal?: AbortSignal,
   ) {
-    const { row, path } = await selected(args);
+    const { row, call } = await selected(action, args);
+    const { path } = call;
     let token: string | undefined;
     const secrets: string[] = [];
     const hide = (value: unknown) =>
@@ -964,44 +994,32 @@ export async function createDiscoveredConnections(
                 : { [path.env[0]]: token };
           secrets.push(...Object.values(environment));
           let result: unknown;
-          if (action === 'CONNECTED_HTTP') {
-            if (path.kind !== 'http') throw error('Choose an HTTP access path.');
-            const method = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).parse(args.method);
-            const url = target(path, z.string().parse(args.path));
+          if (call.kind === 'http')
             result = await options.transport.http(
-              url,
-              headers(path, token),
-              method,
-              method === 'GET' ? undefined : args.body,
+              call.url,
+              headers(call.path, token),
+              call.method,
+              call.method === 'GET' ? undefined : args.body,
               signal,
             );
-          } else if (action === 'CONNECTED_CLI') {
-            if (path.kind !== 'cli') throw error('Choose a CLI access path.');
+          else if (call.kind === 'cli') {
             if (!turn || !options.runCli) throw error('CLI connections are unavailable.', 503);
-            if (!path.source || !path.env)
-              throw error('Propose this CLI again with its install source and connectionId.', 409);
-            const argv = z.array(z.string().min(1)).min(1).parse(args.argv);
             result = await options.runCli(
               turn.threadId,
-              { id: path.id, command: path.command, source: path.source },
-              argv,
+              { id: call.path.id, command: call.path.command, source: call.path.source },
+              call.argv,
               environment,
-              z.number().int().min(1).optional().parse(args.timeoutSeconds),
+              call.timeoutSeconds,
               signal,
             );
-          } else {
-            if (action !== 'CONNECTED_MCP_CALL' || path.kind !== 'mcp')
-              throw error('Choose an MCP access path.');
-            const name = z.string().min(1).max(150).parse(args.tool);
-            const input = z.record(z.string(), z.unknown()).parse(args.input ?? {});
+          } else
             result = await options.transport.callTool(
-              path.endpoint,
-              headers(path, token),
-              name,
-              input,
+              call.path.endpoint,
+              headers(call.path, token),
+              call.tool,
+              call.input,
               signal,
             );
-          }
           return hide(result);
         },
         signal,
@@ -1093,6 +1111,9 @@ export async function createDiscoveredConnections(
     completeOAuth,
     reconnect,
     search,
+    validate: async (action: string, args: Record<string, unknown>) => {
+      await selected(action, args);
+    },
     execute,
     disconnect,
     registerRoutes,

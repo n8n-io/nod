@@ -1562,15 +1562,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   ) {
     assertOwner(ownerId);
     signal?.throwIfAborted();
-    if (
-      action === 'CONNECTED_HTTP' ||
-      action === 'CONNECTED_MCP_CALL' ||
-      action === 'CONNECTED_CLI'
-    ) {
-      if (!options.discovered)
-        throw new IntegrationError('Discovered connections are unavailable.', 503);
-      return options.discovered.execute(action, args, turn, signal);
-    }
     if (action === 'SEARCH_TOOLS') {
       const input = z
         .object({
@@ -1708,7 +1699,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   ) {
     assertOwner(ownerId);
     signal?.throwIfAborted();
-    if (['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action)) return args;
+    if (['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action)) {
+      if (!options.discovered)
+        throw new IntegrationError('Discovered connections are unavailable.', 503);
+      await options.discovered.validate(action, args);
+      return args;
+    }
     const started = performance.now();
     const consent = options.analyticsConsent?.();
     let connection: AnalyticsConnection | undefined;

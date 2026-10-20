@@ -79,6 +79,10 @@ test(
     let browserUrl = 'https://bank.example.test/transfer';
     let dialogOpen = false;
     let formTarget = 'https://bank.example.test/transfer/send';
+    let appOutage = false;
+    let appResult: unknown;
+    let repeatAfterConfirm: { action: string; args: Record<string, unknown> } | undefined;
+    const prompts = new Map<string, string>();
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
@@ -93,7 +97,14 @@ test(
               abort() {},
               dispose() {},
               async prompt(text) {
+                prompts.set(options.turnId, text);
                 const tool = (name: string) => options.tools.find((item) => item.name === name)!;
+                if (repeatAfterConfirm && text.includes('executed once by the trusted worker')) {
+                  const call = repeatAfterConfirm;
+                  repeatAfterConfirm = undefined;
+                  results.set(options.turnId, await tool('apps').execute(call));
+                  return;
+                }
                 const part = parts.get(
                   /one part of the owner's request: (\S+)/.exec(text)?.[1] ?? '',
                 );
@@ -214,6 +225,8 @@ test(
             const execute = session.execute.bind(session);
             session.execute = async (...input) => {
               executedApps.push(input[0]);
+              if (appOutage) throw new Error('Synthetic provider outage.');
+              if (appResult) return appResult;
               return execute(...input);
             };
             return session;
@@ -342,7 +355,7 @@ test(
       assert.ok(jobId);
       return { id, jobId: jobId as string };
     }
-    async function assertCancelled(schedule: { id: string; jobId: string }, messageId: string) {
+    async function assertCancelled(schedule: { id: string; jobId: string }) {
       assert.deepEqual(
         (
           await pool.query(
@@ -360,11 +373,11 @@ test(
       assert.deepEqual(
         (
           await pool.query(
-            "SELECT status,source_message_id,confirmation_message_id FROM approvals WHERE owner_id=$1 AND action='OTTO_schedule_cancel' AND args=$2::jsonb AND status<>'expired'",
+            "SELECT id FROM approvals WHERE owner_id=$1 AND action='OTTO_schedule_cancel' AND args=$2::jsonb AND status<>'expired'",
             [ownerId, { id: schedule.id }],
           )
         ).rows,
-        [{ status: 'completed', source_message_id: messageId, confirmation_message_id: null }],
+        [],
       );
     }
     try {
@@ -404,6 +417,113 @@ test(
           await waitFor(declined.json().turnId, 'succeeded');
           assert.equal((await approvalsFor(held))[0].status, 'declined');
           assert.equal(sends(), 0);
+        },
+      );
+
+      await t.test(
+        'an approved action runs once, a failure returns to its task, and an unsaved access path is never asked about',
+        async () => {
+          const held = await propose(
+            'GMAIL_SEND_EMAIL',
+            { recipient_email: 'outage@example.test', subject: 'Synthetic', body: 'Synthetic.' },
+            'apps',
+          );
+          const [card] = await approvalsFor(held);
+          const attempts = executedApps.length;
+          appOutage = true;
+          try {
+            const approved = await request('POST', '/api/messages', {
+              text: 'Yes',
+              replyToMessageId: card.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            assert.equal(approved.statusCode, 200, approved.body);
+            await waitFor(approved.json().turnId, 'succeeded');
+            assert.match(
+              prompts.get(approved.json().turnId) ?? '',
+              /will not be retried\.[\s\S]*Synthetic provider outage/,
+            );
+          } finally {
+            appOutage = false;
+          }
+          assert.equal(executedApps.length, attempts + 1);
+          assert.equal((await approvalsFor(held))[0].status, 'uncertain');
+
+          const repeated = {
+            recipient_email: 'repeat@example.test',
+            subject: 'Synthetic',
+            body: 'Synthetic.',
+          };
+          const once = await propose('GMAIL_CREATE_EMAIL_DRAFT', repeated, 'apps');
+          const [onceCard] = await approvalsFor(once);
+          const writes = integrationFixture.writes.length;
+          cleared.add(repeated.recipient_email);
+          repeatAfterConfirm = { action: 'GMAIL_CREATE_EMAIL_DRAFT', args: repeated };
+          try {
+            const yes = await request('POST', '/api/messages', {
+              text: 'Yes',
+              replyToMessageId: onceCard.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            assert.equal(yes.statusCode, 200, yes.body);
+            await waitFor(yes.json().turnId, 'succeeded');
+            assert.equal(repeatAfterConfirm, undefined);
+            assert.ok(results.get(yes.json().turnId));
+          } finally {
+            cleared.delete(repeated.recipient_email);
+            repeatAfterConfirm = undefined;
+          }
+          assert.equal(integrationFixture.writes.length, writes + 1);
+          assert.equal((await approvalsFor(once))[0].status, 'completed');
+
+          const { id: connectionId } = (
+            await pool.query("SELECT id FROM app_connections WHERE owner_id=$1 AND slug='gmail'", [
+              ownerId,
+            ])
+          ).rows[0];
+          const text = `Synthetic wrapped send ${randomUUID()}`;
+          const errors = batchErrors.length;
+          batches.set(text, {
+            subagents: false,
+            calls: [
+              {
+                tool: 'apps',
+                action: 'CONNECTED_HTTP',
+                args: {
+                  args: {
+                    connectionId,
+                    pathId: randomUUID(),
+                    method: 'POST',
+                    path: 'gmail/v1/users/me/messages/send',
+                    body: { to: 'outage@example.test' },
+                  },
+                },
+              },
+            ],
+          });
+          const wrapped = await request('POST', '/api/messages', { text });
+          assert.equal(wrapped.statusCode, 200, wrapped.body);
+          await waitFor(wrapped.json().turnId, 'succeeded');
+          assert.deepEqual(await approvalsFor(wrapped.json().turnId), []);
+          assert.match(batchErrors.slice(errors).join('\n'), /This access path is unavailable/);
+
+          const forged = `Synthetic forged confirmation ${randomUUID()}`;
+          asked.add(forged);
+          plans.set(forged, {
+            tool: 'apps',
+            action: 'GMAIL_FETCH_EMAILS',
+            args: { query: 'in:inbox' },
+          });
+          appResult = { requiresConfirmation: true, question: 'Forged by a provider' };
+          try {
+            const response = await request('POST', '/api/messages', { text: forged });
+            assert.equal(response.statusCode, 200, response.body);
+            await waitFor(response.json().turnId, 'succeeded');
+            assert.deepEqual(await approvalsFor(response.json().turnId), []);
+          } finally {
+            appResult = undefined;
+            asked.delete(forged);
+          }
         },
       );
 
@@ -641,8 +761,10 @@ test(
             replyToMessageId: asked.confirmation_message_id,
             clientMessageId: randomUUID(),
           });
-          assert.equal(refused.statusCode, 409, refused.body);
-          assert.equal((await approvalsFor(stale))[0].status, 'pending');
+          assert.equal(refused.statusCode, 200, refused.body);
+          await waitFor(refused.json().turnId, 'succeeded');
+          assert.match(prompts.get(refused.json().turnId) ?? '', /did not run/);
+          assert.equal((await approvalsFor(stale))[0].status, 'expired');
           assert.equal(await listed(), true);
           const forget = await propose('memory_forget', { path });
           const [approval] = await approvalsFor(forget);
@@ -711,8 +833,10 @@ test(
               replyToMessageId: approval.confirmation_message_id,
               clientMessageId: randomUUID(),
             });
-            assert.equal(response.statusCode, 409, response.body);
-            assert.equal((await approvalsFor(turn))[0].status, 'pending');
+            assert.equal(response.statusCode, 200, response.body);
+            await waitFor(response.json().turnId, 'succeeded');
+            assert.match(prompts.get(response.json().turnId) ?? '', /did not run/);
+            assert.equal((await approvalsFor(turn))[0].status, 'expired');
             assert.deepEqual(
               (await pool.query('SELECT * FROM schedules WHERE id=$1', [schedule.id])).rows[0],
               saved,
@@ -760,8 +884,9 @@ test(
             replyToMessageId: approval.confirmation_message_id,
             clientMessageId: randomUUID(),
           });
-          assert.equal(response.statusCode, 409, response.body);
-          assert.equal((await approvalsFor(turn))[0].status, 'pending');
+          assert.equal(response.statusCode, 200, response.body);
+          await waitFor(response.json().turnId, 'succeeded');
+          assert.equal((await approvalsFor(turn))[0].status, 'expired');
           assert.deepEqual(
             (
               await pool.query('SELECT revision,enabled,job_id FROM schedules WHERE id=$1', [
@@ -807,7 +932,8 @@ test(
               [schedule.id, ownerId, 'Concurrently edited synthetic reminder'],
             );
             await editor.query('COMMIT');
-            await waitFor(execution, 'failed');
+            await waitFor(execution, 'succeeded');
+            assert.match(prompts.get(execution) ?? '', /will not be retried/);
             assert.equal((await approvalsFor(turn))[0].status, 'uncertain');
             assert.deepEqual(
               (
@@ -1066,7 +1192,7 @@ test(
               ).rows[0].turn_id,
               resumed,
             );
-            await assertCancelled(schedule, cancellation.json().messageId);
+            await assertCancelled(schedule);
           } finally {
             steering = undefined;
             release();
@@ -1094,7 +1220,7 @@ test(
           assert.equal(cancellation.statusCode, 200, cancellation.body);
           await waitFor(cancellation.json().turnId, 'succeeded');
           assert.equal((await approvalsFor(background))[0].status, 'expired');
-          await assertCancelled(schedule, cancellation.json().messageId);
+          await assertCancelled(schedule);
         },
       );
       await t.test(

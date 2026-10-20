@@ -584,10 +584,7 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
       throw new Error(
         "This step needs the owner's yes, and a subagent cannot ask. Stop and return it to the parent agent with the website, the control and what it would submit.",
       );
-    if (appConfirmation in verdict)
-      return {
-        output: await confirm({ requiresConfirmation: true, question: verdict[appConfirmation] }),
-      };
+    if (appConfirmation in verdict) return { output: await confirm(verdict) };
     return { output: verdict.result };
   };
   return [
@@ -706,8 +703,7 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     }),
     bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);
-      if (appConfirmation in result)
-        return confirm({ requiresConfirmation: true, question: result[appConfirmation] });
+      if (appConfirmation in result) return confirm(result);
       if ('filled' in result)
         return request.kind === 'otp'
           ? 'Verification code entered privately.'
@@ -728,10 +724,7 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
       if (!context.browserConnection) throw new Error('Browser connections are unavailable.');
       const outcome = await context.browserConnection(p);
       if (outcome && typeof outcome === 'object' && appConfirmation in outcome)
-        return confirm({
-          requiresConfirmation: true,
-          question: (outcome as { [appConfirmation]: string })[appConfirmation],
-        });
+        return confirm(outcome);
       const result = outcome as Record<string, unknown>;
       if (result.status === 'rejected') {
         switch (result.code) {
@@ -766,9 +759,7 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     bind(toolDefinitions.apps, async (p) => {
       const result = await context.integration(p.action, p.args, signal);
       signal.throwIfAborted();
-      return result && typeof result === 'object' && appConfirmation in result
-        ? confirm({ requiresConfirmation: true, question: result[appConfirmation] })
-        : result;
+      return confirm(result);
     }),
     bind(toolDefinitions.manage_apps, async (p) => {
       if (!context.connections) throw new Error('Apps are unavailable.');

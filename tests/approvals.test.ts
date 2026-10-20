@@ -19,6 +19,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
+import { appConfirmation } from '../src/ports/agent.ts';
 import type { ApprovalDescription, ApprovalExecutionContext } from '../src/server/approvals.ts';
 test('localhost access requires the owner key and rejects foreign Host, Origin and cross-site requests', async () => {
   const root = await mkdtemp(join(tmpdir(), 'otto-access-'));
@@ -430,8 +431,7 @@ test(
       args: Record<string, unknown>,
     ) {
       const result = await approvals.request(turn, action, args);
-      assert.ok(result && typeof result === 'object' && 'requiresConfirmation' in result);
-      assert.equal(result.requiresConfirmation, true);
+      assert.ok(result && typeof result === 'object' && appConfirmation in result);
       assert.equal('url' in result, false);
       const record = (
         await db.pool.query(
@@ -610,7 +610,7 @@ test(
             args.recipient_email = 'caller-substitution@example.test';
             details.account.email = 'caller-account@example.test';
             release();
-            assert.deepEqual(await result, { requiresConfirmation: true, question });
+            assert.deepEqual(await result, { [appConfirmation]: question });
             const saved = await proposal(turn.turnId);
             assert.deepEqual(saved.args, frozen);
             assert.equal(
@@ -1584,8 +1584,8 @@ test(
           const results = await Promise.all(
             turns.map((turn) => approvals.request(turn, 'OTTO_schedule_cancel', args)),
           );
-          for (const result of results) assert.equal(result.requiresConfirmation, true);
-          assert.equal(results[0].question, results[1].question);
+          for (const result of results) assert.ok(result[appConfirmation]);
+          assert.equal(results[0][appConfirmation], results[1][appConfirmation]);
           const records = (
             await db.pool.query(
               'SELECT * FROM approvals WHERE owner_id=$1 AND thread_id=$2 AND action=$3 AND args=$4::jsonb',
@@ -1612,9 +1612,9 @@ test(
       );
 
       await t.test(
-        'a direct execution keeps its exact snapshot and never replays pending or uncertain work',
+        'a direct run uses its exact snapshot, records nothing, and an action asked in its request fences it',
         async () => {
-          aligned = true;
+          const action = 'OTTO_notification_preferences_update';
           const origin = await begin('Only notify me about urgent reports.');
           const args = { notificationRule: 'Original preference.' };
           const snapshot = structuredClone(args);
@@ -1623,180 +1623,49 @@ test(
           executionGate = new Promise<void>((resolve) => {
             release = resolve;
           });
-          failExecution = true;
-          const pending = assert.rejects(
-            approvals.request(origin, 'OTTO_notification_preferences_update', args),
-            {
-              statusCode: 502,
-            },
-          );
+          const direct = approvals.request(origin, action, args, { allowed: true });
           try {
             for (let attempt = 0; attempt < 100 && calls.length === before; attempt++)
               await delay(10);
-            assert.equal(calls.length, before + 1);
             args.notificationRule = 'Changed after the request.';
             assert.deepEqual(calls.at(-1)?.args, snapshot);
-            await assert.rejects(
-              approvals.request(origin, 'OTTO_notification_preferences_update', snapshot),
-              /pending or uncertain/,
-            );
-            release();
-            await pending;
-            assert.equal((await proposal(origin.turnId)).status, 'uncertain');
-            assert.equal((await proposal(origin.turnId)).result, null);
-            await assert.rejects(
-              approvals.request(origin, 'OTTO_notification_preferences_update', snapshot),
-              /pending or uncertain/,
-            );
-            assert.equal(calls.length, before + 1);
           } finally {
             release();
-            try {
-              await pending;
-            } finally {
-              executionGate = undefined;
-              failExecution = false;
-              aligned = false;
-            }
+            executionGate = undefined;
           }
-        },
-      );
+          await direct;
+          assert.equal(await proposal(origin.turnId), undefined);
 
-      await t.test(
-        'schedule outcome receipts fence repeat requests after the mutation advances its revision',
-        async (t) => {
-          for (const source of [undefined, 'event'] as const)
-            for (const uncertain of [false, true])
-              await t.test(
-                `${source ?? 'user'} ${uncertain ? 'uncertain' : 'completed'}`,
-                async (t) => {
-                  let executions = 0;
-                  let failResult = uncertain;
-                  let release = () => {};
-                  const executing = new Promise<void>((resolve) => {
-                    release = resolve;
-                  });
-                  let mutated = () => {};
-                  const mutation = new Promise<void>((resolve) => {
-                    mutated = resolve;
-                  });
-                  const bound = await createApprovals(
-                    async (action, args, context) => {
-                      executions++;
-                      const result = await personal.manage(
-                        action.slice('OTTO_'.length),
-                        args,
-                        context,
-                      );
-                      if (executions === 1) {
-                        mutated();
-                        await executing;
-                      }
-                      if (failResult)
-                        throw new Error('Synthetic result lost after schedule mutation.');
-                      return result;
-                    },
-                    async (action, args, expectedRevision) => {
-                      await personal.validateReview(
-                        action.slice('OTTO_'.length),
-                        args,
-                        expectedRevision,
-                      );
-                    },
-                  );
-                  const created = await personal.manage('schedule_create', {
-                    title: 'Synthetic revision receipt',
-                    prompt: 'Review the synthetic checklist.',
-                    cron: '0 9 * * 1',
-                    timeZone: 'UTC',
-                  });
-                  const origin = await begin('Rename the synthetic schedule.', { source });
-                  const args = {
-                    id: (created as { id: string }).id,
-                    title: 'Synthetic renamed schedule',
-                  };
-                  t.after(async () => {
-                    assert.equal(
-                      (await request('DELETE', `/api/schedules/${args.id}`)).statusCode,
-                      200,
-                    );
-                    await finish(origin.turnId, 'succeeded');
-                  });
-                  const options = { allowed: true, expectedRevision: 0 };
-                  const original = bound.request(origin, 'OTTO_schedule_update', args, options);
-                  const outcome = uncertain
-                    ? assert.rejects(original, { statusCode: 502 })
-                    : original;
-                  await mutation;
-                  try {
-                    assert.equal((await proposal(origin.turnId)).status, 'executing');
-                    await assert.rejects(
-                      bound.request(origin, 'OTTO_schedule_update', args, {
-                        allowed: true,
-                        expectedRevision: 1,
-                      }),
-                      { statusCode: 409 },
-                    );
-                  } finally {
-                    release();
-                    await outcome;
-                  }
-                  const receipt = await proposal(origin.turnId);
-                  assert.equal(receipt.status, uncertain ? 'uncertain' : 'completed');
-                  const saved = await personal.getSchedule(args.id);
-                  assert.equal(saved.revision, 1);
-                  const job = (
-                    await db.pool.query(
-                      `SELECT * FROM ${bossSchema}.job WHERE data->>'scheduleId'=$1 AND state='created'`,
-                      [args.id],
-                    )
-                  ).rows;
-                  assert.equal(job.length, 1);
-                  for (const expectedRevision of [0, 1]) {
-                    const repeated = bound.request(origin, 'OTTO_schedule_update', args, {
-                      allowed: true,
-                      expectedRevision,
-                    });
-                    if (uncertain) await assert.rejects(repeated, { statusCode: 409 });
-                    else assert.deepEqual(await repeated, receipt.result);
-                  }
-                  await assert.rejects(
-                    bound.request(
-                      { ...origin, threadId: randomUUID() },
-                      'OTTO_schedule_update',
-                      args,
-                      {
-                        allowed: true,
-                        expectedRevision: 1,
-                      },
-                    ),
-                    { statusCode: 409 },
-                  );
-                  assert.equal(executions, 1);
-                  assert.deepEqual(await personal.getSchedule(args.id), saved);
-                  assert.deepEqual(
-                    (
-                      await db.pool.query(
-                        `SELECT * FROM ${bossSchema}.job WHERE data->>'scheduleId'=$1 AND state='created'`,
-                        [args.id],
-                      )
-                    ).rows,
-                    job,
-                  );
-                  await finish(origin.turnId, 'succeeded');
-                  const fresh = await begin(
-                    'I checked the result. Rename the synthetic schedule again.',
-                  );
-                  t.after(() => finish(fresh.turnId, 'succeeded'));
-                  failResult = false;
-                  const freshResult = await bound.request(fresh, 'OTTO_schedule_update', args, {
-                    allowed: true,
-                    expectedRevision: saved.revision,
-                  });
-                  assert.equal(freshResult.revision, 2);
-                  assert.equal(executions, 2);
-                },
-              );
+          const repeat = async (id: string) => {
+            const record = await stored(id);
+            return approvals.request(
+              { threadId: record.thread_id, turnId: record.execution_turn_id ?? record.turn_id },
+              action,
+              record.args,
+              { allowed: true },
+            );
+          };
+          const asked = async (rule: string) =>
+            propose(await begin(`Synthetic ${rule} request.`), action, { notificationRule: rule });
+          const pending = await asked('pending');
+          await assert.rejects(repeat(pending), /pending or uncertain/);
+          const failed = await asked('uncertain');
+          await confirm(failed, true);
+          failExecution = true;
+          try {
+            await execute(failed);
+          } finally {
+            failExecution = false;
+          }
+          assert.equal((await stored(failed)).status, 'uncertain');
+          await assert.rejects(repeat(failed), /pending or uncertain/);
+          const done = await asked('completed');
+          await confirm(done, true);
+          await execute(done);
+          const runs = calls.length;
+          assert.deepEqual(await repeat(done), (await stored(done)).result);
+          assert.equal(calls.length, runs);
+          await thread.stopThread();
         },
       );
 
@@ -2128,20 +1997,16 @@ test(
           });
           rejectPreflight = true;
           try {
-            await assert.rejects(confirm(id, true), { statusCode: 409 });
-            assert.equal((await stored(id)).status, 'pending');
-          } finally {
-            rejectPreflight = false;
-          }
-          await confirm(id, true);
-          rejectPreflight = true;
-          try {
-            await assert.rejects(execute(id), { statusCode: 409 });
+            await confirm(id, true);
             assert.equal((await stored(id)).status, 'confirmed');
+            assert.match((await execute(id))?.prompt ?? '', /did not run, so nothing was done/);
+            assert.equal((await stored(id)).status, 'expired');
             assert.equal(calls.length, before);
           } finally {
             rejectPreflight = false;
           }
+          assert.equal(await execute(id), undefined);
+          assert.equal(calls.length, before);
           await thread.stopThread();
         },
       );
@@ -2272,11 +2137,10 @@ test(
           await confirm(failed, true);
           failExecution = true;
           try {
-            await assert.rejects(execute(failed), (error: unknown) => {
-              assert.ok(error instanceof Error);
-              assert.match(error.message, /outcome is uncertain: .*Fixture provider detail/);
-              return (error as Error & { statusCode: number }).statusCode === 502;
-            });
+            assert.match(
+              (await execute(failed))?.prompt ?? '',
+              /will not be retried\. Its outcome is uncertain[\s\S]*Fixture provider detail/,
+            );
           } finally {
             failExecution = false;
           }
