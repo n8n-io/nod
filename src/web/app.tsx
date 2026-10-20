@@ -23,6 +23,7 @@ import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shar
 import { useSession } from './hooks/use-session';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
+import { DesktopSetup } from './pages/onboarding/desktop-setup';
 import { AccountSettings } from './components/account-settings';
 import { capturePageview } from './lib/analytics';
 import type { AccountControls, AccountTab } from './components/account-menu';
@@ -530,6 +531,8 @@ function AccountApp({
       </main>
     );
   const key = `${session.user.id}:${sessionState.epoch}`;
+  if (session.desktopSetup)
+    return <DesktopSetup key={key} session={session} onAccountUpdate={sessionState.update} />;
   return (
     <AuthenticatedApp
       key={key}

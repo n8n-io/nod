@@ -54,7 +54,9 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
   const [signInRequired, setSignInRequired] = useState(false);
   const [accessRenewed, setAccessRenewed] = useState(false);
   const [setupExpanded, setSetupExpanded] = useState(false);
+  const [completed, setCompleted] = useState(false);
   const choice = useConnectionChoice('onboarding', () => {
+    setCompleted(false);
     setError('');
     setSetupExpanded(false);
   });
@@ -64,6 +66,7 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
   const active = useRef(false);
 
   function clearAttempt() {
+    setCompleted(false);
     attempt.current = undefined;
     setSignInUrl(undefined);
     setStale(false);
@@ -88,6 +91,7 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
         )
           return;
         clearAttempt();
+        setCompleted(connection === 'connected');
         setError(connectionMessage(connection));
         setPending((current) => (current === 'waiting' ? undefined : current));
         void refreshApps();
@@ -116,6 +120,7 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
       window.clearTimeout(poll);
       window.clearTimeout(grace);
       clearAttempt();
+      setCompleted(result === 'connected');
       setPending(undefined);
       setError(connectionMessage(result));
       void refreshApps();
@@ -231,6 +236,36 @@ export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
     choice.ready &&
     !choice.switching &&
     !choice.signingIn;
+
+  useEffect(() => {
+    if (
+      arrived !== 'forward' ||
+      !completed ||
+      !connected ||
+      !canConnect ||
+      !showGmail ||
+      pending ||
+      apps.refreshing ||
+      apps.error ||
+      choice.dirty ||
+      choice.view.editing
+    )
+      return;
+    setCompleted(false);
+    onNext();
+  }, [
+    arrived,
+    completed,
+    connected,
+    canConnect,
+    showGmail,
+    pending,
+    apps.refreshing,
+    apps.error,
+    choice.dirty,
+    choice.view.editing,
+    onNext,
+  ]);
 
   async function connect() {
     if (request.current || !canConnect) return;

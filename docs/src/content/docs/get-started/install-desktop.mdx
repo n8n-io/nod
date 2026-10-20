@@ -15,8 +15,9 @@ Before you start, have a model connection ready: an OpenAI, Anthropic or OpenRou
 flowchart LR
   dl[Download<br/>the installer] --> open[Open and<br/>approve it]
   open --> prep[Otto prepares<br/>its computer]:::accent
-  prep --> ob[Onboarding]
-  ob --> chat([Start chatting]):::go
+  open --> ob[Onboarding]
+  prep --> chat([Start chatting]):::go
+  ob --> chat
 ```
 
 ## Install Otto
@@ -34,11 +35,9 @@ You need macOS 14 or later, on Apple silicon or Intel. The app and its runtime a
 
 3. The first time, macOS asks whether to open an app downloaded from the internet. Select **Open**.
 
-4. On **Set up your computer**, choose whether to turn on **Open at login** and **Desktop notifications**, then select **Open Otto**. If macOS asks for your keychain password, approve it. Otto keeps your saved keys in Keychain.
+4. Follow the onboarding while Otto prepares its computer in the background. Choose whether to share usage data, connect a model, and continue through each step. Email and Telegram connections are optional. If macOS asks for your keychain password, approve it so Otto can protect your saved keys.
 
-5. Keep your internet connection on while Otto prepares its workspace and browser. The first launch takes a few minutes.
-
-6. Follow the onboarding to connect a model and try a first task. See [Your first conversation](/get-started/first-conversation/).
+5. Keep your internet connection on. When setup and the computer are ready, Otto opens your chat with the connections and answers you just saved. See [Your first conversation](/get-started/first-conversation/).
 
 </Steps>
 
@@ -72,13 +71,11 @@ download.
 
 2. Run `Otto-Setup-x64.exe`. The preview isn't signed, so Windows can show a publisher warning. The installer adds Otto to the Start menu.
 
-3. If Otto says WSL is missing, select **Install WSL**, approve the administrator request and restart your PC. Then open Otto again.
+3. Follow the onboarding while Otto prepares its computer in the background. Choose whether to share usage data, connect a model, and continue through each step. Email and Telegram connections are optional.
 
-4. On **Set up your computer**, choose whether to turn on **Open at login** and **Desktop notifications**, then select **Open Otto**.
+4. If Otto needs WSL, follow its setup instructions and approve the administrator request. If Windows needs a restart, open Otto again afterwards; your onboarding progress is saved.
 
-5. Keep your internet connection on while Otto prepares its workspace and browser. The first launch takes a few minutes.
-
-6. Follow the onboarding to connect a model and try a first task. See [Your first conversation](/get-started/first-conversation/).
+5. Keep your internet connection on. When setup and the computer are ready, Otto opens your chat with your saved connections and answers. See [Your first conversation](/get-started/first-conversation/).
 
 </Steps>
 
@@ -113,7 +110,7 @@ If you rely on scheduled tasks, turn on **Open at login** in **Settings → Gene
 
 Otto updates itself. It checks after it starts, every six hours while it's open and after your computer wakes. To check now, select **Check for Updates…** in the **Otto** menu on a Mac, or from the menu bar or tray icon.
 
-When an update is ready, choose **Restart** to install it or **Later** to keep working. If Otto is in the middle of a task, it asks before restarting, and you can ask it to continue afterwards. Otto keeps your profile, keys and data.
+When an update is ready, choose **Restart** to install it or **Later** to keep working. If Otto is in the middle of a task, it asks before restarting, and you can ask it to continue afterwards. Otto keeps your profile, keys and data. A completed installation does not repeat onboarding after an update.
 
 On Windows, the restart runs the new installer in the background and opens Otto again when it's done.
 

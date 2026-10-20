@@ -18,6 +18,7 @@ function validSession(value: unknown): value is SessionResponse {
   if (!value || typeof value !== 'object') return false;
   const session = value as Partial<SessionResponse>;
   if (
+    (session.desktopSetup !== undefined && typeof session.desktopSetup !== 'boolean') ||
     typeof session.capabilities?.developer !== 'boolean' ||
     typeof session.capabilities.traces !== 'boolean'
   )

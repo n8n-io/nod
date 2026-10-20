@@ -4024,3 +4024,354 @@ test(
     }
   },
 );
+
+test('onboarding advances only after a newly confirmed connection with ready owned state', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 25_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><div id="root"></div>', {url:'http://127.0.0.1:51000/onboarding',pretendToBeVisual:true});
+for (const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','MutationObserver','getComputedStyle','sessionStorage']) Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location=window.location;
+globalThis.ResizeObserver=class {observe(){} disconnect(){}};
+HTMLElement.prototype.scrollIntoView=function(){};
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+window.open=()=>({closed:false,opener:null,location:{replace(){}},close(){}});
+let channel;
+globalThis.BroadcastChannel=class {constructor(){channel=this;} close(){}};
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {Brain}=await import('./src/web/pages/onboarding/steps/brain.tsx');
+const {Email}=await import('./src/web/pages/onboarding/steps/email.tsx');
+const {Telegram}=await import('./src/web/pages/onboarding/steps/telegram.tsx');
+const {pageDataCache}=await import('./src/web/lib/page-data-cache.ts');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+let root;
+let advances=0;
+const settle=(ms=15)=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,ms));});
+const waitFor=async(condition)=>{for(let i=0;i<100&&!condition();i++)await settle();assert.ok(condition(),'Expected the confirmed connection to advance its React step');};
+const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent.trim()===text);
+const click=async(text)=>{await waitFor(()=>button(text)&&!button(text).disabled);await act(async()=>button(text).click());await settle();};
+async function mount(Component,arrived='forward') {
+  if(root) await act(async()=>root.unmount());
+  pageDataCache.clear(); advances=0;
+  root=createRoot(document.getElementById('root'));
+  await act(async()=>root.render(createElement(Component,{arrived,onNext(){advances++;},onBack(){},onSkip(){}})));
+  await settle();
+}
+const connection={id:'fixture-model',provider:'anthropic',method:'api_key',status:'connected',label:'Fixture model',managed:false,models:[{id:'fixture-model-name',name:'Fixture',efforts:['off'],images:false,contextWindow:32000}]};
+let models={connections:[],selection:null};
+let failKey=true;
+let select;
+let oauth;
+let gmailConnected=false;
+let gmailCompleted=false;
+let failApps=false;
+let failTelegram=true;
+let telegram={provider:'telegram',enabled:true,mode:'polling',accountHandle:'@fixture_bot',pairingCandidate:{id:'123456',name:'Fixture'},pairingExpiresAt:new Date(Date.now()+600000).toISOString()};
+const attempt='A'.repeat(43);
+window.fetch=globalThis.fetch=async(url,options={})=>{
+  const path=new URL(url,window.location.href).pathname;
+  const body=options.body?JSON.parse(options.body):{};
+  if(path==='/api/models')return Response.json(models);
+  if(path==='/api/models/keys'){
+    if(failKey)return Response.json({error:'Fixture key rejected'},{status:503});
+    models={connections:[connection],selection:null};
+    return Response.json(models);
+  }
+  if(path==='/api/models/selection')return new Promise(resolve=>{select=()=>{models={...models,selection:body};resolve(Response.json(models));};});
+  if(path==='/api/models/oauth')return Response.json({attempt:'fixture-oauth',url:'https://auth.openai.com/authorize?fixture=1'});
+  if(path==='/api/models/oauth/status/fixture-oauth')return new Promise(resolve=>{oauth=()=>resolve(Response.json({status:'connected'}));});
+  if(path==='/api/configuration')return Response.json({integrationsReady:true});
+  if(path==='/api/integrations/key')return Response.json({mode:'own',switchable:false,keyWritable:false,suffix:null,managed:null});
+  if(path==='/api/apps')return failApps?Response.json({error:'Fixture account refresh failed'},{status:503}):Response.json([{slug:'gmail',name:'Gmail',status:gmailConnected?'connected':'disconnected',connectionId:gmailConnected?'fixture-account':undefined}]);
+  if(path==='/api/apps/gmail/connect')return Response.json({url:'https://connect.composio.dev/link/fixture',attempt});
+  if(path==='/api/apps/setup-status')return Response.json({completed:gmailCompleted?body.hashes:[],apps:body.hashes.map(hash=>({hash,pairingConfirmed:true}))});
+  if(path==='/api/channels')return Response.json({channels:[],inbox:[],deliveries:[],error:null});
+  if(path==='/api/channel-settings')return Response.json({ready:true,channels:[telegram]});
+  if(path==='/api/channel-settings/telegram/confirm'){
+    if(failTelegram)return Response.json({error:'Fixture pairing rejected'},{status:503});
+    telegram={provider:'telegram',enabled:true,mode:'polling',accountHandle:'@fixture_bot',allowedUserId:'123456'};
+    return Response.json({channel:telegram});
+  }
+  throw new Error('Unexpected fixture request '+path);
+};
+await mount(Brain);
+await act(async()=>[...document.querySelectorAll('.ob-brain-card')].find(item=>item.textContent.includes('Anthropic')).click());
+await waitFor(()=>document.querySelector('#ob-brain-key-anthropic'));
+await act(async()=>{const input=document.querySelector('#ob-brain-key-anthropic');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'synthetic-model-key');input.dispatchEvent(new Event('input',{bubbles:true}));});
+await click('Connect');
+assert.equal(advances,0);
+assert.match(document.body.textContent,/Fixture key rejected/);
+failKey=false;
+await click('Connect');
+await waitFor(()=>select);
+assert.equal(advances,0,'connection alone cannot advance before model selection is ready');
+await act(async()=>select());
+await waitFor(()=>advances===1);
+await act(async()=>pageDataCache.refresh('/api/models',true));
+assert.equal(advances,1);
+for(const direction of ['forward','back']){
+  await mount(Brain,direction);
+  await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+  assert.equal(advances,0,'cached model must not bounce '+direction);
+}
+models={connections:[],selection:null};
+await mount(Brain);
+await click('Sign in with ChatGPT');
+await waitFor(()=>oauth);
+assert.equal(advances,0);
+models={connections:[{...connection,provider:'openai',method:'subscription'}],selection:{connectionId:connection.id,modelId:connection.models[0].id,effort:'off'}};
+await act(async()=>oauth());
+await waitFor(()=>advances===1);
+await mount(Email);
+await click('Connect');
+await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt:'B'.repeat(43)}}));
+assert.equal(advances,0,'foreign callback cannot advance');
+failApps=true;
+await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt}}));
+await settle();
+assert.equal(advances,0,'callback alone cannot advance without confirmed account state');
+failApps=false; gmailConnected=true;
+await act(async()=>pageDataCache.refresh('/api/apps',true));
+await waitFor(()=>advances===1);
+await act(async()=>pageDataCache.refresh('/api/apps',true));
+assert.equal(advances,1);
+for(const direction of ['forward','back']){
+  await mount(Email,direction);
+  await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+  assert.equal(advances,0,'cached email must not bounce '+direction);
+}
+for(const direction of ['forward','back']){
+  gmailConnected=false; gmailCompleted=false;
+  await mount(Email,direction);
+  await click('Connect');
+  gmailConnected=true; gmailCompleted=true;
+  await act(async()=>window.dispatchEvent(new Event('focus')));
+  await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+  assert.equal(advances,direction==='forward'?1:0,'confirmed polling only advances forward');
+}
+await mount(Telegram);
+await click('Confirm');
+assert.equal(advances,0);
+assert.match(document.body.textContent,/Fixture pairing rejected/);
+failTelegram=false;
+await click('Confirm');
+await waitFor(()=>advances===1);
+await act(async()=>window.dispatchEvent(new Event('focus')));
+assert.equal(advances,1);
+for(const direction of ['forward','back']){
+  await mount(Telegram,direction);
+  await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+  assert.equal(advances,0,'cached Telegram must not bounce '+direction);
+}
+await act(async()=>root.unmount());
+dom.window.close();
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
+test('desktop onboarding resumes its owned journal and waits for durable changes and runtime import', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'http://127.0.0.1:51000/onboarding', pretendToBeVisual: true });
+for (const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage']) Object.defineProperty(globalThis, name, { configurable: true, value: name === 'window' ? dom.window : name === 'document' ? dom.window.document : typeof dom.window[name] === 'function' && name[0] === name[0].toLowerCase() ? dom.window[name].bind(dom.window) : dom.window[name] });
+Object.defineProperty(globalThis, 'navigator', {configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location = window.location;
+globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+HTMLElement.prototype.scrollIntoView = function () {};
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+let events = 0;
+globalThis.EventSource = window.EventSource = class { static CLOSED = 2; constructor() { events++; } close() {} addEventListener() {} };
+const owner = { id: 'synthetic-setup-owner', name: '', email: null, avatarUrl: null };
+const settings = { theme: 'system', onboardingCompleted: false, usageData: false, traces: false };
+let journal = { version: 2, step: 'welcome', runtime: { phase: 'preparing', message: 'Preparing synthetic runtime' }, completed: false };
+let failSave = true;
+let finishCalls = 0;
+let interviewUnavailable = false;
+let setupUnavailable = false;
+let models = {connections:[],selection:null};
+const calls = [];
+const saved = [];
+window.fetch = globalThis.fetch = async (url, options = {}) => {
+  const path = new URL(url, window.location.href).pathname;
+  calls.push(path);
+  const body = options.body ? JSON.parse(options.body) : {};
+  if (path === '/api/session') return Response.json({ desktopSetup: true, user: owner, settings, capabilities: { developer: false, traces: false } });
+  if (path === '/api/account') {
+    Object.assign(settings, body);
+    saved.push(body);
+    return Response.json({ desktopSetup: true, user: owner, settings, capabilities: { developer: false, traces: false } });
+  }
+  if (path === '/api/desktop/setup') {
+    if (setupUnavailable) return Response.json({error:'Synthetic status unavailable'}, {status:503});
+    if (options.method === 'PATCH') {
+      if (failSave) return Response.json({error:'Synthetic disk unavailable'}, {status:503});
+      Object.assign(journal, body);
+    }
+    return Response.json(journal);
+  }
+  if (path === '/api/desktop/setup/complete') {
+    finishCalls++;
+    return Response.json({ok:false,pending:true}, {status:202});
+  }
+  if (path === '/api/desktop/setup/retry') {
+    journal.runtime = {phase:'preparing',message:'Retrying synthetic runtime'};
+    return Response.json({ok:true});
+  }
+  if (path === '/api/preferences') return Response.json({timeZone:'Europe/Lisbon'});
+  if (path === '/api/apps') return Response.json([]);
+  if (path === '/api/channel-settings') return Response.json({ready:false,channels:[]});
+  if (path === '/api/onboarding/suggestions') return Response.json({ok:true});
+  if (path === '/api/onboarding/interview') return interviewUnavailable
+    ? Response.json({error:'Synthetic model needs reconnecting'}, {status:503})
+    : Response.json({ack:'Synthetic acknowledgement',question:'Synthetic follow-up question?'});
+  if (path === '/api/models/keys') {
+    assert.deepEqual(body, {provider:'anthropic',key:'synthetic-replacement-key'});
+    interviewUnavailable = false;
+    models = {connections:[{id:'synthetic-replacement',provider:'anthropic',method:'api_key',status:'connected',label:'Synthetic replacement',managed:false,models:[{id:'synthetic-model',name:'Synthetic model',efforts:['off'],images:false,contextWindow:32000}]}],selection:{connectionId:'synthetic-replacement',modelId:'synthetic-model',effort:'off'}};
+    return Response.json(models);
+  }
+  if (path === '/api/models') return Response.json(models);
+  return Response.json({error:'Unexpected synthetic request'}, {status:404});
+};
+sessionStorage.setItem('otto.onboarding.step', JSON.stringify({owner:owner.id,step:'open',version:2}));
+const { createElement, act } = await import('react');
+const { createRoot } = await import('react-dom/client');
+const { App } = await import('./src/web/app.tsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+let root = createRoot(document.getElementById('root'));
+const settle = (ms = 50) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
+const button = (text) => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === text);
+const waitFor = async (condition) => { for (let at = 0; at < 80 && !condition(); at++) await settle(); assert.ok(condition()); };
+await act(async () => root.render(createElement(App)));
+await waitFor(() => button('Let’s go'));
+assert.equal(document.querySelector('.ob').dataset.step, 'welcome');
+await act(async () => button('Let’s go').click());
+await settle();
+assert.equal(document.querySelector('.ob').dataset.step, 'welcome');
+assert.match(document.body.textContent, /Synthetic disk unavailable/);
+assert.deepEqual(saved, [{usageData:false}]);
+failSave = false;
+await act(async () => button('Let’s go').click());
+await waitFor(() => document.querySelector('.ob')?.dataset.step === 'brain');
+assert.equal(journal.step, 'brain');
+assert.equal(calls.includes('/api/account/prepare'), false);
+assert.equal(events, 0);
+assert.equal(calls.some(path => ['/api/state','/api/tasks','/api/trust','/api/vault'].includes(path)), false);
+await act(async () => root.unmount());
+journal = { ...journal, step:'about', about:{ answers:['Synthetic saved answer'], turns:[{ack:['Synthetic saved intro'],question:'Synthetic saved first question?'},{ack:['Synthetic saved reply'],question:'Synthetic saved second question?'}] } };
+root = createRoot(document.getElementById('root'));
+await act(async () => root.render(createElement(App)));
+await waitFor(() => document.body.textContent.includes('Synthetic saved second question?'));
+assert.match(document.body.textContent, /Synthetic saved answer/);
+assert.equal(calls.includes('/api/onboarding/interview'), false);
+let input = document.querySelector('input[aria-label="Your answer"]');
+interviewUnavailable = true;
+await act(async () => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Synthetic second answer');
+  input.dispatchEvent(new Event('input',{bubbles:true}));
+});
+await act(async () => document.querySelector('button[aria-label="Send"]').click());
+await waitFor(() => document.body.textContent.includes('Synthetic model needs reconnecting'));
+assert.deepEqual(journal.about.answers, ['Synthetic saved answer','Synthetic second answer']);
+assert.equal(journal.about.turns.length, 2);
+assert.ok(button('Back'), 'failed interview must expose a route back to model setup');
+await act(async () => button('Back').click());
+await waitFor(() => document.querySelector('.ob')?.dataset.step === 'email');
+await act(async () => button('Back').click());
+await waitFor(() => document.querySelector('.ob')?.dataset.step === 'brain');
+await act(async () => [...document.querySelectorAll('.ob-brain-card')].find(item => item.textContent.includes('Anthropic')).click());
+await waitFor(() => document.querySelector('input#ob-brain-key-anthropic'));
+await act(async () => {
+  const key = document.querySelector('input#ob-brain-key-anthropic');
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(key,'synthetic-replacement-key');
+  key.dispatchEvent(new Event('input',{bubbles:true}));
+});
+await act(async () => button('Connect').click());
+await waitFor(() => button('Continue') && !button('Continue').disabled);
+await act(async () => button('Continue').click());
+await waitFor(() => document.querySelector('.ob')?.dataset.step === 'email');
+await act(async () => button('Skip for now').click());
+await waitFor(() => document.querySelector('.ob')?.dataset.step === 'about');
+assert.match(document.body.textContent, /Synthetic saved answer/);
+assert.match(document.body.textContent, /Synthetic second answer/);
+await waitFor(() => journal.about.answers.length === 2 && journal.about.turns.length === 3);
+input = document.querySelector('input[aria-label="Your answer"]');
+assert.deepEqual(journal.about.answers, ['Synthetic saved answer','Synthetic second answer']);
+assert.equal(journal.about.turns[2].question, 'Synthetic follow-up question?');
+await act(async () => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Synthetic third answer');
+  input.dispatchEvent(new Event('input',{bubbles:true}));
+});
+await act(async () => document.querySelector('button[aria-label="Send"]').click());
+await waitFor(() => journal.about.answers.length === 3 && journal.about.turns.length === 4);
+assert.deepEqual(journal.about.turns[3], {ack:[],question:''});
+await act(async () => root.unmount());
+journal = {...journal,step:'open'};
+root = createRoot(document.getElementById('root'));
+await act(async () => root.render(createElement(App)));
+await waitFor(() => button('Start chatting'));
+await act(async () => button('Start chatting').click());
+await waitFor(() => document.querySelector('main [role="status"]'));
+assert.equal(document.activeElement, document.querySelector('main'));
+assert.equal(document.querySelector('main button'), null);
+assert.equal(document.querySelector('main a'), null);
+const finishingAt = calls.length;
+assert.equal(finishCalls, 1);
+journal.runtime = {phase:'ready',message:'Synthetic runtime ready'};
+await settle(1700);
+assert.ok(document.querySelector('main [role="status"]'));
+assert.equal(document.querySelector('main button'), null);
+assert.equal(finishCalls, 1);
+journal.completed = true;
+await settle(1700);
+assert.ok(document.querySelector('main [role="status"]'));
+assert.equal(document.querySelector('main button'), null);
+assert.deepEqual(new Set(calls.slice(finishingAt)), new Set(['/api/desktop/setup']));
+assert.equal(settings.onboardingCompleted, false);
+assert.equal(events, 0);
+await act(async () => root.unmount());
+journal = {...journal,completed:false,completing:true,runtime:{phase:'error',message:'Synthetic runtime interrupted'}};
+const restartAt = calls.length;
+root = createRoot(document.getElementById('root'));
+await act(async () => root.render(createElement(App)));
+await waitFor(() => button('Try again'));
+assert.ok(document.querySelector('main [role="alert"]'));
+assert.equal(document.querySelector('main [role="status"]'), null);
+assert.equal(button('Back'), undefined);
+assert.equal(document.querySelector('main a'), null);
+assert.deepEqual(new Set(calls.slice(restartAt)), new Set(['/api/session','/api/desktop/setup']));
+await act(async () => button('Try again').click());
+await waitFor(() => document.querySelector('main [role="status"]'));
+assert.equal(document.querySelector('main [role="alert"]'), null);
+assert.equal(document.querySelector('main button'), null);
+assert.deepEqual(new Set(calls.slice(restartAt)), new Set(['/api/session','/api/desktop/setup','/api/desktop/setup/retry']));
+const retries = calls.filter(path => path === '/api/desktop/setup/retry').length;
+setupUnavailable = true;
+await waitFor(() => document.querySelector('main [role="alert"]'));
+assert.equal(document.querySelector('main [role="status"]'), null);
+setupUnavailable = false;
+await act(async () => button('Try again').click());
+await waitFor(() => document.querySelector('main [role="status"]'));
+assert.equal(calls.filter(path => path === '/api/desktop/setup/retry').length, retries);
+assert.equal(finishCalls, 1);
+assert.equal(events, 0);
+await act(async () => root.unmount());
+dom.window.close();
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});

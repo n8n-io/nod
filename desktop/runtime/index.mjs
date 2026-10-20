@@ -271,7 +271,7 @@ async function prepare(options, onComputerStart) {
   status('starting', 'Starting your private computer…', 0.18);
   onComputerStart();
   await runLima(['start', '--tty=false', vm], { timeout: 600_000 });
-  await removeUnmountedRuntimes(assets).catch(() => {});
+  if (!options.preserveRuntimeCache) await removeUnmountedRuntimes(assets).catch(() => {});
   await waitFor(() => runDocker(['info', '--format', '{{.ServerVersion}}']), { signal });
   for (let index = 0; index < manifest.images.length; index++) {
     const item = validImage(manifest.images[index]);

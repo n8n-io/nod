@@ -18,6 +18,7 @@ export interface AccountSettings {
 }
 
 export interface SessionResponse {
+  desktopSetup?: boolean;
   analytics?: AnalyticsConfiguration;
   user: AccountUser | null;
   settings: AccountSettings | null;

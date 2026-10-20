@@ -14,6 +14,204 @@ import { createChannels } from '../src/server/channels.ts';
 
 const token = '987:fixture-never-live';
 
+async function desktopChannelFixture() {
+  const { createSetupChannels } = await import('../src/server/setup-channels.ts');
+  let saved: unknown;
+  const journal: import('../src/ports/setup.ts').SetupJournal = {
+    async read<T>() {
+      return structuredClone(saved) as T | undefined;
+    },
+    async update<T>(_section: string, change: (value: T | undefined) => T) {
+      saved = structuredClone(change(structuredClone(saved) as T | undefined));
+      return structuredClone(saved) as T;
+    },
+  };
+  const keyStore = { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) };
+  const verifier = createChatSdkSetupVerifier({
+    fetch: async (input) => {
+      const url = String(input);
+      if (url.endsWith('/getMe'))
+        return Response.json({
+          ok: true,
+          result: { id: 987, is_bot: true, first_name: 'Fixture bot', username: 'fixture_bot' },
+        });
+      if (url.endsWith('/getWebhookInfo')) return Response.json({ ok: true, result: { url: '' } });
+      throw new Error('Unexpected fixture provider call.');
+    },
+  });
+  let applied: Record<string, string> = {};
+  let failApply = false;
+  const create = (ownerId = 'fixture-owner') =>
+    createSetupChannels({
+      journal,
+      ownerId,
+      keyStore,
+      verifier,
+      async apply(environment) {
+        if (failApply) throw new Error('fixture-apply-failed');
+        applied = environment;
+      },
+    });
+  return {
+    create,
+    journal,
+    keyStore,
+    applied: () => applied,
+    failApply: (fail: boolean) => {
+      failApply = fail;
+    },
+  };
+}
+
+test('desktop Telegram setup shares owned pairing policy before the database exists and freezes its encrypted state', async (t) => {
+  const f = await desktopChannelFixture();
+  const settings = await f.create();
+  const app = Fastify();
+  settings.registerRoutes(app);
+  t.after(() => app.close());
+  const saved = await app.inject({
+    method: 'PUT',
+    url: '/api/channel-settings/telegram',
+    payload: { botToken: token },
+  });
+  assert.equal(saved.statusCode, 200, saved.body);
+  const code = new URL(saved.json().pairingUrl).searchParams.get('start')!;
+  assert.ok(!saved.body.includes(token));
+  assert.ok(!JSON.stringify(await f.journal.read('channels')).includes(token));
+  assert.ok(!JSON.stringify(await f.journal.read('channels')).includes(code));
+  const candidate: import('../src/ports/messaging.ts').ChannelPairingRequest = {
+    channelId: 'telegram',
+    accountId: '987',
+    messageId: 'fixture-message',
+    threadId: 'telegram:987:123',
+    senderId: '123',
+    senderName: 'Fixture person',
+    senderUsername: 'fixture_person',
+    sentAt: new Date(),
+    code,
+  };
+  assert.equal(await settings.pair({ ...candidate, code: 'incorrect' }), false);
+  assert.equal(await settings.pair({ ...candidate, accountId: 'other-bot' }), false);
+  assert.equal(await settings.pair(candidate), true);
+  assert.equal(await settings.pair(candidate), false);
+  assert.equal((await settings.status()).channels[0].pairingCandidate?.id, '123');
+  assert.equal(Boolean((await settings.environment()).TELEGRAM_ALLOWED_USER_ID), false);
+  const restored = await f.create();
+  await assert.rejects(f.create('fixture-other'), /does not belong/);
+  const restoredApp = Fastify();
+  restored.registerRoutes(restoredApp);
+  t.after(() => restoredApp.close());
+  f.failApply(true);
+  assert.equal(
+    (
+      await restoredApp.inject({
+        method: 'POST',
+        url: '/api/channel-settings/telegram/confirm',
+        payload: {},
+      })
+    ).statusCode,
+    503,
+  );
+  assert.equal(Boolean((await restored.environment()).TELEGRAM_ALLOWED_USER_ID), false);
+  assert.equal((await restored.status()).channels[0].pairingCandidate?.id, '123');
+  f.failApply(false);
+  assert.equal(
+    (
+      await restoredApp.inject({
+        method: 'POST',
+        url: '/api/channel-settings/telegram/confirm',
+        payload: {},
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal((await restored.environment()).TELEGRAM_ALLOWED_USER_ID, '123');
+  assert.equal(f.applied().TELEGRAM_ALLOWED_USER_ID, '123');
+  const transfer = await restored.transfer();
+  assert.equal(transfer.rows[0].summary.allowedUserId, '123');
+  await assert.rejects(restored.disable('telegram'), /setup has finished/);
+  assert.deepEqual(await f.journal.read('channels'), transfer);
+});
+
+test(
+  'desktop channel import rolls back as a unit and refuses to restore changed channel credentials',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { initializeChannelSettings } = await import('../src/server/channel-settings.ts');
+    const { importSetupChannels } = await import('../src/server/setup-channels.ts');
+    const schema = `test_setup_channels_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    await initializeChannelSettings(pool);
+    const f = await desktopChannelFixture();
+    const settings = await f.create();
+    const app = Fastify();
+    settings.registerRoutes(app);
+    t.after(() => app.close());
+    assert.equal(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: '/api/channel-settings/telegram',
+          payload: { botToken: token },
+        })
+      ).statusCode,
+      200,
+    );
+    const transfer = await settings.transfer();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await importSetupChannels(client, {
+        ownerId: 'fixture-owner',
+        keyStore: f.keyStore,
+        transfer,
+      });
+      await client.query('ROLLBACK');
+      assert.equal((await client.query('SELECT * FROM channel_settings')).rowCount, 0);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await client.query('BEGIN');
+        await importSetupChannels(client, {
+          ownerId: 'fixture-owner',
+          keyStore: f.keyStore,
+          transfer,
+        });
+        await client.query('COMMIT');
+      }
+      const stored = (await client.query('SELECT * FROM channel_settings')).rows;
+      assert.equal(stored.length, 1);
+      assert.ok(!JSON.stringify(stored).includes(token));
+      await assert.rejects(
+        importSetupChannels(client, { ownerId: 'fixture-other', keyStore: f.keyStore, transfer }),
+        /does not belong/,
+      );
+      await client.query("UPDATE channel_settings SET enabled=false, ciphertext=NULL,summary='{}'");
+      await client.query('BEGIN');
+      await assert.rejects(
+        importSetupChannels(client, { ownerId: 'fixture-owner', keyStore: f.keyStore, transfer }),
+        /changed since setup/,
+      );
+      await client.query('ROLLBACK');
+      assert.equal(
+        (await client.query('SELECT enabled FROM channel_settings')).rows[0].enabled,
+        false,
+      );
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  },
+);
+
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',created_at timestamptz NOT NULL DEFAULT now());

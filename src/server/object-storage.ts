@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { transaction } from './transaction.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../ports/object-storage.ts';
 import {
@@ -12,10 +12,12 @@ import { fileBytes } from '../shared/files.ts';
 import { lockSetup } from './locks.ts';
 
 export function createPostgresObjectStore(options: {
-  database: Pool;
+  database: Pool | PoolClient;
   ownerId: string;
 }): PrivateObjectStore & { initialize(): Promise<void> } {
   if (!options.ownerId || options.ownerId.length > 200) throw objectFailure();
+  const atomic = <T>(run: (client: PoolClient) => Promise<T>) =>
+    'totalCount' in options.database ? transaction(run, options.database) : run(options.database);
   async function safe<T>(action: () => Promise<T>) {
     try {
       return await action();
@@ -27,7 +29,7 @@ export function createPostgresObjectStore(options: {
   return {
     initialize: () =>
       safe(() =>
-        transaction(async (client) => {
+        atomic(async (client) => {
           await client.query("SET LOCAL lock_timeout='5s'");
           await lockSetup(client, 'otto:private-objects');
           await client.query(`CREATE TABLE IF NOT EXISTS private_objects (
@@ -37,7 +39,7 @@ export function createPostgresObjectStore(options: {
           await client.query(
             'ALTER TABLE private_objects DROP CONSTRAINT IF EXISTS private_objects_bytes_check',
           );
-        }, options.database),
+        }),
       ),
     read: (value, maxBytes) =>
       safe(async () => {

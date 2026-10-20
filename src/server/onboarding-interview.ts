@@ -42,7 +42,7 @@ function interviewTurn(raw: unknown): InterviewResponse | undefined {
 
 export function createOnboardingInterview(options: {
   curator: MemoryCurator;
-  memory: MemoryService;
+  memory: Pick<MemoryService, 'restate'>;
 }) {
   async function next(raw: unknown) {
     const { answers } = turnInput.parse(raw);
@@ -65,6 +65,10 @@ export function createOnboardingInterview(options: {
 
   async function remember(raw: unknown) {
     const { answers } = saveInput.parse(raw);
+    if (answers.some((text) => unsafe(text)))
+      throw new Error(
+        'Passwords, codes, card numbers and instructions to Otto can’t be saved as notes.',
+      );
     await options.memory.restate(
       notes.map((note, index) => ({
         ...note,

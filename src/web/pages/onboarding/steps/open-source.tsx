@@ -6,11 +6,13 @@ import { prepareSuggestions } from '../storage';
 
 const sequence = [{ typing: 450 }, { wait: 300, typing: 550 }, { wait: 300 }];
 
-export function OpenSource({ arrived, onNext, onBack, busy, notice }: StepProps) {
+export function OpenSource({ arrived, onNext, onBack, busy, notice, preparing }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const noticeBox = useRef<HTMLDivElement>(null);
   const noticed = !!notice;
-  useEffect(() => void prepareSuggestions(true), []);
+  useEffect(() => {
+    if (!preparing) void prepareSuggestions(true);
+  }, [preparing]);
   useEffect(() => {
     if (noticed) noticeBox.current?.scrollIntoView({ block: 'nearest' });
   }, [noticed]);
@@ -43,7 +45,7 @@ export function OpenSource({ arrived, onNext, onBack, busy, notice }: StepProps)
       )}
       <Footer
         show={revealed >= sequence.length}
-        onBack={onBack}
+        onBack={preparing ? undefined : onBack}
         onNext={onNext}
         nextLabel={busy ? 'Opening Otto…' : 'Start chatting'}
         busy={busy}

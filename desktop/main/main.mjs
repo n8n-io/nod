@@ -17,7 +17,7 @@ import {
 } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
-import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { hostname } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -50,11 +50,19 @@ const setupPath = app.isPackaged
   ? join(desktopRoot, 'ui', 'index.html')
   : join(engineRoot, 'dist', 'desktop-ui', 'index.html');
 const setupURL = pathToFileURL(setupPath).href;
-app.setName('Otto');
-const developmentDataRoot = !app.isPackaged ? process.env.OTTO_DESKTOP_USER_DATA : undefined;
+const testInstall =
+  app.isPackaged &&
+  JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')).ottoBuild?.testProfile ===
+    true;
+app.setName(testInstall ? 'Otto Setup Test' : 'Otto');
+const developmentDataRoot =
+  !app.isPackaged || testInstall ? process.env.OTTO_DESKTOP_USER_DATA : undefined;
 if (developmentDataRoot && !isAbsolute(developmentDataRoot))
   throw new Error('The development profile path must be absolute.');
-app.setPath('userData', developmentDataRoot || join(app.getPath('appData'), 'Otto'));
+app.setPath(
+  'userData',
+  developmentDataRoot || join(app.getPath('appData'), testInstall ? 'Otto Setup Test' : 'Otto'),
+);
 const profileRoot = join(app.getPath('userData'), 'profiles', 'local');
 const windowsUpdates = join(process.env.LOCALAPPDATA || app.getPath('temp'), 'Otto', 'updates');
 const settings = createSettingsStore(join(profileRoot, 'settings.json'), safeStorage);
@@ -62,9 +70,18 @@ const analyticsConfiguration = createDesktopAnalytics(join(profileRoot, 'analyti
   packaged: app.isPackaged,
 });
 let setupWindow;
+let setupWindowLoaded;
 let engineWindow;
 let pendingFeedback = false;
 let engine;
+let setupEngine;
+let startingSetup;
+let earlyOrigin = '';
+let earlyToken = '';
+let earlyBound = false;
+let earlyCompleting = false;
+let importedSetupId;
+let stoppingSetup = false;
 let enginePreferencesReady = false;
 let preparing;
 let onboardingCompleted = false;
@@ -120,6 +137,7 @@ const lifecycle = createDesktopLifecycle({
     const prepared = await prepareRuntime({
       dataRoot: profileRoot,
       resourcesPath: engineRoot,
+      preserveRuntimeCache: testInstall,
       resolveDownloadUrl: updateSource?.runtimeDownloadUrl,
       signal,
       onStatus,
@@ -137,6 +155,10 @@ const lifecycle = createDesktopLifecycle({
     await stopRuntime({ dataRoot: profileRoot, resourcesPath: engineRoot });
   },
   onRuntimeStatus: (value) => {
+    setupEngine?.postMessage({
+      type: 'otto-setup-runtime',
+      phase: value.phase === 'error' ? 'error' : 'preparing',
+    });
     const runtime = { ...value, message: bounded(value.message) };
     if (preparing && status.phase !== 'starting' && value.phase !== 'error')
       update({
@@ -367,7 +389,7 @@ function trustedAppURL(value) {
   try {
     const url = new URL(value);
     return (
-      url.origin === engineOrigin &&
+      (url.origin === engineOrigin || (earlyBound && url.origin === earlyOrigin)) &&
       ([
         '/',
         '/onboarding',
@@ -448,13 +470,16 @@ function protectWindow(window, origin) {
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
 }
 
-function showSettings(section = 'general', _mode, reset = false) {
+function showSettings(section = 'general', requestedMode, reset = false) {
   if (quitting) return;
-  const mode = desktopSetupMode({
-    completed: onboardingCompleted,
-    replaying: replayingOnboarding,
-    running: Boolean(engine) && status.phase === 'ready',
-  });
+  const mode =
+    requestedMode === 'loading' || !onboardingCompleted
+      ? 'loading'
+      : desktopSetupMode({
+          completed: onboardingCompleted,
+          replaying: replayingOnboarding,
+          running: Boolean(engine) && status.phase === 'ready',
+        });
   if (mode === 'settings') {
     showEngine();
     const window = engineWindow;
@@ -469,11 +494,15 @@ function showSettings(section = 'general', _mode, reset = false) {
   const changedMode = setupNavigation.mode !== mode;
   setupNavigation = { section, mode, reset };
   if (setupWindow && !setupWindow.isDestroyed()) {
-    if (changedMode) setupWindow.setSize(600, 540);
-    setupWindow.webContents.send('otto:navigate', setupNavigation);
-    setupWindow.show();
-    setupWindow.focus();
-    return;
+    const window = setupWindow;
+    if (changedMode) window.setSize(600, 540);
+    window.show();
+    window.focus();
+    return setupWindowLoaded.then(() => {
+      if (window.isDestroyed()) return;
+      window.webContents.send('otto:navigate', setupNavigation);
+      window.webContents.send('otto:status', status);
+    });
   }
   setupWindow = new BrowserWindow({
     width: 600,
@@ -496,14 +525,25 @@ function showSettings(section = 'general', _mode, reset = false) {
   window.on('closed', () => {
     if (setupWindow === window) setupWindow = undefined;
   });
-  void window.loadFile(setupPath, {
-    query: { mode, section, firstSetup: String(!onboardingCompleted) },
+  setupWindowLoaded = window.loadFile(setupPath, {
+    query: {
+      mode,
+      section,
+      firstSetup: String(!onboardingCompleted),
+      early: String(!onboardingCompleted),
+      ...(status.unlockingKeys ? { unlocking: process.platform } : {}),
+    },
   });
+  return setupWindowLoaded;
 }
 
 function showEngine() {
   if (quitting) return;
-  if (!onboardingCompleted || replayingOnboarding || !engineOrigin || status.phase !== 'ready') {
+  const early = setupEngine && earlyBound;
+  if (
+    !early &&
+    (!onboardingCompleted || replayingOnboarding || !engineOrigin || status.phase !== 'ready')
+  ) {
     showSettings(setupNavigation.section, setupNavigation.mode);
     return;
   }
@@ -535,16 +575,18 @@ function showEngine() {
     },
   });
   engineWindows.add(engineWindow);
-  protectWindow(engineWindow, engineOrigin);
+  protectWindow(engineWindow, early ? earlyOrigin : engineOrigin);
   const window = engineWindow;
   window.webContents.on('did-finish-load', () => deliverFeedbackRequest(window));
   engineWindow.on('closed', () => {
     engineWindows.delete(window);
     engineWindow = undefined;
   });
-  const destination = replayingProductOnboarding
-    ? `${engineOrigin}/onboarding?replay=1`
-    : engineOrigin;
+  const destination = early
+    ? `${earlyOrigin}/onboarding`
+    : replayingProductOnboarding
+      ? `${engineOrigin}/onboarding?replay=1`
+      : engineOrigin;
   replayingProductOnboarding = false;
   void engineWindow.loadURL(destination);
 }
@@ -669,18 +711,181 @@ function baseEnvironment() {
 
 async function profileOwner() {
   const path = join(profileRoot, 'profile.json');
+  async function published() {
+    if (process.platform === 'win32') return;
+    const directory = await open(profileRoot, 'r');
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  }
   try {
-    const value = JSON.parse(await readFile(path, 'utf8'));
-    if (
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.ownerId)
-    )
-      throw new Error('The local profile identity is invalid.');
-    return value.ownerId;
+    const file = await open(path, 'r+');
+    try {
+      const value = JSON.parse(await file.readFile('utf8'));
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.ownerId)
+      )
+        throw new Error('The local profile identity is invalid.');
+      await file.sync();
+      await published();
+      return value.ownerId;
+    } finally {
+      await file.close();
+    }
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
     const ownerId = randomUUID();
-    await writeFile(path, JSON.stringify({ ownerId }), { flag: 'wx', mode: 0o600 });
+    const temporary = join(profileRoot, `.profile-${randomUUID()}`);
+    try {
+      const file = await open(temporary, 'wx', 0o600);
+      try {
+        await file.writeFile(JSON.stringify({ ownerId }));
+        await file.sync();
+      } finally {
+        await file.close();
+      }
+      await rename(temporary, path);
+      await published();
+    } finally {
+      await rm(temporary, { force: true });
+    }
     return ownerId;
+  }
+}
+
+async function stopEarlySetup() {
+  if (!setupEngine) return;
+  const child = setupEngine;
+  stoppingSetup = true;
+  await new Promise((accept, reject) => {
+    const timeout = setTimeout(() => {
+      if (child.pid)
+        try {
+          process.kill(child.pid, 'SIGKILL');
+        } catch {}
+    }, 15_000);
+    const deadline = setTimeout(
+      () => reject(new Error('The setup process did not stop. Quit Otto before trying again.')),
+      20_000,
+    );
+    child.once('exit', () => {
+      clearTimeout(timeout);
+      clearTimeout(deadline);
+      accept();
+    });
+    child.kill();
+  });
+  if (setupEngine === child) setupEngine = undefined;
+  earlyBound = false;
+  earlyOrigin = '';
+  earlyToken = '';
+  stoppingSetup = false;
+}
+
+function startEarlySetup() {
+  if (startingSetup) return startingSetup;
+  if (setupEngine || quitting) return Promise.resolve();
+  startingSetup = openEarlySetup()
+    .catch((error) => {
+      update({ phase: 'error', message: bounded(error.message), error: bounded(error.message) });
+      throw error;
+    })
+    .finally(() => {
+      startingSetup = undefined;
+    });
+  return startingSetup;
+}
+
+async function openEarlySetup() {
+  await mkdir(profileRoot, { recursive: true, mode: 0o700 });
+  const port = await availablePort();
+  earlyToken = randomBytes(32).toString('base64url');
+  knownSecrets.add(earlyToken);
+  earlyOrigin = `http://127.0.0.1:${port}`;
+  update({ phase: 'starting', message: 'Opening secure setup…', unlockingKeys: true });
+  await showSettings('general', 'loading');
+  await new Promise((accept) => setTimeout(accept, 50));
+  if (quitting) throw new Error('Otto is closing.');
+  const environment = await settings.environment();
+  if (quitting) throw new Error('Otto is closing.');
+  if (environment.OTTO_VAULT_KEY) knownSecrets.add(environment.OTTO_VAULT_KEY);
+  const analytics = await analyticsConfiguration().catch(() => ({ enabled: false }));
+  const metadata = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')).ottoBuild;
+  const ownerId = await profileOwner();
+  if (quitting) throw new Error('Otto is closing.');
+  const child = utilityProcess.fork(join(engineRoot, 'desktop', 'main', 'setup.mjs'), [], {
+    cwd: engineRoot,
+    env: {
+      ...baseEnvironment(),
+      ...environment,
+      NODE_ENV: 'production',
+      PORT: String(port),
+      OTTO_DESKTOP: 'true',
+      OTTO_DESKTOP_OWNER_ID: ownerId,
+      OTTO_DESKTOP_AUTH_TOKEN: earlyToken,
+      OTTO_PUBLIC_URL: earlyOrigin,
+      OTTO_DATA_ROOT: profileRoot,
+      OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),
+      OTTO_APP_VERSION: app.getVersion(),
+      OTTO_ANALYTICS_ENABLED: String(!testInstall && analytics.enabled),
+      OTTO_ANALYTICS_ENVIRONMENT: testInstall || !app.isPackaged ? 'development' : 'production',
+      ...(metadata?.tracesToken ? { OTTO_TRACES_TOKEN: metadata.tracesToken } : {}),
+      PI_CODING_AGENT_DIR: join(profileRoot, 'pi'),
+    },
+    stdio: 'pipe',
+    serviceName: 'Otto setup',
+  });
+  setupEngine = child;
+  child.stdout?.resume();
+  child.stderr?.resume();
+  child.on('message', (message) => {
+    if (setupEngine !== child || quitting) return;
+    if (message?.type === 'otto-setup-ready' && message.port === port) {
+      earlyBound = true;
+      update({ unlockingKeys: false });
+      showEngine();
+      if (setupWindow && !setupWindow.isDestroyed()) setupWindow.destroy();
+    }
+    if (message?.type === 'otto-setup-complete') {
+      earlyCompleting = true;
+      void prepare().then((value) => {
+        if (value.phase === 'error')
+          child.postMessage({ type: 'otto-setup-runtime', phase: 'error' });
+      });
+    }
+    if (message?.type === 'otto-setup-retry') {
+      if (
+        status.needsWsl ||
+        status.needsRuntimeArchive ||
+        status.runtime.needsWsl ||
+        status.runtime.needsRuntimeArchive
+      )
+        showSettings('general', 'settings');
+      else if (earlyCompleting) void prepare({ retry: true });
+      else void warmRuntime({ retry: true });
+    }
+  });
+  child.on('exit', () => {
+    if (setupEngine !== child) return;
+    setupEngine = undefined;
+    earlyBound = false;
+    if (!quitting && !stoppingSetup) {
+      update({
+        phase: 'error',
+        message: 'Setup stopped. Your progress is saved.',
+        error: 'Quit and reopen Otto to continue.',
+      });
+      showSettings();
+    }
+  });
+  const deadline = Date.now() + 45_000;
+  while (!earlyBound && setupEngine === child && !quitting && Date.now() < deadline)
+    await new Promise((accept) => setTimeout(accept, 100));
+  if (!earlyBound) {
+    if (setupEngine === child) await stopEarlySetup();
+    throw new Error('Otto could not open setup. Quit and reopen to try again.');
   }
 }
 
@@ -731,6 +936,38 @@ async function finishEnginePreparation() {
   await writeDiagnostic('Engine ready.').catch(() => {});
   update({ phase: 'ready', message: 'Otto is running on your computer.', progress: undefined });
   synchronizeNotifications();
+  if (setupEngine && importedSetupId) {
+    const child = setupEngine;
+    const saved = await settings.save({ onboardingCompleted: true });
+    onboardingCompleted = true;
+    applyPreferences(saved);
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('Otto could not confirm setup cleanup. Try again.'));
+      }, 10_000);
+      const message = (value) => {
+        if (value?.type === 'otto-setup-cleaned') {
+          cleanup();
+          resolve();
+        }
+        if (value?.type === 'otto-setup-cleanup-failed') {
+          cleanup();
+          reject(new Error('Otto could not remove temporary setup data.'));
+        }
+      };
+      function cleanup() {
+        clearTimeout(timeout);
+        child.removeListener('message', message);
+      }
+      child.on('message', message);
+      child.postMessage({ type: 'otto-setup-ack', id: importedSetupId });
+    });
+    earlyCompleting = false;
+    earlyBound = false;
+    if (engineWindow && !engineWindow.isDestroyed()) await engineWindow.loadURL(engineOrigin);
+    await stopEarlySetup();
+  }
   if (!replayingOnboarding) {
     if (pendingFeedback || foregroundWindow()) showEngine();
     const completedWindow = setupWindow;
@@ -949,6 +1186,7 @@ async function quit(complete) {
 async function finishQuit(complete) {
   while (true) {
     try {
+      await stopEarlySetup();
       await lifecycle.close();
       await complete();
       return;
@@ -974,7 +1212,7 @@ async function finishQuit(complete) {
 async function validateStart() {
   const selected = await settings.get();
   if (quitting) throw new Error('Otto is closing.');
-  if (!selected.onboardingCompleted)
+  if (!selected.onboardingCompleted && !earlyCompleting)
     throw new Error('Choose your preferences to finish setting up Otto.');
 }
 
@@ -1018,9 +1256,13 @@ async function startEngine({ runtime, signal }) {
     OTTO_APP_VERSION: app.getVersion(),
     OTTO_DESKTOP_OWNER_ID: await profileOwner(),
     OTTO_DESKTOP_AUTH_TOKEN: authToken,
-    OTTO_ANALYTICS_ENABLED: String(analytics.enabled),
+    ...(earlyCompleting ? { OTTO_DESKTOP_SETUP_PENDING: 'true' } : {}),
+    OTTO_ANALYTICS_ENABLED: String(!testInstall && analytics.enabled),
     OTTO_ANALYTICS_ENVIRONMENT:
-      app.isPackaged && ottoBuild?.release === true && /^\d+\.\d+\.\d+$/.test(app.getVersion())
+      !testInstall &&
+      app.isPackaged &&
+      ottoBuild?.release === true &&
+      /^\d+\.\d+\.\d+$/.test(app.getVersion())
         ? 'production'
         : 'development',
     OTTO_PUBLIC_URL: engineOrigin,
@@ -1045,8 +1287,10 @@ async function startEngine({ runtime, signal }) {
   });
   engine = child;
   child.on('message', (message) => {
-    if (engine === child && message?.type === 'otto-ready' && message.port === port)
+    if (engine === child && message?.type === 'otto-ready' && message.port === port) {
       engineBound = true;
+      if (typeof message.setupId === 'string') importedSetupId = message.setupId;
+    }
   });
   child.stdout?.resume();
   let diagnostics = '';
@@ -1072,8 +1316,11 @@ async function startEngine({ runtime, signal }) {
     engineOrigin = '';
     engineBound = false;
     authToken = '';
-    for (const window of engineWindows) if (!window.isDestroyed()) window.destroy();
-    engineWindows.clear();
+    if (!setupEngine) {
+      for (const window of engineWindows) if (!window.isDestroyed()) window.destroy();
+      engineWindows.clear();
+    }
+    setupEngine?.postMessage({ type: 'otto-setup-runtime', phase: 'error' });
     if (!quitting && !closingEngine) {
       update({
         phase: 'error',
@@ -1139,7 +1386,9 @@ async function prepare(options = {}) {
 async function warmRuntime(options = {}) {
   try {
     await lifecycle.warmup({ retry: options?.retry === true });
+    setupEngine?.postMessage({ type: 'otto-setup-runtime', phase: 'ready' });
   } catch (error) {
+    setupEngine?.postMessage({ type: 'otto-setup-runtime', phase: 'error' });
     void writeDiagnostic(error.message).catch(() => {});
   }
   return status;
@@ -1190,6 +1439,7 @@ async function importRuntime() {
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
+  if (testInstall) process.on('SIGTERM', () => app.quit());
   app.on('second-instance', () => showEngine());
   app.on('activate', () => showEngine());
   app.on('window-all-closed', () => {});
@@ -1204,7 +1454,12 @@ else {
   void app
     .whenReady()
     .then(async () => {
-      if (app.isPackaged && process.platform === 'darwin' && !app.isInApplicationsFolder()) {
+      if (
+        app.isPackaged &&
+        !testInstall &&
+        process.platform === 'darwin' &&
+        !app.isInApplicationsFolder()
+      ) {
         const { response } = await dialog.showMessageBox({
           message: 'Move Otto to your Applications folder?',
           detail: 'Otto can update itself only from Applications.',
@@ -1221,7 +1476,7 @@ else {
           }
         }
       }
-      if (app.isPackaged && ['darwin', 'win32'].includes(process.platform)) {
+      if (app.isPackaged && !testInstall && ['darwin', 'win32'].includes(process.platform)) {
         const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
         const windows = process.platform === 'win32';
         if (windows) await rm(windowsUpdates, { recursive: true, force: true }).catch(() => {});
@@ -1284,13 +1539,13 @@ else {
           details.frame?.processId === main.processId &&
           trustedAppURL(main.url);
         if (
-          engineBound &&
-          engineOrigin &&
-          new URL(details.url).origin === engineOrigin &&
+          ((engineBound && new URL(details.url).origin === engineOrigin) ||
+            (earlyBound && new URL(details.url).origin === earlyOrigin)) &&
           window &&
           ((details.resourceType === 'mainFrame' && trustedAppURL(details.url)) || trustedFrame)
         )
-          headers['x-otto-desktop-token'] = authToken;
+          headers['x-otto-desktop-token'] =
+            new URL(details.url).origin === earlyOrigin ? earlyToken : authToken;
         callback({ requestHeaders: headers });
       });
       const image = nativeImage.createFromPath(join(desktopRoot, 'main', 'trayTemplate.png'));
@@ -1358,7 +1613,7 @@ else {
       ipcMain.handle('otto:settings:save', async (event, value) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         const allowed = ['theme', 'notifications', 'launchAtLogin'];
-        if (isSetup(event)) allowed.push('onboardingCompleted');
+        if (isSetup(event) && onboardingCompleted) allowed.push('onboardingCompleted');
         if (
           !value ||
           typeof value !== 'object' ||
@@ -1387,9 +1642,15 @@ else {
           update({ message: 'Ready.' });
         return readDesktopSettings();
       });
-      ipcMain.handle('otto:prepare', (event, options) => {
+      ipcMain.handle('otto:prepare', async (event, options) => {
         allowSetup(event);
         replayingOnboarding = false;
+        if (!onboardingCompleted && !earlyCompleting) {
+          void warmRuntime(options);
+          await startEarlySetup();
+          if (earlyBound && status.runtime.phase !== 'error') showEngine();
+          return status;
+        }
         return prepare(options);
       });
       ipcMain.handle('otto:runtime:warm', (event, options) => {
@@ -1458,11 +1719,23 @@ else {
         const saved = await settings.get();
         onboardingCompleted = saved.onboardingCompleted;
         applyPreferences(saved);
+        const pendingSetup = await stat(join(profileRoot, 'onboarding', 'pending')).then(
+          () => true,
+          (error) => {
+            if (error.code === 'ENOENT') return false;
+            throw error;
+          },
+        );
         const onboarding = replayingOnboarding || !saved.onboardingCompleted;
         guidedStartup = onboarding;
-        showSettings('general', onboarding ? 'onboarding' : 'settings');
-        void warmRuntime();
-        if (!replayingOnboarding && saved.onboardingCompleted) void prepare();
+        if (pendingSetup || !saved.onboardingCompleted) {
+          void warmRuntime();
+          await startEarlySetup();
+        } else {
+          showSettings('general', onboarding ? 'onboarding' : 'settings');
+          void warmRuntime();
+          if (!replayingOnboarding && saved.onboardingCompleted) void prepare();
+        }
       } catch (error) {
         showSettings('general', 'onboarding');
         update({ phase: 'error', message: bounded(error.message), error: bounded(error.message) });

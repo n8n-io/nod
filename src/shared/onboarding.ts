@@ -3,6 +3,22 @@ import { noteChars } from './memory.ts';
 export const onboardingSteps = ['welcome', 'brain', 'email', 'about', 'telegram', 'open'] as const;
 export const onboardingVersion = 2;
 export type OnboardingStep = (typeof onboardingSteps)[number];
+export type OnboardingInterview = {
+  answers: string[];
+  turns: Array<{ ack: string[]; question: string }>;
+};
+export type DesktopSetupState = {
+  version: number;
+  step: OnboardingStep;
+  about?: OnboardingInterview;
+  runtime: { phase: 'preparing' | 'ready' | 'error'; message: string };
+  completed: boolean;
+  completing?: boolean;
+};
+export type DesktopSetupUpdate = {
+  step?: OnboardingStep;
+  about?: OnboardingInterview;
+};
 export const interviewLabels = ['Working on', 'Aiming for', 'Take off your plate'] as const;
 export const interviewAnswerChars =
   noteChars - Math.max(...interviewLabels.map((label) => `${label}: `.length));

@@ -23,6 +23,7 @@ export function createAccountSession(options: {
   start?(ownerId: string, name?: string): Promise<void>;
   traces?: boolean;
   onTraces?(enabled: boolean): void;
+  desktopSetup?: boolean;
 }) {
   const origin = new URL(options.origin).origin;
   const user = options.localUser;
@@ -64,6 +65,7 @@ export function createAccountSession(options: {
   async function response(): Promise<SessionResponse> {
     const account = await readAccount();
     return {
+      ...(options.desktopSetup ? { desktopSetup: true } : {}),
       user: { ...user, name: account.displayName ?? user.name },
       settings: {
         theme: account.theme,

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { run } from './release-tools.mjs';
+import { run, verifyDesktopSetupEntry } from './release-tools.mjs';
 import { assetHash } from '../runtime/assets.mjs';
 import { windowsEnvironment } from '../runtime/windows.mjs';
 
@@ -31,6 +31,7 @@ try {
   await run(join(alone, 'Otto-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
   const application = join(installation, 'Otto.exe');
   const engine = join(installation, 'resources/engine');
+  await verifyDesktopSetupEntry(application, engine);
   const archive = join(engine, 'windows-runtime/guest.tar.gz');
   await assert.rejects(stat(archive), { code: 'ENOENT' });
   const { devDependencies } = JSON.parse(

@@ -5,7 +5,7 @@ import { createApplication, createDefaultAdapters } from './composition.ts';
 
 let stopping = false;
 let closeApplication: (() => Promise<void>) | undefined;
-const { app } = await createApplication(createDefaultAdapters());
+const { app, desktopSetupId } = await createApplication(createDefaultAdapters());
 closeApplication = () => app.close();
 if (!desktopMode && process.env.NODE_ENV !== 'production') {
   const { createServer } = await import('vite');
@@ -82,7 +82,11 @@ const listeningPort = address && typeof address === 'object' ? address.port : po
 if (desktopMode)
   (
     process as NodeJS.Process & { parentPort?: { postMessage(message: unknown): void } }
-  ).parentPort?.postMessage({ type: 'otto-ready', port: listeningPort });
+  ).parentPort?.postMessage({
+    type: 'otto-ready',
+    port: listeningPort,
+    ...(desktopSetupId ? { setupId: desktopSetupId } : {}),
+  });
 else
   console.log(
     `Otto is ready at http://localhost:${listeningPort}/#access=${await accessKey(dataRoot)}`,

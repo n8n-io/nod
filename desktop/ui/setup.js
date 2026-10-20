@@ -1,11 +1,15 @@
 const desktop = window.ottoDesktop;
 const element = (id) => document.getElementById(id);
-let loading = new URLSearchParams(location.search).get('mode') === 'loading';
+const parameters = new URLSearchParams(location.search);
+const early = parameters.get('early') === 'true';
+let loading = parameters.get('mode') === 'loading';
 let initialized = false;
 let busy = false;
 let savingPreferences = false;
 let preferenceSave = Promise.resolve(true);
-let latestStatus = { phase: 'idle' };
+let latestStatus = parameters.has('unlocking')
+  ? { phase: 'starting', unlockingKeys: true, platform: parameters.get('unlocking') }
+  : { phase: 'idle' };
 
 function error(message = '', preparation = false) {
   const target = element(preparation ? 'preparation-error' : 'error');
@@ -38,6 +42,7 @@ function render() {
     return;
   }
   const runtime = latestStatus.runtime;
+  const unlocking = latestStatus.unlockingKeys;
   const failure =
     latestStatus.phase === 'error' || latestStatus.error
       ? latestStatus
@@ -50,20 +55,30 @@ function render() {
       ? runtime
       : latestStatus);
   const ready = latestStatus.phase === 'ready' && !failure;
-  element('heading').textContent = ready
-    ? 'Otto is ready'
+  element('heading').textContent = unlocking
+    ? 'Opening Otto'
+    : ready
+      ? 'Otto is ready'
+      : failure
+        ? 'Setup needs a moment'
+        : 'Getting Otto ready';
+  element('preparation-description').textContent = unlocking
+    ? latestStatus.platform === 'darwin'
+      ? 'If macOS asks, allow Otto to use your Keychain.'
+      : 'Opening your saved settings.'
+    : ready
+      ? 'Opening Otto.'
+      : 'Preparing your workspace and browser. The first launch can take a few minutes.';
+  element('status').textContent = unlocking
+    ? 'Opening secure setup…'
     : failure
-      ? 'Setup needs a moment'
-      : 'Getting Otto ready';
-  element('preparation-description').textContent = ready
-    ? 'Opening Otto.'
-    : 'Preparing your workspace and browser. The first launch can take a few minutes.';
-  element('status').textContent = failure ? '' : active.message || 'Preparing…';
+      ? ''
+      : active.message || 'Preparing…';
   const progress = element('progress-value');
   progress.classList.toggle('determinate', ready || Boolean(failure));
   progress.style.width = ready ? '100%' : failure ? '0%' : '';
   element('retry').hidden = !failure;
-  element('review-setup').hidden = !failure;
+  element('review-setup').hidden = !failure || early;
   element('install-wsl').hidden = !failure || !(failure.needsWsl || runtime?.needsWsl);
   element('install-wsl').disabled = busy;
   element('import-runtime').hidden =
@@ -163,6 +178,7 @@ element('import-runtime').addEventListener('click', async () => {
 });
 
 async function initialize() {
+  render();
   if (!desktop) return error('Open Otto to finish setup.');
   desktop.onStatus((value) => {
     latestStatus = value;

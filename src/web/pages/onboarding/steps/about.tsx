@@ -7,6 +7,7 @@ import {
   lastQuestion,
   type InterviewResponse,
   type InterviewSave,
+  type OnboardingInterview,
 } from '../../../../shared/onboarding';
 import { OttoGlyph, prefersReducedMotion, Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
@@ -17,7 +18,7 @@ import { Bubble, Footer, Messages, UserBubble, useReveal } from '../motion';
 import { prepareSuggestions, readStep, readStored, writeStored } from '../storage';
 
 type Turn = { ack: string[]; question: string };
-type Talk = { answers: string[]; turns: Turn[] };
+type Talk = OnboardingInterview;
 
 const first: Turn = {
   ack: [
@@ -56,8 +57,10 @@ function restore(): Talk {
   return { answers, turns: [first, ...saved.turns.slice(0, answers.length)] };
 }
 
-export function About({ arrived, onNext }: StepProps) {
-  const [{ answers, turns }, setTalk] = useState(restore);
+export function About({ arrived, onNext, onBack, interview }: StepProps) {
+  const [{ answers, turns }, setTalk] = useState(() =>
+    interview ? (interview.state ?? { answers: [], turns: [first] }) : restore(),
+  );
   const { data: apps } = usePageData<Connection[]>('/api/apps');
   const gmail = apps?.some((app) => app.slug === 'gmail' && app.status === 'connected');
   const [draft, setDraft] = useState('');
@@ -69,16 +72,19 @@ export function About({ arrived, onNext }: StepProps) {
   const [waited, setWaited] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const chat = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const stuck = useRef(true);
+  const pendingTurn = useRef<{ count: number; turn: Turn } | null>(null);
+  const savingAnswer = useRef(false);
   const index = turns.length - 1;
   const thinking = turns.length === answers.length;
   const wrapped = turns.length === 4;
 
   useEffect(() => {
-    writeStored('about', { owner: owner(), answers, turns: turns.slice(1) });
+    if (!interview) writeStored('about', { owner: owner(), answers, turns: turns.slice(1) });
   }, [answers, turns]);
 
   useEffect(() => {
@@ -87,26 +93,36 @@ export function About({ arrived, onNext }: StepProps) {
     const controller = new AbortController();
     const started = Date.now();
     const next: Promise<Turn> =
-      count === 3
-        ? wait(1000).then(() => wrapUp)
-        : api<InterviewResponse>('/api/onboarding/interview', {
-            method: 'POST',
-            body: JSON.stringify({ answers }),
-            signal: controller.signal,
-          })
-            .then((reply) => ({ ack: reply.ack ? [reply.ack] : [], question: reply.question }))
-            .catch(() => scripted[count]);
-    void next.then(async (turn) => {
-      await wait(Math.max(0, 700 - (Date.now() - started)));
-      if (controller.signal.aborted) return;
-      setTalk((talk) =>
-        talk.answers.length === count
-          ? { ...talk, turns: [...talk.turns.slice(0, count), turn] }
-          : talk,
-      );
-    });
+      pendingTurn.current?.count === count
+        ? Promise.resolve(pendingTurn.current.turn)
+        : count === 3
+          ? wait(1000).then(() => wrapUp)
+          : api<InterviewResponse>('/api/onboarding/interview', {
+              method: 'POST',
+              body: JSON.stringify({ answers }),
+              signal: controller.signal,
+            })
+              .then((reply) => ({ ack: reply.ack ? [reply.ack] : [], question: reply.question }))
+              .catch((cause) => {
+                if (interview) throw cause;
+                return scripted[count];
+              });
+    void next
+      .then(async (turn) => {
+        await wait(Math.max(0, 700 - (Date.now() - started)));
+        if (controller.signal.aborted) return;
+        pendingTurn.current = { count, turn };
+        const talk = { answers, turns: [...turns.slice(0, count), turn] };
+        await interview?.save(talk);
+        if (controller.signal.aborted) return;
+        pendingTurn.current = null;
+        setTalk((current) => (current.answers.length === count ? talk : current));
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) setError(errorMessage(cause));
+      });
     return () => controller.abort();
-  }, [answers]);
+  }, [answers, retry]);
 
   useEffect(() => {
     if (introDone && !thinking && !wrapped) input.current?.focus({ preventScroll: true });
@@ -132,25 +148,50 @@ export function About({ arrived, onNext }: StepProps) {
     box.dataset.top = String(box.scrollTop < 1);
   }
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || thinking || wrapped) return;
-    setDraft('');
-    setShown(false);
-    setWaited(true);
-    stuck.current = true;
-    setTalk({ answers: [...answers, text], turns });
+    if (!text || thinking || wrapped || savingAnswer.current) return;
+    savingAnswer.current = true;
+    setSaving(true);
+    setError('');
+    const talk = { answers: [...answers, text], turns };
+    try {
+      await interview?.save(talk);
+      setDraft('');
+      setShown(false);
+      setWaited(true);
+      stuck.current = true;
+      setTalk(talk);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      savingAnswer.current = false;
+      setSaving(false);
+    }
   }
 
-  function restart() {
+  async function restart() {
+    if (savingAnswer.current) return;
+    savingAnswer.current = true;
+    setSaving(true);
     setError('');
-    setShown(false);
-    setFresh(true);
-    setWaited(false);
-    stuck.current = true;
-    writeStored('suggestions', false);
-    setTalk({ answers: [], turns: [first] });
+    try {
+      const talk = { answers: [], turns: [first] };
+      await interview?.save(talk);
+      setShown(false);
+      setFresh(true);
+      setWaited(false);
+      stuck.current = true;
+      pendingTurn.current = null;
+      writeStored('suggestions', false);
+      setTalk(talk);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      savingAnswer.current = false;
+      setSaving(false);
+    }
   }
 
   async function save() {
@@ -163,13 +204,19 @@ export function About({ arrived, onNext }: StepProps) {
       onNext();
     } catch (cause) {
       setError(errorMessage(cause));
+    } finally {
       setSaving(false);
     }
   }
 
   const said = (turn: Turn, at: number) => [
-    ...turn.ack.map((text) => <Bubble data-analytics-private={at > 0 || undefined}>{text}</Bubble>),
-    <Bubble className="ob-about-question" data-analytics-private={at > 0 || undefined}>
+    ...turn.ack.map((text) => (
+      <Bubble data-analytics-private={!!interview || at > 0 || undefined}>{text}</Bubble>
+    )),
+    <Bubble
+      className="ob-about-question"
+      data-analytics-private={!!interview || at > 0 || undefined}
+    >
       {turn.question}
     </Bubble>,
   ];
@@ -227,7 +274,7 @@ export function About({ arrived, onNext }: StepProps) {
       </div>
       {!wrapped && (
         <Rise show={introDone} className="ob-about-compose">
-          <form className="composer ob-composer" onSubmit={submit}>
+          <form className="composer ob-composer" onSubmit={(event) => void submit(event)}>
             <input
               ref={input}
               value={draft}
@@ -236,6 +283,7 @@ export function About({ arrived, onNext }: StepProps) {
               aria-label="Your answer"
               autoComplete="off"
               maxLength={interviewAnswerChars}
+              disabled={saving}
               data-analytics-private
             />
             <div className="composer-tools">
@@ -254,7 +302,7 @@ export function About({ arrived, onNext }: StepProps) {
                 size="icon"
                 className="send-button"
                 aria-label="Send"
-                disabled={!draft.trim() || thinking}
+                disabled={!draft.trim() || thinking || saving}
               >
                 <ArrowUp size={18} aria-hidden="true" />
               </Button>
@@ -268,17 +316,33 @@ export function About({ arrived, onNext }: StepProps) {
       {wrapped ? (
         <Footer
           show={shown}
-          onBack={restart}
+          onBack={() => void restart()}
           backLabel="Change my answers"
           onNext={() => void save()}
           busy={saving}
         />
       ) : (
-        arrived === 'back' && !answers.length && <Footer onNext={onNext} />
+        !interview && arrived === 'back' && !answers.length && <Footer onNext={onNext} />
       )}
       {error && (
-        <p className="ob-about-error" role="alert">
+        <p className="ob-about-error" role="alert" data-analytics-private>
           {error}
+          {thinking && interview && (
+            <>
+              <Button variant="ghost" disabled={saving} onClick={onBack}>
+                Back
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setError('');
+                  setRetry((value) => value + 1);
+                }}
+              >
+                Try again
+              </Button>
+            </>
+          )}
         </p>
       )}
     </section>

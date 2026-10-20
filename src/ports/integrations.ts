@@ -15,6 +15,7 @@ export interface IntegrationAccessProvider {
     origin: string,
     challenge: string,
     signal?: AbortSignal,
+    native?: { returnPath: string },
   ): Promise<IntegrationAccessAttempt>;
   pollAccess(id: string, signal?: AbortSignal): Promise<IntegrationAccessProgress>;
   completeAccess(

@@ -808,6 +808,209 @@ test('server addresses keep host and port, add http and refuse other schemes, si
   );
 });
 
+describe('desktop model setup', () => {
+  async function fixture(t: import('node:test').TestContext) {
+    const { createSetupModels } = await import('../src/server/setup-models.ts');
+    const { agentModels } = await import('../src/shared/model-defaults.ts');
+    const values = new Map<string, unknown>();
+    const journal: import('../src/ports/setup.ts').SetupJournal = {
+      async read<T>(section: string) {
+        return structuredClone(values.get(section)) as T | undefined;
+      },
+      async update<T>(section: string, change: (current: T | undefined) => T) {
+        const next = change(structuredClone(values.get(section)) as T | undefined);
+        values.set(section, structuredClone(next));
+        return structuredClone(next);
+      },
+    };
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) };
+    let catalogAvailable = true;
+    let refreshes = 0;
+    const backend: import('../src/ports/models.ts').ModelBackend = {
+      async catalog(provider) {
+        if (!catalogAvailable) throw new Error('fixture-catalog-unavailable');
+        return [
+          {
+            choice: {
+              id: agentModels[provider] ?? 'fixture-local',
+              name: 'Fixture model',
+              efforts: ['off', 'high'],
+              images: false,
+              contextWindow: 32000,
+            },
+            spec: { id: agentModels[provider], provider },
+          },
+        ];
+      },
+      authorize({ redirectUri }) {
+        const state = randomBytes(24).toString('base64url');
+        return {
+          url: `https://auth.example.invalid/?state=${state}`,
+          state,
+          secret: { redirectUri },
+        };
+      },
+      async exchange() {
+        return { type: 'api_key', key: 'fixture-router-key' };
+      },
+      async signIn({ signal }) {
+        const state = randomBytes(24).toString('base64url');
+        let resolve!: (credential: import('../src/ports/models.ts').ModelCredential) => void;
+        let reject!: (error: Error) => void;
+        const result = new Promise<import('../src/ports/models.ts').ModelCredential>((yes, no) => {
+          resolve = yes;
+          reject = no;
+        });
+        signal.addEventListener('abort', () => reject(new Error('fixture-cancelled')), {
+          once: true,
+        });
+        return {
+          url: `https://auth.example.invalid/?state=${state}`,
+          state,
+          result,
+          complete(callback) {
+            assert.equal(callback.searchParams.get('state'), state);
+            resolve({
+              type: 'oauth',
+              access: 'fixture-access',
+              refresh: 'fixture-refresh',
+              expires: Date.now() - 1,
+              accountId: 'fixture-account',
+            });
+          },
+        };
+      },
+      async refresh(current) {
+        if (current.type !== 'oauth') throw new Error('Expected OAuth.');
+        refreshes++;
+        return {
+          ...current,
+          access: 'fixture-next-access',
+          refresh: 'fixture-next-refresh',
+          expires: Date.now() + 3600000,
+        };
+      },
+    };
+    const services: ReturnType<typeof createSetupModels>[] = [];
+    async function create(ownerId = 'fixture-owner', selectedBackend = backend) {
+      const service = createSetupModels({
+        journal,
+        ownerId,
+        keyStore,
+        backend: selectedBackend,
+        origin: 'http://127.0.0.1:4310',
+      });
+      await service.initialize();
+      services.push(service);
+      return service;
+    }
+    t.after(async () => {
+      for (const service of services) await service.close();
+    });
+    return {
+      create,
+      backend,
+      journal,
+      keyStore,
+      values,
+      catalog: (available: boolean) => {
+        catalogAvailable = available;
+      },
+      refreshes: () => refreshes,
+    };
+  }
+
+  test('a connected model survives setup restart, stays private and freezes before engine handoff', async (t) => {
+    const f = await fixture(t);
+    const setup = await f.create();
+    const app = Fastify();
+    setup.register(app);
+    t.after(() => app.close());
+    const saved = await app.inject({
+      method: 'POST',
+      url: '/api/models/keys',
+      payload: { provider: 'openai', key: 'fixture-api-key' },
+    });
+    assert.equal(saved.statusCode, 200);
+    assert.equal(setup.configured, true);
+    assert.ok(!saved.body.includes('fixture-api-key'));
+    const id = setup.view().connections[0].id;
+    const restored = await f.create();
+    assert.deepEqual(restored.view(), setup.view());
+    await assert.rejects(f.create('fixture-other'), /does not belong/);
+    const access = await restored.resolve();
+    assert.equal((await access.read())?.type, 'api_key');
+    const transfer = await restored.transfer();
+    assert.equal(transfer.connections[0].id, id);
+    assert.equal(transfer.connections[0].credential.type, 'api_key');
+    await assert.rejects(restored.addKey('anthropic', 'fixture-late-key'), /setup has finished/);
+    await assert.rejects(access.read(), /setup has finished/);
+    assert.equal((await f.journal.read<typeof transfer>('models'))!.revision, transfer.revision);
+  });
+
+  test('early OAuth keeps a verified account through model-list failure and fences canceled callbacks', async (t) => {
+    const f = await fixture(t);
+    f.catalog(false);
+    const setup = await f.create();
+    const started = await setup.start('openai');
+    const callback = new URL(
+      `http://127.0.0.1:1455/auth/callback?state=${started.attempt}&code=fixture`,
+    );
+    await setup.complete(callback);
+    assert.equal(setup.signInStatus(started.attempt).status, 'connected');
+    assert.equal(setup.view().connections[0].status, 'loading');
+    assert.equal(setup.configured, false);
+    await assert.rejects(setup.complete(callback));
+    const restored = await f.create();
+    const id = restored.view().connections[0].id;
+    f.catalog(true);
+    await restored.refreshCatalog(id);
+    assert.equal(restored.configured, true);
+    const [a, b] = await Promise.all([restored.resolve(), restored.resolve()]);
+    const results = await Promise.all([a.read(), b.read()]);
+    assert.equal(f.refreshes(), 1);
+    assert.ok(
+      results.every((value) => value?.type === 'oauth' && value.access === 'fixture-next-access'),
+    );
+    const canceled = await restored.start('openai');
+    await restored.cancel(canceled.attempt);
+    await assert.rejects(
+      restored.complete(
+        new URL(`http://127.0.0.1:1455/auth/callback?state=${canceled.attempt}&code=fixture`),
+      ),
+    );
+    assert.equal(restored.view().connections.length, 1);
+  });
+
+  test('a key validation completing after handoff cannot replace the transferred setup', async (t) => {
+    const f = await fixture(t);
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const setup = await f.create('fixture-owner', {
+      ...f.backend,
+      async catalog(...args) {
+        entered();
+        await gate;
+        return f.backend.catalog(...args);
+      },
+    });
+    const pending = setup.addKey('openai', 'fixture-pending-key');
+    const rejected = assert.rejects(pending, /setup has finished/);
+    await started;
+    const transfer = await setup.transfer();
+    release();
+    await rejected;
+    assert.deepEqual(transfer.connections, []);
+    assert.deepEqual((await f.journal.read<typeof transfer>('models'))!.connections, []);
+  });
+});
+
 describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
   async function fixture(t: import('node:test').TestContext) {
     const { createModelService } = await import('../src/server/models.ts');
@@ -852,7 +1055,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       await root.query(`DROP SCHEMA ${schema} CASCADE`);
       await root.end();
     });
-    return { create, database, backend };
+    return { create, database, backend, keyStore };
   }
 
   function subscriptionCredential(expires = Date.now() + 3600000) {
@@ -896,6 +1099,82 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       };
     };
   }
+
+  test('desktop model import is atomic, keeps existing selection and refuses stale credentials', async (t) => {
+    const f = await fixture(t);
+    const { createSetupModels, importSetupModels } = await import('../src/server/setup-models.ts');
+    const { createAppGrantVault } = await import('../src/server/vault-app-grants.ts');
+    const owner = await f.create('fixture-owner');
+    await owner.addKey('openai', 'fixture-existing-key');
+    const selected = owner.view().selection;
+    let saved: unknown;
+    const journal: import('../src/ports/setup.ts').SetupJournal = {
+      async read<T>() {
+        return structuredClone(saved) as T | undefined;
+      },
+      async update<T>(_section: string, change: (value: T | undefined) => T) {
+        saved = structuredClone(change(structuredClone(saved) as T | undefined));
+        return structuredClone(saved) as T;
+      },
+    };
+    const setup = createSetupModels({
+      journal,
+      ownerId: 'fixture-owner',
+      keyStore: f.keyStore,
+      backend: f.backend,
+      origin: 'http://127.0.0.1:4310',
+    });
+    await setup.initialize();
+    const id = await setup.addKey('openai', 'fixture-setup-key');
+    const transfer = await setup.transfer();
+    const client = await f.database.connect();
+    try {
+      await client.query('BEGIN');
+      await importSetupModels(client, { ownerId: 'fixture-owner', keyStore: f.keyStore, transfer });
+      await client.query('ROLLBACK');
+      assert.equal(
+        (await client.query('SELECT id FROM model_connections WHERE id=$1', [id])).rowCount,
+        0,
+      );
+      assert.equal(
+        (await client.query('SELECT id FROM vault_app_grants WHERE id=$1', [id])).rowCount,
+        0,
+      );
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await client.query('BEGIN');
+        await importSetupModels(client, {
+          ownerId: 'fixture-owner',
+          keyStore: f.keyStore,
+          transfer,
+        });
+        await client.query('COMMIT');
+      }
+      await owner.reload();
+      assert.deepEqual(owner.view().selection, selected);
+      assert.equal(owner.view().connections.length, 2);
+      const stored = JSON.stringify((await client.query('SELECT * FROM vault_app_grants')).rows);
+      assert.ok(!stored.includes('fixture-setup-key'));
+      await assert.rejects(
+        importSetupModels(client, { ownerId: 'fixture-other', keyStore: f.keyStore, transfer }),
+        /does not belong/,
+      );
+      const vault = await createAppGrantVault(f.database, {
+        ownerId: 'fixture-owner',
+        keyStore: f.keyStore,
+      });
+      await vault.put(id, JSON.stringify({ type: 'api_key', key: 'fixture-newer-key' }));
+      await client.query('BEGIN');
+      await assert.rejects(
+        importSetupModels(client, { ownerId: 'fixture-owner', keyStore: f.keyStore, transfer }),
+        /changed since setup/,
+      );
+      await client.query('ROLLBACK');
+      assert.equal(JSON.parse((await vault.read(id)).value).key, 'fixture-newer-key');
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
 
   test('saved keys stay encrypted and owner-scoped; a removed connection cannot supply a later turn', async (t) => {
     const f = await fixture(t);
@@ -1329,4 +1608,600 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(owner.view().connections.length, 2);
     assert.deepEqual(owner.view().selection, selection);
   });
+});
+
+describe('desktop setup journal', () => {
+  async function fixture(t: import('node:test').TestContext) {
+    const { createSetupJournal } = await import('../src/server/setup-journal.ts');
+    const root = await mkdtemp(join(tmpdir(), 'otto-setup-journal-'));
+    const secret = randomBytes(32);
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => Buffer.from(secret) };
+    t.after(() => rm(root, { recursive: true, force: true }));
+    return {
+      root,
+      keyStore,
+      create: (ownerId = 'fixture-owner') => createSetupJournal({ root, ownerId, keyStore }),
+    };
+  }
+
+  test('encrypted progress is owner-bound, survives restart and is removed only after matching acknowledgement', async (t) => {
+    const f = await fixture(t);
+    const journal = await f.create();
+    await Promise.all(
+      Array.from({ length: 8 }, () =>
+        journal.update<number>('counter', (value) => (value ?? 0) + 1),
+      ),
+    );
+    await journal.update('private', () => ({
+      key: 'fixture-private-key',
+      answer: 'fixture-private-answer',
+    }));
+    assert.equal(await journal.read('counter'), 8);
+    const bytes = await readFile(join(f.root, 'onboarding', 'pending'), 'utf8');
+    assert.ok(!bytes.includes('fixture-private-key'));
+    assert.ok(!bytes.includes('fixture-private-answer'));
+    await journal.close();
+    await assert.rejects(f.create('other-owner'));
+    const restored = await f.create();
+    assert.deepEqual(await restored.read('private'), {
+      key: 'fixture-private-key',
+      answer: 'fixture-private-answer',
+    });
+    const snapshot = await restored.freeze();
+    await assert.rejects(restored.update('counter', () => 0));
+    await assert.rejects(restored.discard(randomUUID()));
+    assert.equal(await restored.read('counter'), 8);
+    await restored.discard(snapshot.id);
+    await assert.rejects(lstat(join(f.root, 'onboarding', 'pending')), { code: 'ENOENT' });
+    await restored.close();
+  });
+
+  test(
+    'a failed directory flush cannot lose acknowledged progress or overwrite a published revision',
+    { skip: process.platform === 'win32' },
+    async (t) => {
+      const f = await fixture(t);
+      const rootInfo = await lstat(f.root);
+      const handle = await open(f.root, 'r');
+      const prototype = Object.getPrototypeOf(handle);
+      const sync = prototype.sync;
+      await handle.close();
+      let fail: 'root' | 'journal' | undefined = 'root';
+      t.mock.method(prototype, 'sync', async function (this: typeof handle) {
+        const info = await this.stat();
+        const isRoot = info.dev === rootInfo.dev && info.ino === rootInfo.ino;
+        if (info.isDirectory() && ((fail === 'root' && isRoot) || (fail === 'journal' && !isRoot)))
+          throw Object.assign(new Error('Synthetic flush failure'), { code: 'EIO' });
+        return sync.call(this);
+      });
+      await assert.rejects(f.create(), { code: 'EIO' });
+      await assert.rejects(lstat(join(f.root, 'onboarding', 'pending')), { code: 'ENOENT' });
+      fail = undefined;
+      const journal = await f.create();
+      await journal.update('value', () => 'before');
+      fail = 'journal';
+      await assert.rejects(
+        journal.update('value', () => 'published'),
+        { code: 'EIO' },
+      );
+      fail = undefined;
+      await assert.rejects(journal.update('followup', () => 'next'));
+      await journal.close();
+      const restored = await f.create();
+      assert.equal(await restored.read('value'), 'published');
+      assert.equal(await restored.read('followup'), undefined);
+      const snapshot = await restored.freeze();
+      fail = 'root';
+      await assert.rejects(restored.discard(snapshot.id), { code: 'EIO' });
+      fail = undefined;
+      await restored.discard(snapshot.id);
+      await restored.close();
+    },
+  );
+
+  test('failed unpublished writes leave no encrypted temporary files before retry or acknowledgement', async (t) => {
+    for (const operation of ['writeFile', 'sync']) {
+      await t.test(operation, async (t) => {
+        const f = await fixture(t);
+        const journal = await f.create();
+        t.after(() => journal.close());
+        await journal.update('private', () => 'fixture-before');
+        const directory = join(f.root, 'onboarding');
+        const before = await readFile(join(directory, 'pending'), 'utf8');
+        const snapshot = await journal.snapshot();
+        const handle = await open(join(directory, 'pending'), 'r');
+        const prototype = Object.getPrototypeOf(handle);
+        const original = prototype[operation];
+        await handle.close();
+        let fail = true;
+        t.mock.method(
+          prototype,
+          operation,
+          async function (this: typeof handle, ...args: unknown[]) {
+            if (fail && (await this.stat()).isFile())
+              throw Object.assign(new Error('Synthetic unpublished write failure'), {
+                code: 'EIO',
+              });
+            return original.apply(this, args);
+          },
+        );
+        await assert.rejects(
+          journal.update('private', () => 'fixture-interrupted'),
+          {
+            code: 'EIO',
+          },
+        );
+        assert.equal(await journal.read('private'), 'fixture-before');
+        assert.deepEqual(await journal.snapshot(), snapshot);
+        assert.equal(await readFile(join(directory, 'pending'), 'utf8'), before);
+        assert.deepEqual(await readdir(directory), ['pending']);
+        fail = false;
+        await journal.update('private', () => 'fixture-retried');
+        assert.equal(await journal.read('private'), 'fixture-retried');
+        const frozen = await journal.freeze();
+        await journal.discard(frozen.id);
+        await assert.rejects(lstat(directory), { code: 'ENOENT' });
+      });
+    }
+  });
+
+  test(
+    'unsafe journal directory aliases and permissions never redirect a setup write',
+    { skip: process.platform === 'win32' },
+    async (t) => {
+      for (const variant of ['symlink', 'public-directory']) {
+        await t.test(variant, async (t) => {
+          const f = await fixture(t);
+          const target = join(f.root, 'target');
+          await mkdir(target, { mode: 0o700 });
+          const directory = join(f.root, 'onboarding');
+          if (variant === 'symlink') await symlink(target, directory);
+          else await mkdir(directory, { mode: 0o755 });
+          await assert.rejects(async () => {
+            const journal = await f.create();
+            try {
+              await journal.update('private', () => 'fixture-private');
+            } finally {
+              await journal.close();
+            }
+          });
+          assert.deepEqual(await readdir(target), []);
+        });
+      }
+    },
+  );
+});
+
+describe('desktop setup handoff', () => {
+  async function fixture(t: import('node:test').TestContext) {
+    const { createDesktopSetup } = await import('../src/server/desktop-setup.ts');
+    const { createSetupModels } = await import('../src/server/setup-models.ts');
+    const { createSetupChannels } = await import('../src/server/setup-channels.ts');
+    const root = await mkdtemp(join(tmpdir(), 'otto-setup-api-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const key = randomBytes(32);
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => Buffer.from(key) };
+    const ownerId = 'fixture-desktop-owner';
+    const token = randomBytes(32).toString('base64url');
+    const port = 4387;
+    let finished = 0;
+    let callbacks = 0;
+    let adapterStarts = 0;
+    let busyCheck = async () => false;
+    let failTransfer = false;
+    const resumed: boolean[] = [];
+    let model!: ReturnType<typeof createSetupModels>;
+    const closed = new Set<Awaited<ReturnType<typeof createDesktopSetup>>>();
+    const backend: import('../src/ports/models.ts').ModelBackend = {
+      async catalog(provider) {
+        return [
+          {
+            choice: {
+              id: 'gpt-6.1-sol',
+              name: 'Fixture',
+              efforts: ['off'],
+              images: false,
+              contextWindow: 32000,
+            },
+            spec: { id: 'gpt-6.1-sol', provider },
+          },
+        ];
+      },
+      authorize() {
+        throw new Error('Unexpected authorization');
+      },
+      async signIn() {
+        throw new Error('Unexpected sign-in');
+      },
+      async exchange() {
+        throw new Error('Unexpected exchange');
+      },
+      async refresh(value) {
+        return value;
+      },
+    };
+    async function create() {
+      const setup = await createDesktopSetup({
+        root,
+        ownerId,
+        port,
+        token,
+        keyStore,
+        complete: () => {
+          finished++;
+        },
+        retry: () => {},
+        adapters: async (journal, resuming) => {
+          adapterStarts++;
+          resumed.push(resuming);
+          model = createSetupModels({
+            journal,
+            ownerId,
+            keyStore,
+            backend,
+            origin: `http://127.0.0.1:${port}`,
+          });
+          await model.initialize();
+          const channels = await createSetupChannels({
+            journal,
+            ownerId,
+            keyStore,
+            verifier: {
+              async verify() {
+                throw new Error('Unexpected channel verification');
+              },
+            },
+            apply: async () => {},
+          });
+          return {
+            models: model,
+            channels,
+            integrations: {
+              onSecrets: () => {},
+              busy: () => busyCheck(),
+              transfer: async () => {
+                if (failTransfer) throw new Error('Synthetic transfer failure');
+                return { ownerId, mode: 'otto', providerId: 'fixture', connections: [] };
+              },
+              close: async () => {},
+              register(app: import('fastify').FastifyInstance) {
+                app.get('/api/apps/callback', async () => {
+                  callbacks++;
+                  return { ok: true };
+                });
+              },
+            },
+            telegram: { close: async () => {}, channels: () => [], apply: async () => {} },
+            curator: {
+              id: 'fixture',
+              configured: true,
+              curate: async () => ({
+                ack: 'Fixture acknowledgement',
+                question: 'Fixture question?',
+              }),
+            },
+            traces: createModelTraces(),
+            analytics: undefined,
+          } as unknown as Awaited<
+            ReturnType<typeof import('../src/server/composition.ts').createDesktopSetupAdapters>
+          >;
+        },
+      });
+      closed.add(setup);
+      await setup.app.ready();
+      return setup;
+    }
+    t.after(async () => {
+      for (const setup of closed) await setup.app.close();
+    });
+    const request = (
+      setup: Awaited<ReturnType<typeof createDesktopSetup>>,
+      method: 'GET' | 'POST' | 'PATCH' | 'PUT',
+      url: string,
+      payload?: object,
+      extra: Record<string, string> = {},
+    ) =>
+      setup.app.inject({
+        method,
+        url,
+        payload,
+        headers: {
+          host: `127.0.0.1:${port}`,
+          origin: `http://127.0.0.1:${port}`,
+          'x-otto-desktop-token': token,
+          ...extra,
+        },
+      });
+    async function complete(setup: Awaited<ReturnType<typeof createDesktopSetup>>, submit = true) {
+      assert.equal(
+        (await request(setup, 'PATCH', '/api/account', { usageData: false })).statusCode,
+        200,
+      );
+      assert.equal(
+        (await request(setup, 'PATCH', '/api/desktop/setup', { step: 'brain' })).statusCode,
+        200,
+      );
+      assert.equal(
+        (
+          await request(setup, 'POST', '/api/models/keys', {
+            provider: 'openai',
+            key: 'fixture-desktop-model-key',
+          })
+        ).statusCode,
+        200,
+      );
+      for (const step of ['email', 'about'])
+        assert.equal(
+          (await request(setup, 'PATCH', '/api/desktop/setup', { step })).statusCode,
+          200,
+        );
+      assert.equal(
+        (
+          await request(setup, 'PUT', '/api/onboarding/interview', {
+            answers: ['A fixture project', 'A fixture goal', 'A fixture task'],
+          })
+        ).statusCode,
+        200,
+      );
+      for (const step of ['telegram', 'open'])
+        assert.equal(
+          (await request(setup, 'PATCH', '/api/desktop/setup', { step })).statusCode,
+          200,
+        );
+      if (submit)
+        assert.equal((await request(setup, 'POST', '/api/desktop/setup/complete')).statusCode, 202);
+    }
+    return {
+      root,
+      ownerId,
+      keyStore,
+      create,
+      request,
+      complete,
+      backend,
+      model: () => model,
+      callbacks: () => callbacks,
+      finished: () => finished,
+      adapterStarts: () => adapterStarts,
+      resumed,
+      setBusy: (value: typeof busyCheck) => {
+        busyCheck = value;
+      },
+      failTransfer: (value: boolean) => {
+        failTransfer = value;
+      },
+    };
+  }
+
+  test('the host setup API enforces desktop authentication and step prerequisites without database services', async (t) => {
+    const f = await fixture(t);
+    const setup = await f.create();
+    assert.equal(
+      (await f.request(setup, 'GET', '/api/session', undefined, { 'x-otto-desktop-token': '' }))
+        .statusCode,
+      401,
+    );
+    assert.equal(
+      (await f.request(setup, 'GET', '/api/session', undefined, { host: 'attacker.invalid' }))
+        .statusCode,
+      403,
+    );
+    assert.equal(
+      (
+        await f.request(
+          setup,
+          'PATCH',
+          '/api/account',
+          { usageData: true },
+          { origin: 'https://attacker.invalid' },
+        )
+      ).statusCode,
+      403,
+    );
+    assert.equal(
+      (
+        await f.request(setup, 'GET', '/api/apps/callback?state=bad', undefined, {
+          'x-otto-desktop-token': '',
+        })
+      ).statusCode,
+      401,
+    );
+    assert.equal(f.callbacks(), 0);
+    assert.equal((await f.request(setup, 'GET', '/api/session')).json().desktopSetup, true);
+    assert.equal((await f.request(setup, 'POST', '/api/desktop/setup/complete')).statusCode, 409);
+    assert.equal(
+      (await f.request(setup, 'PATCH', '/api/desktop/setup', { step: 'open' })).statusCode,
+      409,
+    );
+    assert.ok(
+      (await f.request(setup, 'PATCH', '/api/account', { onboardingCompleted: true })).statusCode >=
+        400,
+    );
+    assert.equal(
+      (await f.request(setup, 'GET', '/api/session')).json().settings.onboardingCompleted,
+      false,
+    );
+    await f.complete(setup);
+    assert.equal(f.finished(), 1);
+    const journalPath = join(f.root, 'onboarding', 'pending');
+    const encrypted = await readFile(journalPath, 'utf8');
+    assert.ok(!encrypted.includes('fixture-desktop-model-key'));
+    assert.ok(!encrypted.includes('fixture project'));
+    assert.equal(
+      (
+        await f.request(setup, 'POST', '/api/models/keys', {
+          provider: 'openai',
+          key: 'fixture-replacement-key',
+        })
+      ).statusCode,
+      409,
+    );
+    await setup.app.close();
+    const restored = await f.create();
+    assert.equal(f.adapterStarts(), 1);
+    await restored.resume();
+    assert.equal(f.finished(), 2);
+    assert.equal((await f.request(restored, 'GET', '/api/desktop/setup')).json().completing, true);
+  });
+
+  test('completion fences new writes before waiting for an in-flight status check', async (t) => {
+    const f = await fixture(t);
+    const setup = await f.create();
+    await f.complete(setup, false);
+    let release!: () => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.setBusy(async () => {
+      entered();
+      await barrier;
+      return false;
+    });
+    const finishing = f.request(setup, 'POST', '/api/desktop/setup/complete');
+    await waiting;
+    const writing = await f.request(setup, 'PATCH', '/api/preferences', { locale: 'pt-PT' });
+    release();
+    const completed = await finishing;
+    assert.equal(writing.statusCode, 409);
+    assert.equal(completed.statusCode, 202);
+  });
+
+  test('a partial handoff resumes its saved transfer and rejects edits until completion', async (t) => {
+    const f = await fixture(t);
+    const setup = await f.create();
+    await f.complete(setup, false);
+    const selected = f.model().view().selection;
+    f.failTransfer(true);
+    assert.equal((await f.request(setup, 'POST', '/api/desktop/setup/complete')).statusCode, 503);
+    assert.equal(
+      (
+        await f.request(setup, 'POST', '/api/models/keys', {
+          provider: 'openai',
+          key: 'fixture-late-key',
+        })
+      ).statusCode,
+      409,
+    );
+    await setup.app.close();
+    f.failTransfer(false);
+    const resumed = await f.create();
+    assert.deepEqual(f.resumed, [false, true]);
+    assert.equal(
+      (await f.request(resumed, 'PATCH', '/api/preferences', { locale: 'pt-PT' })).statusCode,
+      409,
+    );
+    await resumed.resume();
+    assert.equal(f.finished(), 1);
+    assert.deepEqual(f.model().view().selection, selected);
+    assert.equal((await f.request(resumed, 'GET', '/api/desktop/setup')).json().completing, true);
+  });
+
+  test(
+    'a committed setup receipt prevents stale profile data restoring removed connections or calling providers again',
+    { skip: !process.env.TEST_DATABASE_URL },
+    async (t) => {
+      const f = await fixture(t);
+      const setup = await f.create();
+      await f.complete(setup);
+      await setup.app.close();
+      const schema = `test_setup_receipt_${randomUUID().replaceAll('-', '')}`;
+      const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+      await admin.query(`CREATE SCHEMA ${schema}`);
+      const database = new pg.Pool({
+        connectionString: process.env.TEST_DATABASE_URL,
+        options: `-c search_path=${schema}`,
+        max: 2,
+      });
+      t.after(async () => {
+        await database.end();
+        await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+        await admin.end();
+      });
+      const { createAccountStore } = await import('../src/server/account-store.ts');
+      const { createModelService } = await import('../src/server/models.ts');
+      const { createPostgresObjectStore } = await import('../src/server/object-storage.ts');
+      const { initializeIntegrationSchema } = await import('../src/server/integrations.ts');
+      const { importDesktopSetup } = await import('../src/server/setup-import.ts');
+      await createAccountStore(database).initialize();
+      const models = createModelService({
+        database,
+        ownerId: f.ownerId,
+        keyStore: f.keyStore,
+        backend: f.backend,
+        origin: 'http://127.0.0.1:4387',
+      });
+      await models.initialize();
+      t.after(() => models.close());
+      await createPostgresObjectStore({ database, ownerId: f.ownerId }).initialize();
+      await initializeIntegrationSchema(database);
+      await database.query(
+        `CREATE TABLE integration_keys(owner_id text PRIMARY KEY,vault_id uuid NOT NULL); CREATE TABLE preferences(owner_id text PRIMARY KEY,notification_rule text,time_zone text,quiet_start text,quiet_end text,quiet_hours_enabled boolean,locale text,hour_cycle text)`,
+      );
+      let calls = 0;
+      const provider = new Proxy(
+        { id: 'fixture', configurationId: undefined },
+        {
+          get(target, key) {
+            if (key in target) return target[key as keyof typeof target];
+            return () => {
+              calls++;
+              throw new Error('Unexpected provider call');
+            };
+          },
+        },
+      ) as unknown as import('../src/ports/integrations.ts').IntegrationProvider;
+      const options = {
+        root: f.root,
+        ownerId: f.ownerId,
+        database,
+        keyStore: f.keyStore,
+        managedProvider: provider,
+        ownProvider: provider,
+      };
+      await database.query(
+        `ALTER TABLE preferences ADD CONSTRAINT fixture_failure CHECK (owner_id <> 'fixture-desktop-owner')`,
+      );
+      await assert.rejects(importDesktopSetup(options));
+      for (const table of [
+        'model_connections',
+        'vault_app_grants',
+        'account_settings',
+        'private_objects',
+        'desktop_setup_receipts',
+      ])
+        assert.equal(
+          (await database.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count,
+          0,
+        );
+      await database.query('ALTER TABLE preferences DROP CONSTRAINT fixture_failure');
+      const id = await importDesktopSetup(options);
+      assert.equal(
+        (await database.query('SELECT count(*)::int AS count FROM model_connections')).rows[0]
+          .count,
+        1,
+      );
+      assert.equal(
+        (
+          await database.query(
+            'SELECT onboarding_completed FROM account_settings WHERE owner_id=$1',
+            [f.ownerId],
+          )
+        ).rows[0].onboarding_completed,
+        true,
+      );
+      await database.query('DELETE FROM model_connections');
+      await database.query('DELETE FROM vault_app_grants');
+      assert.equal(await importDesktopSetup(options), id);
+      assert.equal(
+        (await database.query('SELECT count(*)::int AS count FROM model_connections')).rows[0]
+          .count,
+        0,
+      );
+      assert.equal(calls, 0);
+    },
+  );
 });

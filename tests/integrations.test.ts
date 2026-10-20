@@ -10,11 +10,24 @@ import {
   webcrypto,
   type JsonWebKey,
 } from 'node:crypto';
-import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, stat, symlink } from 'node:fs/promises';
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { get as httpGet } from 'node:http';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
+import { runInNewContext } from 'node:vm';
+import { IDBFactory } from 'fake-indexeddb';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client';
@@ -42,6 +55,12 @@ import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
+import {
+  createSetupIntegrations,
+  importSetupIntegrations,
+  validateSetupIntegrations,
+} from '../src/server/setup-integrations.ts';
+import type { SetupJournal } from '../src/ports/setup.ts';
 import { noMailCheck } from '../src/server/integration-result.ts';
 import { cachedIcons } from '../src/server/link-previews.ts';
 import { createErrorRedactor } from '../src/server/redaction.ts';
@@ -78,6 +97,471 @@ function fakeProvider(session: IntegrationSession): IntegrationProvider {
     },
   };
 }
+
+async function earlyAppsFixture(t: TestContext, journal?: SetupJournal) {
+  const entries = new Map<string, unknown>();
+  const storage = journal ?? {
+    async read<T>(section: string): Promise<T | undefined> {
+      return structuredClone(entries.get(section)) as T | undefined;
+    },
+    async update<T>(section: string, change: (current: T | undefined) => T): Promise<T> {
+      const value = JSON.parse(
+        JSON.stringify(change(structuredClone(entries.get(section)) as T | undefined)),
+      ) as T;
+      entries.set(section, value);
+      return structuredClone(value);
+    },
+  };
+  const ownerId = randomUUID();
+  const calls: string[] = [];
+  let active = true;
+  let completingFails = false;
+  let ownKey: string | undefined;
+  let accountIndex = 0;
+  function provider(mode: 'otto' | 'own'): IntegrationProvider {
+    const result: IntegrationProvider = {
+      ...fakeProvider({
+        id: 'fixture',
+        authorize: async () => {
+          throw new Error('Unexpected session.');
+        },
+        search: async () => ({ tools: {}, suggestions: [] }),
+        execute: async () => {
+          throw new Error('No tools before setup completes.');
+        },
+      }),
+      id: 'composio',
+      get configured() {
+        return mode === 'otto' || Boolean(ownKey);
+      },
+      get configurationId() {
+        return mode === 'otto'
+          ? createHash('sha256').update('managed-fixture').digest('hex')
+          : ownKey
+            ? createHash('sha256').update(`direct:${ownKey}`).digest('hex')
+            : undefined;
+      },
+      supportedServices: ['gmail'],
+      supportsSubscriptions: [],
+      listServices: async () => [
+        { slug: 'gmail', name: 'Gmail', description: 'Synthetic mailbox' },
+      ],
+      setApiKey(value) {
+        ownKey = value;
+      },
+      verifyApiKey: async (value) => value === 'synthetic-project-key',
+      async createSession() {
+        calls.push(`${mode}:session`);
+        return {
+          id: 'setup-session',
+          async authorize(service, callback) {
+            calls.push(`${mode}:authorize:${service}`);
+            return {
+              accountId: `fixture-${++accountIndex}`,
+              url: `https://connect.composio.dev/fixture?state=${new URL(callback).searchParams.get('state')}`,
+            };
+          },
+          search: async () => ({ tools: {}, suggestions: [] }),
+          execute: async () => {
+            throw new Error('No tools during setup.');
+          },
+        };
+      },
+      async deleteSession() {
+        calls.push(`${mode}:delete-session`);
+      },
+      async parseCallback(raw) {
+        calls.push(`${mode}:complete`);
+        if (completingFails) throw new Error('Synthetic response lost after completion.');
+        const query = raw as Record<string, string>;
+        return {
+          state: query.state,
+          accountId: query.account_ref,
+          success: query.outcome === 'ok',
+        };
+      },
+      async inspectAccount(id, owner, inspection) {
+        calls.push(`${mode}:inspect:${id}`);
+        assert.equal(owner, ownerId);
+        assert.equal(inspection?.verifyOwner, true);
+        return { active, service: 'gmail', accountEmail: 'person@example.test' };
+      },
+      async deleteAccount(id, owner) {
+        assert.equal(owner, ownerId);
+        calls.push(`${mode}:delete:${id}`);
+      },
+    };
+    if (mode === 'otto')
+      result.authorize = async (_owner, service, callback) => {
+        calls.push(`${mode}:authorize:${service}`);
+        return {
+          accountId: `fixture-${++accountIndex}`,
+          url: `https://proxy.example.test/v1/connect/pair?state=${new URL(callback).searchParams.get('state')}`,
+          verificationSecret: randomBytes(32).toString('base64url'),
+        };
+      };
+    return result;
+  }
+  const managedProvider = provider('otto');
+  const ownProvider = provider('own');
+  const access = createIntegrationAccess({
+    origin: 'http://127.0.0.1:4310',
+    desktop: true,
+    proxy: {
+      origin: 'https://proxy.example.test',
+      accessStatus: async () => ({ state: 'enabled', email: 'person@example.test' }),
+      startAccess: async () => {
+        throw new Error('Unexpected sign-in request.');
+      },
+      pollAccess: async () => ({ status: 'authorized' }),
+      completeAccess: async () => ({ state: 'enabled', email: 'person@example.test' }),
+      cancelAccess: async () => ({ cancelled: true }),
+      revokeAccess: async () => ({ state: 'revoked', email: null }),
+    },
+  });
+  const settings = {
+    journal: storage,
+    ownerId,
+    baseUrl: 'http://127.0.0.1:4310',
+    access,
+    managedProvider,
+    ownProvider,
+  };
+  const service = await createSetupIntegrations(settings);
+  const app = Fastify();
+  service.register(app);
+  await app.ready();
+  t.after(async () => {
+    await service.close();
+    await app.close();
+  });
+  async function connect() {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/apps/gmail/connect',
+      payload: { returnTo: 'window' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const result = response.json<{ url: string; attempt: string }>();
+    const callback = `/api/apps/callback?${new URLSearchParams({ state: result.attempt, account_ref: `fixture-${accountIndex}`, outcome: 'ok' })}`;
+    return { ...result, callback };
+  }
+  return {
+    app,
+    service,
+    settings,
+    journal: storage,
+    ownerId,
+    calls,
+    connect,
+    setActive(value: boolean) {
+      active = value;
+    },
+    failCompletion() {
+      completingFails = true;
+    },
+  };
+}
+
+test('early app setup completes owned consent without a database and fences handoff and callback replay', async (t) => {
+  const f = await earlyAppsFixture(t);
+  const attempt = await f.connect();
+  assert.equal(await f.service.busy(), true);
+  await assert.rejects(f.service.transfer(), /Finish or cancel/);
+  const changed = await f.app.inject({
+    method: 'PUT',
+    url: '/api/integrations/key',
+    payload: { key: 'synthetic-project-key' },
+  });
+  assert.equal(changed.statusCode, 409);
+  const first = await f.app.inject(attempt.callback);
+  assert.equal(first.statusCode, 302);
+  assert.equal(new URL(first.headers.location!).searchParams.get('connection'), 'connected');
+  await f.app.inject(attempt.callback);
+  assert.equal(f.calls.filter((call) => call === 'otto:complete').length, 1);
+  assert.equal(
+    f.calls.some((call) => call.includes('session')),
+    false,
+  );
+  const setup = await f.app.inject({
+    method: 'POST',
+    url: '/api/apps/setup-status',
+    payload: {
+      hashes: [createHash('sha256').update(attempt.url).digest('hex')],
+      pairingUrl: attempt.url,
+    },
+  });
+  assert.equal(setup.json().completed.length, 1);
+  const transfer = await f.service.transfer();
+  assert.equal(transfer.connections.length, 1);
+  assert.equal(transfer.connections[0].accountEmail, 'person@example.test');
+  assert.equal(transfer.connections[0].verificationSecret, undefined);
+  assert.equal(
+    (await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect', payload: {} }))
+      .statusCode,
+    409,
+  );
+  assert.equal(
+    (
+      await f.app.inject({
+        method: 'POST',
+        url: '/api/integrations/access/start',
+        payload: { native: true },
+      })
+    ).statusCode,
+    409,
+  );
+  const invalid = { ...transfer, ownerId: 'another-profile' };
+  await assert.rejects(validateSetupIntegrations(invalid, f.settings), /different profile/);
+  f.setActive(false);
+  await assert.rejects(validateSetupIntegrations(transfer, f.settings), /no longer available/);
+});
+
+test('early personal keys remain direct and failed key saves preserve existing connections', async (t) => {
+  const f = await earlyAppsFixture(t);
+  const save = await f.app.inject({
+    method: 'PUT',
+    url: '/api/integrations/key',
+    payload: { key: 'synthetic-project-key' },
+  });
+  assert.equal(save.statusCode, 200, save.body);
+  assert.equal(save.json().mode, 'own');
+  assert.equal(save.body.includes('synthetic-project-key'), false);
+  const attempt = await f.connect();
+  await f.app.inject(attempt.callback);
+  const before = await f.service.list();
+  const calls = [...f.calls];
+  const invalid = await f.app.inject({
+    method: 'PUT',
+    url: '/api/integrations/key',
+    payload: { key: 'invalid-synthetic-key' },
+  });
+  assert.equal(invalid.statusCode, 400);
+  assert.deepEqual(await f.service.list(), before);
+  assert.deepEqual(f.calls, calls);
+  assert.deepEqual(f.calls.slice(0, 3), [
+    'own:session',
+    'own:authorize:gmail',
+    'own:delete-session',
+  ]);
+  assert.equal(
+    f.calls.some((call) => call.startsWith('otto:')),
+    false,
+  );
+  const transfer = await f.service.transfer();
+  assert.equal(transfer.mode, 'own');
+  assert.equal(transfer.apiKey, 'synthetic-project-key');
+  assert.equal(transfer.connections.length, 1);
+});
+
+test('early completion failures and cancelled attempts never exchange their callback again', async (t) => {
+  const f = await earlyAppsFixture(t);
+  const attempt = await f.connect();
+  f.failCompletion();
+  const failed = await f.app.inject(attempt.callback);
+  assert.equal(new URL(failed.headers.location!).searchParams.get('connection'), 'failed');
+  await f.app.inject(attempt.callback);
+  const restarted = await createSetupIntegrations(f.settings);
+  const app = Fastify();
+  restarted.register(app);
+  await app.ready();
+  t.after(async () => {
+    await restarted.close();
+    await app.close();
+  });
+  await app.inject(attempt.callback);
+  assert.equal(f.calls.filter((call) => call === 'otto:complete').length, 1);
+  assert.equal((await restarted.transfer()).connections.length, 0);
+  const second = await earlyAppsFixture(t);
+  const cancelled = await second.connect();
+  await second.service.cancelPending();
+  await second.app.inject(cancelled.callback);
+  assert.equal(
+    second.calls.some((call) => call.endsWith(':complete')),
+    false,
+  );
+  assert.equal(await second.service.busy(), false);
+});
+
+test('early callback substitution cannot attach an account other than the pending owned account', async (t) => {
+  const f = await earlyAppsFixture(t);
+  const attempt = await f.connect();
+  const substituted = new URL(attempt.callback, 'http://127.0.0.1:4310');
+  substituted.searchParams.set('account_ref', 'another-account');
+  const result = await f.app.inject(substituted.pathname + substituted.search);
+  assert.equal(new URL(result.headers.location!).searchParams.get('connection'), 'failed');
+  assert.equal(
+    f.calls.some((call) => call.includes(':inspect:')),
+    false,
+  );
+  assert.equal((await f.service.transfer()).connections.length, 0);
+});
+
+test(
+  'early connection handoff imports keys and accounts atomically without replaying remote writes',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const fixture = await earlyAppsFixture(t);
+    assert.equal(
+      (
+        await fixture.app.inject({
+          method: 'PUT',
+          url: '/api/integrations/key',
+          payload: { key: 'synthetic-project-key' },
+        })
+      ).statusCode,
+      200,
+    );
+    const attempt = await fixture.connect();
+    await fixture.app.inject(attempt.callback);
+    const transfer = await validateSetupIntegrations(
+      await fixture.service.transfer(),
+      fixture.settings,
+    );
+    const db = await hostedDatabase();
+    t.after(() => db.close());
+    const normal = await createIntegrations(db.pool, {
+      ownerId: fixture.ownerId,
+      provider: fixture.settings.ownProvider,
+      wake: async () => {
+        throw new Error('No watches during setup.');
+      },
+      baseUrl: fixture.settings.baseUrl,
+    });
+    const app = Fastify();
+    normal.registerRoutes(app);
+    await app.ready();
+    await app.close();
+    await db.pool.query(
+      'CREATE TABLE integration_keys(owner_id text PRIMARY KEY,vault_id uuid NOT NULL)',
+    );
+    const vaultKey = randomBytes(32);
+    const vault = await createAppGrantVault(db.pool, {
+      ownerId: fixture.ownerId,
+      keyStore: { id: 'synthetic', configured: true, getKey: async () => vaultKey },
+    });
+    const client = await db.pool.connect();
+    const remoteCalls = [...fixture.calls];
+    try {
+      await client.query('BEGIN');
+      await assert.rejects(
+        importSetupIntegrations(client, transfer, {
+          ...fixture.settings,
+          putKey: async () => {
+            throw new Error('Synthetic durable write failure.');
+          },
+        }),
+        /durable write failure/,
+      );
+      await client.query('ROLLBACK');
+      assert.equal((await client.query('SELECT * FROM app_connections')).rowCount, 0);
+      assert.equal((await client.query('SELECT * FROM app_setup_completions')).rowCount, 0);
+      await client.query('BEGIN');
+      await importSetupIntegrations(client, transfer, { ...fixture.settings, putKey: vault.put });
+      await client.query('COMMIT');
+      await client.query('BEGIN');
+      await importSetupIntegrations(client, transfer, { ...fixture.settings, putKey: vault.put });
+      await client.query('COMMIT');
+      const rows = (await client.query('SELECT * FROM app_connections')).rows;
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].id, transfer.connections[0].id);
+      assert.equal(rows[0].owner_id, fixture.ownerId);
+      assert.equal(rows[0].account_id, transfer.connections[0].accountId);
+      assert.equal(rows[0].watch_requested, false);
+      assert.equal(rows[0].triggers_enabled, false);
+      assert.equal((await vault.read(transfer.keyId!)).value, 'synthetic-project-key');
+      assert.equal((await vault.read(transfer.keyId!)).version, 0);
+      assert.equal((await client.query('SELECT * FROM app_setup_completions')).rowCount, 1);
+      assert.deepEqual(fixture.calls, remoteCalls);
+      await client.query('UPDATE app_connections SET revoked=true');
+      await assert.rejects(
+        importSetupIntegrations(client, transfer, { ...fixture.settings, putKey: vault.put }),
+        /changed before setup finished/,
+      );
+      fixture.settings.ownProvider.setApiKey?.('different-synthetic-project');
+      await assert.rejects(
+        importSetupIntegrations(client, transfer, { ...fixture.settings, putKey: vault.put }),
+        /provider changed/,
+      );
+      assert.deepEqual(fixture.calls, remoteCalls);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  },
+);
+
+test('installation identity persistence failures withhold signatures and preserve the published key across restart', async (t) => {
+  for (const target of ['file', 'directory', 'ancestor']) {
+    await t.test(target, { skip: process.platform === 'win32' && target !== 'file' }, async (t) => {
+      const root = await mkdtemp(join(tmpdir(), 'otto-proxy-durability-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const dataRoot = join(root, 'new', 'profile');
+      const directory = join(dataRoot, 'integration-identity');
+      const probe = join(root, '.probe');
+      const handle = await open(probe, 'wx', 0o600);
+      const prototype = Object.getPrototypeOf(handle);
+      const sync = prototype.sync;
+      await handle.close();
+      await rm(probe);
+      let fail = true;
+      t.mock.method(prototype, 'sync', async function (this: typeof handle) {
+        const metadata = await this.stat();
+        const expected =
+          target === 'file' ? undefined : await stat(target === 'directory' ? directory : root);
+        if (
+          fail &&
+          (target === 'file'
+            ? metadata.isFile()
+            : metadata.dev === expected!.dev && metadata.ino === expected!.ino)
+        )
+          throw Object.assign(new Error('Synthetic installation persistence failure'), {
+            code: 'EIO',
+          });
+        return sync.call(this);
+      });
+      const calls: string[] = [];
+      const options = {
+        dataRoot,
+        ownerId: 'synthetic-owner',
+        url: 'https://proxy.example.test',
+        request: (async (_input, init) => {
+          calls.push(new Headers(init?.headers).get('x-otto-public-key')!);
+          return Response.json({ state: 'enabled' });
+        }) as typeof fetch,
+      };
+      const proxy = createComposioProxy(options);
+      await assert.rejects(proxy.initialize(), { code: 'EIO' });
+      assert.throws(() => proxy.userId);
+      await assert.rejects(proxy.accessStatus(), { code: 'EIO' });
+      assert.equal(calls.length, 0);
+      if (target === 'file') {
+        assert.deepEqual(await readdir(directory), []);
+        fail = false;
+        await proxy.initialize();
+        const restarted = createComposioProxy(options);
+        await restarted.initialize();
+        assert.equal(restarted.userId, proxy.userId);
+        return;
+      }
+      const [entry] = await readdir(directory);
+      assert.match(entry, /^[a-f0-9]{64}\.pem$/);
+      const saved = await readFile(join(directory, entry), 'utf8');
+      const restarted = createComposioProxy(options);
+      await assert.rejects(restarted.initialize(), { code: 'EIO' });
+      assert.throws(() => restarted.userId);
+      assert.equal(await readFile(join(directory, entry), 'utf8'), saved);
+      fail = false;
+      await Promise.all([proxy.initialize(), restarted.initialize()]);
+      assert.equal(restarted.userId, proxy.userId);
+      await proxy.accessStatus();
+      await restarted.accessStatus();
+      const publicKey = createPublicKey(saved).export({ format: 'jwk' }).x;
+      assert.deepEqual(calls, [publicKey, publicKey]);
+      assert.deepEqual(await readdir(directory), [entry]);
+    });
+  }
+});
 
 test('managed integration requests bind SDK calls to a private persisted installation and never retry execution', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => {
@@ -635,6 +1119,7 @@ test('managed proxy access binds browser enrollment to the installation and a pr
     {
       challenge: string;
       origin: string;
+      native?: { returnPath: string };
       status: 'pending' | 'authorized' | 'completed' | 'cancelled' | 'denied';
     }
   >();
@@ -706,11 +1191,12 @@ test('managed proxy access binds browser enrollment to the installation and a pr
         enrollments.set(id, {
           challenge: body.challenge,
           origin: initiatingOrigin,
+          ...(body.native ? { native: body.native } : {}),
           status: 'pending',
         });
         return Response.json({
           id,
-          url: `${brokerOrigin}/api/auth/enroll?id=${id}`,
+          url: `${brokerOrigin}/api/auth/enroll?id=${id}${body.native ? '&handoff=synthetic-sealed-ticket' : ''}`,
           expiresAt: Date.now() + 60_000,
         });
       }
@@ -996,6 +1482,19 @@ test('managed proxy access binds browser enrollment to the installation and a pr
       const brokerAttempt = (await enrolled.json()) as { id: string };
       assert.notEqual(brokerAttempt.id, started.id);
       assert.equal(enrollments.get(brokerAttempt.id)!.origin, url.origin);
+      const returnPath = enrollments.get(brokerAttempt.id)!.native!.returnPath;
+      assert.match(returnPath, /^\/[A-Za-z0-9_-]{43}$/);
+      assert.equal(
+        (await fetch(`${url.origin}/${randomBytes(32).toString('base64url')}`)).status,
+        403,
+      );
+      const continuation = await fetch(`${url.origin}${returnPath}`, {
+        headers: { origin: brokerOrigin, 'sec-fetch-site': 'cross-site' },
+      });
+      assert.equal(continuation.status, 200);
+      assert.match(await continuation.text(), new RegExp(brokerAttempt.id));
+      assert.equal((await fetch(`${url.origin}${returnPath}`)).status, 403);
+
       assert.equal(
         (
           await fetch(`${url.origin}/start`, {
@@ -1113,128 +1612,199 @@ test('managed proxy access binds browser enrollment to the installation and a pr
   );
 
   await t.test(
-    'the native page signs only the exact popup challenge using its own ephemeral browser key',
+    'native Google sign-in advances automatically in one tab and consumes its browser key before proof',
     async () => {
       const { JSDOM } = await import('jsdom');
-      const id = randomBytes(32).toString('base64url');
-      const uiOrigin = 'http://127.0.0.1:54321';
-      const bridgeKey = randomBytes(32).toString('base64url');
-      let exported: JsonWebKey | undefined;
-      let launched!: () => void;
-      const opened = new Promise<void>((resolve) => {
-        launched = resolve;
-      });
-      let proof!: (value: unknown) => void;
-      const signed = new Promise<unknown>((resolve) => {
-        proof = resolve;
-      });
-      const proofs: unknown[] = [];
-      let brokerStatus = 'pending';
-      let statusReads = 0;
-      let poll: (() => void) | undefined;
-      const popup = {
-        closed: false,
-        location: {
-          set href(value: string) {
-            assert.equal(value, `${brokerOrigin}/api/auth/enroll?id=${id}`);
-            launched();
+      const slot = 'otto-native-access';
+      for (const scenario of [
+        'success',
+        'wrong-tab',
+        'wrong-id',
+        'wrong-origin',
+        'expired',
+        'write-failed',
+        'delete-failed',
+        'old-broker',
+      ]) {
+        const factory = new IDBFactory();
+        const storage = new Map<string, string>();
+        const id = randomBytes(32).toString('base64url');
+        const origin = 'http://127.0.0.1:54321';
+        const expiresAt = Date.now() + 60_000;
+        let publicKey!: JsonWebKey;
+        let failDelete = false;
+        let navigations = 0;
+        const indexedDB = {
+          open(name: string, version: number) {
+            const request = factory.open(name, version);
+            request.addEventListener('success', () => {
+              const database = request.result;
+              const original = database.transaction.bind(database);
+              database.transaction = ((...args: Parameters<typeof original>) => {
+                const transaction = original(...args);
+                if (scenario === 'write-failed' || failDelete)
+                  queueMicrotask(() => transaction.abort());
+                return transaction;
+              }) as typeof database.transaction;
+            });
+            return request;
           },
-        },
-        close() {},
-        postMessage(value: unknown, target: string) {
-          assert.equal(target, brokerOrigin);
-          proofs.push(value);
-          proof(value);
-        },
-      };
-      const dom = new JSDOM(
-        renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', bridgeKey),
-        {
-          url: `${uiOrigin}/synthetic`,
-          runScripts: 'dangerously',
-          beforeParse(window) {
-            Object.defineProperty(window, 'crypto', { value: webcrypto });
-            window.TextEncoder = TextEncoder;
-            window.open = () => popup as unknown as Window;
-            window.setTimeout = ((callback: () => void) => {
-              poll = callback;
-              return 1;
-            }) as typeof window.setTimeout;
-            window.clearTimeout = () => {
-              poll = undefined;
-            };
-            window.fetch = async (path, options) => {
-              assert.equal(new Headers(options?.headers).get('x-otto-bridge'), bridgeKey);
-              if (path === '/status') {
-                statusReads++;
-                return Response.json({ status: brokerStatus });
-              }
+        };
+        const readStored = async () => {
+          const database = await new Promise<IDBDatabase>((resolve, reject) => {
+            const request = factory.open(slot, 1);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+          try {
+            return await new Promise<unknown>((resolve, reject) => {
+              const request = database.transaction('keys').objectStore('keys').get('current');
+              request.onsuccess = () => resolve(request.result);
+              request.onerror = () => reject(request.error);
+            });
+          } finally {
+            database.close();
+          }
+        };
+        const run = async (html: string, hash = '') => {
+          const dom = new JSDOM(html);
+          let destination = '';
+          let cleared = false;
+          const location = {
+            origin,
+            pathname: '/private-callback',
+            hash,
+            replace(value: string) {
+              assert.equal(cleared, true);
+              navigations++;
+              destination = value;
+            },
+          };
+          runInNewContext(dom.window.document.querySelector('script')!.textContent!, {
+            location,
+            history: {
+              replaceState() {
+                cleared = true;
+              },
+            },
+            document: dom.window.document,
+            indexedDB,
+            sessionStorage: {
+              getItem: (name: string) => storage.get(name) ?? null,
+              setItem: (name: string, value: string) => storage.set(name, value),
+              removeItem: (name: string) => storage.delete(name),
+            },
+            crypto: webcrypto,
+            TextEncoder,
+            Uint8Array,
+            URL,
+            btoa,
+            Date,
+            fetch: async (path: string, options: RequestInit) => {
               assert.equal(path, '/start');
-              exported = JSON.parse(String(options!.body)).browserKey;
-              assert.equal(exported!.d, undefined);
+              assert.equal(
+                new Headers(options.headers).get('x-otto-bridge'),
+                'synthetic-bridge-key',
+              );
+              publicKey = JSON.parse(String(options.body)).browserKey;
+              assert.equal(publicKey.d, undefined);
+              const pending = (await readStored()) as { key: CryptoKey };
+              assert.equal(pending.key.extractable, false);
               return Response.json({
                 id,
-                url: `${brokerOrigin}/api/auth/enroll?id=${id}`,
-                expiresAt: Date.now() + 60_000,
+                expiresAt,
+                url: `${brokerOrigin}/api/auth/enroll?id=${id}${scenario === 'old-broker' ? '' : '&handoff=synthetic-sealed-ticket'}`,
               });
-            };
-          },
-        },
-      );
-      t.after(() => dom.window.close());
-      dom.window.document.querySelector<HTMLButtonElement>('#continue')!.click();
-      await opened;
-      const challenge = `otto-proxy-access-v1\n${id}\n${uiOrigin}\n${randomBytes(32).toString('base64url')}`;
-      const deliver = (origin: string, source: unknown, value: unknown) =>
-        dom.window.dispatchEvent(
-          new dom.window.MessageEvent('message', { origin, source: source as Window, data: value }),
+            },
+          });
+          try {
+            for (
+              let n = 0;
+              n < 200 && !destination && !dom.window.document.body.classList.contains('failed');
+              n++
+            )
+              await delay(5);
+            return { destination, failed: dom.window.document.body.classList.contains('failed') };
+          } finally {
+            dom.window.close();
+          }
+        };
+        const opened = await run(
+          renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', 'synthetic-bridge-key', {
+            expiresAt,
+          }),
         );
-      const value = { type: 'otto:proxy-access:challenge', id, challenge };
-      deliver('https://attacker.example.test', popup, value);
-      deliver(brokerOrigin, {}, value);
-      deliver(brokerOrigin, popup, { ...value, id: randomBytes(32).toString('base64url') });
-      deliver(brokerOrigin, popup, { ...value, challenge: 'arbitrary-signature-input' });
-      deliver(brokerOrigin, popup, {
-        ...value,
-        challenge: `otto-proxy-access-v1\n${id}\n${uiOrigin}\n`,
-      });
-      const now = dom.window.Date.now;
-      dom.window.Date.now = () => now() + 120_000;
-      deliver(brokerOrigin, popup, value);
-      dom.window.Date.now = now;
-      deliver(brokerOrigin, popup, { ...value, challenge: challenge + 'x'.repeat(513) });
-      await delay(0);
-      assert.equal(proofs.length, 0);
-      deliver(brokerOrigin, popup, value);
-      const result = (await signed) as { type: string; id: string; signature: string };
-      assert.equal(result.type, 'otto:proxy-access:proof');
-      assert.equal(result.id, id);
-      assert.equal(Buffer.from(result.signature, 'base64url').length, 64);
-      assert.ok(
-        verify(
-          'sha256',
-          Buffer.from(challenge),
-          { key: createPublicKey({ key: exported!, format: 'jwk' }), dsaEncoding: 'ieee-p1363' },
-          Buffer.from(result.signature, 'base64url'),
-        ),
-      );
-      deliver(brokerOrigin, popup, value);
-      await delay(0);
-      assert.equal(proofs.length, 1);
-      popup.closed = true;
-      brokerStatus = 'authorized';
-      const previousReads = statusReads;
-      assert.ok(poll);
-      poll();
-      await delay(0);
-      assert.equal(statusReads, previousReads + 1);
-      assert.ok(poll);
-      brokerStatus = 'completed';
-      poll();
-      await delay(0);
-      assert.equal(statusReads, previousReads + 2);
-      assert.equal(poll, undefined);
-      assert.equal(proofs.length, 1);
+        if (scenario === 'write-failed' || scenario === 'old-broker') {
+          assert.equal(opened.destination, '');
+          assert.equal(opened.failed, true);
+          assert.equal(navigations, 0);
+          continue;
+        }
+        assert.equal(
+          opened.destination,
+          `${brokerOrigin}/api/auth/enroll?id=${id}&handoff=synthetic-sealed-ticket`,
+        );
+        const saved = (await readStored()) as { id: string; key: CryptoKey };
+        assert.equal(saved.id, id);
+        assert.equal(saved.key.type, 'private');
+        assert.equal(saved.key.extractable, false);
+        if (scenario === 'wrong-tab') storage.clear();
+        failDelete = scenario === 'delete-failed';
+        const challenge = [
+          'otto-proxy-access-v1',
+          id,
+          scenario === 'wrong-origin' ? 'https://attacker.example.test' : origin,
+          randomBytes(32).toString('base64url'),
+          randomBytes(32).toString('base64url'),
+        ].join('\n');
+        const fragment =
+          '#' +
+          encodeURIComponent(
+            JSON.stringify({
+              id: scenario === 'wrong-id' ? randomBytes(32).toString('base64url') : id,
+              challenge,
+              proof: 'synthetic-sealed-proof',
+            }),
+          );
+        const returned = await run(
+          renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', '', {
+            id,
+            expiresAt: scenario === 'expired' ? Date.now() - 1 : expiresAt,
+          }),
+          fragment,
+        );
+        if (scenario !== 'success') {
+          assert.equal(returned.destination, '', scenario);
+          assert.equal(returned.failed, true, scenario);
+          assert.equal(navigations, 1);
+        } else {
+          const target = new URL(returned.destination);
+          assert.equal(target.origin, brokerOrigin);
+          assert.equal(target.pathname, '/api/auth/native-proof');
+          assert.equal(target.search, '');
+          const result = JSON.parse(decodeURIComponent(target.hash.slice(1)));
+          assert.equal(result.proof, 'synthetic-sealed-proof');
+          assert.ok(
+            verify(
+              'sha256',
+              Buffer.from(challenge),
+              {
+                key: createPublicKey({ key: publicKey, format: 'jwk' }),
+                dsaEncoding: 'ieee-p1363',
+              },
+              Buffer.from(result.signature, 'base64url'),
+            ),
+          );
+          assert.equal(await readStored(), undefined);
+          assert.equal(storage.size, 0);
+          const repeated = await run(
+            renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', '', { id, expiresAt }),
+            fragment,
+          );
+          assert.equal(repeated.destination, '');
+          assert.equal(navigations, 2);
+        }
+      }
     },
   );
   assert.equal(identities.size, 1);

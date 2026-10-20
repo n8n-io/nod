@@ -1698,3 +1698,43 @@ test('runtime removes images outside its manifest without touching current image
   assert.deepEqual(removed, []);
   assert.equal(guest.length, 1);
 });
+
+test('local test installs refuse normal apps and cannot reuse or follow foreign profiles', async (t) => {
+  const { testProfile, validateTestApplication } = await import('../scripts/test-install.mjs');
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), 'otto-test-install-')));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const application = join(temporary, 'Otto.app');
+  const packagePath = join(application, 'Contents', 'Resources', 'app', 'package.json');
+  await mkdir(dirname(packagePath), { recursive: true });
+  await writeFile(packagePath, JSON.stringify({ name: 'otto-desktop', productName: 'Otto' }));
+  await assert.rejects(validateTestApplication(application), /not an isolated Otto test/);
+  await writeFile(
+    packagePath,
+    JSON.stringify({
+      name: 'otto-setup-test',
+      productName: 'Otto Setup Test',
+      ottoBuild: { testProfile: true },
+    }),
+  );
+  await validateTestApplication(application);
+  const linkedApp = join(temporary, 'linked.app');
+  await symlink(application, linkedApp, 'dir');
+  await assert.rejects(validateTestApplication(linkedApp), /real directory/);
+  const profiles = join(temporary, 'profiles');
+  const fresh = await testProfile(profiles, 'fresh', true);
+  const saved = join(fresh, 'saved-data');
+  await writeFile(saved, 'synthetic preserved account data');
+  assert.equal(await testProfile(profiles, 'fresh'), fresh);
+  await assert.rejects(testProfile(profiles, 'fresh', true), { code: 'EEXIST' });
+  await assert.rejects(testProfile(profiles, '../normal', true), /profile name/);
+  const foreign = join(temporary, 'normal');
+  await mkdir(foreign);
+  await writeFile(join(foreign, 'test-profile.json'), '{}');
+  await symlink(foreign, join(profiles, 'foreign'), 'dir');
+  await assert.rejects(testProfile(profiles, 'foreign'), /must not be a link/);
+  await mkdir(join(profiles, 'unowned'));
+  await writeFile(join(profiles, 'unowned', 'test-profile.json'), '{}');
+  await assert.rejects(testProfile(profiles, 'unowned'), /not created by the test installer/);
+  assert.equal(await readFile(saved, 'utf8'), 'synthetic preserved account data');
+  assert.deepEqual(await readdir(foreign), ['test-profile.json']);
+});

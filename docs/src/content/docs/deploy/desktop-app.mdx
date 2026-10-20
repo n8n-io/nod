@@ -46,6 +46,16 @@ flowchart LR
 
 The workspace and browser have separate networks, no access to your home folder, no Docker socket and no model keys. Model requests go to the provider you connect, or to a [local model](/connect/local-models/) server you run.
 
+## Onboarding during startup
+
+On a new desktop profile, a small host process serves the same chat onboarding while the private computer starts. It handles model sign-in, app connections, Telegram pairing, preferences, and the introduction without PostgreSQL or the containers. Every screen is visited; a model is required, while email, Telegram and analytics sharing remain optional. A source web install keeps onboarding in the ordinary app.
+
+Pending setup is encrypted with the profile's Vault key, bound to its owner, and written atomically in the private profile directory. Only Otto's own window receives the temporary server token. Keys are submitted through the private forms and are never returned by a read endpoint or sent to the workspace or browser containers. OS permissions and the key store protect stored data; this does not isolate Otto from a compromised OS user session.
+
+After the last step, setup stops accepting edits and freezes the saved state. Once the computer is ready, the ordinary server imports connections, preferences, consent and introduction notes in one database transaction before starting background workers. It records a receipt so a restarted handoff cannot import the same credentials twice. After acknowledgment, Otto deletes the temporary journal, stops the setup process and opens chat in the same window.
+
+If startup fails, the encrypted progress remains for a retry. Updates reuse the existing profile and do not repeat completed onboarding.
+
 ## The runtime pack
 
 The app download is small. On first launch, Otto downloads a matching runtime pack with the container images, the base VM image and the tools that run them.
@@ -173,7 +183,7 @@ The app, DMG and matching runtime archive land in `dist/desktop`. `--seed-cache`
 | Replay onboarding                   | `pnpm --dir desktop start --onboarding`                                                    |
 | Use a fresh, throwaway profile      | `OTTO_DESKTOP_USER_DATA=/tmp/otto-onboarding-review pnpm --dir desktop start --onboarding` |
 
-`OTTO_DESKTOP_USER_DATA` works only in development. Packaged apps always use their normal profile.
+`OTTO_DESKTOP_USER_DATA` works in development and in the deliberately marked [isolated test build](/contribute/desktop-releases/#test-a-local-mac-build). Normal packaged apps always use their own profile.
 
 To test a local connection service, run the unpackaged app with a new, absolute profile path and a proxy origin:
 

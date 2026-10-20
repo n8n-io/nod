@@ -56,18 +56,19 @@ function ianaTimeZone(value: string) {
     return false;
   }
 }
-export function createPreferencesStore(pool: Pool, ownerId: string) {
-  function validate(raw: unknown) {
-    const patch = preferencesSchema.partial().parse(raw);
-    if (typeof patch.timeZone === 'string' && !ianaTimeZone(patch.timeZone))
-      throw Object.assign(new Error('Choose a valid time zone.'), { statusCode: 400 });
-    if (patch.locale !== undefined && patch.locale !== null) {
-      const locale = canonicalLocale(patch.locale);
-      if (!locale) throw Object.assign(new Error('Choose a valid region.'), { statusCode: 400 });
-      patch.locale = locale;
-    }
-    return patch;
+export function validatePreferences(raw: unknown) {
+  const patch = preferencesSchema.partial().parse(raw);
+  if (typeof patch.timeZone === 'string' && !ianaTimeZone(patch.timeZone))
+    throw Object.assign(new Error('Choose a valid time zone.'), { statusCode: 400 });
+  if (patch.locale !== undefined && patch.locale !== null) {
+    const locale = canonicalLocale(patch.locale);
+    if (!locale) throw Object.assign(new Error('Choose a valid region.'), { statusCode: 400 });
+    patch.locale = locale;
   }
+  return patch;
+}
+export function createPreferencesStore(pool: Pool, ownerId: string) {
+  const validate = validatePreferences;
   return {
     validate,
     async get(): Promise<Preferences> {
