@@ -174,6 +174,7 @@ test('managed integration requests bind SDK calls to a private persisted install
               'workbench',
               'sandbox',
               'premium_usage',
+              'instant',
               'search',
               'execute',
               'preload',
