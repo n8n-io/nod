@@ -227,13 +227,7 @@ export function createIntegrationAccess(options: {
         )
           return send(403, { error: 'This sign-in attempt is unavailable.' });
         if (request.method === 'GET' && request.url === '/status')
-          return send(
-            200,
-            await status(attempt.id).catch((error: unknown) => {
-              if (terminal()) return { status: attempt.status };
-              throw error;
-            }),
-          );
+          return send(200, { status: attempt.status });
         if (!live(attempt)) return send(403, { error: 'This sign-in attempt is unavailable.' });
         if (
           request.method === 'POST' &&
