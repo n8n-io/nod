@@ -419,6 +419,25 @@ export async function staple(path) {
   }
 }
 
+export async function assess(path, type) {
+  const context = type === 'open' ? ['--context', 'context:primary-signature'] : [];
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run('/usr/sbin/spctl', ['--assess', '--type', type, ...context, path]);
+    } catch (error) {
+      console.error(`Gatekeeper rejected ${basename(path)}: ${error.diagnostic ?? error.message}`);
+      if (type === 'execute')
+        console.error(
+          await run('/usr/bin/syspolicy_check', ['distribution', path, '--verbose']).catch(
+            (failure) => failure.diagnostic ?? failure.message,
+          ),
+        );
+      if (attempt === 3) throw error;
+      await delay(30_000);
+    }
+  }
+}
+
 export function runtimeUrl(value, archive) {
   const url = new URL(value);
   if (

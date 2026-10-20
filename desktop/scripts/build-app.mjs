@@ -19,6 +19,7 @@ import { runtimeInputs } from './runtime-inputs.mjs';
 import { buildDesktopUI } from './build-ui.mjs';
 import { checkRelease } from '../../.github/scripts/prepare-desktop-release.mjs';
 import {
+  assess,
   exportCertificate,
   minimumSystemVersion as supportedMinimumSystemVersion,
   notarize,
@@ -244,34 +245,7 @@ if (signing) {
       );
       await staple(application);
       await verifySignature(application, signing, { executable: true });
-      await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', application]).catch(
-        async (error) => {
-          for (const [command, args] of [
-            [
-              '/usr/bin/codesign',
-              ['--verify', '--deep', '--strict', '--all-architectures', '--verbose=4', application],
-            ],
-            [
-              '/usr/bin/log',
-              [
-                'show',
-                '--last',
-                '10m',
-                '--style',
-                'compact',
-                '--predicate',
-                'process == "syspolicyd"',
-              ],
-            ],
-          ])
-            console.error(
-              (
-                await run(command, args).catch((failure) => failure.diagnostic ?? failure.message)
-              ).slice(-8192),
-            );
-          throw error;
-        },
-      );
+      await assess(application, 'execute');
     } finally {
       await rm(archive, { force: true });
     }
@@ -332,14 +306,7 @@ if (signing) {
     diskNotarization = await notarize(diskImage, signing, join(output, 'disk-notarization.json'));
     await staple(diskImage);
     await verifySignature(diskImage, signing);
-    await run('/usr/sbin/spctl', [
-      '--assess',
-      '--type',
-      'open',
-      '--context',
-      'context:primary-signature',
-      diskImage,
-    ]);
+    await assess(diskImage, 'open');
   }
 }
 await run('/usr/bin/hdiutil', ['verify', diskImage], { timeout: 10 * 60_000 });
