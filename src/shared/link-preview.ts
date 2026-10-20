@@ -24,7 +24,7 @@ export function publicMediaUrl(value: string): string | null {
       (url.port && !['80', '443'].includes(url.port))
     )
       return null;
-    const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    const host = url.hostname.toLowerCase().replace(/\.$/, '');
     if (
       !host.includes('.') ||
       /(?:^|\.)(?:localhost|local|internal|test|invalid|example)$/.test(host) ||
@@ -43,7 +43,7 @@ export function previewableUrl(value: string): string | null {
   if (!publicMediaUrl(value)) return null;
   try {
     const url = new URL(value);
-    const host = url.hostname.toLowerCase();
+    const host = url.hostname.toLowerCase().replace(/\.$/, '');
     if (
       /^(?:auth|login|accounts)\./i.test(host) ||
       ['connect.composio.dev', 'app.composio.dev'].includes(host)

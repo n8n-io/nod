@@ -65,6 +65,8 @@ test('preview eligibility blocks local, credential, consent and token URLs befor
     'https://example.com/confirm/opaque',
     'https://connect.composio.dev/link/opaque',
     'https://app.composio.dev/link/opaque',
+    'https://connect.composio.dev./link/opaque',
+    'https://app.composio.dev./link/opaque',
     'https://accounts.google.com/o/oauth2',
     'https://auth.example.com/continue',
     'https://example.com/?access_token=private',
@@ -88,6 +90,9 @@ test('preview eligibility blocks local, credential, consent and token URLs befor
   for (const value of [
     'http://127.0.0.1/a.png',
     'https://localhost/a.png',
+    'https://localhost./a.png',
+    'https://files.internal./a.png',
+    'https://files.local./a.png',
     'https://a:b@example.org/a.png',
     'https://100.64.0.1/a.png',
     'https://100.127.255.255/a.png',
