@@ -149,6 +149,10 @@ test(
           fileName: 'fixture.mp3',
         }),
       },
+      linkPreviews: {
+        metadata: async () => null,
+        image: async () => null,
+      },
       keyStore,
       model: { provider: 'fixture', name: 'fixture', configured: false },
       integrations: {
