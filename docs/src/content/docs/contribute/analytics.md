@@ -27,10 +27,11 @@ What Otto sends and when is listed in [Analytics and recordings](/deploy/analyti
 
 ## Add a UI event
 
-1. Add the event to the `AnalyticsEvents` type and to the `eventProperties` allowlist in `src/web/lib/analytics.ts`. `sanitizeEvent` strips any property or value that isn't in the allowlist.
+1. Add the event to the `AnalyticsEvents` type and to the `eventProperties` allowlist in `src/web/lib/analytics.ts`. `sanitizeEvent` strips any property or value that isn't in the allowlist. For a list of enum values, allow `{ items: [...] }`; `sanitizeEvent` keeps only allowed, unique items.
 2. Call `captureAnalytics(event, properties)`. In an async callback that can outlive the session, take `const capture = analyticsForCurrentSession()` first and call `capture` later.
 3. Don't name a property `surface` or `route`. `sanitizeEvent` sets those itself.
-4. For a new page, add its path to `routes` in [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/otto/blob/main/src/web/lib/analytics-privacy.ts). Map paths with IDs to one route, like `/credentials/:id` to `/credentials`. Unknown paths report `/not-found`.
+4. Nothing is sent before the owner opts in, so an event fired before consent is lost. For a flow that runs before the choice, like onboarding, keep a bounded record in memory and send it once after consent is saved, as `otto_onboarding_recap` does.
+5. For a new page, add its path to `routes` in [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/otto/blob/main/src/web/lib/analytics-privacy.ts). Map paths with IDs to one route, like `/credentials/:id` to `/credentials`. Unknown paths report `/not-found`.
 
 ## Evolve the task vocabulary
 
@@ -63,7 +64,7 @@ Prefer deleting an event nobody reads to keeping it "just in case". Dead events 
 
 ## Update the dashboards
 
-The PostHog project is the Otto team's EU project. There are four dashboards: **Otto · Overview**, **Otto · Activation**, **Otto · Tasks & quality** and **Otto · Models & apps**. Each tile is named after the question it answers, such as "Are tasks getting done?", and each dashboard has at most eight tiles. Each starts with a text tile whose agent context lists the events it uses.
+The PostHog project is the Otto team's EU project. There are four dashboards: **Otto · Overview**, **Otto · Activation**, **Otto · Tasks & quality** and **Otto · Models, apps & websites**. Each tile is named after the question it answers, such as "Are tasks getting done?", and each dashboard has at most eight tiles. Each starts with a text tile whose agent context lists the events it uses.
 
 Add a tile only when it answers a question the team reads. If a new event doesn't change an answer, leave the dashboards alone.
 

@@ -12,7 +12,7 @@ import { AppAccessRecovery } from '../../../components/app-connection-dialog';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
 import { api, errorMessage } from '../../../lib/api';
-import { analyticsForCurrentSession, captureAnalytics } from '../../../lib/analytics';
+import { analyticsForCurrentSession } from '../../../lib/analytics';
 import { connectionUrl } from '../../../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../../../lib/desktop';
 import type { StepProps } from '..';
@@ -39,7 +39,7 @@ function connectionMessage(result?: string) {
   return '';
 }
 
-export function Email({ arrived, onNext, onBack }: StepProps) {
+export function Email({ arrived, onNext, onBack, onSkip }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const configuration = usePageData<Configuration>('/api/configuration');
   const apps = usePageData<Connection[]>('/api/apps');
@@ -492,7 +492,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
           connected && showGmail
             ? undefined
             : () => {
-                captureAnalytics('otto_onboarding_step_skipped', { step: 'email' });
+                onSkip?.();
                 onNext();
               }
         }

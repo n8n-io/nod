@@ -767,8 +767,8 @@ async function initializeApplication(
     }
   };
   const approvals = await createApprovals(
-    (action, args, provenance) =>
-      action === 'OTTO_browser'
+    async (action, args, provenance) => {
+      const result = await (action === 'OTTO_browser'
         ? replayBrowserStep(args, provenance)
         : action === 'OTTO_vault_allow'
           ? vaultAccess.allow(args)
@@ -804,7 +804,10 @@ async function initializeApplication(
                       ).value,
                       mailCheck,
                     );
-                  })(),
+                  })());
+      analytics.actionExecuted(ownerId, action);
+      return result;
+    },
     async (action, args, expectedRevision) => {
       if (['OTTO_browser', 'OTTO_vault_allow'].includes(action)) return;
       if (action === 'OTTO_limits_update') limitsInput.parse(args);
@@ -1269,6 +1272,7 @@ async function initializeApplication(
         }
         const result = await integrations.execute(ownerId, action, args, turn, options?.signal);
         if (action !== 'SEARCH_TOOLS') await ledger.action(turn.turnId, action);
+        analytics.actionExecuted(ownerId, action);
         return result;
       },
     });
@@ -1334,6 +1338,7 @@ async function initializeApplication(
   registerPrivacyNotice(app, privacyNotice);
   createAccountSession({
     analytics,
+    model: () => adapters.model,
     accounts: localAccounts,
     origin: publicOrigin,
     localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },

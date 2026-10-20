@@ -488,7 +488,10 @@ function AccountApp({
           ? '/apps'
           : path === '/onboarding'
             ? '/'
-            : path,
+            : (path === '/browser' && !session.capabilities.developer) ||
+                /^\/(?:vault|credentials|payments)\/?$/.test(path)
+              ? '/not-found'
+              : path,
     );
   }, [path, sessionState.loading, session, legacyBrowserLink]);
   useEffect(() => {

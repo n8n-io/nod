@@ -97,6 +97,29 @@ function turnModel(provider: TurnModel['model_provider'], model?: string): TurnM
   return { model_provider: provider, ...(model ? { model } : {}) };
 }
 
+const readVerbs = new Set([
+  'get',
+  'list',
+  'fetch',
+  'search',
+  'find',
+  'read',
+  'retrieve',
+  'query',
+  'lookup',
+  'view',
+  'describe',
+  'download',
+]);
+
+function sideEffecting(action: string) {
+  if (action === 'OTTO_vault_allow' || action === 'SEARCH_TOOLS') return false;
+  if (action.startsWith('OTTO_')) return true;
+  return !action
+    .split(/[^a-zA-Z0-9]+|(?<=[a-z0-9])(?=[A-Z])/)
+    .some((word) => readVerbs.has(word.toLowerCase()));
+}
+
 const workspaceTools = new Set(['read', 'bash', 'edit', 'write', 'find', 'ls', 'grep']);
 const webTools = new Set(['web_search', 'fetch_content', 'get_search_content', 'code_search']);
 
@@ -144,6 +167,10 @@ export async function createAnalytics(options: {
   }>();
   const replaySessions = new Map<string, string>();
   const actedRuns = new Set<string>();
+  function acted(runId: string) {
+    if (actedRuns.size >= 1000) actedRuns.delete(actedRuns.values().next().value!);
+    actedRuns.add(runId);
+  }
   let closed = false;
   function state(owner: string) {
     let value = states.get(owner);
@@ -200,15 +227,11 @@ export async function createAnalytics(options: {
     if (!parsed.success) return;
     if (
       runId &&
-      ((parsed.data.event === 'otto_confirmation_changed' &&
-        parsed.data.properties.status === 'executed') ||
-        (parsed.data.event === 'otto_secure_entry_changed' &&
-          parsed.data.properties.kind === 'payment' &&
-          parsed.data.properties.status === 'submitted'))
-    ) {
-      if (actedRuns.size >= 1000) actedRuns.delete(actedRuns.values().next().value!);
-      actedRuns.add(runId);
-    }
+      parsed.data.event === 'otto_secure_entry_changed' &&
+      parsed.data.properties.kind === 'payment' &&
+      parsed.data.properties.status === 'submitted'
+    )
+      acted(runId);
     if (run) {
       const { data } = parsed;
       if (data.event === 'otto_turn_started' && data.properties.model_provider)
@@ -277,6 +300,10 @@ export async function createAnalytics(options: {
     },
     actionSucceeded(runId: string) {
       return actedRuns.has(runId);
+    },
+    actionExecuted(owner: string, action: string) {
+      const run = runs.getStore();
+      if (run?.owner === owner && run.consent.enabled && sideEffecting(action)) acted(run.id);
     },
     currentRun(owner: string) {
       const run = runs.getStore();

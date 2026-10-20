@@ -4290,7 +4290,7 @@ test(
 );
 
 test(
-  'a completed task counts as action_succeeded only when its turn executed a confirmed action or submitted a payment',
+  'a completed task counts as action_succeeded only when its turn ran a side-effecting action or submitted a payment',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await conversationAnalyticsFixture(t);
@@ -4316,13 +4316,18 @@ test(
     }));
     const evidence = [];
     for (const acted of [
-      {
-        event: 'otto_confirmation_changed',
-        properties: { status: 'executed', action_kind: 'app', source: 'user' },
-      },
+      'GMAIL_SEND_EMAIL',
+      'OTTO_schedule_create',
       {
         event: 'otto_secure_entry_changed',
         properties: { kind: 'payment', status: 'submitted', currency: 'EUR', amount: 12 },
+      },
+      'GMAIL_FETCH_EMAILS',
+      'searchIssues',
+      'OTTO_vault_allow',
+      {
+        event: 'otto_confirmation_changed',
+        properties: { status: 'executed', action_kind: 'sign_in', source: 'user' },
       },
       {
         event: 'otto_secure_entry_changed',
@@ -4333,14 +4338,25 @@ test(
       const turn = await f.turn({ session: randomUUID() });
       const before = f.events.length;
       await processor.observe(turn.id, async () => {
-        if (acted) f.analytics.capture(f.ownerId, acted);
+        if (typeof acted === 'string') f.analytics.actionExecuted(f.ownerId, acted);
+        else if (acted) f.analytics.capture(f.ownerId, acted);
       });
       await processor.drain();
       const updated = f.events.slice(before).find((event) => event.event === 'otto_task_updated');
       assert.equal(updated?.properties.use_case, 'subscription_management');
       evidence.push(updated?.properties.completion_evidence);
     }
-    assert.deepEqual(evidence, ['action_succeeded', 'action_succeeded', 'inferred', 'inferred']);
+    assert.deepEqual(evidence, [
+      'action_succeeded',
+      'action_succeeded',
+      'action_succeeded',
+      'inferred',
+      'inferred',
+      'inferred',
+      'inferred',
+      'inferred',
+      'inferred',
+    ]);
   },
 );
 

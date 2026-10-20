@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AccountUpdate, AccountUser, SessionResponse } from '../shared/account.ts';
 import type { AccountStore } from './account-store.ts';
-import type { Analytics } from './analytics.ts';
+import { analyticsModel, type Analytics } from './analytics.ts';
 
 const accountUpdate = z
   .object({
@@ -19,6 +19,7 @@ export function createAccountSession(options: {
   localUser: AccountUser;
   developerIds?: ReadonlySet<string>;
   analytics?: Analytics;
+  model?(): { provider: string; name: string; configured: boolean };
   start?(ownerId: string, name?: string): Promise<void>;
   traces?: boolean;
   onTraces?(enabled: boolean): void;
@@ -127,8 +128,15 @@ export function createAccountSession(options: {
         )
           return;
       } else await updateAccount(input);
-      if (onboardingCompletedNow)
-        options.analytics?.capture(owner, { event: 'otto_onboarding_completed' });
+      if (onboardingCompletedNow) {
+        const model = options.model?.();
+        options.analytics?.capture(owner, {
+          event: 'otto_onboarding_completed',
+          ...(model?.configured
+            ? { properties: { model_provider: analyticsModel(model.provider).provider } }
+            : {}),
+        });
+      }
       if (input.theme !== undefined)
         options.analytics?.capture(owner, {
           event: 'otto_settings_updated',

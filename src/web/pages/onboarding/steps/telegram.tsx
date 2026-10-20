@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Send } from 'lucide-react';
 import type { StepProps } from '..';
-import { captureAnalytics } from '../../../lib/analytics';
 import { Rise } from '../../../components/motion';
 import { TelegramSetup } from '../../../components/telegram-setup';
 import { Button } from '../../../components/ui';
@@ -11,7 +10,7 @@ import { Bubble, Footer, Messages, useReveal } from '../motion';
 
 const sequence = [{ typing: 450 }, { wait: 300, typing: 550 }, { wait: 200 }, { wait: 300 }];
 
-export function Telegram({ arrived, onNext, onBack }: StepProps) {
+export function Telegram({ arrived, onNext, onBack, onSkip }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const {
     settings,
@@ -120,7 +119,7 @@ export function Telegram({ arrived, onNext, onBack }: StepProps) {
           state.paired
             ? undefined
             : () => {
-                captureAnalytics('otto_onboarding_step_skipped', { step: 'telegram' });
+                onSkip?.();
                 onNext();
               }
         }

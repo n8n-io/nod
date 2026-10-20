@@ -10,7 +10,6 @@ const routes = new Set([
   '/browser',
   '/credentials',
   '/payments',
-  '/privacy',
 ]);
 
 export function analyticsRoute(value: string) {

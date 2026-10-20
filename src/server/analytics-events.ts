@@ -246,7 +246,12 @@ const taskProperties = z.object({
   channel: z.enum(['web', 'telegram', 'whatsapp', 'other']),
 });
 export const analyticsEvent = z.discriminatedUnion('event', [
-  z.object({ event: z.literal('otto_onboarding_completed') }).strict(),
+  z
+    .object({
+      event: z.literal('otto_onboarding_completed'),
+      properties: z.object({ model_provider: analyticsModelProvider }).strict().optional(),
+    })
+    .strict(),
   z.object({ event: z.literal('otto_conversation_reset') }).strict(),
   z.object({ event: z.literal('otto_chat_stopped') }).strict(),
   z.object({ event: z.literal('otto_task_stopped') }).strict(),
@@ -460,6 +465,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
           outcome: z.enum(['succeeded', 'failed', 'cancelled']),
           input_tokens: duration,
           output_tokens: duration,
+          cached_input_tokens: duration.optional(),
           cost_usd: z.number().nonnegative().max(1_000_000).optional(),
           pricing: z.enum(['api', 'plan_estimate', 'unavailable']),
           duration_ms: duration.optional(),

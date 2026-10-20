@@ -69,6 +69,9 @@ function modelUsed(usage: ProviderUsageEvent): Parameters<CaptureAnalytics>[0] {
       input_tokens:
         tokens(usage.inputTokens) + tokens(usage.cacheReadTokens) + tokens(usage.cacheWriteTokens),
       output_tokens: tokens(usage.outputTokens),
+      ...(usage.cacheReadTokens !== undefined
+        ? { cached_input_tokens: tokens(usage.cacheReadTokens) }
+        : {}),
       ...(spent !== null ? { cost_usd: Math.round(spent * 1e6) / 1e6 } : {}),
       pricing: charged !== null ? 'api' : estimated !== null ? 'plan_estimate' : 'unavailable',
       ...(usage.durationMs > 0 && Number.isFinite(usage.durationMs)

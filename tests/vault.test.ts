@@ -3728,7 +3728,8 @@ test('analytics routes collapse private paths to known pages', async () => {
     ['/credentials/synthetic-private-id?token=synthetic-private', '/credentials'],
     ['/payments/synthetic-private-id', '/payments'],
     ['/payments/synthetic-private-id/extra', '/not-found'],
-    ['/privacy', '/privacy'],
+    ['/credentials', '/credentials'],
+    ['/privacy', '/not-found'],
     ['/memory', '/not-found'],
     ['/login', '/not-found'],
     ['/desktop/setup', '/not-found'],
@@ -3739,6 +3740,82 @@ test('analytics routes collapse private paths to known pages', async () => {
     sanitizedAnalyticsUrl('/payments/synthetic-private-id?code=1'),
     'https://otto.invalid/payments',
   );
+});
+
+test('the onboarding recap is sent once, only after the owner opts in', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'https://otto.fixture.invalid/onboarding', pretendToBeVisual: true });
+for (const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage']) Object.defineProperty(globalThis, name, { configurable: true, value: name === 'window' ? dom.window : name === 'document' ? dom.window.document : typeof dom.window[name] === 'function' && name[0] === name[0].toLowerCase() ? dom.window[name].bind(dom.window) : dom.window[name] });
+Object.defineProperty(globalThis, 'navigator', {configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location = window.location;
+globalThis.EventSource = window.EventSource = class { static CLOSED = 2; readyState = 0; close() {} addEventListener() {} };
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+window.fetch = globalThis.fetch = async (url) => {
+  const path = new URL(url, window.location.href).pathname;
+  if (path === '/api/account/prepare') return Response.json({ ok: true });
+  if (path === '/api/models') return Response.json({ connections: [{ status: 'connected' }] });
+  if (path === '/api/channel-settings') return Response.json({ ready: false, channels: [] });
+  return Response.json({ error: 'Synthetic route unavailable.' }, { status: 404 });
+};
+const analytics = await import('./src/web/lib/analytics.ts');
+const captured = [];
+let options;
+analytics.setAnalyticsClient({
+  init(_key, value) { options = value; },
+  capture(event, properties) {
+    const sent = options?.before_send({ uuid: 'synthetic', event, properties: { ...properties }, timestamp: new Date() });
+    if (sent) captured.push(sent);
+  },
+  set_config() {}, reset() {}, stopSessionRecording() {}, startSessionRecording() {}, get_session_id() {},
+});
+const enabled = { enabled: true, distinctId: 'local:11111111-1111-4111-8111-111111111111', environment: 'production' };
+analytics.configureAnalytics(enabled, 'web');
+analytics.captureAnalytics('otto_onboarding_recap', { steps_viewed: ['welcome', 'synthetic-private-step', 'welcome', 3], steps_skipped: 'email', went_back: 'yes' });
+assert.deepEqual(captured.map(event => [event.event, event.properties.steps_viewed, 'steps_skipped' in event.properties, 'went_back' in event.properties]), [['otto_onboarding_recap', ['welcome'], false, false]]);
+captured.length = 0;
+analytics.configureAnalytics(undefined, 'web');
+sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 1 }));
+const { createElement, act } = await import('react');
+const { createRoot } = await import('react-dom/client');
+const { Onboarding } = await import('./src/web/pages/onboarding/index.tsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+const root = createRoot(document.getElementById('root'));
+let sharing = false;
+const render = () => root.render(createElement(Onboarding, {
+  user: { id: 'synthetic-owner', name: 'Synthetic', email: null, avatarUrl: null },
+  onComplete: async () => {},
+  onFeedback() {},
+  usageData: sharing,
+  onUsageData: async (value) => { sharing = value; analytics.configureAnalytics(value ? enabled : undefined, 'web'); render(); },
+}));
+const settle = (ms = 50) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
+const button = (text) => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === text);
+await act(async () => render());
+for (let attempt = 0; attempt < 80 && !button('Back'); attempt++) await settle();
+await act(async () => button('Back').click());
+for (let attempt = 0; attempt < 80 && !button('Skip for now'); attempt++) await settle();
+await act(async () => button('Skip for now').click());
+for (let attempt = 0; attempt < 80 && !document.querySelector('[role=switch]'); attempt++) await settle();
+assert.deepEqual(captured, []);
+const toggle = async () => { await act(async () => document.querySelector('[role=switch]').click()); await settle(); };
+await toggle();
+await toggle();
+await toggle();
+const recaps = captured.filter(event => event.event === 'otto_onboarding_recap');
+assert.equal(recaps.length, 1);
+assert.deepEqual([recaps[0].properties.steps_viewed, recaps[0].properties.steps_skipped, recaps[0].properties.went_back], [['open_source', 'telegram'], ['telegram'], true]);
+await act(async () => root.unmount());
+dom.window.close();
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
 });
 
 test('session replay masks private DOM without exposing content', async () => {

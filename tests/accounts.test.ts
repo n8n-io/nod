@@ -514,6 +514,7 @@ describe('analytics privacy', () => {
     await opened.prompt('Synthetic', []);
     const used = captured.find((event) => event.event === 'otto_model_used')!;
     assert.equal(used.properties.input_tokens, 2020);
+    assert.equal(used.properties.cached_input_tokens, 2000);
     assert.ok(Number(used.properties.duration_ms) >= 1_500);
   });
 
@@ -579,6 +580,7 @@ describe('analytics privacy', () => {
           model: 'custom',
           input_tokens: 40,
           output_tokens: 5,
+          cached_input_tokens: 30,
           cost_usd: 0.000012,
           pricing: 'api',
           duration_ms: 12,
