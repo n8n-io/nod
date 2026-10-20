@@ -173,7 +173,7 @@ export const toolDefinitions = {
   ),
   send_message: defineTool(
     'send_message',
-    'Send a message to the user now. In a conversation, text in your response already reaches the user, so use this only to reply to a specific earlier message. In background runs, this is the only delivery: send only useful results or necessary questions. Do not repeat a sent message in the final answer.',
+    'Send a message to the user now. In a conversation or task, use it only when the user needs something before your answer, such as a blocker, a decision to make now or a key finding from long work, or to reply to a specific earlier message. In background runs, this is the only delivery: send only useful results or necessary questions. Do not repeat a sent message in the final answer.',
     Type.Object({
       text: Type.String(),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
