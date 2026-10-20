@@ -8,7 +8,7 @@
 - **onboarding:** Run the setup interview from one skill file. [#374](https://github.com/n8n-io/otto/pull/374) (b9dca01)
 - **settings:** One General tab and ask about usage data at the start of setup. [#368](https://github.com/n8n-io/otto/pull/368) (1d3edce)
 - **web:** Open every file in a side panel next to the chat. [#371](https://github.com/n8n-io/otto/pull/371) (9ec1014)
-- **analytics:** Define real jobs and count weekly installations (#369. [commit](https://github.com/n8n-io/otto/commit/c94ba331cf59190098e5a0b56ef11622548b0e2f) (c94ba33)
+- **analytics:** Define real jobs and count weekly installations. [#369](https://github.com/n8n-io/otto/pull/369) (c94ba33)
 - **memory:** Import memory from another assistant. [#370](https://github.com/n8n-io/otto/pull/370) (afe0b24)
 
 ### Fixes
