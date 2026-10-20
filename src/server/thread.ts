@@ -1389,7 +1389,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       throw new Error('Invalid turn result.');
     if (taskContext && result.status === 'succeeded' && result.result)
       await post(result.result, shared.splice(0));
-    if (shared.length) await post('', shared.splice(0));
+    if (shared.length && (result.status === 'succeeded' || !result.message))
+      await post('', shared.splice(0));
     await current(async (client) => {
       if (result.status === 'succeeded') return finishTurn(client, turnId, 'succeeded');
       const waiting = await finishTurn(client, turnId, 'waiting', {
@@ -1399,7 +1400,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             : (result.waitingFor ?? 'question'),
         handoffBrowserId: result.handoffBrowserId,
       });
-      if (waiting && result.message) await insertAssistantMessage(client, ref, result.message);
+      if (waiting && result.message)
+        await insertAssistantMessage(client, ref, result.message, shared.splice(0));
     }).catch((error) => {
       if (!signal.aborted) throw error;
     });

@@ -315,7 +315,11 @@ export function createAgentRuntime(dependencies: {
           assertActive();
           const output = await execute();
           signal.throwIfAborted();
-          if (reportingTools.has(name) && name !== 'share_file') reported = true;
+          if (
+            name === 'send_message' ||
+            (name === 'task' && (params as { action?: unknown } | null)?.action === 'start')
+          )
+            reported = true;
           if (!stopped) await context.emit('tool_complete', label, event());
           result = isToolResult(output) ? output : textResult(output);
           if (
