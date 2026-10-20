@@ -1,11 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowUp, PanelLeftClose, PanelLeftOpen, Paperclip } from 'lucide-react';
 import { BrandMark } from './brand';
 import { Skeleton } from './ui';
-import { sidebarItems } from '../lib/navigation';
 import { readUiPreference } from '../lib/ui-preferences';
 import { desktopSettingsAvailable } from '../lib/desktop';
-import { DesktopToolbar } from './desktop-toolbar';
 
 function useElapsed(afterMs: number) {
   const [passed, setPassed] = useState(false);
@@ -99,65 +97,5 @@ export function ChatSkeleton({
         </div>
       </div>
     </div>
-  );
-}
-
-function StartupShell({ children }: { children: ReactNode }) {
-  return (
-    <div
-      className={`app-shell startup-shell ${readUiPreference('otto.sidebar') !== 'expanded' ? 'sidebar-collapsed' : ''}`}
-    >
-      {desktopSettingsAvailable() && (
-        <DesktopToolbar collapsed={readUiPreference('otto.sidebar') !== 'expanded'} />
-      )}
-      <aside className="sidebar" aria-hidden="true" inert>
-        <span className="brand">
-          <BrandMark />
-          <span>otto</span>
-        </span>
-        <nav className="main-nav" id="sidebar-navigation">
-          <ul>
-            {sidebarItems.map((item) => (
-              <li key={item.path}>
-                <span className="nav-link">
-                  <Skeleton className="ghost-nav-icon" />
-                  <span className="nav-label">{item.label}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <div className="mobile-top-bar">
-          <span className="mobile-chat-link">
-            <BrandMark />
-          </span>
-          <span className="mobile-menu-trigger">
-            <Skeleton className="ghost-avatar" />
-          </span>
-        </div>
-        <div className="sidebar-bottom">
-          {[0, 1].map((row) => (
-            <span key={row} className="nav-link">
-              <Skeleton className="ghost-nav-icon" />
-              <Skeleton className="ghost-nav-label" />
-            </span>
-          ))}
-          <Skeleton className="ghost-account" />
-        </div>
-      </aside>
-      <div className="workspace-frame">
-        <div className="workspace-body">
-          <main className="main-workspace">{children}</main>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function Splash() {
-  return (
-    <StartupShell>
-      <ChatSkeleton />
-    </StartupShell>
   );
 }

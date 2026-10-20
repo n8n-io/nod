@@ -1,24 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
-import { OnboardingFrame } from '..';
-import { Splash } from '../../../components/startup';
-import { Button, Notice } from '../../../components/ui';
+import { desktopOnboardingSteps, OnboardingFrame } from '..';
+import { SetupProgress } from '../../../components/setup-progress';
+import { Button } from '../../../components/ui';
 import { errorMessage } from '../../../lib/api';
 import {
   getDesktopSettings,
   saveDesktopSettings,
   type DesktopSettings,
 } from '../../../lib/desktop';
-import { Bubble, Footer, Messages, useReveal } from '../motion';
+import { Footer, Messages, PreferenceBubble, useReveal } from '../motion';
 
 type PreferenceStep = Exclude<DesktopSettings['onboardingPreferenceStep'], 'complete'>;
 
-const sequence = [{ typing: 450 }, { wait: 250, typing: 550 }, { wait: 250 }];
+const sequence = [{ typing: 550 }, { wait: 250 }];
 
 export function DesktopPreferencesSetup({ onReady }: { onReady(): void }) {
   const [step, setStep] = useState<PreferenceStep | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [enabled, setEnabled] = useState(false);
   const active = useRef(false);
   const writing = useRef(false);
   const ready = useRef(onReady);
@@ -29,9 +30,10 @@ export function DesktopPreferencesSetup({ onReady }: { onReady(): void }) {
     else if (
       value.onboardingPreferenceStep === 'notifications' ||
       value.onboardingPreferenceStep === 'launchAtLogin'
-    )
+    ) {
       setStep(value.onboardingPreferenceStep);
-    else throw new Error('Your desktop preferences could not be loaded. Try again.');
+      setEnabled(value[value.onboardingPreferenceStep]);
+    } else throw new Error('Your desktop preferences could not be loaded. Try again.');
   }
 
   useEffect(() => {
@@ -54,7 +56,7 @@ export function DesktopPreferencesSetup({ onReady }: { onReady(): void }) {
     };
   }, [retry]);
 
-  async function choose(enabled: boolean) {
+  async function choose(enabled: boolean, advance = false) {
     if (!step || writing.current) return;
     writing.current = true;
     setSaving(true);
@@ -62,7 +64,12 @@ export function DesktopPreferencesSetup({ onReady }: { onReady(): void }) {
     try {
       const saved = await saveDesktopSettings({
         [step]: enabled,
-        onboardingPreferenceStep: step === 'notifications' ? 'launchAtLogin' : 'complete',
+        ...(advance
+          ? {
+              onboardingPreferenceStep:
+                step === 'notifications' ? ('launchAtLogin' as const) : ('complete' as const),
+            }
+          : {}),
       });
       if (active.current) accept(saved);
     } catch (cause) {
@@ -74,23 +81,32 @@ export function DesktopPreferencesSetup({ onReady }: { onReady(): void }) {
   }
 
   if (!step)
-    return error ? (
-      <main className="initial-loading">
-        <Notice>{error}</Notice>
-        <Button variant="outline" onClick={() => setRetry((value) => value + 1)}>
-          Try again
-        </Button>
-      </main>
-    ) : (
-      <Splash />
+    return (
+      <SetupProgress
+        title={error ? 'Your preferences could not be loaded.' : 'Opening your setup…'}
+        error={error}
+      >
+        {error && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setError('');
+              setRetry((value) => value + 1);
+            }}
+          >
+            Try again
+          </Button>
+        )}
+      </SetupProgress>
     );
 
   return (
-    <OnboardingFrame step="open">
+    <OnboardingFrame step={step} steps={desktopOnboardingSteps}>
       <DesktopPreferenceQuestion
         key={step}
         step={step}
         saving={saving}
+        enabled={enabled}
         error={error}
         choose={choose}
       />
@@ -101,13 +117,15 @@ export function DesktopPreferencesSetup({ onReady }: { onReady(): void }) {
 function DesktopPreferenceQuestion({
   step,
   saving,
+  enabled,
   error,
   choose,
 }: {
   step: PreferenceStep;
   saving: boolean;
+  enabled: boolean;
   error: string;
-  choose(enabled: boolean): Promise<void>;
+  choose(enabled: boolean, advance?: boolean): Promise<void>;
 }) {
   const { revealed, typing } = useReveal(sequence);
   const question = useRef<HTMLElement>(null);
@@ -128,29 +146,25 @@ function DesktopPreferenceQuestion({
       <Messages
         revealed={revealed}
         typing={typing}
-        items={
-          notifications
-            ? [
-                <Bubble>Would you like desktop notifications?</Bubble>,
-                <Bubble>
-                  I can let you know when a task finishes or needs your attention, even when you’re
-                  using another app.
-                </Bubble>,
-              ]
-            : [
-                <Bubble>Should I open when you sign in to your computer?</Bubble>,
-                <Bubble>I’ll be ready when you need me. You can change this in Settings.</Bubble>,
-              ]
-        }
+        items={[
+          <PreferenceBubble
+            label={notifications ? 'Desktop notifications' : 'Open at login'}
+            checked={enabled}
+            saving={saving}
+            disabled={saving}
+            error={error}
+            onChange={(value) => void choose(value)}
+          >
+            {notifications
+              ? 'I can let you know when setup is ready, a task finishes, or I need your attention — even when you’re using another app.'
+              : 'I can open when you sign in to your computer, so I’m ready when you need me.'}
+          </PreferenceBubble>,
+        ]}
       />
-      {error && <Notice>{error}</Notice>}
       <Footer
         show={revealed >= sequence.length}
         busy={saving}
-        onSkip={() => void choose(false)}
-        skipLabel="Not now"
-        onNext={() => void choose(true)}
-        nextLabel={notifications ? 'Enable notifications' : 'Open at login'}
+        onNext={() => void choose(enabled, true)}
       />
     </section>
   );

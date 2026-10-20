@@ -449,17 +449,15 @@ export async function createSetupIntegrations(options: {
         row.configurationId === provider.configurationId,
     );
     const apps = await Promise.all(
-      rows
-        .filter((row) => row.state === 'pending' && pending(row))
-        .map(async (row) => {
-          const progress =
-            input.pairingUrl && hash(input.pairingUrl) === row.linkHash
-              ? await provider
-                  .connectionStatus?.(options.ownerId, input.pairingUrl)
-                  .catch(() => undefined)
-              : undefined;
-          return { hash: row.linkHash!, slug: row.slug, name: info(row.slug).name, ...progress };
-        }),
+      rows.filter(pending).map(async (row) => {
+        const progress =
+          input.pairingUrl && hash(input.pairingUrl) === row.linkHash
+            ? await provider
+                .connectionStatus?.(options.ownerId, input.pairingUrl)
+                .catch(() => undefined)
+            : undefined;
+        return { hash: row.linkHash!, slug: row.slug, name: info(row.slug).name, ...progress };
+      }),
     );
     return {
       completed: rows.filter((row) => row.state === 'connected').map((row) => row.linkHash!),

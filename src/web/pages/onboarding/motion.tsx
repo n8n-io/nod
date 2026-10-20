@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type HTMLAttributes,
@@ -8,7 +9,7 @@ import {
 } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { OttoGlyph, prefersReducedMotion, Rise } from '../../components/motion';
-import { Button } from '../../components/ui';
+import { Button, Switch } from '../../components/ui';
 import { cn } from '../../lib/utils';
 
 export type RevealStep = { wait?: number; typing?: number };
@@ -64,6 +65,47 @@ export function useReveal(
 
 export function Bubble({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('ob-bubble', className)} {...props} />;
+}
+
+export function PreferenceBubble({
+  children,
+  label,
+  checked,
+  saving,
+  disabled,
+  error,
+  onChange,
+}: {
+  children: ReactNode;
+  label: string;
+  checked: boolean;
+  saving: boolean;
+  disabled?: boolean;
+  error: string;
+  onChange(value: boolean): void;
+}) {
+  const id = useId();
+  return (
+    <Bubble onClick={(event) => event.stopPropagation()}>
+      <p id={`${id}-reason`}>{children}</p>
+      <div className="ob-preference-toggle">
+        <Switch
+          id={id}
+          checked={checked}
+          disabled={disabled}
+          aria-busy={saving}
+          aria-describedby={`${id}-reason`}
+          onCheckedChange={onChange}
+        />
+        <label htmlFor={id}>{label} · you can change this in Settings</label>
+      </div>
+      {error && (
+        <p className="ob-preference-error" role="alert">
+          {error}
+        </p>
+      )}
+    </Bubble>
+  );
 }
 
 export function UserBubble({ className, ...props }: HTMLAttributes<HTMLDivElement>) {

@@ -35,6 +35,7 @@ import {
   startDesktopUpdateChecks,
 } from '../main/updates.mjs';
 import { stageWindowsUpdate } from '../runtime/windows.mjs';
+import { buildDesktopUI } from '../scripts/build-ui.mjs';
 
 function deferred() {
   let resolve;
@@ -343,6 +344,7 @@ async function runningDesktop(
     environment = {},
     platform = 'darwin',
     packaged = false,
+    argv = [],
     prompt = () => assert.fail('No restart prompt is needed.'),
     reveal = () => assert.fail('No file should be revealed.'),
   } = {},
@@ -385,7 +387,7 @@ async function runningDesktop(
     },
     process: {
       platform,
-      argv: [],
+      argv,
       env: typeof environment === 'function' ? environment(dirname(storage.path)) : environment,
       resourcesPath: dirname(storage.path),
     },
@@ -641,8 +643,11 @@ test('native first launch shows a loading window before unlocking its system key
     for (let attempt = 0; !f.windows.length && attempt < 50; attempt++)
       await new Promise((accept) => setTimeout(accept, 10));
     assert.equal(f.windows.length, 1);
-    const page = new JSDOM(await readFile(new URL('../ui/index.html', import.meta.url), 'utf8'), {
-      url: 'file:///synthetic/setup.html?mode=loading&unlocking=darwin',
+    const output = await mkdtemp(join(tmpdir(), 'otto-native-startup-'));
+    t.after(() => rm(output, { recursive: true, force: true }));
+    await buildDesktopUI(output);
+    const page = new JSDOM(await readFile(join(output, 'index.html'), 'utf8'), {
+      url: 'file:///synthetic/setup.html?mode=loading&firstSetup=true&unlocking=darwin',
       runScripts: 'outside-only',
     });
     t.after(() => page.window.close());
@@ -653,10 +658,16 @@ test('native first launch shows a loading window before unlocking its system key
       getPreferences: () => new Promise(() => {}),
       status: () => new Promise(() => {}),
     };
-    page.window.eval(await readFile(new URL('../ui/setup.js', import.meta.url), 'utf8'));
-    assert.equal(page.window.document.getElementById('setup-form').hidden, true);
-    assert.equal(page.window.document.getElementById('actions').hidden, true);
-    assert.equal(page.window.document.getElementById('preparation').hidden, false);
+    page.window.eval(await readFile(join(output, 'setup.js'), 'utf8'));
+    for (
+      let attempt = 0;
+      !page.window.document.querySelector('[role="status"]') && attempt < 50;
+      attempt++
+    )
+      await new Promise((accept) => setTimeout(accept, 10));
+    assert.ok(page.window.document.querySelector('[role="status"]'));
+    assert.equal(page.window.document.querySelector('input'), null);
+    assert.equal(page.window.document.querySelector('button'), null);
     await new Promise((accept) => setTimeout(accept, 100));
     assert.equal(observed, false);
     loaded.resolve();
@@ -669,6 +680,108 @@ test('native first launch shows a loading window before unlocking its system key
   } finally {
     loaded.resolve();
     await f.close();
+  }
+});
+
+test('native startup recovery keeps current status and serializes retry, prerequisite installation, and runtime import', async (t) => {
+  for (const initialResult of ['stale response', 'stale failure']) {
+    await t.test(initialResult, async (t) => {
+      const output = await mkdtemp(join(tmpdir(), 'otto-native-recovery-'));
+      t.after(() => rm(output, { recursive: true, force: true }));
+      await buildDesktopUI(output);
+      const page = new JSDOM(await readFile(join(output, 'index.html'), 'utf8'), {
+        url: 'file:///synthetic/setup.html?mode=loading&firstSetup=false',
+        runScripts: 'outside-only',
+      });
+      t.after(() => page.window.close());
+      const initial = deferred();
+      const retry = deferred();
+      let publish;
+      const calls = [];
+      let imports = 0;
+      page.window.ottoDesktop = {
+        onStatus(listener) {
+          publish = listener;
+        },
+        onPreferences() {},
+        getPreferences: async () => ({ theme: 'light' }),
+        status: () => initial.promise,
+        prepare(options) {
+          calls.push(['prepare', options]);
+          return options ? retry.promise : Promise.resolve({ phase: 'starting' });
+        },
+        installWsl: async () => {
+          calls.push(['installWsl']);
+          return { phase: 'error', error: 'Synthetic restart required' };
+        },
+        importRuntime: async () => {
+          calls.push(['importRuntime']);
+          return imports++ ? { runtime: { phase: 'ready' } } : undefined;
+        },
+      };
+      page.window.eval(await readFile(join(output, 'setup.js'), 'utf8'));
+      const settle = async (predicate) => {
+        for (let attempt = 0; attempt < 100; attempt++) {
+          await new Promise((accept) => setTimeout(accept, 10));
+          if (predicate()) return;
+        }
+        assert.ok(predicate());
+      };
+      await settle(() => publish);
+      publish({ phase: 'error', error: 'Synthetic startup failure' });
+      if (initialResult === 'stale response') initial.resolve({ phase: 'ready' });
+      else initial.reject(new page.window.Error('Synthetic stale failure'));
+      await settle(() => page.window.document.querySelector('[role="alert"]'));
+      assert.ok(
+        page.window.document
+          .querySelector('[role="alert"]')
+          .textContent.includes('Synthetic startup failure'),
+      );
+      assert.equal(page.window.document.querySelector('input'), null);
+      const button = (name) =>
+        [...page.window.document.querySelectorAll('button')].find(
+          (item) => item.textContent === name,
+        );
+      button('Try again').click();
+      button('Try again').click();
+      await settle(() => calls.length === 1);
+      assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['prepare', { retry: true }]]);
+      retry.reject(new page.window.Error('Synthetic retry failed'));
+      await settle(() =>
+        page.window.document
+          .querySelector('[role="alert"]')
+          ?.textContent.includes('Synthetic retry failed'),
+      );
+      publish({ phase: 'preparing', runtime: { phase: 'downloading', progress: 0.42 } });
+      await settle(() => page.window.document.querySelector('progress')?.value === 42);
+      assert.equal(page.window.document.querySelector('[role="alert"]'), null);
+      assert.equal(page.window.document.querySelector('button'), null);
+      publish({ phase: 'error', error: 'Synthetic prerequisite failure', needsWsl: true });
+      await settle(() => button('Install WSL'));
+      button('Install WSL').click();
+      await settle(() =>
+        page.window.document
+          .querySelector('[role="alert"]')
+          ?.textContent.includes('Synthetic restart required'),
+      );
+      assert.deepEqual(calls.at(-1), ['installWsl']);
+      assert.equal(button('Install WSL'), undefined);
+      publish({ phase: 'error', error: 'Synthetic runtime missing', needsRuntimeArchive: true });
+      await settle(() => button('Choose runtime file'));
+      button('Choose runtime file').click();
+      await settle(
+        () =>
+          calls.filter(([name]) => name === 'importRuntime').length === 1 &&
+          !button('Choose runtime file').disabled &&
+          page.window.document.querySelector('[role="alert"]'),
+      );
+      assert.equal(calls.filter(([name]) => name === 'prepare').length, 1);
+      assert.ok(page.window.document.querySelector('[role="alert"]'));
+      button('Choose runtime file').click();
+      await settle(() => calls.filter(([name]) => name === 'prepare').length === 2);
+      assert.deepEqual(calls.at(-1), ['prepare', undefined]);
+      await settle(() => !page.window.document.querySelector('[role="alert"]'));
+    });
   }
 });
 
@@ -811,6 +924,12 @@ test('native first launch opens the shared web onboarding while runtime preparat
         assert.equal(f.windows.filter((window) => window.isVisible()).length, 1);
         const window = f.windows.at(-1);
         assert.equal(new URL(window.url).pathname, '/onboarding');
+        const beforeReplay = await readFile(f.storage.path, 'utf8');
+        const setupUrl = window.url;
+        f.replayOnboarding();
+        assert.equal(window.url, setupUrl);
+        assert.equal(await readFile(f.storage.path, 'utf8'), beforeReplay);
+        assert.equal(f.children.length, 1);
         const setupOrigin = new URL(window.url).origin;
         const request = (url, extra = {}) => ({
           url,
@@ -885,12 +1004,15 @@ test('native first launch opens the shared web onboarding while runtime preparat
 });
 
 test('native frozen setup resumes handoff while completed upgrades skip early setup', async (t) => {
-  for (const initialState of ['frozen', 'upgrade']) {
+  for (const initialState of ['frozen', 'upgrade', 'replay']) {
     await t.test(initialState, async (t) => {
       const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
         initialState,
         allowStart: true,
+        argv: initialState === 'replay' ? ['--onboarding'] : [],
       });
+      const before = await f.storage.store.environment();
+      const preferences = await f.storage.store.get();
       try {
         await f.launch();
         await f.settle();
@@ -904,12 +1026,18 @@ test('native frozen setup resumes handoff while completed upgrades skip early se
           initialState === 'frozen' ? 'true' : undefined,
         );
         if (initialState === 'frozen') assert.equal(f.children[0].killed, true);
+        else if (initialState === 'replay')
+          assert.ok(f.windows.some((window) => window.url?.endsWith('/onboarding?replay=1')));
         else
           assert.ok(
             f.windows.every(
               (window) => !window.url || new URL(window.url).pathname !== '/onboarding',
             ),
           );
+        if (initialState !== 'frozen') {
+          assert.deepEqual(await f.storage.store.environment(), before);
+          assert.deepEqual(await f.storage.store.get(), preferences);
+        }
       } finally {
         await f.close();
       }
@@ -1466,15 +1594,9 @@ test('native onboarding replay reaches product onboarding without restarting or 
   f.showEngine();
   const chat = f.windows.at(-1);
   f.replayOnboarding();
-  const intro = f.windows.at(-1);
-  assert.equal(intro.query.mode, 'onboarding');
-  await f.handlers.get('otto:prepare')({
-    sender: intro.webContents,
-    senderFrame: intro.webContents.mainFrame,
-  });
+  assert.equal(f.windows.length, 1);
   assert.equal(chat.url, 'http://127.0.0.1:4310/onboarding?replay=1');
   assert.equal(chat.isDestroyed(), false);
-  assert.equal(intro.isDestroyed(), true);
   assert.equal(f.children.length, 0);
   assert.equal(await readFile(f.storage.path, 'utf8'), before);
 });

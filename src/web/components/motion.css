@@ -1,0 +1,76 @@
+.ob-glyph {
+  display: block;
+  overflow: visible;
+}
+.ob-glyph-pulse {
+  transform-box: view-box;
+  transform-origin: 25px 6px;
+  animation: ob-pulse 2.8s ease-in-out infinite;
+}
+.ob-glyph-orbit {
+  transform-box: view-box;
+  transform-origin: 16px 16px;
+}
+.ob-glyph-orbit[data-phase='spin'] {
+  animation: ob-spin 1.1s linear infinite;
+}
+.ob-glyph-orbit[data-phase='settle'] {
+  animation: ob-spin-out 1.6s cubic-bezier(0.33, 0.48, 0.4, 1);
+}
+.ob-glyph-react {
+  transform-box: view-box;
+  transform-origin: 25px 6px;
+}
+.ob-glyph-react[data-reaction='on'] {
+  animation: ob-dot-hop 480ms var(--ease-pop);
+}
+.ob-glyph-react[data-reaction='off'] {
+  animation: ob-dot-droop 440ms var(--ease-reveal);
+}
+@keyframes ob-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+}
+@keyframes ob-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ob-spin-out {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ob-dot-hop {
+  30% {
+    transform: translate(2px, -5px) scale(1.35);
+  }
+  55% {
+    transform: translate(1px, 0) scale(0.9, 1.1);
+  }
+  75% {
+    transform: translate(0.5px, -1.5px) scale(1.06);
+  }
+}
+@keyframes ob-dot-droop {
+  35% {
+    opacity: 0.6;
+    transform: translate(-1.5px, 3px) scale(0.75);
+  }
+  70% {
+    transform: translate(-0.5px, 0.5px) scale(1.04);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ob-glyph *,
+  .ob-glyph *::before,
+  .ob-glyph *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

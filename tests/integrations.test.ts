@@ -274,7 +274,38 @@ test('early app setup completes owned consent without a database and fences hand
     payload: { key: 'synthetic-project-key' },
   });
   assert.equal(changed.statusCode, 409);
-  const first = await f.app.inject(attempt.callback);
+  const parseCallback = f.settings.managedProvider.parseCallback;
+  let release!: () => void;
+  let started!: () => void;
+  const blocked = new Promise<void>((resolve) => (release = resolve));
+  const claimed = new Promise<void>((resolve) => (started = resolve));
+  f.settings.managedProvider.parseCallback = async (...args) => {
+    started();
+    await blocked;
+    return parseCallback(...args);
+  };
+  const completing = f.app.inject(attempt.callback).then((response) => response);
+  await claimed;
+  let during;
+  try {
+    during = await f.app.inject({
+      method: 'POST',
+      url: '/api/apps/setup-status',
+      payload: {
+        hashes: [createHash('sha256').update(attempt.url).digest('hex')],
+        pairingUrl: attempt.url,
+      },
+    });
+  } finally {
+    release();
+  }
+  const first = await completing;
+  assert.equal(during.statusCode, 200);
+  assert.deepEqual(during.json().completed, []);
+  assert.deepEqual(
+    during.json().apps.map((app: { hash: string }) => app.hash),
+    [createHash('sha256').update(attempt.url).digest('hex')],
+  );
   assert.equal(first.statusCode, 302);
   assert.equal(new URL(first.headers.location!).searchParams.get('connection'), 'connected');
   await f.app.inject(attempt.callback);
@@ -360,6 +391,12 @@ test('early completion failures and cancelled attempts never exchange their call
   f.failCompletion();
   const failed = await f.app.inject(attempt.callback);
   assert.equal(new URL(failed.headers.location!).searchParams.get('connection'), 'failed');
+  const status = await f.app.inject({
+    method: 'POST',
+    url: '/api/apps/setup-status',
+    payload: { hashes: [createHash('sha256').update(attempt.url).digest('hex')] },
+  });
+  assert.deepEqual(status.json(), { completed: [], apps: [] });
   await f.app.inject(attempt.callback);
   const restarted = await createSetupIntegrations(f.settings);
   const app = Fastify();

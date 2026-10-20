@@ -100,8 +100,7 @@ let tray;
 let engineOrigin = '';
 let engineBound = false;
 let authToken = '';
-let replayingOnboarding = process.argv.includes('--onboarding');
-let replayingProductOnboarding = replayingOnboarding;
+let replayingProductOnboarding = process.argv.includes('--onboarding');
 let stopNotifications;
 let setupNavigation = { mode: 'settings', section: 'general' };
 let preferences = { theme: 'system', notifications: false, launchAtLogin: false };
@@ -179,10 +178,9 @@ const readinessNotice = createReadinessNotice({
     if (!Notification.isSupported() || isQuietTime(saved.preferences)) return true;
     const notification = new Notification({
       title: 'Otto is ready',
-      body:
-        onboardingCompleted && !replayingOnboarding
-          ? 'Your workspace and browser are ready.'
-          : 'Your computer is ready. Come back to finish setup.',
+      body: onboardingCompleted
+        ? 'Your workspace and browser are ready.'
+        : 'Your computer is ready. Come back to finish setup.',
     });
     displayedNotifications.add(notification);
     notification.on('click', () => {
@@ -209,7 +207,7 @@ function updateReadinessNotice() {
     enabled: preferences.notifications,
     foreground: foregroundWindow(),
     quitting,
-    completed: onboardingCompleted && !replayingOnboarding,
+    completed: onboardingCompleted,
     engineReady: setupFinished && Boolean(engine) && status.phase === 'ready',
   });
 }
@@ -478,7 +476,6 @@ function showSettings(section = 'general', requestedMode, reset = false) {
       ? 'loading'
       : desktopSetupMode({
           completed: onboardingCompleted,
-          replaying: replayingOnboarding,
           running: Boolean(engine) && status.phase === 'ready',
         });
   if (mode === 'settings') {
@@ -511,7 +508,7 @@ function showSettings(section = 'general', requestedMode, reset = false) {
     minWidth: 520,
     minHeight: 500,
     title: 'Otto',
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1b21' : '#fdfcfe',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(desktopRoot, 'preload', 'index.cjs'),
@@ -541,10 +538,7 @@ function showSettings(section = 'general', requestedMode, reset = false) {
 function showEngine() {
   if (quitting) return;
   const early = setupEngine && earlyBound;
-  if (
-    !early &&
-    (!onboardingCompleted || replayingOnboarding || !engineOrigin || status.phase !== 'ready')
-  ) {
+  if (!early && (!onboardingCompleted || !engineOrigin || status.phase !== 'ready')) {
     showSettings(setupNavigation.section, setupNavigation.mode);
     return;
   }
@@ -564,7 +558,7 @@ function showEngine() {
     minWidth: 700,
     minHeight: 600,
     title: 'Otto',
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1b21' : '#fdfcfe',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 17 } } : {}),
     webPreferences: {
@@ -969,12 +963,10 @@ async function finishEnginePreparation() {
     if (engineWindow && !engineWindow.isDestroyed()) await engineWindow.loadURL(engineOrigin);
     await stopEarlySetup();
   }
-  if (!replayingOnboarding) {
-    if (pendingFeedback || foregroundWindow()) showEngine();
-    const completedWindow = setupWindow;
-    setupWindow = undefined;
-    if (completedWindow && !completedWindow.isDestroyed()) completedWindow.destroy();
-  }
+  if (pendingFeedback || foregroundWindow()) showEngine();
+  const completedWindow = setupWindow;
+  setupWindow = undefined;
+  if (completedWindow && !completedWindow.isDestroyed()) completedWindow.destroy();
   if (pendingPreload) {
     const assets = pendingPreload;
     pendingPreload = undefined;
@@ -1397,9 +1389,8 @@ async function warmRuntime(options = {}) {
 }
 
 function replayOnboarding() {
-  replayingOnboarding = true;
-  replayingProductOnboarding = true;
-  showSettings('general', 'onboarding', true);
+  replayingProductOnboarding = onboardingCompleted && !setupEngine;
+  showEngine();
   return status;
 }
 
@@ -1426,10 +1417,10 @@ async function importRuntime() {
         onStatus,
       });
     });
-    if (onboardingCompleted && !replayingOnboarding) return prepare();
+    if (onboardingCompleted) return prepare();
   } catch (error) {
     void writeDiagnostic(error.message).catch(() => {});
-    if (onboardingCompleted && !replayingOnboarding)
+    if (onboardingCompleted)
       update({
         phase: 'error',
         message: bounded(error.message),
@@ -1648,7 +1639,6 @@ else {
       });
       ipcMain.handle('otto:prepare', async (event, options) => {
         allowSetup(event);
-        replayingOnboarding = false;
         if (!onboardingCompleted && !earlyCompleting) {
           void warmRuntime(options);
           await startEarlySetup();
@@ -1730,7 +1720,7 @@ else {
             throw error;
           },
         );
-        const onboarding = replayingOnboarding || !saved.onboardingCompleted;
+        const onboarding = !saved.onboardingCompleted;
         guidedStartup = onboarding || pendingSetup;
         if (pendingSetup || !saved.onboardingCompleted) {
           void warmRuntime();
@@ -1738,7 +1728,7 @@ else {
         } else {
           showSettings('general', onboarding ? 'onboarding' : 'settings');
           void warmRuntime();
-          if (!replayingOnboarding && saved.onboardingCompleted) void prepare();
+          if (saved.onboardingCompleted) void prepare();
         }
       } catch (error) {
         showSettings('general', 'onboarding');

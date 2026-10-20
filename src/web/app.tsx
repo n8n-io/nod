@@ -10,7 +10,8 @@ import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
 import { prefetchPageData } from './hooks/use-page-data';
 import { Button, Notice } from './components/ui';
-import { ChatSkeleton, Splash } from './components/startup';
+import { ChatSkeleton } from './components/startup';
+import { SetupProgress } from './components/setup-progress';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggleContext } from './components/sidebar-toggle';
@@ -520,7 +521,7 @@ function AccountApp({
         </p>
       </main>
     );
-  if (sessionState.loading) return <Splash />;
+  if (sessionState.loading) return <SetupProgress title="Opening Otto…" />;
   if (!session?.user || !session.settings)
     return (
       <main className="initial-loading">

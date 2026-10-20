@@ -6,9 +6,8 @@ import {
   type DesktopSetupState,
   type DesktopSetupUpdate,
 } from '../../../shared/onboarding';
-import { OttoGlyph } from '../../components/motion';
-import { Splash } from '../../components/startup';
-import { Button, Notice } from '../../components/ui';
+import { SetupProgress } from '../../components/setup-progress';
+import { Button } from '../../components/ui';
 import { api, errorMessage } from '../../lib/api';
 import { Onboarding } from '.';
 import { DesktopPreferencesSetup } from './steps/desktop-preferences';
@@ -37,7 +36,6 @@ export function DesktopSetup({
   const [retrying, setRetrying] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
-  const panel = useRef<HTMLElement>(null);
   const active = useRef(false);
   const revision = useRef(0);
   const writing = useRef(false);
@@ -46,10 +44,6 @@ export function DesktopSetup({
   const latest = useRef(state);
   latest.current = state;
   const finishing = submitted || state?.completing || state?.completed;
-
-  useEffect(() => {
-    if (finishing) panel.current?.focus();
-  }, [finishing]);
 
   function completed(value: DesktopSetupState) {
     if (!completion.current) return;
@@ -123,36 +117,31 @@ export function DesktopSetup({
   }
 
   if (!state)
-    return error ? (
-      <main className="initial-loading">
-        <Notice>{error}</Notice>
-        <Button variant="outline" onClick={() => setRetry((value) => value + 1)}>
-          Try again
-        </Button>
-      </main>
-    ) : (
-      <Splash />
+    return (
+      <SetupProgress title={error ? 'Setup could not load.' : 'Opening setup…'} error={error}>
+        {error && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setError('');
+              setRetry((value) => value + 1);
+            }}
+          >
+            Try again
+          </Button>
+        )}
+      </SetupProgress>
     );
 
   if (finishing) {
     const failure =
       error || (!state.completed && state.runtime.phase === 'error' ? state.runtime.message : '');
     return (
-      <main className="ob ob-finishing" aria-label="Finishing setup" ref={panel} tabIndex={-1}>
-        <OttoGlyph
-          key={failure ? 'error' : 'preparing'}
-          size={64}
-          mode={failure ? 'still' : 'thinking'}
-        />
-        <div
-          className="ob-finishing-message"
-          role={failure ? 'alert' : 'status'}
-          data-analytics-private
-        >
-          <h1>{failure ? 'Setup needs another try.' : 'Finishing setting up your environment…'}</h1>
-          {failure && <p>{failure}</p>}
-          {failure && <p>Your progress is saved.</p>}
-        </div>
+      <SetupProgress
+        title={failure ? 'Setup needs another try.' : 'Finishing setting up your environment…'}
+        description={failure ? 'Your progress is saved.' : undefined}
+        error={failure}
+      >
         {failure && (
           <Button
             variant="outline"
@@ -173,7 +162,7 @@ export function DesktopSetup({
             Try again
           </Button>
         )}
-      </main>
+      </SetupProgress>
     );
   }
 

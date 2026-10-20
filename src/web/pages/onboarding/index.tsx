@@ -44,6 +44,12 @@ const screens: Record<OnboardingStep, ComponentType<StepProps>> = {
   open: OpenSource,
 };
 
+type DisplayStep = OnboardingStep | 'notifications' | 'launchAtLogin';
+
+export const desktopOnboardingSteps: readonly DisplayStep[] = onboardingSteps.flatMap<DisplayStep>(
+  (step) => (step === 'open' ? ['notifications', 'launchAtLogin', step] : [step]),
+);
+
 export function Onboarding({
   user,
   onComplete,
@@ -205,7 +211,12 @@ export function Onboarding({
 
   const Screen = screens[step];
   return (
-    <OnboardingFrame step={step} onFeedback={onFeedback} mainRef={main}>
+    <OnboardingFrame
+      step={step}
+      steps={desktop ? desktopOnboardingSteps : onboardingSteps}
+      onFeedback={onFeedback}
+      mainRef={main}
+    >
       <div className="ob-screen" inert={saving || desktop?.state.completed}>
         <Screen
           key={step}
@@ -270,17 +281,19 @@ export function Onboarding({
 
 export function OnboardingFrame({
   step,
+  steps = onboardingSteps,
   onFeedback,
   mainRef,
   children,
 }: {
-  step: OnboardingStep;
+  step: DisplayStep;
+  steps?: readonly DisplayStep[];
   onFeedback?(): void;
   mainRef?: Ref<HTMLElement>;
   children: ReactNode;
 }) {
   const welcome = step === 'welcome';
-  const index = onboardingSteps.indexOf(step);
+  const index = steps.indexOf(step);
   return (
     <div className="ob" data-step={step}>
       <header className="ob-header">
@@ -295,10 +308,10 @@ export function OnboardingFrame({
         <div
           className="ob-dots"
           role={welcome ? undefined : 'img'}
-          aria-label={welcome ? undefined : `Step ${index} of ${onboardingSteps.length - 1}`}
+          aria-label={welcome ? undefined : `Step ${index} of ${steps.length - 1}`}
         >
           {!welcome &&
-            onboardingSteps
+            steps
               .slice(1)
               .map((dot, at) => (
                 <span

@@ -1,4 +1,6 @@
 @import 'tailwindcss';
+@import './components/motion.css';
+@import './components/setup-progress.css';
 
 @font-face {
   font-family: 'Geist';
@@ -82,7 +84,7 @@ body {
 :root[data-desktop='true'] .sidebar-collapsed .sidebar {
   padding-inline: 12px;
 }
-:root[data-desktop='true'] :is(.sidebar-header, .startup-shell .sidebar > .brand) {
+:root[data-desktop='true'] .sidebar-header {
   justify-content: center;
   align-items: center;
 }
@@ -1789,7 +1791,6 @@ input[type='range']:disabled {
     border-right: 0;
   }
   .app-shell .sidebar > .sidebar-header,
-  .startup-shell .sidebar > .brand,
   .app-shell .main-nav,
   .app-shell .sidebar-bottom,
   .app-shell .sidebar .nav-shortcut {
@@ -2094,32 +2095,6 @@ input[type='range']:disabled {
 .chat-entering > .chat-page:not(.chat-skeleton) :is(.messages, .welcome) {
   animation: startup-fade 180ms ease-out;
 }
-.app-shell.startup-shell {
-  visibility: visible;
-}
-.startup-shell .sidebar :is(.nav-link, .mobile-top-bar) {
-  opacity: 0.4;
-}
-.ghost-nav-icon {
-  flex: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-}
-.ghost-nav-label {
-  width: 84px;
-}
-.ghost-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-}
-.ghost-account {
-  width: 150px;
-  height: 36px;
-  margin: 0 8px;
-  border-radius: var(--control-radius);
-}
 .ghost-bubble {
   height: 44px;
   border-radius: var(--radius-full);
@@ -2156,9 +2131,4 @@ input[type='range']:disabled {
   background: var(--hover);
   color: var(--muted-foreground);
   box-shadow: none;
-}
-@media (max-width: 640px) {
-  .startup-shell .sidebar {
-    min-height: calc(57px + env(safe-area-inset-top));
-  }
 }
