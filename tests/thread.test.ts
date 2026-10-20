@@ -4087,6 +4087,11 @@ test(
       reply: 'Model A costs 1299 EUR with 512 GB',
     });
     const code = await f.turn({ prompt: '482913', at: Date.parse('2026-10-14T12:01:00.000Z') });
+    const grouped = await f.turn({
+      prompt: 'My verification code is 12 34 56 please',
+      reply: 'Try 123-456 or 98.76.54',
+      at: Date.parse('2026-10-14T12:02:00.000Z'),
+    });
     const inputs: Array<{ messages: Array<{ id: string; text: string }> }> = [];
     const processor = await f.processor(async (request) => {
       inputs.push(request.input as (typeof inputs)[number]);
@@ -4094,14 +4099,17 @@ test(
     });
     processor.start(priced.id)();
     processor.start(code.id)();
+    processor.start(grouped.id)();
     await processor.drain();
-    const [first, second] = inputs.map(
+    const [first, second, third] = inputs.map(
       (input) => new Map(input.messages.map((m) => [m.id, m.text])),
     );
     assert.equal(first!.get(priced.messageId), 'My budget for a laptop is # EUR, suggest two');
     assert.equal(first!.get(priced.replyId), 'Model A costs # EUR with # GB');
     assert.equal(second!.has(code.messageId), false);
-    assert.ok(!JSON.stringify(inputs).match(/1500|1299|482913/));
+    assert.equal(third!.get(grouped.messageId), 'My verification code is # please');
+    assert.equal(third!.get(grouped.replyId), 'Try # or #');
+    assert.ok(!JSON.stringify(inputs).match(/1500|1299|482913|12 34|123-456|98\.76/));
   },
 );
 
@@ -4138,6 +4146,52 @@ test(
     assert.ok(!JSON.stringify(f.events).includes('synthetic_'));
     const health = f.events.find((event) => event.event === 'otto_task_analysis')!;
     assert.equal(health.properties.other_label_count, 3);
+  },
+);
+
+test(
+  'conversation analytics lets a completed task replace other and unclear defaults but keeps known labels',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const answers = [
+      { use_case: 'other', context: 'unclear', collaboration: 'unclear' },
+      { use_case: 'question_answering', context: 'personal', collaboration: 'directive' },
+      { use_case: 'other', context: 'work', collaboration: 'unclear' },
+    ];
+    const processor = await f.processor(async ({ input }) => {
+      const { tasks, messages } = input as {
+        tasks: Array<{ id: string }>;
+        messages: Array<{ id: string; current: boolean }>;
+      };
+      return {
+        tasks: [
+          {
+            task_id: tasks[0]?.id ?? null,
+            request_message_id: tasks[0] ? null : messages.find((m) => m.current)!.id,
+            task_type: 'research',
+            task_action: 'find',
+            task_subject: 'web',
+            task_activities: ['find:web'],
+            ...answers.shift()!,
+            outcome: 'completed',
+          },
+        ],
+        frustration: null,
+      };
+    });
+    for (const minute of [0, 1, 2]) {
+      const turn = await f.turn({ at: Date.parse(`2026-10-14T12:0${minute}:00.000Z`) });
+      processor.start(turn.id)();
+      await processor.drain();
+    }
+    const { rows } = await f.pool.query(
+      'SELECT use_case,context,collaboration FROM analytics_tasks',
+    );
+    assert.deepEqual(rows, [
+      { use_case: 'question_answering', context: 'personal', collaboration: 'directive' },
+    ]);
   },
 );
 

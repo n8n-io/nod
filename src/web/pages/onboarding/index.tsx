@@ -126,6 +126,10 @@ export function Onboarding({
       return;
     }
     const capture = analyticsForCurrentSession();
+    if (usageData && recap.current) {
+      capture('otto_onboarding_recap', recap.current);
+      recap.current = null;
+    }
     onComplete()
       .then(clearStored)
       .catch((cause) => {

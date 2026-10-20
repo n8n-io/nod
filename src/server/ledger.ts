@@ -219,7 +219,6 @@ export function createLedger({
       },
       curate: async (request, signal, report) => {
         if (await limitReached()) throw new Error(spendingLimitReached);
-        const started = performance.now();
         try {
           return await base.curate(request, signal, (value) => {
             const usage: ProviderUsageEvent = {
@@ -234,7 +233,7 @@ export function createLedger({
                       : 'memory',
               operation: request.task,
               status: 'succeeded',
-              durationMs: performance.now() - started,
+              durationMs: 0,
               ...value,
             };
             record(usage);

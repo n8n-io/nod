@@ -38,7 +38,7 @@ What Otto sends and when is listed in [Analytics and recordings](/deploy/analyti
 The task labels, `use_case`, `context` and `collaboration` values are one list each in [`src/server/analytics-events.ts`](https://github.com/n8n-io/otto/blob/main/src/server/analytics-events.ts). The event schema and the classifier prompt in `src/server/conversation-analytics.ts` both read them, so a value exists in one place.
 
 1. Watch `unknown_label_count` and `other_label_count` on `otto_task_analysis`. A rising share of `unknown`, `other` or `unclear` shows a gap.
-2. Add a value only when it names a reusable product need across many requests. Never add one for a single template, brand or private topic, and never add sensitive topics such as health, religion or politics.
+2. Add a value only when it names a reusable category across many requests: an action, subject or task type, or for `use_case` a product need. Never add one for a single template, brand or private topic, and never add sensitive topics such as health, religion or politics.
 3. Add one line to the prompt rules only when the value is easy to confuse with an existing one, such as `order` and `pay`.
 4. Add a reference case in `evals/src/analytics.ts`, then run `pnpm --dir evals run check` and `pnpm --dir evals test`. Run the live analytics eval by hand to compare agreement before and after.
 

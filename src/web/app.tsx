@@ -383,7 +383,10 @@ function AuthenticatedApp({
     onSettings: openSettings,
     onTheme: (theme) => onAccountUpdate({ theme }),
     onUsageData: (usageData) => onAccountUpdate({ usageData }),
-    onResetAnalyticsId: sessionStore.resetAnalyticsId,
+    onResetAnalyticsId: async () => {
+      await sessionStore.resetAnalyticsId();
+      window.dispatchEvent(new CustomEvent('otto:session-changed', { detail: 'analytics-id' }));
+    },
     onTraces: (traces) => onAccountUpdate({ traces }),
   };
   const allowed = path !== '/browser' || session.capabilities.developer;

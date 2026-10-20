@@ -121,7 +121,7 @@ export function createConversationAnalytics(options: {
       return '';
     const safe = redact(value);
     return (typeof safe === 'string' ? safe : JSON.stringify(safe))
-      .replace(/\d{3,}/g, '#')
+      .replace(/\p{Nd}(?:[\p{P}\p{S}\p{Z}\s]*\p{Nd}){2,}/gu, '#')
       .slice(0, 1200);
   }
 
@@ -387,7 +387,7 @@ export function createConversationAnalytics(options: {
             ? previous.task_subject
             : task.task_subject;
         const keep = <T extends string>(next: T, before: T | undefined, vague: string) =>
-          before && (unchanged || next === vague) ? before : next;
+          before && ((unchanged && before !== vague) || next === vague) ? before : next;
         const useCase = keep(task.use_case, previous?.use_case, 'other');
         const context = keep(task.context, previous?.context, 'unclear');
         const collaboration = keep(task.collaboration, previous?.collaboration, 'unclear');
@@ -421,10 +421,15 @@ export function createConversationAnalytics(options: {
           at: new Date(turn.finished_at),
         });
         if (unchanged) {
-          if (activities.some((activity) => !previous.task_activities.includes(activity)))
+          if (
+            activities.some((activity) => !previous.task_activities.includes(activity)) ||
+            useCase !== previous.use_case ||
+            context !== previous.context ||
+            collaboration !== previous.collaboration
+          )
             await client.query(
-              'UPDATE analytics_tasks SET task_activities=$2 WHERE id=$1 AND owner_id=$3',
-              [id, activities, ownerId],
+              'UPDATE analytics_tasks SET task_activities=$2,use_case=$4,context=$5,collaboration=$6 WHERE id=$1 AND owner_id=$3',
+              [id, activities, ownerId, useCase, context, collaboration],
             );
           continue;
         }
