@@ -487,11 +487,9 @@ function showSettings(section = 'general', requestedMode, reset = false) {
     else open();
     return;
   }
-  const changedMode = setupNavigation.mode !== mode;
   setupNavigation = { section, mode, reset };
   if (setupWindow && !setupWindow.isDestroyed()) {
     const window = setupWindow;
-    if (changedMode) window.setSize(600, 540);
     window.show();
     window.focus();
     return setupWindowLoaded.then(() => {
@@ -501,13 +499,14 @@ function showSettings(section = 'general', requestedMode, reset = false) {
     });
   }
   setupWindow = new BrowserWindow({
-    width: 600,
-    height: 540,
-    minWidth: 520,
-    minHeight: 500,
+    width: 1200,
+    height: 860,
+    minWidth: 700,
+    minHeight: 600,
     title: 'Otto',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 17 } } : {}),
     webPreferences: {
       preload: join(desktopRoot, 'preload', 'index.cjs'),
       contextIsolation: true,
