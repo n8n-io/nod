@@ -274,7 +274,7 @@ async function prepare(options, onComputerStart) {
   await runLima(['start', '--tty=false', vm], { timeout: 600_000 });
   if (!options.preserveRuntimeCache) await removeUnmountedRuntimes(assets).catch(() => {});
   await waitFor(() => runDocker(['info', '--format', '{{.ServerVersion}}']), { signal });
-  const prepareImage = async (name) => {
+  const prepareImage = async (name, progress) => {
     const item = validImage(manifest.images.find((image) => image.name === name));
     let installed = '';
     try {
@@ -284,7 +284,7 @@ async function prepare(options, onComputerStart) {
     status(
       'installing',
       `Preparing ${item.name === 'postgres' ? 'local storage' : `your ${item.name}`}…`,
-      { postgres: 0.3, workspace: 0.8, browser: 0.88 }[name],
+      progress,
     );
     if ((await fileHash(join(assets, item.file))) !== item.sha256)
       throw new Error('An Otto computer image is damaged. Reinstall this build.');
@@ -528,7 +528,7 @@ export async function finishRuntime({
   };
   for (const volume of Object.values(volumes)) await runDocker(['volume', 'create', volume]);
   const image = (name) => manifest.images.find((item) => item.name === name).id;
-  await prepareImage?.('postgres');
+  await prepareImage?.('postgres', 0.3);
   const postgres = await replaceContainer(
     runDocker,
     names.postgres,
@@ -650,7 +650,7 @@ exec "$docker" "$@"
   signal?.throwIfAborted();
   await onStorageReady?.(runtime);
   signal?.throwIfAborted();
-  await prepareImage?.('workspace');
+  await prepareImage?.('workspace', 0.8);
   status('starting', 'Preparing your workspace…', 0.82);
   await replaceContainer(
     runDocker,
@@ -679,7 +679,7 @@ exec "$docker" "$@"
     ],
     { command: ['infinity'] },
   );
-  await prepareImage?.('browser');
+  await prepareImage?.('browser', 0.88);
   status('starting', 'Preparing your browser…', 0.9);
   await replaceContainer(runDocker, names.browser, image('browser'), [
     '--network',

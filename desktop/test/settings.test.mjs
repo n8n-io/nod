@@ -28,7 +28,7 @@ import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
 import { createReadinessNotice, isQuietTime } from '../main/notifications.mjs';
 import { saveArtifactDownload } from '../main/downloads.mjs';
-import { createDesktopLifecycle, desktopSetupMode } from '../main/lifecycle.mjs';
+import { createDesktopLifecycle } from '../main/lifecycle.mjs';
 import {
   createDesktopUpdater,
   createUpdateSource,
@@ -370,6 +370,7 @@ async function runningDesktop(
   const paths = new Map();
   const handlers = new Map();
   const notifications = [];
+  const externalURLs = [];
   const updateMenu = {};
   const ipc = Object.assign(new EventEmitter(), {
     handle: (name, handler) => handlers.set(name, handler),
@@ -407,7 +408,7 @@ async function runningDesktop(
     session: { fromPartition: () => appSession },
     dialog: { showMessageBox: async (options) => prompt(options) },
     Menu: { getApplicationMenu: () => ({ getMenuItemById: () => updateMenu }) },
-    shell: { showItemInFolder: reveal },
+    shell: { showItemInFolder: reveal, openExternal: async (url) => externalURLs.push(url) },
     URL,
     dirname,
     isAbsolute,
@@ -457,7 +458,6 @@ async function runningDesktop(
           return runtime;
         },
       }),
-    desktopSetupMode,
     nativeTheme: { shouldUseDarkColors: false },
     safeStorage: storage.encryption,
     Notification: class extends EventEmitter {
@@ -497,6 +497,12 @@ async function runningDesktop(
       constructor(options = {}) {
         super();
         this.sent = [];
+        this.bounds = {
+          x: options.x ?? 0,
+          y: options.y ?? 0,
+          width: options.width,
+          height: options.height,
+        };
         this.visible = options.show !== false;
         this.webContents = Object.assign(new EventEmitter(), {
           id: windows.length + 1,
@@ -548,7 +554,12 @@ async function runningDesktop(
         for (const window of windows) window.focused = false;
         this.focused = true;
       }
-      setSize() {}
+      getBounds() {
+        return this.bounds;
+      }
+      getNormalBounds() {
+        return this.normalBounds ?? this.bounds;
+      }
       setBackgroundColor() {}
       destroy() {
         this.destroyed = true;
@@ -579,9 +590,10 @@ async function runningDesktop(
     ${source.slice(source.indexOf('      const appSession ='), source.indexOf('      const image = nativeImage'))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:get'"), source.indexOf("      ipcMain.handle('otto:feedback:context'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:feedback:context'"), source.indexOf("      ipcMain.handle('otto:preferences:get'"))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:save'"), source.indexOf("      ipcMain.handle('otto:prepare'"))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:prepare'"), source.indexOf("      ipcMain.handle('otto:onboarding:replay'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:preferences:get'"), source.indexOf("      ipcMain.handle('otto:prepare'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:prepare'"), source.indexOf("      ipcMain.handle('otto:runtime:import'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:runtime:install-wsl'"), source.indexOf("      ipcMain.handle('otto:chat-read:get'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:external'"), source.indexOf('      try {', source.indexOf("      ipcMain.handle('otto:external'")))}
     globalThis.running = {
       prepare,
       launch: async () => { ${source.slice(source.lastIndexOf('      try {\n        const saved = await settings.get();'), source.indexOf('    })', source.lastIndexOf('      try {\n        const saved = await settings.get();')))} },
@@ -610,6 +622,7 @@ async function runningDesktop(
     storage,
     handlers,
     notifications,
+    externalURLs,
     updateMenu,
     headers: (details) => new Promise((resolve) => requestHeaders(details, resolve)),
   };
@@ -758,7 +771,7 @@ test('native startup recovery keeps current status and serializes retry, prerequ
       t.after(() => rm(output, { recursive: true, force: true }));
       await buildDesktopUI(output);
       const page = new JSDOM(await readFile(join(output, 'index.html'), 'utf8'), {
-        url: 'file:///synthetic/setup.html?mode=loading&firstSetup=false',
+        url: 'file:///synthetic/setup.html?firstSetup=false',
         runScripts: 'outside-only',
       });
       t.after(() => page.window.close());
@@ -912,7 +925,6 @@ test('quitting while macOS keychain access is pending never forks a late setup p
     await accessed.promise;
     const window = f.windows.find((candidate) => candidate.isVisible());
     assert.ok(window);
-    assert.equal(window.query.mode, 'loading');
     assert.equal(f.status().unlockingKeys, true);
     const closing = f.close();
     unlocked.resolve(true);
@@ -1051,12 +1063,13 @@ test('native onboarding starts one normal backend at storage readiness and keeps
   }
 });
 
-test('runtime readiness respects closed, minimized and background windows after the initial handoff', async (t) => {
+test('runtime handoff and readiness respect closed, minimized and background windows', async (t) => {
   for (const scenario of [
     'closed',
     'minimized',
     'background',
     'welcome-closed',
+    'welcome-minimized',
     'upgrade-closed',
   ]) {
     await t.test(scenario, async (t) => {
@@ -1088,15 +1101,22 @@ test('runtime readiness respects closed, minimized and background windows after 
         await f.launch();
         const shell = f.windows[0];
         if (scenario.endsWith('-closed')) shell.destroy();
+        if (scenario === 'welcome-minimized') {
+          shell.normalBounds = { x: 80, y: 120, width: 940, height: 720 };
+          shell.bounds = { x: -32000, y: -32000, width: 160, height: 28 };
+          shell.visible = false;
+          shell.focused = false;
+        }
         storage.resolve();
         await connected.promise;
         const window = f.windows.find((window) => window.url);
         if (scenario.endsWith('-closed')) assert.equal(window, undefined);
         else {
           assert.ok(window);
+          if (scenario === 'welcome-minimized') assert.deepEqual(window.bounds, shell.normalBounds);
           window.focused = false;
           if (scenario === 'closed') window.destroy();
-          if (scenario === 'minimized') window.visible = false;
+          if (scenario.endsWith('minimized')) window.visible = false;
         }
         const count = f.windows.length;
         const inactiveShows = window?.inactiveShows ?? 0;
@@ -1846,11 +1866,27 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   assert.equal(serialized.includes(vaultCiphertext), false);
   await save({ theme: 'dark', launchAtLogin: true });
   assert.equal((await f.storage.store.get()).launchAtLogin, true);
+  await invoke('otto:preferences:theme', event, 'light');
+  assert.equal((await f.storage.store.get()).theme, 'light');
+  await invoke('otto:external', event, 'https://example.test/');
+  assert.deepEqual(f.externalURLs, ['https://example.test/']);
+  window.loading = false;
+  await invoke('otto:settings:open', event, 'models');
+  assert.ok(
+    window.sent.some(([channel, value]) => channel === 'otto:settings:focus' && value === 'models'),
+  );
   window.destroy();
   await assert.rejects(save({ theme: 'light' }));
   f.setReady(false);
   f.showSettings();
   const setup = f.windows.at(-1).webContents;
+  const setupEvent = { sender: setup, senderFrame: setup.mainFrame };
+  for (const [channel, value] of [
+    ['otto:preferences:theme', 'dark'],
+    ['otto:external', 'https://example.test/'],
+    ['otto:settings:open', 'models'],
+  ])
+    await assert.rejects(invoke(channel, setupEvent, value), /This action is unavailable/);
   f.status().runtime = { phase: 'error', needsWsl: true };
   for (const rejected of [
     { sender: window.webContents, senderFrame: frame },

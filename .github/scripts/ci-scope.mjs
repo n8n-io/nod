@@ -63,7 +63,12 @@ else {
     }
     if (path.startsWith('desktop/')) {
       scope.desktop = true;
-      scope.windows = true;
+      if (
+        /^desktop\/(package\.json|pnpm-lock\.yaml|main\/settings\.mjs|runtime\/(index\.mjs|windows\.mjs|protect-profile\.ps1)|test\/settings\.test\.mjs)$/.test(
+          path,
+        )
+      )
+        scope.windows = true;
       if (/^desktop\/runtime\/|^desktop\/test\/runtime-assets\.test\.mjs$/.test(path))
         scope.network = true;
       if (path === 'desktop/main/updates.mjs') scope.n8n = true;
@@ -72,7 +77,12 @@ else {
     }
     if (path.startsWith('deployment/n8n/')) {
       scope.n8n = true;
-      if (/^deployment\/n8n\/(install\.ps1|install\.test\.mjs)$/.test(path)) scope.windows = true;
+      if (
+        /^deployment\/n8n\/(install\.ps1|(install\.test|install-workflow|desktop-releases)\.mjs)$/.test(
+          path,
+        )
+      )
+        scope.windows = true;
       continue;
     }
     if (path.startsWith('evals/')) {
@@ -85,7 +95,6 @@ else {
       )
     ) {
       scope.desktop = true;
-      scope.windows = true;
       continue;
     }
     if (

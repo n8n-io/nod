@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from 'react';
 import type { AccountPreparationResponse, AccountUser } from '../../../shared/account';
 import type { ModelsResponse } from '../../../shared/models';
 import {
@@ -120,6 +127,9 @@ export function Onboarding({
         direction: arrived,
       });
     }
+  }, [step, user.id, preferencesReady]);
+
+  useLayoutEffect(() => {
     if (main.current) main.current.scrollTop = 0;
   }, [step, user.id, preferencesReady]);
 

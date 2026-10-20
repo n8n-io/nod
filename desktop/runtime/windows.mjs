@@ -384,10 +384,11 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     runGuest,
     signal,
     status: (phase, message, progress) => status({ phase, message, progress }),
-    prepareImage: async (name) => {
+    prepareImage: async (name, progress) => {
       status({
         phase: 'installing',
         message: `Preparing ${name === 'postgres' ? 'local storage' : `your ${name}`}…`,
+        progress,
       });
       await execute(
         wsl,

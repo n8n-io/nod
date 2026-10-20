@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { desktopOnboardingSteps, OnboardingFrame } from '../frame';
-import { SetupProgress } from '../../../components/setup-progress';
-import { Button } from '../../../components/ui';
+import { Button, Notice } from '../../../components/ui';
 import { errorMessage } from '../../../lib/api';
 import { captureAnalytics } from '../../../lib/analytics';
 import {
@@ -95,37 +94,37 @@ export function DesktopPreferencesSetup({
     }
   }
 
-  if (!step)
-    return (
-      <SetupProgress
-        title={error ? 'Your preferences could not be loaded.' : 'Opening your setup…'}
-        error={error}
-      >
-        {notice}
-        {error && (
-          <Button
-            variant="outline"
-            onClick={() => {
-              setError('');
-              setRetry((value) => value + 1);
-            }}
-          >
-            Try again
-          </Button>
-        )}
-      </SetupProgress>
-    );
-
   return (
-    <OnboardingFrame step={step} steps={desktopOnboardingSteps}>
-      <DesktopPreferenceQuestion
-        key={step}
-        step={step}
-        saving={saving}
-        enabled={enabled}
-        error={error}
-        choose={choose}
-      />
+    <OnboardingFrame step={step ?? 'notifications'} steps={desktopOnboardingSteps}>
+      {step ? (
+        <DesktopPreferenceQuestion
+          key={step}
+          step={step}
+          saving={saving}
+          enabled={enabled}
+          error={error}
+          choose={choose}
+        />
+      ) : (
+        <section className="ob-step">
+          <Messages items={[]} typing={!error} />
+          {error && (
+            <Notice>
+              {error}{' '}
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setError('');
+                  setRetry((value) => value + 1);
+                }}
+              >
+                Try again
+              </Button>
+            </Notice>
+          )}
+          <Footer show={false} onNext={() => void choose(enabled, true)} />
+        </section>
+      )}
       {notice}
     </OnboardingFrame>
   );

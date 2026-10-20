@@ -94,6 +94,7 @@
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
 }
 .ob-screen {
   display: contents;
@@ -117,7 +118,6 @@
   max-width: 720px;
   margin: 0 auto;
   padding: 24px 24px 0;
-  animation: ob-step-in 260ms ease-out;
 }
 .ob-preference-toggle {
   display: flex;
@@ -159,6 +159,30 @@
   display: grid;
   justify-items: start;
   min-width: 0;
+}
+.ob-intro {
+  align-items: flex-start;
+}
+.ob-intro > .ob-avatar {
+  margin-top: 4px;
+}
+.ob-intro > .ob-stack {
+  gap: 4px;
+}
+.ob-message {
+  position: relative;
+}
+.ob-message-content {
+  transition: opacity 260ms ease-out;
+}
+.ob-message-content[data-show='false'] {
+  visibility: hidden;
+  opacity: 0;
+}
+.ob-message > .ob-typing {
+  position: absolute;
+  top: 0;
+  left: 0;
 }
 .ob-grow {
   display: grid;
@@ -280,7 +304,6 @@
 @keyframes ob-step-in {
   from {
     opacity: 0;
-    transform: translateY(10px);
   }
 }
 @keyframes ob-bounce {

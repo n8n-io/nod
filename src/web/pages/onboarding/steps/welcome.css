@@ -45,7 +45,7 @@
   animation: ob-wave 1.8s ease-in-out 250ms 2;
 }
 .ob-welcome-cta {
-  --rise-from: translateY(8px);
+  --rise-from: none;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -53,7 +53,7 @@
   gap: 16px;
   margin: 48px 0 auto;
 }
-.ob-welcome-reset :is(.ob-grow, .ob-bubble, .ob-rise) {
+.ob-welcome-reset :is(.ob-message-content, .ob-rise) {
   transition: none;
 }
 .ob-welcome-reassurance {

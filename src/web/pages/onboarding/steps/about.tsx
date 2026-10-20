@@ -314,7 +314,7 @@ export function About({ arrived, onNext, onBack }: StepProps) {
         <div className="ob-about-log" ref={log}>
           {answers.map((answer, at) => (
             <Fragment key={at}>
-              <Messages items={said(turns[at], true)} avatar={still} />
+              <Messages items={said(turns[at], true)} avatar={still} conversation />
               <div className="ob-about-sent" data-new={waited && at === answers.length - 1}>
                 <div>
                   <UserBubble>{answer}</UserBubble>
@@ -323,7 +323,7 @@ export function About({ arrived, onNext, onBack }: StepProps) {
             </Fragment>
           ))}
           {thinking ? (
-            !error && <Messages key="thinking" items={[]} typing />
+            !error && <Messages key="thinking" items={[]} typing conversation />
           ) : (
             <Reveal
               key={`turn-${index}`}
@@ -435,5 +435,5 @@ function Reveal({
   useEffect(() => {
     if (done) onDone();
   }, [done]);
-  return <Messages items={lines} revealed={revealed} typing={typing} />;
+  return <Messages items={lines} revealed={revealed} typing={typing} conversation />;
 }

@@ -33,7 +33,7 @@ import {
 import { createAppPreferencesStore } from './app-preferences.mjs';
 import { createChatReadCursorStore } from './chat-read-cursors.mjs';
 import { saveArtifactDownload } from './downloads.mjs';
-import { createDesktopLifecycle, desktopSetupMode } from './lifecycle.mjs';
+import { createDesktopLifecycle } from './lifecycle.mjs';
 import {
   createDesktopUpdater,
   createUpdateSource,
@@ -99,7 +99,6 @@ let engineBound = false;
 let authToken = '';
 let replayingProductOnboarding = process.argv.includes('--onboarding');
 let stopNotifications;
-let setupNavigation = { mode: 'settings', section: 'general' };
 let preferences = { theme: 'system', notifications: false, launchAtLogin: false };
 const displayedNotifications = new Set();
 let status = {
@@ -248,7 +247,7 @@ function publishPreferences() {
   const value = publicPreferences();
   for (const window of [setupWindow, ...engineWindows]) {
     if (!window || window.isDestroyed()) continue;
-    window.setBackgroundColor(value.resolvedTheme === 'dark' ? '#1e1b21' : '#fdfcfe');
+    window.setBackgroundColor(value.resolvedTheme === 'dark' ? '#191919' : '#fafafa');
     window.webContents.send('otto:preferences', value);
   }
 }
@@ -467,16 +466,9 @@ function protectWindow(window, origin) {
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
 }
 
-function showSettings(section = 'general', requestedMode, reset = false) {
+function showSettings(section = 'general', loading = false) {
   if (quitting) return;
-  const mode =
-    requestedMode === 'loading' || !onboardingCompleted
-      ? 'loading'
-      : desktopSetupMode({
-          completed: onboardingCompleted,
-          running: Boolean(engine) && status.phase === 'ready',
-        });
-  if (mode === 'settings') {
+  if (!loading && onboardingCompleted && engine && status.phase === 'ready') {
     showEngine();
     const window = engineWindow;
     if (!window || window.isDestroyed()) return;
@@ -487,14 +479,12 @@ function showSettings(section = 'general', requestedMode, reset = false) {
     else open();
     return;
   }
-  setupNavigation = { section, mode, reset };
   if (setupWindow && !setupWindow.isDestroyed()) {
     const window = setupWindow;
     window.show();
     window.focus();
     return setupWindowLoaded.then(() => {
       if (window.isDestroyed()) return;
-      window.webContents.send('otto:navigate', setupNavigation);
       window.webContents.send('otto:status', status);
     });
   }
@@ -522,8 +512,6 @@ function showSettings(section = 'general', requestedMode, reset = false) {
   });
   setupWindowLoaded = window.loadFile(setupPath, {
     query: {
-      mode,
-      section,
       firstSetup: String(!onboardingCompleted),
       ...(status.unlockingKeys ? { unlocking: process.platform } : {}),
     },
@@ -539,7 +527,7 @@ function showEngine({ focus = true } = {}) {
     (onboardingCompleted && !engineRuntimeReady) ||
     (!onboardingCompleted && !welcomePassed)
   ) {
-    showSettings(setupNavigation.section, setupNavigation.mode);
+    showSettings('general', true);
     return;
   }
   if (engineWindow && !engineWindow.isDestroyed()) {
@@ -556,8 +544,9 @@ function showEngine({ focus = true } = {}) {
   }
   engineWindow = new BrowserWindow({
     show: focus,
-    width: 1200,
-    height: 860,
+    ...(setupWindow && !setupWindow.isDestroyed()
+      ? setupWindow.getNormalBounds()
+      : { width: 1200, height: 860 }),
     minWidth: 700,
     minHeight: 600,
     title: 'Otto',
@@ -1554,7 +1543,7 @@ else {
         return publicPreferences();
       });
       ipcMain.handle('otto:preferences:theme', async (event, theme) => {
-        if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
+        if (!isEngine(event)) throw new Error('This action is unavailable.');
         if (quitting) throw new Error('Otto is closing.');
         applyPreferences(await settings.save({ theme }));
         return publicPreferences();
@@ -1609,10 +1598,6 @@ else {
         if (engineRuntimeReady) return status;
         return prepare(options);
       });
-      ipcMain.handle('otto:onboarding:replay', (event) => {
-        allowSetup(event);
-        return replayOnboarding();
-      });
       ipcMain.handle('otto:runtime:import', (event) => {
         allowSetup(event);
         return importRuntime();
@@ -1654,28 +1639,24 @@ else {
         return chatReadCursors.set(ownerId, threadId, cursor);
       });
       ipcMain.handle('otto:external', (event, url) => {
-        if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
+        if (!isEngine(event)) throw new Error('This action is unavailable.');
         return openExternal(url);
       });
       ipcMain.handle('otto:settings:open', (event, section = 'general') => {
-        if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
+        if (!isEngine(event)) throw new Error('This action is unavailable.');
         if (!['general', 'models', 'preferences'].includes(section))
           throw new Error('Choose a settings section.');
         showSettings(section);
-      });
-      ipcMain.handle('otto:quit', (event) => {
-        allowSetup(event);
-        app.quit();
       });
       try {
         const saved = await settings.get();
         onboardingCompleted = saved.onboardingCompleted;
         applyPreferences(saved);
         guidedStartup = !saved.onboardingCompleted;
-        await showSettings('general', 'loading');
+        await showSettings('general', true);
         void prepare();
       } catch (error) {
-        showSettings('general', 'onboarding');
+        showSettings('general', true);
         update({ phase: 'error', message: bounded(error.message), error: bounded(error.message) });
       }
     })
