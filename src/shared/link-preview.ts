@@ -1,3 +1,5 @@
+import { isPublicIpv4Address } from './public-address';
+
 export interface LinkPreview {
   url: string;
   title?: string;
@@ -26,7 +28,7 @@ export function publicMediaUrl(value: string): string | null {
     if (
       !host.includes('.') ||
       /(?:^|\.)(?:localhost|local|internal|test|invalid|example)$/.test(host) ||
-      /^(?:0|10|127|169\.254|192\.168|172\.(?:1[6-9]|2\d|3[01]))\./.test(host) ||
+      (/^\d+\.\d+\.\d+\.\d+$/.test(host) && !isPublicIpv4Address(host)) ||
       host.includes(':')
     )
       return null;

@@ -2,25 +2,12 @@ import * as dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { createServer, request, type OutgoingHttpHeaders } from 'node:http';
 import { connect, isIP, type LookupFunction, type Socket } from 'node:net';
+import { isPublicIpv4Address } from '../../shared/public-address.ts';
 
 export type AddressResolver = (host: string) => Promise<Array<{ address: string; family: number }>>;
 
 export function isPublicAddress(address: string): boolean {
-  if (isIP(address) === 4) {
-    const [a, b, c] = address.split('.').map(Number);
-    return !(
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      a >= 224 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && ((b === 0 && (c === 0 || c === 2)) || b === 168 || (b === 88 && c === 99))) ||
-      (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
-      (a === 203 && b === 0 && c === 113)
-    );
-  }
+  if (isIP(address) === 4) return isPublicIpv4Address(address);
   if (isIP(address) !== 6) return false;
   let normal: string;
   try {

@@ -89,8 +89,23 @@ test('preview eligibility blocks local, credential, consent and token URLs befor
     'http://127.0.0.1/a.png',
     'https://localhost/a.png',
     'https://a:b@example.org/a.png',
+    'https://100.64.0.1/a.png',
+    'https://100.127.255.255/a.png',
+    'https://192.0.0.1/a.png',
+    'https://192.0.2.1/a.png',
+    'https://192.88.99.1/a.png',
+    'https://198.18.0.1/a.png',
+    'https://198.19.255.255/a.png',
+    'https://198.51.100.1/a.png',
+    'https://203.0.113.1/a.png',
+    'https://224.0.0.1/a.png',
+    'https://255.255.255.255/a.png',
   ])
     assert.equal(publicMediaUrl(value), null, value);
+  for (const address of ['100.63.255.255', '100.128.0.1', '192.0.77.1', '93.184.216.34']) {
+    const url = `https://${address}/a.png`;
+    assert.equal(publicMediaUrl(url), url);
+  }
   assert.equal(
     previewableUrl('https://upload.wikimedia.org/a.jpg?utm_source=en.wikipedia.org'),
     'https://upload.wikimedia.org/a.jpg?utm_source=en.wikipedia.org',
@@ -124,6 +139,16 @@ test('preview media comes only from public addresses and players only over HTTPS
     page('<meta name="twitter:player" content="https://10.0.0.1/embed/1">')?.player,
     undefined,
   );
+  for (const address of ['100.64.0.1', '192.0.0.1', '198.18.0.1', '224.0.0.1']) {
+    assert.equal(
+      page(`<meta name="twitter:player" content="https://${address}/embed/1">`)?.player,
+      undefined,
+    );
+    assert.equal(
+      page(`<meta property="og:image" content="https://${address}/image.png">`)?.image,
+      undefined,
+    );
+  }
   assert.equal(
     page('<meta property="og:video:url" content="https://video.example.org/1.mp4">')?.player,
     undefined,
