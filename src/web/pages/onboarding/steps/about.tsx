@@ -18,6 +18,7 @@ import { prepareSuggestions, readStep, readStored, writeStored } from '../storag
 type Talk = { answers: string[]; turns: string[][]; done: boolean };
 
 const opening = ['I’d love to get to know you a little.', 'What are you working on these days?'];
+const handOff = 'What’s one thing you’d love to take off your plate?';
 const still = (
   <span className="ob-avatar">
     <OttoGlyph mode="still" />
@@ -29,10 +30,10 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 function restore(): Talk {
   const saved = readStored<(Talk & { owner?: string }) | null>('about');
   const answers = Array.isArray(saved?.answers) ? saved.answers.slice(0, interviewQuestions) : [];
-  const turns = Array.isArray(saved?.turns) ? saved.turns.slice(0, answers.length) : [];
+  const turns = Array.isArray(saved?.turns) ? saved.turns.slice(0, answers.length + 1) : [];
   if (saved?.owner !== owner() || turns.length < answers.length || !turns.every(Array.isArray))
     return { answers: [], turns: [], done: false };
-  return { answers, turns, done: false };
+  return { answers, turns, done: saved?.done === true && turns.length > answers.length };
 }
 
 export function About({ arrived, onNext }: StepProps) {
@@ -56,8 +57,8 @@ export function About({ arrived, onNext }: StepProps) {
   const thinking = turns.length === answers.length;
 
   useEffect(() => {
-    writeStored('about', { owner: owner(), answers, turns });
-  }, [answers, turns]);
+    writeStored('about', { owner: owner(), answers, turns, done });
+  }, [answers, turns, done]);
 
   useEffect(() => {
     const count = answers.length;
@@ -74,7 +75,11 @@ export function About({ arrived, onNext }: StepProps) {
       signal: controller.signal,
     })
       .catch((): InterviewResponse =>
-        count ? { messages: [], done: true } : { messages: opening, done: false },
+        !count
+          ? { messages: opening, done: false }
+          : count < interviewQuestions && !turns.flat().includes(handOff)
+            ? { messages: [handOff], done: false }
+            : { messages: [], done: true },
       )
       .then(async (reply) => {
         await wait(Math.max(0, 700 - (Date.now() - started)));

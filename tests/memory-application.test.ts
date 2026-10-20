@@ -775,6 +775,8 @@ test('the onboarding interview follows its skill with the chat and inbox brief o
   for (const [chat, broken] of [
     [[], { messages: ['Hi.'], done: true }],
     [talk, { messages: [], done: false }],
+    [talk, { messages: [], done: true }],
+    [talk, { messages: ['Noted.', `${'A'.repeat(1001)}?`], done: false }],
     [talk, { messages: ['Noted.', 'Is your key sk-fixturefixture1234?'], done: false }],
     [talk, { messages: ['Noted.'] }],
     [full, { messages: ['And one more?'], done: false }],

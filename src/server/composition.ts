@@ -1374,7 +1374,7 @@ async function initializeApplication(
   createOnboardingInterview({
     curator: onboardingCurator,
     memory,
-    brief: () => onboardingSuggestions.savedBrief(0),
+    brief: onboardingSuggestions.currentBrief,
   }).registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
   tasks.registerRoutes(app);

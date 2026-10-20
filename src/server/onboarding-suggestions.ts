@@ -350,14 +350,19 @@ export function createOnboardingSuggestions(options: {
     return run;
   }
 
-  async function savedBrief(wait = 60_000) {
-    if (briefing && wait)
-      await Promise.race([briefing, new Promise((resolve) => setTimeout(resolve, wait).unref())]);
+  async function currentBrief() {
+    if (!(await options.gmail())) return;
     const row = await pool.query<{ brief: Brief | null }>(
       'SELECT brief FROM onboarding_suggestions WHERE owner_id=$1',
       [owner],
     );
     return row.rows[0]?.brief ?? undefined;
+  }
+
+  async function savedBrief() {
+    if (briefing)
+      await Promise.race([briefing, new Promise((resolve) => setTimeout(resolve, 60_000).unref())]);
+    return currentBrief();
   }
 
   async function build(): Promise<PreparedSuggestions> {
@@ -656,7 +661,7 @@ export function createOnboardingSuggestions(options: {
     initialize,
     prepare,
     briefInbox,
-    savedBrief,
+    currentBrief,
     afterTurn,
     complete,
     delivered: () => delivering ?? Promise.resolve(),
