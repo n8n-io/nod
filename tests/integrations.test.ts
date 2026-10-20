@@ -1097,9 +1097,10 @@ test('managed proxy access binds browser enrollment to the installation and a pr
         try {
           const completion = access.complete(started.id);
           await waiting;
-          await bridgeStatus();
+          const during = await bridgeStatus();
           release();
           assert.equal((await completion).state, denied ? 'denied' : 'enabled');
+          assert.deepEqual(during, { status: 'authorized' });
         } finally {
           denyCompletion = false;
           holdComplete = undefined;
