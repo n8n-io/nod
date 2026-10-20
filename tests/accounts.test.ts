@@ -1833,6 +1833,7 @@ describe('desktop setup handoff', () => {
     const { createDesktopSetup } = await import('../src/server/desktop-setup.ts');
     const { createSetupModels } = await import('../src/server/setup-models.ts');
     const { createSetupChannels } = await import('../src/server/setup-channels.ts');
+    const { createChatSdkSetupVerifier } = await import('../src/providers/chat-sdk/settings.ts');
     const root = await mkdtemp(join(tmpdir(), 'otto-setup-api-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const key = randomBytes(32);
@@ -1848,6 +1849,9 @@ describe('desktop setup handoff', () => {
     let failTransfer = false;
     const resumed: boolean[] = [];
     let model!: ReturnType<typeof createSetupModels>;
+    let channels!: Awaited<ReturnType<typeof createSetupChannels>>;
+    const channelCalls: string[] = [];
+    const telegramToken = '987:fixture-desktop-telegram-token';
     const closed = new Set<Awaited<ReturnType<typeof createDesktopSetup>>>();
     const backend: import('../src/ports/models.ts').ModelBackend = {
       async catalog(provider) {
@@ -1899,15 +1903,32 @@ describe('desktop setup handoff', () => {
             origin: `http://127.0.0.1:${port}`,
           });
           await model.initialize();
-          const channels = await createSetupChannels({
+          channels = await createSetupChannels({
             journal,
             ownerId,
             keyStore,
-            verifier: {
-              async verify() {
-                throw new Error('Unexpected channel verification');
+            verifier: createChatSdkSetupVerifier({
+              fetch: async (input) => {
+                const url = String(input);
+                if (url === `https://api.telegram.org/bot${telegramToken}/getMe`) {
+                  channelCalls.push('getMe');
+                  return Response.json({
+                    ok: true,
+                    result: {
+                      id: 987,
+                      is_bot: true,
+                      first_name: 'Fixture bot',
+                      username: 'fixture_bot',
+                    },
+                  });
+                }
+                if (url === `https://api.telegram.org/bot${telegramToken}/getWebhookInfo`) {
+                  channelCalls.push('getWebhookInfo');
+                  return Response.json({ ok: true, result: { url: '' } });
+                }
+                throw new Error('Unexpected synthetic Telegram request.');
               },
-            },
+            }),
             apply: async () => {},
           });
           return {
@@ -1972,7 +1993,11 @@ describe('desktop setup handoff', () => {
           ...extra,
         },
       });
-    async function complete(setup: Awaited<ReturnType<typeof createDesktopSetup>>, submit = true) {
+    async function complete(
+      setup: Awaited<ReturnType<typeof createDesktopSetup>>,
+      submit = true,
+      withTelegram = false,
+    ) {
       assert.equal(
         (await request(setup, 'PATCH', '/api/account', { usageData: false })).statusCode,
         200,
@@ -2003,11 +2028,37 @@ describe('desktop setup handoff', () => {
         ).statusCode,
         200,
       );
-      for (const step of ['telegram', 'open'])
+      for (const step of ['telegram', 'open']) {
         assert.equal(
           (await request(setup, 'PATCH', '/api/desktop/setup', { step })).statusCode,
           200,
         );
+        if (step === 'telegram' && withTelegram) {
+          const saved = await request(setup, 'PUT', '/api/channel-settings/telegram', {
+            botToken: telegramToken,
+          });
+          assert.equal(saved.statusCode, 200, saved.body);
+          const code = new URL(saved.json().pairingUrl).searchParams.get('start')!;
+          assert.equal(
+            await channels.pair({
+              channelId: 'telegram',
+              accountId: '987',
+              messageId: 'fixture-desktop-pairing',
+              threadId: 'telegram:123456',
+              senderId: '123456',
+              senderName: 'Fixture owner',
+              code,
+              sentAt: new Date(),
+            }),
+            true,
+          );
+          assert.equal((await channels.status()).channels[0].pairingCandidate?.id, '123456');
+          assert.equal((await channels.environment()).TELEGRAM_ALLOWED_USER_ID, '');
+          const confirmed = await request(setup, 'POST', '/api/channel-settings/telegram/confirm');
+          assert.equal(confirmed.statusCode, 200, confirmed.body);
+          assert.equal(confirmed.json().channel.allowedUserId, '123456');
+        }
+      }
       if (submit)
         assert.equal((await request(setup, 'POST', '/api/desktop/setup/complete')).statusCode, 202);
     }
@@ -2019,6 +2070,8 @@ describe('desktop setup handoff', () => {
       request,
       complete,
       backend,
+      telegramToken,
+      channelCalls,
       model: () => model,
       callbacks: () => callbacks,
       interviewCalls: () => interviewCalls,
@@ -2207,7 +2260,13 @@ describe('desktop setup handoff', () => {
     async (t) => {
       const f = await fixture(t);
       const setup = await f.create();
-      await f.complete(setup);
+      await f.complete(setup, true, true);
+      const pendingPath = join(f.root, 'onboarding', 'pending');
+      const encrypted = await readFile(pendingPath, 'utf8');
+      assert.equal(encrypted.includes(f.telegramToken), false);
+      assert.equal(encrypted.includes('123456'), false);
+      const verifiedChannelCalls = [...f.channelCalls];
+      assert.deepEqual(verifiedChannelCalls, ['getMe', 'getWebhookInfo']);
       await setup.app.close();
       const schema = `test_setup_receipt_${randomUUID().replaceAll('-', '')}`;
       const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -2227,6 +2286,7 @@ describe('desktop setup handoff', () => {
       const { createPostgresObjectStore } = await import('../src/server/object-storage.ts');
       const { initializeIntegrationSchema } = await import('../src/server/integrations.ts');
       const { importDesktopSetup } = await import('../src/server/setup-import.ts');
+      const { openChannelSettings } = await import('../src/server/channel-settings.ts');
       await createAccountStore(database).initialize();
       const models = createModelService({
         database,
@@ -2269,6 +2329,7 @@ describe('desktop setup handoff', () => {
       await assert.rejects(importDesktopSetup(options));
       for (const table of [
         'model_connections',
+        'channel_settings',
         'vault_app_grants',
         'account_settings',
         'private_objects',
@@ -2294,7 +2355,27 @@ describe('desktop setup handoff', () => {
         ).rows[0].onboarding_completed,
         true,
       );
+      const channel = (
+        await database.query(
+          'SELECT provider,enabled,ciphertext,summary FROM channel_settings WHERE owner_id=$1',
+          [f.ownerId],
+        )
+      ).rows[0];
+      assert.equal(channel.provider, 'telegram');
+      assert.equal(channel.summary.allowedUserId, '123456');
+      assert.equal(JSON.stringify(channel).includes(f.telegramToken), false);
+      const environment = openChannelSettings(await f.keyStore.getKey(), f.ownerId, channel);
+      assert.equal(environment.TELEGRAM_BOT_TOKEN, f.telegramToken);
+      assert.equal(environment.TELEGRAM_ALLOWED_USER_ID, '123456');
+      assert.equal(
+        Object.keys(environment).some((key) => key.startsWith('TELEGRAM_PAIRING_')),
+        false,
+      );
+      assert.throws(() => openChannelSettings(randomBytes(32), f.ownerId, channel));
+      const vaultKey = await f.keyStore.getKey();
+      assert.throws(() => openChannelSettings(vaultKey, 'another-owner', channel));
       await database.query('DELETE FROM model_connections');
+      await database.query('DELETE FROM channel_settings');
       await database.query('DELETE FROM vault_app_grants');
       assert.equal(await importDesktopSetup(options), id);
       assert.equal(
@@ -2302,7 +2383,18 @@ describe('desktop setup handoff', () => {
           .count,
         0,
       );
+      assert.equal(
+        (await database.query('SELECT count(*)::int AS count FROM channel_settings')).rows[0].count,
+        0,
+      );
       assert.equal(calls, 0);
+      assert.deepEqual(f.channelCalls, verifiedChannelCalls);
+      const resumed = await f.create();
+      assert.equal(f.adapterStarts(), 1);
+      await resumed.acknowledge(id);
+      await assert.rejects(readFile(pendingPath), { code: 'ENOENT' });
+      assert.equal((await f.request(resumed, 'GET', '/api/desktop/setup')).json().completed, true);
+      assert.deepEqual(f.channelCalls, verifiedChannelCalls);
     },
   );
 });

@@ -155,6 +155,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
         <Button className="ob-next" disabled={saving !== null} onClick={onNext}>
           Let’s go
         </Button>
+        <p className="ob-welcome-reassurance">You can change your choices later in Settings.</p>
       </Rise>
     </section>
   );

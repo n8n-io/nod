@@ -179,7 +179,6 @@
   min-width: 0;
 }
 .connection-onboarding .connection-onboarding-reason {
-  max-width: 46ch;
   margin-top: 8px;
   color: var(--muted-foreground);
   font-size: 15px;

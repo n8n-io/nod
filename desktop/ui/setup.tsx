@@ -136,8 +136,8 @@ function Startup() {
       : undefined;
   const description = unlocking
     ? status.platform === 'darwin'
-      ? 'If macOS asks, allow Otto to use your Keychain.'
-      : 'Opening your saved settings.'
+      ? 'Otto uses your Mac’s Keychain to protect your saved connections. Allow access if macOS asks.'
+      : 'Otto uses your system’s secure storage to protect your saved connections.'
     : busy
       ? firstSetup
         ? 'Preparing your workspace and browser.'
@@ -154,9 +154,11 @@ function Startup() {
         title={
           error
             ? 'Otto needs another try'
-            : firstSetup && !unlocking
-              ? 'Getting Otto ready'
-              : 'Opening Otto'
+            : unlocking
+              ? 'Keeping your connections secure'
+              : firstSetup
+                ? 'Getting Otto ready'
+                : 'Opening Otto'
         }
         description={description}
         error={error}

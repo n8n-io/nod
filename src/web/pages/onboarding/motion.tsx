@@ -97,7 +97,7 @@ export function PreferenceBubble({
           aria-describedby={`${id}-reason`}
           onCheckedChange={onChange}
         />
-        <label htmlFor={id}>{label} · you can change this in Settings</label>
+        <label htmlFor={id}>{label}</label>
       </div>
       {error && (
         <p className="ob-preference-error" role="alert">
