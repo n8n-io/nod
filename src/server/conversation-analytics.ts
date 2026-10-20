@@ -167,6 +167,14 @@ export function createConversationAnalytics(options: {
         owner_id text NOT NULL, epoch uuid NOT NULL
       );
     `);
+    await pool.query(
+      `UPDATE analytics_tasks a SET starter=true FROM messages m
+       WHERE a.owner_id=$1 AND NOT a.starter AND m.id=a.request_message_id AND m.owner_id=a.owner_id AND m.role='user' AND EXISTS(
+         SELECT 1 FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
+         WHERE offer.owner_id=m.owner_id AND offer.thread_id=m.thread_id AND task->>'title'=m.text
+       )`,
+      [ownerId],
+    );
     const consent = analytics.consent(ownerId);
     await saveConsent(consent.enabled, consent.revision, false);
     unsubscribe = analytics.subscribe(ownerId, (enabled) => {

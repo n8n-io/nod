@@ -35,7 +35,7 @@ What Otto sends and when is listed in [Analytics and recordings](/deploy/analyti
 
 ## Count real jobs
 
-A real job is the product's main measure: the latest `otto_task_updated` of an owner-started task (`source` `user` or `task`, `starter=false`) with `outcome=completed` and `completion_evidence=action_succeeded`. Only app actions, confirmed browser steps and payments set `action_succeeded`; Otto's own settings, memory and schedules set `settings_changed`. Keep that split when you add a new kind of action. The full definition is in [Analytics and recordings](/deploy/analytics/#real-jobs).
+A real job is the product's main measure: the latest `otto_task_updated` of an owner-started task (`source` `user` or `task`, `starter=false`) with `outcome=completed` and `completion_evidence=action_succeeded`. Only app actions, confirmed browser steps and payments set `action_succeeded`; Otto's own settings, memory and schedules set `settings_changed` only when the turn had no successful app action, browser step or payment. Keep that split when you add a new kind of action. The full definition is in [Analytics and recordings](/deploy/analytics/#real-jobs).
 
 ## Evolve the task vocabulary
 

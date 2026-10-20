@@ -4427,7 +4427,7 @@ test(
       offer.replyId,
       { tasks: [{ title: 'Find synthetic public bicycle specifications' }] },
     ]);
-    const processor = await f.processor(async ({ input }) => {
+    const curate: MemoryCurator['curate'] = async ({ input }) => {
       const { tasks, messages } = input as {
         tasks: Array<{ id: string }>;
         messages: Array<{ id: string; current: boolean }>;
@@ -4449,10 +4449,12 @@ test(
         ],
         frustration: null,
       };
-    });
+    };
+    const processor = await f.processor(curate);
     const starter = [];
+    const tappedSession = randomUUID();
     for (const [session, prompt] of [
-      [randomUUID(), 'Find synthetic public bicycle specifications'],
+      [tappedSession, 'Find synthetic public bicycle specifications'],
       [randomUUID(), 'Find synthetic public tram timetables'],
     ] as const) {
       const before = f.events.length;
@@ -4479,6 +4481,23 @@ test(
       [true, true, true, true, true],
       [false, false, false, false, false],
     ]);
+    await f.pool.query('UPDATE analytics_tasks SET starter=false WHERE owner_id=$1', [f.ownerId]);
+    const upgraded = await f.processor(curate);
+    const before = f.events.length;
+    const later = await f.turn({
+      session: tappedSession,
+      prompt: 'Thanks again',
+      at: Date.parse('2026-10-14T14:00:00.000Z'),
+    });
+    upgraded.start(later.id)();
+    await upgraded.drain();
+    assert.deepEqual(
+      f.events
+        .slice(before)
+        .filter((event) => event.event === 'otto_task_linked')
+        .map((event) => event.properties?.starter),
+      [true],
+    );
   },
 );
 

@@ -89,7 +89,9 @@ async function json(url, request, signal, accept = 'application/json', headers =
       redirect: 'manual',
     });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
-      address = https(new URL(response.headers.get('location') || '', address).href);
+      const next = https(new URL(response.headers.get('location') || '', address).href);
+      if (new URL(next).origin !== new URL(address).origin) headers = {};
+      address = next;
       await response.body?.cancel();
       continue;
     }
