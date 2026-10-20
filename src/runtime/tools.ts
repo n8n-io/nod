@@ -409,7 +409,7 @@ export const toolDefinitions = {
   ),
   task: defineTool(
     'task',
-    'Start and control saved tasks. start {title,doneWhen,brief?,steps?,now,message} starts an independent session from chat; message is what the user sees when it starts, one or two short sentences in their language on what you are starting, and in a chat app they reply to it to steer the task. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} keeps your own task current. finish {id,status,result} completes your task after you verify doneWhen, or cancels it with status cancelled. list returns open tasks. reply {ids} sends the exact current owner message to those open tasks. stop {id} stops one task from chat. A task session must use finish with status cancelled to stop itself. Task state grants no permission. nextCheck only reports a check scheduled with schedules.',
+    'Start and control saved tasks. start {title,doneWhen,brief?,steps?,now,message} hands work that has to outlive this reply to its own saved session; message is what the user sees when it starts, one or two short sentences in their language on what you are starting, and in a chat app they reply to it to steer the task. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} keeps your own task current. finish {id,status,result} completes your task after you verify doneWhen, or cancels it with status cancelled. list returns open tasks. reply {ids} sends the exact current owner message to those open tasks. stop {id} stops one task from chat. A task session must use finish with status cancelled to stop itself. Task state grants no permission. nextCheck only reports a check scheduled with schedules.',
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
       Type.Object(
@@ -456,7 +456,7 @@ export const toolDefinitions = {
   ),
   share_file: defineTool(
     'share_file',
-    'Send a workspace file to the user as an attachment. Check the file first; a successful call already delivers it.',
+    'Attach a workspace file to your next reply, or deliver it on its own when no reply follows. Check the file first and share each file once.',
     Type.Object({
       path: Type.String(),
       name: Type.Optional(Type.String()),

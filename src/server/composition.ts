@@ -855,11 +855,6 @@ async function initializeApplication(
           (channel) => channel.provider === 'telegram' && channel.enabled && channel.allowedUserId,
         ),
       ),
-    apps: async () =>
-      (await integrations.connectedApps())
-        .filter((app) => app.status === 'connected')
-        .map((app) => app.name),
-    present: communication.present,
   });
   const localConsent = await localAccounts.readConsent(ownerId);
   analytics.setUsageData(ownerId, localConsent?.enabled ?? false, localConsent?.revision);
@@ -995,7 +990,6 @@ async function initializeApplication(
       taskLedger: tasks.read,
       task: tasks.execute,
       startTurn: tasks.inherit,
-      turnFinished: (turn, outcome) => void onboardingSuggestions.afterTurn(turn, outcome),
       connections: async (...args) => {
         const result = await integrations.manageConnections(...args);
         if (!('url' in result) || !('name' in result) || typeof result.name !== 'string')

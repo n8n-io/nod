@@ -135,8 +135,6 @@ test(
     const briefInputs: Array<{ owner: string; input: object }> = [];
     let planAnswer: (owner: string) => unknown = () => null;
     let briefAnswer: () => unknown = () => null;
-    let tipAnswer: () => unknown = () => null;
-    let followUps = false;
     let planGate: Promise<void> | undefined;
     let inbox: InboxSnippet[] = [];
     const onboardingFor = (owner: string) =>
@@ -150,7 +148,6 @@ test(
               briefInputs.push({ owner, input: structuredClone(input) });
               return briefAnswer();
             }
-            if ('options' in input) return tipAnswer();
             assert.equal(task, 'plan');
             planInputs.push({ owner, input: structuredClone(input) });
             await planGate;
@@ -161,9 +158,6 @@ test(
         gmail: async () => currentApps.some((app) => app.slug === 'gmail'),
         inbox: async () => structuredClone(inbox),
         telegram: async () => false,
-        apps: async () => currentApps.map((app) => app.name),
-        present: async (_thread, input) =>
-          `A few other things: ${(input.tips as string[]).join(' ')}`,
         mailCheck: async (email) => /verification code/i.test(`${email.subject}\n${email.text}`),
       });
     const onboarding = onboardingFor(ownerId);
@@ -303,9 +297,6 @@ test(
       taskLedger: tasks.read,
       task: tasks.execute,
       startTurn: tasks.inherit,
-      turnFinished: (turn, outcome) => {
-        if (followUps) void onboarding.afterTurn(turn, outcome);
-      },
       artifacts: localArtifacts,
       runTurn: async (context) => {
         runs.push(context);
@@ -1690,39 +1681,6 @@ test(
       );
 
       await t.test(
-        'after the first task finishes Otto suggests a few other things it can do, once',
-        async () => {
-          tipAnswer = () => ({ tips: ['budget', 'synthetic-unknown', 'budget', 'meetings'] });
-          const tipRows = async () =>
-            (
-              await db.pool.query(
-                `SELECT text FROM messages WHERE owner_id=$1 AND role='assistant'
-                 AND text LIKE 'A few other things%' ORDER BY created_at,id`,
-                [ownerId],
-              )
-            ).rows;
-          const tapped = await thread.submitUserMessage('Reply about the venue shortlist');
-          await waitFor(async () => (await turnStatus(tapped.turnId)) === 'succeeded');
-          await db.pool.query(
-            "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=$1",
-            [tapped.turnId],
-          );
-          followUps = true;
-          const resumed = await thread.enqueueTurn('Synthetic continuation after sign-in.', {
-            source: 'resume',
-          });
-          await waitFor(async () => (await turnStatus(resumed)) === 'succeeded');
-          await waitFor(async () => (await tipRows()).length === 1);
-          const next = await thread.submitUserMessage('Synthetic second request');
-          await waitFor(async () => (await turnStatus(next.turnId)) === 'succeeded');
-          await delay(100);
-          assert.equal((await tipRows()).length, 1);
-          followUps = false;
-          tipAnswer = () => null;
-        },
-      );
-
-      await t.test(
         'first-task preparation stays with its owner and falls back when the model fails or breaks the rules',
         async () => {
           const ownerCards = async (owner: string) =>
@@ -2028,189 +1986,6 @@ test(
           currentApps = [];
           briefAnswer = () => null;
           planAnswer = () => null;
-        },
-      );
-
-      await t.test(
-        'onboarding tips commit only with their message and respect concurrent changes',
-        async (t) => {
-          const seed = async () => {
-            const owner = `synthetic-tips-${randomUUID()}`;
-            const threadId = randomUUID();
-            const turnId = randomUUID();
-            const suggestions = {
-              intro: 'Synthetic first tasks',
-              tasks: [{ title: 'Prepare a synthetic report', source: 'web', kind: 'now' }],
-            };
-            await onboardingFor(owner).initialize();
-            await db.pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [
-              threadId,
-              owner,
-            ]);
-            await db.pool.query(
-              `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status)
-             VALUES($1,$2,$3,'user','Synthetic completed task','succeeded')`,
-              [turnId, owner, threadId],
-            );
-            await db.pool.query(
-              `INSERT INTO onboarding_suggestions(owner_id,suggestions,greeted_at,posted_at)
-             VALUES($1,$2,now(),now())`,
-              [owner, JSON.stringify(suggestions)],
-            );
-            await db.pool.query(
-              `INSERT INTO messages(id,owner_id,thread_id,role,text,suggestions)
-             VALUES($1,$2,$3,'assistant','Synthetic first tasks',$4)`,
-              [randomUUID(), owner, threadId, JSON.stringify(suggestions)],
-            );
-            const state = async () => {
-              const row = await db.pool.query<{ followed: boolean; messages: number }>(
-                `SELECT followed_at IS NOT NULL AS followed,
-               (SELECT count(*)::integer FROM messages WHERE owner_id=$1 AND text LIKE 'A few other things%') AS messages
-               FROM onboarding_suggestions WHERE owner_id=$1`,
-                [owner],
-              );
-              return row.rows[0]!;
-            };
-            return {
-              owner,
-              threadId,
-              state,
-              turn: { turnId, threadId, source: 'user', background: false },
-            };
-          };
-          try {
-            await t.test(
-              'failed insertion leaves no durable claim and a later turn can deliver once',
-              async () => {
-                const fixture = await seed();
-                let calls = 0;
-                tipAnswer = () => {
-                  calls++;
-                  return { tips: ['budget', 'meetings', 'logins'] };
-                };
-                await db.pool.query(`
-              CREATE TABLE test_tip_failures(owner_id text PRIMARY KEY);
-              CREATE FUNCTION test_reject_tip() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-                IF NEW.text LIKE 'A few other things%' AND EXISTS (
-                  SELECT 1 FROM test_tip_failures WHERE owner_id=NEW.owner_id
-                ) THEN RAISE EXCEPTION 'Synthetic tip insertion failed'; END IF;
-                RETURN NEW;
-              END $$;
-              CREATE TRIGGER test_reject_tip BEFORE INSERT ON messages
-                FOR EACH ROW EXECUTE FUNCTION test_reject_tip()
-            `);
-                try {
-                  await db.pool.query('INSERT INTO test_tip_failures VALUES($1)', [fixture.owner]);
-                  await onboardingFor(fixture.owner).afterTurn(fixture.turn, 'succeeded');
-                  assert.deepEqual(await fixture.state(), { followed: false, messages: 0 });
-                  assert.equal(calls, 1);
-                  await db.pool.query('DELETE FROM test_tip_failures WHERE owner_id=$1', [
-                    fixture.owner,
-                  ]);
-                  const restarted = onboardingFor(fixture.owner);
-                  await restarted.afterTurn(fixture.turn, 'succeeded');
-                  assert.deepEqual(await fixture.state(), { followed: true, messages: 1 });
-                  await restarted.afterTurn(fixture.turn, 'succeeded');
-                  assert.deepEqual(await fixture.state(), { followed: true, messages: 1 });
-                  assert.equal(calls, 2);
-                } finally {
-                  await db.pool.query(`
-                DROP TRIGGER test_reject_tip ON messages;
-                DROP FUNCTION test_reject_tip();
-                DROP TABLE test_tip_failures
-              `);
-                }
-              },
-            );
-            await t.test(
-              'parallel instances generate without claiming and insert one message',
-              async () => {
-                const fixture = await seed();
-                let release = () => {};
-                let entered = () => {};
-                const gate = new Promise<void>((resolve) => {
-                  release = resolve;
-                });
-                const ready = new Promise<void>((resolve) => {
-                  entered = resolve;
-                });
-                tipAnswer = async () => {
-                  entered();
-                  await gate;
-                  return { tips: ['budget', 'meetings', 'logins'] };
-                };
-                const first = onboardingFor(fixture.owner).afterTurn(fixture.turn, 'succeeded');
-                const second = onboardingFor(fixture.owner).afterTurn(fixture.turn, 'succeeded');
-                try {
-                  await ready;
-                  assert.deepEqual(await fixture.state(), { followed: false, messages: 0 });
-                } finally {
-                  release();
-                  await Promise.all([first, second]);
-                }
-                assert.deepEqual(await fixture.state(), { followed: true, messages: 1 });
-              },
-            );
-            for (const change of ['busy', 'archived'] as const) {
-              await t.test(
-                `${change} thread during generation leaves the follow-up unclaimed`,
-                async () => {
-                  const fixture = await seed();
-                  const nextTurn = randomUUID();
-                  let release = () => {};
-                  let entered = () => {};
-                  const gate = new Promise<void>((resolve) => {
-                    release = resolve;
-                  });
-                  const ready = new Promise<void>((resolve) => {
-                    entered = resolve;
-                  });
-                  tipAnswer = async () => {
-                    entered();
-                    await gate;
-                    return { tips: ['budget', 'meetings', 'logins'] };
-                  };
-                  const running = onboardingFor(fixture.owner).afterTurn(fixture.turn, 'succeeded');
-                  try {
-                    await ready;
-                    if (change === 'busy')
-                      await db.pool.query(
-                        `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status)
-                     VALUES($1,$2,$3,'user','Synthetic new task','queued')`,
-                        [nextTurn, fixture.owner, fixture.threadId],
-                      );
-                    else {
-                      await db.pool.query(
-                        'UPDATE threads SET archived_at=now() WHERE id=$1 AND owner_id=$2',
-                        [fixture.threadId, fixture.owner],
-                      );
-                      await db.pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [
-                        randomUUID(),
-                        fixture.owner,
-                      ]);
-                    }
-                  } finally {
-                    release();
-                    await running;
-                  }
-                  assert.deepEqual(await fixture.state(), { followed: false, messages: 0 });
-                  if (change === 'busy') {
-                    await db.pool.query(
-                      "UPDATE turns SET status='succeeded' WHERE id=$1 AND owner_id=$2",
-                      [nextTurn, fixture.owner],
-                    );
-                    await onboardingFor(fixture.owner).afterTurn(
-                      { ...fixture.turn, turnId: nextTurn },
-                      'succeeded',
-                    );
-                    assert.deepEqual(await fixture.state(), { followed: true, messages: 1 });
-                  }
-                },
-              );
-            }
-          } finally {
-            tipAnswer = () => null;
-          }
         },
       );
 
@@ -2980,12 +2755,11 @@ test(
                 research,
               ])
             ).rows;
-            assert.equal(messages.length, 4);
+            assert.equal(messages.length, 3);
             const artifact = messages.find(
               (message) => message.attachments[0]?.name === 'finished.txt',
             );
-            assert.equal(artifact.attachments[0].name, 'finished.txt');
-            assert.equal(artifact.text, '');
+            assert.equal(artifact.text, 'The synthetic research summary is ready.');
             const unrelated = await thread.enqueueTurn('ask-question', { source: 'event' });
             await waitFor(settled(unrelated));
             block(pending);

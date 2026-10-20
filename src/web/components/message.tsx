@@ -415,12 +415,13 @@ export function MessageBubble({
             }
           >
             <div className="message-body">
-              {message.replyTo && (
-                <blockquote className="message-reply-quote">
-                  <span>{message.replyTo.text || 'Attachment'}</span>
-                </blockquote>
-              )}
-              {message.attachments.length > 0 && (
+              {message.replyTo &&
+                !(message.role === 'assistant' && message.replyTo.role === 'assistant') && (
+                  <blockquote className="message-reply-quote">
+                    <span>{message.replyTo.text || 'Attachment'}</span>
+                  </blockquote>
+                )}
+              {message.role === 'user' && message.attachments.length > 0 && (
                 <MessageAttachments attachments={message.attachments} />
               )}
               {message.text && (
@@ -432,6 +433,9 @@ export function MessageBubble({
                   handoffPaused={handoffPaused}
                   handoffTurnId={message.turnId ?? undefined}
                 />
+              )}
+              {message.role === 'assistant' && message.attachments.length > 0 && (
+                <MessageAttachments attachments={message.attachments} />
               )}
             </div>
           </div>

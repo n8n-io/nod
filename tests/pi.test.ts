@@ -1315,6 +1315,78 @@ test('delegated subagents run in parallel, each in its own browser, and answer a
   }
 });
 
+test('a turn posts its opening line and final reply, never the narration between tool calls', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-narration-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async (text) => {
+          for (const words of [
+            'Reading the synthetic comments.',
+            'Found three synthetic threads.',
+          ]) {
+            input.onEvent({ type: 'message_start' });
+            input.onEvent({ type: 'text_delta', text: words });
+            input.onEvent({ type: 'message_end', status: 'succeeded' });
+            await input.tools
+              .find((item) => item.name === 'manage_personal_context')!
+              .execute({ action: 'memory_find', args: { query: 'synthetic' } });
+          }
+          const answer = /without an answer/.test(text) ? '' : 'The synthetic summary is ready.';
+          input.onEvent({ type: 'message_start' });
+          input.onEvent({ type: 'text_delta', text: answer });
+          input.onEvent({ type: 'final', text: answer });
+          input.onEvent({ type: 'message_end', status: 'succeeded' });
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  const task = {
+    id: randomUUID(),
+    title: 'Synthetic summary',
+    brief: 'Summarize the synthetic comments.',
+    doneWhen: 'The summary is delivered.',
+    revision: 1,
+  };
+  try {
+    for (const [prompt, taskContext, expected] of [
+      [
+        'Summarize the synthetic comments',
+        undefined,
+        ['Reading the synthetic comments.', 'The synthetic summary is ready.'],
+      ],
+      [
+        'Summarize the synthetic comments without an answer',
+        undefined,
+        ['Reading the synthetic comments.', 'Found three synthetic threads.'],
+      ],
+      ['Summarize the synthetic comments', task, ['The synthetic summary is ready.']],
+    ] as const) {
+      const replies: string[] = [];
+      const result = await runtime.runTurn({
+        ...context(directory),
+        turnId: randomUUID(),
+        prompt,
+        ...(taskContext ? { taskContext, background: true } : {}),
+        reply: async (text) => {
+          replies.push(text);
+        },
+      });
+      assert.equal(result.status, 'succeeded');
+      assert.deepEqual(replies, expected);
+    }
+  } finally {
+    await runtime.dispose();
+  }
+});
+
 test('a paused turn cannot start a subagent still preparing and failed children return errors', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-stop-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
