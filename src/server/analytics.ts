@@ -112,12 +112,15 @@ const readVerbs = new Set([
   'download',
 ]);
 
-function sideEffecting(action: string) {
-  if (action === 'OTTO_vault_allow' || action === 'SEARCH_TOOLS') return false;
-  if (action.startsWith('OTTO_')) return true;
-  return !action
+function sideEffect(action: string) {
+  if (action === 'OTTO_vault_allow' || action === 'SEARCH_TOOLS') return;
+  if (action === 'OTTO_browser') return 'action';
+  if (action.startsWith('OTTO_')) return 'settings';
+  return action
     .split(/[^a-zA-Z0-9]+|(?<=[a-z0-9])(?=[A-Z])/)
-    .some((word) => readVerbs.has(word.toLowerCase()));
+    .some((word) => readVerbs.has(word.toLowerCase()))
+    ? undefined
+    : 'action';
 }
 
 const workspaceTools = new Set(['read', 'bash', 'edit', 'write', 'find', 'ls', 'grep']);
@@ -166,10 +169,11 @@ export async function createAnalytics(options: {
     model?: TurnModel;
   }>();
   const replaySessions = new Map<string, string>();
-  const actedRuns = new Set<string>();
-  function acted(runId: string) {
-    if (actedRuns.size >= 1000) actedRuns.delete(actedRuns.values().next().value!);
-    actedRuns.add(runId);
+  const actedRuns = new Map<string, 'action' | 'settings'>();
+  function acted(runId: string, kind: 'action' | 'settings') {
+    if (actedRuns.get(runId) === 'action') return;
+    if (actedRuns.size >= 1000) actedRuns.delete(actedRuns.keys().next().value!);
+    actedRuns.set(runId, kind);
   }
   let closed = false;
   function state(owner: string) {
@@ -231,7 +235,7 @@ export async function createAnalytics(options: {
       parsed.data.properties.kind === 'payment' &&
       parsed.data.properties.status === 'submitted'
     )
-      acted(runId);
+      acted(runId, 'action');
     if (run) {
       const { data } = parsed;
       if (data.event === 'otto_turn_started' && data.properties.model_provider)
@@ -298,12 +302,13 @@ export async function createAnalytics(options: {
     replaySession(turnId: string) {
       return replaySessions.get(turnId);
     },
-    actionSucceeded(runId: string) {
-      return actedRuns.has(runId);
+    sideEffect(runId: string) {
+      return actedRuns.get(runId);
     },
     actionExecuted(owner: string, action: string) {
       const run = runs.getStore();
-      if (run?.owner === owner && run.consent.enabled && sideEffecting(action)) acted(run.id);
+      const kind = sideEffect(action);
+      if (run?.owner === owner && run.consent.enabled && kind) acted(run.id, kind);
     },
     currentRun(owner: string) {
       const run = runs.getStore();

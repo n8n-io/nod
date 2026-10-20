@@ -159,13 +159,13 @@ Apps, connections and Vault:
 
 Tasks Otto works on, inferred after each turn:
 
-| Event                     | When                                                                                    | Properties                                                                                                                                                                                                                                  |
-| ------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `otto_task_started`       | The post-turn analyzer identifies a new request                                         | Opaque `task_id`, short `task_type`, `task_action`, `task_subject`, bounded `task_activities`, `use_case`, `context`, `collaboration`, originating `source` and `channel`; `model_provider` and `model` of the turn that produced the event |
-| `otto_task_linked`        | An analyzed turn is associated with a task                                              | Task properties, including originating `source` and `channel` and the turn's model; the common `run_id` links its service activity                                                                                                          |
-| `otto_task_updated`       | An identified task progresses                                                           | Task properties, `outcome`: `active`, `waiting`, `completed`, `failed`, `cancelled`; `completion_evidence`: `action_succeeded`, `inferred`, `none`; `elapsed_ms`, `turn_count`                                                              |
-| `otto_frustration_signal` | The analyzer identifies an explicit complaint or repeated unresolved correction/request | Bounded `signal`, `reason`, `task_type` and `channel`                                                                                                                                                                                       |
-| `otto_task_analysis`      | Analysis finishes, is unavailable or the queue is full                                  | `source`, `outcome`: `analyzed`, `unavailable`, `invalid`, `failed`, `queue_full`; `task_count`, `unknown_label_count` and `other_label_count` for analyzed turns                                                                           |
+| Event                     | When                                                                                    | Properties                                                                                                                                                                                                                                             |
+| ------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `otto_task_started`       | The post-turn analyzer identifies a new request                                         | Opaque `task_id`, short `task_type`, `task_action`, `task_subject`, bounded `task_activities`, `use_case`, `context`, `collaboration`, originating `source` and `channel`, `starter`; `model_provider` and `model` of the turn that produced the event |
+| `otto_task_linked`        | An analyzed turn is associated with a task                                              | Task properties, including originating `source` and `channel` and the turn's model; the common `run_id` links its service activity                                                                                                                     |
+| `otto_task_updated`       | An identified task progresses                                                           | Task properties, `outcome`: `active`, `waiting`, `completed`, `failed`, `cancelled`; `completion_evidence`: `action_succeeded`, `settings_changed`, `inferred`, `none`; `elapsed_ms`, `turn_count`                                                     |
+| `otto_frustration_signal` | The analyzer identifies an explicit complaint or repeated unresolved correction/request | Bounded `signal`, `reason`, `task_type` and `channel`                                                                                                                                                                                                  |
+| `otto_task_analysis`      | Analysis finishes, is unavailable or the queue is full                                  | `source`, `outcome`: `analyzed`, `unavailable`, `invalid`, `failed`, `queue_full`; `task_count`, `unknown_label_count` and `other_label_count` for analyzed turns                                                                                      |
 
 ## Request analysis and timing
 
@@ -197,16 +197,32 @@ The shared `run_id` connects a turn's tool calls, model requests, service attemp
 
 A turn started by a message from the web or desktop app carries that tab's recording `$session_id` on all of its events, including the task and frustration events analyzed later. A reviewer can open a failed task or a frustration signal in the masked recording of the session that sent the message. The recording stays masked and blocked as described below. Telegram, WhatsApp, scheduled, event and resumed turns carry no recording ID. The link is kept in memory, so a turn that runs after a restart has none.
 
-Completion is **inferred**, not independently verified delivery. A successful runtime turn doesn't establish that the user's goal was achieved. A completed task gets `completion_evidence=action_succeeded` when the same turn (`run_id`) also ran an action the server saw succeed:
+Completion is **inferred**, not independently verified delivery. A successful runtime turn doesn't establish that the user's goal was achieved. A completed task gets `completion_evidence=action_succeeded` when the same turn (`run_id`) also did something in an app or on a website that the server saw succeed:
 
 - a connected-app action that passed the trust check, whether it ran straight away or after your yes, unless its name marks it as a read (`get`, `list`, `fetch`, `search`, `find`, `read`, `retrieve`, `query`, `lookup`, `view`, `describe` or `download`);
-- a change to Otto's schedules, notification settings, spending limits or memory that ran;
 - a browser step you confirmed that ran;
 - a submitted payment (`otto_secure_entry_changed` with `kind=payment` and `submitted`).
 
-Otherwise it's `inferred`; unfinished tasks are `none`. Reads, sign-ins, browser steps that ran without asking and `send_message`, which only messages you, don't count. The read check uses the action's name, so an app action with an unusual name can be counted the wrong way. Every completed task in that turn gets the evidence, and a task finished in a later turn than its action stays `inferred`. Corrections can reopen a task; no reply doesn't mean cancellation. Frustration describes an interaction, not a person's mood or personality. It requires an explicit complaint or repeated unresolved request/correction.
+When the turn only changed Otto's own schedules, notification settings, spending limits or memory, it gets `settings_changed`. Otherwise it's `inferred`; unfinished tasks are `none`. Reads, sign-ins, browser steps that ran without asking and `send_message`, which only messages you, don't count. The read check uses the action's name, so an app action with an unusual name can be counted the wrong way. Every completed task in that turn gets the evidence, and a task finished in a later turn than its action stays `inferred`. Corrections can reopen a task; no reply doesn't mean cancellation. Frustration describes an interaction, not a person's mood or personality. It requires an explicit complaint or repeated unresolved request/correction.
+
+`starter` is `true` when the task's request is the title of a first-chat task card, which is what **Do it** sends. A message you type with the exact card title counts too.
+
+### Real jobs
+
+A **real job** is a task you asked for that Otto finished in an app or on a website. In events, it's the latest `otto_task_updated` for a `task_id` with `source` `user` or `task`, `starter=false`, `outcome=completed` and `completion_evidence=action_succeeded`. First-chat task cards, scheduled runs, event turns and changes to Otto's own settings don't count. Count distinct `task_id` values; a task reopened after completion counts once.
 
 `elapsed_ms` runs from the first associated request to the observed turn finish, including queueing and time between turns. `duration_ms` on turn completion measures that execution segment, excluding the classifier call. `queue_duration_ms` measures the queued turn's wait to execute. A turn that pauses includes the runtime's bounded `waiting_reason`. These timings don't yet separate active work, user waiting and provider latency within a task. Compare percentiles by task category, source and app version, and show unfinished requests alongside completed ones.
+
+## Weekly installations
+
+Opt-in analytics only covers people who turned usage data on. To estimate everyone, the desktop update check counts installations each week without identifying anyone, and with no consent switch because nothing in it is personal.
+
+On each check, the desktop app sends n8n's update service a random weekly ID, its platform and app version, on the release-list request only. The ID is a new random UUID each ISO week, kept in the desktop profile, so checks within a week count once and two weeks can't be linked. The service sends one `otto_update_check` event to PostHog per check, with `distinct_id` `week:<id>`, `platform`, `app_version`, `analytics_schema`, `environment` (`production` for stable versions), no person profile and GeoIP off. It never forwards your IP address, and a failed send never affects the update check.
+
+- **Weekly installations:** unique `distinct_id` values of `otto_update_check` per week. An app that is open on a few days still counts once. Source installs and apps that don't check that week aren't counted.
+- **Scale up opted-in numbers:** divide weekly installations by the opted-in installations active the same week (unique `local:` IDs with any event), then multiply opted-in counts, such as real jobs, by that factor. This assumes opted-in people use Otto like everyone else, so treat the result as a rough total.
+
+The weekly IDs are separate from installation IDs and can't be joined with opt-in analytics.
 
 ## Connections and consent
 
