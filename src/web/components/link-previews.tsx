@@ -46,10 +46,16 @@ function messageLinks(content: HTMLDivElement | null): Link[] {
   return [...links.values()];
 }
 
-function PreviewRow({ row, active }: { row: Row; active: boolean }) {
+function PreviewRow({
+  row,
+  active,
+  onImageError,
+}: {
+  row: Row;
+  active: boolean;
+  onImageError: (url: string) => void;
+}) {
   const [playing, setPlaying] = useState(false);
-  const [failed, setFailed] = useState(false);
-  if (failed) return null;
   const copy = (
     <span className="message-link-preview-copy">
       <strong>{row.label}</strong>
@@ -59,7 +65,7 @@ function PreviewRow({ row, active }: { row: Row; active: boolean }) {
   );
   const image = (
     <span className="message-link-preview-image">
-      <img src={row.imageUrl} alt="" loading="lazy" onError={() => setFailed(true)} />
+      <img src={row.imageUrl} alt="" loading="lazy" onError={() => onImageError(row.url)} />
     </span>
   );
   const className = `message-link-preview${active ? ' message-link-preview-active' : ''}`;
@@ -92,6 +98,7 @@ function PreviewRow({ row, active }: { row: Row; active: boolean }) {
             allowFullScreen
             referrerPolicy="strict-origin-when-cross-origin"
             sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
+            {...{ credentialless: 'true' }}
           />
         </span>
       ) : (
@@ -146,6 +153,7 @@ export function MessageLinkPreviews({
   const list = useRef<HTMLDivElement>(null);
   const tipElement = useRef<HTMLAnchorElement>(null);
   const tipId = useId();
+  const retry = useRef<(url: string) => void>(() => undefined);
 
   useEffect(() => {
     let current = true;
@@ -155,20 +163,35 @@ export function MessageLinkPreviews({
     const load = () => {
       if (!current || !links.length) return;
       const found = new Map<number, LinkPreview & Link>();
-      links.forEach((link, index) => {
-        void loadLinkPreview(link.url).then((value) => {
-          if (!current || !value) return;
-          found.set(index, { ...value, ...link });
-          setRows(
-            [...found]
-              .sort(([a], [b]) => a - b)
-              .map(([, row], position) => ({
-                ...row,
-                position: position + 1,
-              })),
-          );
+      const retried = new Set<string>();
+      const show = () =>
+        setRows(
+          [...found]
+            .sort(([a], [b]) => a - b)
+            .map(([, row], position) => ({ ...row, position: position + 1 })),
+        );
+      const fetch = (index: number, fresh = false) => {
+        const link = links[index];
+        const previous = found.get(index)?.imageUrl;
+        void loadLinkPreview(link.url, fresh).then((value) => {
+          if (!current) return;
+          if (value && value.imageUrl !== previous) found.set(index, { ...value, ...link });
+          else found.delete(index);
+          show();
         });
-      });
+      };
+      retry.current = (url) => {
+        const index = links.findIndex((link) => link.url === url);
+        if (index < 0) return;
+        if (retried.has(url)) {
+          found.delete(index);
+          show();
+        } else {
+          retried.add(url);
+          fetch(index, true);
+        }
+      };
+      links.forEach((_, index) => fetch(index));
     };
     const target = content.current;
     let observer: IntersectionObserver | undefined;
@@ -314,7 +337,12 @@ export function MessageLinkPreviews({
       {rows.length > 0 && (
         <div className="message-link-previews" ref={list}>
           {visible.map((row) => (
-            <PreviewRow key={row.url} row={row} active={active === row.url} />
+            <PreviewRow
+              key={row.url}
+              row={row}
+              active={active === row.url}
+              onImageError={(url) => retry.current(url)}
+            />
           ))}
           {rows.length > shownRows && !expanded && (
             <button

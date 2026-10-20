@@ -34,7 +34,7 @@ export function previewImageUrl(value?: string) {
     : undefined;
 }
 
-export function loadLinkPreview(value: string): Promise<LinkPreview | null> {
+export function loadLinkPreview(value: string, fresh = false): Promise<LinkPreview | null> {
   const url = previewableUrl(value);
   if (!url) return Promise.resolve(null);
   const version = requestAccountVersion();
@@ -43,6 +43,7 @@ export function loadLinkPreview(value: string): Promise<LinkPreview | null> {
     pending.clear();
     accountVersion = version;
   }
+  if (fresh) previews.delete(url);
   const existing = previews.get(url);
   if (existing && existing.expiresAt > Date.now()) return Promise.resolve(existing.value);
   if (pending.has(url)) return pending.get(url)!;
