@@ -646,7 +646,7 @@ export function createAgentRuntime(dependencies: {
                 !context.taskContext &&
                 (firstMessage ||
                   Date.now() - lastSpoke >=
-                    (!context.channel || context.channel === 'web' ? 60_000 : 180_000))
+                    (!context.channel || context.channel === 'web' ? 30_000 : 180_000))
               ) {
                 queueStreamReply(text, streamId ?? randomUUID());
                 lastSpoke = Date.now();

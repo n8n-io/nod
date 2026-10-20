@@ -1335,7 +1335,7 @@ test('a turn posts its opening line, an update after a quiet stretch and its fin
             await input.tools
               .find((item) => item.name === 'manage_personal_context')!
               .execute({ action: 'memory_find', args: { query: 'synthetic' } });
-            if (/after a quiet minute/.test(text)) t.mock.timers.tick(61_000);
+            if (/after a quiet stretch/.test(text)) t.mock.timers.tick(31_000);
           }
           const answer = /without an answer/.test(text) ? '' : 'The synthetic summary is ready.';
           input.onEvent({ type: 'message_start' });
@@ -1371,7 +1371,7 @@ test('a turn posts its opening line, an update after a quiet stretch and its fin
       ],
       ['Summarize the synthetic comments', task, ['The synthetic summary is ready.']],
       [
-        'Summarize the synthetic comments after a quiet minute',
+        'Summarize the synthetic comments after a quiet stretch',
         undefined,
         [
           'Reading the synthetic comments.',
@@ -1380,7 +1380,7 @@ test('a turn posts its opening line, an update after a quiet stretch and its fin
         ],
       ],
       [
-        'Summarize the synthetic comments after a quiet minute on telegram',
+        'Summarize the synthetic comments after a quiet stretch on telegram',
         undefined,
         ['Reading the synthetic comments.', 'The synthetic summary is ready.'],
       ],
