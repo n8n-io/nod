@@ -2047,6 +2047,7 @@ test('runtime hands off verified storage before browser readiness and fences fai
         status() {},
         prepareImage: async (name) => {
           calls.push(['prepare-image', name]);
+          if (name !== 'postgres') await handed;
           windows?.run('image', name);
         },
         async onStorageReady(runtime) {
@@ -2113,7 +2114,11 @@ test('runtime hands off verified storage before browser readiness and fences fai
           ]);
           assert.deepEqual(
             calls.filter((command) => Array.isArray(command) && command[0] === 'prepare-image'),
-            [['prepare-image', 'postgres']],
+            [
+              ['prepare-image', 'postgres'],
+              ['prepare-image', 'workspace'],
+              ['prepare-image', 'browser'],
+            ],
           );
           if (outcome === 'aborted-handoff') {
             signal.abort(new Error('Synthetic setup cancelled during handoff'));

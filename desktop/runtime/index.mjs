@@ -105,7 +105,7 @@ export async function availablePort() {
   return port;
 }
 
-export async function waitFor(operation, { signal, attempts = 60, interval = 1000 } = {}) {
+export async function waitFor(operation, { signal, attempts = 240, interval = 250 } = {}) {
   let failure;
   for (let attempt = 0; attempt < attempts; attempt++) {
     signal?.throwIfAborted();
@@ -274,18 +274,13 @@ async function prepare(options, onComputerStart) {
   await runLima(['start', '--tty=false', vm], { timeout: 600_000 });
   if (!options.preserveRuntimeCache) await removeUnmountedRuntimes(assets).catch(() => {});
   await waitFor(() => runDocker(['info', '--format', '{{.ServerVersion}}']), { signal });
-  const prepareImage = async (name, progress) => {
+  const prepareImage = async (name) => {
     const item = validImage(manifest.images.find((image) => image.name === name));
     let installed = '';
     try {
       installed = await runDocker(['image', 'inspect', '--format', '{{.Id}}', item.reference]);
     } catch {}
     if (installed === item.id) return;
-    status(
-      'installing',
-      `Preparing ${item.name === 'postgres' ? 'local storage' : `your ${item.name}`}…`,
-      progress,
-    );
     if ((await fileHash(join(assets, item.file))) !== item.sha256)
       throw new Error('An Otto computer image is damaged. Reinstall this build.');
     await runLima(
@@ -506,6 +501,12 @@ export async function finishRuntime({
   onStorageReady,
 }) {
   status('starting', 'Preparing secure storage and tools…', 0.24);
+  const images = {};
+  const loadImage = (name) => {
+    images[name] = Promise.resolve().then(() => prepareImage?.(name));
+    images[name].catch(() => {});
+  };
+  loadImage('postgres');
   const names = {
     workspace: `otto-workspace-${identity}`,
     browser: `otto-browser-${identity}`,
@@ -528,7 +529,9 @@ export async function finishRuntime({
   };
   for (const volume of Object.values(volumes)) await runDocker(['volume', 'create', volume]);
   const image = (name) => manifest.images.find((item) => item.name === name).id;
-  await prepareImage?.('postgres', 0.3);
+  await images.postgres;
+  loadImage('workspace');
+  loadImage('browser');
   const postgres = await replaceContainer(
     runDocker,
     names.postgres,
@@ -582,7 +585,7 @@ export async function finishRuntime({
           await client.end().catch(() => {});
         }
       },
-      { signal, attempts: 12 },
+      { signal, attempts: 12, interval: 1000 },
     );
   } catch (error) {
     const storage = storageReady.get(resolve(dataRoot));
@@ -650,8 +653,8 @@ exec "$docker" "$@"
   signal?.throwIfAborted();
   await onStorageReady?.(runtime);
   signal?.throwIfAborted();
-  await prepareImage?.('workspace', 0.8);
   status('starting', 'Preparing your workspace…', 0.82);
+  await images.workspace;
   await replaceContainer(
     runDocker,
     names.workspace,
@@ -679,8 +682,8 @@ exec "$docker" "$@"
     ],
     { command: ['infinity'] },
   );
-  await prepareImage?.('browser', 0.88);
   status('starting', 'Preparing your browser…', 0.9);
+  await images.browser;
   await replaceContainer(runDocker, names.browser, image('browser'), [
     '--network',
     `otto-browser-${identity}`,
