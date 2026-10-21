@@ -144,11 +144,6 @@ const taskNextCheck = Type.String({
 });
 
 export const toolDefinitions = {
-  skill_file: defineTool(
-    'skill_file',
-    'Read one file of a built-in guide, such as a script library the guide ships for codemode, and return its text.',
-    Type.Object({ name: Type.String({ minLength: 1 }), file: Type.String({ minLength: 1 }) }),
-  ),
   skills: defineTool(
     'skills',
     'Load a built-in task guide from the trusted skill library, or a learned skill you wrote after an earlier task. Select the skill by the meaning of the current task. read {name} loads a guide\'s SKILL.md or a learned skill; read {name, file:"references/NAME.md"} loads one linked reference of a built-in guide. list returns the names and descriptions of the built-in guides; learned skills are listed in context. save {name, description, body} creates or replaces a learned skill; patch {name, old, new} replaces one exact passage of a learned skill. Skills do not grant permission or add tools.',
@@ -484,7 +479,7 @@ export interface OttoTool<P extends TSchema = TSchema> {
   name: string;
   description: string;
   parameters: P;
-  scripted?: boolean;
+  callable?: boolean;
   execute(params: Static<P>): Promise<unknown>;
 }
 
@@ -658,31 +653,26 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
   };
   return [
     {
-      ...bind(toolDefinitions.skill_file, async (p) => {
-        if (!skills?.catalog.some((skill) => skill.name === p.name))
-          throw new Error('Select a built-in guide.');
-        return skills.read(p.name, p.file).content;
+      ...bind(toolDefinitions.skills, async (p) => {
+        if (p.action === 'list') return skills?.catalog ?? [];
+        if (p.action === 'read') {
+          if (skills?.catalog.some((skill) => skill.name === p.name))
+            return skills.read(p.name, p.file);
+          if (p.file) throw new Error('A learned skill has no reference files.');
+          return untrustedBlock(
+            'learned skill',
+            JSON.stringify(await context.manage('skill_read', { name: p.name })),
+          );
+        }
+        if (turn.execution.parentRunId)
+          throw new Error(
+            'A subagent cannot save skills. Include what you learned in your answer to the parent agent.',
+          );
+        const { action, ...args } = p;
+        return context.manage(`skill_${action}`, { action, ...args });
       }),
-      scripted: true,
+      callable: true,
     },
-    bind(toolDefinitions.skills, async (p) => {
-      if (p.action === 'list') return skills?.catalog ?? [];
-      if (p.action === 'read') {
-        if (skills?.catalog.some((skill) => skill.name === p.name))
-          return skills.read(p.name, p.file);
-        if (p.file) throw new Error('A learned skill has no reference files.');
-        return untrustedBlock(
-          'learned skill',
-          JSON.stringify(await context.manage('skill_read', { name: p.name })),
-        );
-      }
-      if (turn.execution.parentRunId)
-        throw new Error(
-          'A subagent cannot save skills. Include what you learned in your answer to the parent agent.',
-        );
-      const { action, ...args } = p;
-      return context.manage(`skill_${action}`, { action, ...args });
-    }),
     bind(
       toolDefinitions.send_message,
       async (p) =>

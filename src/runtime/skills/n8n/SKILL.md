@@ -59,7 +59,8 @@ Read the ones the work needs before you act, and again when the work turns to so
 6. Run every scenario in one codemode script with this guide's verify library:
 
    ```js
-   const n8n = new Function(await tools.skill_file({ name: 'n8n', file: 'lib/verify.js' }))();
+   const lib = await tools.skills({ action: 'read', name: 'n8n', file: 'lib/verify.js' });
+   const n8n = new Function(JSON.parse(lib).content)();
    const scenarios = JSON.parse(await tools.read({ path: 'n8n/order-alerts.scenarios.json' }));
    return await n8n.verify({ workflowId, scenarios });
    ```
