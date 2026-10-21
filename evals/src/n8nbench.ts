@@ -38,7 +38,14 @@ export interface N8nBenchOptions {
 }
 
 export const infrastructure = (run: BenchRun) =>
-  Boolean(run.error) && !run.messages.some((message) => message.role === 'assistant');
+  Boolean(run.unavailable) ||
+  (Boolean(run.error) && !run.messages.some((message) => message.role === 'assistant'));
+
+const healthy = (url: string) =>
+  fetch(new URL('/healthz', url), { signal: AbortSignal.timeout(10_000) }).then(
+    (response) => response.ok,
+    () => false,
+  );
 
 const percent = (part: number, whole: number) =>
   whole ? Math.round((1000 * part) / whole) / 10 : null;
@@ -473,6 +480,11 @@ export async function runN8nBench(options: N8nBenchOptions) {
           console.log(`Budget of $${options.budget} reached; skipping ${job.item.slug}.`);
           continue;
         }
+        if (!(await healthy(options.n8nUrl))) {
+          console.log(`n8n is unavailable; stopping before ${job.item.slug}.`);
+          next = jobs.length;
+          return;
+        }
         const run = await attempt(
           directory,
           {
@@ -487,6 +499,13 @@ export async function runN8nBench(options: N8nBenchOptions) {
           },
           options.minutes,
         );
+        if (!(await healthy(options.n8nUrl))) {
+          run.unavailable = 'n8n became unavailable during the attempt.';
+          await writeFile(outFile, JSON.stringify(run, null, 2));
+          console.log(`${job.item.slug}#${job.iteration} discarded: n8n became unavailable.`);
+          next = jobs.length;
+          return;
+        }
         if (!existsSync(outFile)) await writeFile(outFile, JSON.stringify(run, null, 2));
         runs.push(run);
         spent += run.costUsd;
@@ -497,6 +516,8 @@ export async function runN8nBench(options: N8nBenchOptions) {
     };
     await Promise.all(Array.from({ length: options.concurrency }, worker));
     if (!options.verify) return { runs: runs.length, spent };
+    if (!(await healthy(options.n8nUrl)))
+      throw new Error('n8n is unavailable, so the runs cannot be verified. Restart it and resume.');
     const graded: CaseIteration[] = [];
     const lookup = new Map(cases.map((item) => [item.slug, item]));
     for (let iteration = 0; iteration < options.iterations; iteration++) {

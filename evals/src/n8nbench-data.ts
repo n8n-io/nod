@@ -64,6 +64,7 @@ export interface BenchRun {
   projectId?: string;
   agents?: Array<{ id: string; name?: string }>;
   error?: string;
+  unavailable?: string;
 }
 
 export interface UnitResult {
