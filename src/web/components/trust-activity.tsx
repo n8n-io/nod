@@ -367,9 +367,7 @@ function Sentence({
             </Value>
           </>
         )}
-        .
-        <br />
-        {taskUsd === null ? 'Tasks ' : 'Tasks check in at '}
+        . {taskUsd === null ? 'Tasks ' : 'Tasks check in at '}
         <Value text={taskUsd === null ? 'never check in' : money(taskUsd)} label="Task check-in">
           {(close) => (
             <TaskLimit

@@ -18,7 +18,7 @@ Open **Trust** in the sidebar (⌘I on a Mac, Ctrl+I elsewhere). **Activity** op
 
 Select this month's total to see a chart and a forecast, such as "On track for $12.40". Every app action is recorded, reads included.
 
-![Trust → Activity: a line on what the page is for, then October spending of $18.42 of a $40 limit, tasks that check in at $5, the instruction Otto follows on its own, and today's tasks and sign-in.](../../../assets/screens/trust-light.png)
+![Trust → Activity: a line on what the page is for, then October spending of $18.42 of a $40 limit, tasks that check in at $5, the instruction Otto follows on its own, and today's tasks, sign-in and schedule run.](../../../assets/screens/trust-light.png)
 
 ## Set a monthly limit
 
