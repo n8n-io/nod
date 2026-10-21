@@ -12,7 +12,7 @@ Capability evals run real tasks against the real Otto harness and report how oft
 The short version: each attempt boots its own Otto with a real model. The apps, websites and user are fake. The score comes from what actually changed, not from what Otto said.
 
 :::caution[Evals cost money]
-They call live models. An attempt costs about $0.10 to $0.50, and the default run has 201 attempts. The unit tests never call them.
+They call live models. An attempt costs about $0.10 to $0.50, and the default run has 198 attempts. The unit tests never call them.
 :::
 
 ## How an attempt works
@@ -56,7 +56,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 65 controlled cases, three attempts each.
+3. Run all 66 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -74,7 +74,7 @@ The release suite adds 159 cases of everyday work across every connected app, th
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 224 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 225 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run.
 
@@ -132,7 +132,7 @@ pnpm run eval:capability decisions --model openai/gpt-6.1-sol --baseline origin/
 
 The command compares the baseline LLM, the current LLM path, and decision-model paths whose keys are set. Action permission and confirmation facts always use the selected model in production, so only the two LLM paths answer those cases unless the current revision gives that check a decision question. GPT Decisions needs `OPENAI_API_KEY`. Jev through OpenRouter needs `OPENROUTER_API_KEY`. Set both keys to compare all four paths. The current LLM path separates prompt changes from model changes. Keys stay in memory and do not enter the inputs or saved results.
 
-The 55 cases cover action permission, multilingual approval replies, and confirmation facts. They include forbidden reads, changed recipients, conditional replies, prompt injection, standing instructions and their changes, and a long request. Version three adds eight action holdouts. Expected answers are fixed before the first request. The models receive only the input and the production policy.
+The 95 cases cover action permission, multilingual approval replies, and confirmation facts. They include forbidden reads, changed recipients, conditional replies, prompt injection, standing instructions and their changes, and a long request. Version three adds eight action holdouts. Twenty-nine browser steps, 15 of them holdouts, start from a real purchase on a Czech shop, and eight app cases move a meeting or close an issue: the steps a request covers, and the ones it doesn't, such as a subscription, a new account, another shop or another recipient. Expected answers are fixed before the first request. The models receive only the input and the production policy.
 
 Each case runs three times by default, with one warm-up request per model excluded from the score. Two workers rotate the model order. The run stops at an estimated $3. Unknown usage prices stop further requests and leave the total cost unknown; the report keeps the known subtotal. Requests already running can finish. A failed warm-up blocks that model; failed requests never count as correct. The baseline skips a check if that revision does not have it.
 
@@ -324,7 +324,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 228 cases: 65 controlled cases, 159 release cases, three live web cases and the harness canary.
+The suite has 229 cases: 66 controlled cases, 159 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -382,6 +382,7 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `price-watch`                           | Watch a booked hotel price and alert only when it really drops                     | browser, schedules, memory               | scored      |
 | `proactive-standing-intro`              | The first unprompted update says Otto will keep doing it, once                     | apps, progress                           | known gap   |
 | `prospects-research`                    | Research 10 prospects, find the contact, draft a personal pitch each               | research, files, approvals, apps         | known gap   |
+| `purchase-asks-only-to-pay`             | Buy past a cookie wall and an icon-only basket button, asked only to pay           | vault, browser, approvals                | calibrating |
 | `purchase-within-limit`                 | Buy a charger without spending over my limit, shipping included                    | approvals, vault, browser                | scored      |
 | `rapid-fire-requests`                   | Three requests sent back to back are all answered once and correctly               | progress, long-running, files            | calibrating |
 | `reply-drafts`                          | Draft replies in my voice to the emails that need one                              | apps, memory, approvals                  | scored      |
