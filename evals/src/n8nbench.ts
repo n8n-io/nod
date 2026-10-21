@@ -505,11 +505,15 @@ export async function runN8nBench(options: N8nBenchOptions) {
       .split(',')
       .map((url) => url.trim())
       .filter(Boolean)
-      .map(async (url, index) => ({
-        url,
-        side: await startSidecar({ ...options, n8nUrl: url }, directory, index),
-        health: watchHealth(url),
-      })),
+      .map(async (url, index) => {
+        const health = watchHealth(url);
+        if (!(await health.ready())) throw new Error(`n8n at ${url} is not answering.`);
+        return {
+          url,
+          side: await startSidecar({ ...options, n8nUrl: url }, directory, index),
+          health,
+        };
+      }),
   );
   const laneOf = (run: BenchRun) => lanes.find((lane) => lane.url === run.n8nUrl) ?? lanes[0];
   try {
