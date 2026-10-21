@@ -50,6 +50,8 @@ The off-repo gallery compares the original app snapshot `e79bf5d2` with two alte
 - **Empty states:** proposals center clear explanations on pages that can be empty, preserving continuous chat and the existing Memory interface.
 - **Browser:** two input bugs are fixed in code. In-chat and focused presentation options remain review proposals; broad website reliability is not established by these checks.
 - **Onboarding and feedback:** proposals retain a conversational flow and an anchored feedback hint styled with the app's controls.
+- **Onboarding Send position:** restored right alignment after removing the microphone. Synthetic web and desktop renderer checks cover desktop and narrow widths.
+- **Secure action buttons:** improved Sign in securely and Confirm payment treatments are being reviewed separately in the local gallery; their new presentation is not installed in this branch.
 
 ## Additional bugs found while reviewing
 
