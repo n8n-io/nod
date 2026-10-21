@@ -25,7 +25,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
-import { createAnalytics, type Analytics } from '../src/server/analytics.ts';
+import { createAnalytics, type Analytics, type CaptureAnalytics } from '../src/server/analytics.ts';
 import { createLedger } from '../src/server/ledger.ts';
 import { createModelTraces } from '../src/server/traces.ts';
 import type { ModelTrace } from '../src/ports/traces.ts';
@@ -1109,7 +1109,11 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const invalidKey = 'a'.repeat(64);
     Object.assign(f.keyStore, createEnvironmentKeyStore(invalidKey));
     const calls = { signIn: 0, authorize: 0, catalog: 0 };
-    const signIn = stubSignIn(async () => subscriptionCredential());
+    let rejectSignIn = false;
+    const signIn = stubSignIn(async () => {
+      if (rejectSignIn) throw new Error('Synthetic sign-in failure');
+      return subscriptionCredential();
+    });
     const owner = await f.create('fixture-owner', {
       ...f.backend,
       signIn(input) {
@@ -1126,7 +1130,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       },
     });
     const app = Fastify();
-    owner.register(app);
+    const captured: Parameters<CaptureAnalytics>[0][] = [];
+    owner.register(app, (event) => captured.push(event));
     t.after(() => app.close());
     for (const [url, payload] of [
       ['/api/models/oauth', { provider: 'openai' }],
@@ -1139,6 +1144,16 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       assert.ok(!response.body.includes(invalidKey));
       assert.deepEqual(calls, { signIn: 0, authorize: 0, catalog: 0 });
     }
+    const failures = [
+      { provider: 'openai', method: 'subscription' },
+      { provider: 'openrouter', method: 'oauth' },
+      { provider: 'openai', method: 'api_key' },
+      { provider: 'compatible', method: 'api_key' },
+    ].map((properties) => ({
+      event: 'otto_model_connection_changed',
+      properties: { ...properties, status: 'failed' },
+    }));
+    assert.deepEqual(captured, failures);
     assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 0);
     assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 0);
     Object.assign(f.keyStore, createEnvironmentKeyStore(Buffer.alloc(32, 77).toString('base64')));
@@ -1163,6 +1178,109 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 1);
     assert.equal((await (await owner.resolve()).read())?.type, 'oauth');
     assert.ok(!JSON.stringify(owner.view()).includes('fixture-access'));
+    assert.deepEqual(captured, [
+      ...failures,
+      {
+        event: 'otto_model_connection_changed',
+        properties: { provider: 'openai', method: 'subscription', status: 'connected' },
+      },
+    ]);
+    rejectSignIn = true;
+    const next = await owner.start('openai');
+    await assert.rejects(
+      owner.complete(
+        new URL(`http://127.0.0.1:1455/auth/callback?state=${next.attempt}&code=fixture`),
+      ),
+    );
+    assert.deepEqual(captured.slice(failures.length + 1), [failures[0]]);
+    assert.deepEqual(calls, { signIn: 2, authorize: 0, catalog: 1 });
+  });
+
+  test('model storage preflight preserves database failures without exposing their cause', async (t) => {
+    const f = await fixture(t);
+    const { checkedKeyStore } = await import('../src/server/vault.ts');
+    const { createEnvironmentKeyStore } = await import('../src/providers/environment/key-store.ts');
+    const database = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `${f.database.options.options} -c lock_timeout=50ms`,
+      max: 1,
+    });
+    t.after(() => database.end());
+    let providerCalls = 0;
+    const owner = await f.create('fixture-owner', {
+      ...f.backend,
+      async signIn() {
+        providerCalls++;
+        throw new Error('Unexpected provider call');
+      },
+      async catalog() {
+        providerCalls++;
+        throw new Error('Unexpected provider call');
+      },
+    });
+    Object.assign(
+      f.keyStore,
+      checkedKeyStore(database, createEnvironmentKeyStore(Buffer.alloc(32, 77).toString('base64'))),
+    );
+    const logs: string[] = [];
+    const app = Fastify({ logger: { stream: { write: (value: string) => logs.push(value) } } });
+    const captured: Parameters<CaptureAnalytics>[0][] = [];
+    owner.register(app, (event) => captured.push(event));
+    t.after(() => app.close());
+    const blocker = await f.database.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('LOCK TABLE otto_locks IN ACCESS EXCLUSIVE MODE');
+      await assert.rejects(owner.start('openai'), (error: Error) => {
+        assert.ok(error.cause instanceof pg.DatabaseError);
+        assert.equal(error.cause.code, '55P03');
+        assert.ok(!error.message.includes('OTTO_VAULT_KEY'));
+        assert.ok(!Object.keys(error).includes('cause'));
+        return true;
+      });
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/models/keys',
+        payload: { provider: 'openai', key: 'fixture-provider-key' },
+      });
+      assert.equal(response.statusCode, 400);
+      assert.deepEqual(Object.keys(response.json()), ['error']);
+      assert.ok(!response.body.includes('OTTO_VAULT_KEY'));
+      assert.ok(!response.body.includes('55P03'));
+    } finally {
+      await blocker.query('ROLLBACK');
+      blocker.release();
+    }
+    const privateValue = 'fixture-private-storage-secret';
+    const cause = new Error(`Storage connection failed: ${privateValue}`);
+    f.keyStore.getKey = async () => {
+      throw cause;
+    };
+    await assert.rejects(owner.addKey('openai', 'fixture-provider-key'), (error: Error) => {
+      assert.equal(error.cause, cause);
+      assert.ok(!JSON.stringify(error).includes(privateValue));
+      return true;
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/models/oauth',
+      payload: { provider: 'openai' },
+    });
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(Object.keys(response.json()), ['error']);
+    assert.ok(!response.body.includes(privateValue));
+    assert.ok(!logs.join('').includes(privateValue));
+    assert.ok(!logs.join('').includes('55P03'));
+    assert.deepEqual(
+      captured,
+      ['subscription', 'api_key', 'api_key', 'subscription'].map((method) => ({
+        event: 'otto_model_connection_changed',
+        properties: { provider: 'openai', method, status: 'failed' },
+      })),
+    );
+    assert.equal(providerCalls, 0);
+    assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 0);
+    assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 0);
   });
 
   test('model store batches owned credentials and keeps transient key failures distinct from unavailable grants', async (t) => {

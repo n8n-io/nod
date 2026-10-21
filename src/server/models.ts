@@ -201,15 +201,10 @@ export function createModelService(options: {
       );
     try {
       await options.keyStore.getKey();
-    } catch {
+    } catch (cause) {
       throw new ConnectionError(
-        options.keyStore.id === 'environment'
-          ? 'Check OTTO_VAULT_KEY in server settings: it must be a 32-byte key encoded as base64 that matches this Otto data. Restart Otto after changing it.'
-          : options.keyStore.id === 'keychain'
-            ? 'Otto cannot access macOS Keychain. Unlock it and allow Otto access, then try again.'
-            : options.keyStore.id === 'filesystem'
-              ? 'Otto cannot open its Vault key file. Check the file and its permissions, then try again.'
-              : 'Otto cannot open its credential storage. Check your server settings, then try again.',
+        'Otto cannot open its credential storage. Check your server settings, then try again.',
+        { cause },
       );
     }
   }
@@ -416,7 +411,12 @@ export function createModelService(options: {
   }
   async function begin(provider: 'openai' | 'openrouter', connectionId?: string) {
     if (closed) throw new ConnectionError('Model connections have stopped.');
-    await checkStorage();
+    try {
+      await checkStorage();
+    } catch (error) {
+      connectionChanged(provider, provider === 'openai' ? 'subscription' : 'oauth', 'failed');
+      throw error;
+    }
     await reload();
     const row = connectionId
       ? rows.find(
@@ -557,21 +557,21 @@ export function createModelService(options: {
       }
     },
     async addKey(provider: ModelProvider, key: string) {
-      await checkStorage();
       const value: ModelCredential = { type: 'api_key', key };
       remember(value);
-      return tracked(provider, 'api_key', async () =>
-        save(provider, 'api_key', value, await catalog(provider, 'api_key', value)),
-      );
+      return tracked(provider, 'api_key', async () => {
+        await checkStorage();
+        return save(provider, 'api_key', value, await catalog(provider, 'api_key', value));
+      });
     },
     async addEndpoint(address: string, key?: string) {
-      await checkStorage();
       const url = endpointAddress(address);
       if (!url)
         throw new ConnectionError('Enter a server address such as http://localhost:11434/v1.');
       const value: ModelCredential = { type: 'endpoint', url, ...(key ? { key } : {}) };
       remember(value);
       return tracked('compatible', 'api_key', async () => {
+        await checkStorage();
         const definitions = await backend.catalog('compatible', 'api_key', value).catch(() => {
           throw new ConnectionError(
             'Otto couldn’t list this server’s models. Check the address, the API key and that the server is running.',
