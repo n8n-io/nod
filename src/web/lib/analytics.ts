@@ -13,6 +13,7 @@ type AnalyticsEvents = {
       | 'telegram'
       | 'notifications'
       | 'launch_at_login'
+      | 'computer'
       | 'open_source';
     direction: 'forward' | 'back';
   };
@@ -80,6 +81,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
       'telegram',
       'notifications',
       'launch_at_login',
+      'computer',
       'open_source',
     ],
     direction: ['forward', 'back'],

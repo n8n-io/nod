@@ -548,6 +548,10 @@ export function abortTurns(ids: string[]) {
   for (const id of ids) running.get(id)?.abort();
 }
 
+export function turnSignal(turnId: string) {
+  return running.get(turnId)?.signal;
+}
+
 export async function stopThread() {
   const cancelled = await transaction(
     async (client) => cancelTurns(client, (await lockThread(client)).id),

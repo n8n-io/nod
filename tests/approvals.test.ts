@@ -2408,6 +2408,7 @@ test(
         return { [appConfirmation]: 'question' };
       },
       lock: (_turnId, write) => write(),
+      signalFor: (id) => (id === turn.turnId ? signal : undefined),
     });
     await policy.initialize();
     policy.registerRoutes(app);
@@ -2470,6 +2471,10 @@ test(
     await assert.rejects(
       run({ action: 'act', app: 'Notes', step: 'press', ref: 'e9' }),
       /Unknown ref/,
+    );
+    await assert.rejects(
+      run({ action: 'act', app: 'Notes', step: 'set', ref: 'e1' }),
+      /value for set/,
     );
     assert.deepEqual(ran, []);
 

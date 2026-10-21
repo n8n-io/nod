@@ -94,12 +94,12 @@ export function createComputerPolicy(options: {
   check(turn: TurnRef, action: string, args: Record<string, unknown>): Promise<Verdict>;
   request: Request;
   lock(turnId: string, write: () => Promise<void>): Promise<void>;
+  signalFor(turnId: string): AbortSignal | undefined;
   using?(apps: string[]): void;
 }) {
   const { pool, ownerId, request } = options;
   const computer = options.computer ?? { shell: unavailable, dispose() {} };
   const active = new Map<string, ReturnType<typeof setTimeout>>();
-  const turnSignals = new Map<string, AbortSignal>();
 
   function touch(name: string) {
     clearTimeout(active.get(name));
@@ -226,8 +226,6 @@ export function createComputerPolicy(options: {
       throw new Error(
         'Your computer is off. The owner can turn it on in Settings, under Your computer.',
       );
-    turnSignals.set(turn.turnId, signal);
-    signal.addEventListener('abort', () => turnSignals.delete(turn.turnId), { once: true });
     const input = computerInput.parse(raw);
     if (input.action === 'shell') {
       const verdict = await options.check(turn, 'OTTO_computer', input);
@@ -255,12 +253,11 @@ export function createComputerPolicy(options: {
     };
     if (input.action === 'act') {
       const { step, ref, value, text, key } = input;
-      if (['type', 'key'].includes(step) ? !(text ?? key) : !ref)
-        throw new Error(
-          step === 'type' || step === 'key'
-            ? 'Pass text for type or key for key.'
-            : 'Pass the ref from a fresh look.',
-        );
+      if (step === 'type' && text === undefined) throw new Error('Pass text for type.');
+      if (step === 'key' && !key) throw new Error('Pass key for key.');
+      if (step === 'set' && value === undefined) throw new Error('Pass value for set.');
+      if (['press', 'focus', 'showMenu', 'raise', 'set'].includes(step) && !ref)
+        throw new Error('Pass the ref from a fresh look.');
       const control = ref ? computer.label?.(app.bundleId, ref) : undefined;
       if (ref && !control) throw new Error(`Unknown ref ${ref}. Look at ${app.name} again first.`);
       args = {
@@ -295,7 +292,7 @@ export function createComputerPolicy(options: {
         notRun: true,
       });
     const signal =
-      (provenance?.turnId ? turnSignals.get(provenance.turnId) : undefined) ??
+      (provenance?.turnId ? options.signalFor(provenance.turnId) : undefined) ??
       new AbortController().signal;
     if (args.action === 'shell') {
       const { command, timeoutSeconds } = computerInput.parse(args) as {

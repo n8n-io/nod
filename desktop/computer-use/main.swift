@@ -114,8 +114,8 @@ func act(_ request: [String: Any]) throws -> [String: Any] {
       let name = "AX" + action.prefix(1).uppercased() + action.dropFirst()
       result = AXUIElementPerformAction(target, name as CFString)
     }
-    if result != .success && result != .cannotComplete {
-      throw Failure(message: "\(query) refused \(action) (AXError \(result.rawValue)).")
+    if result != .success {
+      throw Failure(message: "\(query) did not complete \(action) (AXError \(result.rawValue)). Look again to check its state.")
     }
   }
   return ["done": true]

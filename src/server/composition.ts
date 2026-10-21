@@ -126,6 +126,7 @@ import {
   startThreadWorkers,
   stopThread,
   stopThreadWorkers,
+  turnSignal,
   withTurnLock,
   type TurnRef,
 } from './thread.ts';
@@ -1028,6 +1029,7 @@ async function initializeApplication(
     check: trust.check,
     request: (turn, action, args, options) => approvals.request(turn, action, args, options),
     lock: (turnId, write) => withTurnLock(turnId, write),
+    signalFor: turnSignal,
     using: (apps) => parentPort?.postMessage({ type: 'otto-computer', apps }),
   });
   await computerPolicy.initialize();

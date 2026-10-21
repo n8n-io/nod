@@ -24,6 +24,7 @@ export function sandboxProfile(denyRead: string[] = []) {
 (deny file-read* file-write* (subpath (string-append (param "HOME") "/.docker")))
 (deny file-read* file-write* (subpath (string-append (param "HOME") "/.otto-desktop")))
 (deny file-read* file-write* (subpath (string-append (param "HOME") "/.colima")) (subpath (string-append (param "HOME") "/.lima")) (subpath (string-append (param "HOME") "/.orbstack")) (subpath (string-append (param "HOME") "/.rd")))
+(deny file-read* file-write* (subpath (string-append (param "HOME") "/.ssh")) (subpath (string-append (param "HOME") "/.aws")) (subpath (string-append (param "HOME") "/.gnupg")) (subpath (string-append (param "HOME") "/.config/gh")) (subpath (string-append (param "HOME") "/.config/gcloud")) (subpath (string-append (param "HOME") "/.kube")) (literal (string-append (param "HOME") "/.netrc")))
 ${extra}
 (deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd") (global-name "com.apple.security.agent"))
 (deny lsopen)

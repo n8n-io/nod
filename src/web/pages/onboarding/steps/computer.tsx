@@ -7,6 +7,7 @@ import {
   useComputer,
 } from '../../../components/your-computer';
 import { api, errorMessage } from '../../../lib/api';
+import { captureAnalytics } from '../../../lib/analytics';
 import { Bubble, Footer, Messages, useReveal } from '../motion';
 
 const sequence = [{ typing: 550 }, { wait: 250 }];
@@ -30,6 +31,11 @@ export function ComputerSetup({
   useEffect(() => {
     if ((status && status.available !== true) || (!status && error)) ready.current();
   }, [status, error]);
+
+  useEffect(() => {
+    if (status?.available)
+      captureAnalytics('otto_onboarding_step_viewed', { step: 'computer', direction: 'forward' });
+  }, [status?.available]);
 
   const missing = status
     ? computerPermissions.find(([key]) => !status.permissions[key])?.[0]
@@ -83,7 +89,7 @@ export function ComputerSetup({
         {(error || saveError) && <Notice>{error || saveError}</Notice>}
         <Footer
           show={Boolean(status?.available) && revealed >= sequence.length}
-          busy={saving}
+          busy={saving || busy}
           onSkip={onReady}
           skipLabel="Not now"
           nextLabel={
