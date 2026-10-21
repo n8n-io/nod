@@ -101,16 +101,25 @@ async function provisionDatabase(root: string, provision: boolean) {
 }
 
 export async function evalImages(environment: Record<string, string | undefined>) {
-  const build = async (fromEnv: string | undefined, tag: string, dockerfile: string) => {
+  const build = async (
+    fromEnv: string | undefined,
+    tag: string,
+    dockerfile: string,
+    target: string[] = [],
+  ) => {
     if (fromEnv) {
       if ((await docker('image', 'inspect', fromEnv, '--format', '{{.Id}}')).exitCode)
         throw new Error(`Docker image ${fromEnv} is missing.`);
       return fromEnv;
     }
-    const built = await runProcess('docker', ['build', '-q', '-f', dockerfile, '-t', tag, '.'], {
-      cwd: repository,
-      timeoutMs: 1_800_000,
-    });
+    const built = await runProcess(
+      'docker',
+      ['build', '-q', '-f', dockerfile, ...target, '-t', tag, '.'],
+      {
+        cwd: repository,
+        timeoutMs: 1_800_000,
+      },
+    );
     if (built.exitCode)
       throw new Error(
         `Could not build ${tag} from ${dockerfile}: ${built.stderr.trim().slice(-300)}`,
@@ -127,6 +136,7 @@ export async function evalImages(environment: Record<string, string | undefined>
       environment.OTTO_EVAL_BROWSER_IMAGE,
       'otto-eval-browser',
       'Dockerfile.browser',
+      ['--target', 'eval'],
     ),
   };
 }
