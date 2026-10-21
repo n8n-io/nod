@@ -11,6 +11,7 @@ const booleans = new Set([
   'markdown',
   'json',
   'help',
+  'no-verify',
 ]);
 
 export interface Args {

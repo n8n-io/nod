@@ -6,6 +6,7 @@ import { runAnalyticsEval } from './analytics.ts';
 import { runDecisionEval } from './decisions.ts';
 import { parseSetups, runLongMemEval } from './longmemeval.ts';
 import { parseModes, runWhisperBench } from './whisperbench.ts';
+import { runN8nBench } from './n8nbench.ts';
 import { cards, comparisonChart } from './chart.ts';
 import { storyCard, type StoryNotes } from './story.ts';
 import { renderImages } from './images.ts';
@@ -36,6 +37,7 @@ export const help = `Otto capability evals
     longmemeval --data <file>  run the LongMemEval-S memory benchmark on the real Otto, graded by the official judge
                                (--setups memory,chat, --sample 30, --chat-sample 10, --questions a,b,
                                 --concurrency 6, --budget 50, --label name, --resume)
+    n8nbench --data <folder> --n8n-source <instance-ai package>  build the n8n Instance AI suite with Otto through n8n's MCP server and grade it with n8n's own verifier
     whisperbench --data <folder>  run the WhisperBench memory-poisoning benchmark on the real Otto
                                (--modes foreground,background, --cases a,b, --model provider/name,
                                 --concurrency 6, --budget 50, --label name, --resume)
@@ -270,6 +272,36 @@ export async function main(args: Args) {
         concurrency: whole(args, 'concurrency', 6),
         budget: number(args, 'budget', 0),
         resume: has(args, 'resume'),
+      });
+      return;
+    }
+    case 'n8nbench': {
+      const data = text(args, 'data');
+      const n8nSource = text(args, 'n8n-source');
+      if (!data || !n8nSource)
+        throw new Error(
+          'n8nbench requires --data <suite export folder> and --n8n-source <packages/@n8n/instance-ai>.',
+        );
+      const environment = await loadEnvironment();
+      await runN8nBench({
+        data,
+        root,
+        label: text(args, 'label') ?? `n8nbench-${new Date().toISOString().replace(/[:.]/g, '-')}`,
+        model: text(args, 'model') ?? defaultModel(environment),
+        tier: text(args, 'tier'),
+        split: choice(args, 'split', ['dev', 'holdout', 'all'] as const, 'all'),
+        only: idList(text(args, 'cases'), 'cases'),
+        sample: text(args, 'sample') === undefined ? undefined : whole(args, 'sample', 1),
+        iterations: whole(args, 'iterations', 1),
+        concurrency: whole(args, 'concurrency', 4),
+        resume: has(args, 'resume'),
+        n8nSource,
+        n8nUrl: text(args, 'n8n-url') ?? 'http://127.0.0.1:5690',
+        minutes: whole(args, 'minutes', 45),
+        verify: !has(args, 'no-verify'),
+        budget: number(args, 'budget', 0),
+        baseline: text(args, 'baseline'),
+        frame: text(args, 'frame') ?? 'In n8n: ',
       });
       return;
     }
