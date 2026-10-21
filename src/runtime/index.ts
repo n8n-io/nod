@@ -97,6 +97,16 @@ function isToolResult(value: unknown): value is AgentToolResult {
   );
 }
 
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  work.catch(() => {});
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) return abort();
+    signal.addEventListener('abort', abort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
+
 export function createAgentRuntime(dependencies: {
   agent: Agent;
   computer: Computer;
@@ -311,11 +321,11 @@ export function createAgentRuntime(dependencies: {
         let result: AgentToolResult;
         try {
           assertActive();
-          await pendingReplies;
+          await untilAborted(pendingReplies, signal);
           assertActive();
           await context.emit('tool_start', label, event());
           assertActive();
-          const output = await execute();
+          const output = await untilAborted(execute(), signal);
           signal.throwIfAborted();
           if (
             name === 'send_message' ||

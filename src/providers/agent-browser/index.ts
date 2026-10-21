@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
@@ -27,6 +28,7 @@ import { credentialFields } from './credentials.ts';
 import { openDevtools } from './devtools.ts';
 import {
   createScreenStore,
+  daemonDeadline,
   existingDaemonCommand,
   DaemonCommandError,
   DaemonTransportError,
@@ -83,6 +85,7 @@ const streamFrame = z.object({
 });
 
 const holdMs = 30 * 60_000;
+const snapshotChars = 40_000;
 
 const withoutPasskeys = `(() => {
   const container = window.CredentialsContainer && CredentialsContainer.prototype;
@@ -423,16 +426,58 @@ export function createAgentBrowserComputer(options: {
   const referenceOf = (value: string | undefined) =>
     /^@?(?:ref=)?(e\d+)$/.exec(value?.trim() ?? '')?.[1];
 
+  async function shutDown(state: BrowserState) {
+    try {
+      await command(state, { action: 'close' }, { timeoutMs: 5000 });
+    } catch {
+      await kill(state);
+    }
+  }
+
+  async function kill(state: BrowserState) {
+    const socket = state.socket ?? (await daemonSocket(state).catch(() => undefined));
+    const pidFile = socket?.replace(/\.sock$/, '.pid');
+    const host = `${hostname()}-`;
+    const profile = profilePath(state);
+    const lock = await readlink(resolve(profile, 'SingletonLock')).catch(() => '');
+    const owned = async (pid: number, file: string, marker: string) =>
+      Number.isInteger(pid) &&
+      pid > 1 &&
+      pid !== process.pid &&
+      (process.platform !== 'linux' ||
+        (await readFile(`/proc/${pid}/${file}`, 'utf8').catch(() => '')).includes(marker));
+    const chrome = lock.startsWith(host) ? Number(lock.slice(host.length)) : 0;
+    const daemon = Number(pidFile ? await readFile(pidFile, 'utf8').catch(() => '') : '');
+    const targets = [
+      ...((await owned(chrome, 'cmdline', `--user-data-dir=${profile}\0`)) ? [chrome] : []),
+      ...((await owned(daemon, 'environ', `AGENT_BROWSER_SESSION=${browserSessionId(state.id)}\0`))
+        ? [daemon]
+        : []),
+    ];
+    const signal = (pid: number, value: NodeJS.Signals | 0) => {
+      try {
+        process.kill(pid, value);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (const pid of targets) {
+      signal(-pid, 'SIGKILL');
+      signal(pid, 'SIGKILL');
+    }
+    for (let waited = 0; waited < 5000 && targets.some((pid) => signal(pid, 0)); waited += 50)
+      await delay(50);
+    await Promise.all([socket, pidFile].map((path) => path && rm(path, { force: true })));
+    delete state.socket;
+  }
+
   async function closeInterruptedBrowser(state: BrowserState) {
     state.closing = true;
-    try {
-      await command(state, { action: 'close' });
-      state.started = false;
-      state.closed = true;
-      await saveState(state);
-    } catch {
-      throw new Error('The browser could not stop safely. Open the URL again to retry.');
-    }
+    await shutDown(state);
+    state.started = false;
+    state.closed = true;
+    await saveState(state);
   }
 
   async function drainInterruptedCommand<T>(
@@ -528,7 +573,7 @@ export function createAgentBrowserComputer(options: {
             ...(timeZone && { TZ: timeZone }),
           },
           signal: options.signal,
-          timeoutMs: options.timeoutMs,
+          timeoutMs: options.timeoutMs ?? daemonDeadline(request) + 30_000,
         },
       ),
     );
@@ -776,8 +821,9 @@ export function createAgentBrowserComputer(options: {
           ).slice(0, 300),
         });
     const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
+    const end = Math.min(page.length, offset + snapshotChars);
     return {
-      text: `Page (${offset}-${page.length} of ${page.length} characters):\n${page.slice(offset)}`,
+      text: `Page (${offset}-${end} of ${page.length} characters${end < page.length ? `; snapshot with offset ${end} continues` : ''}):\n${page.slice(offset, end)}`,
       url: redactBrowserUrl(url, state.secrets),
     };
   }
@@ -1891,7 +1937,7 @@ export function createAgentBrowserComputer(options: {
       if (state.started && !state.closed && !state.injecting)
         await captureScreen(state).catch(() => {});
       state.closed = true;
-      if (state.started || state.saved.navigationFailed) await command(state, { action: 'close' });
+      if (state.started || state.saved.navigationFailed) await shutDown(state);
       state.started = false;
       await state.proxy?.dispose();
       await saveState(state);

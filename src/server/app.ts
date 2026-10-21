@@ -121,7 +121,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       );
       return { running: result.rows };
     });
-  const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",NOT u.background AS "showTyping",
+  const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",(NOT u.background OR u.source='user') AS "showTyping",
     CASE WHEN ${activeHandoffSql}
       THEN (SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id AND m.role='assistant' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS "handoffMessageId"`;
   async function messageTurns(threadId: string, ids: string[]): Promise<Turn[]> {

@@ -107,7 +107,11 @@ export function TaskCard({
   onReply?(): void;
 }) {
   const headingId = useId();
-  const [expanded, setExpanded] = useState(false);
+  const stuck = task.status === 'failed' || task.status === 'stalled';
+  const [expanded, setExpanded] = useState(stuck);
+  useEffect(() => {
+    if (stuck) setExpanded(true);
+  }, [stuck]);
   const [showActivity, setShowActivity] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState('');

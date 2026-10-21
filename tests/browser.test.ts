@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { constants } from 'node:fs';
-import { mkdir, mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { connect, createServer, type Socket } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -1194,59 +1194,74 @@ test('discarding a thread closes its browser and deletes only its throwaway data
   }
 });
 
-async function wedgedBrowser() {
+test('a browser that will not close is killed with its process groups so the next open starts fresh', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-drain-failure-'));
   const fixture = stagedLoginBrowser();
   const commands: string[] = [];
-  let failClose = true;
+  let failOpen = true;
+  const sockets = join(directory, 'fixture-sockets');
+  const profile = join(directory, 'runtime', 'profiles', 'fixture');
+  const daemon = spawn('sh', ['-c', 'sleep 60 & echo $!; wait'], {
+    detached: true,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    env: { ...process.env, AGENT_BROWSER_SESSION: browserSessionId('fixture') },
+  });
+  const display = Number(String((await once(daemon.stdout, 'data'))[0]).trim());
+  const chrome = spawn(
+    process.execPath,
+    ['-e', 'setInterval(() => {}, 1000)', `--user-data-dir=${profile}`],
+    { detached: true, stdio: 'ignore' },
+  );
+  const alive = async (pid: number) => {
+    for (let waited = 0; waited < 2000; waited += 50) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return false;
+      }
+      await delay(50);
+    }
+    return true;
+  };
   const computer = createBrowserFixture({
     dataRoot: directory,
     run: async (executable, args, input) => {
       const action = args[args.indexOf('--idle-timeout') + 2];
       commands.push(action);
-      if (action === 'open' && failClose)
+      if (action === 'open' && failOpen) {
+        failOpen = false;
         throw new Error('Runtime command exceeded its time limit.');
-      if (action === 'close' && failClose) throw new Error('Synthetic close unavailable.');
+      }
+      if (action === 'close') throw new Error('Synthetic close unavailable.');
       return fixture.run(executable, args, input);
     },
   });
-  await assert.rejects(
-    computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' }),
-    /could not stop safely/,
-  );
-  return {
-    computer,
-    commands,
-    repair: () => {
-      failClose = false;
-    },
-    async cleanup() {
-      failClose = false;
-      await computer.dispose();
-      await rm(directory, { recursive: true, force: true });
-    },
-  };
-}
-
-test('failed interruption cleanup blocks actions until the next open retries the close', async () => {
-  const wedged = await wedgedBrowser();
-  const { computer, commands } = wedged;
   try {
-    await assert.rejects(computer.act('fixture', { action: 'snapshot' }), /expired/);
-    const count = commands.length;
+    await mkdir(sockets, { recursive: true });
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(sockets, `${browserSessionId('fixture')}.pid`), String(daemon.pid));
+    await symlink(`${hostname()}-${chrome.pid}`, join(profile, 'SingletonLock'));
     await assert.rejects(
       computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' }),
-      /Synthetic close unavailable/,
+      /time limit/,
     );
-    assert.equal(commands.slice(count).at(-1), 'close');
-    wedged.repair();
+    assert.ok(commands.includes('close'));
+    assert.equal(await alive(daemon.pid!), false);
+    assert.equal(await alive(display), false);
+    assert.equal(await alive(chrome.pid!), false);
+    await assert.rejects(computer.act('fixture', { action: 'snapshot' }), /expired/);
     const reopened = await computer.act('fixture', {
       action: 'open',
       url: 'https://1.1.1.1/login',
     });
     assert.equal(reopened.url, 'https://1.1.1.1/login');
   } finally {
-    await wedged.cleanup();
+    for (const pid of [daemon.pid, display, chrome.pid])
+      try {
+        process.kill(pid!, 'SIGKILL');
+      } catch {}
+    await computer.dispose().catch(() => {});
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -2241,6 +2256,62 @@ test(
           }
         }
       }
+      await computer.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'a native page that freezes its renderer is killed at the deadline and the browser reopens',
+  {
+    skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',
+    timeout: 60_000,
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-frozen-native-'));
+    const server = createHttpServer((request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        request.url === '/frozen'
+          ? '<p>Bidding history</p><script>setTimeout(() => { for (;;) {} }, 300)</script>'
+          : '<p>Bidding open</p>',
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const computer = createAgentBrowserComputer({
+      ...containerBrowserOptions(directory),
+      privateNetwork: true,
+      daemonCommand: (path, command, signal, timeoutMs) =>
+        existingDaemonCommand(path, command, signal, timeoutMs ?? 3_000),
+    });
+    const session = `AGENT_BROWSER_SESSION=${browserSessionId('frozen')}\0`;
+    const browsers = async () => {
+      const found: string[] = [];
+      for (const pid of await readdir('/proc')) {
+        if (!/^\d+$/.test(pid)) continue;
+        const environ = await readFile(`/proc/${pid}/environ`, 'utf8').catch(() => '');
+        const args = await readFile(`/proc/${pid}/cmdline`, 'utf8').catch(() => '');
+        if (environ.includes(session) || args.includes(`--user-data-dir=${directory}/`))
+          found.push(args.split('\0')[0]!);
+      }
+      return found;
+    };
+    try {
+      await computer.act('frozen', { action: 'open', url: `${origin}/frozen` });
+      assert.ok((await browsers()).length);
+      await delay(1_000);
+      const started = Date.now();
+      await assert.rejects(computer.act('frozen', { action: 'snapshot' }));
+      assert.ok(Date.now() - started < 20_000);
+      assert.deepEqual(await browsers(), []);
+      await computer.act('frozen', { action: 'open', url: origin });
+      assert.match((await computer.act('frozen', { action: 'snapshot' })).text, /Bidding open/);
+    } finally {
       await computer.dispose();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(directory, { recursive: true, force: true });

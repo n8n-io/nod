@@ -122,7 +122,7 @@ stateDiagram-v2
   needs --> Stopped: you move on
 ```
 
-A question stays **Needs you** until you reply to it or continue its session. An unrelated chat message does not answer it. A failed task shows **Failed**. A stopped task shows **Stopped**. Reply to the task to continue the same saved session.
+A question stays **Needs you** until you reply to it or continue its session. An unrelated chat message does not answer it. A failed or stalled task opens its card, so **Reply** and **Stop** are in view. A stopped task shows **Stopped**. Reply to the task to continue the same saved session. While a task works on your reply, the chat shows that Otto is working.
 
 ## Task status and permission
 

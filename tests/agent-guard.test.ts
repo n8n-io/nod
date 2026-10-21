@@ -628,6 +628,36 @@ test(
   },
 );
 
+test(
+  'stopping ends the turn at once even when a tool never settles',
+  { timeout: 5_000 },
+  async () => {
+    const controller = new AbortController();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const pending = fixture(
+      async (tools) => {
+        const opening = call(tools, 'browser', { action: 'open', url: 'https://example.com' });
+        await started;
+        controller.abort();
+        await assert.rejects(opening, /cancelled/i);
+      },
+      { signal: controller.signal },
+      {
+        computer: fakeComputer({
+          act: () => {
+            entered();
+            return new Promise(() => {});
+          },
+        }),
+      },
+    );
+    await assert.rejects(pending, /aborted|cancelled/i);
+  },
+);
+
 test('secure credential pause prevents subsequent tools in the same execution segment', async () => {
   for (const input of [
     {
