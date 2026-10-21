@@ -18,7 +18,7 @@ Open **Trust** in the sidebar (⌘I on a Mac, Ctrl+I elsewhere). **Activity** op
 
 Select this month's total to see a chart and a forecast, such as "On track for $12.40". Every app action is recorded, reads included.
 
-![Trust → Activity: October spending of $18.42 of a $40 limit, tasks that check in at $5, the instruction Otto follows on its own, and today's tasks, sign-in and schedule run.](../../../assets/screens/trust-light.png)
+![Trust → Activity: a line on what the page is for, then October spending of $18.42 of a $40 limit, tasks that check in at $5, the instruction Otto follows on its own, and today's tasks and sign-in.](../../../assets/screens/trust-light.png)
 
 ## Set a monthly limit
 
@@ -47,7 +47,7 @@ When the month's spending reaches your limit:
 The pause lifts at the start of next month, or as soon as you raise or remove the limit.
 
 :::caution[Some usage has no price]
-Usage on a ChatGPT plan has no price, so it doesn't count toward the limit. In the statement it shows a dash instead of a cost, labelled **Included in your plan**. Otto doesn't know the prices of an [OpenAI-compatible server](/connect/local-models/), so it counts that usage at $0. It doesn't count toward the limit or task check-ins. Costs are Otto's estimates. Your provider's bill is the final word.
+Usage on a ChatGPT plan has no price, so it doesn't count toward the limit. In the list it shows no cost. Otto doesn't know the prices of an [OpenAI-compatible server](/connect/local-models/), so it counts that usage at $0. It doesn't count toward the limit or task check-ins. Costs are Otto's estimates. Your provider's bill is the final word.
 :::
 
 ## Task check-ins

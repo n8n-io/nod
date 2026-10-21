@@ -98,7 +98,7 @@ Memory notes come only from your own messages and the notes you add or import in
 ## Delete your data
 
 - **Memories.** Open **Settings → Memory**, select a note and choose **Forget**. This deletes the note and its earlier versions. You can also ask Otto to forget something.
-- **Vault items.** Open the item in **Trust → Saved** and delete it. For a saved browser session, select **Sign out**.
+- **Vault items.** Open the item in **Trust → Logins and cards** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
 - **Composio key.** Sign in to Easy Connect and confirm the switch in **Settings → App connections**. This deletes your saved key and disconnects the apps you connected through your project.
 - **Everything.** Quit Otto and delete its data folders from the table above. Uninstalling the app alone keeps your data. A service you signed in to through Otto may still list Otto as a connected app until you remove it there.

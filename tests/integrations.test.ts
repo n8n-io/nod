@@ -9366,7 +9366,6 @@ test(
           ['Tell Sam we take the quote', 'chat', 0.55],
         ],
       );
-      assert.equal(view.entries[0].unpriced, true);
       assert.doesNotMatch(
         usagePdf(await ledger.report(), new Date()).toString('latin1'),
         /Foreign request/,

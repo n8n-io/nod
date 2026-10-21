@@ -345,7 +345,7 @@ function Sentence({
   return (
     <>
       <p className="statement-summary trust-sentence">
-        {name}:{' '}
+        Otto spent{' '}
         <Value text={money(month.spentUsd)} label={`Spending in ${name}`}>
           {() => <Month view={view} />}
         </Value>
@@ -355,17 +355,21 @@ function Sentence({
             of{' '}
             <Value text={money(limit.monthlyUsd)} label="Monthly limit">
               {limitForm}
-            </Value>
+            </Value>{' '}
+            in {name}
           </>
         ) : (
           <>
-            ,{' '}
+            {' '}
+            in {name}, with{' '}
             <Value text="no monthly limit" label="Monthly limit">
               {limitForm}
             </Value>
           </>
         )}
-        . {taskUsd === null ? 'Tasks ' : 'Tasks check in at '}
+        .
+        <br />
+        {taskUsd === null ? 'Tasks ' : 'Tasks check in at '}
         <Value text={taskUsd === null ? 'never check in' : money(taskUsd)} label="Task check-in">
           {(close) => (
             <TaskLimit
@@ -429,9 +433,7 @@ function TrustRow({ entry }: { entry: TrustEntry }) {
           {entry.error ? ` · ${entry.error}` : did ? ` · ${did}` : ''}
         </span>
       </span>
-      <span className="trust-row-cost" title={entry.unpriced ? 'Included in your plan' : undefined}>
-        {entry.costUsd !== null ? money(entry.costUsd) : '—'}
-      </span>
+      {entry.costUsd !== null && <span className="trust-row-cost">{money(entry.costUsd)}</span>}
     </div>
   );
 }

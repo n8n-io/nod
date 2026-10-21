@@ -249,7 +249,7 @@
   display: grid;
   grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
   gap: 32px;
-  min-height: calc(100dvh - 190px);
+  min-height: calc(100dvh - 290px);
 }
 .vault-page.is-split .vault-detail-column {
   padding: 0 0 32px 32px;
@@ -292,14 +292,6 @@
     height: 40px;
   }
 }
-.vault-heading {
-  align-items: center;
-}
-.vault-heading-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
 .vault-seg {
   display: inline-flex;
   gap: 2px;
@@ -319,17 +311,6 @@
   color: var(--muted-foreground);
   font-size: var(--text-control);
   cursor: pointer;
-}
-.vault-seg > button[aria-selected='true'] {
-  background: var(--surface);
-  color: var(--foreground);
-  box-shadow:
-    0 1px 2px rgb(0 0 0 / 0.08),
-    inset 0 0 0 1px var(--border);
-}
-.vault-seg > button > span {
-  color: var(--muted-foreground);
-  font-variant-numeric: tabular-nums;
 }
 .vault-seg > button:focus-visible {
   outline: 2px solid var(--primary);
@@ -435,9 +416,6 @@ button.vault-use:focus-visible {
   color: var(--accent);
 }
 @media (max-width: 640px) {
-  .vault-heading-actions {
-    gap: 8px;
-  }
   .vault-use {
     grid-template-columns: 28px minmax(0, 1fr);
     row-gap: 4px;

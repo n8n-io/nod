@@ -7,19 +7,19 @@ sidebar:
 
 import { Steps } from '@astrojs/starlight/components';
 
-Vault keeps your website logins and cards, under **Trust → Saved**. Otto can sign in with a saved login, but the model never receives the password: the Otto server types it into the website for you.
+Vault keeps your website logins and cards, under **Trust → Logins and cards**. Otto can sign in with a saved login, but the model never receives the password: the Otto server types it into the website for you.
 
 ## Add a login
 
 <Steps>
 
-1. Open **Trust**, select **New**, then **New login**.
+1. Open **Trust → Logins and cards**, select **Add**, then **Login**.
 2. Enter a **Name** you'll recognize, such as "Work reports", and the **Website domain**.
 3. Enter the username or email and the **Password**, then select **Save**.
 
 </Steps>
 
-**Import from a password manager.** Select **New → Import passwords** and choose a CSV exported from Chrome, 1Password or another password manager. Otto imports the website logins and skips archived items. Passkeys, cookies and other items aren't imported. Delete the exported file afterwards, because it isn't encrypted.
+**Import from a password manager.** Select **Add → Import passwords** and choose a CSV exported from Chrome, 1Password or another password manager. Otto imports the website logins and skips archived items. Passkeys, cookies and other items aren't imported. Delete the exported file afterwards, because it isn't encrypted.
 
 **Add one during a task.** When a task needs a login you haven't saved, Otto opens a private **Sign in** form. Its fields use the website's own names, such as **Username** or **Email address**; an account the site took on an earlier page gets a generic label. Enter the account and password, then select **Save and continue**. Otto saves both under the website's name, even when the site took the account on an earlier page, and types only the fields that page asks for. The values never pass through chat or the model.
 
@@ -88,9 +88,9 @@ Private forms never open in a chat app. Finish the step in the same conversation
 
 **Trust → Activity** lists every sign-in, code, saved-session use, question, held attempt, reveal and permission change, with the task and the reason, next to what Otto did in your apps.
 
-**Trust → Saved** lists your logins, cards and saved sessions. Open one to edit, reveal, copy or delete it. Every reveal is recorded.
+**Trust → Logins and cards** lists your logins, cards and saved sessions. Open one to edit, reveal, copy or delete it. Every reveal is recorded.
 
-![Trust → Saved with five logins and a card. The selected login shows its saved session and every time Otto asked for it, used it or you entered it.](../../../assets/screens/trust-saved-light.png)
+![Trust → Logins and cards with five logins and a card, and Add at the top. The selected login shows every time Otto asked for it, used it or you entered it.](../../../assets/screens/trust-saved-light.png)
 
 ## How Vault stores secrets
 

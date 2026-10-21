@@ -335,7 +335,7 @@ export function createLedger({
   async function entries(before?: { at: string; id: string }) {
     const { rows } = await pool.query(
       `SELECT u.id,u.source,u.source_id,u.channel,u.status,u.error,u.created_at,
-         left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,c.unpriced,
+         left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,
          (SELECT title FROM schedules WHERE owner_id=$1 AND id::text=split_part(u.source_id,':',2)) AS schedule,
          (SELECT array_agg(action ORDER BY created_at) FROM app_actions WHERE turn_id=u.id) AS actions
        FROM turns u
@@ -353,7 +353,6 @@ export function createLedger({
       channel: String(row.channel).split(':')[0]!,
       error: row.status === 'failed' ? row.error : null,
       costUsd: row.cost,
-      unpriced: Boolean(row.unpriced),
       actions: (row.actions ?? []).map((name: string) => {
         const { app, label } = actionTitle(name);
         return app ? `${app}: ${label}` : label;

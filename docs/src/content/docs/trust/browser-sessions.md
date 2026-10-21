@@ -9,7 +9,7 @@ A saved browser session keeps a website signed in inside Otto's private browser,
 
 ## Save a session
 
-1. In **Trust**, select **New**, then **Website session**.
+1. In **Trust → Logins and cards**, select **Add**, then **Website session**.
 2. Enter the **Website address** and, if you like, an **Account name**. Select **Continue in chat**.
 3. Otto opens the website in a new private browser profile. Sign in through the secure form, or take over the browser yourself.
 4. Otto saves the session once it sees you're signed in.
@@ -33,7 +33,7 @@ A session opens in one browser at a time. While you're still signing in to it in
 
 ## Sign out
 
-Open the session in **Trust → Saved** and select **Sign out**. This deletes the saved profile. If a task is using it, stop the task first.
+Open the session in **Trust → Logins and cards** and select **Sign out**. This deletes the saved profile. If a task is using it, stop the task first.
 
 ## Passkeys and manual sign-in
 
@@ -44,7 +44,7 @@ Passkeys are turned off in Otto's browser, because your passkeys live on your ow
 |                  | Saved login                                            | Saved session                                 |
 | ---------------- | ------------------------------------------------------ | --------------------------------------------- |
 | What's stored    | Username and password, encrypted by Vault              | The browser profile: cookies and site storage |
-| How you add it   | **New login**, an import or the private form           | Sign in once in Otto's browser                |
+| How you add it   | **Add → Login**, an import or the private form         | Sign in once in Otto's browser                |
 | How Otto uses it | The server types the values into the fields Otto picks | Otto opens the signed-in profile              |
 | Where it works   | Fields on the login's exact origin                     | Any public website, never your local network  |
 | Best for         | Username and password sign-in                          | Sign-ins you do by hand, such as magic links  |

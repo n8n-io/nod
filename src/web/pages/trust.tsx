@@ -296,107 +296,112 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
     >
       {!pageMode && (
         <>
-          <header className="page-heading secondary-heading vault-heading">
-            <PageTitle path="/trust" />
-            <div className="vault-heading-actions">
-              <div
-                className="vault-seg"
-                role="tablist"
-                aria-label="Trust views"
-                onKeyDown={(event) => {
-                  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-                  event.preventDefault();
-                  const next =
-                    event.key === 'Home'
-                      ? 'activity'
-                      : event.key === 'End'
-                        ? 'saved'
-                        : view === 'activity'
-                          ? 'saved'
-                          : 'activity';
-                  selectView(next);
-                  event.currentTarget
-                    .querySelector<HTMLButtonElement>(`[data-view="${next}"]`)
-                    ?.focus();
-                }}
-              >
-                {views.map((item) => (
-                  <button
-                    key={item}
-                    id={`${tabsId}-tab-${item}`}
-                    data-view={item}
-                    role="tab"
-                    tabIndex={view === item ? 0 : -1}
-                    aria-selected={view === item}
-                    aria-controls={`${tabsId}-panel`}
-                    onClick={() => selectView(item)}
-                  >
-                    {item === 'activity' ? 'Activity' : 'Saved'}
-                    {item === 'saved' && entries && <span>{items.length}</span>}
-                  </button>
-                ))}
-              </div>
-              <Popover.Root open={menu} onOpenChange={setMenu}>
-                <Popover.Trigger asChild>
-                  <button
-                    ref={newTrigger}
-                    type="button"
-                    className="button button-primary button-sm vault-new"
-                  >
-                    <Plus size={16} aria-hidden="true" />
-                    New
-                  </button>
-                </Popover.Trigger>
-                <Popover.Portal>
-                  <Popover.Content
-                    className="connection-menu-options menu vault-new-menu"
-                    align="end"
-                    sideOffset={6}
-                    onCloseAutoFocus={(event) => {
-                      if (!openingDialog.current) return;
-                      openingDialog.current = false;
-                      event.preventDefault();
-                    }}
-                  >
-                    <button type="button" className="menu-item" onClick={() => start('login')}>
-                      <Globe size={16} aria-hidden="true" />
-                      New login
+          <header className="page-heading secondary-heading">
+            <div>
+              <PageTitle path="/trust" />
+              <p>What Otto did and spent, what it may do on its own, and your logins and cards.</p>
+            </div>
+            {view === 'saved' && (
+              <div className="secondary-heading-actions">
+                <Popover.Root open={menu} onOpenChange={setMenu}>
+                  <Popover.Trigger asChild>
+                    <button
+                      ref={newTrigger}
+                      type="button"
+                      className="button button-primary button-sm"
+                    >
+                      <Plus size={16} aria-hidden="true" />
+                      Add
                     </button>
-                    <button type="button" className="menu-item" onClick={() => start('card')}>
-                      <CreditCard size={16} aria-hidden="true" />
-                      New payment card
-                    </button>
-                    {onAsk && (
+                  </Popover.Trigger>
+                  <Popover.Portal>
+                    <Popover.Content
+                      className="connection-menu-options menu vault-new-menu"
+                      align="end"
+                      sideOffset={6}
+                      onCloseAutoFocus={(event) => {
+                        if (!openingDialog.current) return;
+                        openingDialog.current = false;
+                        event.preventDefault();
+                      }}
+                    >
+                      <button type="button" className="menu-item" onClick={() => start('login')}>
+                        <Globe size={16} aria-hidden="true" />
+                        Login
+                      </button>
+                      <button type="button" className="menu-item" onClick={() => start('card')}>
+                        <CreditCard size={16} aria-hidden="true" />
+                        Payment card
+                      </button>
+                      {onAsk && (
+                        <button
+                          type="button"
+                          className="menu-item"
+                          onClick={() => {
+                            openingDialog.current = true;
+                            setMenu(false);
+                            setWebsite(true);
+                          }}
+                        >
+                          <Globe size={16} aria-hidden="true" />
+                          Website session
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="menu-item"
                         onClick={() => {
                           openingDialog.current = true;
                           setMenu(false);
-                          setWebsite(true);
+                          setImporting(true);
                         }}
                       >
-                        <Globe size={16} aria-hidden="true" />
-                        Website session
+                        <Upload size={16} aria-hidden="true" />
+                        Import passwords
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      className="menu-item"
-                      onClick={() => {
-                        openingDialog.current = true;
-                        setMenu(false);
-                        setImporting(true);
-                      }}
-                    >
-                      <Upload size={16} aria-hidden="true" />
-                      Import passwords
-                    </button>
-                  </Popover.Content>
-                </Popover.Portal>
-              </Popover.Root>
-            </div>
+                    </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
+              </div>
+            )}
           </header>
+          <div
+            className="secondary-tabs"
+            role="tablist"
+            aria-label="Trust views"
+            onKeyDown={(event) => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              event.preventDefault();
+              const next =
+                event.key === 'Home'
+                  ? 'activity'
+                  : event.key === 'End'
+                    ? 'saved'
+                    : view === 'activity'
+                      ? 'saved'
+                      : 'activity';
+              selectView(next);
+              event.currentTarget
+                .querySelector<HTMLButtonElement>(`[data-view="${next}"]`)
+                ?.focus();
+            }}
+          >
+            {views.map((item) => (
+              <button
+                key={item}
+                id={`${tabsId}-tab-${item}`}
+                data-view={item}
+                role="tab"
+                tabIndex={view === item ? 0 : -1}
+                aria-selected={view === item}
+                aria-controls={`${tabsId}-panel`}
+                onClick={() => selectView(item)}
+              >
+                {item === 'activity' ? 'Activity' : 'Logins and cards'}
+                {item === 'saved' && entries && <span>{items.length}</span>}
+              </button>
+            ))}
+          </div>
         </>
       )}
       {loadError && <Notice>{loadError}</Notice>}
@@ -438,11 +443,11 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
                   type="search"
                   value={query}
                   placeholder="Search"
-                  aria-label="Search saved"
+                  aria-label="Search logins and cards"
                   onChange={(event) => setQuery(event.target.value)}
                 />
                 {!entries ? (
-                  loading && <Loading label="Opening saved items…" />
+                  loading && <Loading label="Opening logins and cards…" />
                 ) : !items.length ? (
                   <div className="secondary-empty">
                     <h2>Nothing saved yet</h2>
