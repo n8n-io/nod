@@ -1,6 +1,6 @@
 {
-  "base": "52277de24103dad09ae3bab1038b99c830dc5620",
-  "head": "21456f70cf47a49b30fffdef1681678c263f433c",
+  "base": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
+  "head": "f1d7d4d18f6914686ca7b5982fde766b9e0e9c33",
   "viewport": {
     "width": 1280,
     "height": 800
@@ -301,7 +301,7 @@
       ]
     }
   ],
-  "capturedAt": "2026-10-21T19:09:20.785Z",
+  "capturedAt": "2026-10-21T19:29:50.275Z",
   "assertions": {
     "noPageErrors": true,
     "noUnexpectedApiRequests": true,
@@ -320,28 +320,6 @@
     "completedActionsRemoved": true,
     "remainingSessionSelected": true
   },
-  "artifacts": [
-    {
-      "file": "navigation-and-chat.png",
-      "bytes": 484387,
-      "sha256": "cc7dde27a36813f7e0f8f75fa085b468c54474dafce1ecc3af5a1125f395ca51"
-    },
-    {
-      "file": "onboarding.png",
-      "bytes": 444763,
-      "sha256": "c8589cc7302f1c468e555db963de1ee0d97fbe982a539a9f7dc1745ea51b18c6"
-    },
-    {
-      "file": "vault-and-sign-in.png",
-      "bytes": 400350,
-      "sha256": "a6d302da27db25f5a9f5565daa9d2e6605b79548df49f8751e1b2f7b120b5f9f"
-    },
-    {
-      "file": "overview.png",
-      "bytes": 526257,
-      "sha256": "c18b55e867b9174f807b29e9a2531cb4e4b625e0f97bcaa138723fcc1f418105"
-    }
-  ],
   "browser": {
     "comparison": "browser-pointer.png",
     "capturedAt": "2026-10-21T19:21:01.971Z",
@@ -411,5 +389,27 @@
         "accepted": 400
       }
     }
-  }
+  },
+  "artifacts": [
+    {
+      "file": "navigation-and-chat.png",
+      "bytes": 484458,
+      "sha256": "76079a4c4452b8786d2271eb27fc90a77677c5917791b53de280b230b6424409"
+    },
+    {
+      "file": "onboarding.png",
+      "bytes": 444668,
+      "sha256": "5b982bc5b481cb36c3bc837eee5fc0a2ed90dfb245919d38a95467eaee2d4059"
+    },
+    {
+      "file": "vault-and-sign-in.png",
+      "bytes": 400054,
+      "sha256": "7b9f61406bd74525fee68be49b88f52f576f7df56a4aeefd1ee8ff0fdd876ddf"
+    },
+    {
+      "file": "overview.png",
+      "bytes": 526001,
+      "sha256": "262c2a4513c5caa40513e256a1e2573f015d42c4e28d87cddce921e41257125c"
+    }
+  ]
 }
