@@ -351,7 +351,7 @@ function claudeTurn(
       'claude',
       [
         '-p',
-        '--bare',
+        ...(plugin ? ['--plugin-dir', plugin] : ['--bare']),
         '--model',
         model,
         '--effort',
@@ -359,7 +359,6 @@ function claudeTurn(
         '--mcp-config',
         join(folder, 'mcp.json'),
         '--strict-mcp-config',
-        ...(plugin ? ['--plugin-dir', plugin] : []),
         '--tools',
         allowed.join(','),
         '--allowedTools',
