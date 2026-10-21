@@ -57,7 +57,7 @@
 
 .n8n-sticky text {
   fill: var(--foreground);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
 }
 
@@ -127,20 +127,24 @@
   font-size: 22px;
 }
 
+.n8n-node-icon {
+  color: var(--tone);
+}
+
 .n8n-node-label,
 .n8n-node-title {
   fill: var(--foreground);
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 500;
 }
 
 .n8n-node-title {
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .n8n-port-label {
   fill: var(--muted-foreground);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .n8n-node-label,

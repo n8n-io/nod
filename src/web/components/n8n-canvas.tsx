@@ -10,7 +10,30 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
-import { ExternalLink, Scan, X } from 'lucide-react';
+import {
+  Bot,
+  Brain,
+  Clock,
+  Code,
+  Database,
+  ExternalLink,
+  Filter,
+  Globe,
+  Hourglass,
+  Merge,
+  MessageCircle,
+  MousePointerClick,
+  PenLine,
+  Repeat,
+  Route,
+  Scan,
+  Sparkles,
+  Split,
+  Webhook,
+  Wrench,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import { formatNumber } from '../lib/date-format';
 import { safeMessageLink } from '../lib/message-links';
 import { CodeView } from './attachment-code';
@@ -55,6 +78,32 @@ const outputLabels: Record<string, string[]> = {
   filter: ['kept', 'discarded'],
   splitInBatches: ['done', 'loop'],
 };
+const icons: Record<string, LucideIcon> = {
+  manualTrigger: MousePointerClick,
+  scheduleTrigger: Clock,
+  cron: Clock,
+  webhook: Webhook,
+  chatTrigger: MessageCircle,
+  if: Split,
+  switch: Route,
+  filter: Filter,
+  merge: Merge,
+  splitInBatches: Repeat,
+  wait: Hourglass,
+  code: Code,
+  function: Code,
+  functionItem: Code,
+  set: PenLine,
+  httpRequest: Globe,
+  agent: Bot,
+};
+const families: Array<[RegExp, LucideIcon]> = [
+  [/^lm/, Sparkles],
+  [/^memory/, Brain],
+  [/^vectorStore/, Database],
+  [/^tool/, Wrench],
+];
+const readable = 0.75;
 
 const record = (value: unknown) =>
   value && typeof value === 'object' && !Array.isArray(value)
@@ -146,6 +195,17 @@ function category(type: string): Category {
   return 'other';
 }
 
+function icon(type: string) {
+  if (!/^(?:n8n-nodes-base|@n8n\/n8n-nodes-langchain)\./.test(type)) return undefined;
+  const name = segment(type);
+  const tool = name.replace(/^tool(?=[A-Z])/, '');
+  return (
+    icons[name] ??
+    icons[tool.charAt(0).toLowerCase() + tool.slice(1)] ??
+    families.find(([pattern]) => pattern.test(name))?.[1]
+  );
+}
+
 function initials(type: string) {
   const words =
     segment(type)
@@ -165,6 +225,16 @@ function initials(type: string) {
 function slotLabel(type: string) {
   const word = /([A-Z]?[a-z]+)$/.exec(type)?.[1] ?? type;
   return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+function wrap(text: string, length: number) {
+  const lines = [''];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const line = lines[lines.length - 1];
+    if (line && line.length + word.length >= length) lines.push(word);
+    else lines[lines.length - 1] = line ? `${line} ${word}` : word;
+  }
+  return [lines[0], lines.slice(1).join(' ')].filter(Boolean).map((line) => clip(line, length));
 }
 
 function stickyText(value: unknown) {
@@ -275,7 +345,7 @@ function Canvas({ workflow }: { workflow: Workflow }) {
   const id = `n8n-${useId().replace(/[^\w-]/g, '')}`;
   const frame = useRef<HTMLDivElement>(null);
   const svg = useRef<SVGSVGElement>(null);
-  const touched = useRef(false);
+  const fitted = useRef<'start' | 'whole' | null>('start');
   const moved = useRef(false);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const [area, setArea] = useState({ width: 0, height: 0 });
@@ -288,26 +358,48 @@ function Canvas({ workflow }: { workflow: Workflow }) {
       const margin = box.sticky ? 0 : 40;
       return [box.x - margin, box.x + box.w + margin];
     });
-    const ys = boxes.flatMap((box) => [box.y, box.y + box.h + (box.sticky ? 0 : 32)]);
+    const ys = boxes.flatMap((box) => [box.y, box.y + box.h + (box.sticky ? 0 : 56)]);
     const x = Math.min(...xs);
     const y = Math.min(...ys);
     return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
   }, [boxes]);
-  const fit = useCallback(() => {
-    if (!area.width || !area.height) return;
-    touched.current = false;
-    const k = Math.min(
-      1,
-      Math.max(0.1, Math.min((area.width - 96) / bounds.width, (area.height - 96) / bounds.height)),
+  const start = useMemo(() => {
+    const nodes = boxes.filter((box) => !box.sticky && !box.sub);
+    const triggers = nodes.filter((box) => box.category === 'trigger');
+    return (triggers.length ? triggers : nodes.length ? nodes : boxes).reduce((left, box) =>
+      box.x < left.x ? box : left,
     );
-    setView({
-      k,
-      x: (area.width - bounds.width * k) / 2 - bounds.x * k,
-      y: (area.height - bounds.height * k) / 2 - bounds.y * k,
-    });
-  }, [area, bounds]);
+  }, [boxes]);
+  const fit = useCallback(
+    (whole = false) => {
+      if (!area.width || !area.height) return;
+      fitted.current = whole ? 'whole' : 'start';
+      const k = Math.min(
+        1,
+        Math.max(
+          whole ? 0.1 : readable,
+          Math.min((area.width - 96) / bounds.width, (area.height - 96) / bounds.height),
+        ),
+      );
+      const place = (size: number, from: number, length: number, wanted: number) =>
+        length * k <= size - 96
+          ? (size - length * k) / 2 - from * k
+          : Math.min(48 - from * k, Math.max(size - 48 - (from + length) * k, wanted));
+      setView({
+        k,
+        x: place(area.width, bounds.x, bounds.width, 48 - Math.max(bounds.x, start.x - 120) * k),
+        y: place(
+          area.height,
+          bounds.y,
+          bounds.height,
+          area.height / 2 - (start.y + start.h / 2) * k,
+        ),
+      });
+    },
+    [area, bounds, start],
+  );
   const zoom = useCallback((factor: number, x: number, y: number) => {
-    touched.current = true;
+    fitted.current = null;
     setView((value) => {
       if (!value) return value;
       const k = Math.min(2, Math.max(0.1, value.k * factor));
@@ -329,7 +421,7 @@ function Canvas({ workflow }: { workflow: Workflow }) {
     return () => observer.disconnect();
   }, []);
   useLayoutEffect(() => {
-    if (!touched.current) fit();
+    if (fitted.current) fit(fitted.current === 'whole');
   }, [fit]);
   useEffect(() => {
     const element = svg.current;
@@ -365,7 +457,7 @@ function Canvas({ workflow }: { workflow: Workflow }) {
     if (!moved.current && !other && Math.hypot(next.x - last.x, next.y - last.y) < 4) return;
     if (!moved.current) event.currentTarget.setPointerCapture(event.pointerId);
     moved.current = true;
-    touched.current = true;
+    fitted.current = null;
     pointers.current.set(event.pointerId, next);
     if (!other) {
       setView(
@@ -396,11 +488,11 @@ function Canvas({ workflow }: { workflow: Workflow }) {
       } as Record<string, [number, number] | undefined>
     )[event.key];
     if (pan) {
-      touched.current = true;
+      fitted.current = null;
       setView((value) => value && { ...value, x: value.x + pan[0], y: value.y + pan[1] });
     } else if (event.key === '+' || event.key === '=') zoom(1.25, area.width / 2, area.height / 2);
     else if (event.key === '-') zoom(0.8, area.width / 2, area.height / 2);
-    else if (event.key === '0') fit();
+    else if (event.key === '0') fit(true);
     else return;
     event.preventDefault();
   }
@@ -461,8 +553,8 @@ function Canvas({ workflow }: { workflow: Workflow }) {
                 box.sticky && (
                   <g key={index} className="n8n-sticky">
                     <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={8} />
-                    <text x={box.x + 16} y={box.y + 28}>
-                      {clip(stickyText(box.parameters.content), Math.floor((box.w - 32) / 8))}
+                    <text x={box.x + 16} y={box.y + 30}>
+                      {clip(stickyText(box.parameters.content), Math.floor((box.w - 32) / 9))}
                     </text>
                   </g>
                 ),
@@ -479,6 +571,9 @@ function Canvas({ workflow }: { workflow: Workflow }) {
               if (box.sticky) return null;
               const wide = box.w > 100 && !box.sub;
               const middle = box.y + box.h / 2;
+              const center = wide ? box.x + 50 : box.x + box.w / 2;
+              const Icon = icon(box.type);
+              const glyph = box.sub ? 32 : 40;
               return (
                 <g
                   key={index}
@@ -540,22 +635,31 @@ function Canvas({ workflow }: { workflow: Workflow }) {
                       <text
                         className="n8n-port-label"
                         x={slotX(box, slot)}
-                        y={box.y + box.h + 24}
+                        y={box.y + box.h + 26}
                         textAnchor="middle"
                       >
                         {slotLabel(type)}
                       </text>
                     </g>
                   ))}
-                  <text
-                    className="n8n-node-glyph"
-                    x={wide ? box.x + 50 : box.x + box.w / 2}
-                    y={middle}
-                    textAnchor="middle"
-                    dominantBaseline="central"
-                  >
-                    {initials(box.type)}
-                  </text>
+                  {Icon ? (
+                    <Icon
+                      className="n8n-node-icon"
+                      x={center - glyph / 2}
+                      y={middle - glyph / 2}
+                      size={glyph}
+                    />
+                  ) : (
+                    <text
+                      className="n8n-node-glyph"
+                      x={center}
+                      y={middle}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                    >
+                      {initials(box.type)}
+                    </text>
+                  )}
                   {wide ? (
                     <text
                       className="n8n-node-title"
@@ -563,16 +667,20 @@ function Canvas({ workflow }: { workflow: Workflow }) {
                       y={middle}
                       dominantBaseline="central"
                     >
-                      {clip(box.name, Math.floor((box.w - 108) / 8))}
+                      {clip(box.name, Math.floor((box.w - 108) / 9))}
                     </text>
                   ) : (
                     <text
                       className="n8n-node-label"
                       x={box.x + box.w / 2}
-                      y={box.y + box.h + 22}
+                      y={box.y + box.h + 26}
                       textAnchor="middle"
                     >
-                      {clip(box.name, 24)}
+                      {wrap(box.name, box.sub ? 13 : 18).map((line, index) => (
+                        <tspan key={index} x={box.x + box.w / 2} dy={index ? 20 : 0}>
+                          {line}
+                        </tspan>
+                      ))}
                     </text>
                   )}
                 </g>
@@ -587,7 +695,7 @@ function Canvas({ workflow }: { workflow: Workflow }) {
           size="icon"
           aria-label="Fit to view"
           title="Fit (0)"
-          onClick={fit}
+          onClick={() => fit(true)}
         >
           <Scan size={16} />
         </Button>
