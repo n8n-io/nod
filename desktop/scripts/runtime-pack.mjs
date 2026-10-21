@@ -54,6 +54,7 @@ function included(path) {
   )
     return true;
   if (/^images\/(workspace|browser|postgres)\.tar\.gz$/.test(path)) return true;
+  if (/^guest-packages\/[a-z0-9._-]+\.deb$/.test(path)) return true;
   if (!path.startsWith('lima/share/')) return false;
   if (/lima-guestagent\./.test(path))
     return path.endsWith(

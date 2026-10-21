@@ -31,7 +31,7 @@ flowchart LR
 <TabItem label="Mac" icon="apple">
 
 - Electron runs the app window and the Otto server.
-- Lima and Apple's Virtualization framework run a private Ubuntu virtual machine. It gets half your memory, between 3 and 6 GiB, and a 24 GiB disk that grows as it's used.
+- Lima and Apple's Virtualization framework run a private Ubuntu virtual machine. It gets half your memory, between 3 and 6 GiB, and a 24 GiB disk that grows as it's used. Its first boot installs the firewall packages it needs from the runtime pack, so setup doesn't wait on Ubuntu's package servers.
 - The VM holds PostgreSQL and separate workspace and browser containers. Docker runs only inside the VM.
 
 </TabItem>

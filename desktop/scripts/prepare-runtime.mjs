@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
-import { access, chmod, cp, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { access, chmod, cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
@@ -264,6 +264,12 @@ if (!imagesOnly) {
   await chmod(join(assets, 'docker-host/docker/docker'), 0o755);
   dockerGuest = await download('Docker guest 28.5.1', downloads.dockerGuest, 'docker-guest.tar.gz');
   guest = await download(`Ubuntu 24.04 ${nodeArchitecture}`, downloads.guest, 'guest.img');
+  await rm(join(assets, 'guest-packages'), { recursive: true, force: true });
+  await mkdir(join(assets, 'guest-packages'));
+  for (const item of downloads.guestPackages) {
+    const file = basename(new URL(item.url).pathname);
+    await cp(await download(file, item, file), join(assets, 'guest-packages', file));
+  }
 
   const sourceArchive = await download(
     'Lima source',
@@ -294,6 +300,7 @@ if (!imagesOnly) {
       `- Docker Engine ${buildLock.dockerVersion}: https://github.com/moby/moby/tree/v${buildLock.dockerVersion}. License and notices: docker-engine/LICENSE, docker-engine/NOTICE.`,
       `- Lima ${buildLock.limaVersion}: ${buildLock.limaSource.url}. License: ../lima/share/doc/lima/LICENSE.`,
       `- Ubuntu guest image: ${downloads.guest.url}. Package copyright and license files remain inside the guest at /usr/share/doc.`,
+      `- Ubuntu iptables packages: ${downloads.guestPackages.map((item) => item.url).join(', ')}. Copyright and license files are inside each package at /usr/share/doc.`,
       ...images.map(
         (image) =>
           `- ${image.name} container: ${image.reference}, ${image.id}. Package notices remain inside the image.`,
