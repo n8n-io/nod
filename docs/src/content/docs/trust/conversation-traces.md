@@ -41,7 +41,7 @@ Every trace passes through these layers on your computer before it's sent.
 | --------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | Known secrets               | Keys you saved, model and app keys, Otto's own tokens, and text shaped like a key, token or password | The exact values Otto knows, plus known key formats          |
 | Secret fields               | The value of fields such as `password`, `token` or `api_key` in tool arguments and app data          | The field name                                               |
-| Your name                   | The name on the Gmail account you connected, in full or in part                                      | An exact match                                               |
+| Your name                   | The name on each Gmail account you connected, in full or in part                                     | An exact match                                               |
 | Email addresses             | Every address, and the name written beside one, as in `Jane Doe <jane@example.com>`                  | The address format                                           |
 | Phone numbers               | Numbers that are valid in a country's numbering plan, using your region for local formats            | Google's libphonenumber rules                                |
 | Payment cards               | Card numbers from Visa, Mastercard, American Express and other issuers                               | The issuer prefix and the Luhn checksum                      |

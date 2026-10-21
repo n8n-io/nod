@@ -880,8 +880,10 @@ async function initializeApplication(
       channels ? channels.react(messageId, reaction, signal) : 'absent',
   });
   const localAccounts = createAccountStore(pool);
-  const ownerName = async () =>
-    (await integrations.list(ownerId, { refresh: false })).find(connectedGmail)?.accountName;
+  const ownerNames = async () =>
+    (await integrations.list(ownerId, { refresh: false }))
+      .filter(connectedGmail)
+      .flatMap((connection) => (connection.accountName ? [connection.accountName] : []));
   await localAccounts.initialize();
   const onboardingSuggestions = createOnboardingSuggestions({
     ownerId,
@@ -914,7 +916,7 @@ async function initializeApplication(
         getPreferences(),
       ]);
       return {
-        names: [await ownerName()].filter((name) => name !== undefined),
+        names: await ownerNames(),
         region: preferences.locale
           ? new Intl.Locale(preferences.locale).maximize().region
           : undefined,
@@ -959,7 +961,7 @@ async function initializeApplication(
       name: null,
       givenName: null,
       email: null,
-      preferredName: (await ownerName()) ?? null,
+      preferredName: (await ownerNames())[0] ?? null,
     });
   async function permitVault(
     turn: TurnRef,
@@ -1330,7 +1332,7 @@ async function initializeApplication(
   }
   const welcome = async () => {
     if (adapters.model.configured)
-      await onboardingSuggestions.complete(await ownerName().catch(() => undefined));
+      await onboardingSuggestions.complete((await ownerNames().catch(() => []))[0]);
   };
   const app = await createApp({
     analytics: captureAnalytics,

@@ -386,7 +386,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   async function connectionRows(ownerId: string) {
     assertOwner(ownerId);
     return (
-      await pool.query<ConnectionRow>('SELECT * FROM app_connections WHERE owner_id=$1', [ownerId])
+      await pool.query<ConnectionRow>(
+        'SELECT * FROM app_connections WHERE owner_id=$1 ORDER BY created_at,id',
+        [ownerId],
+      )
     ).rows;
   }
 
