@@ -71,7 +71,7 @@ export function createMemoryLearning(options: {
     if (messages.length) {
       const proposed = await ask(reflectInstructions(tree.sensitive), {
         today: new Date().toISOString().slice(0, 10),
-        memory: indexLayout(tree, { tentative: true }),
+        memory: JSON.stringify(indexLayout(tree, { tentative: true })),
         messages: messages.map((message, index) => ({
           m: index + 1,
           at: message.zone

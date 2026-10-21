@@ -73,7 +73,7 @@ Otto removes what it can recognize. A trace can still contain personal details w
 
 - **No account or device ID.** A trace carries no account, installation or device identifier, and no analytics ID.
 - **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever Otto restarts. It can't be used to link traces to you, to other days or to other Otto data such as feedback reports.
-- **No owner context.** Otto leaves your saved memory, learned skills and format preferences out of the instructions it sends.
+- **No owner context.** Otto replaces your saved memory, learned skills and format preferences with `[owner context omitted]`.
 - **No images.** Images are replaced with `[image]`.
 
 These steps remove the direct links to you. What a conversation says can still identify you, for example a detail the scrubber doesn't recognize, so treat traces as private data rather than anonymous data.

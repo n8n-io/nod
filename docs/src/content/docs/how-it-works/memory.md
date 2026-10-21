@@ -42,7 +42,7 @@ flowchart TD
   find -- path --> l2
 ```
 
-- The **index** is a JSON list of every entry's full text in the owner context, with confirmed entries first. Nothing is cut. Tentative entries are marked `(tentative)`, so Pi treats them as likely rather than certain.
+- The **index** lists every entry's full text in the owner context, one line each as `area/slug: text`, with confirmed entries first. Nothing is cut. Tentative entries are marked `(tentative)`, so Pi treats them as likely rather than certain.
 - An **area** lists its entries.
 - An **entry** shows its full text, status and evidence count.
 

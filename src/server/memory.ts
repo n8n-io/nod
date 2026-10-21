@@ -115,14 +115,13 @@ export function createMemoryService(options: {
 
   async function context() {
     const { tree } = await load();
-    const index = indexLayout(tree, { tentative: true });
-    const settings = {
-      ...(tree.enabled ? {} : { savingEnabled: false }),
-      ...(tree.sensitive ? { sensitiveTopics: 'allowed' } : {}),
-    };
-    return Object.keys(settings).length
-      ? JSON.stringify({ ...settings, ...JSON.parse(index) })
-      : index;
+    return [
+      ...(tree.enabled ? [] : ['savingEnabled: false']),
+      ...(tree.sensitive ? ['sensitiveTopics: allowed'] : []),
+      ...Object.entries(indexLayout(tree, { tentative: true })).flatMap(([area, rows]) =>
+        rows.map((row) => `${area}/${row}`),
+      ),
+    ].join('\n');
   }
 
   async function watermark() {

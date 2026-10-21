@@ -44,7 +44,6 @@ function isFinalAnswer(signature: string | undefined) {
 
 function resources(
   systemPrompt: string,
-  systemContext: string | undefined,
   extensions: ReturnType<ResourceLoader['getExtensions']>,
 ): ResourceLoader {
   return {
@@ -55,7 +54,7 @@ function resources(
     getAgentsFiles: () => ({ agentsFiles: [] }),
     getSystemPrompt: () => systemPrompt,
     getSystemPromptSource: () => undefined,
-    getAppendSystemPrompt: () => (systemContext ? [systemContext] : []),
+    getAppendSystemPrompt: () => [],
     getAppendSystemPromptSources: () => [],
     extendResources: () => {},
     reload: async () => {},
@@ -142,6 +141,57 @@ function threadPromptCache(threadId: string) {
     pi.on('before_provider_request', ({ payload }) => {
       const request = payload as { prompt_cache_key?: unknown } | null;
       if (request?.prompt_cache_key) return { ...request, prompt_cache_key: key };
+    });
+  };
+}
+
+const ownerContextType = 'otto-owner-context';
+
+function isOwnerContext(message: { role: string }) {
+  return (
+    message.role === 'custom' &&
+    (message as { customType?: string }).customType === ownerContextType
+  );
+}
+
+function ownerContextLines(message: { role: string }) {
+  const { content } = message as { content?: unknown };
+  return String(content).split('\n');
+}
+
+function ownerContextCopies(ownerContext: string | undefined) {
+  return (pi: ExtensionAPI) => {
+    pi.on('context', ({ messages }) => {
+      const copies = messages.filter(isOwnerContext);
+      const latest = copies.at(-1);
+      if (!latest)
+        return ownerContext
+          ? {
+              messages: [
+                ...messages,
+                {
+                  role: 'custom' as const,
+                  customType: ownerContextType,
+                  content: ownerContext,
+                  display: false,
+                  timestamp: Date.now(),
+                },
+              ],
+            }
+          : undefined;
+      const current = new Set(ownerContextLines(latest));
+      const stale = new Set(
+        copies.filter((copy) => ownerContextLines(copy).some((line) => !current.has(line))),
+      );
+      if (stale.size) return { messages: messages.filter((message) => !stale.has(message)) };
+    });
+    pi.on('session_before_compact', ({ preparation }) => {
+      preparation.messagesToSummarize = preparation.messagesToSummarize.filter(
+        (message) => !isOwnerContext(message),
+      );
+      preparation.turnPrefixMessages = preparation.turnPrefixMessages.filter(
+        (message) => !isOwnerContext(message),
+      );
     });
   };
 }
@@ -245,7 +295,7 @@ export function createPiAgent(options: {
                         run_id: input.runId,
                         ...(input.parentRunId ? { parent_run_id: input.parentRunId } : {}),
                       },
-                      input.systemContext,
+                      input.ownerContext,
                     ),
                   );
               }),
@@ -319,6 +369,7 @@ export function createPiAgent(options: {
           createCodemodeExtension(),
           recentImages,
           threadPromptCache(input.threadId),
+          ownerContextCopies(input.ownerContext),
         ],
         noExtensions: true,
         noSkills: true,
@@ -422,7 +473,7 @@ export function createPiAgent(options: {
         ],
         customTools: tools,
         noTools: 'builtin',
-        resourceLoader: resources(systemPrompt, input.systemContext, extensions),
+        resourceLoader: resources(systemPrompt, extensions),
         sessionManager: manager,
         settingsManager: SettingsManager.inMemory({
           compaction: {
@@ -564,6 +615,13 @@ export function createPiAgent(options: {
         resumed,
         readsImages: model.input.includes('image'),
         async prompt(text, images) {
+          const owner = input.ownerContext;
+          const copy = manager.buildSessionContext().messages.findLast(isOwnerContext);
+          if (owner && (!copy || ownerContextLines(copy).join('\n') !== owner))
+            await session.sendCustomMessage(
+              { customType: ownerContextType, content: owner, display: false },
+              { deliverAs: 'nextTurn' },
+            );
           await session.prompt(text, { images, expandPromptTemplates: false });
         },
         async abort() {

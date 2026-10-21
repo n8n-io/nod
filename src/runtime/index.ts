@@ -20,7 +20,7 @@ import { appConfirmation, ModelRequestError } from '../ports/agent.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
-import { firstInstruction, steeredInstruction, systemContext, systemPrompt } from './prompt.ts';
+import { firstInstruction, ownerContext, steeredInstruction, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
 import { ottoTools } from './tools.ts';
 import type { Turn } from './turn.ts';
@@ -497,7 +497,7 @@ export function createAgentRuntime(dependencies: {
             ...source,
             ephemeral: true,
             systemPrompt: system,
-            systemContext: systemContext(context),
+            ownerContext: ownerContext(context),
             tools: bind({ ...shared, execution: source }, async () => {
               browsed = true;
             }).filter((tool) => !parentTools.has(tool.name)),
@@ -615,7 +615,7 @@ export function createAgentRuntime(dependencies: {
       const opening = agent.open({
         ...execution,
         systemPrompt: system,
-        systemContext: systemContext(context),
+        ownerContext: ownerContext(context),
         tools,
         workspace,
         timeZone: context.timeZone,

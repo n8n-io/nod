@@ -2962,9 +2962,7 @@ test(
       const saved = await memory.learn({ area: 'preferences', quote: short }, first);
       const slug = 'keep-progress-reports-short';
       assert.deepEqual(saved, { path: `preferences/${slug}`, text: short, status: 'stated' });
-      assert.deepEqual(JSON.parse(await memory.context()), {
-        preferences: [`${slug}: ${short}`],
-      });
+      assert.equal(await memory.context(), `preferences/${slug}: ${short}`);
       const reopened = createMemoryService({ pool, ownerId, store });
       assert.equal(
         ((await reopened.read({ path: saved.path })) as { text: string }).text,
@@ -3065,10 +3063,10 @@ test(
         ),
         { expectedVersion: (await memoryObject()).version },
       );
-      assert.deepEqual(JSON.parse(await memory.context()), {
-        preferences: ['prefers-email-updates: Prefers email updates.'],
-        lessons: ['often-asks-for-design-first: Often asks for a design first. (tentative)'],
-      });
+      assert.deepEqual((await memory.context()).split('\n'), [
+        'preferences/prefers-email-updates: Prefers email updates.',
+        'lessons/often-asks-for-design-first: Often asks for a design first. (tentative)',
+      ]);
       assert.equal(
         (await memory.view()).notes.find((note) => note.area === 'lessons')?.status,
         'tentative',
@@ -3406,10 +3404,10 @@ test(
           ['ana', 'inferred', 1],
         ],
       );
-      assert.deepEqual(JSON.parse(await memory.context()), {
-        preferences: ['meeting-notes: Wants meeting notes as bullet points. (tentative)'],
-        people: ["ana: Ana is the user's sister. (tentative)"],
-      });
+      assert.deepEqual((await memory.context()).split('\n'), [
+        'preferences/meeting-notes: Wants meeting notes as bullet points. (tentative)',
+        "people/ana: Ana is the user's sister. (tentative)",
+      ]);
       assert.equal(await learning.reflect(), 0);
       assert.equal(calls.length, 1);
 
@@ -3436,10 +3434,10 @@ test(
         calls[1].input.memory ?? '',
         /meeting-notes: Wants meeting notes as bullet points\. \(tentative\)/,
       );
-      assert.deepEqual(JSON.parse(await memory.context()), {
-        preferences: ['meeting-notes: Wants meeting notes as bullet points.'],
-        people: ["ana: Ana is the user's sister. (tentative)"],
-      });
+      assert.deepEqual((await memory.context()).split('\n'), [
+        'preferences/meeting-notes: Wants meeting notes as bullet points.',
+        "people/ana: Ana is the user's sister. (tentative)",
+      ]);
     } finally {
       await close();
     }

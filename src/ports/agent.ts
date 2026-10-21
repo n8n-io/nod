@@ -216,7 +216,7 @@ export type AgentEvent =
 export interface AgentSessionOptions extends ExecutionScope {
   ephemeral?: boolean;
   systemPrompt: string;
-  systemContext?: string;
+  ownerContext?: string;
   tools: AgentTool[];
   workspace: WorkspaceSession;
   timeZone?: string;

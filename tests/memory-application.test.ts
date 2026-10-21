@@ -106,7 +106,7 @@ test(
       {
         agent: {
           async open(options) {
-            contexts.push(options.systemContext ?? '');
+            contexts.push(options.ownerContext ?? '');
             return {
               resumed: false,
               abort() {},

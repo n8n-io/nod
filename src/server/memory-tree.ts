@@ -293,7 +293,7 @@ export function indexLayout(tree: Tree, options: { tentative?: boolean } = {}) {
       );
     if (rows.length) index[target] = rows;
   }
-  return JSON.stringify(index);
+  return index;
 }
 
 const matches = (tokens: string[], term: string) =>
