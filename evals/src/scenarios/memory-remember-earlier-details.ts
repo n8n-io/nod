@@ -18,8 +18,11 @@ const digits = (text: string) => text.replace(/\D/g, '');
 const holds = (notes: Memory['notes']) => {
   const text = notes.map((note) => note.text).join(' | ');
   return {
-    address: /rua das flores,? 12\b/i.test(text) && digits(text).includes('4050262'),
-    phone: digits(text).includes('912345678'),
+    address:
+      /rua das flores,? 12\b/i.test(text) &&
+      digits(text).includes('4050262') &&
+      /porto/i.test(text),
+    phone: digits(text).includes('351912345678'),
     text,
   };
 };
@@ -69,8 +72,9 @@ export default scenario({
         (run: Run) => ({
           pass:
             run.approvals.length === 0 &&
+            run.interactions.length === 0 &&
             !run.tools.some((call) => JSON.stringify(call.input ?? {}).includes('memory_forget')),
-          evidence: `${run.approvals.length} approval records; forget calls: ${run.tools.filter((call) => JSON.stringify(call.input ?? {}).includes('memory_forget')).length}.`,
+          evidence: `${run.approvals.length} approval records; ${run.interactions.length} questions to the owner; forget calls: ${run.tools.filter((call) => JSON.stringify(call.input ?? {}).includes('memory_forget')).length}.`,
         }),
         { aspect: 'process', failure: 'overcaution' },
       ),

@@ -80,11 +80,11 @@ This is one call to the memory model per save, about $0.0002 with GPT-6 Luna, ma
 
 | Action           | What the server requires                                                                                                                                                                         |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `memory_learn`   | A turn started or steered by an owner message. Every message it reads is the owner's own, and every note quotes one.                                                                             |
+| `memory_learn`   | Work the owner started, in chat or a task, with an owner message. Every message it reads is the owner's own, and every note quotes one.                                                          |
 | `memory_forget`  | A turn started by an owner message, and the [trust check](/trust/approvals/): unless the owner's words ask to forget that note, Otto asks first. It deletes the entry and its archived versions. |
 | `memory_control` | The complete current owner message, quoted, and the trust check: unless it asks to stop, resume or clear memory, Otto asks first. Clearing also needs a turn started by an owner message.        |
 
-So a fact from a web page, an email, a tool result or Otto's own reply can't be saved, even when it fools Pi, and neither can a background or scheduled run, which has no owner message.
+So a fact from a web page, an email, a tool result or Otto's own reply can't be saved, even when it fools Pi, and neither can an event or scheduled run, or a session that started from one.
 
 Saves are silent: no notice appears in chat or on Telegram or WhatsApp. A note that repeats an existing one adds the new message as evidence to it, and confirms it if it was only learned in the background.
 
@@ -166,7 +166,7 @@ Learned skills are procedures Otto writes for itself after a task, as [Hermes Ag
 The owner sees, edits and forgets learned skills under **Skills** in **Settings → Memory**, and **Export** includes them. Clearing memory clears them too. The code is in [`src/server/learned-skills.ts`](https://github.com/n8n-io/otto/blob/main/src/server/learned-skills.ts).
 
 :::caution[Skills come from what Otto read]
-Otto writes a skill from what it did and read, so a web page or an email can shape one. A skill is guidance, never permission. It never counts as the owner's words: the trust check, the confirmation writer and the fact check never see it. Saving a note still needs the owner's current message word for word, and forgetting a note, turning memory off or clearing it, and changes to schedules, notification rules and limits still go through the check.
+Otto writes a skill from what it did and read, so a web page or an email can shape one. A skill is guidance, never permission. It never counts as the owner's words: the trust check, the confirmation writer and the fact check never see it. Saving a note still needs the owner's own messages, quoted, and forgetting a note, turning memory off or clearing it, and changes to schedules, notification rules and limits still go through the check.
 :::
 
 ## Related resources

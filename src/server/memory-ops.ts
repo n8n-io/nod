@@ -75,7 +75,10 @@ export function applyOps(
       if (origin === 'inferred' && match.origin !== 'inferred') continue;
       match.sources = union(match.sources, sources);
       match.updated = now;
-      if (origin === 'stated') match.origin = 'stated';
+      if (origin === 'stated') {
+        match.origin = 'stated';
+        if (op.expires) match.expires = op.expires;
+      }
       applied.push({ operation: 'save', path: pathOf(match), text: match.text });
       continue;
     }
