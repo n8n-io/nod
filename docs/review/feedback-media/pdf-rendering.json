@@ -17,7 +17,7 @@
       },
       "errors": [],
       "unavailable": true,
-      "screenshot": "1280-light-before.png",
+      "screenshot": "pdf-screenshots/1280-light-before.png",
       "screenshotSha256": "bd4e247026f5e859e793067a91ebb83265767ccc4646f9b50620752ea753f991"
     },
     {
@@ -34,7 +34,7 @@
       },
       "errors": [],
       "unavailable": true,
-      "screenshot": "1280-dark-before.png",
+      "screenshot": "pdf-screenshots/1280-dark-before.png",
       "screenshotSha256": "4438ad503c3131d80ce7b8442e5828417b0c4169e64457e31c8120cb4ae42d59"
     },
     {
@@ -51,7 +51,7 @@
       },
       "errors": [],
       "unavailable": true,
-      "screenshot": "390-light-before.png",
+      "screenshot": "pdf-screenshots/390-light-before.png",
       "screenshotSha256": "b5bc5dcc3b267f7c1fb55543041abb319f8b8c0b04d6f004972d8e3d2f3628be"
     },
     {
@@ -68,7 +68,7 @@
       },
       "errors": [],
       "unavailable": true,
-      "screenshot": "390-dark-before.png",
+      "screenshot": "pdf-screenshots/390-dark-before.png",
       "screenshotSha256": "6d8811f02c134c8f46dc0c47109ed60996fabcba2066f88c566d98bc5bd308d2"
     },
     {
@@ -95,7 +95,7 @@
         }
       },
       "text": "Product review  Review decisions, open questions and next steps.",
-      "screenshot": "1280-light-after.png",
+      "screenshot": "pdf-screenshots/1280-light-after.png",
       "zoomIn": {
         "width": 724,
         "height": 1025,
@@ -165,7 +165,7 @@
         }
       },
       "text": "Product review  Review decisions, open questions and next steps.",
-      "screenshot": "1280-dark-after.png",
+      "screenshot": "pdf-screenshots/1280-dark-after.png",
       "zoomIn": {
         "width": 724,
         "height": 1025,
@@ -235,7 +235,7 @@
         }
       },
       "text": "Product review  Review decisions, open questions and next steps.",
-      "screenshot": "390-light-after.png",
+      "screenshot": "pdf-screenshots/390-light-after.png",
       "zoomIn": {
         "width": 457,
         "height": 647,
@@ -305,7 +305,7 @@
         }
       },
       "text": "Product review  Review decisions, open questions and next steps.",
-      "screenshot": "390-dark-after.png",
+      "screenshot": "pdf-screenshots/390-dark-after.png",
       "zoomIn": {
         "width": 457,
         "height": 647,
@@ -383,7 +383,7 @@
     "file": "pdf-fixture.pdf",
     "bytes": 663,
     "sha256": "72ff9b76f0341d560a39f6edb62b1a936163f7a43fb11c92882ec1377ccc9587",
-    "text": "Product review — Review decisions, open questions and next steps.",
+    "text": "Product review \u2014 Review decisions, open questions and next steps.",
     "pages": 1
   },
   "assertions": {

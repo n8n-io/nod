@@ -1,0 +1,42 @@
+{
+  "beforeRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
+  "afterRevision": "ec9c7eebcd7c44dee7e556562c8812b8751ca261",
+  "afterSourceObject": "41e6995e1ad2faf4054d26056551a796a1c27d72",
+  "before": {
+    "name": "before",
+    "zoom": 2,
+    "input": {
+      "x": 0.3,
+      "y": 0.3
+    },
+    "expected": {
+      "x": 216,
+      "y": 135
+    },
+    "observed": {
+      "target": "",
+      "x": 432,
+      "y": 270
+    }
+  },
+  "after": {
+    "name": "after",
+    "sourceRevision": "ec9c7eebcd7c44dee7e556562c8812b8751ca261",
+    "readiness": "Decoded JPEG contained the post-zoom magenta background marker; removed after input before screenshot",
+    "decodedFrames": 2,
+    "zoom": 2,
+    "input": {
+      "x": 0.3,
+      "y": 0.3
+    },
+    "expected": {
+      "x": 216,
+      "y": 135
+    },
+    "observed": {
+      "target": "target",
+      "x": 216,
+      "y": 135
+    }
+  }
+}

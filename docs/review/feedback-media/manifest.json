@@ -307,7 +307,6 @@
     "noUnexpectedApiRequests": true,
     "noExternalRequests": true,
     "identicalViewport": true,
-    "matchedData": true,
     "webRailCentered": true,
     "modelPickerRemoved": true,
     "toggleStableAcrossPages": true,
@@ -319,25 +318,29 @@
     "vaultFontChanged": true,
     "completedActionsRemoved": true,
     "remainingSessionSelected": true,
-    "beforeImagesPreserved": true
+    "beforeImagesPreserved": true,
+    "matchedSemanticState": true
   },
   "browser": {
     "comparison": "browser-pointer.png",
-    "capturedAt": "2026-10-21T19:21:01.971Z",
+    "capturedAt": "2026-10-21T20:16:22.296Z",
     "beforeRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
+    "afterRevision": "ec9c7eebcd7c44dee7e556562c8812b8751ca261",
     "afterSourceObjects": {
       "src/providers/agent-browser/index.ts": "41e6995e1ad2faf4054d26056551a796a1c27d72",
-      "src/web/components/browser-handoff.tsx": "6db497d7c93b0ddddfa285e9895e5853c58ee384"
+      "src/web/components/browser-handoff.tsx": "861a4f983fda119f6e6171bec86e7c1fdca8380e"
     },
     "scope": "Actual agent-browser provider and native Chromium on a local synthetic page. Identical 1440x900 viewport, 2x page zoom and normalized input (0.3,0.3). No model, external website, connected account or recipient. Does not establish that all browser failures are fixed.",
     "screenshots": [
       {
         "side": "before",
+        "file": "browser-screenshots/pointer-before.png",
         "sha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab"
       },
       {
         "side": "after",
-        "sha256": "0d01e664c91c5223c2eb97f1ef56515cd095c743636aa0e770377b2d52ebb910"
+        "file": "browser-screenshots/pointer-after.png",
+        "sha256": "bdfb7c3ae6d0106d27346beb7f1b6f492b3359b64e04adfe9e08df6c1a236e1e"
       }
     ],
     "observations": [
@@ -360,6 +363,9 @@
       },
       {
         "name": "after",
+        "sourceRevision": "ec9c7eebcd7c44dee7e556562c8812b8751ca261",
+        "readiness": "Decoded JPEG contained the post-zoom magenta background marker; removed after input before screenshot",
+        "decodedFrames": 2,
         "zoom": 2,
         "input": {
           "x": 0.3,
@@ -376,28 +382,46 @@
         }
       }
     ],
+    "details": "browser-pointer-results.json",
     "loadingFrame": {
-      "scope": "Actual Chat and BrowserHandoff with synthetic JPEG stream in native Chrome. Supplementary behavior verification, not a visual redesign comparison.",
+      "comparison": "browser-loading-frame.png",
+      "details": "browser-loading-frame.json",
+      "scope": "Actual Chat and BrowserHandoff rendered in the review harness, with a synthetic JPEG stream and synthetic API acknowledgments. Measures accepted inputs, not native target hits or live provider delivery.",
       "before": {
+        "sourceRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
+        "preservedOriginalFailingRun": true,
         "droppedAtInput": 40,
         "naturalWidth": 0,
         "naturalHeight": 0,
         "displayedWidth": 1230,
-        "displayedHeight": 768.75
+        "displayedHeight": 768.75,
+        "screenshot": "browser-screenshots/loading-frame-before.png",
+        "screenshotSha256": "129d8c0ac4dc484fbae9a4d413dbb172db909aa8897f0456aaffcb31434c66c7"
       },
       "after": {
+        "sourceRevision": "ec9c7eebcd7c44dee7e556562c8812b8751ca261",
+        "sourceObjects": {
+          "src/web/components/browser-handoff.tsx": "861a4f983fda119f6e6171bec86e7c1fdca8380e",
+          "src/web/pages/chat.tsx": "55732e31ce9bb1711b8f8586961c03cbbe19956f"
+        },
+        "capturedAt": "2026-10-21T20:14:39.385Z",
         "inputs": 400,
-        "accepted": 400
+        "accepted": 400,
+        "postedMouseDowns": 400,
+        "postedMouseUps": 400,
+        "zeroNaturalSizeInputs": 6,
+        "screenshot": "browser-screenshots/loading-frame-after.png",
+        "screenshotSha256": "41fa5d49cd440b33d8a041fc5e908a2d4b8f027c9e1b0dd6c094af37b0fbac52"
       }
     },
-    "comparisonSha256": "5d8cd53152c9a2f580476d33a4e12ac4a23ea5e786b759d623dbae15b16c5e01",
-    "comparisonBytes": 68863
+    "comparisonSha256": "b4f2edcaee34b71c1fc9f895db272931001a4ff0436ca61e41f17f1b59d25c40",
+    "comparisonBytes": 68357
   },
   "artifacts": [
     {
       "file": "browser-pointer.png",
-      "bytes": 68863,
-      "sha256": "5d8cd53152c9a2f580476d33a4e12ac4a23ea5e786b759d623dbae15b16c5e01"
+      "bytes": 68357,
+      "sha256": "b4f2edcaee34b71c1fc9f895db272931001a4ff0436ca61e41f17f1b59d25c40"
     },
     {
       "file": "pdf-rendering.png",
@@ -411,8 +435,8 @@
     },
     {
       "file": "pdf-rendering.json",
-      "bytes": 11216,
-      "sha256": "cdf9ce9610e41efb0829d5d9a2b4974f7482b396d5b506ff801c3056e33beb10"
+      "bytes": 11347,
+      "sha256": "93bc04ce01616bf1f98fd52e81f4d6bb2b8d185f6d58437b9d15129c6a681329"
     },
     {
       "file": "navigation-and-chat.png",
@@ -433,12 +457,105 @@
       "file": "overview.png",
       "bytes": 526312,
       "sha256": "26a01cda75d8f776928be3bd24537583e05882d929fb929ebb4387cfa7dd70f6"
+    },
+    {
+      "file": "browser-loading-frame.png",
+      "bytes": 128667,
+      "sha256": "8a79f660f7e42c3f0a4c7b28834ccff3a91e15d3a0a3560c8efdddfc8966cd4a"
+    },
+    {
+      "file": "browser-loading-frame.json",
+      "bytes": 11422,
+      "sha256": "a757e15603271842e1979fe348e43c07bf1e3b8caeebb62e386eda98d7587731"
+    },
+    {
+      "file": "browser-pointer-results.json",
+      "bytes": 893,
+      "sha256": "59c3434415fed3ff4ff85c11bca9867dc75369699bc66927f98b32b7b088ba47"
+    },
+    {
+      "file": "browser-screenshots/loading-frame-after.png",
+      "bytes": 94753,
+      "sha256": "41fa5d49cd440b33d8a041fc5e908a2d4b8f027c9e1b0dd6c094af37b0fbac52"
+    },
+    {
+      "file": "browser-screenshots/loading-frame-before.png",
+      "bytes": 94479,
+      "sha256": "129d8c0ac4dc484fbae9a4d413dbb172db909aa8897f0456aaffcb31434c66c7"
+    },
+    {
+      "file": "browser-screenshots/pointer-after.png",
+      "bytes": 20229,
+      "sha256": "bdfb7c3ae6d0106d27346beb7f1b6f492b3359b64e04adfe9e08df6c1a236e1e"
+    },
+    {
+      "file": "browser-screenshots/pointer-before.png",
+      "bytes": 21823,
+      "sha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab"
+    },
+    {
+      "file": "pdf-screenshots/1280-dark-after.png",
+      "bytes": 59134,
+      "sha256": "739f5d6460363bff1a3796db20ad5f8097c1733a6bb19d5241f849cea0fa73a0"
+    },
+    {
+      "file": "pdf-screenshots/1280-dark-before.png",
+      "bytes": 45902,
+      "sha256": "4438ad503c3131d80ce7b8442e5828417b0c4169e64457e31c8120cb4ae42d59"
+    },
+    {
+      "file": "pdf-screenshots/1280-light-after.png",
+      "bytes": 58735,
+      "sha256": "2bc886b75fdec409d7b33634792517a65b2de219015dedfd2ac66dd63975af7f"
+    },
+    {
+      "file": "pdf-screenshots/1280-light-before.png",
+      "bytes": 46427,
+      "sha256": "bd4e247026f5e859e793067a91ebb83265767ccc4646f9b50620752ea753f991"
+    },
+    {
+      "file": "pdf-screenshots/390-dark-after.png",
+      "bytes": 14694,
+      "sha256": "20d78a4ca115761fba9f1916f5e5b36a780358f19cb39a662da671967e0af38c"
+    },
+    {
+      "file": "pdf-screenshots/390-dark-before.png",
+      "bytes": 10704,
+      "sha256": "6d8811f02c134c8f46dc0c47109ed60996fabcba2066f88c566d98bc5bd308d2"
+    },
+    {
+      "file": "pdf-screenshots/390-light-after.png",
+      "bytes": 15959,
+      "sha256": "ab2055e3337ab7dc03a181d29aa570581aff22b0030fb3dbe9dfb0f23769a840"
+    },
+    {
+      "file": "pdf-screenshots/390-light-before.png",
+      "bytes": 10529,
+      "sha256": "b5bc5dcc3b267f7c1fb55543041abb319f8b8c0b04d6f004972d8e3d2f3628be"
     }
   ],
   "beforeCapturedAt": "2026-10-21T19:29:50.275Z",
   "afterCapturedAt": "2026-10-21T19:47:04.542Z",
   "captureFixtureChanges": {
-    "credentialStatus": "The after fixture supplies status only at /api/credential-requests/:token/status; the completed value remains filled."
+    "scenario": "10-completed-private-actions",
+    "matchedSemanticState": {
+      "credentialStatus": "filled",
+      "paymentStatus": "submitted"
+    },
+    "identicalApiTransport": false,
+    "credentialStatus": {
+      "before": {
+        "path": "/api/credential-requests/:token",
+        "response": "Full synthetic request metadata including status: filled"
+      },
+      "after": {
+        "path": "/api/credential-requests/:token/status",
+        "response": {
+          "status": "filled"
+        }
+      }
+    },
+    "scope": "Compares the UI outcome for the same completed credential/payment state. The credential endpoint and response shape differ; this is not a byte-identical API-response comparison or server contract verification."
   },
   "pdf": {
     "comparison": "pdf-rendering.png",

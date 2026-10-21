@@ -1,6 +1,6 @@
 # Feedback fixes: before and after
 
-The first eleven comparisons use read-only snapshots of the branch base and final application source at a matched 1280 × 800 viewport, with the same synthetic data and interactions. The baseline captures were preserved; all eleven after captures were refreshed on 2026-10-21 against the final source revision.
+The first eleven comparisons use read-only snapshots of the branch base and final application source at a matched 1280 × 800 viewport, with the same synthetic product state and interactions. The baseline captures were preserved; all eleven after captures were refreshed on 2026-10-21 against the final source revision.
 
 - Before: `e79bf5d2fcfcadb093102c31f1e240b44cd210ce`
 - After: `be9595b92b0101cb0fa2295313a1b764bb84b2f6`
@@ -24,6 +24,8 @@ The conversation composer has no microphone. Desktop notifications and Open at l
 
 The revealed synthetic Vault password uses the app font. Credential and payment action buttons disappear only after the mocked server reports `filled` and `submitted`, respectively. Deleting a login keeps its remaining browser session selected, with Sign out visible.
 
+For the completed-action scenario, both revision fixtures represent the semantic state `filled` for credentials and `submitted` for payments. The credential transport differs: the baseline fixture makes full synthetic request metadata available at `/api/credential-requests/:token`; the after fixture serves `{ status: "filled" }` at `/api/credential-requests/:token/status`. This comparison verifies the UI outcome for completed requests, not identical response bytes or the server endpoint contract.
+
 These screenshots demonstrate frontend behavior. They do not establish live credential entry, payment submission, native settings persistence, or server-side browser-session release.
 
 ![Before and after: Vault and completed actions](vault-and-sign-in.png)
@@ -32,11 +34,15 @@ These screenshots demonstrate frontend behavior. They do not establish live cred
 
 ## Browser input
 
-The browser comparison uses the real native Chromium provider on a local synthetic page at a matched 1440 × 900 viewport and 2× page zoom. With the same normalized input, the old mapping misses the target at CSS (432, 270); the corrected mapping hits its center at (216, 135). The baseline is `21456f70`; the manifest records source object IDs for the patch.
+The pointer and loading-frame checks were rerun against `ec9c7eebcd7c44dee7e556562c8812b8751ca261`. The original failing `21456f70` captures are preserved. The manifest records the current provider and component source objects, including `browser-handoff.tsx` object `861a4f983fda119f6e6171bec86e7c1fdca8380e` with the later `onLoad` update.
+
+The native Chromium provider comparison uses the same local synthetic page, 1440 × 900 viewport, 2× page zoom and normalized input. The old mapping misses at CSS (432, 270); the current source hits the center at (216, 135). The fresh run waits for a decoded JPEG containing a post-zoom marker before sending the click. [Pointer measurements](browser-pointer-results.json) and [original PNGs](browser-screenshots/) are committed.
 
 ![Before and after: browser pointer alignment](browser-pointer.png)
 
-A separate frontend defect dropped clicks while the next JPEG loaded and its natural dimensions were temporarily zero. The client now retains the last displayed frame dimensions. Native Chrome recorded that failure; after the fix, all 400 rapid click inputs were accepted using the actual Chat and BrowserHandoff with a synthetic stream. This does not establish that every website or browser failure is resolved.
+The separate loading-frame check uses the actual Chat and BrowserHandoff in the review harness with a synthetic JPEG stream. All 400 rapid click inputs were accepted, with 400 down and 400 up events posted. 6 mouse-downs arrived while natural image dimensions were zero and were still accepted, exercising the changed loading path. The [detailed measurements](browser-loading-frame.json) preserve the original failure at input 40 and the new per-input results. These acknowledgments do not prove 400 native target hits or live provider delivery.
+
+![Before and after: loading-frame inputs](browser-loading-frame.png)
 
 ## PDF attachments
 
@@ -46,4 +52,4 @@ The same one-page synthetic PDF failed to render on Chrome 142 with `pdfjs-dist`
 
 These are actual application screenshots at 1280 × 800 and 390 × 800 in light and dark themes. The baseline is `c60a75f8`; the fixed component source object is `db8009123d59a18788b5c114c796ca60738e9504`. All four baseline previews failed; all four fixed previews rendered visible text pixels. Text extraction, Zoom in/out, Fit page, and Fit width also passed against the real renderer. The browser was unmodified, with no compatibility shim or renderer mock.
 
-The [detailed measurements](pdf-rendering.json) retain the original failure, source objects, canvas dimensions, screenshot digests, and the hash of the [synthetic PDF](pdf-fixture.pdf). Every API request was intercepted; this verifies frontend rendering, not live upload storage or account access.
+The [detailed measurements](pdf-rendering.json) retain the original failure, source objects, canvas dimensions, screenshot digests, and the hash of the [synthetic PDF](pdf-fixture.pdf). All eight [per-run PNGs](pdf-screenshots/) are committed at the relative paths recorded in the JSON, so each digest can be verified. Every API request was intercepted; this verifies frontend rendering, not live upload storage or account access.
