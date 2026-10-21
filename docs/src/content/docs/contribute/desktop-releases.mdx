@@ -127,6 +127,7 @@ Drafts are never offered to the installer or the updater.
 - An automatic check announces a ready update with a notification when notifications are on, and with a **Restart** or **Later** dialog otherwise. The menu offers **Restart to update** until you restart.
 - If a reply, schedule or background check is running, or Otto can't tell, it asks before restarting.
 - If the runtime hasn't changed, Otto reuses it and downloads only the app or installer.
+- A Mac runtime changes only when what it ships changes: the browser worker and the source it imports, the scripts the images copy, dependencies, Dockerfiles, pinned downloads and the runtime build scripts. Other app changes reuse the published runtime.
 - On Windows, the restart runs the verified installer silently over the current install, then opens Otto again. The profile is kept.
 
 ## Help private-alpha testers

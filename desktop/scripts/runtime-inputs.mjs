@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -25,8 +25,28 @@ const inputs = [
   'desktop/scripts/runtime-inputs.mjs',
   'desktop/scripts/runtime-pack.mjs',
   'desktop/runtime/assets.mjs',
-  'src',
+  'src/providers/container-browser/chromium.sh',
+  'src/providers/container-browser/xvfb.sh',
+  'src/providers/docker/install-rtk.sh',
+  'src/providers/docker/save-video.py',
 ];
+export const browserEntries = [
+  'src/providers/container-browser/worker.ts',
+  'src/providers/container-browser/bridge.ts',
+];
+
+export async function browserSources(root = repository) {
+  const seen = new Set();
+  const visit = async (path) => {
+    if (seen.has(path)) return;
+    seen.add(path);
+    const source = await readFile(join(root, path), 'utf8');
+    for (const [, target] of source.matchAll(/(?:from|import)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g))
+      await visit(posix.join(posix.dirname(path), target));
+  };
+  for (const entry of browserEntries) await visit(entry);
+  return [...seen].sort();
+}
 
 export function runtimePlatform(env = process.env) {
   const target =
@@ -56,7 +76,7 @@ export async function runtimeInputs() {
     for (const child of children.sort((a, b) => a.name.localeCompare(b.name)))
       await collect(`${path}/${child.name}`);
   }
-  for (const input of inputs) await collect(input);
+  for (const input of [...inputs, ...(await browserSources())]) await collect(input);
   const configuration = JSON.parse(
     await readFile(join(repository, 'desktop/package.json'), 'utf8'),
   );

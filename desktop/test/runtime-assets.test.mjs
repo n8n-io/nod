@@ -2259,13 +2259,34 @@ test('runtime hands off verified storage before browser readiness and fences fai
   }
 });
 
-test('runtime fingerprints include root dependencies and complete source and reject symlinked input roots', async (t) => {
+test('runtime fingerprints cover dependencies and every source the images use, and reject symlinked input roots', async (t) => {
   const { cp, realpath } = await import('node:fs/promises');
-  const { runtimeInputs } = await import('../scripts/runtime-inputs.mjs');
+  const { build } = await import('esbuild');
+  const { browserEntries, browserSources, runtimeInputs } =
+    await import('../scripts/runtime-inputs.mjs');
   const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-runtime-inputs-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const repository = fileURLToPath(new URL('../../', import.meta.url));
+  const bundle = await build({
+    entryPoints: browserEntries,
+    absWorkingDir: repository,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    write: false,
+    metafile: true,
+    outdir: 'out',
+    logLevel: 'silent',
+  });
+  const sources = await browserSources();
+  for (const path of Object.keys(bundle.metafile.inputs))
+    if (!path.startsWith('node_modules/')) assert.ok(sources.includes(path), path);
+  const browserDockerfile = await readFile(join(repository, 'Dockerfile.browser'), 'utf8');
+  assert.ok(browserDockerfile.includes(`esbuild ${browserEntries.join(' ')} `));
   const input = await runtimeInputs();
+  const dockerfiles = `${browserDockerfile}\n${await readFile(join(repository, 'Dockerfile.workspace'), 'utf8')}`;
+  for (const [, path] of dockerfiles.matchAll(/^COPY (?:--\S+ )*(src\/\S+)/gm))
+    assert.ok(input.inputs.includes(path), path);
   const sourcePaths = input.inputs.filter(
     (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
   );
@@ -2295,22 +2316,28 @@ test('runtime fingerprints include root dependencies and complete source and rej
   await writeFile(lockPath, `${lockSource}\nsyntheticDependencyChange: true\n`);
   assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
   await writeFile(lockPath, lockSource);
-  for (const path of ['src/server/index.ts', 'src/web/pages/chat.tsx']) {
+  for (const path of ['src/shared/public-address.ts', 'src/providers/docker/save-video.py']) {
     const file = join(root, path);
     const source = await readFile(file, 'utf8');
-    await writeFile(file, `${source}\nexport const syntheticRuntimeChange = true;\n`);
+    await writeFile(file, `${source}\n// synthetic runtime change\n`);
     assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
     await writeFile(file, source);
+  }
+  for (const path of ['src/server/index.ts', 'src/web/pages/chat.tsx']) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), 'export const syntheticAppChange = true;\n');
   }
   assert.equal(JSON.parse((await run()).stdout).fingerprint, before);
   const outside = join(root, 'outside');
   await mkdir(outside);
   await writeFile(join(outside, 'must-not-be-hashed'), 'Synthetic outside-checkout content');
-  await rm(join(root, 'src/ports'), { recursive: true });
-  await symlink(outside, join(root, 'src/ports'));
+  const ports = join(root, 'src/ports');
+  await rm(ports, { recursive: true });
+  await symlink(outside, ports);
   await assert.rejects(run());
-  await rm(join(root, 'src/ports'));
-  await mkdir(join(root, 'src/ports'));
+  await rm(ports);
+  await cp(join(repository, 'src/ports'), ports, { recursive: true });
+  assert.equal(JSON.parse((await run()).stdout).fingerprint, before);
   await rm(join(root, 'Dockerfile.workspace'));
   await symlink(join(outside, 'must-not-be-hashed'), join(root, 'Dockerfile.workspace'));
   await assert.rejects(run());
