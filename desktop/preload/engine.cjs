@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
   openExternal: (url) => ipcRenderer.invoke('otto:external', url),
   getSettings: () => ipcRenderer.invoke('otto:settings:get'),
   saveSettings: (input) => ipcRenderer.invoke('otto:settings:save', input),
+  removeAllData: () => ipcRenderer.invoke('otto:data:remove'),
   onOpenSettings: (listener) => {
     if (typeof listener !== 'function') throw new TypeError('A settings listener is required.');
     settingsListeners.add(listener);

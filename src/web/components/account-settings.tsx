@@ -42,7 +42,7 @@ import {
 } from '../lib/date-format';
 import { savePreferences } from '../lib/preferences';
 import { localeRegion } from '../../shared/date-locale';
-import { desktopSettingsAvailable } from '../lib/desktop';
+import { desktopSettingsAvailable, removeDesktopData } from '../lib/desktop';
 import { DesktopOptions, useDesktopSettings } from './desktop-settings';
 import { ConnectionSettings } from './connection-choice';
 import { Memory } from '../pages/memory';
@@ -633,6 +633,22 @@ export function AccountSettings({
                           device ID. Kept for 14 days and never used to train AI models.
                         </p>
                       </>
+                    )}
+                    {desktop && (
+                      <Button
+                        className="account-remove-data"
+                        variant="destructive"
+                        size="sm"
+                        disabled={pending.current}
+                        onClick={() => {
+                          setError('');
+                          void removeDesktopData().catch((cause) => {
+                            if (active.current) setError(errorMessage(cause));
+                          });
+                        }}
+                      >
+                        Remove all data
+                      </Button>
                     )}
                   </section>
                 </>

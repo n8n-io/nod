@@ -1,7 +1,17 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { access, chmod, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  rmdir,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { cpus as hostCpus, homedir, totalmem } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
@@ -201,9 +211,11 @@ async function prepare(options, onComputerStart) {
       () => false,
     );
     if (orphaned)
-      throw new Error(
-        'The Otto local storage key is missing. Restore its configuration before continuing.',
-      );
+      await execute(lima, ['delete', '--force', 'otto'], {
+        env: hostEnvironment,
+        signal,
+        timeout: 120_000,
+      });
   }
   if (
     saved &&
@@ -786,6 +798,22 @@ export function prepareRuntime(options) {
 export async function stopRuntime(options) {
   await stopComputer(options);
   storageReady.delete(resolve(options.dataRoot || options.root));
+}
+
+export async function removeProfile(options) {
+  const dataRoot = resolve(options.dataRoot || options.root);
+  if (process.platform === 'win32') {
+    const { removeWindowsComputer } = await import('./windows.mjs');
+    await removeWindowsComputer(dataRoot);
+  } else {
+    const homes = join(homedir(), '.otto-desktop');
+    await rm(join(homes, createHash('sha256').update(dataRoot).digest('hex').slice(0, 12)), {
+      recursive: true,
+      force: true,
+    });
+    await rmdir(homes).catch(() => {});
+  }
+  await rm(dataRoot, { recursive: true, force: true });
 }
 
 async function stopComputer(options) {

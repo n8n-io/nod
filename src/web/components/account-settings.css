@@ -425,6 +425,9 @@
 .desktop-options {
   margin-top: 24px;
 }
+.account-remove-data {
+  margin-top: 16px;
+}
 .desktop-options .account-preference-row {
   border: 0;
 }

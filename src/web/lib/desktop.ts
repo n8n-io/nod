@@ -42,6 +42,7 @@ type DesktopWindow = Window & {
     onStatus?(listener: (status: DesktopStatus) => void): () => void;
     prepare?(options?: { retry: boolean }): Promise<DesktopStatus>;
     saveSettings(input: DesktopSettingsChange): Promise<DesktopSettings>;
+    removeAllData(): Promise<void>;
     onOpenSettings(listener: (section: DesktopSettingsSection) => void): () => void;
     openExternal(url: string): Promise<void>;
     getPreferences(): Promise<DesktopPreferences>;
@@ -96,6 +97,10 @@ export function getDesktopSettings() {
 
 export function saveDesktopSettings(change: DesktopSettingsChange) {
   return settingsBridge().saveSettings(change);
+}
+
+export function removeDesktopData() {
+  return settingsBridge().removeAllData();
 }
 
 export function desktopPreferences() {

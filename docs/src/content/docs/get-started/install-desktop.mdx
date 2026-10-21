@@ -126,6 +126,18 @@ Otto starts with a fresh profile and doesn't import data from a source install.
 | Private computer      | `~/.otto-desktop/<profile id>`                      | A WSL distribution named `Otto-<profile id>` |
 | Saved keys            | Encrypted with the macOS key store                  | Encrypted with Windows DPAPI                 |
 
+## Remove Otto
+
+Moving Otto to the Trash or uninstalling it keeps your data, so a later install opens where you left off. To delete everything first:
+
+1. Select **Remove all data** in **Settings → General**. If Otto can't finish setup, select **Remove all data…** in the **Otto** menu instead.
+2. Confirm. Otto deletes your profile and private computer, then quits.
+3. Move Otto to the Trash on a Mac, or uninstall it in **Settings → Apps** on Windows.
+
+Otto keeps the runtime it downloaded, so a new install doesn't download it again, and on a Mac its entry in the key store. Neither holds your data. Apps you connected may still list Otto until you remove it there.
+
+If you deleted Otto's folders by hand, Otto removes the private computer they leave behind the next time it opens.
+
 ## Troubleshooting
 
 | Problem                               | Try this                                                                                                            |

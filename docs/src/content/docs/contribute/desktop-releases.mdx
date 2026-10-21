@@ -143,6 +143,7 @@ On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/otto/insta
 | Moving from Otto Preview        | Version 0.1.2 introduced the Otto app identity and a fresh profile. Install it by hand. There's no migration, and earlier data is left untouched.                                                  |
 | Setup was interrupted           | Retry it.                                                                                                                                                                                          |
 | It still fails                  | Open **Send feedback** in Chat to review and send the diagnostic report. If Chat can't open, send the visible setup error.                                                                         |
+| Starting over                   | Select **Remove all data…** in the **Otto** menu. It deletes the profile and private computer, keeps the runtime, and quits.                                                                       |
 
 :::danger[Don't delete the profile to recover]
 Never delete the profile, VM, database or runtime cache as a routine recovery step. A downgrade or full backup-and-restore isn't supported. Testers should never send API keys, passwords or the settings file.

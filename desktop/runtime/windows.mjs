@@ -213,11 +213,15 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   } catch (error) {
     if (error.code !== 'ENOENT') throw new Error('The Otto computer configuration needs recovery.');
   }
-  const existing = (await distributions(wsl, hostEnvironment)).includes(distribution);
-  if (existing && !saved)
-    throw new Error(
-      'The Otto storage key is missing. Restore its configuration before continuing.',
-    );
+  let existing = (await distributions(wsl, hostEnvironment)).includes(distribution);
+  if (existing && !saved) {
+    await execute(wsl, ['--unregister', distribution], {
+      env: hostEnvironment,
+      signal,
+      timeout: 300_000,
+    });
+    existing = false;
+  }
   if (
     saved &&
     (saved.version !== 1 ||
@@ -440,4 +444,12 @@ export async function stopWindowsRuntime(options) {
       { code: 'OTTO_RUNTIME_STOP_FAILED' },
     );
   }
+}
+
+export async function removeWindowsComputer(dataRoot) {
+  const distribution = distributionName(dataRoot);
+  const env = windowsEnvironment();
+  const wsl = join(env.SYSTEMROOT, 'System32/wsl.exe');
+  if ((await distributions(wsl, env).catch(() => [])).includes(distribution))
+    await execute(wsl, ['--unregister', distribution], { env, timeout: 300_000 });
 }
