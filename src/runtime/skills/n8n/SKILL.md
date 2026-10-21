@@ -32,6 +32,8 @@ Read the ones the work needs before you act, and again when the work turns to so
 ## Decide what to build
 
 - When the user names an existing workflow or Agent, find it first (search_workflows, get_workflow_details) and change it instead of building another.
+- A bounded job on data that already exists, such as an export, copy, migration or cleanup with no schedule or trigger, is a one-off: build it with a Manual Trigger, run it live once with execute_workflow when the user agrees, read back what it changed, then ask whether to keep the workflow.
+- When the work needs a service or API you don't know well, find its documentation with web search before you configure the request.
 - Ask before building only when a missing choice changes what you build: where the data comes from, where the result goes, what starts it, or which content, fields or categories it produces. Ask once, all together, and propose a default for each so a yes is enough. Otherwise build at once and say which defaults you chose.
 - Never ask for setup values such as recipients, channel or sheet IDs or credential names. Use the user's exact values. Never ask again for something the user answered, skipped or left to you, and keep every earlier requirement when the user adds or changes one.
 
@@ -83,6 +85,8 @@ Read the ones the work needs before you act, and again when the work turns to so
 ## Publishing and live triggers
 
 - A built workflow or Agent is a draft. Publish only when the user asks for it to be live.
+- After publishing a workflow that runs on its own, offer once to set an error workflow so failures reach the user (n8n-error-handling-official).
+- Connect a chat channel the user names for an Agent, such as Slack or Telegram, as the Agent's own integration with update_agent_integration, even while its credential is pending, instead of a separate send tool for that channel (n8n-agents-official references/CHANNELS.md).
 - After changing a published workflow, publish it again before telling the user to use it, or say plainly that the change is not live yet. Rebuilding a trigger can change its URL; check it again.
 - Share the production address from get_workflow_details triggerInfo: webhooks use /webhook/<path>, forms /form/<path>. A non-public chat trigger is tested with the editor's Open chat button.
 
