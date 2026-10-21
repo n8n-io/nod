@@ -229,6 +229,7 @@ export async function initializeIntegrationSchema(pool: Pool) {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS app_connections_account_key ON app_connections(owner_id,provider_id,account_id) WHERE account_id IS NOT NULL;
     ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS inbox_cursor text,
+      ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
       ADD COLUMN IF NOT EXISTS callback_verifier text,
       DROP COLUMN IF EXISTS pairing_code,
       ADD COLUMN IF NOT EXISTS callback_claim_id text,
