@@ -2323,6 +2323,8 @@ test(
   'native handoff clicks stay aligned through page zoom, panning and viewport changes',
   { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
   async () => {
+    const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+    const context = createCanvas(1, 1).getContext('2d');
     const directory = await mkdtemp(join(tmpdir(), 'otto-pointer-native-'));
     const server = createHttpServer((_request, response) => {
       response.setHeader('content-type', 'text/html');
@@ -2380,13 +2382,14 @@ test(
       });
       const page = (method: string, params: Record<string, unknown>) =>
         send(method, params, String(sessionId));
-      for (const sample of [
+      for (const [index, sample] of [
         { width: 1440, height: 900, dpr: 1, zoom: 1, pan: false },
         { width: 1440, height: 900, dpr: 2, zoom: 1, pan: false },
         { width: 1440, height: 900, dpr: 1, zoom: 2, pan: false },
         { width: 1440, height: 900, dpr: 1, zoom: 2, pan: true },
         { width: 800, height: 1200, dpr: 1, zoom: 1, pan: false },
-      ]) {
+      ].entries()) {
+        const color = [1, 2, 4].map((bit) => ((index + 1) & bit ? 255 : 0));
         await existingDaemonCommand(socketPath, {
           action: 'viewport',
           width: sample.width,
@@ -2404,7 +2407,7 @@ test(
           });
         const expected = await existingDaemonCommand(socketPath, {
           action: 'evaluate',
-          script: `(() => {const r=document.querySelector('#target').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,width:visualViewport.width,height:visualViewport.height,left:visualViewport.offsetLeft,top:visualViewport.offsetTop}})()`,
+          script: `(() => {document.documentElement.style.backgroundColor='rgb(${color.join(',')})';const r=document.querySelector('#target').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,width:visualViewport.width,height:visualViewport.height,left:visualViewport.offsetLeft,top:visualViewport.offsetTop}})()`,
         });
         const point = expected.result as {
           x: number;
@@ -2417,8 +2420,14 @@ test(
         const controller = new AbortController();
         const frames = computer.view!('pointer', controller.signal)[Symbol.asyncIterator]();
         try {
-          await frames.next();
-          await frames.next();
+          for (;;) {
+            const frame = await frames.next();
+            assert.equal(frame.done, false);
+            const image = await loadImage(frame.value!);
+            context.drawImage(image, 1 - image.width, 1 - image.height);
+            const pixel = context.getImageData(0, 0, 1, 1).data;
+            if (color.every((channel, index) => channel === (pixel[index]! > 127 ? 255 : 0))) break;
+          }
           const position = {
             x: (point.x - point.left) / point.width,
             y: (point.y - point.top) / point.height,
