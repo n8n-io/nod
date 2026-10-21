@@ -171,7 +171,6 @@ test(
       }),
       submitMessage: userMessages.submit,
       configuration: () => ({ ...configuration(), llmReady: true }),
-      startOnboarding: onboarding.complete,
       planningTasks: onboarding.planning,
       messageCosts: async () => ({}),
     });
@@ -185,7 +184,7 @@ test(
       accounts,
       origin: `http://localhost:${port}`,
       localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
-      start: (_owner, name) => onboarding.complete(name),
+      start: () => onboarding.complete(),
     }).register(app);
     const headers = {
       host: `localhost:${port}`,

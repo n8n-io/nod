@@ -20,7 +20,7 @@ export function createAccountSession(options: {
   developerIds?: ReadonlySet<string>;
   analytics?: Analytics;
   model?(): { provider: string; name: string; configured: boolean };
-  start?(ownerId: string, name?: string): Promise<void>;
+  start?(): Promise<void>;
   onboardingReady?(): Promise<boolean>;
   traces?: boolean;
   onTraces?(enabled: boolean): void;
@@ -66,7 +66,7 @@ export function createAccountSession(options: {
   async function response(): Promise<SessionResponse> {
     const account = await readAccount();
     return {
-      user: { ...user, name: account.displayName ?? user.name },
+      user,
       settings: {
         theme: account.theme,
         onboardingCompleted: account.onboardingCompleted,
@@ -106,7 +106,7 @@ export function createAccountSession(options: {
   async function start(reply: FastifyReply, complete?: () => Promise<unknown>) {
     try {
       await prepare(reply);
-      await options.start?.(owner, (await options.accounts.read(owner)).displayName?.slice(0, 100));
+      await options.start?.();
       await complete?.();
       return true;
     } catch {

@@ -64,7 +64,6 @@ export interface AppDependencies {
   >;
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
-  startOnboarding?: (name?: string) => Promise<unknown>;
   taskLedger?: () => Promise<import('../shared/contracts.ts').Task[]>;
   planningTasks?: () => boolean;
   messageCosts?: (
@@ -231,16 +230,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
     for (const id of [previousThreadId, ...browsers])
       void dependencies.computer?.discard(id).catch(() => {});
     return reset;
-  });
-  app.post('/api/onboarding/start', async (request) => {
-    const { name } = z
-      .object({ name: z.string().trim().max(100).optional() })
-      .strict()
-      .parse(request.body ?? {});
-    if (!dependencies.startOnboarding)
-      throw Object.assign(new Error('Setup is unavailable.'), { statusCode: 503 });
-    await dependencies.startOnboarding(name);
-    return { ok: true };
   });
   app.post('/api/messages', async (request) => {
     const input = z

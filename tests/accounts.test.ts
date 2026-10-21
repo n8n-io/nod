@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 import Fastify from 'fastify';
-import type { AccountStore, StoredAccount } from '../src/server/account-store.ts';
+import type { AccountStore } from '../src/server/account-store.ts';
+import type { AccountSettings } from '../src/shared/account.ts';
 import { createAccountSession } from '../src/server/account.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
 import { randomUUID, randomBytes } from 'node:crypto';
@@ -90,20 +91,18 @@ test('queued and cached link previews cannot cross an owner change', async (t) =
 describe('account routes', () => {
   const origin = 'http://localhost:4399';
   async function fixture(
-    start?: (ownerId: string) => Promise<void>,
     analytics?: Analytics,
     onTraces?: (enabled: boolean) => void,
     key?: string,
     onboardingReady?: () => Promise<boolean>,
   ) {
-    let record: StoredAccount = {
+    let record: AccountSettings = {
       theme: 'system',
       onboardingCompleted: false,
-      displayName: null,
       usageData: false,
       traces: false,
     };
-    const calls = { writes: 0, started: [] as (string | undefined)[] };
+    const calls = { writes: 0, started: 0 };
     const accounts: AccountStore = {
       async readConsent() {
         return { enabled: record.usageData, revision: '0' };
@@ -117,7 +116,6 @@ describe('account routes', () => {
         record = {
           theme: input.theme ?? saved.theme,
           onboardingCompleted: input.onboardingCompleted ?? saved.onboardingCompleted,
-          displayName: saved.displayName,
           usageData: input.usageData ?? saved.usageData,
           traces: input.traces ?? saved.traces,
         };
@@ -138,9 +136,8 @@ describe('account routes', () => {
       origin,
       localUser: { id: 'local-owner', name: 'You', email: null, avatarUrl: null },
       developerIds: new Set(['local-owner']),
-      async start(owner, name) {
-        calls.started.push(name);
-        await start?.(owner);
+      async start() {
+        calls.started++;
       },
       traces: onTraces !== undefined,
       onTraces,
@@ -154,7 +151,7 @@ describe('account routes', () => {
     let ready = false;
     let failed = false;
     let checked = 0;
-    const f = await fixture(undefined, undefined, undefined, undefined, async () => {
+    const f = await fixture(undefined, undefined, undefined, async () => {
       checked++;
       if (failed) throw new Error('Synthetic provider outage');
       return ready;
@@ -170,7 +167,7 @@ describe('account routes', () => {
     assert.equal((await complete()).statusCode, 409);
     assert.equal(f.record().onboardingCompleted, false);
     assert.equal(f.calls.writes, 0);
-    assert.equal(f.calls.started.length, 0);
+    assert.equal(f.calls.started, 0);
     failed = true;
     assert.equal((await complete()).statusCode, 503);
     assert.equal(f.record().onboardingCompleted, false);
@@ -196,7 +193,7 @@ describe('account routes', () => {
         dataRoot: '.',
         installationId,
       });
-      const f = await fixture(undefined, analytics);
+      const f = await fixture(analytics);
       t.after(() => f.app.close());
       const request = (payload?: object) =>
         f.app.inject({
@@ -213,7 +210,7 @@ describe('account routes', () => {
         [false, null],
       );
       await request({ onboardingCompleted: true });
-      assert.deepEqual(f.calls.started, [undefined]);
+      assert.equal(f.calls.started, 1);
       analytics.capture('local-owner', { event: 'otto_conversation_reset' });
       assert.equal(captured.length, 0);
       const opted = await request({ usageData: true });
@@ -249,7 +246,7 @@ describe('account routes', () => {
       secrets: ['fixture-model-key-8c41f2'],
       profile: async () => ({ names: ['Marta Vidal'], region: 'ES' }),
     });
-    const f = await fixture(undefined, undefined, (enabled) => traces.configure({ enabled }));
+    const f = await fixture(undefined, (enabled) => traces.configure({ enabled }));
     t.after(() => f.app.close());
     const request = (payload?: object) =>
       f.app.inject({
@@ -401,7 +398,7 @@ describe('account routes', () => {
     });
     assert.equal(prepared.statusCode, 200);
     assert.equal(f.calls.writes, 0);
-    assert.deepEqual(f.calls.started, []);
+    assert.equal(f.calls.started, 0);
   });
 });
 

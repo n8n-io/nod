@@ -16,7 +16,7 @@ import { createAccountSession } from '../../src/server/account.ts';
 import { createMemoryService } from '../../src/server/memory.ts';
 import { createPostgresObjectStore } from '../../src/server/object-storage.ts';
 import { createOnboardingInterview } from '../../src/server/onboarding-interview.ts';
-import type { StoredAccount } from '../../src/server/account-store.ts';
+import type { AccountSettings } from '../../src/shared/account.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import { fisherLower, holm, passAtK, passPowK, summarize } from '../src/aggregate.ts';
 import { analyticsCases, scoreAnalytics, summarizeAnalytics } from '../src/analytics.ts';
@@ -665,10 +665,9 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   const origin = `http://127.0.0.1:${port}`;
   const key = 'a'.repeat(43);
   const cookie = `${accessCookie(port)}=${key}`;
-  const account: StoredAccount = {
+  const account: AccountSettings = {
     theme: 'system',
     onboardingCompleted: false,
-    displayName: null,
     usageData: false,
     traces: false,
   };
@@ -695,8 +694,7 @@ test('scenario API calls use authenticated local transport and refuse outside ta
         return account;
       },
     },
-    async start(owner) {
-      assert.equal(owner, 'synthetic-owner');
+    async start() {
       started++;
     },
   }).register(app);

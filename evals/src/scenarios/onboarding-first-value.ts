@@ -112,7 +112,7 @@ export default scenario({
     await api('POST', '/api/onboarding/interview', { generation, talk }, [200, 503]);
     state.saved = (await api('PUT', '/api/onboarding/interview', { generation, answers })).status;
     await api('POST', '/api/onboarding/suggestions', {}, [202]);
-    await api('PATCH', '/api/account', { onboardingCompleted: true, name: owner.name });
+    await api('PATCH', '/api/account', { onboardingCompleted: true });
     for (let tries = 0; tries < 240 && !state.suggestions; tries++) {
       const view = await api('GET', '/api/state');
       state.suggestions = view.body.messages?.find(
