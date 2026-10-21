@@ -88,7 +88,10 @@ test(
     const skillDrafts: string[] = [];
     const contexts: string[] = [];
     const rememberInputs: string[] = [];
-    type Remembered = { request: number; messages: Array<{ text: string }> };
+    type Remembered = {
+      current: { m: number; text: string };
+      earlier: Array<{ m: number; text: string }>;
+    };
     let notes = 0;
     const keep = (input: Remembered, texts: string[], area = 'about') =>
       texts.map((text) => ({
@@ -96,7 +99,7 @@ test(
         area,
         slug: `fixture-note-${++notes}`,
         text,
-        m: [input.messages.findIndex((message) => message.text === text) + 1],
+        m: [[...input.earlier, input.current].find((message) => message.text === text)?.m ?? 0],
         quote: text,
         sensitive: false,
       }));
@@ -791,10 +794,7 @@ test('reflection ops need a verbatim quote from a cited message and cannot touch
     sensitive: true,
   };
   assert.equal(applyOps(treeOf(), [sensitive], messages, when).length, 0);
-  assert.equal(
-    applyOps({ ...treeOf(), sensitive: true }, [sensitive], messages, when).length,
-    1,
-  );
+  assert.equal(applyOps({ ...treeOf(), sensitive: true }, [sensitive], messages, when).length, 1);
   assert.equal(
     applyOps(treeOf(), [{ ...sensitive, sensitive: undefined }], messages, when).length,
     0,

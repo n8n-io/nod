@@ -2967,7 +2967,7 @@ test(
       sensitive: false,
     });
     const answer = (ops: Array<(m: number) => unknown>) => (input: unknown) => ({
-      ops: ops.map((op) => op((input as { request: number }).request)),
+      ops: ops.map((op) => op((input as { current: { m: number } }).current.m)),
     });
     const remember = (ops: Array<(m: number) => unknown>, source: { sourceMessageId: string }) => {
       state.answer = answer(ops);
@@ -3128,12 +3128,14 @@ test(
     const { pool, ownerId, store, post, memory, close } = await memoryFixture();
     const { calls, state, curator } = scriptedCurator();
     const learning = createMemoryLearning({ pool, ownerId, memory, curator });
-    const sent = () =>
-      calls.at(-1)!.input as unknown as { request: number; messages: Array<{ text: string }> };
+    type Sent = {
+      current: { m: number; text: string };
+      earlier: Array<{ m: number; text: string }>;
+    };
+    const sent = () => calls.at(-1)!.input as unknown as Sent;
     const number = (input: unknown, text: string) =>
-      (input as { messages: Array<{ text: string }> }).messages.findIndex(
-        (message) => message.text === text,
-      ) + 1;
+      [...(input as Sent).earlier, (input as Sent).current].find((message) => message.text === text)
+        ?.m ?? 0;
     const add = (slug: string, text: string, m: number[], quote: string) => ({
       op: 'add',
       area: 'about',
@@ -3178,8 +3180,11 @@ test(
         ['about/holiday-flat', 'about/delivery-address', 'about/phone'],
       );
       assert.deepEqual(
-        [sent().request, sent().messages.map((message) => message.text)],
-        [3, [flat, details, ask]],
+        [
+          { m: sent().current.m, text: sent().current.text },
+          sent().earlier.map((message) => message.text),
+        ],
+        [{ m: 3, text: ask }, [flat, details]],
       );
       assert.deepEqual(
         Object.fromEntries(
@@ -3216,7 +3221,7 @@ test(
       const moved = 'I moved: ship to Rua Nova 3, 1100-001 Lisboa from now on.';
       const movedSource = await post(moved);
       state.answer = (input) => {
-        const m = (input as { request: number }).request;
+        const m = (input as { current: { m: number } }).current.m;
         return {
           ops: [
             {
@@ -3259,7 +3264,7 @@ test(
       const before = await reopened.load();
       const blocked = 'I always drink green tea.';
       state.answer = (input) => ({
-        ops: [add('tea', blocked, [(input as { request: number }).request], blocked)],
+        ops: [add('tea', blocked, [(input as { current: { m: number } }).current.m], blocked)],
       });
       const beforeDisabled = calls.length;
       await assert.rejects(

@@ -4,7 +4,7 @@ import { createApps } from '../world/apps.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const details =
-  'My new delivery address is Rua das Flores 12, 4050-262 Porto, and the best number to reach me is +351 912 345 678. Draft a short note to my landlord’s agency with these details, just in chat.';
+  'Draft a short note for the courier, just in chat: deliver the parcel to Rua das Flores 12, 4050-262 Porto, and call +351 912 345 678 on arrival.';
 const tweak = 'Thanks. Make it a bit more formal.';
 const request = 'Please remember that address and number for me.';
 const question =
@@ -50,7 +50,7 @@ export default scenario({
     await session.say(question);
   },
   evidence: (run, world) =>
-    `The owner gave a delivery address (Rua das Flores 12, 4050-262 Porto) and a phone number (+351 912 345 678) in their first message, asked for a more formal draft, then asked: "${request}". After a reset they asked: "${question}". Memory right after the request:\n${JSON.stringify(world.state.saved?.notes?.map((note) => note.text) ?? [])}`,
+    `The owner gave a delivery address (Rua das Flores 12, 4050-262 Porto) and a phone number (+351 912 345 678) as details of a one-off courier note, asked for a more formal draft, then asked: "${request}". After a reset they asked: "${question}". Memory right after the request:\n${JSON.stringify(world.state.saved?.notes?.map((note) => note.text) ?? [])}`,
   expect(world) {
     return [
       check(
