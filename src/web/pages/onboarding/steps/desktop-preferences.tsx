@@ -173,9 +173,10 @@ function DesktopPreferenceQuestion({
           >
             {notifications
               ? 'I can let you know when setup is ready, a task finishes, or I need your attention — even when you’re using another app.'
-              : 'I can open when you sign in to your computer, so I’m ready when you need me.'}{' '}
-            Turn this on to continue.
-            {notifications &&
+              : 'I can open when you sign in to your computer, so I’m ready when you need me.'}
+            {!enabled && ' Turn this on to continue.'}
+            {!enabled &&
+              notifications &&
               ' If alerts are blocked, allow Otto in your computer’s notification settings.'}
           </PreferenceBubble>,
         ]}

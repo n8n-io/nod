@@ -273,10 +273,10 @@ export function Onboarding({
 
   if (finishing) {
     const failure =
-      runtimeError || error || (preparation === 'failed' ? 'Setup needs another try.' : '');
+      runtimeError || error || (preparation === 'failed' ? 'Otto couldn’t finish setup.' : '');
     return (
       <SetupProgress
-        title={failure ? 'Setup needs another try.' : 'Finishing setting up your environment…'}
+        title={failure ? 'Setup needs another try.' : 'Finishing setup…'}
         description={failure ? 'Your progress is saved.' : undefined}
         error={failure || undefined}
       >

@@ -140,9 +140,10 @@ const hash = (value) => createHash('sha256').update(value).digest('hex');
 const record = (event, fields = {}) => appendFile(join(root, 'events.jsonl'), JSON.stringify({ event, pid: process.pid, version: app.getVersion(), ...fields }) + '\\n');
 app.setPath('userData', join(root, 'electron'));
 app.whenReady().then(async () => {
-  const store = createSettingsStore(join(profile, 'settings.json'), safeStorage);
-  const fresh = await stat(join(profile, 'settings.json')).then(() => false, (error) => { if (error.code === 'ENOENT') return true; throw error; });
-  if (fresh) await store.save({ onboardingCompleted: true, notifications: false, launchAtLogin: true });
+  const settingsPath = join(profile, 'settings.json');
+  const fresh = await stat(settingsPath).then(() => false, (error) => { if (error.code === 'ENOENT') return true; throw error; });
+  if (fresh) await writeFile(settingsPath, JSON.stringify({ version: 1, theme: 'system', onboardingCompleted: true, notifications: false, launchAtLogin: true, secrets: {}, keyMetadata: {} }), { mode: 0o600 });
+  const store = createSettingsStore(settingsPath, safeStorage);
   const key = Buffer.from((await store.environment()).OTTO_VAULT_KEY, 'base64');
   const binding = ['synthetic-owner', 'synthetic-model'];
   const secret = 'synthetic-saved-provider-credential';

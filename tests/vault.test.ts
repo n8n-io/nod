@@ -148,6 +148,7 @@ test(
     });
     const app = Fastify();
     const fixtureKey = randomBytes(32);
+    let keyReads = 0;
     const { turn, wait, resume } = await seedTurns(pool);
     const other = await turn('other-user');
     const task1 = await turn();
@@ -165,7 +166,14 @@ test(
     });
     let failNext = false;
     const vault = await createVault(pool, {
-      keyStore: { id: 'fixture', configured: true, getKey: async () => fixtureKey },
+      keyStore: {
+        id: 'fixture',
+        configured: true,
+        getKey: async () => {
+          keyReads++;
+          return fixtureKey;
+        },
+      },
       retry: async () => {},
       page: async (_threadId, step) => ({
         origin: 'https://example.com',
@@ -217,6 +225,17 @@ test(
         'pending',
       );
       const url = result.url.replace('/vault/', '/api/credential-requests/');
+      const status = await app.inject({ url: `${url}/status` });
+      assert.deepEqual(status.json(), { status: 'pending' });
+      assert.equal(status.headers['cache-control'], 'no-store');
+      assert.equal(
+        (
+          await app.inject({
+            url: `${hidden.url.replace('/vault/', '/api/credential-requests/')}/status`,
+          })
+        ).statusCode,
+        404,
+      );
       const form = await app.inject({ url });
       assert.equal(form.statusCode, 200);
       assert.equal(form.headers['cache-control'], 'no-store');
@@ -233,6 +252,9 @@ test(
         },
       });
       await injectionStarted;
+      assert.deepEqual((await app.inject({ url: `${url}/status` })).json(), {
+        status: 'entering',
+      });
       assert.equal(resumed, 0);
       let secondSettled = false;
       const second = app
@@ -248,6 +270,9 @@ test(
       assert.equal(secondSettled, true);
       complete();
       assert.equal((await first).statusCode, 200);
+      assert.deepEqual((await app.inject({ url: `${url}/status` })).json(), {
+        status: 'filled',
+      });
       assert.equal((await second).statusCode, 409);
       assert.equal(injected, 1);
       assert.equal(resumed, 1);
@@ -304,6 +329,9 @@ test(
       await wait(expiredTask);
       await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [expiredTask.turnId]);
       const expiredUrl = expired.url.replace('/vault/', '/api/credential-requests/');
+      assert.deepEqual((await app.inject({ url: `${expiredUrl}/status` })).json(), {
+        status: 'expired',
+      });
       assert.equal((await app.inject({ url: expiredUrl })).json().status, 'expired');
       assert.equal(
         (
@@ -315,6 +343,16 @@ test(
         ).statusCode,
         409,
       );
+      const pendingTask = await turn();
+      const pending = await vault.request(pendingTask, 'local-development', input);
+      await wait(pendingTask);
+      const pendingUrl = pending.url.replace('/vault/', '/api/credential-requests/');
+      const readsBeforeStatus = keyReads;
+      assert.deepEqual((await app.inject({ url: `${pendingUrl}/status` })).json(), {
+        status: 'pending',
+      });
+      assert.equal(keyReads, readsBeforeStatus);
+      assert.ok((await app.inject({ url: pendingUrl })).json().savedEntries.length > 0);
     } finally {
       complete();
       await app.close();
@@ -367,6 +405,9 @@ test(
       assert.equal(failed.statusCode, 502);
       assert.equal(failed.body.includes('123456'), false);
       assert.equal((await app.inject({ url })).json().status, 'uncertain');
+      assert.deepEqual((await app.inject({ url: `${url}/status` })).json(), {
+        status: 'uncertain',
+      });
       assert.equal(
         (await app.inject({ method: 'POST', url, payload: { code: '789012' } })).statusCode,
         409,
@@ -2518,6 +2559,12 @@ test(
         },
       });
       assert.equal(changedCard.statusCode, 200, changedCard.body);
+      assert.deepEqual(
+        (
+          await app.inject({ url: `/api/payment-requests/${changedPayment}/status`, headers })
+        ).json(),
+        { status: 'expired' },
+      );
       const beforeChange = fills.length;
       assert.equal(
         (
@@ -2622,6 +2669,18 @@ test(
         (await pool.query('SELECT 1 FROM vault_uses WHERE id=$1', [stoppedPayment])).rowCount,
         0,
       );
+      const deletedCardRequest = await payments.request(parallel, { ...order, card: card.id });
+      const deletedCardStatus = `/api/payment-requests/${deletedCardRequest.url!.split('/').at(-1)}/status`;
+      assert.deepEqual((await app.inject({ url: deletedCardStatus, headers })).json(), {
+        status: 'pending',
+      });
+      assert.equal(
+        (await app.inject({ method: 'DELETE', url: `/api/vault/${card.id}`, headers })).statusCode,
+        200,
+      );
+      assert.deepEqual((await app.inject({ url: deletedCardStatus, headers })).json(), {
+        status: 'expired',
+      });
       assert.doesNotMatch(
         JSON.stringify(
           (
@@ -3751,17 +3810,17 @@ test('chat removes private-entry actions only after the server confirms submissi
       ],
     }),
     async (path) => {
-      const gone = /-(404|410)$/.exec(path);
+      const gone = /-(404|410)\/status$/.exec(path);
       if (gone) {
         missingReads.set(path, (missingReads.get(path) ?? 0) + 1);
         return Response.json({ error: 'Unavailable' }, { status: Number(gone[1]) });
       }
       if (unavailable) return Response.json({ error: 'Unavailable' }, { status: 503 });
-      if (path === `/api/credential-requests/${token}`)
+      if (path === `/api/credential-requests/${token}/status`)
         return Response.json({ status: credentialStatus });
-      if (path === `/api/credential-requests/${token}-uncertain`)
+      if (path === `/api/credential-requests/${token}-uncertain/status`)
         return Response.json({ status: 'uncertain' });
-      if (path === `/api/credential-requests/${token}-expired`)
+      if (path === `/api/credential-requests/${token}-expired/status`)
         return Response.json({ status: 'expired' });
       if (path === `/api/payment-requests/${payment}/status`)
         return Response.json({ status: paymentSubmitted ? 'submitted' : 'pending' });

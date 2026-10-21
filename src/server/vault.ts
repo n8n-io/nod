@@ -1897,6 +1897,23 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       scope.get<{ Params: { id: string } }>('/api/credential-requests/:id', async (request) =>
         describe(request.params.id),
       );
+      scope.get<{ Params: { id: string } }>(
+        '/api/credential-requests/:id/status',
+        async (request) => {
+          const { rows } = await pool.query<Pick<CredentialRequest, 'status'>>(
+            `SELECT CASE WHEN v.status='submitted' THEN 'filled' WHEN v.status='uncertain' THEN 'uncertain'
+             WHEN v.status='running' THEN 'entering' WHEN r.status='pending' AND EXISTS(
+               SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id
+               AND ${waitingTurnSql('u', 'credentials')}) THEN 'pending' ELSE 'expired' END AS status
+             FROM credential_requests r LEFT JOIN vault_uses v
+               ON v.id=r.id AND v.owner_id=r.owner_id AND r.status='consumed'
+             WHERE r.token_hash=$1 AND r.owner_id=$2`,
+            [tokenHash(request.params.id), owner],
+          );
+          if (!rows[0]) throw new VaultError('Credential request not found.', 404);
+          return rows[0];
+        },
+      );
       scope.post<{ Params: { id: string } }>(
         '/api/credential-requests/:id/retry',
         async (request) => retry(request.params.id),

@@ -392,10 +392,10 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
               setLive(true);
               setShown(true);
               setFailures(0);
-              setNaturalSize({
-                width: event.currentTarget.naturalWidth,
-                height: event.currentTarget.naturalHeight,
-              });
+              const { naturalWidth: width, naturalHeight: height } = event.currentTarget;
+              setNaturalSize((size) =>
+                size.width === width && size.height === height ? size : { width, height },
+              );
               imageLoad.current.resolve();
             }}
             onError={(event) => {

@@ -188,12 +188,18 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
 
   function removed(id: string) {
     const entry = entries?.find((value) => value.id === id);
-    const next =
+    const remaining =
       entry?.kind === 'login'
-        ? (entries?.find(
+        ? entries?.filter(
             (value) => value.id !== id && value.kind === 'login' && value.origin === entry.origin,
-          ) ?? sessions.data?.find((value) => value.origin === entry.origin))
+          )
         : undefined;
+    const next =
+      remaining?.find((value) => value.kind === 'login' && !value.unreadable) ??
+      (entry?.kind === 'login'
+        ? sessions.data?.find((value) => value.origin === entry.origin)
+        : undefined) ??
+      remaining?.[0];
     update((current) => current?.filter((value) => value.id !== id) ?? current);
     sessions.update((current) => current?.filter((value) => value.id !== id) ?? current);
     returnTo.current = next?.id ?? 'new';

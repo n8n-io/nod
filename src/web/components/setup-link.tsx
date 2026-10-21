@@ -94,6 +94,7 @@ function usePrivateLinks(hrefs: string[]) {
     if (!links.length) return;
     const controller = new AbortController();
     const settled = new Set<string>();
+    const deadline = Date.now() + 10 * 60_000;
     let checking = false;
     const check = async () => {
       if (checking || document.visibilityState !== 'visible') return;
@@ -108,10 +109,10 @@ function usePrivateLinks(hrefs: string[]) {
                 const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
                 const status = token
                   ? (
-                      await api<CredentialRequest>(`/api/credential-requests/${token}`, {
-                        signal,
-                        cache: 'no-store',
-                      })
+                      await api<Pick<CredentialRequest, 'status'>>(
+                        `/api/credential-requests/${token}/status`,
+                        { signal, cache: 'no-store' },
+                      )
                     ).status
                   : (
                       await api<{ status: string }>(
@@ -139,7 +140,10 @@ function usePrivateLinks(hrefs: string[]) {
         if (settled.size === links.length) window.clearInterval(timer);
       }
     };
-    const timer = window.setInterval(() => void check(), 5000);
+    const timer = window.setInterval(() => {
+      if (Date.now() >= deadline) window.clearInterval(timer);
+      else void check();
+    }, 5000);
     void check();
     window.addEventListener('focus', check);
     document.addEventListener('visibilitychange', check);
