@@ -76,6 +76,22 @@ Each connected CLI runs as its own Linux user, derived from its path ID, in grou
 
 The CLI then runs with an environment built from scratch: a fixed `PATH`, a private temporary `HOME` and `XDG_CONFIG_HOME`, `LANG` and the connection's credential variables. Nothing comes from the sandbox user's files or environment, so a program the model plants never receives the token. See [MCP, APIs and CLIs](/connect/mcp-api-cli/).
 
+## Your computer
+
+On macOS, the owner can turn on [Your computer](/use/your-computer/). Pi then gets one `computer` tool that acts outside the containers, on the owner's own Mac.
+
+| Part                                        | Runs as                                                     | Can't reach                                                                                                                                        |
+| ------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shell`                                     | The server, with an empty environment, under `sandbox-exec` | Otto's data folder, Keychain services, LaunchAgents, login items, shell startup files, Apple Events, `open`, `osascript`, `automator`, `shortcuts` |
+| `apps`, `open`, `look`, `screenshot`, `act` | Otto Computer Use, a Swift helper in the desktop app        | Terminal apps, Script Editor, Automator, Shortcuts, Otto itself, macOS security prompts and the login window                                       |
+
+- The helper holds the Accessibility and Screen Recording grants. It reads accessibility trees with refs, captures one window even when covered, and acts without focus or the mouse.
+- Every `shell` command, `open` and `act` goes through the trust check. The first use of each Mac app asks the owner, and a yes is saved.
+- One Mac app step runs at a time across sessions. Stop ends the turn, and an action already sent becomes uncertain.
+- Results reach Pi as untrusted data. The source install gets `shell` only.
+
+The shell profile is a deny list. Code that calls Launch Services directly can still open apps. See [ADR 0001](https://github.com/n8n-io/otto/blob/main/docs/adr/0001-your-computer-helper-and-sandboxed-shell.md).
+
 ## The browser container
 
 The browser is a separate trusted container. It doesn't share mounts or a network namespace with the workspace. The server drives Vercel Labs [agent-browser](https://github.com/vercel-labs/agent-browser) over a fixed stdin bridge to a private Unix socket.
@@ -128,4 +144,5 @@ In a source install, the workspace has internet access through normal Docker rou
 - [The agent runtime](/how-it-works/agent-runtime/)
 - [Otto's workspace](/use/workspace/)
 - [The browser](/use/browser/)
+- [Your computer](/use/your-computer/)
 - [Security model and limits](/trust/security-model/)

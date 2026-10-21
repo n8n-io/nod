@@ -462,6 +462,37 @@ export const toolDefinitions = {
       name: Type.Optional(Type.String()),
     }),
   ),
+  computer: defineTool(
+    'computer',
+    "Act on the owner's own Mac, outside your workspace. Use it only when the task concerns the owner's files, Mac apps or screen; otherwise use the workspace. Load the your-computer skill first. shell {command, timeoutSeconds?} runs zsh in the owner's home folder with an empty environment; prefer moving files to ~/.Trash over deleting them. apps lists running Mac apps. open {app} opens a Mac app in the background by name or bundle ID. look {app} returns the app's accessibility tree with refs; refs expire at the next look. screenshot {app} captures the app's window, even when covered. act {app, step, ref?, value?, text?, key?} works in the app without focus or the mouse: press, set (value), focus, showMenu and raise take a ref from a fresh look; type sends text to the focused field; key sends a combination such as cmd+s. Look again after acting to verify. The first use of a Mac app asks the owner; commands and actions their words don't cover also ask.",
+    Type.Union([
+      Type.Object(
+        {
+          action: Type.Literal('shell'),
+          command: Type.String({ minLength: 1 }),
+          timeoutSeconds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3600 })),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object({ action: Type.Literal('apps') }, { additionalProperties: false }),
+      Type.Object(
+        { action: literals(['open', 'look', 'screenshot']), app: Type.String({ minLength: 1 }) },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('act'),
+          app: Type.String({ minLength: 1 }),
+          step: literals(['press', 'set', 'focus', 'showMenu', 'raise', 'type', 'key']),
+          ref: Type.Optional(Type.String()),
+          value: Type.Optional(Type.String()),
+          text: Type.Optional(Type.String()),
+          key: Type.Optional(Type.String()),
+        },
+        { additionalProperties: false },
+      ),
+    ]),
+  ),
   create_audio: defineTool(
     'create_audio',
     'Turn text into speech and send the audio to the user.',
@@ -793,6 +824,25 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
       if (!context.task) throw new Error('Tasks are unavailable.');
       return context.task(p);
     }),
+    ...(context.computer
+      ? [
+          bind(toolDefinitions.computer, async (p) => {
+            const result = await confirm(await context.computer!(p));
+            signal.throwIfAborted();
+            if (result && typeof result === 'object' && 'png' in result) {
+              const { png, ...rest } = result as { png: string };
+              return {
+                content: [
+                  { type: 'text', text: JSON.stringify(rest) },
+                  { type: 'image', data: png, mimeType: 'image/png' },
+                ],
+                details: {},
+              };
+            }
+            return result;
+          }),
+        ]
+      : []),
     bind(toolDefinitions.share_file, (p) => context.publish(p.path, p.name)),
     bind(toolDefinitions.create_audio, async (p) => {
       if (!context.createAudio)

@@ -151,6 +151,21 @@ for (const path of [
   await copy(join(root, path), join(engine, path));
 }
 await copyEngineDependencies({ root, target: engine, arch: process.arch });
+const computerHelper = join(engine, 'desktop', 'computer-use', '.build', 'otto-computer-use');
+await mkdir(dirname(computerHelper), { recursive: true });
+await run(
+  '/usr/bin/xcrun',
+  [
+    'swiftc',
+    '-O',
+    '-target',
+    `${process.arch === 'x64' ? 'x86_64' : 'arm64'}-apple-macos${supportedMinimumSystemVersion}`,
+    '-o',
+    computerHelper,
+    join(desktop, 'computer-use', 'main.swift'),
+  ],
+  { timeout: 600_000 },
+);
 for (const path of ['main', 'preload']) await copy(join(desktop, path), join(appSource, path));
 await buildDesktopUI(join(appSource, 'ui'));
 if (full)

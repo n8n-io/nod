@@ -48,6 +48,9 @@ import { agentModels } from '../shared/model-defaults.ts';
 import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
+import { createMacComputer } from '../providers/macos/owner-computer.ts';
+import type { OwnerComputer } from '../ports/owner-computer.ts';
+import { createComputerPolicy } from './computer.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
 import { createComposioProxy } from '../providers/composio/proxy.ts';
 import { createDiscoveredTransport } from '../providers/discovered/remote.ts';
@@ -121,6 +124,7 @@ import {
   resumeAfterPayment,
   retryCredentials,
   startThreadWorkers,
+  stopThread,
   stopThreadWorkers,
   withTurnLock,
   type TurnRef,
@@ -143,6 +147,7 @@ export interface ApplicationAdapters {
   integrationAccess?: ReturnType<typeof createIntegrationAccess>;
   agent: Agent;
   computer: Computer;
+  ownerComputer?: OwnerComputer;
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
@@ -342,6 +347,17 @@ export function createDefaultAdapters(
       traces,
     }),
     computer: createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
+    ...(process.platform === 'darwin'
+      ? {
+          ownerComputer: createMacComputer({
+            dataRoot,
+            helper:
+              env.OTTO_COMPUTER_HELPER ||
+              join(process.cwd(), 'desktop', 'computer-use', '.build', 'otto-computer-use'),
+            denyRead: [process.cwd()],
+          }),
+        }
+      : {}),
     workspace: createDockerWorkspace({
       container: env.WORKSPACE_CONTAINER || 'otto-workspace',
       workspaceRoot: join(dataRoot, 'workspaces'),
@@ -815,46 +831,56 @@ async function initializeApplication(
     async (action, args, provenance) => {
       const result = await (action === 'OTTO_browser'
         ? replayBrowserStep(args, provenance)
-        : action === 'OTTO_vault_allow'
-          ? vaultAccess.allow(args)
-          : action === 'OTTO_limits_update'
-            ? ledger.setLimits(args)
-            : action.startsWith('OTTO_memory_')
-              ? withTurnLock(provenance.turnId, () =>
-                  personal.manage(action.slice('OTTO_'.length), args, provenance),
-                )
-              : action.startsWith('OTTO_')
-                ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-                : (async () => {
-                    const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
-                    const ready = hasWorkspaceFiles(args)
-                      ? await integrations
-                          .prepare(ownerId, action, args, turn)
-                          .catch((error: unknown) => {
-                            throw Object.assign(
-                              error instanceof Error ? error : new Error(String(error)),
-                              { notRun: true },
-                            );
+        : action === 'OTTO_computer' || action === 'OTTO_computer_app'
+          ? computerPolicy.execute(action, args, provenance)
+          : action === 'OTTO_vault_allow'
+            ? vaultAccess.allow(args)
+            : action === 'OTTO_limits_update'
+              ? ledger.setLimits(args)
+              : action.startsWith('OTTO_memory_')
+                ? withTurnLock(provenance.turnId, () =>
+                    personal.manage(action.slice('OTTO_'.length), args, provenance),
+                  )
+                : action.startsWith('OTTO_')
+                  ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+                  : (async () => {
+                      const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
+                      const ready = hasWorkspaceFiles(args)
+                        ? await integrations
+                            .prepare(ownerId, action, args, turn)
+                            .catch((error: unknown) => {
+                              throw Object.assign(
+                                error instanceof Error ? error : new Error(String(error)),
+                                { notRun: true },
+                              );
+                            })
+                        : args;
+                      const result = await integrations.executeApproved(
+                        ownerId,
+                        action,
+                        ready,
+                        turn,
+                      );
+                      await ledger.action(provenance.turnId, action);
+                      return privateEmailResult(
+                        (
+                          await saveIntegrationFiles(result, async (file) => {
+                            const name = `${randomUUID()}-${basename(file.name)}`;
+                            await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                            return name;
                           })
-                      : args;
-                    const result = await integrations.executeApproved(ownerId, action, ready, turn);
-                    await ledger.action(provenance.turnId, action);
-                    return privateEmailResult(
-                      (
-                        await saveIntegrationFiles(result, async (file) => {
-                          const name = `${randomUUID()}-${basename(file.name)}`;
-                          await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                          return name;
-                        })
-                      ).value,
-                      mailCheck,
-                    );
-                  })());
+                        ).value,
+                        mailCheck,
+                      );
+                    })());
       analytics.actionExecuted(ownerId, action);
       return result;
     },
     async (action, args, expectedRevision) => {
-      if (['OTTO_browser', 'OTTO_vault_allow'].includes(action)) return;
+      if (
+        ['OTTO_browser', 'OTTO_vault_allow', 'OTTO_computer', 'OTTO_computer_app'].includes(action)
+      )
+        return;
       if (action === 'OTTO_limits_update') limitsInput.parse(args);
       else if (action.startsWith('OTTO_')) {
         if (
@@ -987,6 +1013,28 @@ async function initializeApplication(
     ownerId,
     review,
   });
+  const parentPort = (
+    process as NodeJS.Process & {
+      parentPort?: {
+        postMessage(message: unknown): void;
+        on(event: 'message', listener: (event: { data: unknown }) => void): void;
+      };
+    }
+  ).parentPort;
+  const computerPolicy = createComputerPolicy({
+    pool,
+    ownerId,
+    computer: adapters.ownerComputer,
+    check: trust.check,
+    request: (turn, action, args, options) => approvals.request(turn, action, args, options),
+    lock: (turnId, write) => withTurnLock(turnId, write),
+    using: (apps) => parentPort?.postMessage({ type: 'otto-computer', apps }),
+  });
+  await computerPolicy.initialize();
+  parentPort?.on('message', (event) => {
+    if ((event.data as { type?: string } | null)?.type === 'otto-computer-stop')
+      void stopThread().catch(() => {});
+  });
   vaultAccess = await createVaultAccess(pool, {
     ownerId,
     check: trust.check,
@@ -1111,6 +1159,24 @@ async function initializeApplication(
         return result;
       },
       speech,
+      ...(adapters.ownerComputer
+        ? {
+            computer: async (
+              turn: TurnRef,
+              args: Record<string, unknown>,
+              {
+                signal,
+                ...provenance
+              }: Parameters<typeof computerPolicy.run>[2] & {
+                signal: AbortSignal;
+              },
+            ) => {
+              const origin = await turnOrigin(turn.turnId);
+              const rooted = ['user', 'task', 'schedule'].includes(origin?.source ?? '');
+              return computerPolicy.run(turn, args, { ...provenance, rooted }, signal);
+            },
+          }
+        : {}),
       manage: async (turn, action, args, { admit, ...provenance }) => {
         if (action === 'limits_update') {
           const input = limitsInput.parse(args);
@@ -1432,6 +1498,7 @@ async function initializeApplication(
   onboardingSuggestions.registerRoutes(app);
   tasks.registerRoutes(app);
   triage.registerRoutes(app);
+  computerPolicy.registerRoutes(app);
   let channelSettings: Awaited<ReturnType<typeof createChannelSettings>> | undefined;
   if (options.channels !== false && (adapters.messaging || adapters.messagingSetup)) {
     const setup = adapters.messagingSetup;
@@ -1567,6 +1634,7 @@ async function initializeApplication(
       () => conversationAnalytics.close(),
       finishWork,
       () => runtime.dispose(),
+      () => adapters.ownerComputer?.dispose(),
       () => analytics.shutdown(),
       () => adapters.telemetry?.shutdown(),
     ]) {

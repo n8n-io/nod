@@ -22,6 +22,7 @@ import './components/attachment-images.css';
 import './components/attachment-card.css';
 import './components/artifact-drawer.css';
 import './components/vault-details.css';
+import './components/your-computer.css';
 import './pages/browser.css';
 import './pages/privacy.css';
 import './pages/onboarding/onboarding.css';

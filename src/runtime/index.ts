@@ -33,6 +33,7 @@ const inlineChars = 40_000;
 const imageBudget = 16 * 1024 * 1024;
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const parentTools = new Set([
+  'computer',
   'sign_in',
   'pay',
   'browser_session',
@@ -66,6 +67,7 @@ const reportingTools = new Set(['ask_user', 'send_message', 'share_file', 'task'
 const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
 const delimitedTools = new Set([
   'apps',
+  'computer',
   'delegate',
   'browser',
   'web_search',

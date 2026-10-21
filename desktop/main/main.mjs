@@ -94,6 +94,7 @@ let updateFailed = false;
 let pendingPreload;
 let stopUpdateChecks;
 let closingEngine = false;
+let computerApps = [];
 let tray;
 let engineOrigin = '';
 let engineBound = false;
@@ -983,6 +984,13 @@ function refreshUpdateMenu() {
   if (tray)
     tray.setContextMenu(
       Menu.buildFromTemplate([
+        ...(computerApps.length
+          ? [
+              { label: `Using ${computerApps.join(', ')}`, enabled: false },
+              { label: 'Stop', click: () => engine?.postMessage({ type: 'otto-computer-stop' }) },
+              { type: 'separator' },
+            ]
+          : []),
         { label: 'Open Otto', click: showEngine },
         { label: 'Settings…', click: () => showSettings() },
         { label: 'Send feedback…', click: showFeedback },
@@ -1288,6 +1296,13 @@ async function startEngine({ runtime, signal, pending = false }) {
     OTTO_PUBLIC_URL: engineOrigin,
     OTTO_DATA_ROOT: profileRoot,
     OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),
+    OTTO_COMPUTER_HELPER: join(
+      engineRoot,
+      'desktop',
+      'computer-use',
+      '.build',
+      'otto-computer-use',
+    ),
     ...(process.env.OTTO_FEEDBACK_URL === '' ? { OTTO_FEEDBACK_ENABLED: 'false' } : {}),
     ...(tracesToken ? { OTTO_TRACES_TOKEN: tracesToken } : {}),
     PI_CODING_AGENT_DIR: join(profileRoot, 'pi'),
@@ -1355,6 +1370,15 @@ async function startEngine({ runtime, signal, pending = false }) {
           });
       }
     }
+    if (
+      engine === child &&
+      message?.type === 'otto-computer' &&
+      Array.isArray(message.apps) &&
+      message.apps.every((name) => typeof name === 'string')
+    ) {
+      computerApps = message.apps;
+      refreshUpdateMenu();
+    }
     if (engine === child && message?.type === 'otto-ready' && message.port === port) {
       engineBound = true;
     }
@@ -1375,6 +1399,8 @@ async function startEngine({ runtime, signal, pending = false }) {
   });
   child.on('exit', (code) => {
     if (engine !== child) return;
+    computerApps = [];
+    refreshUpdateMenu();
     stopNotifications?.();
     stopNotifications = undefined;
     if (!closingEngine) void writeDiagnostic(`Engine exited with code ${code}.`).catch(() => {});

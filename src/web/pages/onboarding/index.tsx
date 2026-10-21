@@ -23,6 +23,7 @@ import {
   type DesktopStatus,
 } from '../../lib/desktop';
 import { DesktopPreferencesSetup } from './steps/desktop-preferences';
+import { ComputerSetup } from './steps/computer';
 import { useBrowserTimeZone } from '../../hooks/use-browser-time-zone';
 import { api, errorMessage } from '../../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../../lib/analytics';
@@ -33,7 +34,7 @@ import { About } from './steps/about';
 import { Email } from './steps/email';
 import { Telegram } from './steps/telegram';
 import { OpenSource } from './steps/open-source';
-import { desktopOnboardingSteps, OnboardingFrame } from './frame';
+import { computerOnboardingSteps, desktopOnboardingSteps, OnboardingFrame } from './frame';
 
 export type StepProps = {
   arrived: 'forward' | 'back';
@@ -101,6 +102,7 @@ export function Onboarding({
   const [completionFailed, setCompletionFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(!desktop);
+  const [computerReady, setComputerReady] = useState(false);
   const [runtimeError, setRuntimeError] = useState('');
   const [error, setError] = useState('');
   const preparationRequest = useRef<AbortController | null>(null);
@@ -116,7 +118,7 @@ export function Onboarding({
   useEffect(() => {
     writeStep({ owner: user.id, step, version: onboardingVersion });
     if (
-      (step !== 'open' || preferencesReady) &&
+      (step !== 'open' || (preferencesReady && computerReady)) &&
       (viewed.current?.owner !== user.id ||
         viewed.current.step !== step ||
         viewed.current.direction !== arrived)
@@ -127,11 +129,11 @@ export function Onboarding({
         direction: arrived,
       });
     }
-  }, [step, user.id, preferencesReady]);
+  }, [step, user.id, preferencesReady, computerReady]);
 
   useLayoutEffect(() => {
     if (main.current) main.current.scrollTop = 0;
-  }, [step, user.id, preferencesReady]);
+  }, [step, user.id, preferencesReady, computerReady]);
 
   useEffect(() => {
     if (index <= onboardingSteps.indexOf('brain')) return;
@@ -310,6 +312,15 @@ export function Onboarding({
 
   if (desktop && step === 'open' && !preferencesReady)
     return <DesktopPreferencesSetup notice={recovery} onReady={() => setPreferencesReady(true)} />;
+
+  if (step === 'open' && !computerReady)
+    return (
+      <ComputerSetup
+        steps={desktop ? desktopOnboardingSteps : computerOnboardingSteps}
+        notice={recovery || undefined}
+        onReady={() => setComputerReady(true)}
+      />
+    );
 
   const Screen = screens[step];
   return (

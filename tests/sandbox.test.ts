@@ -37,6 +37,7 @@ import {
   workspaceFile,
 } from '../src/providers/docker/index.ts';
 import { runProcess, serviceEnvironment } from '../src/providers/process.ts';
+import { createMacComputer } from '../src/providers/macos/owner-computer.ts';
 import { prepareLocalDirectories } from '../scripts/local-database.ts';
 
 test('local startup protects data through its private root and preserves workspace mount traversal', async () => {
@@ -165,6 +166,46 @@ test('runtime subprocesses do not inherit provider keys and stop at bounds', asy
     else process.env.OPENAI_API_KEY = previous;
   }
 });
+
+if (process.platform === 'darwin')
+  test("commands on the owner's computer get no keys and cannot reach Otto's data or other apps", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-computer-'));
+    const install = await mkdtemp(join(tmpdir(), 'otto-install-'));
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'test-secret-not-for-child';
+    const computer = createMacComputer({ dataRoot: root, denyRead: [install] });
+    try {
+      await writeFile(join(root, 'access-key'), 'fixture-key');
+      await writeFile(join(install, '.env'), 'OPENAI_API_KEY=fixture-env-key');
+      const signal = new AbortController().signal;
+      const run = (command: string) => computer.shell(command, { signal });
+      assert.equal((await run('printf %s "$OPENAI_API_KEY"')).output, '');
+      const key = await run(`cat '${join(root, 'access-key')}'`);
+      assert.notEqual(key.exitCode, 0);
+      assert.doesNotMatch(key.output, /fixture-key/);
+      const env = await run(`cat '${join(install, '.env')}'`);
+      assert.notEqual(env.exitCode, 0);
+      assert.doesNotMatch(env.output, /fixture-env-key/);
+      assert.equal((await run('echo hi | grep -c hi')).output.trim(), '1');
+      assert.notEqual((await run('open -a Chess')).exitCode, 0);
+      assert.notEqual((await run('osascript -e "return 1"')).exitCode, 0);
+      assert.notEqual((await run('launchctl submit -l otto.fixture -- /bin/true')).exitCode, 0);
+      assert.notEqual((await run('touch ~/Library/LaunchAgents/otto-fixture.plist')).exitCode, 0);
+      spawnSync('osascript', ['-e', 'tell application "Chess" to quit']);
+      await run(
+        'swift -e \'import AppKit; _ = NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Chess.app"))\'',
+      );
+      await delay(1000);
+      assert.equal(spawnSync('pgrep', ['-x', 'Chess']).status, 1);
+      await assert.rejects(computer.shell('sleep 5', { signal, timeoutMs: 50 }), /stopped/);
+    } finally {
+      await rm(install, { recursive: true, force: true });
+      computer.dispose();
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
 // Supervised workspace commands: cancellation, bounds, uncertain fencing and file containment.
 

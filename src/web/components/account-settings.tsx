@@ -45,6 +45,7 @@ import { localeRegion } from '../../shared/date-locale';
 import { desktopSettingsAvailable, removeDesktopData } from '../lib/desktop';
 import { DesktopOptions, useDesktopSettings } from './desktop-settings';
 import { ConnectionSettings } from './connection-choice';
+import { YourComputer } from './your-computer';
 import { Memory } from '../pages/memory';
 import { isEditingTarget, navigationShortcut, shortcutLabel } from '../lib/navigation';
 
@@ -651,6 +652,7 @@ export function AccountSettings({
                       </Button>
                     )}
                   </section>
+                  <YourComputer />
                 </>
               )}
               {tab === 'Memory' && (

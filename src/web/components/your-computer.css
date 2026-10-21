@@ -1,0 +1,62 @@
+.your-computer {
+  display: grid;
+  gap: 12px;
+}
+.your-computer h5 {
+  margin-top: 8px;
+  font-size: var(--text-control);
+  font-weight: 500;
+}
+.computer-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: var(--text-control);
+}
+.computer-switch > label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+.computer-switch svg {
+  color: var(--muted-foreground);
+}
+.computer-note {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.computer-permissions,
+.computer-apps {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+.computer-permissions > li,
+.computer-apps > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: var(--control-height-sm);
+  font-size: var(--text-control);
+}
+.computer-permissions > li > span {
+  display: grid;
+}
+.computer-permissions strong {
+  font-weight: 400;
+}
+.computer-permissions small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.computer-apps > li > span {
+  display: grid;
+}
+.computer-apps small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}

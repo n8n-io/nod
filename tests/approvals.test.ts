@@ -20,6 +20,8 @@ import Fastify from 'fastify';
 import pg from 'pg';
 import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
 import { appConfirmation } from '../src/ports/agent.ts';
+import type { OwnerComputer } from '../src/ports/owner-computer.ts';
+import { createComputerPolicy } from '../src/server/computer.ts';
 import type { ApprovalDescription, ApprovalExecutionContext } from '../src/server/approvals.ts';
 test('localhost access requires the owner key and rejects foreign Host, Origin and cross-site requests', async () => {
   const root = await mkdtemp(join(tmpdir(), 'otto-access-'));
@@ -2341,5 +2343,165 @@ test(
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
     }
+  },
+);
+
+test(
+  'your computer stays off until the owner turns it on, asks before a new Mac app, refuses blocked apps and checks every step',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_computer_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    t.after(async () => {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const ran: string[] = [];
+    const shellSignals: AbortSignal[] = [];
+    let covered = false;
+    let label = 'Button "Delete all"';
+    const checks: Record<string, unknown>[] = [];
+    const requests: { action: string; args: Record<string, unknown>; allowed: unknown }[] = [];
+    const computer: OwnerComputer = {
+      shell: async (command, { signal }) => {
+        ran.push(command);
+        shellSignals.push(signal);
+        return { exitCode: 0, output: '' };
+      },
+      resolve: async (name) =>
+        name === 'Calculator' || name === 'EvilTerm'
+          ? null
+          : { name, bundleId: name === 'Terminal' ? 'com.apple.Terminal' : `fixture.${name}` },
+      identify: async (name) => ({
+        name,
+        bundleId: name === 'EvilTerm' ? 'COM.APPLE.TERMINAL' : `fixture.${name}`,
+      }),
+      open: async (bundleId) => ({ name: 'Calculator', bundleId }),
+      look: async (bundleId) => ({
+        app: { name: 'Notes', bundleId },
+        tree: `- ${label} [ref=e1]`,
+      }),
+      label: (_bundleId, ref) => (ref === 'e1' ? label : undefined),
+      act: async (step) => {
+        ran.push(`${step.action} ${step.ref}`);
+      },
+      dispose() {},
+    };
+    const policy = createComputerPolicy({
+      pool,
+      ownerId: 'computer-owner',
+      computer,
+      check: async (_turn, _action, args) => {
+        checks.push(args);
+        return covered ? { confirm: false } : { confirm: true, reason: 'unrequested' };
+      },
+      request: async (_turn, action, args, options) => {
+        requests.push({ action, args, allowed: options.allowed });
+        return { [appConfirmation]: 'question' };
+      },
+      lock: (_turnId, write) => write(),
+    });
+    await policy.initialize();
+    policy.registerRoutes(app);
+    const turn = { threadId: randomUUID(), turnId: randomUUID() };
+    const signal = new AbortController().signal;
+    const run = (args: Record<string, unknown>, rooted = true) =>
+      policy.run(turn, args, { rooted }, signal);
+
+    await assert.rejects(run({ action: 'shell', command: 'ls' }), /off/);
+    const on = await app.inject({
+      method: 'PATCH',
+      url: '/api/computer',
+      payload: { enabled: true },
+    });
+    assert.equal(on.json().enabled, true);
+
+    await run({ action: 'shell', command: 'rm -rf ~/Documents' });
+    assert.deepEqual(requests.at(-1), {
+      action: 'OTTO_computer',
+      args: { action: 'shell', command: 'rm -rf ~/Documents' },
+      allowed: false,
+    });
+    assert.equal(checks.at(-1)?.command, 'rm -rf ~/Documents');
+
+    await assert.rejects(run({ action: 'look', app: 'Terminal' }), /never uses/);
+    await assert.rejects(run({ action: 'open', app: 'Script Editor' }), /never uses/);
+    await assert.rejects(run({ action: 'look', app: 'a/b' }), /not a path/);
+    await assert.rejects(run({ action: 'open', app: 'EvilTerm' }), /never uses/);
+
+    await run({ action: 'look', app: 'Notes' });
+    assert.equal(requests.at(-1)?.action, 'OTTO_computer_app');
+    await policy.execute(
+      'OTTO_computer_app',
+      { action: 'look', app: 'Notes', bundleId: 'fixture.Notes' },
+      { turnId: turn.turnId },
+    );
+    const asked = requests.length;
+    assert.deepEqual(await run({ action: 'look', app: 'Notes' }), {
+      app: { name: 'Notes', bundleId: 'fixture.Notes' },
+      tree: '- Button "Delete all" [ref=e1]',
+    });
+    assert.equal(requests.length, asked);
+
+    covered = true;
+    await run({ action: 'look', app: 'Calendar' });
+    covered = false;
+    await run({ action: 'look', app: 'Calendar' });
+    assert.equal(requests.length, asked);
+
+    covered = true;
+    await run({ action: 'look', app: 'Mail' }, false);
+    covered = false;
+    await run({ action: 'look', app: 'Mail' }, false);
+    assert.equal(requests.at(-1)?.action, 'OTTO_computer_app');
+    assert.equal((requests.at(-1)?.args as { app?: string }).app, 'Mail');
+
+    await run({ action: 'act', app: 'Notes', step: 'press', ref: 'e1' });
+    assert.equal(checks.at(-1)?.control, 'Button "Delete all"');
+    assert.equal(requests.at(-1)?.allowed, false);
+    await assert.rejects(
+      run({ action: 'act', app: 'Notes', step: 'press', ref: 'e9' }),
+      /Unknown ref/,
+    );
+    assert.deepEqual(ran, []);
+
+    label = 'Button "Archive"';
+    await assert.rejects(
+      policy.execute(
+        'OTTO_computer',
+        {
+          action: 'act',
+          app: 'Notes',
+          bundleId: 'fixture.Notes',
+          step: 'press',
+          ref: 'e1',
+          control: 'Button "Delete all"',
+        },
+        { turnId: turn.turnId },
+      ),
+      (error: Error & { notRun?: boolean }) => error.notRun === true,
+    );
+    assert.deepEqual(ran, []);
+
+    await policy.execute(
+      'OTTO_computer',
+      { action: 'shell', command: 'sleep 1' },
+      { turnId: turn.turnId },
+    );
+    assert.equal(shellSignals.at(-1), signal);
+
+    await app.inject({ method: 'PATCH', url: '/api/computer', payload: { enabled: false } });
+    await assert.rejects(
+      policy.execute('OTTO_computer', { action: 'shell', command: 'ls' }),
+      (error: Error & { notRun?: boolean }) => error.notRun === true,
+    );
   },
 );

@@ -4,10 +4,14 @@ import { onboardingSteps, type OnboardingStep } from '../../../shared/onboarding
 import { OttoGlyph } from '../../components/motion';
 import { Button } from '../../components/ui';
 
-type DisplayStep = OnboardingStep | 'notifications' | 'launchAtLogin';
+export type DisplayStep = OnboardingStep | 'notifications' | 'launchAtLogin' | 'computer';
 
 export const desktopOnboardingSteps: readonly DisplayStep[] = onboardingSteps.flatMap<DisplayStep>(
-  (step) => (step === 'open' ? ['notifications', 'launchAtLogin', step] : [step]),
+  (step) => (step === 'open' ? ['notifications', 'launchAtLogin', 'computer', step] : [step]),
+);
+
+export const computerOnboardingSteps: readonly DisplayStep[] = onboardingSteps.flatMap<DisplayStep>(
+  (step) => (step === 'open' ? ['computer', step] : [step]),
 );
 
 export function OnboardingFrame({

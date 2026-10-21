@@ -7,7 +7,7 @@ sidebar:
 
 Otto has its own Linux computer, called the workspace, where it runs commands and keeps files for your conversation.
 
-The workspace is separate from your computer. Otto can write documents, convert files, run code and keep notes there without touching your own files.
+The workspace is separate from your computer. Otto can write documents, convert files, run code and keep notes there without touching your own files. When a task is about your own files or Mac apps, and you've turned it on, Otto uses [your computer](/use/your-computer/) instead.
 
 ## What Otto can use
 
@@ -39,7 +39,7 @@ flowchart LR
   server -- drives --> br
 ```
 
-- **Your files.** The workspace doesn't see your home folder. It only gets the files you attach or that Otto fetches.
+- **Your files.** The workspace doesn't see your home folder. It only gets the files you attach or that Otto fetches. Otto reaches your own files only through [your computer](/use/your-computer/), when you turn it on.
 - **Keys.** Model provider keys and Otto's access key never enter the workspace. If you connect a command-line tool, its token reaches only that tool, never code Otto writes.
 - **The browser.** Otto's browser runs in its own container. The workspace can't read its saved sign-ins.
 
@@ -91,5 +91,6 @@ In a development run, **Clear messages** gives Otto a new, empty workspace folde
 
 - [Chat with Otto](/use/chat/)
 - [Otto's browser](/use/browser/)
+- [Your computer](/use/your-computer/)
 - [Your data and privacy](/trust/privacy/)
 - [Sandbox and browser](/how-it-works/sandbox-and-browser/)

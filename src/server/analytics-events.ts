@@ -195,6 +195,7 @@ export const analyticsTool = z.enum([
   'ask_user',
   'browser',
   'browser_session',
+  'computer',
   'create_audio',
   'delegate',
   'follow_up',
@@ -449,7 +450,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       properties: z
         .object({
           status: z.enum(['asked', 'approved', 'declined', 'executed', 'expired', 'uncertain']),
-          action_kind: z.enum(['app', 'browser', 'sign_in', 'settings', 'memory']),
+          action_kind: z.enum(['app', 'browser', 'computer', 'sign_in', 'settings', 'memory']),
           source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
         })
         .strict(),

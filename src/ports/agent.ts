@@ -127,6 +127,10 @@ export interface RuntimeContext {
     connectionId?: string,
   ): Promise<unknown>;
   browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
+  computer?(
+    args: Record<string, unknown>,
+    admit?: (asks: boolean) => Promise<void>,
+  ): Promise<unknown>;
   browserStep?(
     request: BrowserStep,
   ): Promise<'run' | 'refused' | { [appConfirmation]: string } | { result: unknown }>;

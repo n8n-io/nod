@@ -39,6 +39,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 
 - Only your messages, a schedule's instruction, your standing instruction and your approvals carry authority. Pages, emails, files and tool results can't create permission.
 - App actions beyond reads and drafts need a review match against your request or your yes. See [Approvals](/trust/approvals/).
+- On [your computer](/use/your-computer/), every command, app opening and app action needs a review match or your yes. The first use of each Mac app needs your yes, and Otto never uses terminal apps, Script Editor, Automator, Shortcuts, Otto itself or macOS security prompts.
 - A confirmation is bound to the exact action and arguments, and runs once.
 - Background work Otto starts itself reads and drafts, and does only what your [standing instruction](/trust/approvals/#standing-instructions) asks. Anything else waits for your yes, and a payment always needs your approval.
 
@@ -65,6 +66,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 
 - The workspace runs as an unprivileged user with no host home folder, Docker socket, provider keys, access key or browser profiles.
 - A connected command-line tool's token reaches only a sealed install of its declared source, run as its own user with a clean environment, apart from other tools.
+- Commands on your computer run with an empty environment under a macOS sandbox profile that blocks Otto's data folder, Keychain services, startup items, Apple Events and the `open`, `osascript`, `automator` and `shortcuts` commands.
 - Every query and route is scoped to one owner.
 - File previews never run a file in Otto's own page. An HTML file runs in a sandbox with an empty origin and no network, forms or pop-ups, and its preview closes if it tries to open a website. Other formats are read as data. Files that can run code get no local preview before they upload.
 
@@ -87,6 +89,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - Reads, drafts and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
 - A saved card can't make the issuer enforce the amount, and card support isn't a PCI DSS compliance claim.
 - A script in an HTML preview can still navigate its own frame to a website and take that page's contents with it, as it could if you opened the downloaded file in a browser. It can't read anything from Otto, and the preview closes when it navigates.
+- The sandbox profile for commands on your computer is a deny list. A program that calls macOS Launch Services directly can still open apps, and an approved command can change any file the profile doesn't block.
 - Tests cover known failure cases. They don't prove that every injection or browser exploit is blocked.
 
 :::

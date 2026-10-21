@@ -165,6 +165,15 @@ export interface ThreadDependencies {
     args: Record<string, unknown>,
     provenance: { sourceMessageId: string | null; admit?: (asks: boolean) => Promise<void> },
   ) => Promise<unknown>;
+  computer?: (
+    turn: TurnRef,
+    args: Record<string, unknown>,
+    provenance: {
+      sourceMessageId: string | null;
+      admit?: (asks: boolean) => Promise<void>;
+      signal: AbortSignal;
+    },
+  ) => Promise<unknown>;
 }
 
 export function activeThreadSql(alias = 'm') {
@@ -1356,6 +1365,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       manage: fenced((action, args, admit) =>
         dependencies.manage(ref, action, args, { sourceMessageId, admit }),
       ),
+      computer:
+        dependencies.computer &&
+        fenced((args, admit) =>
+          dependencies.computer!(ref, args, { sourceMessageId, admit, signal }),
+        ),
       task: dependencies.task && fenced((input) => dependencies.task!(ref, input, sourceMessageId)),
       takeMessages:
         turn.background && !taskContext

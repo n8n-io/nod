@@ -178,13 +178,15 @@ export async function createApprovals(
         action_kind:
           action === 'OTTO_browser'
             ? 'browser'
-            : action === 'OTTO_vault_allow'
-              ? 'sign_in'
-              : action.startsWith('OTTO_memory_')
-                ? 'memory'
-                : action.startsWith('OTTO_')
-                  ? 'settings'
-                  : 'app',
+            : action === 'OTTO_computer' || action === 'OTTO_computer_app'
+              ? 'computer'
+              : action === 'OTTO_vault_allow'
+                ? 'sign_in'
+                : action.startsWith('OTTO_memory_')
+                  ? 'memory'
+                  : action.startsWith('OTTO_')
+                    ? 'settings'
+                    : 'app',
         source: source as TurnSource,
       },
     });
