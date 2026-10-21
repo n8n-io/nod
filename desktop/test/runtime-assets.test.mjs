@@ -1859,13 +1859,13 @@ async function windowsImageFixture(t) {
     ['postgres', 'workspace', 'browser'].map(async (name) => {
       const bytes = Buffer.from(`synthetic-${name}-image`);
       const digest = createHash('sha256').update(bytes).digest('hex');
-      await writeFile(join(root, 'images', `${name}.tar.gz`), bytes);
+      await writeFile(join(root, 'images', `${name}.tar.zst`), bytes);
       return {
         name,
         id: `sha256:${digest}`,
         sha256: digest,
         reference: `synthetic:${name}`,
-        file: `images/${name}.tar.gz`,
+        file: `images/${name}.tar.zst`,
       };
     }),
   );
@@ -1963,7 +1963,10 @@ test('runtime hands off verified storage before browser readiness and fences fai
         assert.deepEqual((await windows.read()).images, {});
         if (outcome === 'windows-failed') await windows.wrong('browser');
         if (outcome === 'windows-damaged')
-          await writeFile(join(windows.root, 'images/browser.tar.gz'), 'corrupt synthetic archive');
+          await writeFile(
+            join(windows.root, 'images/browser.tar.zst'),
+            'corrupt synthetic archive',
+          );
       }
       const calls = [];
       let storage;
@@ -2172,7 +2175,7 @@ test('runtime hands off verified storage before browser readiness and fences fai
             if (outcome === 'windows-damaged')
               assert.equal(
                 (await windows.read()).commands.some(
-                  (command) => command[0] === 'load' && command.at(-1).endsWith('/browser.tar.gz'),
+                  (command) => command[0] === 'load' && command.at(-1).endsWith('/browser.tar.zst'),
                 ),
                 false,
               );

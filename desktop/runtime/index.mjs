@@ -169,7 +169,7 @@ async function prepare(options, onComputerStart) {
   for (const entry of [manifest.guest, manifest.dockerGuest, ...manifest.images]) {
     if (
       !/^[a-f0-9]{64}$/.test(entry.sha256) ||
-      !/^(guest\.img|docker-guest\.tar\.gz|images\/(workspace|browser|postgres)\.tar\.gz)$/.test(
+      !/^(guest\.img|docker-guest\.tar\.gz|images\/(workspace|browser|postgres)\.tar\.zst)$/.test(
         entry.file,
       )
     )
@@ -340,7 +340,7 @@ function validImage(item) {
   if (
     !['workspace', 'browser', 'postgres'].includes(item.name) ||
     !/^sha256:[a-f0-9]{64}$/.test(item.id) ||
-    !/^images\/(workspace|browser|postgres)\.tar\.gz$/.test(item.file)
+    !/^images\/(workspace|browser|postgres)\.tar\.zst$/.test(item.file)
   )
     throw new Error('The Otto computer image is invalid.');
   return item;

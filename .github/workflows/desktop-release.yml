@@ -163,7 +163,7 @@ jobs:
         with:
           name: desktop-runtime-images-${{ matrix.arch }}
           path: |
-            .local/desktop-runtime-assets/images/*.tar.gz
+            .local/desktop-runtime-assets/images/*.tar.zst
             .local/desktop-runtime-assets/images-manifest.json
           include-hidden-files: true
           compression-level: 0

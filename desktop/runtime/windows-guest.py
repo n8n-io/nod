@@ -50,7 +50,7 @@ images = [image for image in manifest['images'] if image['name'] == name]
 if len(images) != 1:
     sys.exit(64)
 image = images[0]
-if image['file'] != 'images/' + name + '.tar.gz' or not re.fullmatch(r'sha256:[a-f0-9]{64}', image['id']) or not re.fullmatch(r'[a-f0-9]{64}', image['sha256']):
+if image['file'] != 'images/' + name + '.tar.zst' or not re.fullmatch(r'sha256:[a-f0-9]{64}', image['id']) or not re.fullmatch(r'[a-f0-9]{64}', image['sha256']):
     sys.exit(64)
 result = subprocess.run([docker, 'image', 'inspect', '--format', '{{.Id}}', image['reference']], capture_output=True, text=True)
 if result.returncode or result.stdout.strip() != image['id']:
