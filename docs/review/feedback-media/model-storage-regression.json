@@ -1,0 +1,71 @@
+{
+  "scope": "Actual model service and encrypted database store with synthetic OAuth completion, disposable PostgreSQL schema and no network access. Not proof of a live ChatGPT account connection.",
+  "before": {
+    "revision": "ec9c7eebcd7c44dee7e556562c8812b8751ca261",
+    "modelsSourceObject": "17236b6c6e9cc11800f7b6818bf0deb824a4bedf",
+    "results": [
+      {
+        "name": "invalid",
+        "authenticationStarted": 1,
+        "authenticationCompleted": 1,
+        "catalogRequests": 0,
+        "error": "The credential key must contain exactly 32 bytes encoded as base64.",
+        "status": {
+          "status": "failed",
+          "error": "Sign-in failed. Start a new connection."
+        },
+        "counts": {
+          "connections": 0,
+          "grants": 0
+        }
+      },
+      {
+        "name": "valid",
+        "authenticationStarted": 1,
+        "authenticationCompleted": 1,
+        "catalogRequests": 1,
+        "status": {
+          "status": "connected"
+        },
+        "counts": {
+          "connections": 1,
+          "grants": 1
+        }
+      }
+    ],
+    "capturedResultSha256": "2055c73a9d5998ac4f6fd47e8b43665ec4c83e57a334daf20d7ee868bba06128"
+  },
+  "after": {
+    "revision": "254db6ccf12fd08175c352770fd05011662411e6",
+    "modelsSourceObject": "f38277fc394b5848ac843f14a1181ef090039e34",
+    "results": [
+      {
+        "name": "invalid",
+        "authenticationStarted": 0,
+        "authenticationCompleted": 0,
+        "catalogRequests": 0,
+        "error": "Check OTTO_VAULT_KEY in server settings: it must be a 32-byte key encoded as base64 that matches this Otto data. Restart Otto after changing it.",
+        "counts": {
+          "connections": 0,
+          "grants": 0
+        }
+      },
+      {
+        "name": "valid",
+        "authenticationStarted": 1,
+        "authenticationCompleted": 1,
+        "catalogRequests": 1,
+        "status": {
+          "status": "connected"
+        },
+        "counts": {
+          "connections": 1,
+          "grants": 1
+        }
+      }
+    ],
+    "capturedResultSha256": "1c2750611c46a58fe9f3f1bec63f7d573ed95fed87a0fb7462dd3a0ccadd6288"
+  },
+  "regression": "tests/accounts.test.ts: model connections verify credential storage before opening sign-in or calling a provider",
+  "keyFixtures": "Invalid: 64 a characters. Valid: 32 bytes with value77 encoded as base64. Neither fixture is a real credential."
+}
