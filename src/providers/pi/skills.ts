@@ -10,8 +10,8 @@ export function createSkillLibrary(
   const root = realpathSync(directory);
   const checkedPath = (base: string, file: string) => {
     const path = realpathSync(resolve(base, file));
-    if (!path.startsWith(base + sep) || !path.endsWith('.md'))
-      throw new Error('The skill file must be a Markdown file inside its skill directory.');
+    if (!path.startsWith(base + sep))
+      throw new Error('The skill file must be inside its skill directory.');
     if (!statSync(path).isFile()) throw new Error('The skill file must be a regular file.');
     return path;
   };

@@ -21,6 +21,7 @@ const vendor = /^(?:@earendil-works\/|@composio\/|@chat-adapter\/|chat$|agent-br
 for (const file of await files(sourceRoot)) {
   if (!/\.[cm]?tsx?$/.test(file)) continue;
   const name = relative(sourceRoot, file).replaceAll('\\', '/');
+  if (name.startsWith('runtime/skills/')) continue;
   const layer = name.split('/')[0];
   const source = ts.createSourceFile(
     file,
