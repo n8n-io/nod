@@ -12,12 +12,14 @@ const [
   { createDeclaredCredentials },
   { UserProxyLlm },
   { verifyBuildExpectations },
+  { resolveArtifactContext },
 ] = await Promise.all([
   load('clients/n8n-client.ts'),
   load('run/lane-users.ts'),
   load('credentials/seeder.ts'),
   load('utils/user-proxy/index.ts'),
   load('build-expectations/verifier.ts'),
+  load('harness/artifacts/artifact-context.ts'),
 ]);
 
 const logger = {
@@ -32,8 +34,8 @@ const owner = new N8nClient(base);
 await owner.login(process.env.N8N_EVAL_EMAIL, process.env.N8N_EVAL_PASSWORD);
 await owner.enableMcpAccess();
 const users = new LaneUserPool(owner);
-const members = new Map();
 const proxies = new Map();
+const list = (result) => (Array.isArray(result) ? result : (result?.data ?? []));
 
 async function provision({ credentials = [] }) {
   const user = await users.claim();
@@ -47,7 +49,6 @@ async function provision({ credentials = [] }) {
   const mcpApiKey = await client.rotateMcpApiKey();
   const created = await createDeclaredCredentials(client, credentials, { logger });
   const projectId = await client.getPersonalProjectId();
-  members.set(user.id, client);
   return {
     userId: user.id,
     email: user.email,
@@ -57,59 +58,60 @@ async function provision({ credentials = [] }) {
   };
 }
 
-async function workflows({ userId }) {
-  const client = members.get(userId);
-  if (!client) throw new Error('Unknown member.');
-  const listed = await client.listWorkflows();
-  const full = [];
-  for (const item of listed) {
-    const workflow = await client.getWorkflow(item.id).catch(() => undefined);
-    if (workflow) full.push(workflow);
+async function artifacts({ userId }) {
+  const project = list(await owner.fetch('/rest/projects')).find(
+    (item) => item.type === 'personal' && item.creatorId === userId,
+  );
+  if (!project) throw new Error('The member has no personal project.');
+  const filter = encodeURIComponent(JSON.stringify({ projectId: project.id }));
+  const workflows = [];
+  for (const item of list(await owner.fetch(`/rest/workflows?filter=${filter}`))) {
+    const workflow = await owner.getWorkflow(item.id).catch(() => undefined);
+    if (workflow) workflows.push(workflow);
   }
-  return full;
+  const agents = list(
+    await owner.fetch(`/rest/projects/${project.id}/agents/v2`).catch(() => []),
+  ).map((agent) => ({ id: agent.id, name: agent.name }));
+  return { projectId: project.id, workflows, agents };
 }
 
 function startProxy({ id, conversation, messageBudget }) {
-  proxies.set(id, new UserProxyLlm({ conversation, messageBudget, logger }));
+  proxies.set(id, { proxy: new UserProxyLlm({ conversation, messageBudget, logger }), events: [] });
   return {};
 }
 
 async function decide({ id, assistantText }) {
-  const proxy = proxies.get(id);
-  if (!proxy) throw new Error('Unknown conversation.');
-  const events = [];
-  if (assistantText.trim()) events.push({ type: 'text-delta', data: { text: assistantText } });
-  events.push({ type: 'run-finish', data: {} });
-  proxy.ingestEvents([...(proxy.otto ?? []), ...events]);
-  proxy.otto = [...(proxy.otto ?? []), ...events];
-  return proxy.decideFollowUp();
+  const entry = proxies.get(id);
+  if (!entry) throw new Error('Unknown conversation.');
+  if (assistantText.trim())
+    entry.events.push({ type: 'text-delta', data: { text: assistantText } });
+  entry.events.push({ type: 'run-finish', data: {} });
+  entry.proxy.ingestEvents(entry.events);
+  return entry.proxy.decideFollowUp();
 }
 
-async function judge({ expectations, transcript, workflowId }) {
+async function judge({ expectations, transcript, workflowId, projectId, agents = [] }) {
   const workflowJson = workflowId
     ? await owner.getWorkflow(workflowId).catch(() => undefined)
     : undefined;
+  const artifactContext = await resolveArtifactContext({
+    artifactRefs: agents.map((agent) => ({ type: 'agent', id: agent.id, projectId })),
+    client: owner,
+    logger,
+  });
   return verifyBuildExpectations(expectations, {
     transcript,
     ...(workflowJson ? { workflowJson } : {}),
+    ...(artifactContext ? { artifactContext } : {}),
   });
-}
-
-async function remove({ userIds }) {
-  for (const id of userIds) {
-    members.delete(id);
-    await owner.deleteUser(id).catch(() => {});
-  }
-  return {};
 }
 
 const routes = {
   '/provision': provision,
-  '/workflows': workflows,
+  '/artifacts': artifacts,
   '/proxy/start': startProxy,
   '/proxy/decide': decide,
   '/judge': judge,
-  '/remove': remove,
 };
 
 const server = createServer(async (request, response) => {

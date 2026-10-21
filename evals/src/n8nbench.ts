@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
-  caseUnits,
   loadCases,
   selectCases,
   type BenchCase,
@@ -237,20 +236,41 @@ async function verified(out: string | undefined) {
   );
 }
 
-async function judgeProcess(sidecarUrl: string, item: BenchCase, run: BenchRun, directory: string) {
-  const expectations = item.definition.processExpectations ?? [];
-  if (!expectations.length) return [];
-  const file = join(directory, 'process', `${run.slug}-${run.iteration}.json`);
+async function artifactsOf(sidecarUrl: string, run: BenchRun) {
+  if (run.projectId || !run.userId) return run;
+  const built = await sidecar<{ projectId: string; agents: Array<{ id: string; name?: string }> }>(
+    sidecarUrl,
+    '/artifacts',
+    { userId: run.userId },
+  ).catch(() => undefined);
+  return built ? { ...run, projectId: built.projectId, agents: built.agents } : run;
+}
+
+async function judgeExpectations(
+  sidecarUrl: string,
+  item: BenchCase,
+  run: BenchRun,
+  directory: string,
+): Promise<UnitResult[]> {
+  const kinds = new Map<string, 'outcome' | 'process'>([
+    ...(item.definition.outcomeExpectations ?? []).map((name) => [name, 'outcome'] as const),
+    ...(item.definition.processExpectations ?? []).map((name) => [name, 'process'] as const),
+  ]);
+  if (!kinds.size) return [];
+  const file = join(directory, 'expectations', `${run.slug}-${run.iteration}.json`);
   const saved = await readFile(file, 'utf8')
     .then((text) => JSON.parse(text) as UnitResult[])
     .catch(() => undefined);
   if (saved) return saved;
+  const built = await artifactsOf(sidecarUrl, run);
+  const expectations = [...kinds.keys()];
   const verdicts = await sidecar<
     Array<{ expectation: string; pass: boolean; reason: string; incomplete?: boolean }>
   >(sidecarUrl, '/judge', {
     expectations,
     transcript: run.transcript,
     ...(run.workflowId ? { workflowId: run.workflowId } : {}),
+    ...(built.projectId ? { projectId: built.projectId, agents: built.agents ?? [] } : {}),
   }).catch((error: Error) =>
     expectations.map((expectation) => ({
       expectation,
@@ -260,13 +280,13 @@ async function judgeProcess(sidecarUrl: string, item: BenchCase, run: BenchRun, 
     })),
   );
   const units = verdicts.map((verdict) => ({
-    kind: 'process' as const,
+    kind: kinds.get(verdict.expectation) ?? ('outcome' as const),
     name: verdict.expectation,
     pass: verdict.pass,
     reason: verdict.reason,
     ...(verdict.incomplete ? { incomplete: true } : {}),
   }));
-  await mkdir(join(directory, 'process'), { recursive: true });
+  await mkdir(join(directory, 'expectations'), { recursive: true });
   await writeFile(file, JSON.stringify(units, null, 2));
   return units;
 }
@@ -275,41 +295,32 @@ function grade(
   item: BenchCase,
   run: BenchRun,
   verifiedCase: VerifiedCase | undefined,
-  process: UnitResult[],
+  expectations: UnitResult[],
 ): CaseIteration {
-  const units: UnitResult[] = [];
-  for (const unit of caseUnits(item.definition)) {
-    if (unit.kind === 'process') continue;
-    if (unit.kind === 'scenario') {
-      const runResult = verifiedCase?.scenarios.find((scenario) => scenario.name === unit.name)
-        ?.runs[0];
-      units.push({
+  const agentOnly = !run.workflowId && Boolean(run.agents?.length);
+  const scenarios = item.definition.executionScenarios.map((scenario): UnitResult => {
+    if (agentOnly)
+      return {
         kind: 'scenario',
-        name: unit.name,
-        pass: Boolean(runResult?.passed),
-        reason:
-          runResult?.reasoning ?? (run.workflowId ? 'Not verified.' : 'No workflow was built.'),
-        ...(runResult?.incomplete ? { incomplete: true } : {}),
-      });
-    } else {
-      const verdict = verifiedCase?.buildExpectationResultsPerRun[0]?.find(
-        (result) => result.expectation === unit.name,
-      );
-      units.push({
-        kind: 'outcome',
-        name: unit.name,
-        pass: Boolean(verdict?.pass),
-        reason: verdict?.reason ?? (run.workflowId ? 'Not judged.' : 'No workflow was built.'),
-        ...(verdict?.incomplete ? { incomplete: true } : {}),
-      });
-    }
-  }
-  units.push(...process);
+        name: scenario.name,
+        pass: false,
+        reason: 'Agent scenarios are not run by the prebuilt verifier.',
+        incomplete: true,
+      };
+    const result = verifiedCase?.scenarios.find((item) => item.name === scenario.name)?.runs[0];
+    return {
+      kind: 'scenario',
+      name: scenario.name,
+      pass: Boolean(result?.passed),
+      reason: result?.reasoning ?? (run.workflowId ? 'Not verified.' : 'No workflow was built.'),
+      ...(result?.incomplete ? { incomplete: true } : {}),
+    };
+  });
   return {
     slug: item.slug,
     iteration: run.iteration,
-    built: Boolean(run.workflowId),
-    units,
+    built: Boolean(run.workflowId || run.agents?.length),
+    units: [...scenarios, ...expectations],
     costUsd: run.costUsd,
     seconds: run.seconds,
   };
@@ -418,7 +429,7 @@ async function loadBaseline(path: string | undefined) {
 
 export async function runN8nBench(options: N8nBenchOptions) {
   const directory = join(options.root, options.label);
-  for (const sub of ['raw', 'logs', 'verify', 'process'])
+  for (const sub of ['raw', 'logs', 'verify', 'expectations'])
     await mkdir(join(directory, sub), { recursive: true });
   const cases = selectCases(await loadCases(options.data), options);
   if (!cases.length) throw new Error('No n8n cases match the selection.');
@@ -491,8 +502,8 @@ export async function runN8nBench(options: N8nBenchOptions) {
       for (const run of these) {
         if (infrastructure(run)) continue;
         const item = lookup.get(run.slug)!;
-        const process = await judgeProcess(side.url, item, run, directory);
-        graded.push(grade(item, run, verifiedCases.get(run.slug), process));
+        const expectations = await judgeExpectations(side.url, item, run, directory);
+        graded.push(grade(item, run, verifiedCases.get(run.slug), expectations));
       }
     }
     await writeFile(join(directory, 'graded.json'), JSON.stringify(graded, null, 2));

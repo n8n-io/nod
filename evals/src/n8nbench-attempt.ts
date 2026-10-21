@@ -252,11 +252,15 @@ async function run(spec: N8nBenchSpec): Promise<BenchRun> {
         .filter((row) => !['succeeded', 'waiting'].includes(row.status))
         .map((row) => `${row.status}: ${String(row.error ?? '').slice(0, 300)}`);
     }
-    const workflows = await sidecar<
-      Array<{ id: string; createdAt?: string; nodes?: unknown[]; settings?: unknown }>
-    >(spec.sidecar, '/workflows', { userId: member.userId });
-    result.workflowIds = workflows.map((workflow) => workflow.id);
-    result.workflowId = mainWorkflow(workflows);
+    const built = await sidecar<{
+      projectId: string;
+      workflows: Array<{ id: string; createdAt?: string; nodes?: unknown[]; settings?: unknown }>;
+      agents: Array<{ id: string; name?: string }>;
+    }>(spec.sidecar, '/artifacts', { userId: member.userId });
+    result.projectId = built.projectId;
+    result.agents = built.agents;
+    result.workflowIds = built.workflows.map((workflow) => workflow.id);
+    result.workflowId = mainWorkflow(built.workflows);
   } catch (failure) {
     result.error ??= failure instanceof Error ? failure.message : String(failure);
   }

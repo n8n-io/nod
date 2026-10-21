@@ -61,6 +61,8 @@ export interface BenchRun {
   turns: number;
   failedTurns: string[];
   userId?: string;
+  projectId?: string;
+  agents?: Array<{ id: string; name?: string }>;
   error?: string;
 }
 
@@ -137,17 +139,6 @@ export function selectCases(
       )
       .slice(0, options.sample);
   return selected;
-}
-
-export function caseUnits(definition: N8nCase) {
-  return [
-    ...definition.executionScenarios.map((scenario) => ({
-      kind: 'scenario' as const,
-      name: scenario.name,
-    })),
-    ...(definition.outcomeExpectations ?? []).map((name) => ({ kind: 'outcome' as const, name })),
-    ...(definition.processExpectations ?? []).map((name) => ({ kind: 'process' as const, name })),
-  ];
 }
 
 export function mainWorkflow(
