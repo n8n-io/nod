@@ -45,7 +45,7 @@ export const infrastructure = (run: BenchRun) =>
   (Boolean(run.error) && !run.messages.some((message) => message.role === 'assistant'));
 
 const healthy = (url: string) =>
-  fetch(new URL('/healthz', url), { signal: AbortSignal.timeout(10_000) }).then(
+  fetch(new URL('/healthz', url), { signal: AbortSignal.timeout(20_000) }).then(
     (response) => response.ok,
     () => false,
   );
@@ -69,7 +69,7 @@ function watchHealth(url: string) {
     up = await healthy(url);
     if (up) downSince = undefined;
     else if (downSince === undefined) downSince = at;
-    else if (failures.at(-1) !== downSince) failures.push(downSince);
+    else if (at - downSince >= 45_000 && failures.at(-1) !== downSince) failures.push(downSince);
   };
   const timer = setInterval(() => void check(), 15_000);
   return {
