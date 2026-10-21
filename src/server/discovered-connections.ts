@@ -442,6 +442,11 @@ export async function createDiscoveredConnections(
     const server = officialMcp.get(pending.service);
     if (!server?.instancePath || pending.paths.length)
       throw error('This connection does not take an address.');
+    if (
+      /^[a-z][a-z0-9+.-]*:\/\//i.test(parsed.instanceUrl) &&
+      !/^https?:\/\//i.test(parsed.instanceUrl)
+    )
+      throw error(`Enter an http or https address for ${server.name}.`);
     const schemeless = !/^https?:\/\//i.test(parsed.instanceUrl);
     const url = URL.parse(schemeless ? `https://${parsed.instanceUrl}` : parsed.instanceUrl);
     if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password)
@@ -461,6 +466,30 @@ export async function createDiscoveredConnections(
           throw error(`Otto could not reach ${url.host}. Check the address.`);
         });
       local = true;
+      const advertised = await options
+        .local(url.origin)
+        .transport.http(
+          `${url.origin}/.well-known/oauth-protected-resource${servicePath}`,
+          {},
+          'GET',
+        )
+        .catch(() => undefined);
+      const resource = URL.parse(
+        String(
+          (advertised &&
+            'body' in advertised &&
+            (advertised.body as { resource?: unknown })?.resource) ??
+            '',
+        ),
+      );
+      if (resource && resource.origin !== url.origin)
+        await options
+          .local(url.origin)
+          .transport.validateEndpoint(resource.href)
+          .then((checked) => {
+            endpoint = checked;
+          })
+          .catch(() => {});
     });
     const path = {
       kind: 'mcp',
@@ -469,13 +498,24 @@ export async function createDiscoveredConnections(
       id: pending.id,
       ...(local ? { local: true } : {}),
     };
+    const same = pending.connection_id
+      ? undefined
+      : (
+          await pool.query<{ id: string }>(
+            `SELECT id FROM discovered_connections WHERE owner_id=$1 AND service=$2
+             AND paths->0->>'endpoint'=$3 ORDER BY created_at LIMIT 1`,
+            [owner, pending.service, endpoint],
+          )
+        ).rows[0]?.id;
     const updated = await pool.query(
-      `UPDATE discovered_connection_proposals SET paths=$3,account_name=$4
+      `UPDATE discovered_connection_proposals SET paths=$3,account_name=$4,connection_id=COALESCE(connection_id,$5)
        WHERE id=$1 AND owner_id=$2 AND expires_at>now() AND paths='[]'::jsonb`,
-      [id, owner, JSON.stringify([path]), url.host],
+      [id, owner, JSON.stringify([path]), url.host, same ?? null],
     );
     if (!updated.rowCount) throw error('This connection request expired.', 409);
-    const unreachable = `${server.name} did not answer at ${url.host}. Check the address, and turn on MCP access in ${server.name} under Settings, Instance-level MCP.`;
+    const unreachable = parsed.token
+      ? `Otto could not use this token at ${url.host}. Check the address and the token in ${server.name} under Settings, Instance-level MCP.`
+      : `${server.name} did not answer at ${url.host}. Check the address, and turn on MCP access in ${server.name} under Settings, Instance-level MCP.`;
     try {
       return parsed.token
         ? await complete(id, { token: parsed.token, accountName: url.host })
