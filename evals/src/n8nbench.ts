@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -553,10 +553,14 @@ export async function runN8nBench(options: N8nBenchOptions) {
         graded.push(grade(item, run, verifiedCases.get(run.slug), expectations));
       }
     }
-    if (health.failedSince(verifyStarted))
+    if (health.failedSince(verifyStarted)) {
+      for (const name of await readdir(join(directory, 'verify')))
+        if (Number(name.split('-').at(-1)) >= verifyStarted)
+          await rm(join(directory, 'verify', name), { recursive: true, force: true });
       throw new Error(
         'n8n was unavailable during verification. Restart it and resume to verify again.',
       );
+    }
     await writeFile(join(directory, 'graded.json'), JSON.stringify(graded, null, 2));
     const incomplete = runs
       .filter(infrastructure)
