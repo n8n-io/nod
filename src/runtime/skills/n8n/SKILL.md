@@ -5,7 +5,7 @@ description: Use when building, changing, testing, debugging, publishing or expl
 
 # n8n
 
-Work through the connected n8n MCP server. Its tools are named mcp__n8n__<tool>, and its own guide in your context lists the build steps; follow it. Load the tools you need with one tool_search, for example "workflow sdk reference best practices search nodes node types explore resources validate create update details pin data test execution publish". For an n8n Agent also search "agent builder reference create mutate validate call publish".
+Work through the connected n8n MCP server. Its tools are named mcp__n8n__<tool>, and its own guide in your context lists the build steps; follow it. Load the tools you need with one tool_search with limit 20, for example "workflow sdk reference best practices search nodes node types explore resources validate create update details pin data test execution publish". For an n8n Agent also search "agent builder reference create mutate validate call publish".
 
 ## Decide what to build
 
@@ -17,7 +17,7 @@ Work through the connected n8n MCP server. Its tools are named mcp__n8n__<tool>,
 
 ## Build loop
 
-1. Read get_workflow_sdk_reference and get_workflow_best_practices for each technique the request needs. Batch search_nodes queries, then call get_node_types once with every node you will use, including its resource, operation and mode. Use the parameter names and versions it returns, not memory.
+1. Read the get_workflow_sdk_reference sections you need, such as patterns, rules and expressions, and get_workflow_best_practices for each technique the request needs. Batch search_nodes queries, then call get_node_types once with every node you will use, including its resource, operation and mode. Use the parameter names and versions it returns, not memory.
 2. Write the SDK code to a workspace file such as `n8n/<short-name>.workflow.ts`. Change it with edit; never paste the whole code into a tool call or chat.
 3. Validate and create from the file in one codemode script, so the code is never typed twice:
 
@@ -57,8 +57,18 @@ Unpinned nodes run for real in a test: Code, data tables, file and command nodes
 
 ## n8n Agents
 
-Call get_agent_builder_reference first, then discover_agent_assets. Create the Agent, apply one mutate_agent change at a time with the latest configHash, and validate_agent. Keep earlier instructions and tools when adding a rule, and never describe a service the user only named. Test with one representative call_agent when the request covers running it, and publish only when the user asks.
+Call get_agent_builder_reference first, then discover_agent_assets. Create the Agent, apply one mutate_agent change at a time with the latest configHash, and validate_agent. Change only what the user asked and keep the rest of its configuration. Test with one representative call_agent when the request covers running it, and publish only when the user asks.
 
 ## Report
 
-End with one short message: what you built or changed, with the workflow's url from create_workflow_from_code or get_workflow_details; what you tested, with which data and paths; what you could not verify and why; and what the user still has to do, such as creating credentials or publishing. Say a workflow is tested, working or fixed only when an execution exercised that path.
+Show the saved workflow as a canvas: in codemode, write the workflow from get_workflow_details, with the url create_workflow_from_code returned, to `n8n/<short-name>.n8n.json`, then attach that file with share_file.
+
+```js
+const { workflow } = JSON.parse(await tools.mcp__n8n__get_workflow_details({ workflowId }));
+await tools.write({
+  path: 'n8n/order-alerts.n8n.json',
+  content: JSON.stringify({ ...workflow, url }),
+});
+```
+
+End with one short message: what you built or changed, with the workflow's url; what you tested, with which data and paths; what you could not verify and why; and what the user still has to do, such as creating credentials or publishing. Say a workflow is tested, working or fixed only when an execution exercised that path.
