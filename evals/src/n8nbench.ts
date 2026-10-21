@@ -586,21 +586,41 @@ export async function runN8nBench(options: N8nBenchOptions) {
     for (let iteration = 0; iteration < options.iterations; iteration++) {
       const these = runs.filter((run) => run.iteration === iteration);
       const verifiedCases = new Map<string, VerifiedCase>();
-      for (const lane of lanes)
-        for (const [slug, item] of await verifyIteration(
-          { ...options, n8nUrl: lane.url },
-          directory,
-          iteration,
-          these.filter((run) => laneOf(run) === lane),
-          lookup,
-        ))
-          verifiedCases.set(slug, item);
-      for (const run of these) {
-        if (infrastructure(run)) continue;
-        const item = lookup.get(run.slug)!;
-        const expectations = await judgeExpectations(laneOf(run).side.url, item, run, directory);
-        graded.push(grade(item, run, verifiedCases.get(run.slug), expectations));
-      }
+      for (const results of await Promise.all(
+        lanes.map((lane) =>
+          verifyIteration(
+            { ...options, n8nUrl: lane.url },
+            directory,
+            iteration,
+            these.filter((run) => laneOf(run) === lane),
+            lookup,
+          ),
+        ),
+      ))
+        for (const [slug, item] of results)
+          if (
+            these.some(
+              (run) =>
+                run.slug === slug && item.scenarios[0]?.runs[0]?.workflowId === run.workflowId,
+            )
+          )
+            verifiedCases.set(slug, item);
+      const pending = these.filter((run) => !infrastructure(run));
+      let cursor = 0;
+      await Promise.all(
+        Array.from({ length: 8 }, async () => {
+          for (let run = pending[cursor++]; run; run = pending[cursor++]) {
+            const item = lookup.get(run.slug)!;
+            const expectations = await judgeExpectations(
+              laneOf(run).side.url,
+              item,
+              run,
+              directory,
+            );
+            graded.push(grade(item, run, verifiedCases.get(run.slug), expectations));
+          }
+        }),
+      );
     }
     if (lanes.some((lane) => lane.health.failedSince(verifyStarted))) {
       for (const name of await readdir(join(directory, 'verify')))
