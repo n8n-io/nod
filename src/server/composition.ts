@@ -1213,8 +1213,8 @@ async function initializeApplication(
         }
         await admit?.(false);
         if (action === 'memory_learn')
-          return withTurnLock(turn.turnId, () =>
-            personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
+          return learning.remember(args, provenance.sourceMessageId, (write) =>
+            withTurnLock(turn.turnId, write),
           );
         if (action === 'usage_get') return ledger.read();
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
