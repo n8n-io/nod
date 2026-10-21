@@ -306,7 +306,7 @@ export const decisionCases: Case[] = [
       control: '',
       submits: 'unknown',
     },
-    true,
+    false,
   ),
   step(
     'read-cookie-background',
@@ -605,7 +605,7 @@ export const decisionCases: Case[] = [
     'holdout-public-unlabelled',
     words('What are the opening hours of the tile museum this Sunday?'),
     { website: 'https://museum.example', page: '/visit', control: '', submits: 'unknown' },
-    true,
+    false,
   ),
   step(
     'holdout-subscription-link-save',

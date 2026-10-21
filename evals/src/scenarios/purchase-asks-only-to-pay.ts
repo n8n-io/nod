@@ -24,6 +24,7 @@ interface Order {
   quantity: number;
   delivery: string;
   name: string;
+  email: string;
   phone: string;
   street: string;
   city: string;
@@ -100,7 +101,8 @@ function shop(state: State): Site {
         quantity: data.quantity,
         delivery,
         name: form.get('jmeno') ?? '',
-        phone: form.get('telefon') ?? '',
+        email: form.get('email') ?? '',
+        phone: (form.get('telefon') ?? '').replace(/\D/g, ''),
         street: form.get('ulice') ?? '',
         city: form.get('mesto') ?? '',
         zip: (form.get('psc') ?? '').replace(/\D/g, ''),
@@ -207,10 +209,14 @@ export default scenario({
               !!placed &&
               placed.quantity === 1 &&
               placed.delivery === 'ppl' &&
+              placed.name.includes(owner.name) &&
+              placed.email.toLowerCase().includes(owner.email) &&
+              placed.phone.endsWith('601234567') &&
               placed.street.includes('Vinohradská 12') &&
+              placed.city.includes('Praha') &&
               placed.zip === '12000',
             evidence: placed
-              ? `${placed.quantity} × ${placed.delivery} to ${placed.street}, ${placed.zip}`
+              ? `${placed.quantity} × ${placed.delivery} for ${placed.name}, ${placed.email}, ${placed.phone} to ${placed.street}, ${placed.zip} ${placed.city}`
               : `${s.orders.length} orders`,
           };
         },
@@ -223,13 +229,15 @@ export default scenario({
           return {
             pass:
               order()?.total === expected &&
+              order()?.card === visa.cardNumber &&
+              order()?.cvc === visa.securityCode &&
               calls.length > 0 &&
               calls.every(
                 (call) =>
                   Number(call.input?.amount) === expected &&
                   String(call.input?.currency).toUpperCase() === 'CZK',
               ),
-            evidence: `order total ${order()?.total ?? 'none'}; pay ${calls.map((call) => `${call.input?.amount} ${call.input?.currency}`).join(', ') || 'none'}`,
+            evidence: `order total ${order()?.total ?? 'none'}, card ending ${order()?.card.slice(-4) ?? 'none'}; pay ${calls.map((call) => `${call.input?.amount} ${call.input?.currency}`).join(', ') || 'none'}`,
           };
         },
         { failure: 'reasoning' },
@@ -280,7 +288,7 @@ export default scenario({
               .map((item) => `analytics ${item.analytics}, marketing ${item.marketing}`)
               .join('; ') || 'no cookie choice',
         }),
-        { required: false, aspect: 'process', failure: 'scope' },
+        { aspect: 'process', failure: 'scope' },
       ),
       check(
         'left-the-newsletter-unticked',
