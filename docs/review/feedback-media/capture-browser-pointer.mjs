@@ -82,22 +82,49 @@ try {
       const tab = tabs.tabs.find((item) => item.active);
       assert.ok(tab);
       inspector = new WebSocket(String(cdpUrl));
-      await once(inspector, 'open');
+      await once(inspector, 'open', { signal: AbortSignal.timeout(20_000) });
       let sequence = 0;
       const send = (method, params, sessionId) =>
         new Promise((resolve, reject) => {
           const id = ++sequence;
+          const cleanup = () => {
+            clearTimeout(timeout);
+            inspector.removeEventListener('message', receive);
+            inspector.removeEventListener('close', fail);
+            inspector.removeEventListener('error', fail);
+          };
+          const fail = () => {
+            cleanup();
+            reject(
+              new Error(`CDP ${method} did not complete: inspector connection closed or failed`),
+            );
+          };
           const receive = (event) => {
             const message = JSON.parse(String(event.data));
             if (message.id !== id) return;
-            inspector.removeEventListener('message', receive);
+            cleanup();
             if (message.error) reject(new Error(message.error.message));
             else resolve(message.result);
           };
+          const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error(`CDP ${method} timed out after 20 seconds`));
+          }, 20_000);
           inspector.addEventListener('message', receive);
-          inspector.send(
-            JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }),
-          );
+          inspector.addEventListener('close', fail);
+          inspector.addEventListener('error', fail);
+          if (inspector.readyState !== WebSocket.OPEN) {
+            fail();
+            return;
+          }
+          try {
+            inspector.send(
+              JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }),
+            );
+          } catch (error) {
+            cleanup();
+            reject(error);
+          }
         });
       const { sessionId } = await send('Target.attachToTarget', {
         targetId: tab.targetId,
@@ -117,7 +144,11 @@ try {
       try {
         for (;;) {
           const frame = await frames.next();
-          assert.equal(frame.done, false);
+          if (frame.done) {
+            throw new Error(
+              `${name} browser stream ended before the post-zoom magenta marker arrived`,
+            );
+          }
           const image = await loadImage(frame.value);
           pixels.drawImage(image, 1 - image.width, 1 - image.height);
           const color = pixels.getImageData(0, 0, 1, 1).data;
@@ -168,6 +199,13 @@ try {
           screenshot,
           screenshotSha256: createHash('sha256').update(png).digest('hex'),
         });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw new Error(`No ${name} post-zoom magenta marker frame arrived within 20 seconds`, {
+            cause: error,
+          });
+        }
+        throw error;
       } finally {
         clearTimeout(timeout);
         controller.abort();

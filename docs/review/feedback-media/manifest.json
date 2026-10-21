@@ -442,7 +442,8 @@
       "marker": {
         "rgb": [255, 0, 255],
         "removedBeforeScreenshot": true
-      }
+      },
+      "revision": "5aa801d3d38d9e03a88bb47ab808aab5b6acf28b"
     },
     "originalBefore": {
       "file": "browser-screenshots/pointer-before-original.png",
@@ -458,6 +459,11 @@
       "matchedSourceObject": "26661470b3ed1212991453e904d63be4167f8747",
       "identicalProviderObject": true,
       "note": "The new before image was captured from the reachable branch base e79bf5d2. The original 21456f70 image retains its original provenance and readiness procedure."
+    },
+    "reproductionHarness": {
+      "file": "capture-browser-pointer.mjs",
+      "sha256": "8550199937cc59b67c151755dc19a98f1c7311e8f929caa40369313f8c3a871c",
+      "scope": "Current reproduction script adds bounded CDP failure cleanup and descriptive marker EOF/timeout errors. Existing comparison PNGs retain the original capture revision and harness hash."
     }
   },
   "artifacts": [
@@ -513,8 +519,8 @@
     },
     {
       "file": "browser-pointer-results.json",
-      "bytes": 3694,
-      "sha256": "1ec8fdfc8bdd00bf0a5ef3e41e7696c4a3dd02e96dfaf9fb6565ac730660db7e"
+      "bytes": 4117,
+      "sha256": "aa217acfbb5d210a8f7fd3ec4cd5a73c57b6b922d4e024a7fdb4615a59f79c89"
     },
     {
       "file": "browser-screenshots/loading-frame-after.png",
@@ -578,8 +584,8 @@
     },
     {
       "file": "capture-browser-pointer.mjs",
-      "bytes": 9269,
-      "sha256": "27104d3c4f2b481aab009dbb8291e62c14d6b5a4c3e869c95b562bc161f5a5b8"
+      "bytes": 10589,
+      "sha256": "8550199937cc59b67c151755dc19a98f1c7311e8f929caa40369313f8c3a871c"
     },
     {
       "file": "browser-screenshots/pointer-before-original.png",

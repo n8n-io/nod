@@ -15,7 +15,8 @@
     "marker": {
       "rgb": [255, 0, 255],
       "removedBeforeScreenshot": true
-    }
+    },
+    "harnessRevision": "5aa801d3d38d9e03a88bb47ab808aab5b6acf28b"
   },
   "before": {
     "name": "before",
@@ -102,5 +103,10 @@
     "readiness": "Original harness read the first two stream frames without a decoded-marker check. Preserved as historical evidence; superseded by the matched-harness comparison.",
     "screenshot": "browser-screenshots/pointer-before-original.png",
     "screenshotSha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab"
+  },
+  "reproductionHarness": {
+    "file": "capture-browser-pointer.mjs",
+    "sha256": "8550199937cc59b67c151755dc19a98f1c7311e8f929caa40369313f8c3a871c",
+    "scope": "Current reproduction script adds bounded CDP failure cleanup and descriptive marker EOF/timeout errors. Existing comparison PNGs retain the original capture revision and harness hash."
   }
 }
