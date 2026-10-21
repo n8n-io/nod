@@ -112,6 +112,7 @@ function toolCalls(stack: Stack): ToolCall[] {
       ...(end?.output !== undefined ? { output: clip(end.output, 4000) } : {}),
       ...(end?.error ? { error: clip(end.error, 2000) } : {}),
       status: end?.status ?? 'unfinished',
+      ...(end ? { ms: Math.round(end.durationMs) } : {}),
       at: Date.parse(event.startedAt),
     });
   }

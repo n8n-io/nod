@@ -48,6 +48,16 @@ const healthy = (url: string) =>
     () => false,
   );
 
+const executes = /(?:^|__)(?:test_workflow|execute_workflow|call_agent)$/;
+
+const causedOutage = (run: BenchRun, outage: number) =>
+  run.tools.some(
+    (call) =>
+      executes.test(call.tool ?? call.name) &&
+      call.at <= outage &&
+      (call.ms === undefined || call.at + call.ms >= outage - 30_000),
+  );
+
 function watchHealth(url: string) {
   const failures: number[] = [];
   let up = true;
@@ -62,6 +72,7 @@ function watchHealth(url: string) {
       up = false;
     },
     failedSince: (at: number) => failures.some((time) => time >= at),
+    firstFailureSince: (at: number) => failures.find((time) => time >= at),
     async ready() {
       for (const until = Date.now() + 10 * 60_000; Date.now() < until;) {
         if (up && (await healthy(url))) return true;
@@ -540,7 +551,8 @@ export async function runN8nBench(options: N8nBenchOptions) {
           options.minutes,
         );
         run.n8nUrl = lane.url;
-        if (lane.health.failedSince(startedAt)) {
+        const outage = lane.health.firstFailureSince(startedAt);
+        if (outage !== undefined && !causedOutage(run, outage)) {
           run.unavailable = 'n8n was unavailable during the attempt.';
           await writeFile(outFile, JSON.stringify(run, null, 2));
           console.log(`${job.item.slug}#${job.iteration} discarded: n8n was unavailable.`);

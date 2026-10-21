@@ -45,6 +45,7 @@ export interface ToolCall {
   error?: string;
   status: string;
   at: number;
+  ms?: number;
 }
 
 export interface BenchRun {
