@@ -63,14 +63,19 @@ const causedOutage = (run: BenchRun, outage: number) =>
 function watchHealth(url: string) {
   const failures: number[] = [];
   let up = true;
+  let downSince: number | undefined;
   const check = async () => {
+    const at = Date.now();
     up = await healthy(url);
-    if (!up) failures.push(Date.now());
+    if (up) downSince = undefined;
+    else if (downSince === undefined) downSince = at;
+    else if (failures.at(-1) !== downSince) failures.push(downSince);
   };
   const timer = setInterval(() => void check(), 15_000);
   return {
     reset: () => {
       failures.length = 0;
+      downSince = undefined;
       up = false;
     },
     failedSince: (at: number) => failures.some((time) => time >= at),
