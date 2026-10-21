@@ -115,7 +115,7 @@ The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `
 The owner context is a message of its own, never part of the system prompt, so a new note or learned skill leaves the system prompt and the conversation before it untouched:
 
 - A session gets the full current owner context with its first turn, and again with the first turn after it changes. The newest copy replaces earlier ones.
-- An earlier copy stays in later requests only while every line in it is still current. When a note is forgotten, changed or archived, or memory is cleared, the copies holding the old line leave every later request.
+- An earlier copy stays in later requests only while every line in it is still current. When a note is forgotten, changed or archived, or memory is cleared, the copies holding the old line leave every request from each session's next turn on. A turn already running keeps the copy it started with.
 - Compaction summaries leave the owner context out. A session that compacts it away gets it again with its next request.
 
 Providers that take a prompt cache key, such as OpenAI, get the same one from every session of a thread: a keyed hash of the thread ID that changes when Otto restarts. When a session's system prompt and tools match a recent request from the same thread, as they do for back-to-back background runs even after memory changes, the provider reads them from its cache and bills them at its cheaper cache-read rate. The code is in [`src/providers/pi/index.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/pi/index.ts).

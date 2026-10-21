@@ -65,7 +65,7 @@ export function piModelTrace(
   ownerContext?: string,
 ): ModelTrace {
   const { message } = call;
-  const owner = new Set(ownerContext?.split('\n'));
+  const header = ownerContext?.split('\n', 1)[0];
   const usage = piUsageMetrics(message.usage);
   const cacheReadTokens = usage.cacheReadTokens ?? 0;
   const cacheWriteTokens = usage.cacheWriteTokens ?? 0;
@@ -83,9 +83,7 @@ export function piModelTrace(
         : []),
       ...call.context.messages.map(chat),
     ].map((message) =>
-      message.role === 'user' &&
-      owner.size &&
-      message.content.split('\n').every((line) => owner.has(line))
+      header && message.role === 'user' && message.content.startsWith(header)
         ? { ...message, content: '[owner context omitted]' }
         : message,
     ),

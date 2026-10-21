@@ -2708,6 +2708,7 @@ test('owner context stays out of the system prompt, is added only when it change
 
   assert.ok(recorded.length >= 6);
   assert.ok(JSON.stringify(recorded).includes('[owner context omitted]'));
+  assert.ok(JSON.stringify(recorded).includes('Synthetic request 6'));
   assert.ok(!JSON.stringify(recorded).includes('Jordi Fixture'));
   assert.ok(!JSON.stringify(recorded).includes('Oat flat white'));
   assert.equal(recorded[0].metadata.session_id, execution.sessionId);
