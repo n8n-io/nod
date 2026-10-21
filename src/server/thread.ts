@@ -104,6 +104,7 @@ export interface ThreadDependencies {
   skipTurn?: (sourceId: string) => Promise<boolean>;
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
+  mcpServers?: () => Promise<NonNullable<RuntimeContext['mcpServers']>>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   recall?: (
     text: string,
@@ -974,7 +975,7 @@ async function loadMessage(messageId: string | null) {
 async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const threadId = turn.thread_id as string;
   const sourceMessageId: string | null = turn.message_id ?? null;
-  const [source, history, preferences, account, memory, learnedSkills, connectedApps] =
+  const [source, history, preferences, account, memory, learnedSkills, connectedApps, mcpServers] =
     await Promise.all([
       loadMessage(sourceMessageId),
       pool.query(
@@ -1001,6 +1002,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       dependencies.memoryContext?.().catch(() => ''),
       dependencies.learnedSkills?.().catch(() => undefined),
       turn.background ? dependencies.connectedApps?.() : undefined,
+      dependencies.mcpServers?.().catch(() => undefined),
     ]);
   const preference = preferences.rows[0];
   const related =
@@ -1031,6 +1033,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       ...(related.length ? { relatedConversation: related } : {}),
       ...(learnedSkills?.length ? { learnedSkills } : {}),
       ...(connectedApps ? { connectedApps } : {}),
+      ...(mcpServers?.length ? { mcpServers } : {}),
     },
   };
 }

@@ -4155,7 +4155,7 @@ test(
         transport: {
           validateEndpoint: async (endpoint) => endpoint,
           http: async () => ({ status: 200, body: null }),
-          listTools: async () => [{ name: 'list_records', inputSchema: {} }],
+          listTools: async () => ({ tools: [{ name: 'list_records', inputSchema: {} }] }),
           callTool: async () => ({}),
         },
         oauth: {
@@ -4311,7 +4311,7 @@ test(
       transport: {
         validateEndpoint: async (endpoint: string) => endpoint,
         http: async () => ({ status: 200, body: null }),
-        listTools: async () => [{ name: 'list_records', inputSchema: {} }],
+        listTools: async () => ({ tools: [{ name: 'list_records', inputSchema: {} }] }),
         callTool: async () => ({}),
       },
       oauth: {
@@ -6535,14 +6535,16 @@ test(
           listTools: async (endpoint, _headers, signal) => {
             await waitForAbort('listTools', signal);
             catalogs.push(endpoint);
-            return [
-              {
-                name: 'list_records',
-                inputSchema: { type: 'object' },
-                annotations: { readOnlyHint: true },
-              },
-              { name: 'find_user', description: 'Find a user by display name', inputSchema: {} },
-            ];
+            return {
+              tools: [
+                {
+                  name: 'list_records',
+                  inputSchema: { type: 'object' },
+                  annotations: { readOnlyHint: true },
+                },
+                { name: 'find_user', description: 'Find a user by display name', inputSchema: {} },
+              ],
+            };
           },
           callTool: async (_endpoint, _headers, _name, _input, signal) => {
             await waitForAbort('callTool', signal);
@@ -6768,7 +6770,7 @@ test(
       const cancellations: Array<
         [NonNullable<typeof blocked>, (signal: AbortSignal) => Promise<unknown>]
       > = [
-        ['listTools', (signal) => discovered.search('list_records', connectionId, signal)],
+        ['listTools', (signal) => discovered.search('list_records', otherId, signal)],
         ['callTool', (signal) => discovered.execute('CONNECTED_MCP_CALL', mcpArgs, ref, signal)],
         [
           'http',
@@ -7208,7 +7210,7 @@ test(
       transport: {
         validateEndpoint: async (endpoint) => endpoint,
         http: async () => ({ status: 200, body: null }),
-        listTools: async () => [{ name: 'search', inputSchema: {} }],
+        listTools: async () => ({ tools: [{ name: 'search', inputSchema: {} }] }),
         callTool: async () => ({}),
       },
       oauth: {

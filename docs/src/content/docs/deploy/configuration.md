@@ -76,7 +76,7 @@ For `OTTO_COMPOSIO_PROXY_URL`, use a trusted HTTPS origin without a path, query,
 
 Webhook and auth-config settings apply only when Otto uses your own Composio project, through `COMPOSIO_API_KEY` or a key saved in the app. Explicit auth-config IDs take precedence. Otherwise, Otto discovers eligible custom configurations across supported toolkits. It uses Composio defaults only when no custom configuration exists. Ambiguous or unavailable custom configurations stop the connection instead of falling back.
 
-Easy Connect's operator selects its configurations on the connection service. Otto doesn't send these auth-config settings to that service. Notion and Linear connect through their own MCP servers, so these settings don't apply to them. See [Apps](/connect/apps/) for key permissions and automatic-update limits.
+Easy Connect's operator selects its configurations on the connection service. Otto doesn't send these auth-config settings to that service. Notion, Linear and n8n connect through their own MCP servers, so these settings don't apply to them. See [Apps](/connect/apps/) for key permissions and automatic-update limits.
 
 ## Vault
 

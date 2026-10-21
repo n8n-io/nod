@@ -9,6 +9,12 @@ export interface DiscoveredTool {
   name: string;
   description?: string;
   inputSchema: unknown;
+  annotations?: Record<string, unknown>;
+}
+
+export interface DiscoveredCatalog {
+  tools: DiscoveredTool[];
+  instructions?: string;
 }
 
 export interface DiscoveredTransport {
@@ -24,7 +30,7 @@ export interface DiscoveredTransport {
     endpoint: string,
     headers: Record<string, string>,
     signal?: AbortSignal,
-  ): Promise<DiscoveredTool[]>;
+  ): Promise<DiscoveredCatalog>;
   callTool(
     endpoint: string,
     headers: Record<string, string>,

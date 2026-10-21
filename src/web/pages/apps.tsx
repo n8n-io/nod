@@ -45,6 +45,7 @@ import {
 
 type Discovery = {
   name: string;
+  needsAddress?: boolean;
   oauthStatus?: 'pending' | 'connected' | 'cancelled' | 'failed' | null;
   authorizationUrl?: string;
   callbackUrl?: string;
@@ -591,7 +592,11 @@ export function Apps({
           value.authorizationUrl
             ? {
                 id: discoveryId!,
-                url: connectionUrl(value.authorizationUrl, window.location.origin),
+                url: connectionUrl(
+                  value.authorizationUrl,
+                  window.location.origin,
+                  value.paths[0]?.endpoint,
+                ),
               }
             : null,
         );
@@ -649,6 +654,56 @@ export function Apps({
         if (input instanceof HTMLInputElement) input.value = '';
       setDiscoveryError(errorMessage(cause));
       setSavingDiscovery(false);
+    }
+  }
+  async function connectInstance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!discoveryId || savingDiscovery || actionRequest.current) return;
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    const token = String(values.get('token') ?? '').trim();
+    const request = new AbortController();
+    actionRequest.current = request;
+    discoveryRequest.current?.abort();
+    setSavingDiscovery(true);
+    setDiscoveryError('');
+    try {
+      const result = await api<{ url?: string }>(
+        `/api/apps/discovery/${encodeURIComponent(discoveryId)}/instance`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            instanceUrl: values.get('instanceUrl'),
+            ...(token ? { token } : {}),
+          }),
+          signal: request.signal,
+        },
+      );
+      if (request.signal.aborted) return;
+      if (!result.url) {
+        form.reset();
+        window.location.assign('/');
+        return;
+      }
+      const typed = String(values.get('instanceUrl') ?? '').trim();
+      const url = connectionUrl(
+        result.url,
+        window.location.origin,
+        /^https?:\/\//i.test(typed) ? typed : `http://${typed}`,
+      );
+      setDiscoverySignIn({ id: discoveryId, url });
+      await openConnection(url);
+    } catch (cause) {
+      if (request.signal.aborted) return;
+      for (const input of form.querySelectorAll('input[type="password"]'))
+        if (input instanceof HTMLInputElement) input.value = '';
+      setDiscoveryError(errorMessage(cause));
+    } finally {
+      if (actionRequest.current === request) actionRequest.current = null;
+      if (!request.signal.aborted) {
+        setSavingDiscovery(false);
+        setDiscoveryVersion((value) => value + 1);
+      }
     }
   }
   async function authorizeDiscovery(event: FormEvent<HTMLFormElement>) {
@@ -1407,7 +1462,38 @@ export function Apps({
           {(discoveryError || discoveryLoadError) && (
             <Notice>{discoveryError || discoveryLoadError}</Notice>
           )}
-          {discovery?.paths[0]?.auth === 'oauth' ? (
+          {discovery?.needsAddress ? (
+            <form onSubmit={(event) => void connectInstance(event)} autoComplete="off">
+              <Field label={`Your ${discovery.name} address`}>
+                <Input
+                  name="instanceUrl"
+                  required
+                  maxLength={2048}
+                  placeholder="https://you.app.n8n.cloud"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={savingDiscovery}
+                />
+              </Field>
+              <details className="app-discovery-methods">
+                <summary>Use an access token instead</summary>
+                <Field label="MCP access token">
+                  <Input
+                    name="token"
+                    type="password"
+                    minLength={8}
+                    maxLength={8192}
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={savingDiscovery}
+                  />
+                </Field>
+              </details>
+              <Button type="submit" disabled={savingDiscovery}>
+                {savingDiscovery ? 'Connecting…' : `Connect ${discovery.name}`}
+              </Button>
+            </form>
+          ) : discovery?.paths[0]?.auth === 'oauth' ? (
             <form onSubmit={(event) => void authorizeDiscovery(event)} autoComplete="off">
               {discovery.paths[0]?.clientIdRequired && (
                 <Field label="Client ID">

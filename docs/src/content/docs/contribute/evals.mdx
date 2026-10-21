@@ -263,6 +263,33 @@ pnpm run eval:capability whisperbench --data ~/whisperbench/MemGhost-WhisperBenc
 
 Add `--modes foreground` for one mode or `--cases a,b` for chosen cases. A full run of both modes costs about $55 with GPT-6.1 Sol. Results go to `.local/capability-evals/whisperbench/<label>/` with `summary.md`. The benchmark measures no usefulness, so report it next to LongMemEval: an assistant that never remembers anything also scores zero.
 
+## Benchmark n8n building
+
+The `n8nbench` command runs n8n's own Instance AI test suite on Otto: about 400 cases where a user asks for an n8n workflow or n8n Agent, often over several turns. Otto builds each case through the MCP server of a local n8n, and n8n's own tools grade it, so Otto and n8n's built-in assistant face the same test.
+
+```mermaid
+flowchart LR
+  case[n8n test case] --> otto[Fresh Otto]:::accent
+  proxy[n8n's simulated user] <--> otto
+  otto -- MCP --> n8n[(Local n8n)]
+  n8n --> verify[n8n's verifier runs<br/>each scenario with mocks]
+  otto -- transcript --> judge[n8n's expectations judge]
+```
+
+- Each case gets a fresh Otto and a fresh n8n member with its own MCP token and the case's credentials, so cases can't see each other's work.
+- The first message starts with `In n8n: `, because Otto is a general assistant and n8n's assistant runs inside n8n. n8n's own simulated user, with its own prompts and model, answers every later question and confirmation.
+- n8n's verifier runs the workflow against mocked services for each execution scenario. n8n's expectations judge grades outcome and process expectations from Otto's transcript, the workflow and any n8n Agent Otto built.
+- A case where Otto built nothing fails all its checks. Seeded and attachment cases are skipped for now, and scenarios of an n8n Agent are marked incomplete, since n8n's verifier only runs them inside its own assistant.
+
+It needs a local n8n from the image and eval-harness commit you compare against, a checkout of n8n for its harness, and the suite export with `cases/` and `dataset.json`:
+
+```sh title="Terminal"
+pnpm run eval:capability n8nbench --data ~/n8n-suite --n8n-source ~/n8n/packages/@n8n/instance-ai \
+  --n8n-url http://127.0.0.1:5690 --model anthropic/claude-opus-5-5 --split holdout --iterations 3
+```
+
+`--split dev` and `--split holdout` divide the cases by a fixed hash: tune Otto on `dev` and report `holdout` and `all`. `--baseline <run.json>` compares with an n8n Instance AI run from LangTracer. Results go to `.local/capability-evals/<label>/` with `summary.json`.
+
 ## Run evals in CI
 
 The **Evals** workflow runs the suite with a disposable PostgreSQL and images built from the code under test. Its scores don't gate CI, deployments or releases. It never runs the release suite: the workflow offers only the **pr** and **full** tiers, and release cases never join the gate.
