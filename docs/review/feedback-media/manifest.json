@@ -323,9 +323,9 @@
   },
   "browser": {
     "comparison": "browser-pointer.png",
-    "capturedAt": "2026-10-21T20:16:22.296Z",
-    "beforeRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
-    "afterRevision": "ec9c7eebcd7c44dee7e556562c8812b8751ca261",
+    "capturedAt": "2026-10-21T20:36:30.441Z",
+    "beforeRevision": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
+    "afterRevision": "4b5bee4ab7a47d51f7a7226010a8edb80c492983",
     "afterSourceObjects": {
       "src/providers/agent-browser/index.ts": "41e6995e1ad2faf4054d26056551a796a1c27d72",
       "src/web/components/browser-handoff.tsx": "861a4f983fda119f6e6171bec86e7c1fdca8380e"
@@ -335,17 +335,26 @@
       {
         "side": "before",
         "file": "browser-screenshots/pointer-before.png",
-        "sha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab"
+        "sha256": "4a86d2985cac7f7ff2f5d23ed44f2de0f22c4c9e45cbb07a26912fefad556089"
       },
       {
         "side": "after",
         "file": "browser-screenshots/pointer-after.png",
-        "sha256": "bdfb7c3ae6d0106d27346beb7f1b6f492b3359b64e04adfe9e08df6c1a236e1e"
+        "sha256": "0d01e664c91c5223c2eb97f1ef56515cd095c743636aa0e770377b2d52ebb910"
       }
     ],
     "observations": [
       {
         "name": "before",
+        "sourceRevision": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
+        "sourceObject": "26661470b3ed1212991453e904d63be4167f8747",
+        "readiness": "Wait for the decoded JPEG bottom-right pixel to contain the post-zoom magenta background marker.",
+        "decodedFrames": 2,
+        "markerPixel": [255, 0, 254, 255],
+        "restoredBackground": {
+          "body": "rgb(250, 250, 250)",
+          "html": "rgb(250, 250, 250)"
+        },
         "zoom": 2,
         "input": {
           "x": 0.3,
@@ -359,13 +368,21 @@
           "target": "",
           "x": 432,
           "y": 270
-        }
+        },
+        "screenshot": "browser-screenshots/pointer-before.png",
+        "screenshotSha256": "4a86d2985cac7f7ff2f5d23ed44f2de0f22c4c9e45cbb07a26912fefad556089"
       },
       {
         "name": "after",
-        "sourceRevision": "ec9c7eebcd7c44dee7e556562c8812b8751ca261",
-        "readiness": "Decoded JPEG contained the post-zoom magenta background marker; removed after input before screenshot",
+        "sourceRevision": "4b5bee4ab7a47d51f7a7226010a8edb80c492983",
+        "sourceObject": "41e6995e1ad2faf4054d26056551a796a1c27d72",
+        "readiness": "Wait for the decoded JPEG bottom-right pixel to contain the post-zoom magenta background marker.",
         "decodedFrames": 2,
+        "markerPixel": [255, 0, 254, 255],
+        "restoredBackground": {
+          "body": "rgb(250, 250, 250)",
+          "html": "rgb(250, 250, 250)"
+        },
         "zoom": 2,
         "input": {
           "x": 0.3,
@@ -379,7 +396,9 @@
           "target": "target",
           "x": 216,
           "y": 135
-        }
+        },
+        "screenshot": "browser-screenshots/pointer-after.png",
+        "screenshotSha256": "0d01e664c91c5223c2eb97f1ef56515cd095c743636aa0e770377b2d52ebb910"
       }
     ],
     "details": "browser-pointer-results.json",
@@ -414,14 +433,38 @@
         "screenshotSha256": "41fa5d49cd440b33d8a041fc5e908a2d4b8f027c9e1b0dd6c094af37b0fbac52"
       }
     },
-    "comparisonSha256": "b4f2edcaee34b71c1fc9f895db272931001a4ff0436ca61e41f17f1b59d25c40",
-    "comparisonBytes": 68357
+    "comparisonSha256": "3680ca6ec5a504c8e16b75c832fd84310c4315e2b295cc28d509bc25dc47cd3f",
+    "comparisonBytes": 81994,
+    "captureHarness": {
+      "file": "capture-browser-pointer.mjs",
+      "sha256": "27104d3c4f2b481aab009dbb8291e62c14d6b5a4c3e869c95b562bc161f5a5b8",
+      "identicalReadiness": true,
+      "marker": {
+        "rgb": [255, 0, 255],
+        "removedBeforeScreenshot": true
+      }
+    },
+    "originalBefore": {
+      "file": "browser-screenshots/pointer-before-original.png",
+      "sha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab",
+      "sourceRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
+      "readiness": "Original harness read the first two stream frames without a decoded-marker check. Preserved as historical evidence; superseded by the matched-harness comparison."
+    },
+    "baselineIdentity": {
+      "providerPath": "src/providers/agent-browser/index.ts",
+      "originalRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
+      "originalSourceObject": "26661470b3ed1212991453e904d63be4167f8747",
+      "matchedRevision": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
+      "matchedSourceObject": "26661470b3ed1212991453e904d63be4167f8747",
+      "identicalProviderObject": true,
+      "note": "The new before image was captured from the reachable branch base e79bf5d2. The original 21456f70 image retains its original provenance and readiness procedure."
+    }
   },
   "artifacts": [
     {
       "file": "browser-pointer.png",
-      "bytes": 68357,
-      "sha256": "b4f2edcaee34b71c1fc9f895db272931001a4ff0436ca61e41f17f1b59d25c40"
+      "bytes": 81994,
+      "sha256": "3680ca6ec5a504c8e16b75c832fd84310c4315e2b295cc28d509bc25dc47cd3f"
     },
     {
       "file": "pdf-rendering.png",
@@ -435,8 +478,8 @@
     },
     {
       "file": "pdf-rendering.json",
-      "bytes": 11347,
-      "sha256": "93bc04ce01616bf1f98fd52e81f4d6bb2b8d185f6d58437b9d15129c6a681329"
+      "bytes": 11341,
+      "sha256": "207798d638970ea289690d5c988d805159273a2e3b6b27a1bdbe4b7a33d5de19"
     },
     {
       "file": "navigation-and-chat.png",
@@ -470,8 +513,8 @@
     },
     {
       "file": "browser-pointer-results.json",
-      "bytes": 893,
-      "sha256": "59c3434415fed3ff4ff85c11bca9867dc75369699bc66927f98b32b7b088ba47"
+      "bytes": 3694,
+      "sha256": "1ec8fdfc8bdd00bf0a5ef3e41e7696c4a3dd02e96dfaf9fb6565ac730660db7e"
     },
     {
       "file": "browser-screenshots/loading-frame-after.png",
@@ -485,13 +528,13 @@
     },
     {
       "file": "browser-screenshots/pointer-after.png",
-      "bytes": 20229,
-      "sha256": "bdfb7c3ae6d0106d27346beb7f1b6f492b3359b64e04adfe9e08df6c1a236e1e"
+      "bytes": 20227,
+      "sha256": "0d01e664c91c5223c2eb97f1ef56515cd095c743636aa0e770377b2d52ebb910"
     },
     {
       "file": "browser-screenshots/pointer-before.png",
-      "bytes": 21823,
-      "sha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab"
+      "bytes": 21821,
+      "sha256": "4a86d2985cac7f7ff2f5d23ed44f2de0f22c4c9e45cbb07a26912fefad556089"
     },
     {
       "file": "pdf-screenshots/1280-dark-after.png",
@@ -532,6 +575,16 @@
       "file": "pdf-screenshots/390-light-before.png",
       "bytes": 10529,
       "sha256": "b5bc5dcc3b267f7c1fb55543041abb319f8b8c0b04d6f004972d8e3d2f3628be"
+    },
+    {
+      "file": "capture-browser-pointer.mjs",
+      "bytes": 9269,
+      "sha256": "27104d3c4f2b481aab009dbb8291e62c14d6b5a4c3e869c95b562bc161f5a5b8"
+    },
+    {
+      "file": "browser-screenshots/pointer-before-original.png",
+      "bytes": 21823,
+      "sha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab"
     }
   ],
   "beforeCapturedAt": "2026-10-21T19:29:50.275Z",
@@ -569,7 +622,7 @@
       "file": "pdf-fixture.pdf",
       "bytes": 663,
       "sha256": "72ff9b76f0341d560a39f6edb62b1a936163f7a43fb11c92882ec1377ccc9587",
-      "text": "Product review \u2014 Review decisions, open questions and next steps.",
+      "text": "Product review  Review decisions, open questions and next steps.",
       "pages": 1
     },
     "assertions": {

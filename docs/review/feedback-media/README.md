@@ -34,11 +34,24 @@ These screenshots demonstrate frontend behavior. They do not establish live cred
 
 ## Browser input
 
-The pointer and loading-frame checks were rerun against `ec9c7eebcd7c44dee7e556562c8812b8751ca261`. The original failing `21456f70` captures are preserved. The manifest records the current provider and component source objects, including `browser-handoff.tsx` object `861a4f983fda119f6e6171bec86e7c1fdca8380e` with the later `onLoad` update.
+The native pointer comparison was recaptured from frozen source snapshots `e79bf5d2` and `4b5bee4a` using the same [committed capture harness](capture-browser-pointer.mjs) for both. Both runs use the same local synthetic page, 1440 × 900 viewport, 2× page zoom, normalized input, decoded magenta JPEG readiness check, and background restoration before screenshots. The baseline still misses at CSS (432, 270); the fixed provider hits the center at (216, 135).
 
-The native Chromium provider comparison uses the same local synthetic page, 1440 × 900 viewport, 2× page zoom and normalized input. The old mapping misses at CSS (432, 270); the current source hits the center at (216, 135). The fresh run waits for a decoded JPEG containing a post-zoom marker before sending the click. [Pointer measurements](browser-pointer-results.json) and [original PNGs](browser-screenshots/) are committed.
+The marker in this screenshot harness is magenta, RGB (255, 0, 255). Both runs measured decoded pixel (255, 0, 254, 255), then verified that the HTML and body backgrounds were restored to RGB (250, 250, 250) before their screenshot. This capture procedure is separate from the multi-scenario integration test’s marker colors. The branch base `e79bf5d2` is reachable from the PR history and has the identical provider source object as original baseline `21456f70`; the new before image was captured from `e79bf5d2`, and the original image keeps its original provenance. [Pointer measurements](browser-pointer-results.json) record each revision, source object, readiness procedure, marker pixel, and screenshot digest. The [original red capture](browser-screenshots/pointer-before-original.png), which used the first two frames without a marker check, is preserved separately and is no longer the official before image.
 
 ![Before and after: browser pointer alignment](browser-pointer.png)
+
+To reproduce from the repository root with installed dependencies and Node 26:
+
+```sh
+node --import tsx docs/review/feedback-media/capture-browser-pointer.mjs \
+  e79bf5d2fcfcadb093102c31f1e240b44cd210ce \
+  4b5bee4ab7a47d51f7a7226010a8edb80c492983 \
+  .local/feedback-review/pointer-recapture
+```
+
+Set `OTTO_TEST_BROWSER_EXECUTABLE` when Chrome is installed elsewhere. The harness uses read-only Git archives, the same installed dependencies for both revisions, and disposable browser profiles. It removes its snapshots and profiles after capture and does not start Vite.
+
+The loading-frame evidence remains the separate `ec9c7eeb` run against `browser-handoff.tsx` object `861a4f983fda119f6e6171bec86e7c1fdca8380e`, including the later `onLoad` update; it has not been relabelled as a new capture.
 
 The separate loading-frame check uses the actual Chat and BrowserHandoff in the review harness with a synthetic JPEG stream. All 400 rapid click inputs were accepted, with 400 down and 400 up events posted. 6 mouse-downs arrived while natural image dimensions were zero and were still accepted, exercising the changed loading path. The [detailed measurements](browser-loading-frame.json) preserve the original failure at input 40 and the new per-input results. These acknowledgments do not prove 400 native target hits or live provider delivery.
 

@@ -383,7 +383,7 @@
     "file": "pdf-fixture.pdf",
     "bytes": 663,
     "sha256": "72ff9b76f0341d560a39f6edb62b1a936163f7a43fb11c92882ec1377ccc9587",
-    "text": "Product review \u2014 Review decisions, open questions and next steps.",
+    "text": "Product review  Review decisions, open questions and next steps.",
     "pages": 1
   },
   "assertions": {
