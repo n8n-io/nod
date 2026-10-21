@@ -56,6 +56,10 @@ import {
   verificationSenderDomain,
   type EmailCodeRequest,
 } from './email-code.ts';
+import { logFailure } from './failure-log.ts';
+
+const unverifiedAccount =
+  "Otto can't confirm this is the same account, so it can't reconnect it in place. Connect the app again as a new connection; the old one stays in Apps until you remove it.";
 
 const slugSchema = z.string().regex(/^[a-z][a-z0-9_]{0,79}$/);
 type Slug = z.infer<typeof slugSchema>;
@@ -478,7 +482,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             }
             if (!saved) continue;
             if (!closed) options.refresh?.();
-          } catch {}
+          } catch (error) {
+            logFailure('connection_adoption_failed', error);
+          }
         }
       }),
     );
@@ -802,7 +808,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 : 'pending',
           supportsTriggers: supported,
           description: changed
-            ? 'The integration service changed. Connect this account again to use it here.'
+            ? "Otto's app connection settings changed since this account was connected. Connect it again to use it."
             : row?.inbox_reconnect_required
               ? 'Inbox history expired. Reconnect this account to resume new email updates. Review the missing interval separately; reconnecting does not recover it.'
               : service.description,
@@ -1057,10 +1063,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     const row = await selectConnection(configuredOwner, slug, connectionId, true);
     if (!configurationMatches(row)) {
       if (row.revoked || !normalizedEmail(row.account_email ?? ''))
-        throw new IntegrationError(
-          'The original account identity could not be verified. Add an account separately; the saved connection will remain unchanged.',
-          409,
-        );
+        throw new IntegrationError(unverifiedAccount, 409);
       return connect(slug, returnTo, turn, row);
     }
     const selected = providerForRow(row);
@@ -1075,11 +1078,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       if (original.active && original.service === row.slug)
         email = normalizedEmail(original.accountEmail ?? '');
     }
-    if (!email)
-      throw new IntegrationError(
-        'The original account identity could not be verified. Add an account separately; the saved connection will remain unchanged.',
-        409,
-      );
+    if (!email) throw new IntegrationError(unverifiedAccount, 409);
     const nonce = randomBytes(32).toString('base64url');
     const hash = createHash('sha256').update(nonce).digest('hex');
     const callbackUrl = new URL('/api/apps/callback', options.baseUrl);
@@ -2131,6 +2130,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               : error instanceof z.ZodError
                 ? 400
                 : 502;
+        if (status === 502 && !(error instanceof IntegrationError))
+          logFailure('connection_failed', error);
         reply.code(status).send({
           error:
             error instanceof IntegrationError ||

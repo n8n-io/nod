@@ -286,7 +286,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
           duration_ms: duration,
           queue_duration_ms: duration.optional(),
           waiting_reason: z.enum(['question', 'approval', 'credentials']).optional(),
-          failure_reason: z.enum(['spending_limit', 'unknown']).optional(),
+          failure_reason: z.enum(['spending_limit', 'model', 'unknown']).optional(),
         })
         .strict(),
     })

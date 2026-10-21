@@ -513,7 +513,11 @@ export function createPiAgent(options: {
         if (event.type === 'message_end' && event.message.role === 'assistant') {
           const usage = observeUsage(event.message);
           if (usage) input.onEvent(usage);
-          if (event.message.stopReason === 'error') input.onEvent({ type: 'error' });
+          if (event.message.stopReason === 'error')
+            input.onEvent({
+              type: 'error',
+              message: event.message.errorMessage?.trim() || 'The provider gave no reason.',
+            });
           if (event.message.stopReason === 'stop') {
             const blocks = event.message.content.filter((item) => item.type === 'text');
             const finalBlocks = blocks.filter((item) => isFinalAnswer(item.textSignature));

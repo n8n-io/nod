@@ -51,6 +51,7 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
     };
   if (id.startsWith('activity-check:'))
     return { source: 'check', title: 'Checked a connected app' };
+  if (id.startsWith('reaction:')) return { source: 'chat', title: 'Your reaction' };
   return { source: 'event', title: 'Woke for an email or app event' };
 }
 

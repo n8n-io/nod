@@ -16,7 +16,7 @@ import type {
   RuntimeResult,
   SkillLibrary,
 } from '../ports/agent.ts';
-import { appConfirmation } from '../ports/agent.ts';
+import { appConfirmation, ModelRequestError } from '../ports/agent.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
@@ -140,7 +140,7 @@ export function createAgentRuntime(dependencies: {
     let waitingMessage: string | undefined;
     const sites = new Map<string, string>();
     let stopped = false;
-    let modelFailed = false;
+    let modelError: string | undefined;
     let modelIncomplete = false;
     let completed = false;
     let lastReply = '';
@@ -477,7 +477,7 @@ export function createAgentRuntime(dependencies: {
         assertActive();
         let browsed = false;
         let answer = '';
-        let failed = false;
+        let failure: string | undefined;
         let incomplete = false;
         let completed = false;
         await context.emit('agent_start', title, { execution: source });
@@ -499,13 +499,15 @@ export function createAgentRuntime(dependencies: {
             onEvent: (event) => {
               countUsage(event);
               if (event.type === 'final') answer = event.text;
-              if (event.type === 'error') failed = true;
+              if (event.type === 'error') failure = event.message;
               if (event.type === 'message_end' && event.status === 'incomplete') incomplete = true;
               if (
                 event.type === 'final' ||
                 (event.type === 'message_end' && event.status === 'succeeded')
-              )
-                failed = incomplete = false;
+              ) {
+                failure = undefined;
+                incomplete = false;
+              }
             },
           });
           children.add(child);
@@ -514,7 +516,7 @@ export function createAgentRuntime(dependencies: {
             `${currentUserTime(context.timeZone)}\nYou are a subagent doing one part of the owner's request: ${title}\n${instruction}\nYour working directory is ${childPath}. Write new files there. The shared workspace is ${workspace.path}. Give complete file paths in your answer. Return any question or browser blocker to the parent agent. Do not hand your browser to the owner. Your final answer goes back to the parent agent, so include every result it needs.`,
             [],
           );
-          if (failed) throw new Error('The subagent model request failed.');
+          if (failure) throw new Error(`The subagent model request failed: ${failure}`);
           if (incomplete) throw new Error('The subagent response was incomplete.');
           assertActive();
           completed = true;
@@ -633,13 +635,16 @@ export function createAgentRuntime(dependencies: {
             streamId = randomUUID();
           }
           if (event.type === 'message_end') {
-            if (event.status === 'succeeded') modelFailed = modelIncomplete = false;
+            if (event.status === 'succeeded') {
+              modelError = undefined;
+              modelIncomplete = false;
+            }
             if (event.status === 'incomplete') modelIncomplete = true;
             flushText();
             const text = streamSubmitted || stopped ? '' : streamedText.trim();
             if (
               text &&
-              !modelFailed &&
+              !modelError &&
               (event.status === undefined || event.status === 'succeeded')
             ) {
               if (
@@ -656,9 +661,10 @@ export function createAgentRuntime(dependencies: {
             firstMessage = false;
             completeStream();
           }
-          if (event.type === 'error') modelFailed = true;
+          if (event.type === 'error') modelError = event.message;
           if (event.type === 'final') {
-            modelFailed = modelIncomplete = false;
+            modelError = undefined;
+            modelIncomplete = false;
             if (context.taskContext) taskResult = event.text;
             answered ||= Boolean(event.text.trim());
           }
@@ -682,8 +688,10 @@ export function createAgentRuntime(dependencies: {
         throw new Error(
           `Paused at the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`,
         );
-      if (modelFailed)
-        throw new Error('The model request failed. Check the configured provider and model.');
+      if (modelError)
+        throw new ModelRequestError(
+          `The model request failed: ${(dependencies.redactError ?? String)(modelError)}`,
+        );
       if (modelIncomplete && status === 'succeeded')
         throw new Error('The model response was incomplete. Say continue to try again.');
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');

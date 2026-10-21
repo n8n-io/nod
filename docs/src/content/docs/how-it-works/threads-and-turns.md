@@ -122,7 +122,7 @@ A session opens its browser on its first browser call, so a session that never b
 
 The main **Stop** control aborts running turns, cancels queued and waiting turns in every session, and closes all open task records. A task's **Stop** control affects only that session and its helpers. Stop can't undo an external action that already started. Ordinary turns have no time limit.
 
-Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a restart during execution, ends the turn `failed`. When the model is available, Otto prepares an interruption notice for the main chat or the affected task's message. A restart keeps saved task sessions and waiting questions.
+Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a restart during execution, ends the turn `failed`. The turn keeps the error as it was raised, such as the model provider's own reason for refusing a request, with known secrets removed. Otto posts it in the main chat or as a reply to the affected task's message, written by the model, or as the plain error when the model can't write it. A restart posts an interruption notice instead. The session's next turn receives the error as `previousFailure`, so Otto can work around it or tell you what to fix. A restart keeps saved task sessions and waiting questions.
 
 When the monthly spending limit is reached, new turns end `failed` with a limit notice before they call the model.
 

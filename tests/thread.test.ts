@@ -1272,6 +1272,7 @@ test(
             await db.pool.query('SELECT status,error FROM turns WHERE id=$1', [failed.turnId])
           ).rows[0];
           assert.equal(row.status, 'failed');
+          assert.equal(row.error, 'Synthetic runtime failure for private-fixture');
           const messages = (
             await db.pool.query(
               "SELECT text FROM messages WHERE thread_id=$1 AND role='assistant' AND created_at >= (SELECT created_at FROM turns WHERE id=$2)",
@@ -1284,12 +1285,18 @@ test(
             before + 1,
           );
           assert.equal(runs.filter((context) => context.prompt === 'runtime-failure').length, 1);
+          const next = await thread.submitUserMessage('Try again.', [], { channel: 'web' });
+          await waitFor(settled(next.turnId));
+          assert.equal(
+            runs.find((context) => context.turnId === next.turnId)?.previousFailure,
+            'Synthetic runtime failure for private-fixture',
+          );
           await waitFor(settledThread);
         },
       );
 
       await t.test(
-        'interruption recovery finishes before presentation and ignores missing or stale text',
+        'failure recovery finishes before presentation, falls back to the error and ignores stale text',
         async (t) => {
           const logged = t.mock.method(console, 'error', () => {});
           try {
@@ -1320,7 +1327,10 @@ test(
               };
               presentInterruption = async (presentedThread, input) => {
                 presented++;
-                assert.deepEqual(input, { kind: 'interrupted' });
+                assert.deepEqual(input, {
+                  kind: 'failed',
+                  error: 'Synthetic runtime failure for private-fixture',
+                });
                 await transaction(async (client) => {
                   assert.equal((await thread.lockThread(client)).id, presentedThread);
                   const failed = (
@@ -1387,7 +1397,11 @@ test(
                     [failed.turnId],
                   )
                 ).rows.map((row) => row.text),
-                ['long', 'background', 'consumed', 'resume'].includes(mode) ? [completeText] : [],
+                ['long', 'background', 'consumed', 'resume'].includes(mode)
+                  ? [completeText]
+                  : ['offline', 'invalid'].includes(mode)
+                    ? ["I couldn't finish this. Synthetic runtime failure for private-fixture"]
+                    : [],
               );
               if (advanced) {
                 const advancedTurnId = advanced.turnId;

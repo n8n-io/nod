@@ -8037,6 +8037,8 @@ test('Composio connection requests classify HTTP failures without repeating cons
       [429, 'rate_limit'],
       [503, 'unavailable'],
       [504, 'timeout'],
+      [404, 'invalid_request'],
+      [422, 'invalid_request'],
     ] as const) {
       failure = { phase, status };
       const before = rejected;
@@ -8044,6 +8046,7 @@ test('Composio connection requests classify HTTP failures without repeating cons
         assert.ok(error instanceof IntegrationConnectionError);
         assert.equal(error.reason, reason);
         assert.equal(error.phase, phase);
+        if (reason === 'invalid_request') assert.match(error.message, new RegExp(`HTTP ${status}`));
         assert.doesNotMatch(String(error), /synthetic-private|fixture-key/);
         assert.equal(error.cause, undefined);
         return true;

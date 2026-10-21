@@ -9,7 +9,7 @@ Chat is where you give Otto work, answer its questions and get the results.
 
 Otto keeps one ongoing conversation with you. The desktop app, the web app, Telegram and WhatsApp all add to that same conversation, so Otto remembers what you said in any of them.
 
-Otto follows your conversation language, including questions, confirmations and connection instructions. You can request another language at any point. Asking for an email or document in a different language applies to that output; a short acknowledgement keeps the conversation's language. Region, date format and time zone are separate preferences.
+Otto follows your conversation language, including questions, confirmations and connection instructions. Only your own messages set it, never your email or other data, and before you've written anything, such as at the start of setup, Otto writes in English. You can request another language at any point. Asking for an email or document in a different language applies to that output; a short acknowledgement keeps the conversation's language. Region, date format and time zone are separate preferences.
 
 ## Send a message
 
@@ -38,7 +38,7 @@ To stop Otto, select **Stop** next to the send button.
 
 The main Stop control ends active work, cancels queued messages and open questions, and closes all open tasks. To stop only one task, open its preview and select **Stop**. Your schedules stay configured. Stop can't undo something that already happened, such as an email that was already sent.
 
-Otto never repeats interrupted work on its own. If it restarts during a run, that run fails. When the model is available, Otto posts an interruption notice in the main chat or as a reply to the affected task. Saved tasks and waiting questions survive a restart.
+When a run stops on an error, Otto tells you what failed, in the main chat or as a reply to the affected task, with the error's own details, such as low credits or a rejected key with your model provider. Its next turn knows what went wrong. If Otto restarts during a run, that run fails and Otto posts an interruption notice. Otto never repeats failed or interrupted work on its own. Saved tasks and waiting questions survive a restart.
 
 If Otto may have sent or changed something, verify the result yourself or ask Otto to inspect it before continuing. Don't make a new attempt while the result is unclear.
 

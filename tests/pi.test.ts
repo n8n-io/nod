@@ -1425,7 +1425,7 @@ test('a paused turn cannot start a subagent still preparing and failed children 
           prompt: async () => {
             if (child) {
               await gate;
-              input.onEvent({ type: 'error' });
+              input.onEvent({ type: 'error', message: '402 Insufficient credits' });
               input.onEvent({ type: 'message_end', status: 'failed' });
               return;
             }
@@ -1447,7 +1447,9 @@ test('a paused turn cannot start a subagent still preparing and failed children 
                 .every(
                   (outcome) =>
                     outcome.status === 'rejected' &&
-                    /subagent model request failed/.test(String(outcome.reason)),
+                    /subagent model request failed: 402 Insufficient credits/.test(
+                      String(outcome.reason),
+                    ),
                 ),
             );
           },

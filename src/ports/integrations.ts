@@ -102,8 +102,10 @@ export class IntegrationCatalogAccessDenied extends Error {
 export class IntegrationConnectionError extends Error {
   readonly statusCode: number;
   constructor(
-    readonly reason: 'authorization' | 'permission' | 'rate_limit' | 'timeout' | 'unavailable',
+    readonly reason:
+      'authorization' | 'permission' | 'rate_limit' | 'timeout' | 'unavailable' | 'invalid_request',
     readonly phase: 'session' | 'auth_config' | 'link',
+    readonly status?: number,
   ) {
     const access =
       phase === 'auth_config'
@@ -118,7 +120,9 @@ export class IntegrationConnectionError extends Error {
             ? 'Composio is receiving too many requests. Wait a moment, then try connecting again.'
             : reason === 'timeout'
               ? 'Composio took too long to respond. Try connecting again.'
-              : 'Composio could not complete the connection. Try connecting again shortly.',
+              : reason === 'invalid_request'
+                ? `Composio rejected this request (HTTP ${status}). Check that your Composio key belongs to the project you use with Otto, then try connecting again.`
+                : 'Composio could not complete the connection. Try connecting again shortly.',
     );
     this.statusCode =
       reason === 'authorization' || reason === 'permission'

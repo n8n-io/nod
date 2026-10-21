@@ -99,6 +99,7 @@ export interface RuntimeContext {
   memory?: string;
   learnedSkills?: Array<{ name: string; description: string }>;
   checkIn?: { budgetUsd: number; spentUsd: number };
+  previousFailure?: string;
   taskContext?: {
     id: string;
     title: string;
@@ -211,7 +212,7 @@ export type AgentEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'final'; text: string }
   | ModelUsageObservation
-  | { type: 'error' };
+  | { type: 'error'; message: string };
 export interface AgentSessionOptions extends ExecutionScope {
   ephemeral?: boolean;
   systemPrompt: string;
@@ -240,3 +241,4 @@ export interface Agent {
   open(options: AgentSessionOptions): Promise<AgentSession>;
   dispose(): void | Promise<void>;
 }
+export class ModelRequestError extends Error {}

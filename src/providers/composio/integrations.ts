@@ -230,8 +230,15 @@ function connectionFailure(phase: IntegrationConnectionError['phase'], signal?: 
               : (typeof status === 'number' && status >= 500 && status <= 599) ||
                   kind === 'APIConnectionError'
                 ? 'unavailable'
-                : undefined;
-    if (reason) throw new IntegrationConnectionError(reason, phase);
+                : typeof status === 'number' && status >= 400 && status <= 499
+                  ? 'invalid_request'
+                  : undefined;
+    if (reason)
+      throw new IntegrationConnectionError(
+        reason,
+        phase,
+        typeof status === 'number' ? status : undefined,
+      );
     throw error;
   };
 }
