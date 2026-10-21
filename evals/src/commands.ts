@@ -302,6 +302,7 @@ export async function main(args: Args) {
         budget: number(args, 'budget', 0),
         baseline: text(args, 'baseline'),
         frame: text(args, 'frame') ?? 'In n8n: ',
+        beforeVerify: text(args, 'before-verify'),
       });
       return;
     }

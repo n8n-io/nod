@@ -35,6 +35,7 @@ export interface N8nBenchOptions {
   budget?: number;
   baseline?: string;
   frame: string;
+  beforeVerify?: string;
 }
 
 export const infrastructure = (run: BenchRun) =>
@@ -56,6 +57,10 @@ function watchHealth(url: string) {
   };
   const timer = setInterval(() => void check(), 15_000);
   return {
+    reset: () => {
+      failures.length = 0;
+      up = false;
+    },
     failedSince: (at: number) => failures.some((time) => time >= at),
     async ready() {
       for (const until = Date.now() + 10 * 60_000; Date.now() < until;) {
@@ -551,6 +556,12 @@ export async function runN8nBench(options: N8nBenchOptions) {
     };
     await Promise.all(Array.from({ length: options.concurrency }, (_, slot) => worker(slot)));
     if (!options.verify) return { runs: runs.length, spent };
+    if (options.beforeVerify) {
+      const hook = spawn('sh', ['-c', options.beforeVerify], { stdio: 'inherit' });
+      const code = await new Promise((done) => hook.on('close', done));
+      if (code !== 0) throw new Error(`The before-verify command failed (${code}).`);
+      for (const lane of lanes) lane.health.reset();
+    }
     for (const lane of lanes)
       if (!(await lane.health.ready()))
         throw new Error(`n8n at ${lane.url} is unavailable, so the runs cannot be verified.`);
