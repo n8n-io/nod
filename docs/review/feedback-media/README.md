@@ -1,9 +1,9 @@
 # Feedback fixes: before and after
 
-The first eleven comparisons were recaptured on 2026-10-21 from read-only snapshots of the exact PR base and rebased application frontend at a matched 1280 × 800 viewport, with the same synthetic API data and interactions in both revisions.
+The first eleven comparisons use read-only snapshots of the branch base and final application source at a matched 1280 × 800 viewport, with the same synthetic data and interactions. The baseline captures were preserved; all eleven after captures were refreshed on 2026-10-21 against the final source revision.
 
 - Before: `e79bf5d2fcfcadb093102c31f1e240b44cd210ce`
-- After: `f1d7d4d18f6914686ca7b5982fde766b9e0e9c33`
+- After: `be9595b92b0101cb0fa2295313a1b764bb84b2f6`
 - Eleven scenarios, 22 screenshots. The three full-resolution comparison sheets preserve the original screenshots; the overview scales them to half width.
 - Every API request was intercepted. No live model, connected account, recipient, backend write, or OS setting was used. Desktop screenshots simulate the renderer bridge and do not demonstrate installed Electron or OS permission behavior.
 - Capture completed with no page errors, unexpected API requests, or external requests. Measured states and source revisions are in [the manifest](manifest.json).

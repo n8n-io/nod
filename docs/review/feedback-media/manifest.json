@@ -1,6 +1,6 @@
 {
   "base": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
-  "head": "f1d7d4d18f6914686ca7b5982fde766b9e0e9c33",
+  "head": "be9595b92b0101cb0fa2295313a1b764bb84b2f6",
   "viewport": {
     "width": 1280,
     "height": 800
@@ -301,7 +301,7 @@
       ]
     }
   ],
-  "capturedAt": "2026-10-21T19:29:50.275Z",
+  "capturedAt": "2026-10-21T19:47:04.542Z",
   "assertions": {
     "noPageErrors": true,
     "noUnexpectedApiRequests": true,
@@ -318,7 +318,8 @@
     "launchAtLoginRequired": true,
     "vaultFontChanged": true,
     "completedActionsRemoved": true,
-    "remainingSessionSelected": true
+    "remainingSessionSelected": true,
+    "beforeImagesPreserved": true
   },
   "browser": {
     "comparison": "browser-pointer.png",
@@ -394,26 +395,6 @@
   },
   "artifacts": [
     {
-      "file": "navigation-and-chat.png",
-      "bytes": 484458,
-      "sha256": "76079a4c4452b8786d2271eb27fc90a77677c5917791b53de280b230b6424409"
-    },
-    {
-      "file": "onboarding.png",
-      "bytes": 444668,
-      "sha256": "5b982bc5b481cb36c3bc837eee5fc0a2ed90dfb245919d38a95467eaee2d4059"
-    },
-    {
-      "file": "vault-and-sign-in.png",
-      "bytes": 400054,
-      "sha256": "7b9f61406bd74525fee68be49b88f52f576f7df56a4aeefd1ee8ff0fdd876ddf"
-    },
-    {
-      "file": "overview.png",
-      "bytes": 526001,
-      "sha256": "262c2a4513c5caa40513e256a1e2573f015d42c4e28d87cddce921e41257125c"
-    },
-    {
       "file": "browser-pointer.png",
       "bytes": 68863,
       "sha256": "5d8cd53152c9a2f580476d33a4e12ac4a23ea5e786b759d623dbae15b16c5e01"
@@ -432,8 +413,33 @@
       "file": "pdf-rendering.json",
       "bytes": 11216,
       "sha256": "cdf9ce9610e41efb0829d5d9a2b4974f7482b396d5b506ff801c3056e33beb10"
+    },
+    {
+      "file": "navigation-and-chat.png",
+      "bytes": 484525,
+      "sha256": "aa5243b4c4c25ac75f03ccdbe9efa7a2938bea74b5ddf2039c46c2009be70a26"
+    },
+    {
+      "file": "onboarding.png",
+      "bytes": 444610,
+      "sha256": "a2cfad0dc0c45b1f1bd1582030daea52af953a5e09bb77d60158b3e3e66df3c1"
+    },
+    {
+      "file": "vault-and-sign-in.png",
+      "bytes": 400353,
+      "sha256": "63baca2e01fe2725e3924669115b30e82f39d60cc5a3a32bb96e7b23dd73068b"
+    },
+    {
+      "file": "overview.png",
+      "bytes": 526312,
+      "sha256": "26a01cda75d8f776928be3bd24537583e05882d929fb929ebb4387cfa7dd70f6"
     }
   ],
+  "beforeCapturedAt": "2026-10-21T19:29:50.275Z",
+  "afterCapturedAt": "2026-10-21T19:47:04.542Z",
+  "captureFixtureChanges": {
+    "credentialStatus": "The after fixture supplies status only at /api/credential-requests/:token/status; the completed value remains filled."
+  },
   "pdf": {
     "comparison": "pdf-rendering.png",
     "details": "pdf-rendering.json",
