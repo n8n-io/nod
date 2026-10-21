@@ -248,7 +248,7 @@ async function verifyIteration(
   );
   if (!missing.length) return results;
   const manifest = Object.fromEntries(missing.map((run) => [run.slug, [run.workflowId!]]));
-  const out = join(root, `iteration-${iteration}-${Date.now()}`);
+  const out = join(root, `iteration-${iteration}-${new URL(options.n8nUrl).port}-${Date.now()}`);
   await mkdir(out, { recursive: true });
   const manifestPath = join(out, 'manifest.json');
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
