@@ -121,7 +121,7 @@ function interceptedClick(command: Record<string, unknown>, error: unknown): boo
 
 export function daemonDeadline(command: Record<string, unknown>) {
   const operation = Number(command.timeout);
-  return Math.max(30_000, (Number.isFinite(operation) ? operation : 0) + 10_000);
+  return Math.max(60_000, (Number.isFinite(operation) ? operation : 0) + 30_000);
 }
 
 export function existingDaemonCommand(
