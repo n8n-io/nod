@@ -292,12 +292,12 @@ async function prepare(options, onComputerStart) {
   await waitFor(() => runDocker(['info', '--format', '{{.ServerVersion}}']), { signal });
   const prepareImage = async (name) => {
     const item = validImage(manifest.images.find((image) => image.name === name));
-    await runtimeAssets.ready(item.file);
     let installed = '';
     try {
       installed = await runDocker(['image', 'inspect', '--format', '{{.Id}}', item.reference]);
     } catch {}
     if (installed === item.id) return;
+    await runtimeAssets.ready(item.file);
     if ((await fileHash(join(assets, item.file))) !== item.sha256)
       throw new Error('An Otto computer image is damaged. Reinstall this build.');
     await runLima(

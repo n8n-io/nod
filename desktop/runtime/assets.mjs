@@ -471,7 +471,9 @@ function downloadRuntime(release, options) {
       }
       if (!response?.ok || !response.body)
         throw new Error('The Otto runtime download is unavailable. Try again.');
-      return Readable.fromWeb(response.body);
+      const body = Readable.fromWeb(response.body);
+      body.once('end', () => clearTimeout(timer));
+      return body;
     },
     {
       message: 'Downloading your local computer…',
