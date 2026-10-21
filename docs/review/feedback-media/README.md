@@ -36,4 +36,14 @@ The browser comparison uses the real native Chromium provider on a local synthet
 
 ![Before and after: browser pointer alignment](browser-pointer.png)
 
-A separate frontend defect dropped clicks while the next JPEG loaded and its natural dimensions were temporarily zero. The client now retains the last displayed frame dimensions. Native Chrome recorded that failure; after the fix, all 400 rapid clicks reached their targets using the actual Chat and BrowserHandoff with a synthetic stream. This does not establish that every website or browser failure is resolved.
+A separate frontend defect dropped clicks while the next JPEG loaded and its natural dimensions were temporarily zero. The client now retains the last displayed frame dimensions. Native Chrome recorded that failure; after the fix, all 400 rapid click inputs were accepted using the actual Chat and BrowserHandoff with a synthetic stream. This does not establish that every website or browser failure is resolved.
+
+## PDF attachments
+
+The same one-page synthetic PDF failed to render on Chrome 142 with `pdfjs-dist` 6.4.299’s modern build: `getOrInsertComputed` was unavailable during rendering. The app now loads the documented compatibility build and its matching worker. The installed package’s `README.md` (lines 10–12) recommends `legacy/` for environments missing newer JavaScript features; see the [PDF.js browser support documentation](https://github.com/mozilla/pdf.js/wiki/Frequently-Asked-Questions#faq-support).
+
+![Before and after: PDF rendering](pdf-rendering.png)
+
+These are actual application screenshots at 1280 × 800 and 390 × 800 in light and dark themes. The baseline is `c60a75f8`; the fixed component source object is `db8009123d59a18788b5c114c796ca60738e9504`. All four baseline previews failed; all four fixed previews rendered visible text pixels. Text extraction, Zoom in/out, Fit page, and Fit width also passed against the real renderer. The browser was unmodified, with no compatibility shim or renderer mock.
+
+The [detailed measurements](pdf-rendering.json) retain the original failure, source objects, canvas dimensions, screenshot digests, and the hash of the [synthetic PDF](pdf-fixture.pdf). Every API request was intercepted; this verifies frontend rendering, not live upload storage or account access.

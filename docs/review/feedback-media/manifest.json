@@ -388,7 +388,9 @@
         "inputs": 400,
         "accepted": 400
       }
-    }
+    },
+    "comparisonSha256": "5d8cd53152c9a2f580476d33a4e12ac4a23ea5e786b759d623dbae15b16c5e01",
+    "comparisonBytes": 68863
   },
   "artifacts": [
     {
@@ -410,6 +412,52 @@
       "file": "overview.png",
       "bytes": 526001,
       "sha256": "262c2a4513c5caa40513e256a1e2573f015d42c4e28d87cddce921e41257125c"
+    },
+    {
+      "file": "browser-pointer.png",
+      "bytes": 68863,
+      "sha256": "5d8cd53152c9a2f580476d33a4e12ac4a23ea5e786b759d623dbae15b16c5e01"
+    },
+    {
+      "file": "pdf-rendering.png",
+      "bytes": 390852,
+      "sha256": "3f4141949224a5b3392f0cbe16f998a22efa05effb05fab8787df3f4ff805929"
+    },
+    {
+      "file": "pdf-fixture.pdf",
+      "bytes": 663,
+      "sha256": "72ff9b76f0341d560a39f6edb62b1a936163f7a43fb11c92882ec1377ccc9587"
+    },
+    {
+      "file": "pdf-rendering.json",
+      "bytes": 11216,
+      "sha256": "cdf9ce9610e41efb0829d5d9a2b4974f7482b396d5b506ff801c3056e33beb10"
     }
-  ]
+  ],
+  "pdf": {
+    "comparison": "pdf-rendering.png",
+    "details": "pdf-rendering.json",
+    "capturedAt": "2026-10-21T19:38:02.712Z",
+    "beforeRevision": "c60a75f8ed4071b130fdc4ebaa3426fbc5130874",
+    "beforeSourceObject": "47811c8babd7cf6cffd42017b771669912696e00",
+    "afterSourceObject": "db8009123d59a18788b5c114c796ca60738e9504",
+    "scope": "Actual application frontend; identical synthetic PDF and API fixtures. Native unmodified Chrome; no prototype styling, renderer mocks, browser compatibility shims, real backend, models, connected accounts or recipients.",
+    "fixture": {
+      "file": "pdf-fixture.pdf",
+      "bytes": 663,
+      "sha256": "72ff9b76f0341d560a39f6edb62b1a936163f7a43fb11c92882ec1377ccc9587",
+      "text": "Product review \u2014 Review decisions, open questions and next steps.",
+      "pages": 1
+    },
+    "assertions": {
+      "matchedInput": true,
+      "allFourBaselinePreviewsUnavailable": true,
+      "allFourFixedPreviewsVisible": true,
+      "pdfTextVerified": true,
+      "zoomAndFitRendered": true,
+      "noPageErrors": true,
+      "noUnexpectedApiRequests": true,
+      "noExternalRequests": true
+    }
+  }
 }
