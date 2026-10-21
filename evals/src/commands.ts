@@ -304,6 +304,10 @@ export async function main(args: Args) {
         frame: text(args, 'frame') ?? 'In n8n: ',
         beforeVerify: text(args, 'before-verify'),
         agent: choice(args, 'agent', ['otto', 'claude-code'] as const, 'otto'),
+        verifyConcurrency:
+          text(args, 'verify-concurrency') === undefined
+            ? undefined
+            : whole(args, 'verify-concurrency', 1),
       });
       process.exit(0);
     }

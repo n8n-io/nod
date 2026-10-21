@@ -37,6 +37,7 @@ export interface N8nBenchOptions {
   frame: string;
   beforeVerify?: string;
   agent: 'otto' | 'claude-code';
+  verifyConcurrency?: number;
 }
 
 export const infrastructure = (run: BenchRun) =>
@@ -265,7 +266,7 @@ async function verifyIteration(
       '--iterations',
       '1',
       '--concurrency',
-      String(Math.max(1, Math.min(options.concurrency, 6))),
+      String(options.verifyConcurrency ?? Math.max(1, Math.min(options.concurrency, 6))),
       '--timeout-ms',
       '1500000',
       '--output-dir',
