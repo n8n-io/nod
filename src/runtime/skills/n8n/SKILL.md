@@ -37,7 +37,7 @@ Read the ones the work needs before you act, and again when the work turns to so
 
 ## Build loop
 
-1. Read the official skills above, the get_workflow_sdk_reference sections you need and get_workflow_best_practices for each technique. Batch search_nodes queries, then call get_node_types once with every node you will use, including its resource, operation and mode.
+1. Read the official skills above, the get_workflow_sdk_reference sections you need and get_workflow_best_practices for each technique. Batch search_nodes queries, then call get_node_types once with every node you will use, including its resource, operation and mode. Before writing code, list every effect the user asked for, every branch including the empty and invalid cases, and the fields each step needs.
 2. Write the SDK code to a workspace file such as `n8n/<short-name>.workflow.ts`. Change it with edit; never paste the whole code into a tool call or chat.
 3. Validate and create from the file in one codemode script, so the code is never typed twice:
 
@@ -55,18 +55,19 @@ Read the ones the work needs before you act, and again when the work turns to so
    validate_workflow can say valid: true while its warnings name real errors. Fix every error and every warning that is not clearly informational, then validate again.
 
 4. After each create or update, read get_workflow_details and check the saved graph against the request: every IF and Switch branch wired to the right target, Merge inputs in order, AI sub-nodes attached, nothing dropped.
-5. Test as TESTING.md says, with pin data shaped like each node's real output from prepare_workflow_pin_data, not like what your next node expects. Run once per meaningful path, such as both sides of an IF, an empty result and an error branch.
-6. A pinned node does not run, so the test does not show what it would have sent. Read get_workflow_execution with includeData and, for every pinned node that sends, writes or calls a service, check the items it received: each field its parameters use is there and not empty, and the number of items is what the user asked for.
+5. Test as TESTING.md says. Pin each trigger exactly as it emits, and every other pinned node with data shaped like its real output from prepare_workflow_pin_data, not like what your next node expects: every field later steps read, and at least two items where a list is expected. Run once per trigger and once per path that matters, such as both sides of an IF or a Switch fallback, by changing the pin data of the node that decides it; never edit or copy the workflow to steer a test. Pin data leaves a node only through its first output, so an error branch behind a pinned node cannot run in a test; call it untested.
+6. Read get_workflow_execution with includeData. Check which nodes ran: a node that outputs nothing ends its branch quietly and the test still succeeds. A pinned node does not run, so the test does not show what it would have sent: for every pinned node that sends, writes or calls a service, check its parameters against the items it received. Each field they use is there and not empty, and the number of items is what the user asked for.
 7. Fix with update_workflow and test again with the same pin data. Change a node in place with updateNodeParameters or setNodeParameter; never remove and re-add it, because that detaches its sub-nodes. Pin a node rather than disable it; if you disabled one, enable it again. After two failed fixes of the same kind, rethink the design.
 
 ## Pitfalls the tools do not catch
 
-- A picker (resource locator) the user gave no ID for stays in list mode with an empty value, for the user to choose. Use id mode only for an ID the user gave or you looked up with explore_node_resources; a name such as primary or Sheet1 is not an ID.
-- A node that outputs nothing stops everything after it. When the user still expects a result, such as a digest on a quiet day, set alwaysOutputData on that node and handle the empty item.
+- A picker (resource locator) holds an ID in list and id mode, so a readable name such as primary or Sheet1 there points at nothing. Use an ID the user gave or you looked up with explore_node_resources, name or URL mode with the user's own value where the node offers it, or else list mode with an empty value for the user to choose.
+- A node that outputs nothing stops everything after it. When an outcome must still happen, such as a digest on a quiet day, set alwaysOutputData on the node that can output nothing and handle the empty item there; elsewhere it feeds empty items to later steps.
+- Read an AI node's output at the path its type and version use, from get_node_types or a past execution, not from memory.
 - A response that wraps its records, such as { data: [...] }, arrives as one item. Split it out before steps that work per record.
 - When one failing item should not stop the others, such as several channels, accounts or URLs, set onError to continue on that node and report the failures.
 - A polling or scheduled workflow marks or stores what it handled, after handling it, so the next run skips it.
-- Choose AI models from a lookup in this conversation: the node's model list through explore_node_resources, or discover_agent_assets for an Agent. Never type a model ID from memory.
+- Keep the model a workflow or Agent already uses unless the user asks to change it. Choose a new one from a lookup in this conversation: the node's model list through explore_node_resources, or discover_agent_assets for an Agent. Never type a model ID from memory.
 - Give every loop that goes back, such as a retry or a revision round, an exit: a counter or a maximum number of rounds. Never test it with pinned data that keeps it looping, because a test runs until it ends.
 
 ## Publishing and live triggers
