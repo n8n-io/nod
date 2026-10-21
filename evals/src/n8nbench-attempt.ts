@@ -279,6 +279,8 @@ async function run(spec: N8nBenchSpec): Promise<BenchRun> {
     }
   } catch (failure) {
     result.error = failure instanceof Error ? failure.message : String(failure);
+    if (!/exceeded its time limit|made no progress/.test(result.error))
+      result.unavailable = `The harness failed during the run: ${result.error}`;
   }
   try {
     if (stack) {
