@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
@@ -133,6 +133,18 @@ function configureWebAccess(root: string) {
 }
 
 type ModelUsage = { input?: number; output?: number; cost?: { total?: number } };
+
+const promptCacheSecret = randomBytes(32);
+
+function threadPromptCache(threadId: string) {
+  const key = createHmac('sha256', promptCacheSecret).update(threadId).digest('base64url');
+  return (pi: ExtensionAPI) => {
+    pi.on('before_provider_request', ({ payload }) => {
+      const request = payload as { prompt_cache_key?: unknown } | null;
+      if (request?.prompt_cache_key) return { ...request, prompt_cache_key: key };
+    });
+  };
+}
 
 function recentImages(pi: ExtensionAPI) {
   pi.on('context', ({ messages }) => {
@@ -303,7 +315,11 @@ export function createPiAgent(options: {
         cwd: input.workspace.path,
         agentDir: directory,
         additionalExtensionPaths: [webExtension],
-        extensionFactories: [createCodemodeExtension(), recentImages],
+        extensionFactories: [
+          createCodemodeExtension(),
+          recentImages,
+          threadPromptCache(input.threadId),
+        ],
         noExtensions: true,
         noSkills: true,
         noPromptTemplates: true,

@@ -112,6 +112,8 @@ The prompt has three layers, built in [`src/runtime/prompt.ts`](https://github.c
 
 The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `video-links`. Pi's own tool guidelines are appended to the static prompt, because Otto's custom prompt would otherwise drop them.
 
+Every session of a thread sends the same prompt cache key: a keyed hash of the thread ID that changes when Otto restarts. When a session's system prompt and tools match a recent request from the same thread, as they do for back-to-back background runs, the provider reads them from its cache instead of charging for them again.
+
 ## Message cadence
 
 A chat turn posts its opening line, then only what the model writes between tool calls after the user has heard nothing for a while, then its final reply. The window is 30 seconds in Otto web and 3 minutes in chat apps. A task's first message is its acknowledgement, so the task posts only its questions, files, deliberate `send_message` updates and result. The rule lives in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts); the prompt asks for what each message should contain.

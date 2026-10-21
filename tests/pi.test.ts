@@ -2656,6 +2656,57 @@ test('agent session traces leave out the owner context', async (t) => {
   assert.equal(recorded[0].metadata.session_id, execution.sessionId);
 });
 
+test('sessions of one thread share a prompt cache key that hides execution IDs', async (t) => {
+  const loaders: NonNullable<Parameters<typeof createAgentSession>[0]>['resourceLoader'][] = [];
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture-key',
+    sessionRoot: await mkdtemp(join(tmpdir(), 'otto-pi-cache-')),
+    createSession: async (options) => {
+      loaders.push(options!.resourceLoader);
+      return createAgentSession(options);
+    },
+  });
+  t.after(() => agent.dispose());
+  const threads = [randomUUID(), randomUUID()];
+  const executions = [threads[0], threads[0], threads[1]].map((threadId) => ({
+    ...fakeExecution(threadId),
+    sessionId: randomUUID(),
+  }));
+  for (const execution of executions) {
+    const session = await agent.open({
+      ...execution,
+      ephemeral: true,
+      systemPrompt: 'Synthetic instructions',
+      workspace: recordingWorkspace().workspace,
+      runTool: async (_name, _params, run) => run(),
+      tools: [],
+      shouldStop: () => false,
+      onEvent: () => {},
+    });
+    await session.dispose();
+  }
+  const send = async (index: number, payload: Record<string, unknown>) => {
+    let sent: unknown = payload;
+    for (const extension of loaders[index]!.getExtensions().extensions)
+      for (const handler of extension.handlers.get('before_provider_request') ?? [])
+        sent = (await handler({ type: 'before_provider_request', payload: sent }, {})) ?? sent;
+    return sent as Record<string, unknown>;
+  };
+  const keys = await Promise.all(
+    executions.map(
+      async (_execution, index) =>
+        (await send(index, { model: 'fixture', prompt_cache_key: 'pi-session' })).prompt_cache_key,
+    ),
+  );
+  assert.equal(keys[0], keys[1]);
+  assert.notEqual(keys[0], keys[2]);
+  assert.notEqual(keys[0], 'pi-session');
+  for (const id of executions.flatMap((execution) => Object.values(execution)))
+    assert.ok(!keys.some((key) => String(key).includes(id)));
+  assert.deepEqual(await send(0, { model: 'fixture' }), { model: 'fixture' });
+});
+
 test('OpenAI-compatible servers get tool models, a system message and one attempt without the key', async (t) => {
   const { createServer } = await import('node:http');
   const { createPiModelBackend, createPiModelRuntime } =
