@@ -1,6 +1,6 @@
 {
   "base": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
-  "head": "be9595b92b0101cb0fa2295313a1b764bb84b2f6",
+  "head": "117af4eb53958261b352c905c6bb91e451d42749",
   "viewport": {
     "width": 1280,
     "height": 800
@@ -176,6 +176,19 @@
       "side": "after",
       "name": "05-onboarding-answer",
       "file": "05-onboarding-answer-after.png",
+      "tools": {
+        "x": 317,
+        "y": 733,
+        "width": 646,
+        "height": 34
+      },
+      "send": {
+        "x": 929,
+        "y": 733,
+        "width": 34,
+        "height": 34
+      },
+      "rightEdgeGap": 0,
       "micButtons": 0,
       "errors": []
     },
@@ -301,7 +314,7 @@
       ]
     }
   ],
-  "capturedAt": "2026-10-21T19:47:04.542Z",
+  "capturedAt": "2026-10-21T22:37:15.431Z",
   "assertions": {
     "noPageErrors": true,
     "noUnexpectedApiRequests": true,
@@ -319,7 +332,8 @@
     "completedActionsRemoved": true,
     "remainingSessionSelected": true,
     "beforeImagesPreserved": true,
-    "matchedSemanticState": true
+    "matchedSemanticState": true,
+    "onboardingSendRightAligned": true
   },
   "browser": {
     "comparison": "browser-pointer.png",
@@ -489,23 +503,23 @@
     },
     {
       "file": "navigation-and-chat.png",
-      "bytes": 484525,
-      "sha256": "aa5243b4c4c25ac75f03ccdbe9efa7a2938bea74b5ddf2039c46c2009be70a26"
+      "bytes": 484190,
+      "sha256": "552f96c5ab72f96be941ae2295fbe5cdf0eb4087ab4367e35e65177e85d6e9b3"
     },
     {
       "file": "onboarding.png",
-      "bytes": 444610,
-      "sha256": "a2cfad0dc0c45b1f1bd1582030daea52af953a5e09bb77d60158b3e3e66df3c1"
+      "bytes": 443459,
+      "sha256": "01a36f25ae68c376a3cc58e61b44d17458b673c3604ad769bb2ac50a4cb93a6e"
     },
     {
       "file": "vault-and-sign-in.png",
-      "bytes": 400353,
-      "sha256": "63baca2e01fe2725e3924669115b30e82f39d60cc5a3a32bb96e7b23dd73068b"
+      "bytes": 400134,
+      "sha256": "53c201f4c3173827f1a6f4c6c8a4300af1fc9286841f8f6b3d0443480255bd79"
     },
     {
       "file": "overview.png",
-      "bytes": 526312,
-      "sha256": "26a01cda75d8f776928be3bd24537583e05882d929fb929ebb4387cfa7dd70f6"
+      "bytes": 525214,
+      "sha256": "bc0117ece6519a5a5de30a0fa44bb06c370edf7848fb55769a06dead18ffcf47"
     },
     {
       "file": "browser-loading-frame.png",
@@ -591,10 +605,15 @@
       "file": "browser-screenshots/pointer-before-original.png",
       "bytes": 21823,
       "sha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab"
+    },
+    {
+      "file": "history/onboarding-answer-after-be9595b9.png",
+      "bytes": 24255,
+      "sha256": "59cc77262deffcc2e0726a273ceb2aa7f9eb9027a5e29cfe5a7b2798600c96fb"
     }
   ],
   "beforeCapturedAt": "2026-10-21T19:29:50.275Z",
-  "afterCapturedAt": "2026-10-21T19:47:04.542Z",
+  "afterCapturedAt": "2026-10-21T22:37:15.431Z",
   "captureFixtureChanges": {
     "scenario": "10-completed-private-actions",
     "matchedSemanticState": {
@@ -641,5 +660,114 @@
       "noUnexpectedApiRequests": true,
       "noExternalRequests": true
     }
+  },
+  "onboardingAlignmentCheck": [
+    {
+      "sourceRevision": "117af4eb53958261b352c905c6bb91e451d42749",
+      "desktop": false,
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "tools": {
+        "x": 317,
+        "y": 733,
+        "width": 646,
+        "height": 34
+      },
+      "send": {
+        "x": 929,
+        "y": 733,
+        "width": 34,
+        "height": 34
+      },
+      "rightEdgeGap": 0,
+      "micButtons": 0,
+      "errors": []
+    },
+    {
+      "sourceRevision": "117af4eb53958261b352c905c6bb91e451d42749",
+      "desktop": false,
+      "viewport": {
+        "width": 390,
+        "height": 800
+      },
+      "tools": {
+        "x": 44,
+        "y": 741,
+        "width": 302,
+        "height": 34
+      },
+      "send": {
+        "x": 312,
+        "y": 741,
+        "width": 34,
+        "height": 34
+      },
+      "rightEdgeGap": 0,
+      "micButtons": 0,
+      "errors": []
+    },
+    {
+      "sourceRevision": "117af4eb53958261b352c905c6bb91e451d42749",
+      "desktop": true,
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "tools": {
+        "x": 317,
+        "y": 733,
+        "width": 646,
+        "height": 34
+      },
+      "send": {
+        "x": 929,
+        "y": 733,
+        "width": 34,
+        "height": 34
+      },
+      "rightEdgeGap": 0,
+      "micButtons": 0,
+      "errors": []
+    },
+    {
+      "sourceRevision": "117af4eb53958261b352c905c6bb91e451d42749",
+      "desktop": true,
+      "viewport": {
+        "width": 390,
+        "height": 800
+      },
+      "tools": {
+        "x": 44,
+        "y": 741,
+        "width": 302,
+        "height": 34
+      },
+      "send": {
+        "x": 312,
+        "y": 741,
+        "width": 34,
+        "height": 34
+      },
+      "rightEdgeGap": 0,
+      "micButtons": 0,
+      "errors": []
+    }
+  ],
+  "onboardingSendCorrection": {
+    "sourceRevision": "117af4eb53958261b352c905c6bb91e451d42749",
+    "previousAfterRevision": "be9595b92b0101cb0fa2295313a1b764bb84b2f6",
+    "previousAfterScreenshot": {
+      "file": "history/onboarding-answer-after-be9595b9.png",
+      "bytes": 24255,
+      "sha256": "59cc77262deffcc2e0726a273ceb2aa7f9eb9027a5e29cfe5a7b2798600c96fb"
+    },
+    "previousPublishedSheet": {
+      "revision": "1ec4df1208707eab93225e276c92e7da41552146",
+      "file": "onboarding.png",
+      "sha256": "a2cfad0dc0c45b1f1bd1582030daea52af953a5e09bb77d60158b3e3e66df3c1"
+    },
+    "scope": "Send is right-aligned after removing the onboarding microphone. Four additional synthetic web/desktop bridge checks at 1280x800 and 390x800 measure the Send right edge against the tools row; this does not demonstrate installed Electron or native OS behavior."
   }
 }

@@ -1,9 +1,9 @@
 # Feedback fixes: before and after
 
-The first eleven comparisons use read-only snapshots of the branch base and final application source at a matched 1280 × 800 viewport, with the same synthetic product state and interactions. The baseline captures were preserved; all eleven after captures were refreshed on 2026-10-21 against the final source revision.
+The first eleven comparisons use read-only snapshots of the branch base and captured application source at a matched 1280 × 800 viewport, with the same synthetic product state and interactions. The baseline captures were preserved; all eleven after captures were refreshed on 2026-10-21 against the corrected source revision.
 
 - Before: `e79bf5d2fcfcadb093102c31f1e240b44cd210ce`
-- After: `be9595b92b0101cb0fa2295313a1b764bb84b2f6`
+- After: `117af4eb53958261b352c905c6bb91e451d42749`
 - Eleven scenarios, 22 screenshots. The three full-resolution comparison sheets preserve the original screenshots; the overview scales them to half width.
 - Every API request was intercepted. No live model, connected account, recipient, backend write, or OS setting was used. Desktop screenshots simulate the renderer bridge and do not demonstrate installed Electron or OS permission behavior.
 - Capture completed with no page errors, unexpected API requests, or external requests. Measured states and source revisions are in [the manifest](manifest.json).
@@ -16,9 +16,11 @@ The web rail is vertically centered. The sidebar toggle stays at the same positi
 
 ## Onboarding
 
-The conversation composer has no microphone. Desktop notifications and Open at login must be enabled before Continue becomes available. After the last web setup action, onboarding enters the chat without the extra final feedback screen.
+The conversation composer has no microphone, and Send stays on the right. Desktop notifications and Open at login must be enabled before Continue becomes available. After the last web setup action, onboarding enters the chat without the extra final feedback screen.
 
 ![Before and after: onboarding](onboarding.png)
+
+The [earlier after capture](history/onboarding-answer-after-be9595b9.png) from `be9595b9` is preserved because removing the microphone had moved Send to the left. The refreshed `117af4eb` capture includes the correction. Four additional web/desktop fixture checks at 1280 px and 390 px found zero gap between the right edges of Send and its tools row; their bounds are recorded in the manifest.
 
 ## Vault and completed actions
 
