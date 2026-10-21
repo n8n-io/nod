@@ -43,6 +43,7 @@ Unpinned nodes run for real in a test: Code, data tables, file and command nodes
 ## Design defaults
 
 - Prefer dedicated nodes over HTTP Request, and expressions or Edit Fields over Code. Use Code only for logic the other nodes cannot express, and never to call APIs.
+- Give every loop that goes back, such as a retry or a revision round, an exit: a counter or a maximum number of rounds. Never test it with pinned data that keeps it looping, because a test runs until it ends.
 - n8n runs a node once per item. Use executeOnce or Aggregate where one call should cover all items, and Split Out or Loop Over Items only when needed.
 - Normalize trigger payloads early: webhook data is under $json.body, form fields are top level.
 - Keep secrets in credentials, never in parameters or code. Credentials are assigned automatically from the project; list_credentials shows them. When one is missing, keep newCredential('Service account') and tell the user which credential to create. You cannot create or test credentials yourself.
