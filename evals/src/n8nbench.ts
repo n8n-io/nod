@@ -71,7 +71,7 @@ function watchHealth(url: string) {
 const percent = (part: number, whole: number) =>
   whole ? Math.round((1000 * part) / whole) / 10 : null;
 
-async function startSidecar(options: N8nBenchOptions, directory: string) {
+async function startSidecar(options: N8nBenchOptions, directory: string, lane = 0) {
   const child = spawn('pnpm', ['exec', 'tsx', join(repository, 'evals/n8n/sidecar.mjs')], {
     cwd: options.n8nSource,
     env: {
@@ -103,9 +103,9 @@ async function startSidecar(options: N8nBenchOptions, directory: string) {
     );
   });
   child.stderr.on('data', (chunk) =>
-    writeFile(join(directory, 'sidecar.log'), log.join('') + String(chunk), { flag: 'w' }).catch(
-      () => {},
-    ),
+    writeFile(join(directory, `sidecar-${lane}.log`), log.join('') + String(chunk), {
+      flag: 'w',
+    }).catch(() => {}),
   );
   return { url: `http://127.0.0.1:${port}`, child };
 }
@@ -475,8 +475,18 @@ export async function runN8nBench(options: N8nBenchOptions) {
       2,
     ),
   );
-  const side = await startSidecar(options, directory);
-  const health = watchHealth(options.n8nUrl);
+  const lanes = await Promise.all(
+    options.n8nUrl
+      .split(',')
+      .map((url) => url.trim())
+      .filter(Boolean)
+      .map(async (url, index) => ({
+        url,
+        side: await startSidecar({ ...options, n8nUrl: url }, directory, index),
+        health: watchHealth(url),
+      })),
+  );
+  const laneOf = (run: BenchRun) => lanes.find((lane) => lane.url === run.n8nUrl) ?? lanes[0];
   try {
     const jobs = cases.flatMap((item) =>
       Array.from({ length: options.iterations }, (_, iteration) => ({ item, iteration })),
@@ -484,7 +494,8 @@ export async function runN8nBench(options: N8nBenchOptions) {
     const runs: BenchRun[] = [];
     let spent = 0;
     let next = 0;
-    const worker = async () => {
+    const worker = async (slot: number) => {
+      const lane = lanes[slot % lanes.length];
       for (;;) {
         const job = jobs[next++];
         if (!job) return;
@@ -503,8 +514,8 @@ export async function runN8nBench(options: N8nBenchOptions) {
           console.log(`Budget of $${options.budget} reached; skipping ${job.item.slug}.`);
           continue;
         }
-        if (!(await health.ready())) {
-          console.log(`n8n stayed unavailable; stopping before ${job.item.slug}.`);
+        if (!(await lane.health.ready())) {
+          console.log(`n8n at ${lane.url} stayed unavailable; stopping before ${job.item.slug}.`);
           next = jobs.length;
           return;
         }
@@ -516,14 +527,15 @@ export async function runN8nBench(options: N8nBenchOptions) {
             iteration: job.iteration,
             model: options.model,
             outFile,
-            sidecar: side.url,
-            n8nUrl: options.n8nUrl,
+            sidecar: lane.side.url,
+            n8nUrl: lane.url,
             minutes: options.minutes,
             frame: options.frame,
           },
           options.minutes,
         );
-        if (health.failedSince(startedAt)) {
+        run.n8nUrl = lane.url;
+        if (lane.health.failedSince(startedAt)) {
           run.unavailable = 'n8n was unavailable during the attempt.';
           await writeFile(outFile, JSON.stringify(run, null, 2));
           console.log(`${job.item.slug}#${job.iteration} discarded: n8n was unavailable.`);
@@ -537,24 +549,34 @@ export async function runN8nBench(options: N8nBenchOptions) {
         );
       }
     };
-    await Promise.all(Array.from({ length: options.concurrency }, worker));
+    await Promise.all(Array.from({ length: options.concurrency }, (_, slot) => worker(slot)));
     if (!options.verify) return { runs: runs.length, spent };
-    if (!(await health.ready()))
-      throw new Error('n8n is unavailable, so the runs cannot be verified. Restart it and resume.');
+    for (const lane of lanes)
+      if (!(await lane.health.ready()))
+        throw new Error(`n8n at ${lane.url} is unavailable, so the runs cannot be verified.`);
     const verifyStarted = Date.now();
     const graded: CaseIteration[] = [];
     const lookup = new Map(cases.map((item) => [item.slug, item]));
     for (let iteration = 0; iteration < options.iterations; iteration++) {
       const these = runs.filter((run) => run.iteration === iteration);
-      const verifiedCases = await verifyIteration(options, directory, iteration, these, lookup);
+      const verifiedCases = new Map<string, VerifiedCase>();
+      for (const lane of lanes)
+        for (const [slug, item] of await verifyIteration(
+          { ...options, n8nUrl: lane.url },
+          directory,
+          iteration,
+          these.filter((run) => laneOf(run) === lane),
+          lookup,
+        ))
+          verifiedCases.set(slug, item);
       for (const run of these) {
         if (infrastructure(run)) continue;
         const item = lookup.get(run.slug)!;
-        const expectations = await judgeExpectations(side.url, item, run, directory);
+        const expectations = await judgeExpectations(laneOf(run).side.url, item, run, directory);
         graded.push(grade(item, run, verifiedCases.get(run.slug), expectations));
       }
     }
-    if (health.failedSince(verifyStarted)) {
+    if (lanes.some((lane) => lane.health.failedSince(verifyStarted))) {
       for (const name of await readdir(join(directory, 'verify')))
         if (Number(name.split('-').at(-1)) >= verifyStarted)
           await rm(join(directory, 'verify', name), { recursive: true, force: true });
@@ -574,7 +596,9 @@ export async function runN8nBench(options: N8nBenchOptions) {
     console.log(JSON.stringify(headline, null, 2));
     return summary;
   } finally {
-    health.stop();
-    side.child.kill('SIGTERM');
+    for (const lane of lanes) {
+      lane.health.stop();
+      lane.side.child.kill('SIGTERM');
+    }
   }
 }
