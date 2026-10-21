@@ -144,8 +144,29 @@ async function run(workflowId, workflow, scenario, outputs) {
       includeData: true,
     }),
   );
-  const found = report(workflow, data, Object.keys(scenario.pinData ?? {}));
+  const pinned = Object.keys(scenario.pinData ?? {});
+  const found = report(workflow, data, pinned);
   const expected = scenario.expect ?? {};
+  const runData = data?.resultData?.runData ?? {};
+  const checks = Object.entries(expected.items ?? {}).flatMap(([name, rule]) => {
+    const items = pinned.includes(name) ? received(runData, name) : output(runData, name);
+    const misses = [];
+    if (rule.count !== undefined && items.length !== rule.count)
+      misses.push(`${name}: ${items.length} items, expected ${rule.count}`);
+    for (const [path, value] of Object.entries(rule.fields ?? {}))
+      items.forEach((item, index) => {
+        const actual = lookup(item.json, path.split('.'));
+        const ok =
+          typeof value === 'string' && typeof actual === 'string'
+            ? actual.includes(value)
+            : JSON.stringify(actual) === JSON.stringify(value);
+        if (!ok)
+          misses.push(
+            `${name} item ${index + 1}: ${path} is ${JSON.stringify(actual)}, expected ${JSON.stringify(value)}`,
+          );
+      });
+    return misses;
+  });
   const problems = [
     ...(expected.reached ?? [])
       .filter((name) => found.notRun.includes(name))
@@ -153,6 +174,7 @@ async function run(workflowId, workflow, scenario, outputs) {
     ...(expected.notReached ?? [])
       .filter((name) => !found.notRun.includes(name))
       .map((name) => `expected ${name} not to run`),
+    ...checks,
   ];
   return {
     executionId: started.executionId,
