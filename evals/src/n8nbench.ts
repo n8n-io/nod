@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -152,18 +152,50 @@ async function serveSuite(dataset: string, slugs: Set<string>) {
   };
 }
 
+interface VerifiedCase {
+  testCaseFile?: string;
+  scenarios: Array<{
+    name: string;
+    runs: Array<{
+      passed: boolean;
+      incomplete?: boolean;
+      reasoning?: string;
+      workflowId?: string | null;
+    }>;
+  }>;
+}
+
+async function verifiedIn(out: string) {
+  const report = JSON.parse(
+    await readFile(join(out, 'eval-results.json'), 'utf8').catch(() => '{"testCases":[]}'),
+  ) as { testCases: VerifiedCase[] };
+  return report.testCases.flatMap((item) =>
+    item.testCaseFile ? [[item.testCaseFile.replace(/\.json$/, ''), item] as const] : [],
+  );
+}
+
 async function verifyIteration(
   options: N8nBenchOptions,
   directory: string,
   iteration: number,
   runs: BenchRun[],
+  cases: Map<string, BenchCase>,
 ) {
-  const out = join(directory, 'verify', `iteration-${iteration}`);
-  if (options.resume && existsSync(join(out, 'eval-results.json'))) return out;
-  const manifest = Object.fromEntries(
-    runs.filter((run) => run.workflowId).map((run) => [run.slug, [run.workflowId!]]),
+  const root = join(directory, 'verify');
+  const results = new Map<string, VerifiedCase>();
+  for (const name of (await readdir(root).catch(() => [] as string[])).sort())
+    if (name === `iteration-${iteration}` || name.startsWith(`iteration-${iteration}-`))
+      for (const [slug, item] of await verifiedIn(join(root, name))) results.set(slug, item);
+  const workflowOf = (item: VerifiedCase) => item.scenarios[0]?.runs[0]?.workflowId;
+  const missing = runs.filter(
+    (run) =>
+      run.workflowId &&
+      cases.get(run.slug)?.definition.executionScenarios.length &&
+      workflowOf(results.get(run.slug) ?? { scenarios: [] }) !== run.workflowId,
   );
-  if (!Object.keys(manifest).length) return undefined;
+  if (!missing.length) return results;
+  const manifest = Object.fromEntries(missing.map((run) => [run.slug, [run.workflowId!]]));
+  const out = join(root, `iteration-${iteration}-${Date.now()}`);
   await mkdir(out, { recursive: true });
   const manifestPath = join(out, 'manifest.json');
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
@@ -205,35 +237,8 @@ async function verifyIteration(
   await new Promise((done) => child.on('close', done));
   suite.close();
   await writeFile(join(out, 'verifier.log'), captured);
-  return out;
-}
-
-interface VerifiedCase {
-  testCaseFile?: string;
-  scenarios: Array<{
-    name: string;
-    runs: Array<{ passed: boolean; incomplete?: boolean; reasoning?: string }>;
-  }>;
-  buildExpectationResultsPerRun: Array<Array<{
-    expectation: string;
-    pass: boolean;
-    reason: string;
-    incomplete?: boolean;
-  }> | null>;
-}
-
-async function verified(out: string | undefined) {
-  if (!out) return new Map<string, VerifiedCase>();
-  const report = JSON.parse(
-    await readFile(join(out, 'eval-results.json'), 'utf8').catch(() => '{"testCases":[]}'),
-  ) as {
-    testCases: VerifiedCase[];
-  };
-  return new Map(
-    report.testCases.flatMap((item) =>
-      item.testCaseFile ? [[item.testCaseFile.replace(/\.json$/, ''), item] as const] : [],
-    ),
-  );
+  for (const [slug, item] of await verifiedIn(out)) results.set(slug, item);
+  return results;
 }
 
 async function artifactsOf(sidecarUrl: string, run: BenchRun) {
@@ -496,9 +501,7 @@ export async function runN8nBench(options: N8nBenchOptions) {
     const lookup = new Map(cases.map((item) => [item.slug, item]));
     for (let iteration = 0; iteration < options.iterations; iteration++) {
       const these = runs.filter((run) => run.iteration === iteration);
-      const verifiedCases = await verified(
-        await verifyIteration(options, directory, iteration, these),
-      );
+      const verifiedCases = await verifyIteration(options, directory, iteration, these, lookup);
       for (const run of these) {
         if (infrastructure(run)) continue;
         const item = lookup.get(run.slug)!;
