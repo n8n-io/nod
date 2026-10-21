@@ -411,6 +411,7 @@ export function createAgentRuntime(dependencies: {
             description,
             parameters,
             ...(deferred ? { deferred } : {}),
+            ...(tool.scripted ? { scripted: true } : {}),
             parallel: Boolean(deferred) || parallelTools.has(name),
             execute: async (params, options) => {
               assertActive();

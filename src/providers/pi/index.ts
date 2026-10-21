@@ -337,7 +337,7 @@ export function createPiAgent(options: {
                     : {}),
                 },
               }
-            : { exposure: 'model-only' as const }),
+            : { exposure: tool.scripted ? ('codemode' as const) : ('model-only' as const) }),
           executionMode: tool.parallel ? 'parallel' : 'sequential',
           execute: async (id, args) => {
             return {
@@ -458,7 +458,9 @@ export function createPiAgent(options: {
         model,
         thinkingLevel: access?.effort ?? 'high',
         tools: [
-          ...tools.filter((tool) => tool.exposure !== 'deferred').map((tool) => tool.name),
+          ...tools
+            .filter((tool) => tool.exposure !== 'deferred' && tool.exposure !== 'codemode')
+            .map((tool) => tool.name),
           ...extensions.extensions.flatMap((extension) => [...extension.tools.keys()]),
         ],
         customTools: tools,

@@ -37,7 +37,7 @@ Read the ones the work needs before you act, and again when the work turns to so
 
 ## Build loop
 
-1. Read the official skills above, the get_workflow_sdk_reference sections you need and get_workflow_best_practices for each technique. Batch search_nodes queries, then call get_node_types once with every node you will use, including its resource, operation and mode. Before writing code, list every effect the user asked for, every branch including the empty and invalid cases, and the fields each step needs.
+1. Read n8n-workflow-lifecycle-official, n8n-node-configuration-official and n8n-expressions-official together in one message, plus the other official skills the table names for this work. Then read the get_workflow_sdk_reference sections you need and get_workflow_best_practices for each technique. Batch search_nodes queries, then call get_node_types once with every node you will use, including its resource, operation and mode. Before writing code, list every effect the user asked for, every branch including the empty and invalid cases, and the fields each step needs.
 2. Write the SDK code to a workspace file such as `n8n/<short-name>.workflow.ts`. Change it with edit; never paste the whole code into a tool call or chat.
 3. Validate and create from the file in one codemode script, so the code is never typed twice:
 
@@ -55,9 +55,18 @@ Read the ones the work needs before you act, and again when the work turns to so
    validate_workflow can say valid: true while its warnings name real errors. Fix every error and every warning that is not clearly informational, then validate again.
 
 4. After each create or update, read get_workflow_details and check the saved graph against the request: every IF and Switch branch wired to the right target, Merge inputs in order, AI sub-nodes attached, nothing dropped.
-5. Test as TESTING.md says. Pin each trigger exactly as it emits, and every other pinned node with data shaped like its real output from prepare_workflow_pin_data, not like what your next node expects: every field later steps read, and at least two items where a list is expected. Run once per trigger and once per path that matters, such as both sides of an IF or a Switch fallback, by changing the pin data of the node that decides it; never edit or copy the workflow to steer a test. Pin data leaves a node only through its first output, so an error branch behind a pinned node cannot run in a test; call it untested.
-6. Read get_workflow_execution with includeData. Check which nodes ran: a node that outputs nothing ends its branch quietly and the test still succeeds. A pinned node does not run, so the test does not show what it would have sent: for every pinned node that sends, writes or calls a service, check its parameters against the items it received. Each field they use is there and not empty, and the number of items is what the user asked for.
-7. Fix with update_workflow and test again with the same pin data. Change a node in place with updateNodeParameters or setNodeParameter; never remove and re-add it, because that detaches its sub-nodes. Pin a node rather than disable it; if you disabled one, enable it again. After two failed fixes of the same kind, rethink the design.
+5. Test as TESTING.md says, from scenarios you write before testing to `n8n/<short-name>.scenarios.json`: one per trigger and per path that matters, such as both sides of an IF, a Switch fallback, an empty result and an invalid input. Each has a name, the pinData for that run and expect: { reached: [...], notReached: [...] } with the node names that path must and must not run. Pin each trigger exactly as it emits, and every other pinned node with data shaped like its real output from prepare_workflow_pin_data, not like what your next node expects: every field later steps read, and at least two items where a list is expected. Steer a path only through the pinData of the node that decides it; never edit or copy the workflow to steer a test. Pin data leaves a node only through its first output, so an error branch behind a pinned node cannot run in a test; call it untested.
+6. Run every scenario in one codemode script with this guide's verify library:
+
+   ```js
+   const n8n = new Function(await tools.skill_file({ name: 'n8n', file: 'lib/verify.js' }))();
+   const scenarios = JSON.parse(await tools.read({ path: 'n8n/order-alerts.scenarios.json' }));
+   return await n8n.verify({ workflowId, scenarios });
+   ```
+
+   For each scenario it returns the status, any failing node and its error, the expected nodes that did or did not run, every node that never ran, the fields that a pinned node's parameters use but that were empty in the items it received, and a short preview of each node's output. A pinned node does not run, so these empty fields are the only sign of what it would really send. Treat every error, empty field and unexpected path as a bug, and check the previews against what the user asked for, such as counts, filters, wording and recipients.
+
+7. Fix with update_workflow and run the same scenarios again. Change a node in place with updateNodeParameters or setNodeParameter; never remove and re-add it, because that detaches its sub-nodes. Pin a node rather than disable it; if you disabled one, enable it again. After two failed fixes of the same kind, rethink the design.
 
 ## Pitfalls the tools do not catch
 
