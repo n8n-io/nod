@@ -13,7 +13,7 @@ Otto never sends what you write, what Otto replies, what your apps return, or wh
 
 ## Turn usage data on or off
 
-You turn on **Share usage data** in the first onboarding step, or later in **Settings → General**. Nothing is collected before you opt in. The desktop setup window sends nothing, because it runs before you choose.
+You turn on **Share usage data** in the first onboarding step, or later in **Settings → General**. Opt-in usage events and recordings start only in the app after your choice is saved; the native Welcome window sends neither. Desktop update checks use separate weekly installation counts, described below.
 
 Next to the switch, Otto says: "Help us make Otto better by sharing how you use it. Never your messages." It links to this page, which lists everything that is sent.
 
@@ -89,8 +89,8 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 | ------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `$pageview`                     | A page becomes visible                             | `route`: `/`, `/onboarding`, `/apps`, `/channels`, `/tasks`, `/trust`, `/browser`, `/credentials`, `/payments` or `/not-found`                                                                      |
 | `$snapshot`                     | Masked full or incremental recording               | PostHog replay metadata and masked snapshot data                                                                                                                                                    |
-| `otto_onboarding_step_viewed`   | An onboarding step appears                         | `step`: `welcome`, `brain`, `email`, `about`, `telegram`, `open_source`; `direction`: `forward`, `back`                                                                                             |
-| `otto_onboarding_step_skipped`  | You skip an onboarding step                        | `step`: `email`, `telegram`                                                                                                                                                                         |
+| `otto_onboarding_step_viewed`   | An onboarding step appears                         | `step`: `welcome`, `brain`, `email`, `about`, `telegram`, `notifications`, `launch_at_login`, `open_source`; `direction`: `forward`, `back`                                                         |
+| `otto_onboarding_step_skipped`  | You skip an onboarding step                        | `step`: `telegram`                                                                                                                                                                                  |
 | `otto_settings_viewed`          | A settings tab appears                             | `tab`: `general`, `models`, `app_connections`, `memory`                                                                                                                                             |
 | `otto_tab_viewed`               | A tab inside a page appears or you switch to it    | `page`: `tasks`, `trust`, `apps`; `tab`: `current`, `scheduled`, `previous`, `activity`, `saved`, `all`, `connected`                                                                                |
 | `otto_chat_message_sent`        | The server accepts a message you sent from the app | `has_attachments`, `is_reply`; `source`: `composer`, `task_card`, `ask_otto`, `task_reply`                                                                                                          |
@@ -107,7 +107,7 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 | `otto_model_selected`           | A model choice you made is saved                   | `provider`: `openai`, `anthropic`, `openrouter`, `compatible`, `other`; `entry`: `chat`, `settings`, `onboarding`; `recommended`. Never the model name                                              |
 | `otto_ui_error`                 | An instrumented UI action or render fails          | `area`: `application`, `onboarding`, `chat`, `settings`, `apps`, `models`; `action`: `load`, `save`, `send`, `connect`, `disconnect`, `prepare`, `stop`, `render`. Never the error itself           |
 
-Onboarding asks about **Share usage data** in its first step. Step events are sent only after you turn it on, so the step where you choose is usually not recorded. If you leave it off, onboarding sends nothing.
+Onboarding asks about **Share usage data** in its first step. Step events are sent only after you turn it on, so the step where you choose is usually not recorded. The native Welcome screen is never recorded or reported later. Desktop notification and Open at login questions are reported when each appears; the final step is reported only after those questions. If you leave usage sharing off, onboarding sends nothing. Only Telegram can be skipped.
 
 ### What Otto does
 

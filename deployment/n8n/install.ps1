@@ -8,6 +8,9 @@
   if (-not [Environment]::Is64BitOperatingSystem -or [int]$windows.CurrentBuildNumber -lt 22000) {
     throw 'Otto requires 64-bit Windows 11.'
   }
+  if ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw 'Run this installer in a normal PowerShell window, not as administrator.'
+  }
   if (Get-Process -Name Otto -ErrorAction SilentlyContinue) {
     throw 'Quit Otto, then run this command again.'
   }
@@ -48,12 +51,30 @@
     }
     $arguments = '/S'
     $existing = (Get-ItemProperty -Path 'HKCU:\Software\Otto' -ErrorAction SilentlyContinue).InstallDir
-    if ($existing) { $arguments = "/S /D=$existing" }
+    $target = Join-Path $env:LOCALAPPDATA 'Programs\Otto'
+    if ($existing) {
+      $target = $existing
+      $arguments = "/S /D=$existing"
+    }
     Write-Host "Installing Otto $($latest.version)..."
     $process = Start-Process -FilePath (Join-Path $directory $files.installer) -ArgumentList $arguments -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw 'The Otto installer did not finish.' }
+    $installed = (Get-ItemProperty -Path 'HKCU:\Software\Otto' -ErrorAction SilentlyContinue).InstallDir
+    if (-not $installed -or [IO.Path]::GetFullPath($installed) -ne [IO.Path]::GetFullPath($target)) {
+      throw 'The Otto installation destination could not be verified.'
+    }
+    $application = Join-Path $installed 'Otto.exe'
+    $package = Get-Content -LiteralPath (Join-Path $installed 'resources\app\package.json') -Raw | ConvertFrom-Json
+    if (-not (Test-Path -LiteralPath $application -PathType Leaf) -or $package.name -ne 'otto-desktop' -or $package.version -ne $latest.version) {
+      throw 'The installed app does not match the Otto release.'
+    }
   } finally {
     Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
   }
-  Write-Host "Otto $($latest.version) is installed. Open Otto from the Start menu."
+  Write-Host "Otto $($latest.version) is installed. Opening Otto..."
+  try {
+    Start-Process -FilePath $application -WorkingDirectory $installed
+  } catch {
+    throw 'Otto is installed, but could not open. Open Otto from the Start menu.'
+  }
 }

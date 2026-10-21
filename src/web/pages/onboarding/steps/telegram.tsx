@@ -13,6 +13,7 @@ const sequence = [{ typing: 450 }, { wait: 300, typing: 550 }, { wait: 200 }, { 
 export function Telegram({ arrived, onNext, onBack, onSkip }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const {
+    data,
     settings,
     telegram,
     error,
@@ -28,6 +29,7 @@ export function Telegram({ arrived, onNext, onBack, onSkip }: StepProps) {
   const state = telegramState(telegram);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [manual, setManual] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
   const issued = useRef(false);
 
   useEffect(() => {
@@ -41,6 +43,12 @@ export function Telegram({ arrived, onNext, onBack, onSkip }: StepProps) {
     if (state.saved) setFields({});
   }, [state.saved]);
 
+  useEffect(() => {
+    if (arrived !== 'forward' || !confirmed || !state.paired || busy || error || loadError) return;
+    setConfirmed(false);
+    onNext();
+  }, [arrived, confirmed, state.paired, busy, error, loadError, onNext]);
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (busy || !settings?.ready) return;
@@ -52,6 +60,7 @@ export function Telegram({ arrived, onNext, onBack, onSkip }: StepProps) {
   async function action(kind: 'pairing' | 'confirm' | 'user', body: object = {}) {
     if (busy || !settings?.ready) return;
     if (!(await telegramAction(kind, body))) return;
+    setConfirmed(kind === 'confirm' || kind === 'user');
     setManual(false);
     setFields({});
   }
@@ -83,7 +92,7 @@ export function Telegram({ arrived, onNext, onBack, onSkip }: StepProps) {
           manual={manual}
           fields={fields}
           busy={busy}
-          error={error || loadError}
+          error={error || loadError || data?.error || ''}
           unavailable={!settings?.ready}
           onField={(name, value) => {
             setFields((current) => ({ ...current, [name]: value }));

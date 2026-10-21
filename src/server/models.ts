@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type {
@@ -19,9 +19,7 @@ import type {
 import { modelSource } from '../shared/models.ts';
 import { signInPage } from '../shared/sign-in-page.ts';
 import { agentModels, memoryModels } from '../shared/model-defaults.ts';
-import { createAppGrantVault } from './vault-app-grants.ts';
-import { transaction } from './transaction.ts';
-import { lockKey, locksTable } from './locks.ts';
+import { createDatabaseModelStore, type ModelRecord, type ModelState } from './model-store.ts';
 import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
 
 const providerSchema = z.enum(['openai', 'anthropic', 'openrouter']);
@@ -54,16 +52,6 @@ export function endpointAddress(address: string) {
     return undefined;
   return url.href.replace(/\/+$/, '');
 }
-interface Row {
-  id: string;
-  provider: ModelProvider;
-  method: ModelMethod;
-  label: string;
-  status: 'connected' | 'reconnect' | 'loading';
-  models: ModelDefinition[];
-  managed: boolean;
-}
-
 export function createModelService(options: {
   database: Pool;
   ownerId: string;
@@ -77,7 +65,12 @@ export function createModelService(options: {
   };
   changed?(): void;
 }) {
-  const { database, ownerId, backend } = options;
+  const { backend } = options;
+  const store = createDatabaseModelStore({
+    database: options.database,
+    ownerId: options.ownerId,
+    keyStore: options.keyStore,
+  });
   let analytics: CaptureAnalytics | undefined;
   function connectionChanged(
     provider: ModelProvider,
@@ -99,8 +92,7 @@ export function createModelService(options: {
       throw error;
     }
   }
-  let vault: Awaited<ReturnType<typeof createAppGrantVault>>;
-  let rows: Row[] = [];
+  let rows: ModelRecord[] = [];
   let selection: ModelSelection | null = null;
   let starting: Promise<unknown> = Promise.resolve();
   const pendingControllers = new Set<AbortController>();
@@ -149,83 +141,42 @@ export function createModelService(options: {
     if (values.length) for (const observer of observers) observer(values);
   }
   async function reload() {
-    rows = (
-      await database.query<Row>(
-        'SELECT id,provider,method,label,status,models,managed FROM model_connections WHERE owner_id=$1 ORDER BY created_at,id',
-        [ownerId],
-      )
-    ).rows;
-    selection =
-      (
-        await database.query<{ selection: ModelSelection | null }>(
-          'SELECT selection FROM model_settings WHERE owner_id=$1',
-          [ownerId],
-        )
-      ).rows[0]?.selection ?? null;
+    const state = await store.read();
+    rows = state.connections.map(({ credential: _credential, ...row }) => row);
+    selection = state.selection;
     options.changed?.();
   }
-  async function locked<T>(
-    id: string,
-    run: (client: PoolClient) => Promise<T>,
-    signal?: AbortSignal,
-  ) {
-    signal?.throwIfAborted();
-    return transaction(async (client) => {
-      await lockKey(client, `model:${ownerId}:${id}`);
-      const result = await run(client);
-      signal?.throwIfAborted();
-      return result;
-    }, database);
-  }
-  async function credential(id: string, client: Pool | PoolClient = database) {
-    const row = (
-      await client.query<Row>(
-        'SELECT provider,managed FROM model_connections WHERE id=$1 AND owner_id=$2',
-        [id, ownerId],
-      )
-    ).rows[0];
+  function credential(row: ModelRecord | undefined) {
     if (!row) return undefined;
-    const value = row.managed
-      ? options.bootstrap?.credentials[row.provider]
-      : (JSON.parse((await vault.read(id, client)).value) as ModelCredential);
-    if (!value) return undefined;
-    remember(value);
+    const value = row.managed ? options.bootstrap?.credentials[row.provider] : row.credential;
+    if (value) remember(value);
     return value;
   }
-  async function readLocked(id: string, client: PoolClient) {
-    const row = (
-      await client.query<Row>('SELECT status FROM model_connections WHERE id=$1 AND owner_id=$2', [
-        id,
-        ownerId,
-      ])
-    ).rows[0];
-    if (!row) return {};
-    if (row.status === 'reconnect')
-      throw new ConnectionError('Reconnect the selected account in Models.');
-    try {
-      const current = await credential(id, client);
-      if (current?.type !== 'oauth' || current.expires > Date.now() + 300000)
-        return { value: current };
-      const next = await backend.refresh(current);
-      remember(next);
-      await vault.put(id, JSON.stringify(next), client);
-      return { value: next };
-    } catch (error) {
-      if (!(error instanceof ModelAuthError) || !error.requiresReconnect)
-        throw new ConnectionError(
-          error instanceof ModelAuthError
-            ? error.message
-            : 'The model service is temporarily unavailable. Try again.',
-        );
-      await client.query(
-        "UPDATE model_connections SET status='reconnect' WHERE id=$1 AND owner_id=$2",
-        [id, ownerId],
-      );
-      return { reconnect: true };
-    }
-  }
   async function read(id: string) {
-    const result = await locked(id, (client) => readLocked(id, client));
+    const result = await store.change(async (state) => {
+      const row = state.connections.find((item) => item.id === id);
+      if (!row) return {};
+      if (row.status === 'reconnect')
+        throw new ConnectionError('Reconnect the selected account in Models.');
+      try {
+        const current = credential(row);
+        if (current?.type !== 'oauth' || current.expires > Date.now() + 300000)
+          return { value: current };
+        const next = await backend.refresh(current);
+        remember(next);
+        row.credential = next;
+        return { value: next };
+      } catch (error) {
+        if (!(error instanceof ModelAuthError) || !error.requiresReconnect)
+          throw new ConnectionError(
+            error instanceof ModelAuthError
+              ? error.message
+              : 'The model service is temporarily unavailable. Try again.',
+          );
+        row.status = 'reconnect';
+        return { reconnect: true };
+      }
+    });
     if (result.reconnect) {
       await reload();
       throw new ConnectionError('Reconnect the selected ChatGPT account in Models.');
@@ -254,7 +205,12 @@ export function createModelService(options: {
       replace = false,
       status = 'connected',
       signal,
-    }: { managed?: boolean; replace?: boolean; status?: Row['status']; signal?: AbortSignal } = {},
+    }: {
+      managed?: boolean;
+      replace?: boolean;
+      status?: ModelRecord['status'];
+      signal?: AbortSignal;
+    } = {},
   ) {
     remember(value);
     if (!managed && !options.keyStore.configured)
@@ -263,68 +219,44 @@ export function createModelService(options: {
       );
     if (status === 'connected' && !definitions.length)
       throw new ConnectionError('This connection has no supported models.');
-    await locked(
-      id,
-      async (client) => {
-        const exists = (
-          await client.query('SELECT id FROM model_connections WHERE id=$1 AND owner_id=$2', [
-            id,
-            ownerId,
-          ])
-        ).rows[0];
-        if (replace && !exists)
-          throw new ConnectionError('This model connection was removed. Start a new connection.');
-        if (replace && value.type === 'oauth') {
-          let previous: ModelCredential | undefined;
-          try {
-            previous = JSON.parse((await vault.read(id, client)).value) as ModelCredential;
-          } catch {}
-          if (
-            previous?.type === 'oauth' &&
-            previous.accountId &&
-            previous.accountId !== value.accountId
-          )
-            throw new ConnectionError('Use Add connection for a different ChatGPT account.');
-        }
-        await client.query('SELECT owner_id FROM model_settings WHERE owner_id=$1 FOR UPDATE', [
-          ownerId,
-        ]);
-        const count = (
-          await client.query<{ count: number }>(
-            'SELECT count(*)::int AS count FROM model_connections WHERE owner_id=$1',
-            [ownerId],
-          )
-        ).rows[0].count;
-        if (!exists && count >= 20)
-          throw new ConnectionError('Remove an unused model connection before adding another.');
-        if (!managed) await vault.put(id, JSON.stringify(value), client);
-        const label =
-          value.type === 'oauth'
-            ? (value.email ?? 'ChatGPT account')
-            : value.type === 'endpoint'
-              ? new URL(value.url).host
-              : modelSource({ provider, method });
-        await client.query(
-          `INSERT INTO model_connections(id,owner_id,provider,method,label,models,managed,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-        ON CONFLICT(id) DO UPDATE SET models=excluded.models,label=excluded.label,status=excluded.status WHERE model_connections.owner_id=excluded.owner_id`,
-          [id, ownerId, provider, method, label, JSON.stringify(definitions), managed, status],
-        );
-        await selectDefault(client, provider, method, definitions, id, managed, status);
-      },
-      signal,
-    );
+    await store.change((state) => {
+      const previous = state.connections.find((row) => row.id === id);
+      if (replace && !previous)
+        throw new ConnectionError('This model connection was removed. Start a new connection.');
+      if (
+        replace &&
+        value.type === 'oauth' &&
+        previous?.credential?.type === 'oauth' &&
+        previous.credential.accountId !== value.accountId
+      )
+        throw new ConnectionError('Use Add connection for a different ChatGPT account.');
+      if (!previous && state.connections.length >= 20)
+        throw new ConnectionError('Remove an unused model connection before adding another.');
+      const label =
+        value.type === 'oauth'
+          ? (value.email ?? 'ChatGPT account')
+          : value.type === 'endpoint'
+            ? new URL(value.url).host
+            : modelSource({ provider, method });
+      const row: ModelRecord = {
+        id,
+        provider,
+        method,
+        label,
+        models: definitions,
+        managed,
+        status,
+        ...(!managed ? { credential: value } : {}),
+      };
+      if (previous) state.connections[state.connections.indexOf(previous)] = row;
+      else state.connections.push(row);
+      selectDefault(state, row);
+    }, signal);
     await reload();
     return id;
   }
-  async function selectDefault(
-    client: PoolClient,
-    provider: ModelProvider,
-    method: ModelMethod,
-    definitions: ModelDefinition[],
-    id: string,
-    managed: boolean,
-    status: Row['status'],
-  ) {
+  function selectDefault(state: ModelState, row: ModelRecord) {
+    const { provider, method, models: definitions, id, managed, status } = row;
     const preferredId =
       managed && options.bootstrap?.provider === provider
         ? (options.bootstrap.model ?? agentModels[provider])
@@ -337,58 +269,38 @@ export function createModelService(options: {
     if (
       preferred &&
       status === 'connected' &&
-      (!managed || options.bootstrap?.provider === provider)
-    )
-      await client.query(
-        'UPDATE model_settings SET selection=$2,selection_set=true WHERE owner_id=$1 AND (NOT selection_set OR ($3 AND selection IS NULL))',
-        [
-          ownerId,
-          JSON.stringify({
-            connectionId: id,
-            modelId: preferred.choice.id,
-            effort: preferred.choice.efforts.includes('high')
-              ? 'high'
-              : preferred.choice.efforts[0],
-          }),
-          subscription,
-        ],
-      );
+      (!managed || options.bootstrap?.provider === provider) &&
+      (!state.selectionSet || (subscription && state.selection === null))
+    ) {
+      state.selection = {
+        connectionId: id,
+        modelId: preferred.choice.id,
+        effort: preferred.choice.efforts.includes('high') ? 'high' : preferred.choice.efforts[0],
+      };
+      state.selectionSet = true;
+    }
   }
   async function updateCatalog(id: string, signal?: AbortSignal) {
-    await locked(
-      id,
-      async (client) => {
-        const row = (
-          await client.query<Row>(
-            'SELECT provider,method,status,managed FROM model_connections WHERE id=$1 AND owner_id=$2',
-            [id, ownerId],
-          )
-        ).rows[0];
-        if (!row) throw new ConnectionError('This model connection is unavailable.');
-        if (!row.managed && row.status === 'reconnect')
-          throw new ConnectionError('Reconnect the selected account in Models.');
-        const value = await credential(id, client);
-        if (!value) throw new ConnectionError('This model connection is unavailable.');
-        const definitions = await catalog(row.provider, row.method, value);
-        if (!definitions.length)
-          throw new ConnectionError('This connection has no supported models.');
-        signal?.throwIfAborted();
-        await client.query(
-          "UPDATE model_connections SET models=$3,status='connected',label=COALESCE($4,label) WHERE id=$1 AND owner_id=$2",
-          [id, ownerId, JSON.stringify(definitions), value.type === 'oauth' ? value.email : null],
-        );
-        await selectDefault(
-          client,
-          row.provider,
-          row.method,
-          definitions,
-          id,
-          row.managed,
-          'connected',
-        );
-      },
-      signal,
-    );
+    signal?.throwIfAborted();
+    const snapshot = (await store.read()).connections.find((item) => item.id === id);
+    if (!snapshot) throw new ConnectionError('This model connection is unavailable.');
+    if (!snapshot.managed && snapshot.status === 'reconnect')
+      throw new ConnectionError('Reconnect the selected account in Models.');
+    const value = credential(snapshot);
+    if (!value) throw new ConnectionError('This model connection is unavailable.');
+    const previous = JSON.stringify(snapshot);
+    const definitions = await catalog(snapshot.provider, snapshot.method, value);
+    if (!definitions.length) throw new ConnectionError('This connection has no supported models.');
+    await store.change((state) => {
+      const row = state.connections.find((item) => item.id === id);
+      if (!row || JSON.stringify(row) !== previous)
+        throw new ConnectionError('This model connection changed. Refresh its models again.');
+      signal?.throwIfAborted();
+      row.models = definitions;
+      row.status = 'connected';
+      if (value.type === 'oauth' && value.email) row.label = value.email;
+      selectDefault(state, row);
+    }, signal);
     await reload();
   }
   async function refreshCatalog(id: string) {
@@ -595,33 +507,16 @@ export function createModelService(options: {
       };
     },
     async initialize() {
-      vault = await createAppGrantVault(database, { ownerId, keyStore: options.keyStore });
-      await database.query(`${locksTable};
-      CREATE TABLE IF NOT EXISTS model_connections (
-        id uuid PRIMARY KEY,owner_id text NOT NULL,provider text NOT NULL,method text NOT NULL,label text NOT NULL,
-        status text NOT NULL DEFAULT 'connected',models jsonb NOT NULL,managed boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now()
-      ); CREATE INDEX IF NOT EXISTS model_connections_owner ON model_connections(owner_id);
-      CREATE TABLE IF NOT EXISTS model_settings(owner_id text PRIMARY KEY,selection jsonb,selection_set boolean NOT NULL DEFAULT false);
-      ALTER TABLE model_settings DROP COLUMN IF EXISTS host_id;`);
-      await database.query(
-        'INSERT INTO model_settings(owner_id) VALUES($1) ON CONFLICT DO NOTHING',
-        [ownerId],
-      );
-      await reload();
-      for (const row of rows) {
-        try {
-          if (!(await credential(row.id)))
-            await database.query(
-              "UPDATE model_connections SET status='reconnect' WHERE id=$1 AND owner_id=$2",
-              [row.id, ownerId],
-            );
-        } catch {
-          await database.query(
-            "UPDATE model_connections SET status='reconnect' WHERE id=$1 AND owner_id=$2",
-            [row.id, ownerId],
-          );
+      await store.initialize();
+      await store.change((state) => {
+        for (const row of state.connections) {
+          try {
+            if (!credential(row)) row.status = 'reconnect';
+          } catch {
+            row.status = 'reconnect';
+          }
         }
-      }
+      });
       await reload();
       const sources = Object.entries(options.bootstrap?.credentials ?? {}).sort(
         ([a], [b]) =>
@@ -676,61 +571,39 @@ export function createModelService(options: {
           throw new ConnectionError(
             'This server has no models Otto can use. Otto needs models with tool support.',
           );
-        await reload();
-        const same = (
-          await Promise.all(
-            rows
-              .filter((row) => row.provider === 'compatible' && !row.managed)
-              .map(async (row) => ({
-                id: row.id,
-                value: await credential(row.id).catch(() => undefined),
-              })),
-          )
-        ).find((row) => row.value?.type === 'endpoint' && row.value.url === url)?.id;
+        const state = await store.read();
+        const same = state.connections.find(
+          (row) =>
+            row.provider === 'compatible' &&
+            !row.managed &&
+            row.credential?.type === 'endpoint' &&
+            row.credential.url === url,
+        )?.id;
         return save('compatible', 'api_key', value, definitions, same, { replace: !!same });
       });
     },
     async select(input: ModelSelection) {
       const value = selectionSchema.parse(input);
-      await locked(value.connectionId, async (client) => {
-        const row = (
-          await client.query<Row>(
-            'SELECT status,models FROM model_connections WHERE id=$1 AND owner_id=$2',
-            [value.connectionId, ownerId],
-          )
-        ).rows[0];
+      await store.change((state) => {
+        const row = state.connections.find((item) => item.id === value.connectionId);
         const model =
           row?.status === 'connected' &&
-          row.models.find((model) => model.choice.id === value.modelId);
+          row.models.find((item) => item.choice.id === value.modelId);
         if (!model || !model.choice.efforts.includes(value.effort))
           throw new ConnectionError('Choose an available model and effort.');
-        await client.query(
-          'UPDATE model_settings SET selection=$2,selection_set=true WHERE owner_id=$1',
-          [ownerId, JSON.stringify(value)],
-        );
+        state.selection = value;
+        state.selectionSet = true;
       });
       await reload();
     },
     async remove(id: string) {
       for (const [state, attempt] of attempts) if (attempt.connectionId === id) await cancel(state);
-      const removed = await locked(id, async (client) => {
-        const row = (
-          await client.query<Row>(
-            'SELECT provider,method,managed FROM model_connections WHERE id=$1 AND owner_id=$2',
-            [id, ownerId],
-          )
-        ).rows[0];
+      const removed = await store.change((state) => {
+        const row = state.connections.find((item) => item.id === id);
         if (row?.managed)
           throw new ConnectionError('This connection is managed in server settings.');
-        await client.query('DELETE FROM model_connections WHERE id=$1 AND owner_id=$2', [
-          id,
-          ownerId,
-        ]);
-        await vault.remove(id, client);
-        await client.query(
-          "UPDATE model_settings SET selection=NULL WHERE owner_id=$1 AND selection->>'connectionId'=$2",
-          [ownerId, id],
-        );
+        state.connections = state.connections.filter((item) => item.id !== id);
+        if (state.selection?.connectionId === id) state.selection = null;
         return row;
       });
       await reload();

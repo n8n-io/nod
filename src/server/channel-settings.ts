@@ -75,12 +75,81 @@ const fields: Record<ChannelProvider, Set<string>> = {
     'WHATSAPP_VERIFY_TOKEN',
   ]),
 };
-type SettingsRow = {
+type ChannelSettingsRow = {
   provider: ChannelProvider;
   enabled: boolean;
   ciphertext: string | null;
   summary: ChannelSetupSummary;
 };
+
+export async function initializeChannelSettings(pool: Pick<Pool, 'query'>) {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS channel_settings(owner_id text NOT NULL,provider text NOT NULL,enabled boolean NOT NULL,ciphertext text,summary jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner_id,provider))`,
+  );
+}
+
+async function databaseStore(pool: Pool, owner: string) {
+  await initializeChannelSettings(pool);
+  return {
+    async read() {
+      return (
+        await pool.query<ChannelSettingsRow>('SELECT * FROM channel_settings WHERE owner_id=$1', [
+          owner,
+        ])
+      ).rows;
+    },
+    async save(row: ChannelSettingsRow, beforeCommit?: () => Promise<void>) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `INSERT INTO channel_settings(owner_id,provider,enabled,ciphertext,summary) VALUES($1,$2,$3,$4,$5)
+           ON CONFLICT(owner_id,provider) DO UPDATE SET enabled=EXCLUDED.enabled,ciphertext=EXCLUDED.ciphertext,summary=EXCLUDED.summary,updated_at=now()`,
+          [owner, row.provider, row.enabled, row.ciphertext, JSON.stringify(row.summary)],
+        );
+        await beforeCommit?.();
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+    async activate(provider: ChannelProvider) {
+      return (
+        await pool.query<Pick<ChannelSettingsRow, 'summary'>>(
+          `UPDATE channel_settings SET summary=jsonb_set(summary,'{webhookStatus}','"registered"'),updated_at=now() WHERE owner_id=$1 AND provider=$2 AND enabled=true RETURNING summary`,
+          [owner, provider],
+        )
+      ).rows[0]?.summary;
+    },
+    async replace(
+      previous: ChannelSettingsRow,
+      next: ChannelSettingsRow,
+      beforeCommit: (client: PoolClient) => Promise<(() => void) | undefined>,
+    ) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const updated = await client.query(
+          `UPDATE channel_settings SET ciphertext=$2,summary=$3::jsonb || CASE WHEN summary ? 'webhookStatus' THEN jsonb_build_object('webhookStatus',summary->'webhookStatus') ELSE '{}'::jsonb END,updated_at=now()
+           WHERE owner_id=$1 AND provider='telegram' AND enabled=true AND ciphertext=$4`,
+          [owner, next.ciphertext, JSON.stringify(next.summary), previous.ciphertext],
+        );
+        if (updated.rowCount !== 1) throw new ChannelSetupFailure('pairing_unavailable');
+        const notify = await beforeCommit(client);
+        await client.query('COMMIT');
+        return notify;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+  };
+}
 
 function createLock() {
   let pending = Promise.resolve();
@@ -132,7 +201,7 @@ function issuePairing(summary: ChannelSetupSummary) {
     pairingUrl: `https://t.me/${handle.slice(1)}?start=${code}`,
   };
 }
-function open(key: Buffer, owner: string, row: SettingsRow) {
+export function openChannelSettings(key: Buffer, owner: string, row: ChannelSettingsRow) {
   const result = z
     .record(z.string(), z.string().max(8192))
     .parse(JSON.parse(openVaultValue(key, binding(owner, row.provider), row.ciphertext!)));
@@ -152,9 +221,7 @@ export async function createChannelSettings(
   },
 ) {
   const owner = z.string().min(1).max(200).parse(options.ownerId);
-  await pool.query(
-    `CREATE TABLE IF NOT EXISTS channel_settings(owner_id text NOT NULL,provider text NOT NULL,enabled boolean NOT NULL,ciphertext text,summary jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner_id,provider))`,
-  );
+  const store = await databaseStore(pool, owner);
   const exclusive = createLock();
   const pairingExclusive = createLock();
   let key: Promise<Buffer> | undefined;
@@ -172,24 +239,18 @@ export async function createChannelSettings(
       : configured.WHATSAPP_PHONE_NUMBER_ID;
   }
   async function environment() {
-    const { rows } = await pool.query<SettingsRow>(
-      'SELECT * FROM channel_settings WHERE owner_id=$1',
-      [owner],
-    );
+    const rows = await store.read();
     const result: Record<string, string> = {};
     for (const row of rows) {
       providerSchema.parse(row.provider);
       if (row.enabled && row.ciphertext) {
-        Object.assign(result, open(await encryptionKey(), owner, row));
+        Object.assign(result, openChannelSettings(await encryptionKey(), owner, row));
       } else result[`${row.provider.toUpperCase()}_ENABLED`] = 'false';
     }
     return result;
   }
   async function status() {
-    const { rows } = await pool.query<SettingsRow>(
-      'SELECT provider,enabled,summary FROM channel_settings WHERE owner_id=$1',
-      [owner],
-    );
+    const rows = await store.read();
     return {
       ready: options.keyStore.configured,
       channels: rows.map((row) =>
@@ -201,22 +262,17 @@ export async function createChannelSettings(
     if (!options.verifier.register) throw new ChannelSetupFailure('activation_pending');
     await options.apply(await environment());
     await options.verifier.register(provider, configuration);
-    const result = await pool.query<Pick<SettingsRow, 'summary'>>(
-      `UPDATE channel_settings SET summary=jsonb_set(summary,'{webhookStatus}','"registered"'),updated_at=now() WHERE owner_id=$1 AND provider=$2 AND enabled=true RETURNING summary`,
-      [owner, provider],
-    );
-    return summarySchema.parse(result.rows[0]?.summary);
+    return summarySchema.parse(await store.activate(provider));
   }
   async function recover() {
     return exclusive(async () => {
-      const { rows } = await pool.query<SettingsRow>(
-        `SELECT * FROM channel_settings WHERE owner_id=$1 AND enabled=true AND summary->>'webhookStatus'='registration_pending'`,
-        [owner],
+      const rows = (await store.read()).filter(
+        (row) => row.enabled && row.summary.webhookStatus === 'registration_pending',
       );
       for (const row of rows) {
         try {
           await activate(providerSchema.parse(row.provider), {
-            environment: open(await encryptionKey(), owner, row),
+            environment: openChannelSettings(await encryptionKey(), owner, row),
             summary: summarySchema.parse(row.summary),
           });
         } catch {
@@ -255,11 +311,7 @@ export async function createChannelSettings(
       if (summary.webhookStatus === 'registration_pending') {
         if (!options.verifier.register || provider !== 'telegram' || summary.mode !== 'webhook')
           throw new Error('Channel registration is unavailable.');
-        await pool.query(
-          `INSERT INTO channel_settings(owner_id,provider,enabled,ciphertext,summary) VALUES($1,$2,true,$3,$4)
-        ON CONFLICT(owner_id,provider) DO UPDATE SET enabled=true,ciphertext=EXCLUDED.ciphertext,summary=EXCLUDED.summary,updated_at=now()`,
-          [owner, provider, ciphertext, JSON.stringify(summary)],
-        );
+        await store.save({ provider, enabled: true, ciphertext, summary });
         try {
           summary = await activate(provider, { environment: configured, summary });
         } catch {
@@ -267,24 +319,15 @@ export async function createChannelSettings(
         }
         return { ok: true, channel: summary, ...(pairingUrl ? { pairingUrl } : {}) };
       }
-      const client = await pool.connect();
       try {
-        await client.query('BEGIN');
-        await client.query(
-          `INSERT INTO channel_settings(owner_id,provider,enabled,ciphertext,summary) VALUES($1,$2,$3,$4,$5)
-        ON CONFLICT(owner_id,provider) DO UPDATE SET enabled=EXCLUDED.enabled,ciphertext=EXCLUDED.ciphertext,summary=EXCLUDED.summary,updated_at=now()`,
-          [owner, provider, input !== undefined, ciphertext, JSON.stringify(summary)],
+        await store.save({ provider, enabled: input !== undefined, ciphertext, summary }, () =>
+          options.apply(nextEnvironment),
         );
-        await options.apply(nextEnvironment);
-        await client.query('COMMIT');
       } catch (error) {
-        await client.query('ROLLBACK');
         try {
           await options.apply(oldEnvironment);
         } catch {}
         throw error;
-      } finally {
-        client.release();
       }
       if (input === undefined)
         await options.verifier.unregister?.(provider, oldEnvironment).catch(() => {});
@@ -292,13 +335,9 @@ export async function createChannelSettings(
     });
   }
   async function telegramRow() {
-    const { rows } = await pool.query<SettingsRow>(
-      "SELECT * FROM channel_settings WHERE owner_id=$1 AND provider='telegram' AND enabled=true",
-      [owner],
-    );
-    const row = rows[0];
+    const row = (await store.read()).find((item) => item.provider === 'telegram' && item.enabled);
     return row?.ciphertext
-      ? { row, configured: open(await encryptionKey(), owner, row) }
+      ? { row, configured: openChannelSettings(await encryptionKey(), owner, row) }
       : undefined;
   }
   function withoutPairing(configured: Record<string, string>) {
@@ -307,45 +346,38 @@ export async function createChannelSettings(
     );
   }
   async function replaceTelegram(
-    row: SettingsRow,
+    row: ChannelSettingsRow,
     next: Record<string, string>,
     summary: ChannelSetupSummary,
     apply: boolean,
     candidate?: TelegramPairingCandidate,
   ) {
     const oldEnvironment = apply ? await environment() : {};
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      const updated = await client.query(
-        "UPDATE channel_settings SET ciphertext=$2,summary=$3::jsonb || CASE WHEN summary ? 'webhookStatus' THEN jsonb_build_object('webhookStatus',summary->'webhookStatus') ELSE '{}'::jsonb END,updated_at=now() WHERE owner_id=$1 AND provider='telegram' AND enabled=true AND ciphertext=$4",
-        [
-          owner,
-          seal(await encryptionKey(), owner, 'telegram', next),
-          JSON.stringify(summarySchema.parse(summary)),
-          row.ciphertext,
-        ],
+      return await store.replace(
+        row,
+        {
+          ...row,
+          ciphertext: seal(await encryptionKey(), owner, 'telegram', next),
+          summary: summarySchema.parse(summary),
+        },
+        async (client) => {
+          if (apply)
+            await options.apply({
+              ...Object.fromEntries(
+                Object.entries(oldEnvironment).filter(([key]) => !fields.telegram.has(key)),
+              ),
+              ...next,
+            });
+          return candidate && client ? options.paired?.(candidate, client) : undefined;
+        },
       );
-      if (updated.rowCount !== 1) throw new ChannelSetupFailure('pairing_unavailable');
-      if (apply)
-        await options.apply({
-          ...Object.fromEntries(
-            Object.entries(oldEnvironment).filter(([key]) => !fields.telegram.has(key)),
-          ),
-          ...next,
-        });
-      const notify = candidate ? await options.paired?.(candidate, client) : undefined;
-      await client.query('COMMIT');
-      return notify;
     } catch (error) {
-      await client.query('ROLLBACK');
       if (apply)
         try {
           await options.apply(oldEnvironment);
         } catch {}
       throw error;
-    } finally {
-      client.release();
     }
   }
   async function pair(request: ChannelPairingRequest) {
@@ -454,7 +486,7 @@ export async function createChannelSettings(
           throw new ChannelSetupFailure('activation_pending');
         }
       }
-      return pairingExclusive(async () => {
+      const result = await pairingExclusive(async () => {
         const latest = await telegramRow();
         if (!latest) throw new ChannelSetupFailure('pairing_unavailable');
         const channel = summarySchema.parse(latest.row.summary);
@@ -480,6 +512,7 @@ export async function createChannelSettings(
           pairingUrl: pairing.pairingUrl,
         };
       });
+      return result;
     });
   }
   function registerRoutes(app: FastifyInstance) {

@@ -6,11 +6,13 @@ import { prepareSuggestions } from '../storage';
 
 const sequence = [{ typing: 450 }, { wait: 300, typing: 550 }, { wait: 300 }];
 
-export function OpenSource({ arrived, onNext, onBack, busy, notice }: StepProps) {
+export function OpenSource({ arrived, onNext, onBack, busy, notice, preparing }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const noticeBox = useRef<HTMLDivElement>(null);
   const noticed = !!notice;
-  useEffect(() => void prepareSuggestions(true), []);
+  useEffect(() => {
+    if (!preparing) void prepareSuggestions(true);
+  }, [preparing]);
   useEffect(() => {
     if (noticed) noticeBox.current?.scrollIntoView({ block: 'nearest' });
   }, [noticed]);
@@ -31,8 +33,8 @@ export function OpenSource({ arrived, onNext, onBack, busy, notice }: StepProps)
             and your feedback shapes what I become.
           </Bubble>,
           <Bubble>
-            If something breaks or you have an idea, send us feedback. There’s a button for it in
-            the app. A screenshot helps a lot, and we read every message.
+            Once Otto opens, use Feedback in the app to report a problem or share an idea. A
+            screenshot helps, and we read every message.
           </Bubble>,
         ]}
       />

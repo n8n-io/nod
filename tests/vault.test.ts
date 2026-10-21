@@ -3756,9 +3756,14 @@ globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.windo
 globalThis.location = window.location;
 globalThis.EventSource = window.EventSource = class { static CLOSED = 2; readyState = 0; close() {} addEventListener() {} };
 window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+let finishPreparation;
+let deferPreparation = false;
+let suggestions = 0;
 window.fetch = globalThis.fetch = async (url) => {
   const path = new URL(url, window.location.href).pathname;
-  if (path === '/api/account/prepare') return Response.json({ ok: true });
+  if (path === '/api/account/prepare') return deferPreparation ? new Promise(resolve => {finishPreparation = () => resolve(Response.json({ok:true}));}) : Response.json({ ok: true });
+  if (path === '/api/apps') return Response.json([]);
+  if (path === '/api/onboarding/suggestions') {suggestions++; return Response.json({ok:true});}
   if (path === '/api/models') return Response.json({ connections: [{ id: 'synthetic', status: 'connected', models: [] }], selection: null });
   if (path === '/api/channel-settings') return Response.json({ ready: false, channels: [] });
   return Response.json({ error: 'Synthetic route unavailable.' }, { status: 404 });
@@ -3783,19 +3788,20 @@ analytics.captureAnalytics('otto_settings_viewed', { tab: 'general' });
 assert.deepEqual(captured.map(event => [event.event, event.properties.step, event.properties.direction, event.properties.tab]), [['otto_onboarding_step_viewed', undefined, 'forward', undefined], ['otto_settings_viewed', undefined, undefined, undefined], ['otto_settings_viewed', undefined, undefined, 'general']]);
 captured.length = 0;
 analytics.configureAnalytics(undefined, 'web');
-const { createElement, act } = await import('react');
+const { createElement, act, StrictMode } = await import('react');
 const { createRoot } = await import('react-dom/client');
 const { Onboarding } = await import('./src/web/pages/onboarding/index.tsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 let root = createRoot(document.getElementById('root'));
 let sharing = false;
-const render = () => root.render(createElement(Onboarding, {
+let native = false;
+const render = () => {const view = createElement(Onboarding, {
   user: { id: 'synthetic-owner', name: 'Synthetic', email: null, avatarUrl: null },
   onComplete: async () => {},
   onFeedback() {},
   usageData: sharing,
   onUsageData: async (value) => { sharing = value; analytics.configureAnalytics(value ? enabled : undefined, 'web'); render(); },
-}));
+}); root.render(native ? createElement(StrictMode, null, view) : view);};
 const settle = (ms = 50) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
 const button = (text) => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === text);
 const steps = () => captured.map(event => [event.event, event.properties.step, event.properties.direction]);
@@ -3811,16 +3817,24 @@ await settle();
 assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'brain', 'forward']]);
 await act(async () => root.unmount());
 captured.length = 0;
+deferPreparation = true;
+sessionStorage.removeItem('otto.onboarding.suggestions');
+suggestions = 0;
 sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 2 }));
 root = createRoot(document.getElementById('root'));
 await act(async () => render());
 for (let attempt = 0; attempt < 80 && !button('Back'); attempt++) await settle();
+assert.equal(suggestions, 0, 'suggestions wait for account preparation');
 await act(async () => button('Back').click());
 for (let attempt = 0; attempt < 80 && !button('Skip for now'); attempt++) await settle();
 await act(async () => button('Skip for now').click());
 await settle();
 assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'open_source', 'forward'], ['otto_onboarding_step_viewed', 'telegram', 'back'], ['otto_onboarding_step_skipped', 'telegram', undefined], ['otto_onboarding_step_viewed', 'open_source', 'forward']]);
 assert.equal(captured.some(event => event.event === 'otto_onboarding_recap'), false);
+assert.equal(suggestions, 0);
+await act(async () => finishPreparation());
+for (let attempt = 0; attempt < 80 && !suggestions; attempt++) await settle();
+assert.equal(suggestions, 1);
 await act(async () => root.unmount());
 sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 1 }));
 root = createRoot(document.getElementById('root'));
@@ -3828,6 +3842,56 @@ await act(async () => render());
 for (let attempt = 0; attempt < 80 && !button('Let’s go'); attempt++) await settle();
 assert.ok(document.querySelector('[role=switch]'));
 await act(async () => root.unmount());
+captured.length = 0;
+native = true;
+let desktopPreferences = {theme:'system',resolvedTheme:'light',notifications:false,launchAtLogin:false,onboardingPreferenceStep:'notifications'};
+window.ottoDesktop = {
+  getSettings:async()=>desktopPreferences,
+  saveSettings:async change=>(desktopPreferences={...desktopPreferences,...change}),
+  getPreferences:async()=>desktopPreferences,
+  onPreferences:()=>()=>{},
+};
+analytics.configureAnalytics(enabled, 'desktop');
+sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'brain', version: 2 }));
+root = createRoot(document.getElementById('root'));
+await act(async () => render());
+await settle();
+assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'brain', 'forward']]);
+await act(async () => root.unmount());
+captured.length = 0;
+analytics.configureAnalytics(undefined, 'desktop');
+sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 2 }));
+root = createRoot(document.getElementById('root'));
+await act(async () => render());
+for (let attempt = 0; attempt < 80 && !button('Continue'); attempt++) await settle();
+assert.equal(document.querySelector('.ob').dataset.step, 'notifications');
+assert.deepEqual(captured, []);
+await act(async () => root.unmount());
+analytics.configureAnalytics(enabled, 'desktop');
+root = createRoot(document.getElementById('root'));
+await act(async () => render());
+for (let attempt = 0; attempt < 80 && !button('Continue'); attempt++) await settle();
+assert.equal(document.querySelector('.ob').dataset.step, 'notifications');
+assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'notifications', 'forward']]);
+await act(async () => document.querySelector('[role=switch]').click());
+await settle();
+assert.equal(captured.length, 1);
+await act(async () => button('Continue').click());
+for (let attempt = 0; attempt < 80 && !(document.querySelector('.ob')?.dataset.step === 'launchAtLogin' && button('Continue')); attempt++) await settle();
+assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'notifications', 'forward'], ['otto_onboarding_step_viewed', 'launch_at_login', 'forward']]);
+await act(async () => button('Continue').click());
+for (let attempt = 0; attempt < 80 && document.querySelector('.ob')?.dataset.step !== 'open'; attempt++) await settle();
+assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'notifications', 'forward'], ['otto_onboarding_step_viewed', 'launch_at_login', 'forward'], ['otto_onboarding_step_viewed', 'open_source', 'forward']]);
+assert.ok(captured.every(event => event.properties.surface === 'desktop'));
+await act(async () => root.unmount());
+captured.length = 0;
+root = createRoot(document.getElementById('root'));
+await act(async () => render());
+await settle();
+assert.equal(document.querySelector('.ob').dataset.step, 'open');
+assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'open_source', 'forward']]);
+await act(async () => root.unmount());
+delete window.ottoDesktop;
 dom.window.close();
 process.exit(0);
 `,
@@ -4024,3 +4088,818 @@ test(
     }
   },
 );
+
+test('onboarding advances only after a newly confirmed connection with ready owned state', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 25_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><div id="root"></div>', {url:'http://127.0.0.1:51000/onboarding',pretendToBeVisual:true});
+for (const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','MutationObserver','getComputedStyle','sessionStorage']) Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location=window.location;
+globalThis.ResizeObserver=class {observe(){} disconnect(){}};
+HTMLElement.prototype.scrollIntoView=function(){};
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+window.open=()=>({closed:false,opener:null,location:{replace(){}},close(){}});
+let channel;
+globalThis.BroadcastChannel=class {constructor(){channel=this;} close(){}};
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {Brain}=await import('./src/web/pages/onboarding/steps/brain.tsx');
+const {Email}=await import('./src/web/pages/onboarding/steps/email.tsx');
+const {Telegram}=await import('./src/web/pages/onboarding/steps/telegram.tsx');
+const {About}=await import('./src/web/pages/onboarding/steps/about.tsx');
+const {pageDataCache}=await import('./src/web/lib/page-data-cache.ts');
+const {writeStep}=await import('./src/web/pages/onboarding/storage.ts');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+let root;
+let advances=0;
+const settle=(ms=15)=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,ms));});
+const waitFor=async(condition)=>{for(let i=0;i<100&&!condition();i++)await settle();assert.ok(condition(),'Expected the confirmed connection to advance its React step');};
+const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent.trim()===text);
+const click=async(text)=>{await waitFor(()=>button(text)&&!button(text).disabled);await act(async()=>button(text).click());await settle();};
+async function mount(Component,arrived='forward') {
+  if(root) await act(async()=>root.unmount());
+  pageDataCache.clear(); advances=0;
+  root=createRoot(document.getElementById('root'));
+  await act(async()=>root.render(createElement(Component,{arrived,onNext(){advances++;},onBack(){},onSkip(){}})));
+  await settle();
+}
+const connection={id:'fixture-model',provider:'anthropic',method:'api_key',status:'connected',label:'Fixture model',managed:false,models:[{id:'fixture-model-name',name:'Fixture',efforts:['off'],images:false,contextWindow:32000}]};
+let models={connections:[],selection:null};
+let failKey=true;
+let select;
+let oauth;
+let gmailConnected=false;
+let disconnectPending=false;
+let disconnectCalls=0;
+let failDisconnect=true;
+let gmailReconnect=false;
+let gmailCompleted=false;
+let gmailMissing=false;
+let failApps=false;
+let failTelegram=true;
+let failChannelLoad=false;
+let interviewSaves=0;
+let interviewDraft={answers:[],turns:[],done:false};
+let interviewGeneration='synthetic-generation-1';
+let interviewCompleted=false;
+let generations=1;
+const interviewState=()=>({...interviewDraft,generation:interviewGeneration,completed:interviewCompleted});
+let interviewPosts=0;
+let holdInterviewRead=false;
+let releaseInterviewRead;
+let failInterviewRead=false;
+let failInterviewReset=false;
+let resetVersion;
+let interviewDeletes=0;
+const recoveryRequests=[];
+let holdRecovery=false;
+let releaseRecovery;
+let failInterviewPost=0;
+let failInterviewSave=false;
+let expectedAnswers=['Synthetic project focus'];
+let telegram={provider:'telegram',enabled:true,mode:'polling',accountHandle:'@fixture_bot',pairingCandidate:{id:'123456',name:'Fixture'},pairingExpiresAt:new Date(Date.now()+600000).toISOString()};
+const attempt='A'.repeat(43);
+window.fetch=globalThis.fetch=async(url,options={})=>{
+  const path=new URL(url,window.location.href).pathname;
+  const body=options.body?JSON.parse(options.body):{};
+  if(path==='/api/onboarding/interview'){
+    if(!options.method||options.method==='GET'){
+      if(holdInterviewRead)return new Promise(resolve=>{releaseInterviewRead=()=>resolve(Response.json(interviewState()));});
+      return failInterviewRead?Response.json({error:'Synthetic draft unavailable'},{status:500}):Response.json(resetVersion?{resetVersion}:interviewState());
+    }
+    if(options.method==='DELETE')interviewDeletes++;
+    if(options.method==='DELETE'&&'resetVersion' in body){
+      recoveryRequests.push(body);
+      if(body.resetVersion!==resetVersion)return Response.json({error:'Synthetic recovery version changed'},{status:409});
+      const recover=()=>{
+        resetVersion=undefined;
+        interviewGeneration='synthetic-generation-'+(++generations);
+        interviewCompleted=false;
+        interviewDraft={answers:[],turns:[],done:false};
+        return Response.json(interviewState());
+      };
+      return holdRecovery?new Promise(resolve=>{releaseRecovery=()=>resolve(recover());}):recover();
+    }
+    if(body.generation!==interviewGeneration)return Response.json({error:'Synthetic generation changed'},{status:409});
+    if(options.method==='DELETE'){
+      if(failInterviewReset)return Response.json({error:'Synthetic reset failed'},{status:500});
+      interviewGeneration='synthetic-generation-'+(++generations);
+      interviewCompleted=false;
+      interviewDraft={answers:[],turns:[],done:false};
+      return Response.json(interviewState());
+    }
+    if(options.method==='PUT'){
+      if(failInterviewSave)return Response.json({error:'Synthetic answers changed'},{status:409});
+      assert.deepEqual(body.answers,expectedAnswers);
+      interviewSaves++;
+      interviewCompleted=true;
+      interviewDraft={answers:[],turns:[],done:true};
+      return Response.json({ok:true});
+    }
+    if(interviewCompleted)return Response.json({error:'Synthetic generation completed'},{status:409});
+    interviewPosts++;
+    if(failInterviewPost)return Response.json({error:'Synthetic draft write failed'},{status:failInterviewPost});
+    const answers=[],turns=[];
+    let said=[];
+    for(const message of body.talk){if(message.from==='owner'){answers.push(message.text);turns.push(said);said=[];}else said.push(message.text);}
+    const messages=answers.length?['Synthetic interview complete.']:['Synthetic question?'];
+    interviewDraft={answers,turns:[...turns,messages],done:answers.length>0};
+    return Response.json({messages,done:answers.length>0});
+  }
+  if(path==='/api/onboarding/suggestions')return Response.json({ok:true});
+  if(path==='/api/models')return Response.json(models);
+  if(path==='/api/models/keys'){
+    if(failKey)return Response.json({error:'Fixture key rejected'},{status:503});
+    models={connections:[connection],selection:null};
+    return Response.json(models);
+  }
+  if(path==='/api/models/selection')return new Promise(resolve=>{select=()=>{models={...models,selection:body};resolve(Response.json(models));};});
+  if(path==='/api/models/oauth')return Response.json({attempt:'fixture-oauth',url:'https://auth.openai.com/authorize?fixture=1'});
+  if(path==='/api/models/oauth/status/fixture-oauth')return new Promise(resolve=>{oauth=()=>resolve(Response.json({status:'connected'}));});
+  if(path==='/api/configuration')return Response.json({integrationsReady:true});
+  if(path==='/api/integrations/key')return Response.json({mode:'own',switchable:false,keyWritable:false,suffix:null,managed:null});
+  if(path==='/api/apps')return failApps?Response.json({error:'Fixture account refresh failed'},{status:503}):Response.json([{slug:'gmail',name:'Gmail',status:gmailConnected?'connected':'disconnected',connectionId:gmailConnected||disconnectPending?'fixture-account':undefined,accountId:gmailConnected||disconnectPending?'fixture-gmail':undefined,reconnectRequired:gmailReconnect,disconnectPending}]);
+  if(path==='/api/apps/gmail/accounts/fixture-account/disconnect'){
+    assert.equal(options.method,'POST');
+    assert.equal(options.body,undefined);
+    disconnectCalls++;
+    if(failDisconnect)return Response.json({error:'Fixture disconnection unavailable'},{status:502});
+    disconnectPending=false;
+    return Response.json({disconnected:true});
+  }
+  if(path==='/api/apps/gmail/connect')return Response.json({url:'https://connect.composio.dev/link/fixture',attempt});
+  if(path==='/api/apps/setup-status')return Response.json({completed:gmailCompleted?body.hashes:[],apps:gmailMissing?[]:body.hashes.map(hash=>({hash,pairingConfirmed:true}))});
+  if(path==='/api/channels')return failChannelLoad?Response.json({error:'Fixture channel refresh failed'},{status:503}):Response.json({channels:[],inbox:[],deliveries:[],error:null});
+  if(path==='/api/channel-settings')return Response.json({ready:true,channels:[telegram]});
+  if(path==='/api/channel-settings/telegram/confirm'){
+    if(failTelegram)return Response.json({error:'Fixture pairing rejected'},{status:503});
+    telegram={provider:'telegram',enabled:true,mode:'polling',accountHandle:'@fixture_bot',allowedUserId:'123456'};
+    return Response.json({channel:telegram});
+  }
+  throw new Error('Unexpected fixture request '+path);
+};
+await mount(Brain);
+await act(async()=>[...document.querySelectorAll('.ob-brain-card')].find(item=>item.textContent.includes('Anthropic')).click());
+await waitFor(()=>document.querySelector('#ob-brain-key-anthropic'));
+await act(async()=>{const input=document.querySelector('#ob-brain-key-anthropic');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'synthetic-model-key');input.dispatchEvent(new Event('input',{bubbles:true}));});
+await click('Connect');
+assert.equal(advances,0);
+assert.match(document.body.textContent,/Fixture key rejected/);
+failKey=false;
+await click('Connect');
+await waitFor(()=>select);
+assert.equal(advances,0,'connection alone cannot advance before model selection is ready');
+await act(async()=>select());
+await waitFor(()=>advances===1);
+await act(async()=>pageDataCache.refresh('/api/models',true));
+assert.equal(advances,1);
+for(const direction of ['forward','back']){
+  await mount(Brain,direction);
+  await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+  assert.equal(advances,0,'cached model must not bounce '+direction);
+}
+models={connections:[],selection:null};
+await mount(Brain);
+await click('Sign in with ChatGPT');
+await waitFor(()=>oauth);
+assert.equal(advances,0);
+models={connections:[{...connection,provider:'openai',method:'subscription'}],selection:{connectionId:connection.id,modelId:connection.models[0].id,effort:'off'}};
+await act(async()=>oauth());
+await waitFor(()=>advances===1);
+disconnectPending=true;
+await mount(Email);
+await waitFor(()=>button('Retry disconnection'));
+assert.equal(disconnectCalls,0,'uncertain disconnection is never retried automatically');
+assert.ok(button('Connect').disabled);
+assert.ok(button('Continue').disabled);
+await click('Retry disconnection');
+assert.equal(disconnectCalls,1);
+assert.match(document.body.textContent,/Fixture disconnection unavailable/);
+assert.ok(button('Connect').disabled);
+assert.equal(advances,0);
+failDisconnect=false;
+await click('Retry disconnection');
+await waitFor(()=>button('Connect')&&!button('Connect').disabled);
+assert.equal(disconnectCalls,2);
+assert.equal(button('Retry disconnection'),undefined);
+assert.doesNotMatch(document.body.textContent,/Fixture disconnection unavailable/);
+assert.equal(advances,0,'recovered disconnection still requires Gmail consent');
+await mount(Email);
+await act(async()=>{for(const action of document.querySelectorAll('.ob-footer-end button'))action.click();});
+assert.equal(advances,0,'unconnected Gmail cannot be skipped');
+await click('Connect');
+await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt:'B'.repeat(43)}}));
+assert.equal(advances,0,'foreign callback cannot advance');
+failApps=true;
+await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt}}));
+await settle();
+assert.equal(advances,0,'callback alone cannot advance without confirmed account state');
+failApps=false; gmailConnected=false; gmailReconnect=true;
+await act(async()=>pageDataCache.refresh('/api/apps',true));
+assert.equal(advances,0,'an inactive account cannot complete onboarding');
+gmailConnected=true;
+await act(async()=>pageDataCache.refresh('/api/apps',true));
+await waitFor(()=>advances===1);
+assert.equal(gmailReconnect,true,'expired inbox history does not invalidate a connected account');
+await act(async()=>pageDataCache.refresh('/api/apps',true));
+assert.equal(advances,1);
+for(const direction of ['forward','back']){
+  await mount(Email,direction);
+  await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+  assert.equal(advances,0,'cached email must not bounce '+direction);
+}
+for(const direction of ['forward','back']){
+  gmailConnected=false; gmailCompleted=false;
+  await mount(Email,direction);
+  await click('Connect');
+  gmailConnected=true; gmailCompleted=true;
+  await act(async()=>window.dispatchEvent(new Event('focus')));
+  await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+  assert.equal(advances,direction==='forward'?1:0,'confirmed polling only advances forward');
+}
+gmailConnected=false; gmailCompleted=false; gmailMissing=false;
+await mount(Email);
+await click('Connect');
+gmailConnected=true;
+await act(async()=>window.dispatchEvent(new Event('focus')));
+await waitFor(()=>document.querySelector('[data-gmail="connected"]'));
+assert.doesNotMatch(document.body.textContent,/Gmail didn’t connect/);
+assert.equal(advances,0,'an account refresh cannot replace confirmation of this attempt');
+gmailCompleted=true;
+await act(async()=>window.dispatchEvent(new Event('focus')));
+await waitFor(()=>advances===1);
+gmailConnected=false; gmailCompleted=false; gmailMissing=false;
+await mount(Email);
+await click('Connect');
+gmailMissing=true;
+await act(async()=>window.dispatchEvent(new Event('focus')));
+await waitFor(()=>document.body.textContent.includes('Gmail didn’t connect'));
+assert.equal(advances,0,'an absent attempt without completion remains a failure');
+await mount(Telegram);
+await click('Confirm');
+assert.equal(advances,0);
+assert.match(document.body.textContent,/Fixture pairing rejected/);
+failChannelLoad=true;
+await act(async()=>window.dispatchEvent(new Event('focus')));
+await waitFor(()=>button('Retry loading'));
+failTelegram=false;
+await click('Confirm');
+await waitFor(()=>advances===1);
+assert.doesNotMatch(document.body.textContent,/Fixture channel refresh failed/);
+failChannelLoad=false;
+await act(async()=>window.dispatchEvent(new Event('focus')));
+assert.equal(advances,1);
+for(const direction of ['forward','back']){
+  await mount(Telegram,direction);
+  await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+  assert.equal(advances,0,'cached Telegram must not bounce '+direction);
+}
+sessionStorage.clear();
+writeStep({owner:'fixture-owner',step:'about',version:2});
+interviewCompleted=false;
+interviewDraft={answers:['Synthetic saved first answer'],turns:[['Synthetic saved first question'],['Synthetic saved next question']],done:false};
+holdInterviewRead=true;
+await mount(About,'forward');
+assert.equal(interviewPosts,0,'cold restart must restore before generating another question');
+assert.equal(document.querySelector('input[aria-label="Your answer"]')?.disabled??true,true);
+await act(async()=>releaseInterviewRead());holdInterviewRead=false;
+await waitFor(()=>document.body.textContent.includes('Synthetic saved first answer')&&document.body.textContent.includes('Synthetic saved next question'));
+await act(async()=>root.unmount());root=undefined;
+interviewCompleted=false;
+interviewDraft={answers:[],turns:[],done:false};
+sessionStorage.removeItem('otto.onboarding.about');
+writeStep({owner:'fixture-owner',step:'about',version:2});
+await mount(About,'back');
+await act(async()=>{for(const action of document.querySelectorAll('.ob-footer-end button'))action.click()});
+assert.equal(advances,0,'returning to an unanswered interview must not bypass its questions');
+assert.equal(interviewSaves,0);
+await waitFor(()=>document.body.textContent.includes('Synthetic question?'));
+await act(async()=>{const input=document.querySelector('input[aria-label="Your answer"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Synthetic project focus');input.dispatchEvent(new Event('input',{bubbles:true}));});
+await act(async()=>document.querySelector('button[aria-label="Send"]').click());
+await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+assert.equal(advances,0);
+await click('Continue');
+assert.equal(interviewSaves,1);
+assert.equal(advances,1);
+await mount(About,'back');
+await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+assert.ok(document.body.textContent.includes('Synthetic project focus'));
+await click('Continue');
+assert.equal(interviewSaves,1,'returning through completed answers must not save them again');
+assert.equal(advances,1);
+failInterviewReset=true;
+await click('Change my answers');
+assert.ok(document.body.textContent.includes('Synthetic project focus'));
+assert.match(document.body.textContent,/Synthetic reset failed/);
+failInterviewReset=false;
+await click('Change my answers');
+await waitFor(()=>document.body.textContent.includes('Synthetic question?'));
+assert.equal(document.body.textContent.includes('Synthetic project focus'),false);
+await act(async()=>root.unmount());root=undefined;
+sessionStorage.clear();
+writeStep({owner:'fixture-owner',step:'about',version:2});
+interviewCompleted=false;
+interviewDraft={answers:['Synthetic saved first answer'],turns:[['Synthetic saved first question'],['Synthetic saved next question']],done:false};
+sessionStorage.setItem('otto.onboarding.about',JSON.stringify({owner:'fixture-owner',version:2,completed:true,answers:['Synthetic stale completed answer'],turns:[['Synthetic stale question'],['Synthetic stale closing']],done:true}));
+holdInterviewRead=true;
+const postsBeforeRestore=interviewPosts;
+await mount(About,'forward');
+assert.equal(interviewPosts,postsBeforeRestore,'restore must finish before any empty interview can overwrite saved progress');
+assert.equal(document.querySelector('input[aria-label="Your answer"]')?.disabled??true,true);
+await act(async()=>releaseInterviewRead());holdInterviewRead=false;
+await waitFor(()=>document.body.textContent.includes('Synthetic saved first answer')&&document.body.textContent.includes('Synthetic saved next question'));
+assert.equal(interviewPosts,postsBeforeRestore,'restored unanswered question does not regenerate a reply');
+assert.doesNotMatch(document.body.textContent,/Synthetic stale completed answer/,'active server progress wins over a completed same-session cache');
+assert.equal(sessionStorage.getItem('otto.onboarding.about'),null,'active server progress removes the stale completed cache without copying unfinished answers');
+await act(async()=>root.unmount());root=undefined;
+failInterviewRead=true;
+await mount(About,'forward');
+await waitFor(()=>button('Try again'));
+assert.match(document.body.textContent,/Synthetic draft unavailable/);
+assert.equal(button('Start interview again'),undefined,'a transient read failure must not offer deletion');
+assert.equal(interviewPosts,postsBeforeRestore);
+failInterviewRead=false;
+await click('Try again');
+await waitFor(()=>document.body.textContent.includes('Synthetic saved next question'));
+assert.equal(interviewPosts,postsBeforeRestore);
+failInterviewPost=400;
+await act(async()=>{const input=document.querySelector('input[aria-label="Your answer"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Synthetic rejected answer');input.dispatchEvent(new Event('input',{bubbles:true}));});
+await act(async()=>document.querySelector('button[aria-label="Send"]').click());
+await waitFor(()=>document.querySelector('input[aria-label="Your answer"]')?.value==='Synthetic rejected answer');
+assert.equal(document.querySelector('input[aria-label="Your answer"]').disabled,false);
+assert.match(document.body.textContent,/Synthetic draft write failed/);
+assert.equal(button('Continue'),undefined);
+failInterviewPost=500;
+await act(async()=>{const input=document.querySelector('input[aria-label="Your answer"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Synthetic next answer');input.dispatchEvent(new Event('input',{bubbles:true}));});
+await act(async()=>document.querySelector('button[aria-label="Send"]').click());
+await waitFor(()=>button('Try again'));
+assert.match(document.body.textContent,/Synthetic draft write failed/);
+assert.match(document.body.textContent,/Synthetic next answer/);
+assert.equal(button('Continue'),undefined,'storage failure must not advance through a fallback question');
+failInterviewPost=0;
+await click('Try again');
+await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+assert.deepEqual(interviewDraft.answers,['Synthetic saved first answer','Synthetic next answer']);
+failInterviewSave=true;
+interviewCompleted=false;
+interviewDraft={answers:['Synthetic newer answer'],turns:[['Synthetic first question'],['Synthetic newer question']],done:false};
+await click('Continue');
+await waitFor(()=>button('Try again'));
+assert.match(document.body.textContent,/Synthetic answers changed/);
+await click('Try again');
+await waitFor(()=>document.body.textContent.includes('Synthetic newer question'));
+assert.match(document.body.textContent,/Synthetic newer answer/);
+assert.doesNotMatch(document.body.textContent,/Synthetic next answer/);
+failInterviewSave=false;
+await act(async()=>root.unmount());root=undefined;
+for(const cache of [{owner:'another-owner',version:2},{owner:'fixture-owner',version:1}]){
+  interviewCompleted=true;
+  interviewDraft={answers:[],turns:[],done:true};
+  sessionStorage.setItem('otto.onboarding.about',JSON.stringify({...cache,generation:interviewGeneration,completed:true,answers:['Synthetic foreign cached answer'],turns:[['Synthetic foreign question'],['Synthetic foreign closing']],done:true}));
+  const count=interviewPosts;
+  await mount(About,'back');
+  await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+  assert.doesNotMatch(document.body.textContent,/Synthetic foreign/,'cache is scoped to owner and onboarding version');
+  assert.equal(interviewPosts,count,'completed receipt without a matching cache never restarts the interview');
+}
+const oldGeneration=interviewGeneration;
+const savedBeforeReplay=interviewSaves;
+interviewGeneration='synthetic-generation-'+(++generations);
+interviewCompleted=false;
+interviewDraft={answers:[],turns:[],done:false};
+await click('Continue');
+await waitFor(()=>button('Try again'));
+assert.match(document.body.textContent,/Your setup answers changed/);
+assert.equal(advances,0,'a stale completion receipt cannot advance after another tab resets the interview');
+assert.equal(interviewSaves,savedBeforeReplay,'old completed answers cannot overwrite current memory');
+await click('Try again');
+await waitFor(()=>document.body.textContent.includes('Synthetic question?'));
+assert.equal(button('Continue'),undefined);
+sessionStorage.setItem('otto.onboarding.about',JSON.stringify({owner:'fixture-owner',version:2,generation:oldGeneration,completed:true,answers:['Synthetic retired answer'],turns:[['Synthetic retired question'],['Synthetic retired closing']],done:true}));
+await mount(About,'back');
+await waitFor(()=>document.body.textContent.includes('Synthetic question?'));
+assert.doesNotMatch(document.body.textContent,/Synthetic retired/);
+assert.equal(sessionStorage.getItem('otto.onboarding.about'),null);
+resetVersion='synthetic-corrupt-version-1';
+const postsBeforeRecovery=interviewPosts;
+const deletesBeforeRecovery=interviewDeletes;
+await mount(About);
+await waitFor(()=>button('Start interview again'));
+assert.equal(button('Try again')?.disabled,false);
+assert.equal(document.querySelector('input[aria-label="Your answer"]')?.disabled??true,true);
+assert.equal(interviewPosts,postsBeforeRecovery,'corrupt saved progress cannot silently start a new interview');
+assert.equal(interviewDeletes,deletesBeforeRecovery,'corrupt saved progress cannot be deleted without an explicit choice');
+holdRecovery=true;
+await act(async()=>{button('Start interview again').click();button('Start interview again').click();});
+await settle();
+assert.deepEqual(recoveryRequests,[{resetVersion:'synthetic-corrupt-version-1'}]);
+assert.equal(interviewDeletes,deletesBeforeRecovery+1);
+assert.equal(interviewPosts,postsBeforeRecovery);
+await act(async()=>releaseRecovery());holdRecovery=false;
+await waitFor(()=>document.body.textContent.includes('Synthetic question?'));
+assert.equal(button('Start interview again'),undefined);
+assert.equal(document.querySelector('input[aria-label="Your answer"]').disabled,false);
+assert.equal(interviewPosts,postsBeforeRecovery+1);
+assert.equal(advances,0);
+resetVersion='synthetic-corrupt-version-2';
+await mount(About);
+await waitFor(()=>button('Start interview again'));
+resetVersion='synthetic-corrupt-version-3';
+await click('Start interview again');
+assert.equal(recoveryRequests.length,2);
+assert.deepEqual(recoveryRequests[1],{resetVersion:'synthetic-corrupt-version-2'});
+assert.equal(button('Start interview again'),undefined,'a stale reset token must require a reload');
+assert.equal(interviewPosts,postsBeforeRecovery+1);
+await click('Try again');
+await waitFor(()=>button('Start interview again'));
+assert.equal(recoveryRequests.length,2,'reloading recovery must never repeat the delete');
+await click('Start interview again');
+await waitFor(()=>document.body.textContent.includes('Synthetic question?'));
+assert.deepEqual(recoveryRequests[2],{resetVersion:'synthetic-corrupt-version-3'});
+assert.equal(interviewDeletes,deletesBeforeRecovery+3);
+assert.equal(interviewPosts,postsBeforeRecovery+2);
+await act(async()=>root.unmount());
+dom.window.close();
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
+test('desktop onboarding uses the normal backend and waits for workspace readiness before completing', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'http://127.0.0.1:51000/onboarding', pretendToBeVisual: true });
+for (const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage']) Object.defineProperty(globalThis, name, { configurable: true, value: name === 'window' ? dom.window : name === 'document' ? dom.window.document : typeof dom.window[name] === 'function' && name[0] === name[0].toLowerCase() ? dom.window[name].bind(dom.window) : dom.window[name] });
+Object.defineProperty(globalThis, 'navigator', {configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location = window.location;
+globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+HTMLElement.prototype.scrollIntoView = function () {};
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+
+let statusListener;
+let runtimeRetries = 0;
+let releaseRetry;
+let modelConnected = false;
+window.ottoDesktop = {
+  getSettings: async () => ({ onboardingPreferenceStep: 'complete' }),
+  onPreferences: () => () => {},
+  status: async () => ({phase:'ready',runtime:{phase:'preparing'}}),
+  onStatus: listener => {statusListener=listener;return()=>{statusListener=undefined}},
+  prepare: async () => {runtimeRetries++;return new Promise(resolve=>{releaseRetry=(next={phase:'ready',runtime:{phase:'ready'}})=>{statusListener(next);resolve(next)}})},
+};
+const owner = { id: 'synthetic-setup-owner', name: '', email: null, avatarUrl: null };
+const calls = [];
+let finishCalls = 0;
+let failFinish = false;
+let modelsStatus = 'connected';
+let failModels = false;
+let suggestions = 0;
+let aborted = 0;
+let releasePreparation;
+window.fetch = globalThis.fetch = async (url, options = {}) => {
+  const path = new URL(url, window.location.href).pathname;
+  calls.push(path);
+  if (path === '/api/account/prepare') return new Promise((resolve,reject)=>{
+    releasePreparation=()=>resolve(Response.json({ok:true}));
+    options.signal.addEventListener('abort',()=>{aborted++;reject(new DOMException('Aborted','AbortError'))},{once:true});
+  });
+  if (path === '/api/preferences') return Response.json({timeZone:'Europe/Lisbon'});
+  if (path === '/api/models') return failModels ? Response.json({error:'Synthetic model service is unavailable'}, {status:503}) : Response.json({connections:modelConnected?[{id:'synthetic-model',provider:'anthropic',method:'api_key',status:modelsStatus,label:'Synthetic model',managed:false,models:[]}]:[],selection:null});
+  if (path === '/api/apps') return Response.json([{slug:'gmail',name:'Gmail',status:'disconnected'}]);
+  if (path === '/api/configuration') return Response.json({integrationsReady:true});
+  if (path === '/api/integrations/key') return Response.json({mode:'own',switchable:true,keyWritable:true,suffix:null,managed:null});
+  if (path === '/api/channel-settings') return Response.json({ready:false,channels:[]});
+  if (path === '/api/onboarding/suggestions') {suggestions++;return Response.json({ok:true});}
+  return Response.json({error:'Unexpected synthetic request'}, {status:404});
+};
+const { createElement, act } = await import('react');
+const { createRoot } = await import('react-dom/client');
+const { Onboarding } = await import('./src/web/pages/onboarding/index.tsx');
+const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+const { writeStep } = await import('./src/web/pages/onboarding/storage.ts');
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+let root = createRoot(document.getElementById('root'));
+const render=()=>root.render(createElement(Onboarding,{user:owner,onComplete:async()=>{finishCalls++;if(failFinish)throw new Error('Synthetic completion save failed')}}));
+const settle=(ms=30)=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,ms))});
+const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent.trim()===text);
+const waitFor=async condition=>{for(let at=0;at<80&&!condition();at++)await settle();assert.ok(Boolean(condition()),'Expected onboarding recovery or progression')};
+window.history.replaceState(null,'','/onboarding?welcome=complete');
+await act(async()=>render());
+await waitFor(()=>document.querySelector('.ob')?.dataset.step==='brain');
+assert.equal(window.location.search,'');
+assert.ok(calls.includes('/api/account/prepare'));
+assert.equal(calls.some(path=>path.startsWith('/api/desktop/setup')),false);
+await waitFor(()=>[...document.querySelectorAll('.ob-brain-card')].some(item=>item.textContent.includes('Anthropic')));
+await act(async()=>[...document.querySelectorAll('.ob-brain-card')].find(item=>item.textContent.includes('Anthropic')).click());
+await waitFor(()=>document.querySelector('#ob-brain-key-anthropic'));
+async function recoverWithDraft(input, draft) {
+  const fill=value=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true}))};
+  await act(async()=>fill(draft));
+  await act(async()=>statusListener({phase:'ready',runtime:{phase:'error',error:'Synthetic runtime interrupted'}}));
+  await waitFor(()=>button('Try again'));
+  assert.equal(input.isConnected,true);
+  assert.equal(input.value,draft);
+  assert.equal(input.closest('[inert]'),null);
+  const before=runtimeRetries;
+  await act(async()=>button('Try again').click());
+  await waitFor(()=>runtimeRetries===before+1);
+  assert.equal(button('Try again').disabled,true);
+  assert.equal(input.isConnected,true);
+  assert.equal(input.closest('[inert]'),null);
+  await act(async()=>fill(draft+'-kept'));
+  await act(async()=>releaseRetry());
+  await waitFor(()=>!button('Try again'));
+  assert.equal(input.isConnected,true);
+  assert.equal(input.value,draft+'-kept');
+}
+await recoverWithDraft(document.querySelector('#ob-brain-key-anthropic'),'synthetic-model-draft');
+assert.equal(document.querySelector('.ob').dataset.step,'brain');
+await act(async()=>root.unmount());
+modelConnected=true;
+pageDataCache.clear();
+writeStep({owner:owner.id,step:'email',version:2});
+root=createRoot(document.getElementById('root'));
+await act(async()=>render());
+await waitFor(()=>button('Change'));
+await act(async()=>button('Change').click());
+await waitFor(()=>document.querySelector('.connection-choice input[type="password"]'));
+await recoverWithDraft(document.querySelector('.connection-choice input[type="password"]'),'synthetic-project-draft');
+assert.equal(document.querySelector('.ob').dataset.step,'email');
+await act(async()=>root.unmount());
+sessionStorage.clear();
+for(const cookie of dom.cookieJar.getCookiesSync(window.location.href))if(!cookie.isPersistent())document.cookie=cookie.key+'=; path=/; max-age=0';
+dom.reconfigure({url:'http://127.0.0.1:51001/onboarding?welcome=complete'});
+root=createRoot(document.getElementById('root'));
+await act(async()=>render());
+await waitFor(()=>document.querySelector('.ob')?.dataset.step==='email');
+assert.equal(window.location.search,'');
+await waitFor(()=>button('Change'));
+await act(async()=>button('Change').click());
+await waitFor(()=>document.querySelector('input[type="password"]'));
+assert.equal(document.querySelector('input[type="password"]').value,'','draft credentials are not persisted with the step');
+await act(async()=>root.unmount());
+writeStep({owner:'foreign-owner',step:'email',version:2});
+root=createRoot(document.getElementById('root'));
+await act(async()=>render());
+assert.equal(document.querySelector('.ob').dataset.step,'welcome');
+await act(async()=>root.unmount());
+writeStep({owner:owner.id,step:'email',version:1});
+root=createRoot(document.getElementById('root'));
+await act(async()=>render());
+assert.equal(document.querySelector('.ob').dataset.step,'welcome');
+await act(async()=>root.unmount());
+writeStep({owner:owner.id,step:'open',version:2});
+root=createRoot(document.getElementById('root'));
+await act(async()=>render());
+await waitFor(()=>button('Start chatting'));
+assert.equal(suggestions,0);
+assert.ok(button('Back')&&!button('Back').disabled);
+await act(async()=>button('Start chatting').click());
+await waitFor(()=>document.querySelector('main [role="status"]'));
+assert.equal(document.activeElement,document.querySelector('main'));
+assert.equal(document.querySelector('main button'),null);
+assert.equal(document.querySelector('main a'),null);
+assert.equal(finishCalls,0);
+await act(async()=>statusListener({phase:'ready',runtime:{phase:'error',error:'Synthetic runtime interrupted'}}));
+await waitFor(()=>button('Try again'));
+assert.ok(document.querySelector('main [role="alert"]'));
+assert.equal(finishCalls,0);
+const beforeFinalRetry=runtimeRetries;
+const preparationsBeforeRetry=calls.filter(path=>path==='/api/account/prepare').length;
+for(const failure of [
+ {phase:'error',error:'Synthetic retry failed again',runtime:{phase:'error',message:'Synthetic retry failed again'}},
+ {phase:'ready',runtime:{phase:'error',error:'Synthetic nested retry failed again'}},
+ {phase:'preparing',runtime:{phase:'preparing'}},
+]){
+ await act(async()=>button('Try again').click());
+ await waitFor(()=>button('Try again')?.disabled);
+ await act(async()=>releaseRetry(failure));
+ await waitFor(()=>button('Try again')&&!button('Try again').disabled);
+ assert.match(document.querySelector('main [role="alert"]').textContent,/failed again|not ready yet/);
+ assert.equal(calls.filter(path=>path==='/api/account/prepare').length,preparationsBeforeRetry,'failed native retry must not restart the backend preparation wait');
+ assert.equal(finishCalls,0);
+}
+assert.equal(runtimeRetries,beforeFinalRetry+3);
+await act(async()=>button('Try again').click());
+await waitFor(()=>runtimeRetries===beforeFinalRetry+4);
+await act(async()=>releaseRetry());
+await waitFor(()=>document.querySelector('main [role="status"]'));
+assert.ok(aborted>1);
+assert.equal(document.querySelector('main button'),null);
+failFinish=true;
+await act(async()=>releasePreparation());
+await waitFor(()=>finishCalls===1&&button('Try again'));
+assert.ok(sessionStorage.getItem('otto.onboarding.step'));
+await settle();
+assert.equal(finishCalls,1,'failed completion must not be retried automatically');
+const preparationsBeforeCompletionRetry=calls.filter(path=>path==='/api/account/prepare').length;
+failFinish=false;
+await act(async()=>button('Try again').click());
+await waitFor(()=>finishCalls===2);
+assert.equal(calls.filter(path=>path==='/api/account/prepare').length,preparationsBeforeCompletionRetry,'completion retry reuses successful preparation');
+assert.equal(sessionStorage.getItem('otto.onboarding.step'),null);
+assert.equal(document.cookie.includes('otto_onboarding_step='),false);
+await act(async()=>statusListener({phase:'ready',runtime:{phase:'ready'}}));
+await settle();
+assert.equal(finishCalls,2);
+assert.equal(calls.some(path=>path.startsWith('/api/desktop/setup')),false);
+await act(async()=>root.unmount());
+assert.equal(statusListener,undefined);
+for(const unavailable of ['request','loading','reconnect']) {
+  failModels=unavailable==='request';
+  modelsStatus=unavailable==='loading'?'loading':unavailable==='reconnect'?'reconnect':'connected';
+  pageDataCache.clear();
+  writeStep({owner:owner.id,step:'email',version:2});
+  root=createRoot(document.getElementById('root'));
+  await act(async()=>render());
+  await settle();
+  assert.equal(document.querySelector('.ob').dataset.step,unavailable==='reconnect'?'brain':'email');
+  await act(async()=>root.unmount());
+}
+failModels=false;
+modelsStatus='connected';
+delete window.ottoDesktop;
+pageDataCache.clear();
+writeStep({owner:owner.id,step:'open',version:2});
+root=createRoot(document.getElementById('root'));
+await act(async()=>render());
+await waitFor(()=>button('Start chatting'));
+await act(async()=>releasePreparation());
+failFinish=true;
+await act(async()=>button('Start chatting').click());
+await waitFor(()=>finishCalls===3&&button('Try again'));
+assert.ok(sessionStorage.getItem('otto.onboarding.step'));
+failFinish=false;
+await act(async()=>button('Try again').click());
+await waitFor(()=>finishCalls===4);
+assert.equal(sessionStorage.getItem('otto.onboarding.step'),null);
+await act(async()=>root.unmount());
+dom.window.close();
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
+test('desktop onboarding persists explicit native choices and resumes without repeating them', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {JSDOM} from 'jsdom';
+import {createSettingsStore} from './desktop/main/settings.mjs';
+const directory=await mkdtemp(join(tmpdir(),'otto-native-preferences-'));
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/onboarding',pretendToBeVisual:true});
+for(const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage']) Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location=window.location;
+globalThis.ResizeObserver=class{observe(){}disconnect(){}};
+HTMLElement.prototype.scrollIntoView=function(){};
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+let store=createSettingsStore(join(directory,'settings.json'),{});
+let failRead=true;
+let failSave=true;
+let saves=0;
+let reads=0;
+let statusListener;
+let runtimeRetries=0;
+window.ottoDesktop={
+  status:async()=>({phase:'ready',runtime:{phase:'preparing'}}),
+  onStatus:listener=>{statusListener=listener;return()=>{statusListener=undefined}},
+  prepare:async()=>{runtimeRetries++;const ready={phase:'ready',runtime:{phase:'ready'}};statusListener(ready);return ready},
+  getSettings:async()=>{reads++;if(failRead)throw new Error('Synthetic native read failed');return store.get()},
+  saveSettings:async change=>{saves++;if(failSave)throw new Error('Synthetic native save failed');return store.save(change)},
+};
+sessionStorage.setItem('otto.onboarding.step',JSON.stringify({owner:'synthetic-native-owner',step:'open',version:2}));
+const calls=[];
+window.fetch=globalThis.fetch=async(url,options={})=>{
+ const path=new URL(url,window.location.href).pathname;calls.push(path);
+ if(path==='/api/account/prepare')return new Promise(()=>{});
+ if(path==='/api/models')return Response.json({connections:[{id:'synthetic',status:'connected',models:[]}],selection:null});
+ if(path==='/api/preferences')return Response.json({timeZone:'Europe/Lisbon'});
+ if(path==='/api/onboarding/suggestions')return Response.json({ok:true});
+ throw new Error('Unexpected request '+path);
+};
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {Onboarding}=await import('./src/web/pages/onboarding/index.tsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+const session={user:{id:'synthetic-native-owner',name:'',email:null,avatarUrl:null},settings:{usageData:false,onboardingCompleted:false}};
+let root=createRoot(document.getElementById('root'));
+const render=()=>act(async()=>root.render(createElement(Onboarding,{user:session.user,onComplete:async()=>assert.fail('No completion before runtime ready')})));
+const settle=()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,20))});
+const waitFor=async condition=>{for(let at=0;at<100&&!condition();at++)await settle();assert.ok(condition())};
+const button=text=>[...document.querySelectorAll('button')].find(value=>value.textContent.trim()===text);
+await render();
+await waitFor(()=>button('Try again'));
+assert.equal(reads,1);
+assert.equal(saves,0);
+assert.equal(document.querySelector('[role="switch"]'),null);
+failRead=false;
+await act(async()=>button('Try again').click());
+await waitFor(()=>document.querySelector('[role="switch"]'));
+const toggle=()=>document.querySelector('[role="switch"]');
+assert.equal((await store.get()).notifications,false);
+assert.equal(toggle().getAttribute('aria-checked'),'false');
+assert.equal(saves,0);
+const notificationToggle=toggle();
+await act(async()=>statusListener({phase:'ready',runtime:{phase:'error',error:'Synthetic runtime interrupted'}}));
+await waitFor(()=>button('Try again'));
+assert.equal(toggle(),notificationToggle);
+await act(async()=>button('Try again').click());
+await waitFor(()=>runtimeRetries===1&&!button('Try again'));
+assert.equal(toggle(),notificationToggle);
+assert.equal(saves,0);
+assert.equal((await store.get()).onboardingPreferenceStep,'notifications');
+await act(async()=>{toggle().click();toggle().click()});
+await waitFor(()=>document.body.textContent.includes('Synthetic native save failed'));
+assert.equal(saves,1);
+assert.equal((await store.get()).onboardingPreferenceStep,'notifications');
+assert.equal(toggle().getAttribute('aria-checked'),'false');
+failSave=false;
+await act(async()=>toggle().click());
+await waitFor(()=>!toggle().disabled);
+assert.equal((await store.get()).notifications,true);
+assert.equal((await store.get()).onboardingPreferenceStep,'notifications');
+await act(async()=>toggle().click());
+await waitFor(()=>!toggle().disabled);
+assert.equal((await store.get()).notifications,false);
+await act(async()=>button('Continue').click());
+await waitFor(()=>(document.querySelector('.ob')?.dataset.step)==='launchAtLogin');
+assert.equal((await store.get()).onboardingPreferenceStep,'launchAtLogin');
+await act(async()=>toggle().click());
+await waitFor(()=>!toggle().disabled);
+assert.equal((await store.get()).launchAtLogin,true);
+assert.equal((await store.get()).onboardingPreferenceStep,'launchAtLogin');
+await act(async()=>root.unmount());
+store=createSettingsStore(join(directory,'settings.json'),{});
+root=createRoot(document.getElementById('root'));
+await render();
+await waitFor(()=>document.querySelector('[role="switch"]'));
+assert.equal(document.querySelector('.ob').dataset.step,'launchAtLogin');
+assert.equal(toggle().getAttribute('aria-checked'),'true');
+await act(async()=>button('Continue').click());
+await waitFor(()=>button('Start chatting'));
+assert.equal((await store.get()).launchAtLogin,true);
+assert.equal((await store.get()).onboardingPreferenceStep,'complete');
+assert.equal(saves,6);
+await act(async()=>root.unmount());
+store=createSettingsStore(join(directory,'settings.json'),{});
+root=createRoot(document.getElementById('root'));
+await render();
+await waitFor(()=>button('Start chatting'));
+assert.equal(document.querySelector('[role="switch"]'),null);
+assert.equal(saves,6);
+await act(async()=>root.unmount());
+const {DesktopOptions,useDesktopSettings}=await import('./src/web/components/desktop-settings.tsx');
+window.ottoDesktop.onPreferences=()=>()=>{};
+function GeneralChoices(){
+ const native=useDesktopSettings();
+ return native.settings?createElement(DesktopOptions,{settings:native.settings,busy:native.busy,onChange:native.save}):null;
+}
+root=createRoot(document.getElementById('root'));
+await act(async()=>root.render(createElement(GeneralChoices)));
+await waitFor(()=>document.querySelectorAll('[role="switch"]').length===2);
+const login=()=>document.querySelector('[role="switch"][aria-label="Open at login"]');
+const notices=()=>document.querySelector('[role="switch"][aria-label="Desktop notifications"]');
+assert.equal(login().getAttribute('aria-checked'),'true');
+assert.equal(notices().getAttribute('aria-checked'),'false');
+await act(async()=>login().click());
+await waitFor(()=>!login().disabled);
+await act(async()=>notices().click());
+await waitFor(()=>!notices().disabled);
+assert.equal((await store.get()).launchAtLogin,false);
+assert.equal((await store.get()).notifications,true);
+assert.equal((await store.get()).onboardingPreferenceStep,'complete');
+failSave=true;
+await act(async()=>login().click());
+await waitFor(()=>!login().disabled);
+assert.equal(login().getAttribute('aria-checked'),'false');
+assert.equal((await store.get()).launchAtLogin,false);
+failSave=false;
+await act(async()=>root.unmount());
+assert.equal(calls.some(path=>path.startsWith('/api/desktop/setup')),false);
+await rm(directory,{recursive:true,force:true});
+dom.window.close();
+process.exit(0);
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});

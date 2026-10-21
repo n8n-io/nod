@@ -89,7 +89,8 @@ function Problem({ children }: { children: string }) {
 export function Brain({ arrived, onNext, onBack }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const models = useModels();
-  const flow = useModelSignIn(models);
+  const [connected, setConnected] = useState<ModelProvider | null>(null);
+  const flow = useModelSignIn(models, setConnected);
   const data = models.data;
   const [choice, setChoice] = useState<ModelProvider | null>(null);
   const [method, setMethod] = useState<'oauth' | 'key' | null>(null);
@@ -124,6 +125,35 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
 
   useEffect(() => {
     if (
+      arrived !== 'forward' ||
+      connected !== provider ||
+      !ready ||
+      models.busy ||
+      models.error ||
+      checking ||
+      flow.signIn ||
+      flow.pending ||
+      (shown?.provider === 'compatible' && shown.models.length > 1)
+    )
+      return;
+    setConnected(null);
+    onNext();
+  }, [
+    arrived,
+    connected,
+    provider,
+    ready,
+    models.busy,
+    models.error,
+    checking,
+    flow.signIn,
+    flow.pending,
+    shown,
+    onNext,
+  ]);
+
+  useEffect(() => {
+    if (
       !shown ||
       shown.status !== 'connected' ||
       !recommendation ||
@@ -150,6 +180,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   function pick(next: ModelProvider) {
     models.setError('');
     if (next === provider) return;
+    setConnected(null);
     if (flow.signIn) void flow.cancel();
     setChoice(next);
     setMethod(null);
@@ -188,6 +219,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
         },
       );
       models.update(() => result);
+      setConnected(provider);
       setKey('');
       setUrl(localServerAddress);
     } catch (cause) {

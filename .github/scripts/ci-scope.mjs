@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 const scope = Object.fromEntries(
-  ['core', 'desktop', 'n8n', 'evals', 'images', 'network'].map((name) => [name, false]),
+  ['core', 'desktop', 'windows', 'n8n', 'evals', 'images', 'network'].map((name) => [name, false]),
 );
 const full = () =>
   Object.keys(scope).forEach((name) => {
@@ -52,15 +52,23 @@ else {
       )
     ) {
       core();
+      if (/^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$/.test(path)) scope.windows = true;
       scope.n8n = true;
       continue;
     }
     if (/^(src|public|tests)\//.test(path)) {
       core();
+      if (path === 'src/server/vault-crypto.ts') scope.windows = true;
       continue;
     }
     if (path.startsWith('desktop/')) {
       scope.desktop = true;
+      if (
+        /^desktop\/(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|main\/settings\.mjs|runtime\/(index\.mjs|windows\.mjs|protect-profile\.ps1)|test\/settings\.test\.mjs)$/.test(
+          path,
+        )
+      )
+        scope.windows = true;
       if (/^desktop\/runtime\/|^desktop\/test\/runtime-assets\.test\.mjs$/.test(path))
         scope.network = true;
       if (path === 'desktop/main/updates.mjs') scope.n8n = true;
@@ -69,6 +77,12 @@ else {
     }
     if (path.startsWith('deployment/n8n/')) {
       scope.n8n = true;
+      if (
+        /^deployment\/n8n\/(install\.ps1|(install\.test|install-workflow|desktop-releases)\.mjs)$/.test(
+          path,
+        )
+      )
+        scope.windows = true;
       continue;
     }
     if (path.startsWith('evals/')) {

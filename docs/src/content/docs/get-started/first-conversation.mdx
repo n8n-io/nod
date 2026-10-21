@@ -11,12 +11,12 @@ This page walks you through Otto's onboarding, your first tasks and what to do w
 
 ## Onboarding at a glance
 
-Otto opens onboarding the first time you use it. In the desktop app, it starts once Otto has prepared its computer. It's a short chat, and you can skip Gmail and Telegram until later.
+Otto opens onboarding the first time you use it. In the desktop app, you can answer and connect accounts while Otto prepares its computer. Connect an AI provider and Gmail, then answer the setup questions. Telegram is optional.
 
 ```mermaid
 flowchart LR
   hi[Welcome and<br/>usage data] --> model[Connect<br/>a model]:::accent
-  model --> gmail[Gmail]:::muted
+  model --> gmail[Gmail]:::accent
   gmail --> q[A few<br/>questions]
   q --> tg[Telegram]:::muted
   tg --> cards([First tasks<br/>in chat]):::go
@@ -28,21 +28,27 @@ flowchart LR
 
 1. **Say hi.** Otto introduces itself and asks whether to **Share usage data**. It's off unless you turn it on, and you can change it later in **Settings → General**. Select **Let's go**.
 
-2. **Connect a model.** Pick OpenAI, Anthropic or OpenRouter. Select **Sign in with ChatGPT** or **Connect OpenRouter** to use your account, or paste an API key. In the desktop app or a source install, you can instead pick **OpenAI-compatible** to use a [local model](/connect/local-models/): check the server address, then select **Connect**. Your key is encrypted and never shown to the model. Otto uses your provider’s default model when available. You can change it later in **Models**. Select **Continue**.
+2. **Connect a model.** Pick OpenAI, Anthropic or OpenRouter. Select **Sign in with ChatGPT** or **Connect OpenRouter** to use your account, or paste an API key. In the desktop app or a source install, you can instead pick **OpenAI-compatible** to use a [local model](/connect/local-models/): check the server address, then select **Connect**. Your key is encrypted and never shown to the model. Otto uses your provider’s default model when available. You can change it later in **Models**. Setup moves on once the new connection and model are ready; if a model choice is still needed, select one and then **Continue**.
 
-3. **Connect Gmail (optional).** On desktop or a personal web install, choose **Easy Connect** and sign in with an allowed Google account, or save your own Composio key. Then select **Connect** for Gmail and approve its separate permissions. You can also select **Skip for now**.
+3. **Connect Gmail.** On desktop or a personal web install, choose **Easy Connect** and sign in with an allowed Google account, or save your own Composio key. Then select **Connect** for Gmail and approve its separate permissions. Setup continues after Gmail connects. If sign-in fails, retry or change your connection setup; your earlier answers stay saved.
 
-4. **Answer a few questions.** Otto says hello, then asks what you're working on and what it can take off your plate, and sometimes what you're aiming for. If you connected Gmail and its inbox summary is ready, it also mentions what it noticed in your inbox. It asks at most three questions, skips what you've already told it and saves your answers to its memory. Select **Continue**, or **Change my answers** to start again.
+4. **Answer a few questions.** Otto says hello, then asks what you're working on and what it can take off your plate, and sometimes what you're aiming for. If you connected Gmail and its inbox summary is ready, it also mentions what it noticed in your inbox. It asks at most three questions and keeps an encrypted draft so you can resume after closing Otto. Select **Continue** to save your answers to memory and remove the encrypted draft text. A browser session copy lets you revisit your answers until setup finishes or the tab closes. Select **Change my answers** to discard it and start again. A completion record lasts 30 days so returning to setup doesn't ask you to save the interview again.
+
+   If a draft can’t be opened, **Try again** keeps it. **Start interview again** discards only that draft; saved connections and settings stay in place.
 
 5. **Connect Telegram (optional).** Follow the numbered steps. Scan the code or select **Open Telegram** to open BotFather, send `/newbot`, and choose a name and a username ending in `bot`. Select **I have my token**, paste BotFather's reply, and select **Connect bot**. In **Open your bot**, scan the new code or open Telegram, then press **Start**. Check your account details and select **Confirm**.
 
-6. Select **Start chatting** to finish setup.
+6. **Choose desktop preferences.** In the desktop app, choose whether Otto can notify you when work finishes or needs your attention, and whether it should open when you sign in to your computer. Both switches are optional and save as soon as you change them. Select **Continue** after each choice. You can change both later in **Settings → General**.
+
+7. Select **Start chatting** to finish setup. If the computer is still preparing, Otto shows its progress and opens chat when ready. If you enabled notifications and switched away, it notifies you when setup finishes.
 
 </Steps>
 
 You can add more later from **Apps** and **Channels** in the sidebar. See [Connect apps](/connect/apps/) and [Channels](/use/channels/).
 
-To restart unfinished setup in your browser, open `/onboarding?replay=1` on your Otto address. This clears the saved onboarding step and unfinished answers from that browser. Your saved model connections, app accounts and other settings stay in place.
+To revisit setup in your browser, open `/onboarding?replay=1` on your Otto address. This returns to Welcome while keeping saved connections, settings and your unfinished interview. Use **Change my answers** to restart the interview.
+
+In the desktop app, **Replay onboarding** opens the questions again without deleting saved connections or preferences. While first setup is still running, it returns to your current step. For a separate empty test install on a Mac, use the [Mac test installer](/contribute/desktop-releases/#test-a-local-mac-build); it creates a new isolated profile.
 
 ## Start your first task
 

@@ -10,8 +10,8 @@ import {
   type KeyObject,
 } from 'node:crypto';
 import { constants } from 'node:fs';
-import { link, lstat, mkdir, open, realpath, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { access, link, lstat, mkdir, open, realpath, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import type { IntegrationFile } from '../../ports/integrations.ts';
 import type { IntegrationManagedAccess } from '../../shared/integrations.ts';
@@ -123,6 +123,31 @@ export function createComposioProxy(options: {
       const publicKey = createPublicKey(key).export({ format: 'jwk' }).x;
       if (!publicKey || Buffer.from(publicKey, 'base64url').length !== 32)
         throw new Error('The integration identity is invalid.');
+      if (process.platform !== 'win32') {
+        for (let path = directory; ; path = dirname(path)) {
+          if (path !== directory && path !== dataRoot) {
+            try {
+              await access(path, constants.W_OK);
+            } catch (error) {
+              if (
+                ['EACCES', 'EPERM', 'EROFS'].includes((error as NodeJS.ErrnoException).code ?? '')
+              )
+                break;
+              throw error;
+            }
+          }
+          const parent = await open(
+            path,
+            constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+          );
+          try {
+            await parent.sync();
+          } finally {
+            await parent.close();
+          }
+          if (dirname(path) === path) break;
+        }
+      }
       identity = {
         key,
         publicKey,
@@ -249,6 +274,7 @@ export function createComposioProxy(options: {
       uiOrigin: string,
       challenge: string,
       signal?: AbortSignal,
+      native?: { returnPath: string },
     ) {
       const ui = new URL(uiOrigin);
       const host =
@@ -274,10 +300,18 @@ export function createComposioProxy(options: {
         (ui.port && Number(ui.port) < 1)
       )
         throw new Error('The sign-in origin is invalid.');
+      if (
+        native &&
+        (ui.protocol !== 'http:' ||
+          ui.hostname !== '127.0.0.1' ||
+          !ui.port ||
+          !/^\/[A-Za-z0-9_-]{43}$/.test(native.returnPath))
+      )
+        throw new Error('The sign-in return address is invalid.');
       const result = z
         .object({
           id: stateSchema,
-          url: z.url().max(2000),
+          url: z.url().max(8000),
           expiresAt: z.number().int(),
         })
         .strict()
@@ -290,6 +324,7 @@ export function createComposioProxy(options: {
                 ? { type: 'loopback', host, port: Number(ui.port || 80) }
                 : { type: 'https', url: uiOrigin },
               challenge: stateSchema.parse(challenge),
+              ...(native ? { native: { returnPath: native.returnPath } } : {}),
             },
             { signal, timeout: 10_000 },
           ),
@@ -298,13 +333,13 @@ export function createComposioProxy(options: {
       if (
         redirect.origin !== origin ||
         redirect.pathname !== '/api/auth/enroll' ||
-        redirect.searchParams.size !== 1 ||
+        redirect.searchParams.size !== (native ? 2 : 1) ||
+        (native && !redirect.searchParams.get('handoff')) ||
         redirect.searchParams.get('id') !== result.id ||
         redirect.hash ||
         redirect.username ||
         redirect.password ||
-        result.expiresAt <= Date.now() ||
-        result.expiresAt > Date.now() + 10 * 60_000
+        result.expiresAt <= Date.now()
       )
         throw new Error('The sign-in response is invalid.');
       return result;

@@ -1,11 +1,42 @@
 import { pool } from './db.ts';
-import { dataRoot, desktopMode, port, webRoot } from './config.ts';
+import { dataRoot, desktopMode, ownerId, port, webRoot } from './config.ts';
 import { accessKey } from './access.ts';
 import { createApplication, createDefaultAdapters } from './composition.ts';
+import { receiveLegacyIntegration } from './integration-key.ts';
 
 let stopping = false;
 let closeApplication: (() => Promise<void>) | undefined;
-const { app } = await createApplication(createDefaultAdapters());
+const parent = (
+  process as NodeJS.Process & {
+    parentPort?: Parameters<typeof receiveLegacyIntegration>[0]['parent'];
+  }
+).parentPort;
+const legacyIntegration =
+  desktopMode && process.env.OTTO_DESKTOP_LEGACY_INTEGRATION === 'true'
+    ? await receiveLegacyIntegration({
+        ownerId,
+        parent:
+          parent ??
+          (() => {
+            throw new Error('Desktop upgrade requires Otto.');
+          })(),
+      })
+    : undefined;
+const runtimeReady =
+  desktopMode && process.env.OTTO_DESKTOP_RUNTIME_PENDING === 'true'
+    ? new Promise<void>((resolve) => {
+        if (!parent) throw new Error('Desktop startup requires Otto.');
+        const ready = (event: { data: unknown }) => {
+          if ((event.data as { type?: string })?.type !== 'otto-runtime-ready') return;
+          parent.removeListener('message', ready);
+          resolve();
+        };
+        parent.on('message', ready);
+      })
+    : undefined;
+const { app } = await createApplication(createDefaultAdapters(process.env, legacyIntegration), {
+  runtimeReady,
+});
 closeApplication = () => app.close();
 if (!desktopMode && process.env.NODE_ENV !== 'production') {
   const { createServer } = await import('vite');
@@ -82,7 +113,10 @@ const listeningPort = address && typeof address === 'object' ? address.port : po
 if (desktopMode)
   (
     process as NodeJS.Process & { parentPort?: { postMessage(message: unknown): void } }
-  ).parentPort?.postMessage({ type: 'otto-ready', port: listeningPort });
+  ).parentPort?.postMessage({
+    type: 'otto-ready',
+    port: listeningPort,
+  });
 else
   console.log(
     `Otto is ready at http://localhost:${listeningPort}/#access=${await accessKey(dataRoot)}`,

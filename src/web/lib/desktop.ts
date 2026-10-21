@@ -7,10 +7,19 @@ export type DesktopPreferences = {
   launchAtLogin: boolean;
 };
 
-export type DesktopSettings = DesktopPreferences;
+export type DesktopSettings = DesktopPreferences & {
+  onboardingPreferenceStep: 'notifications' | 'launchAtLogin' | 'complete';
+};
 
-export type DesktopSettingsChange = Partial<
-  Pick<DesktopPreferences, 'theme' | 'notifications' | 'launchAtLogin'>
+export type DesktopStatus = {
+  phase?: string;
+  message?: string;
+  error?: string;
+  runtime?: { phase?: string; message?: string; error?: string };
+};
+
+export type DesktopSettingsChange = { onboardingCompleted?: true } & Partial<
+  Pick<DesktopSettings, 'theme' | 'notifications' | 'launchAtLogin' | 'onboardingPreferenceStep'>
 >;
 
 export type DesktopSettingsSection = 'general' | 'models' | 'preferences';
@@ -27,7 +36,11 @@ export type DesktopFeedbackContext = {
 
 type DesktopWindow = Window & {
   ottoDesktop?: {
+    ready?(): Promise<void>;
     getSettings(): Promise<DesktopSettings>;
+    status?(): Promise<DesktopStatus>;
+    onStatus?(listener: (status: DesktopStatus) => void): () => void;
+    prepare?(options?: { retry: boolean }): Promise<DesktopStatus>;
     saveSettings(input: DesktopSettingsChange): Promise<DesktopSettings>;
     onOpenSettings(listener: (section: DesktopSettingsSection) => void): () => void;
     openExternal(url: string): Promise<void>;
@@ -44,6 +57,10 @@ type DesktopWindow = Window & {
     setChatReadCursor?(ownerId: string, threadId: string, cursor: ChatReadCursor): Promise<void>;
   };
 };
+
+export function desktopRendererReady() {
+  void (window as DesktopWindow).ottoDesktop?.ready?.();
+}
 
 export function desktopSettingsAvailable() {
   return typeof (window as DesktopWindow).ottoDesktop?.getSettings === 'function';
@@ -130,4 +147,25 @@ export function desktopFeedbackScreenshot() {
 
 export function onFeedbackRequested(listener: () => void) {
   return (window as DesktopWindow).ottoDesktop?.onFeedbackRequested?.(listener) ?? (() => {});
+}
+
+export function desktopStatus() {
+  return (window as DesktopWindow).ottoDesktop?.status?.();
+}
+
+export function subscribeDesktopStatus(listener: (status: DesktopStatus) => void) {
+  return (window as DesktopWindow).ottoDesktop?.onStatus?.(listener) ?? (() => {});
+}
+
+export async function retryDesktopRuntime() {
+  const bridge = (window as DesktopWindow).ottoDesktop;
+  if (!bridge?.prepare) throw new Error('Restart Otto to try setting up your workspace again.');
+  const status = await bridge.prepare({ retry: true });
+  const failure =
+    status.error ||
+    (status.phase === 'error' ? status.message : undefined) ||
+    status.runtime?.error ||
+    (status.runtime?.phase === 'error' ? status.runtime.message : undefined);
+  if (failure || status.phase !== 'ready' || status.runtime?.phase !== 'ready')
+    throw new Error(failure || 'Your workspace is not ready yet. Try again.');
 }

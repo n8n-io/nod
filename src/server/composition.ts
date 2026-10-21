@@ -84,17 +84,18 @@ import { createTrust } from './trust.ts';
 import { localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
-import { createChannelSettings } from './channel-settings.ts';
+import { createChannelSettings, initializeChannelSettings } from './channel-settings.ts';
 import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
 import { createAccountStore } from './account-store.ts';
 import { createModelTraces, type ModelTraceGate } from './traces.ts';
 import { runtimeAccount } from './account-profile.ts';
 import { createAccountSession } from './account.ts';
+import { connectedGmail } from '../shared/onboarding.ts';
 import { createPostgresObjectStore } from './object-storage.ts';
 import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
 import { createPool, initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
-import { createIntegrations } from './integrations.ts';
+import { createIntegrations, initializeIntegrationSchema } from './integrations.ts';
 import { createErrorRedactor } from './redaction.ts';
 import { createLedger, limitsInput } from './ledger.ts';
 import { usageFileName, usagePdf } from './usage-report.ts';
@@ -133,7 +134,6 @@ import { createVaultAccess } from './vault-access.ts';
 import { createPayments } from './payments.ts';
 import { createBrowserConnections } from './browser-connections.ts';
 import { cachedIcons, createLinkPreviews } from './link-previews.ts';
-
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
   initialize?(): Promise<void>;
@@ -166,6 +166,10 @@ export interface ApplicationAdapters {
 
 export function createDefaultAdapters(
   env: Record<string, string | undefined> = process.env,
+  legacyIntegration?: {
+    input: import('./integration-key.ts').LegacyIntegration;
+    acknowledge(): Promise<void>;
+  },
 ): ApplicationAdapters {
   const defaultFeedbackUrl = 'https://internal.users.n8n.cloud/webhook/otto/feedback';
   const feedbackUrl = env.OTTO_FEEDBACK_URL ?? defaultFeedbackUrl;
@@ -321,6 +325,12 @@ export function createDefaultAdapters(
       await models.initialize();
       await integrationProxy?.initialize();
       await integrationKey.initialize();
+      if (
+        desktopMode &&
+        legacyIntegration &&
+        (await integrationKey.importLegacy(legacyIntegration.input))
+      )
+        await legacyIntegration.acknowledge();
     },
     models,
     agent: createPiAgent({
@@ -372,7 +382,7 @@ export function createDefaultAdapters(
 
 export async function createApplication(
   adapters: ApplicationAdapters,
-  options: { workers?: boolean; channels?: boolean } = {},
+  options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> } = {},
 ) {
   try {
     return await initializeApplication(adapters, options);
@@ -389,7 +399,7 @@ export async function createApplication(
 
 async function initializeApplication(
   adapters: ApplicationAdapters,
-  options: { workers?: boolean; channels?: boolean },
+  options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> },
 ) {
   const analytics = await createAnalytics({
     provider: adapters.analytics,
@@ -417,6 +427,29 @@ async function initializeApplication(
   const websiteVisited = createWebsiteVisits(analytics, ownerId);
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
+  const closing = new AbortController();
+  if (options.runtimeReady) await consumers.pause();
+  const runtimeReady =
+    options.runtimeReady?.then(() => {
+      if (!closing.signal.aborted) return consumers.resume();
+    }) ?? Promise.resolve();
+  void runtimeReady.catch(() => {});
+  async function prepareRuntime(signal: AbortSignal) {
+    const lifetime = AbortSignal.any([signal, closing.signal]);
+    lifetime.throwIfAborted();
+    let aborted: () => void;
+    try {
+      await Promise.race([
+        runtimeReady,
+        new Promise<never>((_, reject) => {
+          aborted = () => reject(lifetime.reason);
+          lifetime.addEventListener('abort', aborted, { once: true });
+        }),
+      ]);
+    } finally {
+      lifetime.removeEventListener('abort', aborted!);
+    }
+  }
   const privacyNotice = await loadPrivacyNoticeFile(process.env.OTTO_PRIVACY_NOTICE_FILE);
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   await initializeDatabase();
@@ -1360,6 +1393,10 @@ async function initializeApplication(
     localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
     developerIds: desktopMode ? new Set() : new Set([ownerId]),
     start: (_owner, name) => welcome(name),
+    prepare: prepareRuntime,
+    onboardingReady: async () =>
+      adapters.model.configured &&
+      (await integrations.list(ownerId, { refresh: false })).some(connectedGmail),
     traces: adapters.traces?.available ?? false,
     onTraces: (enabled) => adapters.traces?.configure({ enabled }),
   }).register(app);
@@ -1378,8 +1415,10 @@ async function initializeApplication(
   integrations.registerRoutes(app);
   personal.registerRoutes(app);
   createOnboardingInterview({
+    ownerId,
+    pool,
+    keyStore: adapters.keyStore,
     curator: onboardingCurator,
-    memory,
     brief: onboardingSuggestions.currentBrief,
   }).registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
@@ -1493,6 +1532,7 @@ async function initializeApplication(
   await onboardingSuggestions.initialize();
   let closingConsumers: Promise<void> | undefined;
   app.addHook('preClose', async () => {
+    closing.abort();
     admission.close();
     closingConsumers = consumers.close();
     void closingConsumers.catch(() => {});

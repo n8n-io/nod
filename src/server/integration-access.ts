@@ -25,21 +25,55 @@ export function renderIntegrationAccessBridge(
   brokerOrigin: string,
   nonce: string,
   bridgeKey: string,
+  continuation: { id?: string; expiresAt: number },
 ) {
   const broker = JSON.stringify(brokerOrigin).replaceAll('<', '\\u003c');
   const secret = JSON.stringify(bridgeKey).replaceAll('<', '\\u003c');
-  return String.raw`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in to Otto</title><style nonce="${nonce}">body{font:16px system-ui;margin:12vh auto;padding:24px;max-width:420px;color:#202322;background:#fafaf8}button{font:inherit;padding:12px 18px;border:1px solid #b8bcb5;border-radius:8px;background:white;cursor:pointer}p{line-height:1.5}</style></head><body><h1>Sign in to Otto</h1><p id="status">Continue with Google to enable Otto’s app connection on this installation.</p><button id="continue">Continue with Google</button><script nonce="${nonce}">
+  const expected = JSON.stringify(continuation).replaceAll('<', '\\u003c');
+  return String.raw`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening Google · Otto</title><style nonce="${nonce}">:root{color-scheme:light dark}body{font:16px system-ui;margin:0;min-height:100svh;display:grid;place-items:center;background:light-dark(#fafafa,#191919);color:light-dark(#191919,#fafafa)}main{max-width:360px;padding:32px;text-align:center}svg{width:48px;height:48px;overflow:visible}h1{font-size:21px;font-weight:550;letter-spacing:-.4px}p{line-height:1.6;color:light-dark(#676767,#bfbfbf)}.orbit{transform-origin:16px 16px;animation:orbit 1.4s linear infinite}.failed .orbit{animation:none}@keyframes orbit{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.orbit{animation:none}}</style></head><body><main><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4"/><g class="orbit"><circle cx="25" cy="6" r="4" fill="#ff91ac"/></g></svg><h1 id="heading">Opening Google…</h1><p id="status" role="status"></p></main><script nonce="${nonce}">
 const brokerOrigin=${broker};
 const bridgeKey=${secret};
-const button=document.getElementById('continue');
-const status=document.getElementById('status');
-let popup, key, attempt, timer, stopped=false, proved=false;
-const request=async(path,body)=>{const response=await fetch(path,{method:body===undefined?'GET':'POST',credentials:'same-origin',headers:{'X-Otto-Bridge':bridgeKey,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});if(!response.ok)throw new Error('Sign-in is unavailable. Return to Otto and try again.');return response.json();};
-const stop=(message)=>{stopped=true;clearTimeout(timer);status.textContent=message;button.disabled=true;};
-window.addEventListener('message',async(event)=>{const value=event.data;if(stopped||proved||event.source!==popup||event.origin!==brokerOrigin||!attempt||Date.now()>=attempt.expiresAt||!key||!value||value.type!=='otto:proxy-access:challenge'||value.id!==attempt.id||typeof value.challenge!=='string'||value.challenge.length>512||!value.challenge.startsWith('otto-proxy-access-v1\n'+attempt.id+'\n'+location.origin+'\n')||value.challenge.length<=('otto-proxy-access-v1\n'+attempt.id+'\n'+location.origin+'\n').length)return;proved=true;try{const signature=new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key.privateKey,new TextEncoder().encode(value.challenge)));if(stopped||Date.now()>=attempt.expiresAt||signature.length!==64)return;popup.postMessage({type:'otto:proxy-access:proof',id:attempt.id,signature:btoa(String.fromCharCode(...signature)).replaceAll('+','-').replaceAll('/','_').replaceAll('=','')},brokerOrigin);}catch{stop('Sign-in could not be verified. Return to Otto and try again.');}});
-const poll=async()=>{if(stopped)return;try{const result=await request('/status');if(stopped)return;if(result.status==='completed'){stop('You’re signed in. Return to Otto to continue.');return;}if(result.status==='denied'||result.status==='cancelled'){stop('Sign-in was not completed. Return to Otto to try again.');return;}timer=setTimeout(poll,1000);}catch{stop('Return to Otto to check your connection.');}};
-button.addEventListener('click',async()=>{if(button.disabled)return;popup=window.open('','_blank','popup,width=520,height=720');if(!popup){status.textContent='Allow pop-ups, then continue with Google.';return;}button.disabled=true;try{key=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);const browserKey=await crypto.subtle.exportKey('jwk',key.publicKey);attempt=await request('/start',{browserKey});if(stopped)return;const target=new URL(attempt.url);if(target.origin!==brokerOrigin||target.pathname!=='/api/auth/enroll'||target.searchParams.get('id')!==attempt.id)throw new Error('Invalid sign-in address.');popup.location.href=target.href;status.textContent='Finish signing in with Google in the other window.';void poll();}catch{popup?.close();stop('Sign-in is unavailable. Return to Otto and try again.');}});
-window.addEventListener('pagehide',()=>{stopped=true;clearTimeout(timer);});
+const expected=${expected};
+const fragment=location.hash.slice(1);
+history.replaceState(null,'',location.pathname);
+const slot='otto-native-access';
+let database;
+const valid=()=>{if(Date.now()>=expected.expiresAt)throw new Error();};
+const open=()=>new Promise((resolve,reject)=>{const request=indexedDB.open(slot,1);request.onupgradeneeded=()=>request.result.createObjectStore('keys');request.onsuccess=()=>resolve(request.result);request.onerror=request.onblocked=()=>reject(new Error());});
+const stored=(action,value)=>new Promise((resolve,reject)=>{const transaction=database.transaction('keys','readwrite',{durability:'strict'});const store=transaction.objectStore('keys');let result;const request=store.get('current');request.onsuccess=()=>{result=request.result;if(action==='put')store.put(value,'current');else store.delete('current');};transaction.oncomplete=()=>resolve(result);transaction.onerror=transaction.onabort=()=>reject(new Error());});
+const encoded=(bytes)=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
+const request=async(body)=>{const response=await fetch('/start',{method:'POST',credentials:'same-origin',headers:{'X-Otto-Bridge':bridgeKey,'Content-Type':'application/json'},body:JSON.stringify(body)});if(!response.ok)throw new Error();return response.json();};
+(async()=>{try{
+database=await open();valid();
+if(expected.id){
+const marker=sessionStorage.getItem(slot);sessionStorage.removeItem(slot);
+const saved=await stored('take');valid();
+if(!saved||!marker||saved.marker!==marker||saved.id!==expected.id||saved.brokerOrigin!==brokerOrigin||saved.expiresAt<=Date.now()||saved.key?.type!=='private'||saved.key.extractable!==false||saved.key.algorithm?.name!=='ECDSA'||saved.key.algorithm.namedCurve!=='P-256')throw new Error();
+if(fragment.length>16000)throw new Error();
+const value=JSON.parse(decodeURIComponent(fragment));
+if(!value||Object.keys(value).sort().join(',')!=='challenge,id,proof'||value.id!==expected.id||typeof value.proof!=='string'||value.proof.length>6000||typeof value.challenge!=='string'||value.challenge.length>512)throw new Error();
+const parts=value.challenge.split('\n');
+if(parts.length!==5||parts[0]!=='otto-proxy-access-v1'||parts[1]!==expected.id||parts[2]!==location.origin||!/^[a-f0-9]{64}$/.test(parts[3])||!/^[A-Za-z0-9_-]{43}$/.test(parts[4]))throw new Error();
+const signature=new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},saved.key,new TextEncoder().encode(value.challenge)));valid();if(Date.now()>=saved.expiresAt||signature.length!==64)throw new Error();
+location.replace(brokerOrigin+'/api/auth/native-proof#'+encodeURIComponent(JSON.stringify({proof:value.proof,signature:encoded(signature)})));
+}else{
+if(fragment)throw new Error();
+await stored('take');
+const key=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);valid();
+const marker=encoded(crypto.getRandomValues(new Uint8Array(32)));
+sessionStorage.setItem(slot,marker);
+const saved={key:key.privateKey,marker,brokerOrigin,expiresAt:expected.expiresAt};
+await stored('put',saved);valid();
+const attempt=await request({browserKey:await crypto.subtle.exportKey('jwk',key.publicKey)});valid();
+const target=new URL(attempt.url);
+if(!/^[A-Za-z0-9_-]{43}$/.test(attempt.id)||!Number.isSafeInteger(attempt.expiresAt)||attempt.expiresAt<=Date.now()||target.origin!==brokerOrigin||target.pathname!=='/api/auth/enroll'||target.searchParams.size!==2||target.searchParams.get('id')!==attempt.id||!target.searchParams.get('handoff')||target.username||target.password||target.hash)throw new Error();
+await stored('put',{...saved,id:attempt.id,expiresAt:Math.min(expected.expiresAt,attempt.expiresAt)});valid();
+location.replace(target.href);
+}
+}catch{
+try{sessionStorage.removeItem(slot);if(database)await stored('take');}catch{}
+document.body.classList.add('failed');document.title='Sign-in could not be completed · Otto';document.getElementById('heading').textContent='Sign-in could not be completed';document.getElementById('status').textContent='Return to Otto and try again.';
+}finally{database?.close();}})();
 </script></body></html>`;
 }
 
@@ -110,13 +144,19 @@ export function createIntegrationAccess(options: {
       void cancelAttempt(attempt);
     return attempt;
   }
-  async function enroll(attempt: Attempt, browserKey: unknown, origin: string) {
+  async function enroll(
+    attempt: Attempt,
+    browserKey: unknown,
+    origin: string,
+    native?: { returnPath: string },
+  ) {
     if (!live(attempt) || attempt.brokerId) throw new Error('This sign-in attempt is unavailable.');
     const result = await options.proxy.startAccess(
       publicKeySchema.parse(browserKey),
       origin,
       attempt.challenge,
       attempt.controller.signal,
+      native,
     );
     if (!live(attempt)) {
       await options.proxy.cancelAccess(result.id).catch(() => {});
@@ -181,6 +221,8 @@ export function createIntegrationAccess(options: {
   async function bridge(attempt: Attempt) {
     const capability = randomBytes(32).toString('base64url');
     const bridgeKey = randomBytes(32).toString('base64url');
+    const returnPath = `/${randomBytes(32).toString('base64url')}`;
+    let returned = false;
     let origin = '';
     let bootstrapped = false;
     let starting = false;
@@ -206,7 +248,13 @@ export function createIntegrationAccess(options: {
         if (
           (!live(attempt) && !terminal()) ||
           request.headers.host !== new URL(origin).host ||
-          (request.headers.origin !== undefined && request.headers.origin !== origin)
+          (request.headers.origin !== undefined &&
+            request.headers.origin !== origin &&
+            !(
+              request.method === 'GET' &&
+              request.url === returnPath &&
+              request.headers.origin === options.proxy.origin
+            ))
         )
           return send(403, { error: 'This sign-in attempt is unavailable.' });
         if (
@@ -217,7 +265,29 @@ export function createIntegrationAccess(options: {
         ) {
           bootstrapped = true;
           response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-          response.end(renderIntegrationAccessBridge(options.proxy.origin, nonce, bridgeKey));
+          response.end(
+            renderIntegrationAccessBridge(options.proxy.origin, nonce, bridgeKey, {
+              expiresAt: attempt.expiresAt,
+            }),
+          );
+          return;
+        }
+        if (
+          live(attempt) &&
+          bootstrapped &&
+          attempt.brokerId &&
+          !returned &&
+          request.method === 'GET' &&
+          request.url === returnPath
+        ) {
+          returned = true;
+          response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          response.end(
+            renderIntegrationAccessBridge(options.proxy.origin, nonce, '', {
+              id: attempt.brokerId,
+              expiresAt: attempt.expiresAt,
+            }),
+          );
           return;
         }
         if (
@@ -240,7 +310,7 @@ export function createIntegrationAccess(options: {
             .object({ browserKey: publicKeySchema })
             .strict()
             .parse(await body(request));
-          const result = await enroll(attempt, input.browserKey, origin);
+          const result = await enroll(attempt, input.browserKey, origin, { returnPath });
           return send(200, result);
         }
         send(404, { error: 'This request is unavailable.' });

@@ -10,16 +10,35 @@ import {
   webcrypto,
   type JsonWebKey,
 } from 'node:crypto';
-import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, stat, symlink } from 'node:fs/promises';
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { get as httpGet } from 'node:http';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
+import { runInNewContext } from 'node:vm';
+import { IDBFactory } from 'fake-indexeddb';
+import type { Connection as AppConnection } from '../src/shared/contracts.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client';
 import { Composio } from '@composio/core';
 import Fastify from 'fastify';
+import { EventEmitter } from 'node:events';
+import {
+  createIntegrationKeyService,
+  receiveLegacyIntegration,
+} from '../src/server/integration-key.ts';
 import pg from 'pg';
 import type { Agent, AgentEvent, AgentToolResult, RuntimeContext } from '../src/ports/agent.ts';
 import { type DiscoveredOAuthState } from '../src/ports/discovered.ts';
@@ -51,6 +70,7 @@ import type { TrustEntry } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { createWorkAdmission } from '../src/server/work-admission.ts';
 import { integrationServiceIds } from '../src/shared/integrations.ts';
+import { connectedGmail } from '../src/shared/onboarding.ts';
 import { fileBytes } from '../src/shared/files.ts';
 import { fakeComputer, fakeExecution, fakeWorkspace } from './runtime-fixtures.ts';
 
@@ -78,6 +98,78 @@ function fakeProvider(session: IntegrationSession): IntegrationProvider {
     },
   };
 }
+
+test('installation identity persistence failures withhold signatures and preserve the published key across restart', async (t) => {
+  for (const target of ['file', 'directory', 'ancestor']) {
+    await t.test(target, { skip: process.platform === 'win32' && target !== 'file' }, async (t) => {
+      const root = await mkdtemp(join(tmpdir(), 'otto-proxy-durability-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const dataRoot = join(root, 'new', 'profile');
+      const directory = join(dataRoot, 'integration-identity');
+      const probe = join(root, '.probe');
+      const handle = await open(probe, 'wx', 0o600);
+      const prototype = Object.getPrototypeOf(handle);
+      const sync = prototype.sync;
+      await handle.close();
+      await rm(probe);
+      let fail = true;
+      t.mock.method(prototype, 'sync', async function (this: typeof handle) {
+        const metadata = await this.stat();
+        const expected =
+          target === 'file' ? undefined : await stat(target === 'directory' ? directory : root);
+        if (
+          fail &&
+          (target === 'file'
+            ? metadata.isFile()
+            : metadata.dev === expected!.dev && metadata.ino === expected!.ino)
+        )
+          throw Object.assign(new Error('Synthetic installation persistence failure'), {
+            code: 'EIO',
+          });
+        return sync.call(this);
+      });
+      const calls: string[] = [];
+      const options = {
+        dataRoot,
+        ownerId: 'synthetic-owner',
+        url: 'https://proxy.example.test',
+        request: (async (_input, init) => {
+          calls.push(new Headers(init?.headers).get('x-otto-public-key')!);
+          return Response.json({ state: 'enabled' });
+        }) as typeof fetch,
+      };
+      const proxy = createComposioProxy(options);
+      await assert.rejects(proxy.initialize(), { code: 'EIO' });
+      assert.throws(() => proxy.userId);
+      await assert.rejects(proxy.accessStatus(), { code: 'EIO' });
+      assert.equal(calls.length, 0);
+      if (target === 'file') {
+        assert.deepEqual(await readdir(directory), []);
+        fail = false;
+        await proxy.initialize();
+        const restarted = createComposioProxy(options);
+        await restarted.initialize();
+        assert.equal(restarted.userId, proxy.userId);
+        return;
+      }
+      const [entry] = await readdir(directory);
+      assert.match(entry, /^[a-f0-9]{64}\.pem$/);
+      const saved = await readFile(join(directory, entry), 'utf8');
+      const restarted = createComposioProxy(options);
+      await assert.rejects(restarted.initialize(), { code: 'EIO' });
+      assert.throws(() => restarted.userId);
+      assert.equal(await readFile(join(directory, entry), 'utf8'), saved);
+      fail = false;
+      await Promise.all([proxy.initialize(), restarted.initialize()]);
+      assert.equal(restarted.userId, proxy.userId);
+      await proxy.accessStatus();
+      await restarted.accessStatus();
+      const publicKey = createPublicKey(saved).export({ format: 'jwk' }).x;
+      assert.deepEqual(calls, [publicKey, publicKey]);
+      assert.deepEqual(await readdir(directory), [entry]);
+    });
+  }
+});
 
 test('managed integration requests bind SDK calls to a private persisted installation and never retry execution', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => {
@@ -635,6 +727,7 @@ test('managed proxy access binds browser enrollment to the installation and a pr
     {
       challenge: string;
       origin: string;
+      native?: { returnPath: string };
       status: 'pending' | 'authorized' | 'completed' | 'cancelled' | 'denied';
     }
   >();
@@ -643,6 +736,7 @@ test('managed proxy access binds browser enrollment to the installation and a pr
   let holdPoll: (() => Promise<void>) | undefined;
   let holdComplete: (() => Promise<void>) | undefined;
   let denyCompletion = false;
+  let enrollmentLifetime = 60_000;
   const proxy = createComposioProxy({
     dataRoot: root,
     ownerId: 'synthetic-managed-access',
@@ -706,12 +800,13 @@ test('managed proxy access binds browser enrollment to the installation and a pr
         enrollments.set(id, {
           challenge: body.challenge,
           origin: initiatingOrigin,
+          ...(body.native ? { native: body.native } : {}),
           status: 'pending',
         });
         return Response.json({
           id,
-          url: `${brokerOrigin}/api/auth/enroll?id=${id}`,
-          expiresAt: Date.now() + 60_000,
+          url: `${brokerOrigin}/api/auth/enroll?id=${id}${body.native ? '&handoff=synthetic-sealed-ticket' : ''}`,
+          expiresAt: Date.now() + enrollmentLifetime,
         });
       }
       if (url.pathname === '/v1/access/revoke') {
@@ -864,6 +959,82 @@ test('managed proxy access binds browser enrollment to the installation and a pr
   );
 
   await t.test(
+    'broker clock tolerance keeps web and native sign-in within the local lifetime',
+    async (t) => {
+      for (const native of [false, true])
+        await t.test(native ? 'native' : 'web', async (t) => {
+          let now = Date.now();
+          const clock = t.mock.method(Date, 'now', () => now);
+          t.mock.timers.enable({ apis: ['setTimeout'] });
+          const advance = (milliseconds: number) => {
+            now += milliseconds;
+            t.mock.timers.tick(milliseconds);
+          };
+          async function start() {
+            const response = await route(
+              'POST',
+              '/start',
+              native ? { native: true } : { browserKey },
+            );
+            const started = response.json();
+            if (!native) return { code: response.statusCode, id: started.id, result: started };
+            assert.equal(response.statusCode, 200);
+            const url = new URL(started.url);
+            const html = await (await fetch(started.url)).text();
+            const bridgeKey = JSON.parse(html.match(/const bridgeKey=("[^"]+");/)![1]);
+            advance(30_000);
+            const enrolled = await fetch(`${url.origin}/start`, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                origin: url.origin,
+                'x-otto-bridge': bridgeKey,
+              },
+              body: JSON.stringify({ browserKey }),
+            });
+            return { code: enrolled.status, id: started.id, result: await enrolled.json() };
+          }
+          try {
+            for (const lifetime of [20 * 60_000, 60_000]) {
+              enrollmentLifetime = lifetime;
+              const began = now;
+              const started = await start();
+              assert.equal(started.code, 200);
+              const brokerAttempt = started.result as { id: string; expiresAt: number };
+              assert.equal(brokerAttempt.expiresAt, now + lifetime);
+              const deadline = Math.min(began + 10 * 60_000, brokerAttempt.expiresAt);
+              advance(deadline - now - 1);
+              assert.deepEqual((await route('GET', `/status?id=${started.id}`)).json(), {
+                status: 'pending',
+              });
+              enrollments.get(brokerAttempt.id)!.status = 'authorized';
+              const completions = calls.filter((path) => path === '/v1/access/complete').length;
+              advance(1);
+              assert.deepEqual((await route('GET', `/status?id=${started.id}`)).json(), {
+                status: 'cancelled',
+              });
+              assert.equal((await route('POST', '/complete', { id: started.id })).statusCode, 400);
+              assert.equal(
+                calls.filter((path) => path === '/v1/access/complete').length,
+                completions,
+              );
+              assert.equal(enrollments.get(brokerAttempt.id)!.status, 'cancelled');
+            }
+            for (const lifetime of [-1, 0, Number.NaN, 0.5]) {
+              enrollmentLifetime = lifetime;
+              const started = await start();
+              assert.equal(started.code, 400);
+              if (native) await route('POST', '/cancel', { id: started.id });
+            }
+          } finally {
+            enrollmentLifetime = 60_000;
+            clock.mock.restore();
+          }
+        });
+    },
+  );
+
+  await t.test(
     'a denied completion remains a terminal admission result without enabling access or retrying',
     async () => {
       const started = await access.start({ browserKey });
@@ -996,6 +1167,19 @@ test('managed proxy access binds browser enrollment to the installation and a pr
       const brokerAttempt = (await enrolled.json()) as { id: string };
       assert.notEqual(brokerAttempt.id, started.id);
       assert.equal(enrollments.get(brokerAttempt.id)!.origin, url.origin);
+      const returnPath = enrollments.get(brokerAttempt.id)!.native!.returnPath;
+      assert.match(returnPath, /^\/[A-Za-z0-9_-]{43}$/);
+      assert.equal(
+        (await fetch(`${url.origin}/${randomBytes(32).toString('base64url')}`)).status,
+        403,
+      );
+      const continuation = await fetch(`${url.origin}${returnPath}`, {
+        headers: { origin: brokerOrigin, 'sec-fetch-site': 'cross-site' },
+      });
+      assert.equal(continuation.status, 200);
+      assert.match(await continuation.text(), new RegExp(brokerAttempt.id));
+      assert.equal((await fetch(`${url.origin}${returnPath}`)).status, 403);
+
       assert.equal(
         (
           await fetch(`${url.origin}/start`, {
@@ -1113,128 +1297,199 @@ test('managed proxy access binds browser enrollment to the installation and a pr
   );
 
   await t.test(
-    'the native page signs only the exact popup challenge using its own ephemeral browser key',
+    'native Google sign-in advances automatically in one tab and consumes its browser key before proof',
     async () => {
       const { JSDOM } = await import('jsdom');
-      const id = randomBytes(32).toString('base64url');
-      const uiOrigin = 'http://127.0.0.1:54321';
-      const bridgeKey = randomBytes(32).toString('base64url');
-      let exported: JsonWebKey | undefined;
-      let launched!: () => void;
-      const opened = new Promise<void>((resolve) => {
-        launched = resolve;
-      });
-      let proof!: (value: unknown) => void;
-      const signed = new Promise<unknown>((resolve) => {
-        proof = resolve;
-      });
-      const proofs: unknown[] = [];
-      let brokerStatus = 'pending';
-      let statusReads = 0;
-      let poll: (() => void) | undefined;
-      const popup = {
-        closed: false,
-        location: {
-          set href(value: string) {
-            assert.equal(value, `${brokerOrigin}/api/auth/enroll?id=${id}`);
-            launched();
+      const slot = 'otto-native-access';
+      for (const scenario of [
+        'success',
+        'wrong-tab',
+        'wrong-id',
+        'wrong-origin',
+        'expired',
+        'write-failed',
+        'delete-failed',
+        'old-broker',
+      ]) {
+        const factory = new IDBFactory();
+        const storage = new Map<string, string>();
+        const id = randomBytes(32).toString('base64url');
+        const origin = 'http://127.0.0.1:54321';
+        const expiresAt = Date.now() + 60_000;
+        let publicKey!: JsonWebKey;
+        let failDelete = false;
+        let navigations = 0;
+        const indexedDB = {
+          open(name: string, version: number) {
+            const request = factory.open(name, version);
+            request.addEventListener('success', () => {
+              const database = request.result;
+              const original = database.transaction.bind(database);
+              database.transaction = ((...args: Parameters<typeof original>) => {
+                const transaction = original(...args);
+                if (scenario === 'write-failed' || failDelete)
+                  queueMicrotask(() => transaction.abort());
+                return transaction;
+              }) as typeof database.transaction;
+            });
+            return request;
           },
-        },
-        close() {},
-        postMessage(value: unknown, target: string) {
-          assert.equal(target, brokerOrigin);
-          proofs.push(value);
-          proof(value);
-        },
-      };
-      const dom = new JSDOM(
-        renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', bridgeKey),
-        {
-          url: `${uiOrigin}/synthetic`,
-          runScripts: 'dangerously',
-          beforeParse(window) {
-            Object.defineProperty(window, 'crypto', { value: webcrypto });
-            window.TextEncoder = TextEncoder;
-            window.open = () => popup as unknown as Window;
-            window.setTimeout = ((callback: () => void) => {
-              poll = callback;
-              return 1;
-            }) as typeof window.setTimeout;
-            window.clearTimeout = () => {
-              poll = undefined;
-            };
-            window.fetch = async (path, options) => {
-              assert.equal(new Headers(options?.headers).get('x-otto-bridge'), bridgeKey);
-              if (path === '/status') {
-                statusReads++;
-                return Response.json({ status: brokerStatus });
-              }
+        };
+        const readStored = async () => {
+          const database = await new Promise<IDBDatabase>((resolve, reject) => {
+            const request = factory.open(slot, 1);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+          try {
+            return await new Promise<unknown>((resolve, reject) => {
+              const request = database.transaction('keys').objectStore('keys').get('current');
+              request.onsuccess = () => resolve(request.result);
+              request.onerror = () => reject(request.error);
+            });
+          } finally {
+            database.close();
+          }
+        };
+        const run = async (html: string, hash = '') => {
+          const dom = new JSDOM(html);
+          let destination = '';
+          let cleared = false;
+          const location = {
+            origin,
+            pathname: '/private-callback',
+            hash,
+            replace(value: string) {
+              assert.equal(cleared, true);
+              navigations++;
+              destination = value;
+            },
+          };
+          runInNewContext(dom.window.document.querySelector('script')!.textContent!, {
+            location,
+            history: {
+              replaceState() {
+                cleared = true;
+              },
+            },
+            document: dom.window.document,
+            indexedDB,
+            sessionStorage: {
+              getItem: (name: string) => storage.get(name) ?? null,
+              setItem: (name: string, value: string) => storage.set(name, value),
+              removeItem: (name: string) => storage.delete(name),
+            },
+            crypto: webcrypto,
+            TextEncoder,
+            Uint8Array,
+            URL,
+            btoa,
+            Date,
+            fetch: async (path: string, options: RequestInit) => {
               assert.equal(path, '/start');
-              exported = JSON.parse(String(options!.body)).browserKey;
-              assert.equal(exported!.d, undefined);
+              assert.equal(
+                new Headers(options.headers).get('x-otto-bridge'),
+                'synthetic-bridge-key',
+              );
+              publicKey = JSON.parse(String(options.body)).browserKey;
+              assert.equal(publicKey.d, undefined);
+              const pending = (await readStored()) as { key: CryptoKey };
+              assert.equal(pending.key.extractable, false);
               return Response.json({
                 id,
-                url: `${brokerOrigin}/api/auth/enroll?id=${id}`,
-                expiresAt: Date.now() + 60_000,
+                expiresAt,
+                url: `${brokerOrigin}/api/auth/enroll?id=${id}${scenario === 'old-broker' ? '' : '&handoff=synthetic-sealed-ticket'}`,
               });
-            };
-          },
-        },
-      );
-      t.after(() => dom.window.close());
-      dom.window.document.querySelector<HTMLButtonElement>('#continue')!.click();
-      await opened;
-      const challenge = `otto-proxy-access-v1\n${id}\n${uiOrigin}\n${randomBytes(32).toString('base64url')}`;
-      const deliver = (origin: string, source: unknown, value: unknown) =>
-        dom.window.dispatchEvent(
-          new dom.window.MessageEvent('message', { origin, source: source as Window, data: value }),
+            },
+          });
+          try {
+            for (
+              let n = 0;
+              n < 200 && !destination && !dom.window.document.body.classList.contains('failed');
+              n++
+            )
+              await delay(5);
+            return { destination, failed: dom.window.document.body.classList.contains('failed') };
+          } finally {
+            dom.window.close();
+          }
+        };
+        const opened = await run(
+          renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', 'synthetic-bridge-key', {
+            expiresAt,
+          }),
         );
-      const value = { type: 'otto:proxy-access:challenge', id, challenge };
-      deliver('https://attacker.example.test', popup, value);
-      deliver(brokerOrigin, {}, value);
-      deliver(brokerOrigin, popup, { ...value, id: randomBytes(32).toString('base64url') });
-      deliver(brokerOrigin, popup, { ...value, challenge: 'arbitrary-signature-input' });
-      deliver(brokerOrigin, popup, {
-        ...value,
-        challenge: `otto-proxy-access-v1\n${id}\n${uiOrigin}\n`,
-      });
-      const now = dom.window.Date.now;
-      dom.window.Date.now = () => now() + 120_000;
-      deliver(brokerOrigin, popup, value);
-      dom.window.Date.now = now;
-      deliver(brokerOrigin, popup, { ...value, challenge: challenge + 'x'.repeat(513) });
-      await delay(0);
-      assert.equal(proofs.length, 0);
-      deliver(brokerOrigin, popup, value);
-      const result = (await signed) as { type: string; id: string; signature: string };
-      assert.equal(result.type, 'otto:proxy-access:proof');
-      assert.equal(result.id, id);
-      assert.equal(Buffer.from(result.signature, 'base64url').length, 64);
-      assert.ok(
-        verify(
-          'sha256',
-          Buffer.from(challenge),
-          { key: createPublicKey({ key: exported!, format: 'jwk' }), dsaEncoding: 'ieee-p1363' },
-          Buffer.from(result.signature, 'base64url'),
-        ),
-      );
-      deliver(brokerOrigin, popup, value);
-      await delay(0);
-      assert.equal(proofs.length, 1);
-      popup.closed = true;
-      brokerStatus = 'authorized';
-      const previousReads = statusReads;
-      assert.ok(poll);
-      poll();
-      await delay(0);
-      assert.equal(statusReads, previousReads + 1);
-      assert.ok(poll);
-      brokerStatus = 'completed';
-      poll();
-      await delay(0);
-      assert.equal(statusReads, previousReads + 2);
-      assert.equal(poll, undefined);
-      assert.equal(proofs.length, 1);
+        if (scenario === 'write-failed' || scenario === 'old-broker') {
+          assert.equal(opened.destination, '');
+          assert.equal(opened.failed, true);
+          assert.equal(navigations, 0);
+          continue;
+        }
+        assert.equal(
+          opened.destination,
+          `${brokerOrigin}/api/auth/enroll?id=${id}&handoff=synthetic-sealed-ticket`,
+        );
+        const saved = (await readStored()) as { id: string; key: CryptoKey };
+        assert.equal(saved.id, id);
+        assert.equal(saved.key.type, 'private');
+        assert.equal(saved.key.extractable, false);
+        if (scenario === 'wrong-tab') storage.clear();
+        failDelete = scenario === 'delete-failed';
+        const challenge = [
+          'otto-proxy-access-v1',
+          id,
+          scenario === 'wrong-origin' ? 'https://attacker.example.test' : origin,
+          randomBytes(32).toString('hex'),
+          randomBytes(32).toString('base64url'),
+        ].join('\n');
+        const fragment =
+          '#' +
+          encodeURIComponent(
+            JSON.stringify({
+              id: scenario === 'wrong-id' ? randomBytes(32).toString('base64url') : id,
+              challenge,
+              proof: 'synthetic-sealed-proof',
+            }),
+          );
+        const returned = await run(
+          renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', '', {
+            id,
+            expiresAt: scenario === 'expired' ? Date.now() - 1 : expiresAt,
+          }),
+          fragment,
+        );
+        if (scenario !== 'success') {
+          assert.equal(returned.destination, '', scenario);
+          assert.equal(returned.failed, true, scenario);
+          assert.equal(navigations, 1);
+        } else {
+          const target = new URL(returned.destination);
+          assert.equal(target.origin, brokerOrigin);
+          assert.equal(target.pathname, '/api/auth/native-proof');
+          assert.equal(target.search, '');
+          const result = JSON.parse(decodeURIComponent(target.hash.slice(1)));
+          assert.equal(result.proof, 'synthetic-sealed-proof');
+          assert.ok(
+            verify(
+              'sha256',
+              Buffer.from(challenge),
+              {
+                key: createPublicKey({ key: publicKey, format: 'jwk' }),
+                dsaEncoding: 'ieee-p1363',
+              },
+              Buffer.from(result.signature, 'base64url'),
+            ),
+          );
+          assert.equal(await readStored(), undefined);
+          assert.equal(storage.size, 0);
+          const repeated = await run(
+            renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', '', { id, expiresAt }),
+            fragment,
+          );
+          assert.equal(repeated.destination, '');
+          assert.equal(navigations, 2);
+        }
+      }
     },
   );
   assert.equal(identities.size, 1);
@@ -3434,6 +3689,8 @@ test(
       [];
     const subscriptions: string[] = [];
     const deleted: string[] = [];
+    let deletionFails = false;
+    let deletionAttempts = 0;
     const accountSets: unknown[] = [];
     const session: IntegrationSession = {
       id: 'fixture-session',
@@ -3463,6 +3720,8 @@ test(
       return { id: `trigger-${accountId}` };
     };
     provider.deleteAccount = async (id) => {
+      deletionAttempts++;
+      if (deletionFails) throw new Error('Synthetic provider deletion failure.');
       deleted.push(id);
     };
     const delivered: string[] = [];
@@ -3583,6 +3842,26 @@ test(
       for (let index = 0; index < 200 && !delivered.length; index++) await delay(10);
       assert.equal(delivered.length, 1);
       assert.ok(delivered[0].includes(second.connectionId!));
+      deletionFails = true;
+      const failedDisconnect = await app.inject({
+        method: 'POST',
+        url: `/api/apps/gmail/accounts/${first.connectionId}/disconnect`,
+      });
+      assert.ok(failedDisconnect.statusCode >= 400);
+      const afterFailure = (await app.inject({ url: '/api/apps' })).json();
+      const pending = afterFailure.find(
+        (row: AppConnection) => row.connectionId === first.connectionId,
+      );
+      assert.equal(pending.status, 'disconnected');
+      assert.equal(pending.disconnectPending, true);
+      assert.equal(pending.canReconnect, false);
+      assert.equal(
+        afterFailure.find((row: AppConnection) => row.connectionId === second.connectionId)
+          .disconnectPending,
+        false,
+      );
+      assert.equal(deletionAttempts, 1);
+      deletionFails = false;
       assert.equal(
         (
           await app.inject({
@@ -3593,6 +3872,7 @@ test(
         200,
       );
       assert.deepEqual(deleted, ['account-1']);
+      assert.equal(deletionAttempts, 2);
       assert.equal((await integrations.list()).filter((row) => row.slug === 'gmail').length, 1);
       await assert.rejects(
         integrations.execute('local-development', 'GMAIL_SEND_EMAIL', {
@@ -5829,6 +6109,7 @@ test(
         assert.equal(saved.canReconnect, true);
         assert.equal(saved.reconnectRequired, true);
         assert.equal(saved.status, active ? 'connected' : 'disconnected');
+        assert.equal(connectedGmail(saved), active);
         const response = await f.reconnect();
         assert.equal(response.statusCode, 200, response.body);
         assert.doesNotMatch(response.body, /original-gmail-auth|work@example|private/);
@@ -7850,6 +8131,7 @@ test('Composio key changes bind configuration identity to the active SDK and fen
   const keys = ['synthetic-rotation-key-a', 'synthetic-rotation-key-b'];
   const calls: Array<{ path: string; key: string }> = [];
   let created = 0;
+  const configurations: Record<string, string>[] = [];
   t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
@@ -7884,6 +8166,7 @@ test('Composio key changes bind configuration identity to the active SDK and fen
     if (request.method === 'POST' && url.pathname === '/api/v3.1/tool_router/session') {
       const body = await request.json();
       assert.equal(body.user_id, 'fixture-owner');
+      configurations.push(body.auth_configs ?? {});
       const id = `trs_rotation_${++created}`;
       return Response.json({
         session_id: id,
@@ -7944,6 +8227,33 @@ test('Composio key changes bind configuration identity to the active SDK and fen
     calls.filter((call) => call.path.endsWith('/auth_configs')).map((call) => call.key),
     [keys[0], keys[1], keys[1], keys[0]],
   );
+  const configured = createComposioProvider({
+    apiKey: keys[0],
+    authConfigs: { gmail: 'environment-gmail', slack: 'environment-slack' },
+  });
+  configured.setApiKey!(keys[0], { gmail: 'legacy-gmail', custom_native: 'legacy-native' });
+  await configured.createSession('fixture-owner', {});
+  assert.deepEqual(configurations.at(-1), {
+    gmail: 'legacy-gmail',
+    slack: 'environment-slack',
+    custom_native: 'legacy-native',
+  });
+  configured.setApiKey!(keys[1], {});
+  await configured.createSession('fixture-owner', {});
+  assert.deepEqual(configurations.at(-1), {
+    gmail: 'environment-gmail',
+    slack: 'environment-slack',
+  });
+  for (const slug of ['x'.repeat(81), 'invalid-toolkit']) {
+    const identity = configured.configurationId;
+    assert.throws(() => configured.setApiKey!(keys[0], { [slug]: 'invalid-configuration' }));
+    assert.equal(configured.configurationId, identity);
+  }
+  await configured.createSession('fixture-owner', {});
+  assert.deepEqual(configurations.at(-1), {
+    gmail: 'environment-gmail',
+    slack: 'environment-slack',
+  });
   const root = await mkdtemp(join(tmpdir(), 'otto-integration-key-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const proxy = createComposioProxy({
@@ -8404,6 +8714,336 @@ async function hostedDatabase(options: pg.PoolConfig = {}) {
     },
   };
 }
+
+test(
+  'legacy native Composio migration preserves ownership, durable configuration and stronger choices',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const db = await hostedDatabase();
+    t.after(() => db.close());
+    const keyStore = {
+      id: 'legacy-fixture',
+      configured: true,
+      getKey: async () => Buffer.alloc(32, 31),
+    };
+    const legacy = {
+      apiKey: 'synthetic-legacy-composio-project',
+      authConfigs: { gmail: 'synthetic-legacy-gmail-config' },
+    };
+    for (const importedFirst of [false, true]) {
+      await t.test(
+        `managed choice survives revocation after ${importedFirst ? 'import' : 'deferral'}`,
+        async () => {
+          const ownerId = randomUUID();
+          let managedState: 'sign_in_required' | 'enabled' | 'revoked' = importedFirst
+            ? 'sign_in_required'
+            : 'enabled';
+          const provider = {
+            ...fakeProvider({
+              id: 'unused',
+              authorize: async () => assert.fail('No remote authorization'),
+              search: async () => assert.fail('No remote calls'),
+              execute: async () => assert.fail('No remote tools'),
+            }),
+            setApiKey() {},
+            verifyApiKey: async (key: string) => key === 'synthetic-new-personal-project',
+          };
+          const create = () =>
+            createIntegrationKeyService({
+              ownerId,
+              database: db.pool,
+              keyStore,
+              provider,
+              managed: { status: async () => ({ state: managedState, email: null }) },
+            });
+          const service = create();
+          await service.initialize();
+          assert.equal(await service.importLegacy(legacy), importedFirst);
+          if (importedFirst) {
+            managedState = 'enabled';
+            const app = Fastify();
+            service.register(app, { changeProvider: async (_revoke, swap) => swap() });
+            try {
+              assert.equal(
+                (await app.inject({ method: 'DELETE', url: '/api/integrations/key' })).statusCode,
+                200,
+              );
+            } finally {
+              await app.close();
+            }
+          }
+          managedState = 'revoked';
+          const restarted = create();
+          await restarted.initialize();
+          assert.equal(await restarted.importLegacy(legacy), false);
+          assert.equal(restarted.mode, 'otto');
+          managedState = 'sign_in_required';
+          assert.equal(await restarted.importLegacy(legacy), false);
+          assert.equal(
+            (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
+              .rowCount,
+            0,
+          );
+          const app = Fastify();
+          restarted.register(app, { changeProvider: async (_revoke, swap) => swap() });
+          try {
+            const saved = await app.inject({
+              method: 'PUT',
+              url: '/api/integrations/key',
+              payload: { key: 'synthetic-new-personal-project' },
+            });
+            assert.equal(saved.statusCode, 200);
+            assert.equal(saved.json().mode, 'own');
+          } finally {
+            await app.close();
+          }
+          const personal = create();
+          await personal.initialize();
+          assert.equal(personal.mode, 'own');
+          assert.equal(await personal.importLegacy(legacy), false);
+          assert.equal(
+            (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
+              .rowCount,
+            1,
+          );
+        },
+      );
+    }
+    for (const scenario of [
+      'import',
+      'new-key',
+      'unreadable-key',
+      'managed-binding',
+      'other-owner',
+      'rollback',
+      'managed-enabled',
+      'managed-unavailable',
+      'managed-failed',
+      'managed-denied',
+    ]) {
+      await t.test(scenario, async () => {
+        const ownerId = randomUUID();
+        let activeKey: string | undefined;
+        let activeConfigs: unknown;
+        const provider = {
+          ...fakeProvider({
+            id: 'unused',
+            authorize: async () => assert.fail('No remote authorization'),
+            search: async () => assert.fail('No remote calls'),
+            execute: async () => assert.fail('No remote tools'),
+          }),
+          id: 'composio',
+          setApiKey(key?: string, configs?: unknown) {
+            activeKey = key;
+            activeConfigs = configs;
+          },
+          verifyApiKey: async () => assert.fail('Migration must not verify a live key'),
+        };
+        let accessChecks = 0;
+        const create = () =>
+          createIntegrationKeyService({
+            ownerId,
+            database: db.pool,
+            keyStore,
+            provider,
+            managed: {
+              async status() {
+                accessChecks++;
+                if (scenario === 'managed-failed') throw new Error('Synthetic admission outage');
+                return {
+                  state:
+                    scenario === 'managed-enabled'
+                      ? 'enabled'
+                      : scenario === 'managed-unavailable'
+                        ? 'unavailable'
+                        : scenario === 'managed-denied'
+                          ? 'denied'
+                          : 'sign_in_required',
+                  email: null,
+                };
+              },
+            },
+          });
+        const service = create();
+        await service.initialize();
+        const vault = await createAppGrantVault(db.pool, { ownerId, keyStore });
+        const id = randomUUID();
+        if (scenario === 'new-key' || scenario === 'unreadable-key') {
+          await vault.put(id, 'synthetic-newer-project-key');
+          await db.pool.query('INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,$2)', [
+            ownerId,
+            id,
+          ]);
+          if (scenario === 'unreadable-key')
+            await db.pool.query("UPDATE vault_app_grants SET ciphertext='unreadable' WHERE id=$1", [
+              id,
+            ]);
+          await service.initialize();
+        }
+        if (scenario === 'managed-binding' || scenario === 'other-owner') {
+          const { initializeIntegrationSchema } = await import('../src/server/integrations.ts');
+          await initializeIntegrationSchema(db.pool);
+          await db.pool.query(
+            "INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id) VALUES($1,$2,'composio','gmail',$3,$4)",
+            [
+              id,
+              scenario === 'other-owner' ? randomUUID() : ownerId,
+              'synthetic-existing-account',
+              'f'.repeat(64),
+            ],
+          );
+        }
+        if (scenario === 'rollback') {
+          await db.pool.query(
+            `CREATE FUNCTION reject_legacy_import() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.owner_id='${ownerId}' THEN RAISE EXCEPTION 'synthetic storage failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_legacy_import BEFORE INSERT ON integration_keys FOR EACH ROW EXECUTE FUNCTION reject_legacy_import()`,
+          );
+          await assert.rejects(service.importLegacy(legacy), /synthetic storage failure/);
+          assert.equal(
+            (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
+              .rowCount,
+            0,
+          );
+          await db.pool.query(
+            'DROP TRIGGER reject_legacy_import ON integration_keys; DROP FUNCTION reject_legacy_import()',
+          );
+        }
+        const expected = ['import', 'other-owner', 'rollback'].includes(scenario);
+        const before = await db.pool.query(
+          'SELECT * FROM vault_app_grants WHERE owner_id=$1 ORDER BY id',
+          [ownerId],
+        );
+        assert.equal(await service.importLegacy(legacy), expected);
+        if (!expected) {
+          assert.deepEqual(
+            (
+              await db.pool.query('SELECT * FROM vault_app_grants WHERE owner_id=$1 ORDER BY id', [
+                ownerId,
+              ])
+            ).rows,
+            before.rows,
+          );
+          assert.notEqual(activeKey, legacy.apiKey);
+          assert.equal(
+            accessChecks,
+            scenario.startsWith('managed-') && scenario !== 'managed-binding' ? 1 : 0,
+          );
+          if (scenario === 'managed-binding') {
+            await db.pool.query('DELETE FROM app_connections WHERE owner_id=$1', [ownerId]);
+            const restarted = create();
+            await restarted.initialize();
+            assert.equal(await restarted.importLegacy(legacy), false);
+            assert.equal(restarted.mode, 'otto');
+          }
+          return;
+        }
+        assert.equal(activeKey, legacy.apiKey);
+        assert.deepEqual(activeConfigs, legacy.authConfigs);
+        assert.equal(service.mode, 'own');
+        const stored = (
+          await db.pool.query('SELECT ciphertext FROM vault_app_grants WHERE owner_id=$1', [
+            ownerId,
+          ])
+        ).rows;
+        assert.equal(stored.length, 2);
+        assert.ok(
+          stored.every(
+            (row) =>
+              !row.ciphertext.includes(legacy.apiKey) &&
+              !row.ciphertext.includes(legacy.authConfigs.gmail),
+          ),
+        );
+        activeKey = undefined;
+        const restarted = create();
+        await restarted.initialize();
+        assert.equal(activeKey, legacy.apiKey);
+        assert.deepEqual(activeConfigs, legacy.authConfigs);
+        assert.equal(await restarted.importLegacy(legacy), true);
+        assert.equal(
+          (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
+            .rowCount,
+          2,
+        );
+        assert.equal(
+          await restarted.importLegacy({ ...legacy, apiKey: 'synthetic-different-old-project' }),
+          false,
+        );
+        assert.equal(
+          await restarted.importLegacy({ ...legacy, authConfigs: { gmail: 'different' } }),
+          false,
+        );
+      });
+    }
+  },
+);
+
+test('legacy native handoff binds cleanup replies and defers unavailable cleanup after import', async () => {
+  const parent = Object.assign(new EventEmitter(), { postMessage: (_message: unknown) => {} });
+  const ownerId = randomUUID();
+  const messages: Array<Record<string, unknown>> = [];
+  parent.postMessage = (message) => {
+    messages.push(message as Record<string, unknown>);
+  };
+  const receiving = receiveLegacyIntegration({ ownerId, parent, timeout: 1000 });
+  const nonce = messages[0].nonce;
+  const payload = {
+    type: 'otto-legacy-integration',
+    ownerId,
+    nonce,
+    receipt: 'a'.repeat(64),
+    apiKey: 'synthetic-private-legacy-key',
+    authConfigs: { gmail: 'synthetic-private-config' },
+  };
+  let received = false;
+  void receiving.then(() => {
+    received = true;
+  });
+  for (const invalid of [
+    { ...payload, ownerId: randomUUID() },
+    { ...payload, nonce: randomUUID() },
+    { ...payload, apiKey: undefined },
+  ])
+    parent.emit('message', { data: invalid });
+  await delay(0);
+  assert.equal(received, false);
+  parent.emit('message', { data: payload });
+  const migration = await receiving;
+  assert.deepEqual(migration.input, { apiKey: payload.apiKey, authConfigs: payload.authConfigs });
+  let cleaned = false;
+  const acknowledgement = migration.acknowledge().then(() => {
+    cleaned = true;
+  });
+  const final = {
+    type: 'otto-legacy-integration-cleaned',
+    ownerId,
+    nonce,
+    receipt: payload.receipt,
+  };
+  parent.emit('message', { data: { ...final, receipt: 'b'.repeat(64) } });
+  parent.emit('message', { data: { ...final, ownerId: randomUUID() } });
+  await delay(0);
+  assert.equal(cleaned, false);
+  parent.emit('message', { data: final });
+  await acknowledgement;
+  assert.equal(parent.listenerCount('message'), 0);
+  let deferred = false;
+  const deferral = migration.acknowledge().then(() => {
+    deferred = true;
+  });
+  const failure = { ...final, type: 'otto-legacy-integration-cleanup-deferred' };
+  parent.emit('message', { data: { ...failure, nonce: randomUUID() } });
+  parent.emit('message', { data: { ...failure, ownerId: randomUUID() } });
+  parent.emit('message', { data: { ...failure, receipt: 'b'.repeat(64) } });
+  await delay(0);
+  assert.equal(deferred, false);
+  parent.emit('message', { data: failure });
+  await deferral;
+  assert.equal(parent.listenerCount('message'), 0);
+  await migration.acknowledge();
+  assert.equal(parent.listenerCount('message'), 0);
+  assert.ok(messages.every((value) => !JSON.stringify(value).includes(payload.apiKey)));
+  await assert.rejects(receiveLegacyIntegration({ ownerId, parent, timeout: 5 }), /restore/);
+  assert.equal(parent.listenerCount('message'), 0);
+});
 
 test(
   'hosted app consent returns to its owned screen and tenant event workers cannot consume each other',

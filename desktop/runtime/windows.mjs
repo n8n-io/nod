@@ -384,6 +384,24 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     runGuest,
     signal,
     status: (phase, message, progress) => status({ phase, message, progress }),
+    prepareImage: async (name, progress) => {
+      status({
+        phase: 'installing',
+        message: `Preparing ${name === 'postgres' ? 'local storage' : `your ${name}`}…`,
+        progress,
+      });
+      await execute(
+        wsl,
+        [...guestArgs, '/usr/bin/python3', '/usr/local/lib/otto/windows-guest.py', 'image'],
+        {
+          env: hostEnvironment,
+          signal,
+          input: JSON.stringify({ identity: distribution.slice(5), name }),
+          timeout: 600_000,
+        },
+      );
+    },
+    onStorageReady: options.onStorageReady,
   });
 }
 

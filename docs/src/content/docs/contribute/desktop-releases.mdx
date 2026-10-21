@@ -102,7 +102,7 @@ Private releases use the configured n8n download service for first-run downloads
 
 There's no daily release. Only a merged release pull request, which changes `desktop/release.json`, starts **Build desktop release**; other merges to `main` don't run it. The [capability evals](/contribute/evals/) don't gate publication.
 
-Pull requests and normal merges to `main` run source checks and tests without packaging desktop apps. Packaging and installer checks run only in **Build desktop release**.
+Pull requests and normal merges to `main` run source checks and isolated native update fixtures on Windows and both Mac architectures when desktop files change. These fixtures check secure storage, installer failures and saved-profile preservation without publishing a release. Packaging the complete desktop apps and verifying their release assets runs in **Build desktop release**.
 
 ## Inspect or recover a build
 
@@ -152,6 +152,33 @@ In development, **Copy trace** copies the same report without sending it. `OTTO_
 :::caution[Hardware needs aren't measured yet]
 The storage check covers installing the runtime only. The VM reserves 3 to 6 GiB of RAM and a 24 GiB virtual disk that grows as it's used.
 :::
+
+## Test a local Mac build
+
+Use the isolated test installer to try onboarding without changing your normal Otto app, accounts, or computer. It installs **Otto Setup Test** in your user Applications folder and disables updates for that build.
+
+Build the current source first. The helper verifies and reuses the runtime already cached by `/Applications/Otto.app`, so it doesn't copy or download another runtime:
+
+```sh title="Terminal"
+pnpm --dir desktop install --frozen-lockfile
+pnpm run build
+node desktop/scripts/test-install.mjs build
+node desktop/scripts/test-install.mjs fresh first-run
+```
+
+`fresh` gracefully closes the previous test instance and creates a new profile with its own computer and empty account storage. It refuses an existing profile name. Omit the name to generate one. It never removes an earlier profile.
+
+To reopen the last test profile, or an earlier named one:
+
+```sh title="Terminal"
+node desktop/scripts/test-install.mjs open
+node desktop/scripts/test-install.mjs open first-run
+node desktop/scripts/test-install.mjs stop
+```
+
+Test profiles live under `~/Library/Application Support/Otto Setup Test/test-profiles`. Rebuilding the test app preserves them. The helper accepts an installed engine directory after `build` when the cached runtime comes from another local installation.
+
+This is an ad-hoc signed local app, not a release. It reuses the cached workspace and browser images; it doesn't verify a newly built runtime image or release signing.
 
 ## Signing limits
 

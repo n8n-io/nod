@@ -46,6 +46,16 @@ flowchart LR
 
 The workspace and browser have separate networks, no access to your home folder, no Docker socket and no model keys. Model requests go to the provider you connect, or to a [local model](/connect/local-models/) server you run.
 
+## Onboarding during startup
+
+On a new desktop profile, the native window shows the same Welcome screen and analytics choice as the web app immediately. The private computer starts in the background. Once PostgreSQL is ready, the normal Otto server opens the remaining onboarding steps while the workspace and browser finish starting. A model and Gmail are required; Telegram, analytics sharing, notifications and Open at login are optional.
+
+Before the server starts, the native window saves only the analytics choice and whether Welcome was completed. After the ordinary account API accepts that choice, Otto records its acknowledgment and opens the main Otto window for the remaining onboarding. A restart does not repeat Welcome or overwrite the saved analytics choice; the temporary marker is removed when onboarding completes. Sign-ins, keys, connections and introduction answers use the normal server and storage from the beginning; there is no separate setup backend or credential transfer.
+
+Desktop setup also asks whether to enable notifications and open Otto at login. Each choice is saved before continuing. The web app uses the same onboarding without those native steps. A completed installation keeps its choices and skips onboarding after an update.
+
+If the user finishes first, an animated Otto logo stays visible until the workspace and browser are ready. Chat stays unavailable during that wait. Runtime failures offer an explicit retry without clearing saved connections. If notifications are enabled and Otto is not focused, a single notification announces when setup is ready.
+
 ## The runtime pack
 
 The app download is small. On first launch, Otto downloads a matching runtime pack with the container images, the base VM image and the tools that run them.
@@ -114,9 +124,11 @@ flowchart TD
 
 Restarting stops a running reply, scheduled task or background check, and you can ask Otto to continue afterwards. Queued messages, schedules and app checks resume. Unsent text in the message box isn't kept.
 
-Otto downloads the new app or installer and, when it changed, the new runtime pack in the background before it offers the restart. On a Mac, it also loads the new container images into the running computer, so Otto is ready soon after the restart. An update found by an automatic check shows a notification when notifications are on, and the menu offers **Restart to update**. On a Mac, an update must be signed by n8n, and Otto refuses one with a lower version number, so an update feed can't roll Otto back to an older build. On Windows, the restart runs the installer in the background and opens Otto again.
+Otto downloads the new app or installer and, when it changed, the new runtime pack in the background before it offers the restart. On a Mac, it also loads the new container images into the running computer, so Otto is ready soon after the restart. An update found by an automatic check shows a notification when notifications are on and quiet hours allow it. The menu offers **Restart to update**, and background checks never open a dialog. On a Mac, an update must be signed by n8n, and Otto refuses one with a lower version number, so an update feed can't roll Otto back to an older build. On Windows, the restart runs the installer in the background and opens Otto again.
 
 Otto keeps its profile, credentials and container volumes. A runtime update replaces tools and images without resetting the database.
+
+If a manual update check fails, choose **Try again** or **Not now** and keep using Otto. Background check failures stay quiet. If restarting fails before shutdown begins, **Retry restart** uses the update already downloaded. Once shutdown begins, Otto keeps its separate shutdown recovery prompt.
 
 ## Windows preview
 
@@ -173,7 +185,7 @@ The app, DMG and matching runtime archive land in `dist/desktop`. `--seed-cache`
 | Replay onboarding                   | `pnpm --dir desktop start --onboarding`                                                    |
 | Use a fresh, throwaway profile      | `OTTO_DESKTOP_USER_DATA=/tmp/otto-onboarding-review pnpm --dir desktop start --onboarding` |
 
-`OTTO_DESKTOP_USER_DATA` works only in development. Packaged apps always use their normal profile.
+`OTTO_DESKTOP_USER_DATA` works in development and in the deliberately marked [isolated test build](/contribute/desktop-releases/#test-a-local-mac-build). Normal packaged apps always use their own profile.
 
 To test a local connection service, run the unpackaged app with a new, absolute profile path and a proxy origin:
 

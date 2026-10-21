@@ -1,4 +1,7 @@
 @import 'tailwindcss';
+@import './components/motion.css';
+@import './components/controls.css';
+@import './components/setup-progress.css';
 
 @font-face {
   font-family: 'Geist';
@@ -82,7 +85,7 @@ body {
 :root[data-desktop='true'] .sidebar-collapsed .sidebar {
   padding-inline: 12px;
 }
-:root[data-desktop='true'] :is(.sidebar-header, .startup-shell .sidebar > .brand) {
+:root[data-desktop='true'] .sidebar-header {
   justify-content: center;
   align-items: center;
 }
@@ -213,84 +216,6 @@ button svg,
 a svg {
   flex-shrink: 0;
 }
-.button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-full);
-  font-size: var(--text-control);
-  font-weight: 500;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-.button-default {
-  min-height: var(--control-height);
-  padding: 8px 24px;
-}
-.button-sm {
-  min-height: var(--control-height-sm);
-  padding: 4px 16px;
-  font-size: var(--text-control);
-}
-.button-icon {
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-}
-.button-primary {
-  background: var(--primary);
-  color: var(--primary-foreground);
-}
-.button-primary:hover:not(:disabled) {
-  background: var(--primary-hover);
-}
-.button-primary:active:not(:disabled) {
-  background: var(--primary-pressed);
-}
-.button-secondary {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.button-secondary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-soft), var(--accent) 8%);
-}
-.button-outline {
-  background: var(--control);
-  color: var(--control-foreground);
-}
-.button-outline:hover:not(:disabled) {
-  background: var(--control-hover);
-  color: var(--foreground);
-}
-.button-ghost {
-  background: transparent;
-  color: var(--muted-foreground);
-}
-.button-ghost:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--foreground);
-}
-.button-outline:active:not(:disabled),
-.button-ghost:active:not(:disabled) {
-  background: var(--control-active);
-}
-.button-destructive {
-  background: var(--destructive);
-  color: var(--on-solid);
-}
-.button-destructive:hover:not(:disabled) {
-  background: var(--destructive-hover);
-}
-.button:disabled {
-  opacity: 0.45;
-}
-.button:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
 .input {
   min-width: 0;
   width: 100%;
@@ -401,37 +326,6 @@ a svg {
 .menu-item:disabled {
   opacity: 0.5;
   cursor: default;
-}
-.switch {
-  display: flex;
-  flex-shrink: 0;
-  width: 40px;
-  height: 24px;
-  padding: 4px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--switch-off);
-}
-.switch > span {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--switch-thumb);
-  transition: transform 160ms ease;
-}
-.switch[aria-checked='true'] {
-  background: var(--accent);
-}
-.switch[aria-checked='true'] > span {
-  transform: translateX(16px);
-}
-.switch:disabled {
-  opacity: 0.45;
-}
-@media (prefers-reduced-motion: reduce) {
-  .switch > span {
-    transition: none;
-  }
 }
 .checkbox {
   flex-shrink: 0;
@@ -1789,7 +1683,6 @@ input[type='range']:disabled {
     border-right: 0;
   }
   .app-shell .sidebar > .sidebar-header,
-  .startup-shell .sidebar > .brand,
   .app-shell .main-nav,
   .app-shell .sidebar-bottom,
   .app-shell .sidebar .nav-shortcut {
@@ -1979,11 +1872,6 @@ input[type='range']:disabled {
     transform: translateY(6px);
   }
 }
-@keyframes startup-leave {
-  to {
-    opacity: 0;
-  }
-}
 @keyframes startup-unghost {
   from {
     opacity: 0.4;
@@ -2080,46 +1968,6 @@ input[type='range']:disabled {
 .shell-entering .sidebar :is(.main-nav, .mobile-top-bar, .sidebar-bottom) {
   animation: startup-unghost 0.4s ease-out backwards;
 }
-.startup-leaving {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  background: var(--canvas);
-  pointer-events: none;
-  animation: startup-leave 0.28s ease-in forwards;
-}
-.startup-leaving .skeleton-note {
-  visibility: hidden;
-}
-.chat-entering > .chat-page:not(.chat-skeleton) :is(.messages, .welcome) {
-  animation: startup-fade 180ms ease-out;
-}
-.app-shell.startup-shell {
-  visibility: visible;
-}
-.startup-shell .sidebar :is(.nav-link, .mobile-top-bar) {
-  opacity: 0.4;
-}
-.ghost-nav-icon {
-  flex: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-}
-.ghost-nav-label {
-  width: 84px;
-}
-.ghost-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-}
-.ghost-account {
-  width: 150px;
-  height: 36px;
-  margin: 0 8px;
-  border-radius: var(--control-radius);
-}
 .ghost-bubble {
   height: 44px;
   border-radius: var(--radius-full);
@@ -2156,9 +2004,4 @@ input[type='range']:disabled {
   background: var(--hover);
   color: var(--muted-foreground);
   box-shadow: none;
-}
-@media (max-width: 640px) {
-  .startup-shell .sidebar {
-    min-height: calc(57px + env(safe-area-inset-top));
-  }
 }

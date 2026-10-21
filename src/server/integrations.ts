@@ -50,6 +50,8 @@ import {
   workspaceFileSchemas,
 } from './integration-files.ts';
 import { fileBytes } from '../shared/files.ts';
+import { IntegrationError, verifyIntegrationCompletion } from './integration-connection.ts';
+export { IntegrationError } from './integration-connection.ts';
 import {
   normalizedEmail,
   verificationCode,
@@ -172,15 +174,6 @@ function browserService(origin: string) {
 function failure(prefix: string, error: unknown) {
   return `${prefix}: ${error instanceof Error ? error.message : String(error)}`;
 }
-export class IntegrationError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode = 400,
-  ) {
-    super(message);
-  }
-}
-
 function messageIdentity(data: Record<string, unknown>, field: 'message' | 'thread') {
   const nested = data.message;
   const value =
@@ -209,6 +202,55 @@ export async function eventOverview(
         }
       : data;
   return `Connected-app event from ${toolkit}; trigger ${trigger}. Assess whether there is useful background work to do.\n${untrustedBlock(`${toolkit} event`, JSON.stringify(await privateEmailResult(withoutSecretKeys(fields), check, signal)))}`;
+}
+
+export async function initializeIntegrationSchema(pool: Pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_connections (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      owner_id text NOT NULL, slug text NOT NULL, account_id text, pending_account_id text,
+      callback_hash text, callback_expires timestamptz, trigger_id text,
+      triggers_enabled boolean NOT NULL DEFAULT false, revoked boolean NOT NULL DEFAULT false,
+      callback_return_to text NOT NULL DEFAULT 'apps', provider_id text NOT NULL DEFAULT 'composio',
+      turn_id uuid, account_name text, account_email text,
+      account_active boolean NOT NULL DEFAULT true, account_checked_at timestamptz,
+      watch_retry_at timestamptz, watch_attempted_at timestamptz,
+      watch_failures integer NOT NULL DEFAULT 0, watch_requested boolean NOT NULL DEFAULT true,
+      watch_attempted boolean NOT NULL DEFAULT false, watch_revision integer NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS app_setup_completions (
+      owner_id text NOT NULL, link_hash text NOT NULL,
+      PRIMARY KEY (owner_id,link_hash)
+    );
+    CREATE TABLE IF NOT EXISTS integration_events (
+      id text PRIMARY KEY, owner_id text NOT NULL, summary text NOT NULL, state text NOT NULL DEFAULT 'queued',
+      slug text, account_id text, trigger_id text, claimed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
+      provider_id text NOT NULL DEFAULT 'composio'
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS app_connections_account_key ON app_connections(owner_id,provider_id,account_id) WHERE account_id IS NOT NULL;
+    ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS inbox_cursor text,
+      ADD COLUMN IF NOT EXISTS callback_verifier text,
+      DROP COLUMN IF EXISTS pairing_code,
+      ADD COLUMN IF NOT EXISTS callback_claim_id text,
+      ADD COLUMN IF NOT EXISTS configuration_id text,
+      ADD COLUMN IF NOT EXISTS setup_link_hash text,
+      ADD COLUMN IF NOT EXISTS pending_account_email text,
+      ADD COLUMN IF NOT EXISTS pending_auth_config_id text,
+      ADD COLUMN IF NOT EXISTS replaces_connection_id uuid,
+      ADD COLUMN IF NOT EXISTS inbox_poll_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_claim_id text,
+      ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false;
+    DO $$ BEGIN
+      IF to_regclass('direct_oauth_accounts') IS NOT NULL THEN
+        IF to_regclass('vault_app_grants') IS NOT NULL THEN
+          DELETE FROM vault_app_grants WHERE id IN (SELECT id FROM direct_oauth_accounts);
+        END IF;
+        DROP TABLE direct_oauth_accounts;
+      END IF;
+    END $$;
+    ALTER TABLE integration_events ADD COLUMN IF NOT EXISTS poll_connection_id uuid,
+      DROP COLUMN IF EXISTS intent;
+  `);
 }
 
 export async function createIntegrations(pool: Pool, options: IntegrationOptions) {
@@ -282,53 +324,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         )
       ).rows
     : [];
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_connections (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      owner_id text NOT NULL, slug text NOT NULL, account_id text, pending_account_id text,
-      callback_hash text, callback_expires timestamptz, trigger_id text,
-      triggers_enabled boolean NOT NULL DEFAULT false, revoked boolean NOT NULL DEFAULT false,
-      callback_return_to text NOT NULL DEFAULT 'apps', provider_id text NOT NULL DEFAULT 'composio',
-      turn_id uuid, account_name text, account_email text,
-      account_active boolean NOT NULL DEFAULT true, account_checked_at timestamptz,
-      watch_retry_at timestamptz, watch_attempted_at timestamptz,
-      watch_failures integer NOT NULL DEFAULT 0, watch_requested boolean NOT NULL DEFAULT true,
-      watch_attempted boolean NOT NULL DEFAULT false, watch_revision integer NOT NULL DEFAULT 0
-    );
-    DROP TABLE IF EXISTS integration_sessions;
-    CREATE TABLE IF NOT EXISTS app_setup_completions (
-      owner_id text NOT NULL, link_hash text NOT NULL,
-      PRIMARY KEY (owner_id,link_hash)
-    );
-    CREATE TABLE IF NOT EXISTS integration_events (
-      id text PRIMARY KEY, owner_id text NOT NULL, summary text NOT NULL, state text NOT NULL DEFAULT 'queued',
-      slug text, account_id text, trigger_id text, claimed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
-      provider_id text NOT NULL DEFAULT 'composio'
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS app_connections_account_key ON app_connections(owner_id,provider_id,account_id) WHERE account_id IS NOT NULL;
-    ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS inbox_cursor text,
-      ADD COLUMN IF NOT EXISTS callback_verifier text,
-      DROP COLUMN IF EXISTS pairing_code,
-      ADD COLUMN IF NOT EXISTS callback_claim_id text,
-      ADD COLUMN IF NOT EXISTS configuration_id text,
-      ADD COLUMN IF NOT EXISTS setup_link_hash text,
-      ADD COLUMN IF NOT EXISTS pending_account_email text,
-      ADD COLUMN IF NOT EXISTS pending_auth_config_id text,
-      ADD COLUMN IF NOT EXISTS replaces_connection_id uuid,
-      ADD COLUMN IF NOT EXISTS inbox_poll_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_claim_id text,
-      ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,
-      ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false;
-    DO $$ BEGIN
-      IF to_regclass('direct_oauth_accounts') IS NOT NULL THEN
-        IF to_regclass('vault_app_grants') IS NOT NULL THEN
-          DELETE FROM vault_app_grants WHERE id IN (SELECT id FROM direct_oauth_accounts);
-        END IF;
-        DROP TABLE direct_oauth_accounts;
-      END IF;
-    END $$;
-    ALTER TABLE integration_events ADD COLUMN IF NOT EXISTS poll_connection_id uuid,
-      DROP COLUMN IF EXISTS intent;
-  `);
+  await initializeIntegrationSchema(pool);
+  await pool.query('DROP TABLE IF EXISTS integration_sessions');
   const stale = await pool.query<
     Pick<ConnectionRow, 'provider_id' | 'account_id' | 'pending_account_id' | 'trigger_id'>
   >(
@@ -789,6 +786,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           ...(row ? { connectionId: row.id, accountId: row.account_id! } : {}),
           ...(row
             ? {
+                disconnectPending: row.revoked,
                 reconnectRequired: changed || row.inbox_reconnect_required,
                 canReconnect: Boolean(
                   !row.revoked && provider.configured && provider.reconnectAccount,
@@ -1159,43 +1157,25 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     pending: ConnectionRow,
     verifiedAccount?: (accountId: string) => void,
   ) {
-    const query = z
-      .object({
-        state: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-        accountId: z.string().min(1).max(200),
-        pendingAccountId: z.string().min(1).max(200).optional(),
-        success: z.literal(true),
-      })
-      .parse(parsed);
-    const hash = createHash('sha256').update(query.state).digest('hex');
     const row = pending;
-    if (
-      hash !== row.callback_hash ||
-      (query.pendingAccountId ?? query.accountId) !== row.pending_account_id ||
-      !row.callback_claim_id
-    )
-      throw new IntegrationError('This connection link is expired or already used.', 409);
-    if (!configurationMatches(row))
-      throw new IntegrationError('This connection provider changed. Start sign-in again.', 409);
-    const remote = await providerForRow(row).inspectAccount(
-      query.accountId,
-      configuredOwner,
-      row.account_id || row.replaces_connection_id || query.pendingAccountId
-        ? { verifyOwner: true }
-        : undefined,
-    );
-    if (!remote.active || remote.service !== row.slug)
-      throw new IntegrationError('App sign-in is incomplete. Connect again.', 409);
-    if (query.pendingAccountId && query.pendingAccountId !== query.accountId)
-      verifiedAccount?.(query.accountId);
-    if (
-      (row.account_id || row.replaces_connection_id) &&
-      (!row.pending_account_email ||
-        normalizedEmail(remote.accountEmail ?? '') !== row.pending_account_email ||
-        (row.account_id &&
-          (!row.pending_auth_config_id || remote.authConfigId !== row.pending_auth_config_id)))
-    )
-      throw new IntegrationError('Sign in with the original account to reconnect it.', 409);
+    const { query, hash, remote } = await verifyIntegrationCompletion({
+      parsed,
+      provider: providerForRow(row),
+      ownerId: configuredOwner,
+      pending: {
+        service: row.slug,
+        callbackHash: row.callback_hash,
+        accountId: row.pending_account_id,
+        claimed: Boolean(row.callback_claim_id),
+        configurationId: row.configuration_id,
+        verifyOwner: Boolean(row.account_id || row.replaces_connection_id),
+        ...(row.account_id || row.replaces_connection_id
+          ? { originalEmail: row.pending_account_email }
+          : {}),
+        ...(row.account_id ? { originalAuthConfigId: row.pending_auth_config_id } : {}),
+      },
+      verifiedAccount,
+    });
     let connectedId = row.id;
     let previousTrigger = row.trigger_id;
     await transaction(async (client) => {

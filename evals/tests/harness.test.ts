@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -8,9 +9,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
+import pg from 'pg';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
 import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
+import { createMemoryService } from '../../src/server/memory.ts';
+import { createPostgresObjectStore } from '../../src/server/object-storage.ts';
+import { createOnboardingInterview } from '../../src/server/onboarding-interview.ts';
 import type { StoredAccount } from '../../src/server/account-store.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import { fisherLower, holm, passAtK, passPowK, summarize } from '../src/aggregate.ts';
@@ -34,7 +39,7 @@ import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { collect, requireBackgroundPrompts, type Run } from '../src/trace.ts';
 import { changes } from '../src/report.ts';
 import { fingerprint, scenarios } from '../src/scenarios/index.ts';
-import { createSession } from '../src/session.ts';
+import { createSession, type Session } from '../src/session.ts';
 import { createStackRequest, type Stack } from '../src/stack.ts';
 import { gmail } from '../src/world/apps.ts';
 import { createFixtureProxy } from '../src/world/fixture-proxy.ts';
@@ -43,8 +48,132 @@ import { page, serveSites } from '../src/world/sites.ts';
 import { daysAgo, inDays, localTime } from '../src/world/time.ts';
 import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
 import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
+import onboardingFirstValue from '../src/scenarios/onboarding-first-value.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
 import { approvalLanguageScenario } from '../src/world/approval-language.ts';
+
+test(
+  'the onboarding eval saves its answers through the real interview routes with a reply or fallback',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_eval_interview_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    for (const configured of [true, false]) {
+      const ownerId = `synthetic-eval-owner-${configured}`;
+      const store = createPostgresObjectStore({ database: pool, ownerId });
+      await store.initialize();
+      const memory = createMemoryService({ pool, ownerId, store });
+      const app = Fastify();
+      t.after(() => app.close());
+      createOnboardingInterview({
+        ownerId,
+        pool,
+        keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 51) },
+        curator: {
+          id: 'fixture',
+          configured,
+          curate: async () => ({ messages: ['That helps with the synthetic setup.'], done: true }),
+        },
+        brief: async () => undefined,
+      }).registerRoutes(app);
+      app.post('/api/onboarding/suggestions', async (_request, response) =>
+        response.code(202).send({ ok: true }),
+      );
+      app.patch('/api/account', async () => ({ ok: true }));
+      app.get('/api/state', async () => ({
+        messages: [
+          {
+            suggestions: {
+              intro: 'Synthetic first task.',
+              tasks: [
+                { id: 'synthetic-task', source: 'gmail', title: 'Reply to Sofia about revisions' },
+              ],
+            },
+          },
+        ],
+      }));
+      const calls: Array<{ method: string; path: string; status: number }> = [];
+      const said: string[] = [];
+      const session: Pick<Session, 'api' | 'say'> = {
+        api: async (method, path, body) => {
+          const response = await app.inject({
+            method: method as 'GET' | 'POST' | 'PUT' | 'PATCH',
+            url: path,
+            headers: { 'content-type': 'application/json' },
+            payload: body === undefined ? undefined : JSON.stringify(body),
+          });
+          calls.push({ method, path, status: response.statusCode });
+          return { status: response.statusCode, body: response.json() };
+        },
+        say: async (text) => {
+          said.push(text);
+        },
+      };
+      const world = onboardingFirstValue.world({ now: Date.now });
+      await onboardingFirstValue.play(session as Session, world);
+      const saved = onboardingFirstValue
+        .expect(world)
+        .find((item) => item.id === 'saves-what-i-said-to-memory');
+      assert.equal(saved?.kind, 'check');
+      if (saved?.kind !== 'check') throw new Error('Missing saved-answer check');
+      const run = {
+        memory: (await memory.load()).entries.map((entry) => entry.text).join('\n'),
+      } as Run;
+      assert.deepEqual(await saved.check(run), {
+        pass: true,
+        evidence: 'save 200, 0 of 3 answers missing from memory',
+      });
+      assert.deepEqual(calls.slice(0, 3), [
+        { method: 'GET', path: '/api/onboarding/interview', status: 200 },
+        { method: 'POST', path: '/api/onboarding/interview', status: configured ? 200 : 503 },
+        { method: 'PUT', path: '/api/onboarding/interview', status: 200 },
+      ]);
+      assert.deepEqual(said, ['Reply to Sofia about revisions']);
+      assert.equal((await app.inject('/api/onboarding/interview')).json().completed, true);
+    }
+  },
+);
+
+test('the onboarding eval reports API failures before continuing setup or starting a task', async () => {
+  for (const [method, path, status] of [
+    ['GET', '/api/onboarding/interview', 500],
+    ['POST', '/api/onboarding/interview', 409],
+    ['PUT', '/api/onboarding/interview', 409],
+    ['POST', '/api/onboarding/suggestions', 500],
+    ['PATCH', '/api/account', 500],
+    ['GET', '/api/state', 500],
+  ] as const) {
+    const calls: string[] = [];
+    const session: Pick<Session, 'api' | 'say'> = {
+      api: async (verb, route) => {
+        calls.push(`${verb} ${route}`);
+        if (verb === method && route === path) return { status, body: {} };
+        return {
+          status: route === '/api/onboarding/suggestions' ? 202 : 200,
+          body: { generation: '00000000-0000-4000-8000-000000000001' },
+        };
+      },
+      say: async () => {
+        assert.fail('A failed setup must not start the task');
+      },
+    };
+    await assert.rejects(
+      onboardingFirstValue.play(session as Session, onboardingFirstValue.world({ now: Date.now })),
+      { message: `${method} ${path} failed (${status}).` },
+    );
+    assert.equal(calls.at(-1), `${method} ${path}`);
+  }
+});
 
 test('decision results keep unsafe answers, model errors, and incomplete repeats visible', () => {
   const attempt: DecisionAttempt = {

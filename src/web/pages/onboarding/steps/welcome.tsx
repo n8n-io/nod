@@ -1,10 +1,10 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { OttoGlyph, Rise, type GlyphReaction } from '../../../components/motion';
-import { Button, Switch } from '../../../components/ui';
+import { Button } from '../../../components/ui';
 import type { StepProps } from '..';
 import { errorMessage } from '../../../lib/api';
 import { posthogConfig } from '../../../../shared/analytics';
-import { Bubble, Messages, useReveal, type RevealStep } from '../motion';
+import { Bubble, Messages, PreferenceBubble, useReveal, type RevealStep } from '../motion';
 
 const sequence: RevealStep[] = [
   { wait: 40 },
@@ -18,7 +18,6 @@ const sequence: RevealStep[] = [
 ];
 
 export function Welcome({ arrived, onNext, usage }: StepProps) {
-  const id = useId();
   const [saving, setSaving] = useState<boolean | null>(null);
   const [error, setError] = useState('');
   const [reaction, setReaction] = useState<GlyphReaction | null>(null);
@@ -136,29 +135,18 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
           </Bubble>,
           ...(usage
             ? [
-                <Bubble className="ob-usage" onClick={(event) => event.stopPropagation()}>
-                  <p id={`${id}-usage-data`}>
-                    Help us make Otto better by sharing how you use it. Never your messages.{' '}
-                    <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
-                      What’s shared
-                    </a>
-                  </p>
-                  <div className="ob-usage-toggle">
-                    <Switch
-                      id={id}
-                      checked={enabled}
-                      aria-busy={saving !== null}
-                      aria-describedby={`${id}-usage-data`}
-                      onCheckedChange={(value) => void change(value)}
-                    />
-                    <label htmlFor={id}>Share usage data · you can change this in Settings</label>
-                  </div>
-                  {error && (
-                    <p className="ob-usage-error" role="alert">
-                      {error}
-                    </p>
-                  )}
-                </Bubble>,
+                <PreferenceBubble
+                  label="Share usage data"
+                  checked={enabled}
+                  saving={saving !== null}
+                  error={error}
+                  onChange={(value) => void change(value)}
+                >
+                  Help us make Otto better by sharing how you use it. Never your messages.{' '}
+                  <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
+                    What’s shared
+                  </a>
+                </PreferenceBubble>,
               ]
             : []),
         ]}
@@ -167,6 +155,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
         <Button className="ob-next" disabled={saving !== null} onClick={onNext}>
           Let’s go
         </Button>
+        <p className="ob-welcome-reassurance">You can change your choices later in Settings.</p>
       </Rise>
     </section>
   );

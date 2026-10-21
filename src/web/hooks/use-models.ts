@@ -58,11 +58,20 @@ export function modelSelection(source: ModelConnection, modelId: string): ModelS
   };
 }
 
-export function useModelSignIn(models: Models) {
+export function useModelSignIn(
+  models: Models,
+  connected?: (provider: 'openai' | 'openrouter') => void,
+) {
   const [pending, setPending] = useState(false);
-  const [signIn, setSignIn] = useState<{ url: string; attempt: string } | null>(null);
+  const [signIn, setSignIn] = useState<{
+    url: string;
+    attempt: string;
+    provider: 'openai' | 'openrouter';
+  } | null>(null);
   const activeAttempt = useRef<string | null>(null);
   const mounted = useRef(true);
+  const onConnected = useRef(connected);
+  onConnected.current = connected;
   function finish() {
     activeAttempt.current = null;
     setSignIn(null);
@@ -94,6 +103,7 @@ export function useModelSignIn(models: Models) {
           if (!controller.signal.aborted) {
             models.setError(result.error ?? '');
             finish();
+            onConnected.current?.(signIn!.provider);
           }
           return;
         }
@@ -153,7 +163,7 @@ export function useModelSignIn(models: Models) {
         return;
       }
       const url = connectionUrl(response.url, window.location.origin);
-      setSignIn({ url, attempt: response.attempt });
+      setSignIn({ url, attempt: response.attempt, provider });
       if (desktop) await openConnection(url);
       else if (popup) popup.location.replace(url);
     } catch (cause) {
@@ -179,8 +189,12 @@ export function useModelSignIn(models: Models) {
     else window.open(signIn.url, '_blank', 'noopener,noreferrer');
   }
   async function complete(url: string) {
+    const provider = signIn?.provider;
     const saved = await models.change('/api/models/oauth/complete', 'POST', { url });
-    if (saved) finish();
+    if (saved) {
+      finish();
+      if (provider) onConnected.current?.(provider);
+    }
     return saved;
   }
   return { signIn, pending, connect, cancel, reopen, complete };

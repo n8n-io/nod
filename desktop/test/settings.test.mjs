@@ -4,8 +4,10 @@ import {
   appendFile,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   symlink,
@@ -24,14 +26,20 @@ import { createSettingsStore } from '../main/settings.mjs';
 import { createDesktopAnalytics } from '../main/analytics.mjs';
 import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
+import { createReadinessNotice, isQuietTime } from '../main/notifications.mjs';
 import { saveArtifactDownload } from '../main/downloads.mjs';
-import { createDesktopLifecycle, desktopSetupMode } from '../main/lifecycle.mjs';
+import { createDesktopLifecycle } from '../main/lifecycle.mjs';
 import {
   createDesktopUpdater,
   createUpdateSource,
   startDesktopUpdateChecks,
 } from '../main/updates.mjs';
-import { stageWindowsUpdate } from '../runtime/windows.mjs';
+import {
+  protectWindowsProfile,
+  stageWindowsUpdate,
+  windowsEnvironment,
+} from '../runtime/windows.mjs';
+import { buildDesktopUI } from '../scripts/build-ui.mjs';
 
 function deferred() {
   let resolve;
@@ -97,7 +105,8 @@ test('artifact downloads publish complete bytes without replacing colliding file
     assert.equal(handled, true);
     assert.equal(event.prevented, undefined);
     assert.equal(dirname(dirname(item.savedPath)), f.directory);
-    assert.equal((await stat(dirname(item.savedPath))).mode & 0o777, 0o700);
+    if (process.platform !== 'win32')
+      assert.equal((await stat(dirname(item.savedPath))).mode & 0o777, 0o700);
     await writeFile(item.savedPath, `new file ${index}`);
   }
   assert.notEqual(downloads[0].item.savedPath, downloads[1].item.savedPath);
@@ -192,54 +201,44 @@ test('artifact downloads clean terminal failures without discarding resumable do
   assert.deepEqual(f.errors, [undefined]);
 });
 
-test('runtime warmup overlaps onboarding without reading credentials or starting the engine', async (t) => {
-  const f = await fixture(t);
-  const gate = deferred();
-  const started = deferred();
+test('storage starts the normal backend before workspace readiness and quit closes it before the runtime', async () => {
+  const storage = deferred();
+  const resources = deferred();
+  const listening = deferred();
   const events = [];
-  let decrypted = 0;
-  const decrypt = f.encryption.decryptString;
-  f.encryption.decryptString = (value) => {
-    decrypted++;
-    return decrypt(value);
-  };
   const computer = { close: async () => events.push('computer closed') };
   const lifecycle = createDesktopLifecycle({
-    prepareRuntime: async () => {
-      events.push('computer started');
-      started.resolve();
-      return gate.promise;
+    prepareRuntime: async ({ onStorageReady }) => {
+      events.push('storage starting');
+      await storage.promise;
+      await onStorageReady(computer);
+      listening.resolve();
+      await resources.promise;
+      return computer;
     },
-    validateStart: async () => {
-      if (!(await f.store.get()).onboardingCompleted) throw new Error('Setup incomplete');
-    },
-    startEngine: async ({ runtime }) => {
+    validateStart: async () => {},
+    startEngine: async ({ runtime, pending }) => {
       assert.equal(runtime, computer);
-      assert.equal((await f.reopen().get()).onboardingCompleted, true);
-      await f.store.environment();
-      events.push('engine started');
+      events.push(pending ? 'backend listening' : 'runtime ready');
     },
     stopEngine: async () => events.push('engine stopped'),
     onRuntimeStatus: () => {},
   });
-  const first = lifecycle.warmup();
-  assert.equal(first, lifecycle.warmup());
-  await started.promise;
-  await assert.rejects(lifecycle.start());
-  assert.equal(lifecycle.engineStarting, false);
-  assert.equal(decrypted, 0);
-  await f.store.save({ onboardingCompleted: true });
   const running = lifecycle.start();
   assert.equal(running, lifecycle.start());
-  assert.equal(lifecycle.engineStarting, false);
-  assert.deepEqual(events, ['computer started']);
-  gate.resolve(computer);
-  await Promise.all([first, running]);
-  assert.ok(decrypted > 0);
-  assert.deepEqual(events, ['computer started', 'engine started']);
+  await new Promise(setImmediate);
+  assert.deepEqual(events, ['storage starting']);
+  storage.resolve();
+  await listening.promise;
+  assert.equal(lifecycle.busy, true);
+  assert.deepEqual(events, ['storage starting', 'backend listening']);
+  resources.resolve();
+  await running;
+  assert.deepEqual(events, ['storage starting', 'backend listening', 'runtime ready']);
   const stopped = lifecycle.close();
   assert.equal(stopped, lifecycle.close());
   await stopped;
+  assert.deepEqual(events.slice(-2), ['engine stopped', 'computer closed']);
 });
 
 test('failed runtime preparation waits for explicit retry and keeps the successful computer', async () => {
@@ -329,32 +328,76 @@ async function runningDesktop(
   {
     allowStart = false,
     reportReady = true,
+    initialState = 'running',
+    storedProfile,
+    legacyKey,
+    prepareRuntime,
+    nativePageLoaded,
+    enginePageLoaded,
+    readyRenderers = true,
+    notificationsSupported = false,
+    webPreferences = { quietHoursEnabled: false },
+    openFile = open,
     environment = {},
-    platform = 'darwin',
+    platform = process.platform === 'win32' ? 'win32' : 'darwin',
     packaged = false,
+    buildMetadata,
+    version = '0.0.0-test',
+    argv = [],
     prompt = () => assert.fail('No restart prompt is needed.'),
     reveal = () => assert.fail('No file should be revealed.'),
   } = {},
 ) {
-  const storage = await fixture(t);
-  await storage.store.save({
-    onboardingCompleted: true,
-  });
+  const storage = storedProfile
+    ? { ...storedProfile, store: storedProfile.reopen() }
+    : await fixture(t, platform);
+  if (!storedProfile)
+    await storage.store.save({
+      onboardingCompleted: initialState !== 'fresh',
+    });
+  if (legacyKey) {
+    await storage.store.environment();
+    const saved = JSON.parse(await readFile(storage.path, 'utf8'));
+    saved.secrets.composioApiKey = storage.encryption.encryptString(legacyKey).toString('base64');
+    saved.keyMetadata.composioApiKey = {
+      suffix: legacyKey.slice(-4),
+      source: 'manual',
+      updatedAt: '2026-10-08T00:00:00.000Z',
+    };
+    await writeFile(storage.path, JSON.stringify(saved));
+    storage.store = storage.reopen();
+  }
   const windows = [];
   const children = [];
   const paths = new Map();
   const handlers = new Map();
+  const rendererReady = (window) =>
+    handlers.get('otto:renderer-ready')?.({
+      sender: window.webContents,
+      senderFrame: window.webContents.mainFrame,
+    });
+  const notifications = [];
+  const externalURLs = [];
+  const updateMenu = {};
   const ipc = Object.assign(new EventEmitter(), {
     handle: (name, handler) => handlers.set(name, handler),
   });
   let openAtLogin = false;
+  let requestHeaders;
+  const appSession = Object.assign(new EventEmitter(), {
+    webRequest: {
+      onBeforeSendHeaders: (handler) => {
+        requestHeaders = handler;
+      },
+    },
+  });
   const context = {
     app: {
       isPackaged: packaged,
       setName() {},
       setPath: (name, path) => paths.set(name, path),
       getPath: (name) => paths.get(name) || dirname(storage.path),
-      getVersion: () => '0.0.0-test',
+      getVersion: () => version,
       requestSingleInstanceLock: () => false,
       getLoginItemSettings: () => ({ openAtLogin }),
       setLoginItemSettings: (value) => {
@@ -364,13 +407,15 @@ async function runningDesktop(
     },
     process: {
       platform,
-      argv: [],
+      argv,
       env: typeof environment === 'function' ? environment(dirname(storage.path)) : environment,
       resourcesPath: dirname(storage.path),
     },
     ipcMain: ipc,
+    session: { fromPartition: () => appSession },
     dialog: { showMessageBox: async (options) => prompt(options) },
-    shell: { showItemInFolder: reveal },
+    Menu: { getApplicationMenu: () => ({ getMenuItemById: () => updateMenu }) },
+    shell: { showItemInFolder: reveal, openExternal: async (url) => externalURLs.push(url) },
     URL,
     dirname,
     isAbsolute,
@@ -380,44 +425,69 @@ async function runningDesktop(
     pathToFileURL,
     mkdir,
     appendFile,
-    readFile,
+    readFile: (file, ...args) =>
+      buildMetadata && file === fileURLToPath(new URL('../package.json', import.meta.url))
+        ? Promise.resolve(JSON.stringify({ ottoBuild: buildMetadata }))
+        : readFile(file, ...args),
+    open: openFile,
+    rename,
     stat,
     writeFile,
+    rm,
     randomUUID,
     randomBytes,
     createServer,
     AbortController,
     AbortSignal,
+    Date,
     setTimeout,
     clearTimeout,
     fetch: request,
     createSettingsStore: () => storage.store,
     createDesktopAnalytics,
-    createAppPreferencesStore: () => ({ sync: async () => {} }),
+    createAppPreferencesStore: () => ({
+      sync: async () => {},
+      get: async () => ({ preferences: webPreferences }),
+    }),
     createChatReadCursorStore: () => ({}),
     saveArtifactDownload,
-    createReadinessNotice: () => ({ update() {} }),
+    createReadinessNotice,
+    isQuietTime,
+    watchAssistantMessages: () => () => {},
     createDesktopLifecycle: (options) =>
       createDesktopLifecycle({
         ...options,
-        prepareRuntime: async () => {
+        prepareRuntime: async (options) => {
           await mkdir(join(paths.get('userData'), 'profiles', 'local'), { recursive: true });
-          return { env: {} };
+          if (prepareRuntime) return prepareRuntime(options);
+          const runtime = { env: {} };
+          await options.onStorageReady?.(runtime);
+          return runtime;
         },
       }),
-    desktopSetupMode,
     nativeTheme: { shouldUseDarkColors: false },
     safeStorage: storage.encryption,
-    Notification: { isSupported: () => false },
+    Notification: class extends EventEmitter {
+      static isSupported() {
+        return notificationsSupported;
+      }
+      show() {
+        notifications.push(this);
+      }
+    },
     utilityProcess: {
-      fork(_file, _args, options) {
+      fork(file, _args, options) {
         assert.ok(allowStart, 'The healthy engine must not restart.');
         assert.ok(Object.values(options.env).every((value) => typeof value === 'string'));
         const child = new EventEmitter();
+        assert.ok(file.endsWith('/engine.mjs') || file.endsWith('\\engine.mjs'));
+        child.kind = 'engine';
+        child.sent = [];
+        child.postMessage = (message) => child.sent.push(message);
         child.environment = options.env;
         child.port = options.env.PORT;
         child.stdout = { resume() {} };
-        child.stderr = new EventEmitter();
+        child.stderr = Object.assign(new EventEmitter(), { resume() {} });
         child.kill = () => {
           child.killed = true;
           child.emit('exit', 0);
@@ -431,11 +501,18 @@ async function runningDesktop(
       },
     },
     BrowserWindow: class extends EventEmitter {
-      constructor() {
+      constructor(options = {}) {
         super();
         this.sent = [];
-        this.visible = true;
+        this.bounds = {
+          x: options.x ?? 0,
+          y: options.y ?? 0,
+          width: options.width,
+          height: options.height,
+        };
+        this.visible = options.show !== false;
         this.webContents = Object.assign(new EventEmitter(), {
+          id: windows.length + 1,
           setWindowOpenHandler(handler) {
             this.openWindow = handler;
           },
@@ -446,7 +523,7 @@ async function runningDesktop(
           },
         });
         windows.push(this);
-        this.focus();
+        if (this.visible) this.focus();
       }
       isDestroyed() {
         return this.destroyed === true;
@@ -457,25 +534,62 @@ async function runningDesktop(
       isVisible() {
         return this.visible && !this.destroyed;
       }
+      isMinimized() {
+        return this.minimized === true;
+      }
       loadURL(url) {
         this.url = url;
         this.loading = true;
-        this.webContents.mainFrame = { url };
+        this.webContents.mainFrame = {
+          url,
+          routingId: this.webContents.id,
+          processId: this.webContents.id + 100,
+        };
+        return Promise.resolve(
+          typeof enginePageLoaded === 'function' ? enginePageLoaded() : enginePageLoaded,
+        ).then(async () => {
+          this.loading = false;
+          this.webContents.emit('did-finish-load');
+          if (readyRenderers && !this.isDestroyed()) await rendererReady(this);
+        });
       }
       loadFile(path, options) {
         this.path = path;
         this.query = options?.query;
         this.webContents.mainFrame = { url: pathToFileURL(path).href };
+        return Promise.resolve(
+          typeof nativePageLoaded === 'function' ? nativePageLoaded() : nativePageLoaded,
+        ).then(async () => {
+          if (readyRenderers && !this.isDestroyed()) await rendererReady(this);
+        });
       }
       show() {
+        this.minimized = false;
         this.visible = true;
         this.focus();
+      }
+      minimize() {
+        this.minimized = true;
+        this.visible = false;
+        this.focused = false;
+      }
+      showInactive() {
+        this.inactiveShows = (this.inactiveShows ?? 0) + 1;
+        this.visible = true;
       }
       focus() {
         for (const window of windows) window.focused = false;
         this.focused = true;
       }
-      setSize() {}
+      getBounds() {
+        return this.bounds;
+      }
+      getNormalBounds() {
+        return this.normalBounds ?? this.bounds;
+      }
+      setBounds(bounds) {
+        this.bounds = { ...bounds };
+      }
       setBackgroundColor() {}
       destroy() {
         this.destroyed = true;
@@ -486,26 +600,37 @@ async function runningDesktop(
     },
   };
   const source = (await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8'))
+    .replaceAll('\r\n', '\n')
     .replace(/^import[\s\S]*?;\n/gm, '')
     .replaceAll(
       'import.meta.url',
       JSON.stringify(new URL('../main/main.mjs', import.meta.url).href),
     );
-  runInNewContext(
-    `${source}
+  await runInNewContext(
+    `(async () => {
+    ${source}
     engine = {};
     enginePreferencesReady = true;
+    engineRuntimeReady = true;
     engineOrigin = 'http://127.0.0.1:4310';
     engineBound = true;
     onboardingCompleted = true;
     status.phase = 'ready';
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:get'"), source.indexOf("      ipcMain.handle('otto:feedback:context'"))}
+    ${initialState === 'running' ? '' : "engine = undefined; enginePreferencesReady = false; engineRuntimeReady = false; engineOrigin = ''; engineBound = false; onboardingCompleted = false; status.phase = 'idle';"}
+    ${source.slice(source.indexOf('      const appSession ='), source.indexOf('      const image = nativeImage'))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:renderer-ready'"), source.indexOf("      ipcMain.handle('otto:feedback:context'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:feedback:context'"), source.indexOf("      ipcMain.handle('otto:preferences:get'"))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:save'"), source.indexOf("      ipcMain.handle('otto:prepare'"))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:prepare'"), source.indexOf("      ipcMain.handle('otto:runtime:warm'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:preferences:get'"), source.indexOf("      ipcMain.handle('otto:prepare'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:prepare'"), source.indexOf("      ipcMain.handle('otto:runtime:import'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:runtime:install-wsl'"), source.indexOf("      ipcMain.handle('otto:chat-read:get'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:external'"), source.indexOf('      try {', source.indexOf("      ipcMain.handle('otto:external'")))}
     globalThis.running = {
       prepare,
+      launch: async () => { ${source.slice(source.lastIndexOf('      try {\n        const saved = await settings.get();'), source.indexOf('    })', source.lastIndexOf('      try {\n        const saved = await settings.get();')))} },
+      settle: () => preparing ?? Promise.resolve(),
+      close: async () => { quitting = true; await lifecycle.close(); },
+      profileRoot,
+      profileOwner,
       showEngine,
       showSettings,
       replayOnboarding,
@@ -513,12 +638,1420 @@ async function runningDesktop(
       saveEngineDownload,
       setReady: (ready) => { status.phase = ready ? 'ready' : 'starting'; },
       status: () => status,
+      notifyReady: updateReadinessNotice,
+      checkUpdates: (updater, manual = true) => { updates = updater; return checkForUpdates(manual); },
       crash: () => { engine = undefined; enginePreferencesReady = false; },
-    };`,
+    };
+    })()`,
     context,
   );
-  return { ...context.running, windows, children, storage, handlers };
+  return {
+    ...context.running,
+    windows,
+    children,
+    storage,
+    handlers,
+    notifications,
+    externalURLs,
+    rendererReady,
+    updateMenu,
+    headers: (details) => new Promise((resolve) => requestHeaders(details, resolve)),
+  };
 }
+
+test('the normal engine uses the release boundary for analytics during first setup', async (t) => {
+  for (const scenario of [
+    {
+      name: 'stable release',
+      buildMetadata: { release: true },
+      version: '0.1.17',
+      expected: 'production',
+    },
+    {
+      name: 'staging build',
+      buildMetadata: { release: false },
+      version: '0.1.17',
+      expected: 'development',
+    },
+    {
+      name: 'prerelease',
+      buildMetadata: { release: true },
+      version: '0.1.17-test',
+      expected: 'development',
+    },
+    {
+      name: 'isolated test install',
+      buildMetadata: { release: true, testProfile: true },
+      version: '0.1.17',
+      expected: 'development',
+    },
+  ]) {
+    await t.test(scenario.name, async (t) => {
+      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+        initialState: 'fresh',
+        allowStart: true,
+        packaged: true,
+        buildMetadata: scenario.buildMetadata,
+        version: scenario.version,
+      });
+      try {
+        await f.launch();
+        await f.settle();
+        assert.deepEqual(
+          f.children.map((child) => child.kind),
+          ['engine'],
+        );
+        assert.ok(
+          f.children.every(
+            (child) => child.environment.OTTO_ANALYTICS_ENVIRONMENT === scenario.expected,
+          ),
+        );
+        if (scenario.buildMetadata.testProfile)
+          assert.ok(
+            f.children.every((child) => child.environment.OTTO_ANALYTICS_ENABLED === 'false'),
+          );
+      } finally {
+        await f.close();
+      }
+    });
+  }
+});
+
+test('Windows onboarding waits for storage before unlocking credentials and exposes prerequisite recovery', async (t) => {
+  const f = await runningDesktop(
+    t,
+    async () => assert.fail('No backend can run without storage.'),
+    {
+      initialState: 'fresh',
+      platform: 'win32',
+      allowStart: true,
+      prepareRuntime: async () => {
+        throw Object.assign(new Error('Synthetic WSL missing'), { code: 'OTTO_WSL_REQUIRED' });
+      },
+    },
+  );
+  f.storage.store.environment = async () =>
+    assert.fail('No credentials are needed before storage.');
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.children.length, 0);
+    assert.equal(f.status().needsWsl, true);
+    assert.equal(f.windows.filter((window) => window.isVisible()).length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('native Welcome is visible before storage and system-key access and accepts only nonsecret choices', async (t) => {
+  const storage = deferred();
+  const loaded = deferred();
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'fresh',
+    allowStart: true,
+    nativePageLoaded: loaded.promise,
+    prepareRuntime: async ({ onStorageReady }) => {
+      await storage.promise;
+      const runtime = { env: {} };
+      await onStorageReady(runtime);
+      return runtime;
+    },
+  });
+  const environment = f.storage.store.environment;
+  let unlocked = 0;
+  f.storage.store.environment = async () => {
+    assert.ok(f.windows.some((window) => window.isVisible()));
+    unlocked++;
+    return environment();
+  };
+  try {
+    const launched = f.launch();
+    for (let i = 0; !f.windows.length && i < 50; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(unlocked, 0);
+    loaded.resolve();
+    await launched;
+    const window = f.windows[0];
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    await f.handlers.get('otto:settings:save')(event, {
+      welcome: { usageData: true, continued: false },
+    });
+    await assert.rejects(
+      f.handlers.get('otto:settings:save')(event, {
+        welcome: { usageData: true, continued: false, apiKey: 'synthetic-secret' },
+      }),
+    );
+    assert.equal(unlocked, 0);
+    assert.equal(f.children.length, 0);
+    storage.resolve();
+    await f.settle();
+    assert.equal(unlocked, 1);
+    assert.equal(f.children.length, 1);
+    assert.equal(f.windows[0].isDestroyed(), false);
+    assert.deepEqual((await f.storage.store.get()).welcome, { usageData: true, continued: false });
+  } finally {
+    loaded.resolve();
+    storage.resolve();
+    await f.close();
+  }
+});
+
+test('native startup recovery keeps current status and serializes retry, prerequisite installation, and runtime import', async (t) => {
+  for (const initialResult of ['stale response', 'stale failure']) {
+    await t.test(initialResult, async (t) => {
+      const output = await mkdtemp(join(tmpdir(), 'otto-native-recovery-'));
+      t.after(() => rm(output, { recursive: true, force: true }));
+      await buildDesktopUI(output);
+      const page = new JSDOM(await readFile(join(output, 'index.html'), 'utf8'), {
+        url: 'file:///synthetic/setup.html?firstSetup=false',
+        runScripts: 'outside-only',
+      });
+      t.after(() => page.window.close());
+      const initial = deferred();
+      const retry = deferred();
+      let publish;
+      const calls = [];
+      let imports = 0;
+      page.window.ottoDesktop = {
+        onStatus(listener) {
+          publish = listener;
+        },
+        onPreferences() {},
+        getPreferences: async () => ({ theme: 'light' }),
+        getSettings: async () => ({}),
+        status: () => initial.promise,
+        prepare(options) {
+          calls.push(['prepare', options]);
+          return options ? retry.promise : Promise.resolve({ phase: 'starting' });
+        },
+        installWsl: async () => {
+          calls.push(['installWsl']);
+          return { phase: 'error', error: 'Synthetic restart required' };
+        },
+        importRuntime: async () => {
+          calls.push(['importRuntime']);
+          return imports++ ? { runtime: { phase: 'ready' } } : undefined;
+        },
+      };
+      page.window.eval(await readFile(join(output, 'setup.js'), 'utf8'));
+      const settle = async (predicate) => {
+        for (let attempt = 0; attempt < 100; attempt++) {
+          await new Promise((accept) => setTimeout(accept, 10));
+          if (predicate()) return;
+        }
+        assert.ok(predicate());
+      };
+      await settle(() => publish);
+      publish({ phase: 'error', error: 'Synthetic startup failure' });
+      if (initialResult === 'stale response') initial.resolve({ phase: 'ready' });
+      else initial.reject(new page.window.Error('Synthetic stale failure'));
+      await settle(() => page.window.document.querySelector('[role="alert"]'));
+      assert.ok(
+        page.window.document
+          .querySelector('[role="alert"]')
+          .textContent.includes('Synthetic startup failure'),
+      );
+      assert.equal(page.window.document.querySelector('input'), null);
+      const button = (name) =>
+        [...page.window.document.querySelectorAll('button')].find(
+          (item) => item.textContent === name,
+        );
+      button('Try again').click();
+      button('Try again').click();
+      await settle(() => calls.length === 1);
+      assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['prepare', { retry: true }]]);
+      retry.reject(new page.window.Error('Synthetic retry failed'));
+      await settle(() =>
+        page.window.document
+          .querySelector('[role="alert"]')
+          ?.textContent.includes('Synthetic retry failed'),
+      );
+      publish({ phase: 'preparing', runtime: { phase: 'downloading', progress: 0.42 } });
+      await settle(() => page.window.document.querySelector('progress')?.value === 42);
+      assert.equal(page.window.document.querySelector('[role="alert"]'), null);
+      assert.equal(page.window.document.querySelector('button'), null);
+      publish({ phase: 'error', error: 'Synthetic prerequisite failure', needsWsl: true });
+      await settle(() => button('Install WSL'));
+      button('Install WSL').click();
+      await settle(() =>
+        page.window.document
+          .querySelector('[role="alert"]')
+          ?.textContent.includes('Synthetic restart required'),
+      );
+      assert.deepEqual(calls.at(-1), ['installWsl']);
+      assert.equal(button('Install WSL'), undefined);
+      publish({ phase: 'error', error: 'Synthetic runtime missing', needsRuntimeArchive: true });
+      await settle(() => button('Choose runtime file'));
+      button('Choose runtime file').click();
+      await settle(
+        () =>
+          calls.filter(([name]) => name === 'importRuntime').length === 1 &&
+          !button('Choose runtime file').disabled &&
+          page.window.document.querySelector('[role="alert"]'),
+      );
+      assert.equal(calls.filter(([name]) => name === 'prepare').length, 1);
+      assert.ok(page.window.document.querySelector('[role="alert"]'));
+      button('Choose runtime file').click();
+      await settle(() => calls.filter(([name]) => name === 'prepare').length === 2);
+      assert.deepEqual(calls.at(-1), ['prepare', undefined]);
+      await settle(() => !page.window.document.querySelector('[role="alert"]'));
+    });
+  }
+});
+
+test('native startup preserves saved metadata failures until retry without replaying acknowledged consent', async (t) => {
+  for (const failedMethod of ['getSettings', 'getPreferences']) {
+    await t.test(failedMethod, async (t) => {
+      const output = await mkdtemp(join(tmpdir(), 'otto-native-metadata-'));
+      t.after(() => rm(output, { recursive: true, force: true }));
+      await buildDesktopUI(output);
+      const page = new JSDOM(await readFile(join(output, 'index.html'), 'utf8'), {
+        url: 'file:///synthetic/setup.html?firstSetup=true',
+        runScripts: 'outside-only',
+      });
+      t.after(() => page.window.close());
+      const metadata = deferred();
+      let publish;
+      let reads = 0;
+      let prepares = 0;
+      let acknowledgments = 0;
+      let consentRendered = false;
+      const observer = new page.window.MutationObserver(() => {
+        consentRendered ||= Boolean(page.window.document.querySelector('[role="switch"]'));
+      });
+      observer.observe(page.window.document, { childList: true, subtree: true });
+      t.after(() => observer.disconnect());
+      const values = {
+        getSettings: { welcome: { usageData: false, continued: true, acknowledged: true } },
+        getPreferences: { theme: 'light' },
+      };
+      page.window.ottoDesktop = {
+        onStatus(listener) {
+          publish = listener;
+        },
+        onPreferences() {},
+        status: async () => ({ phase: 'preparing' }),
+        ...Object.fromEntries(
+          Object.entries(values).map(([method, value]) => [
+            method,
+            () =>
+              method === failedMethod && reads++ === 0 ? metadata.promise : Promise.resolve(value),
+          ]),
+        ),
+        ready: async () => {
+          acknowledgments++;
+        },
+        prepare: async () => {
+          prepares++;
+          return { phase: 'starting' };
+        },
+        saveSettings: () => assert.fail('Acknowledged consent must not be resubmitted.'),
+      };
+      page.window.eval(await readFile(join(output, 'setup.js'), 'utf8'));
+      const settle = async (predicate) => {
+        for (let attempt = 0; attempt < 100 && !predicate(); attempt++)
+          await new Promise((accept) => setTimeout(accept, 10));
+        assert.ok(predicate());
+      };
+      await settle(() => publish);
+      publish({ phase: 'ready' });
+      assert.equal(acknowledgments, 0);
+      metadata.reject(new page.window.Error('Synthetic saved metadata failure'));
+      await settle(() => page.window.document.querySelector('[role="alert"]'));
+      publish({ phase: 'preparing' });
+      await new Promise((accept) => setTimeout(accept, 20));
+      assert.ok(page.window.document.querySelector('[role="alert"]'));
+      await settle(() => acknowledgments > 0);
+      page.window.document.querySelector('button').click();
+      await settle(() => prepares === 1 && !page.window.document.querySelector('[role="alert"]'));
+      assert.equal(reads, 2);
+      assert.equal(consentRendered, false);
+    });
+  }
+});
+
+test('native owner identity survives interrupted durable publication without inventing another owner', async (t) => {
+  for (const failure of process.platform === 'win32' ? ['file'] : ['file', 'directory']) {
+    await t.test(failure, async (t) => {
+      let failing = true;
+      const f = await runningDesktop(
+        t,
+        async () => assert.fail('Identity persistence needs no network.'),
+        {
+          initialState: 'fresh',
+          openFile: async (path, flags, mode) => {
+            const file = await open(path, flags, mode);
+            return {
+              readFile: (...args) => file.readFile(...args),
+              writeFile: (...args) => file.writeFile(...args),
+              close: () => file.close(),
+              sync: async () => {
+                if (failing && (failure === 'file' ? flags === 'wx' : flags === 'r'))
+                  throw Object.assign(new Error('Synthetic persistence failure.'), { code: 'EIO' });
+                await file.sync();
+              },
+            };
+          },
+        },
+      );
+      await mkdir(f.profileRoot, { recursive: true });
+      const path = join(f.profileRoot, 'profile.json');
+      await assert.rejects(f.profileOwner(), { code: 'EIO' });
+      let published;
+      if (failure === 'file') await assert.rejects(readFile(path), { code: 'ENOENT' });
+      else published = JSON.parse(await readFile(path, 'utf8')).ownerId;
+      assert.ok((await readdir(f.profileRoot)).every((name) => !name.startsWith('.profile-')));
+      failing = false;
+      const owner = await f.profileOwner();
+      if (published) assert.equal(owner, published);
+      assert.equal(JSON.parse(await readFile(path, 'utf8')).ownerId, owner);
+      assert.equal(await f.profileOwner(), owner);
+      await f.close();
+    });
+  }
+});
+
+test('quitting while macOS keychain access is pending never forks a late setup process', async (t) => {
+  const f = await runningDesktop(t, async () => assert.fail('The full engine must not run.'), {
+    platform: 'darwin',
+    initialState: 'fresh',
+    allowStart: true,
+  });
+  const accessed = deferred();
+  const unlocked = deferred();
+  f.storage.encryption.isAsyncEncryptionAvailable = () => {
+    accessed.resolve();
+    return unlocked.promise;
+  };
+  try {
+    const launching = f.launch();
+    await accessed.promise;
+    const window = f.windows.find((candidate) => candidate.isVisible());
+    assert.ok(window);
+    assert.equal(f.status().unlockingKeys, true);
+    const closing = f.close();
+    unlocked.resolve(true);
+    await Promise.all([launching, closing]);
+    assert.equal(f.children.length, 0);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, false);
+  } finally {
+    unlocked.resolve(true);
+    await f.close();
+  }
+});
+
+test('native key-store failure needs an explicit retry and never completes onboarding', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'fresh',
+    allowStart: true,
+  });
+  const environment = f.storage.store.environment;
+  let failing = true;
+  f.storage.store.environment = () =>
+    failing ? Promise.reject(new Error('Synthetic key-store denial')) : environment();
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.status().phase, 'error');
+    assert.equal(f.children.length, 0);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, false);
+    const window = f.windows[0];
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    failing = false;
+    await Promise.all([
+      f.handlers.get('otto:prepare')(event, { retry: true }),
+      f.handlers.get('otto:prepare')(event, { retry: true }),
+    ]);
+    assert.equal(f.children.length, 1);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, false);
+  } finally {
+    await f.close();
+  }
+});
+
+test('native onboarding starts one normal backend at storage readiness and keeps its origin through full runtime readiness', async (t) => {
+  const storage = deferred();
+  const resources = deferred();
+  const connected = deferred();
+  let writes = 0;
+  const f = await runningDesktop(
+    t,
+    async (url, options) => {
+      if (new URL(url).pathname === '/api/account') {
+        writes++;
+        assert.equal(options.method, 'PATCH');
+        assert.equal(options.headers.Origin, new URL(url).origin);
+        assert.deepEqual(JSON.parse(options.body), { usageData: true });
+        return Response.json({ settings: { usageData: true } });
+      }
+      return Response.json({ ok: true });
+    },
+    {
+      initialState: 'fresh',
+      allowStart: true,
+      prepareRuntime: async ({ onStorageReady }) => {
+        await storage.promise;
+        const runtime = { env: { DATABASE_URL: 'postgresql://synthetic.invalid/test' } };
+        await onStorageReady(runtime);
+        connected.resolve();
+        await resources.promise;
+        return runtime;
+      },
+    },
+  );
+  try {
+    await f.launch();
+    const shell = f.windows[0];
+    await f.handlers.get('otto:settings:save')(
+      { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
+      { welcome: { usageData: true, continued: true } },
+    );
+    const opening = f.handlers.get('otto:prepare')({
+      sender: shell.webContents,
+      senderFrame: shell.webContents.mainFrame,
+    });
+    await new Promise(setImmediate);
+    assert.equal(f.status().phase, 'preparing');
+    assert.equal(f.status().error, undefined);
+    assert.equal(f.children.length, 0);
+    assert.equal(writes, 0);
+    storage.resolve();
+    await connected.promise;
+    assert.equal(f.children.length, 1);
+    const engine = f.children[0];
+    assert.equal(engine.environment.OTTO_DESKTOP_RUNTIME_PENDING, 'true');
+    assert.equal(
+      engine.sent.some((message) => message.type === 'otto-runtime-ready'),
+      false,
+    );
+    const window = f.windows.at(-1);
+    const origin = new URL(window.url).origin;
+    assert.equal(new URL(window.url).searchParams.get('welcome'), 'complete');
+    assert.equal((await f.storage.store.get()).welcome.acknowledged, true);
+    assert.equal(writes, 1);
+    const request = (url, extra = {}) => ({
+      url,
+      webContentsId: window.webContents.id,
+      frame: window.webContents.mainFrame,
+      resourceType: 'xhr',
+      requestHeaders: { 'X-Otto-Desktop-Token': 'forged' },
+      ...extra,
+    });
+    assert.equal(
+      (await f.headers(request(`${origin}/api/session`))).requestHeaders['x-otto-desktop-token'],
+      engine.environment.OTTO_DESKTOP_AUTH_TOKEN,
+    );
+    for (const details of [
+      request(`${origin}/api/session`, { webContentsId: -1 }),
+      request(`${origin}/api/session`, { frame: { routingId: -1, processId: -1 } }),
+      request('https://external.example.test/api/session'),
+    ])
+      assert.ok(
+        Object.keys((await f.headers(details)).requestHeaders).every(
+          (name) => name.toLowerCase() !== 'x-otto-desktop-token',
+        ),
+      );
+    resources.resolve();
+    await opening;
+    await f.settle();
+    assert.equal(f.children.length, 1);
+    assert.equal(new URL(window.url).origin, origin);
+    assert.equal(engine.sent.filter((message) => message.type === 'otto-runtime-ready').length, 1);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, false);
+    assert.equal(f.status().phase, 'ready');
+  } finally {
+    storage.resolve();
+    resources.resolve();
+    await f.close();
+  }
+});
+
+test('runtime handoff and readiness respect closed, minimized and background windows', async (t) => {
+  for (const scenario of [
+    'closed',
+    'minimized',
+    'background',
+    'welcome-closed',
+    'welcome-minimized',
+    'upgrade-closed',
+  ]) {
+    await t.test(scenario, async (t) => {
+      const storage = deferred();
+      const connected = deferred();
+      const resources = deferred();
+      const f = await runningDesktop(
+        t,
+        async (url) =>
+          Response.json(
+            url.endsWith('/api/account') ? { settings: { usageData: true } } : { ok: true },
+          ),
+        {
+          initialState: scenario === 'upgrade-closed' ? 'upgrade' : 'fresh',
+          allowStart: true,
+          prepareRuntime: async ({ onStorageReady }) => {
+            await storage.promise;
+            const runtime = { env: {} };
+            await onStorageReady(runtime);
+            connected.resolve();
+            await resources.promise;
+            return runtime;
+          },
+        },
+      );
+      if (scenario !== 'upgrade-closed')
+        await f.storage.store.save({ welcome: { usageData: true, continued: true } });
+      try {
+        await f.launch();
+        const shell = f.windows[0];
+        if (scenario.endsWith('-closed')) shell.destroy();
+        if (scenario === 'welcome-minimized') {
+          shell.normalBounds = { x: 80, y: 120, width: 940, height: 720 };
+          shell.bounds = { x: -32000, y: -32000, width: 160, height: 28 };
+          shell.visible = false;
+          shell.focused = false;
+        }
+        storage.resolve();
+        await connected.promise;
+        const window = f.windows.find((window) => window.url);
+        if (scenario.endsWith('-closed')) assert.equal(window, undefined);
+        else {
+          assert.ok(window);
+          if (scenario === 'welcome-minimized') assert.deepEqual(window.bounds, shell.normalBounds);
+          window.focused = false;
+          if (scenario === 'closed') window.destroy();
+          if (scenario.endsWith('minimized')) window.visible = false;
+        }
+        const count = f.windows.length;
+        const inactiveShows = window?.inactiveShows ?? 0;
+        resources.resolve();
+        await f.settle();
+        assert.equal(f.status().phase, 'ready');
+        assert.equal(f.windows.length, count);
+        assert.equal(window?.inactiveShows ?? 0, inactiveShows);
+        if (window) {
+          assert.equal(Boolean(window.isFocused()), false);
+          assert.equal(window.isVisible(), scenario === 'background');
+        }
+      } finally {
+        storage.resolve();
+        resources.resolve();
+        await f.close();
+      }
+    });
+  }
+});
+
+test('native windows wait for owned renderer readiness before replacing startup', async (t) => {
+  for (const scenario of [
+    'foreground',
+    'background',
+    'minimized',
+    'closed',
+    'resized',
+    'late-load-failure',
+    'early-load-failure',
+    'load-failure',
+    'upgrade-load-failure',
+    'upgrade-replay-load-failure',
+    'reopen-load-failure',
+    'closed-activate-load-failure',
+  ]) {
+    await t.test(scenario, async (t) => {
+      const storage = deferred();
+      const connected = deferred();
+      const loaded = deferred();
+      const runtimeFinished = deferred();
+      let retried = false;
+      const f = await runningDesktop(
+        t,
+        async (url) =>
+          Response.json(
+            url.endsWith('/api/account') ? { settings: { usageData: false } } : { ok: true },
+          ),
+        {
+          initialState: scenario.startsWith('upgrade-') ? 'upgrade' : 'fresh',
+          argv: scenario.includes('replay') ? ['--onboarding'] : [],
+          allowStart: true,
+          readyRenderers: false,
+          enginePageLoaded: () => (retried ? Promise.resolve() : loaded.promise),
+          prepareRuntime: async ({ onStorageReady }) => {
+            await storage.promise;
+            const runtime = { env: {} };
+            await onStorageReady(runtime);
+            connected.resolve();
+            if (scenario === 'early-load-failure') await runtimeFinished.promise;
+            return runtime;
+          },
+        },
+      );
+      if (!scenario.startsWith('upgrade-'))
+        await f.storage.store.save({ welcome: { usageData: false, continued: true } });
+      try {
+        const launched = f.launch();
+        for (let i = 0; !f.windows.length && i < 50; i++) await new Promise(setImmediate);
+        const setup = f.windows[0];
+        assert.ok(setup);
+        assert.equal(setup.isVisible(), false);
+        await f.rendererReady(setup);
+        await launched;
+        assert.equal(setup.isVisible(), true);
+        storage.resolve();
+        await connected.promise;
+        if (scenario !== 'early-load-failure') await f.settle();
+        const engine = f.windows.find((window) => window.url);
+        assert.ok(engine);
+        assert.equal(engine.isVisible(), false);
+        assert.equal(setup.isDestroyed(), false);
+        if (scenario !== 'early-load-failure') await f.settle();
+        assert.equal(engine.isVisible(), false);
+        const frame = engine.webContents.mainFrame;
+        const ready = f.handlers.get('otto:renderer-ready');
+        for (const event of [
+          { sender: { mainFrame: frame }, senderFrame: frame },
+          { sender: engine.webContents, senderFrame: { ...frame } },
+        ])
+          await assert.rejects(
+            Promise.resolve().then(() => ready(event)),
+            /unavailable/,
+          );
+        assert.equal(engine.isVisible(), false);
+        if (scenario === 'late-load-failure') {
+          await f.rendererReady(engine);
+          assert.equal(engine.isVisible(), true);
+          loaded.reject(new Error('Synthetic initial navigation abort'));
+          await new Promise(setImmediate);
+          assert.equal(engine.isDestroyed(), false);
+          assert.equal(f.status().phase, 'ready');
+          assert.equal(f.status().windowError, undefined);
+          return;
+        }
+        if (scenario.endsWith('load-failure')) {
+          if (scenario === 'closed-activate-load-failure') {
+            setup.destroy();
+            f.showEngine();
+          }
+          loaded.reject(new Error('Synthetic page failure'));
+          await new Promise(setImmediate);
+          assert.equal(engine.isDestroyed(), true);
+          const recovery = f.windows.find((window) => window.path && !window.isDestroyed());
+          assert.ok(recovery);
+          if (recovery !== setup) await f.rendererReady(recovery);
+          assert.equal(recovery.isVisible(), true);
+          assert.equal(f.status().phase, scenario === 'early-load-failure' ? 'preparing' : 'ready');
+          assert.ok(f.status().windowError);
+          const backend = f.children[0];
+          retried = true;
+          let retry;
+          if (scenario === 'reopen-load-failure') f.showEngine();
+          else
+            retry = f.handlers.get('otto:prepare')(
+              { sender: recovery.webContents, senderFrame: recovery.webContents.mainFrame },
+              { retry: true },
+            );
+          if (scenario === 'early-load-failure') await new Promise(setImmediate);
+          else await retry;
+          const replacement = f.windows.find((window) => window.url && !window.isDestroyed());
+          assert.ok(replacement);
+          assert.notEqual(replacement, engine);
+          assert.equal(replacement.url, engine.url);
+          assert.equal(replacement.isVisible(), false);
+          assert.equal(recovery.isDestroyed(), false);
+          await new Promise(setImmediate);
+          await f.rendererReady(replacement);
+          assert.equal(replacement.isVisible(), true);
+          assert.equal(recovery.isDestroyed(), true);
+          assert.equal(f.status().phase, scenario === 'early-load-failure' ? 'preparing' : 'ready');
+          assert.equal(f.status().windowError, undefined);
+          assert.equal(f.children.length, 1);
+          assert.equal(f.children[0], backend);
+          runtimeFinished.resolve();
+          await retry;
+          return;
+        }
+        loaded.resolve();
+        await new Promise(setImmediate);
+        assert.equal(engine.isVisible(), false);
+        if (!['foreground', 'resized'].includes(scenario)) setup.focused = false;
+        if (scenario === 'resized') setup.bounds = { x: 150, y: 75, width: 1300, height: 900 };
+        if (scenario === 'minimized') {
+          setup.minimized = true;
+          setup.visible = false;
+        }
+        if (scenario === 'closed') setup.destroy();
+        await f.rendererReady(engine);
+        assert.equal(
+          engine.isVisible(),
+          ['foreground', 'background', 'resized'].includes(scenario),
+        );
+        assert.equal(Boolean(engine.isFocused()), ['foreground', 'resized'].includes(scenario));
+        if (scenario === 'resized') assert.deepEqual(engine.getBounds(), setup.getNormalBounds());
+        assert.equal(setup.isDestroyed(), true);
+        if (scenario === 'minimized') {
+          assert.equal(engine.isMinimized(), true);
+          assert.equal(Boolean(engine.isFocused()), false);
+          f.showEngine();
+          assert.equal(f.windows.length, 2);
+          assert.equal(engine.isVisible(), true);
+          assert.equal(engine.isMinimized(), false);
+          assert.equal(engine.isFocused(), true);
+        }
+        if (scenario === 'foreground') {
+          const child = new engine.constructor({ show: false });
+          engine.webContents.emit('did-create-window', child);
+          await child.loadURL(`${new URL(engine.url).origin}/payments/synthetic-request`);
+          await f.rendererReady(child);
+          assert.equal(child.isVisible(), false);
+          child.destroy();
+        }
+        engine.focused = false;
+        engine.visible = false;
+        await f.rendererReady(engine);
+        assert.equal(engine.isVisible(), false);
+      } finally {
+        storage.resolve();
+        loaded.resolve();
+        runtimeFinished.resolve();
+        await f.settle();
+        await f.close();
+      }
+    });
+  }
+});
+
+test('a missing native setup renderer offers explicit recovery without hidden key access or automatic retry', async (t) => {
+  for (const failure of ['timeout', 'load-failure']) {
+    await t.test(failure, async (t) => {
+      const prompts = [];
+      const loaded = deferred();
+      let reopened = false;
+      let retryAllowed = false;
+      let keyReads = 0;
+      let keyAccessFailed = true;
+      let unlocking;
+      const wait = setTimeout;
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const f = await runningDesktop(
+        t,
+        async (url) => {
+          assert.ok(retryAllowed);
+          return Response.json(
+            url.endsWith('/api/account') ? { settings: { usageData: false } } : { ok: true },
+          );
+        },
+        {
+          initialState: failure === 'timeout' ? 'upgrade' : 'fresh',
+          allowStart: true,
+          readyRenderers: false,
+          nativePageLoaded: () => (reopened ? Promise.resolve() : loaded.promise),
+          prepareRuntime: async ({ onStorageReady }) => {
+            assert.ok(retryAllowed, 'Runtime startup must wait for explicit retry.');
+            const runtime = { env: {} };
+            await onStorageReady(runtime);
+            return runtime;
+          },
+          prompt: (value) => {
+            prompts.push(value);
+            return { response: 0 };
+          },
+        },
+      );
+      if (failure === 'load-failure')
+        await f.storage.store.save({ welcome: { usageData: false, continued: true } });
+      const environment = f.storage.store.environment;
+      f.storage.store.environment = () => {
+        assert.ok(retryAllowed, 'No hidden Keychain request is allowed.');
+        assert.ok(f.windows.some((window) => window.path && window.isVisible()));
+        keyReads++;
+        unlocking = { active: f.status().unlockingKeys, windowError: f.status().windowError };
+        if (keyAccessFailed) throw new Error('Synthetic key access unavailable');
+        return environment();
+      };
+      try {
+        const launched = f.launch();
+        for (let attempt = 0; !f.windows.length && attempt < 100; attempt++)
+          await new Promise(setImmediate);
+        const window = f.windows[0];
+        assert.ok(window);
+        assert.equal(window.isVisible(), false);
+        if (failure === 'timeout') {
+          loaded.resolve();
+          t.mock.timers.tick(30_000);
+        } else {
+          loaded.reject(new Error('Synthetic setup page failure'));
+          await new Promise(setImmediate);
+          assert.equal(prompts.length, 1);
+        }
+        await launched;
+        assert.equal(prompts.length, 1);
+        assert.equal(window.isDestroyed(), true);
+        assert.equal(f.children.length, 0);
+        t.mock.timers.tick(30_000);
+        assert.equal(prompts.length, 1);
+        assert.equal(f.windows.length, 1);
+        reopened = true;
+        f.showEngine();
+        const recovery = f.windows.at(-1);
+        assert.notEqual(recovery, window);
+        await f.rendererReady(recovery);
+        assert.equal(recovery.isVisible(), true);
+        assert.ok(f.status().windowError);
+        assert.equal(f.children.length, 0);
+        assert.equal(keyReads, 0);
+        retryAllowed = true;
+        const retry = async () => {
+          let retried = false;
+          const result = f.handlers
+            .get('otto:prepare')(
+              { sender: recovery.webContents, senderFrame: recovery.webContents.mainFrame },
+              { retry: true },
+            )
+            .then(() => {
+              retried = true;
+            });
+          for (let attempt = 0; !retried && attempt < 100; attempt++) {
+            await new Promise((resolve) => wait(resolve, 5));
+            t.mock.timers.tick(100);
+          }
+          assert.equal(retried, true);
+          await result;
+        };
+        await retry();
+        assert.equal(f.status().phase, 'error');
+        assert.match(f.status().error, /Synthetic key access unavailable/);
+        assert.equal(f.status().windowError, undefined);
+        assert.deepEqual(unlocking, { active: true, windowError: undefined });
+        assert.equal(f.children.length, 0);
+        assert.equal(recovery.isVisible(), true);
+        keyAccessFailed = false;
+        await retry();
+        const engine = f.windows.find((window) => window.url);
+        assert.ok(engine);
+        assert.equal(engine.isVisible(), false);
+        await f.rendererReady(engine);
+        assert.equal(engine.isVisible(), true);
+        assert.equal(recovery.isDestroyed(), true);
+        assert.equal(f.status().phase, 'ready');
+        assert.equal(f.status().windowError, undefined);
+        assert.equal(f.children.length, 1);
+        assert.ok(keyReads > 0);
+      } finally {
+        loaded.resolve();
+        await f.close();
+      }
+    });
+  }
+});
+
+test('completed upgrades retain settings and only explicit replay repeats onboarding', async (t) => {
+  for (const initialState of ['upgrade', 'replay']) {
+    await t.test(initialState, async (t) => {
+      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+        initialState,
+        allowStart: true,
+        argv: initialState === 'replay' ? ['--onboarding'] : [],
+      });
+      const before = await f.storage.store.environment();
+      const preferences = await f.storage.store.get();
+      try {
+        await f.launch();
+        await f.settle();
+        assert.equal(f.status().phase, 'ready');
+        assert.deepEqual(
+          f.children.map((child) => child.kind),
+          ['engine'],
+        );
+        assert.equal(f.children.at(-1).environment.OTTO_DESKTOP_RUNTIME_PENDING, 'true');
+        assert.equal(f.children.at(-1).environment.OTTO_DESKTOP_LEGACY_INTEGRATION, undefined);
+        if (initialState === 'replay')
+          assert.ok(f.windows.some((window) => window.url?.endsWith('/onboarding?replay=1')));
+        else
+          assert.ok(
+            f.windows.every(
+              (window) => !window.url || new URL(window.url).pathname !== '/onboarding',
+            ),
+          );
+        assert.deepEqual(await f.storage.store.environment(), before);
+        assert.deepEqual(await f.storage.store.get(), preferences);
+      } finally {
+        await f.close();
+      }
+    });
+  }
+});
+
+test('failed Welcome transfer preserves the saved answer and retries without a second choice or engine', async (t) => {
+  let failing = true;
+  let writes = 0;
+  const f = await runningDesktop(
+    t,
+    async (url) => {
+      if (url.endsWith('/api/account')) {
+        writes++;
+        if (failing) throw new Error('Synthetic disconnected transfer');
+        return Response.json({ settings: { usageData: true } });
+      }
+      return Response.json({ ok: true });
+    },
+    { initialState: 'fresh', allowStart: true },
+  );
+  try {
+    await f.launch();
+    await f.settle();
+    const shell = f.windows[0];
+    const event = { sender: shell.webContents, senderFrame: shell.webContents.mainFrame };
+    const choice = { usageData: true, continued: true };
+    assert.deepEqual(
+      (await f.handlers.get('otto:settings:save')(event, { welcome: choice })).welcome,
+      choice,
+    );
+    assert.equal(writes, 0);
+    await assert.rejects(f.handlers.get('otto:prepare')(event));
+    assert.deepEqual((await f.storage.store.get()).welcome, choice);
+    assert.equal(shell.isDestroyed(), false);
+    failing = false;
+    shell.focused = false;
+    await f.handlers.get('otto:prepare')(event, { retry: true });
+    const background = f.windows.find((window) => window.url);
+    assert.ok(background);
+    assert.equal(background.isVisible(), true);
+    assert.equal(Boolean(background.isFocused()), false);
+    assert.equal(shell.isDestroyed(), true);
+    assert.equal(writes, 2);
+    assert.equal(f.children.length, 1);
+    assert.equal((await f.storage.store.get()).welcome.acknowledged, true);
+    assert.ok(f.windows.some((window) => window.url?.endsWith('/onboarding?welcome=complete')));
+  } finally {
+    await f.close();
+  }
+});
+
+test('a failed saved Welcome transfer leaves storage and the normal backend ready for explicit retry', async (t) => {
+  let failing = true;
+  let writes = 0;
+  let attempts = 0;
+  let stopped = 0;
+  let handedOff = false;
+  const f = await runningDesktop(
+    t,
+    async (url) => {
+      if (url.endsWith('/api/account')) {
+        writes++;
+        if (failing) throw new Error('Synthetic consent save unavailable');
+        return Response.json({ settings: { usageData: true } });
+      }
+      return Response.json({ ok: true });
+    },
+    {
+      initialState: 'fresh',
+      allowStart: true,
+      prepareRuntime: async ({ onStorageReady }) => {
+        attempts++;
+        const runtime = {
+          env: {},
+          close: async () => {
+            stopped++;
+          },
+        };
+        await onStorageReady(runtime);
+        handedOff = true;
+        return runtime;
+      },
+    },
+  );
+  await f.storage.store.save({ welcome: { usageData: true, continued: true } });
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(handedOff, true);
+    assert.equal(attempts, 1);
+    assert.equal(writes, 1);
+    assert.equal(stopped, 0);
+    assert.equal(f.children.length, 1);
+    assert.equal(f.status().phase, 'error');
+    assert.equal(f.windows[0].isDestroyed(), false);
+    failing = false;
+    const shell = f.windows[0];
+    await f.handlers.get('otto:prepare')(
+      { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
+      { retry: true },
+    );
+    assert.equal(writes, 2);
+    assert.equal(attempts, 1);
+    assert.equal(f.children.length, 1);
+    assert.equal(f.status().phase, 'ready');
+    assert.equal((await f.storage.store.get()).welcome.acknowledged, true);
+  } finally {
+    await f.close();
+  }
+  assert.equal(stopped, 1);
+});
+
+test('one explicit retry after an engine exit also retries the saved Welcome choice', async (t) => {
+  let failing = true;
+  let writes = 0;
+  const f = await runningDesktop(
+    t,
+    async (url) => {
+      if (url.endsWith('/api/account')) {
+        writes++;
+        if (failing) throw new Error('Synthetic consent save unavailable');
+        return Response.json({ settings: { usageData: true } });
+      }
+      return Response.json({ ok: true });
+    },
+    { initialState: 'fresh', allowStart: true },
+  );
+  await f.storage.store.save({ welcome: { usageData: true, continued: true } });
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(writes, 1);
+    assert.equal(f.status().phase, 'error');
+    f.children[0].emit('exit', 1);
+    await new Promise(setImmediate);
+    assert.equal(writes, 1);
+    assert.equal(f.children.length, 1);
+    failing = false;
+    const shell = f.windows.find((window) => !window.isDestroyed() && window.path);
+    await f.handlers.get('otto:prepare')(
+      { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
+      { retry: true },
+    );
+    assert.equal(writes, 2);
+    assert.equal(f.children.length, 2);
+    assert.equal(f.status().phase, 'ready');
+    assert.equal((await f.storage.store.get()).welcome.acknowledged, true);
+    assert.ok(f.windows.some((window) => window.url));
+  } finally {
+    await f.close();
+  }
+});
+
+test('session reconciliation retries after runtime startup without rebuilding the computer or engine', async (t) => {
+  for (const failure of ['session', 'settings']) {
+    await t.test(failure, async (t) => {
+      let failing = true;
+      let reads = 0;
+      let attempts = 0;
+      let stopped = 0;
+      const f = await runningDesktop(
+        t,
+        async (url) => {
+          if (url.endsWith('/api/session')) {
+            reads++;
+            if (reads > 1 && failing && failure === 'session')
+              throw new Error('Synthetic session unavailable');
+            return Response.json({ settings: { onboardingCompleted: reads > 1 } });
+          }
+          return Response.json({ ok: true });
+        },
+        {
+          initialState: 'fresh',
+          allowStart: true,
+          prepareRuntime: async ({ onStorageReady }) => {
+            attempts++;
+            const runtime = { env: {}, close: async () => stopped++ };
+            await onStorageReady(runtime);
+            return runtime;
+          },
+        },
+      );
+      const save = f.storage.store.save;
+      f.storage.store.save = async (value) => {
+        if (value.onboardingCompleted && failing && failure === 'settings')
+          throw new Error('Synthetic settings unavailable');
+        return save(value);
+      };
+      try {
+        await f.launch();
+        await f.settle();
+        assert.equal(f.status().phase, 'error');
+        assert.equal(reads, 2);
+        assert.equal(attempts, 1);
+        assert.equal(stopped, 0);
+        assert.equal(f.children.length, 1);
+        failing = false;
+        const shell = f.windows[0];
+        const result = await f.handlers.get('otto:prepare')(
+          { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
+          { retry: true },
+        );
+        assert.equal(result.phase, 'ready');
+        assert.equal(reads, 3);
+        assert.equal(attempts, 1);
+        assert.equal(stopped, 0);
+        assert.equal(f.children.length, 1);
+        assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+        assert.equal(
+          f.children[0].sent.filter((message) => message.type === 'otto-runtime-ready').length,
+          1,
+        );
+      } finally {
+        await f.close();
+      }
+      assert.equal(stopped, 1);
+    });
+  }
+});
+
+test('partial onboarding restart keeps acknowledged consent and normal app progress until durable completion', async (t) => {
+  let usageData = true;
+  let completed = false;
+  let writes = 0;
+  const request = async (url, options) => {
+    if (url.endsWith('/api/account')) {
+      writes++;
+      usageData = JSON.parse(options.body).usageData;
+      return Response.json({ settings: { usageData } });
+    }
+    if (url.endsWith('/api/session'))
+      return Response.json({ settings: { onboardingCompleted: completed, usageData } });
+    return Response.json({ ok: true });
+  };
+  const first = await runningDesktop(t, request, { initialState: 'fresh', allowStart: true });
+  try {
+    await first.launch();
+    await first.settle();
+    const shell = first.windows[0];
+    const event = { sender: shell.webContents, senderFrame: shell.webContents.mainFrame };
+    await first.handlers.get('otto:settings:save')(event, {
+      welcome: { usageData: true, continued: true },
+    });
+    await first.handlers.get('otto:prepare')(event);
+    assert.equal(writes, 1);
+  } finally {
+    await first.close();
+  }
+  usageData = false;
+  const next = await runningDesktop(t, request, {
+    initialState: 'fresh',
+    allowStart: true,
+    storedProfile: first.storage,
+  });
+  try {
+    await next.launch();
+    await next.settle();
+    assert.equal(writes, 1);
+    assert.equal(usageData, false);
+    const window = next.windows.find((window) => window.url);
+    assert.ok(window);
+    assert.equal(new URL(window.url).pathname, '/onboarding');
+    assert.equal(new URL(window.url).searchParams.get('welcome'), 'complete');
+    assert.equal((await next.storage.store.get()).welcome.acknowledged, true);
+    completed = true;
+    await next.handlers.get('otto:settings:save')(
+      { sender: window.webContents, senderFrame: window.webContents.mainFrame },
+      { onboardingCompleted: true },
+    );
+    assert.equal((await next.storage.store.get()).welcome, undefined);
+    assert.equal(writes, 1);
+  } finally {
+    await next.close();
+  }
+});
+
+test('completed backend onboarding wins over a stale native Welcome answer without changing consent', async (t) => {
+  const f = await runningDesktop(
+    t,
+    async (url, options) => {
+      assert.notEqual(options?.method, 'PATCH');
+      return Response.json(
+        url.endsWith('/api/session')
+          ? { settings: { onboardingCompleted: true, usageData: false } }
+          : { ok: true },
+      );
+    },
+    { initialState: 'fresh', allowStart: true },
+  );
+  await f.storage.store.save({ welcome: { usageData: true, continued: true } });
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+    assert.equal((await f.storage.store.get()).welcome, undefined);
+    assert.ok(f.windows.some((window) => window.url && new URL(window.url).pathname === '/'));
+    assert.ok(f.windows.every((window) => !window.url?.includes('welcome=complete')));
+  } finally {
+    await f.close();
+  }
+});
+
+test('workspace failure leaves the pending backend intact and an explicit retry releases it once', async (t) => {
+  let attempts = 0;
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'upgrade',
+    allowStart: true,
+    prepareRuntime: async ({ onStorageReady }) => {
+      const runtime = { env: {} };
+      await onStorageReady(runtime);
+      if (++attempts === 1) throw new Error('Synthetic browser startup failure');
+      return runtime;
+    },
+  });
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.status().phase, 'error');
+    assert.equal(f.children.length, 1);
+    assert.equal(f.children[0].sent.length, 0);
+    assert.equal(f.windows[0].isDestroyed(), false);
+    assert.equal(
+      f.windows.some((window) => window.url),
+      false,
+    );
+    f.showEngine();
+    assert.equal(
+      f.windows.some((window) => window.url),
+      false,
+    );
+    await f.prepare();
+    assert.equal(attempts, 1);
+    await f.prepare({ retry: true });
+    assert.equal(attempts, 2);
+    assert.equal(f.children.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(f.children[0].sent)), [
+      { type: 'otto-runtime-ready' },
+    ]);
+    assert.equal(f.status().phase, 'ready');
+    assert.equal(f.windows[0].isDestroyed(), true);
+    assert.ok(f.windows.some((window) => window.url));
+  } finally {
+    await f.close();
+  }
+});
+
+test('native upgrade binds legacy cleanup to its owned child and retains ciphertext when cleanup is deferred', async (t) => {
+  const key = 'synthetic-private-upgrade-key';
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'upgrade',
+    allowStart: true,
+    legacyKey: key,
+  });
+  const before = await f.storage.store.environment();
+  try {
+    await f.launch();
+    await f.settle();
+    const child = f.children[0];
+    assert.deepEqual(JSON.parse(JSON.stringify(child.sent)), [{ type: 'otto-runtime-ready' }]);
+    child.sent.length = 0;
+    assert.equal(child.environment.OTTO_DESKTOP_LEGACY_INTEGRATION, 'true');
+    assert.equal(JSON.stringify(child.environment).includes(key), false);
+    assert.equal(JSON.stringify(await f.storage.store.get()).includes(key), false);
+    const ownerId = child.environment.OTTO_DESKTOP_OWNER_ID;
+    const nonce = randomUUID();
+    const request = { type: 'otto-legacy-integration-request', ownerId, nonce };
+    child.emit('message', { ...request, ownerId: randomUUID() });
+    child.emit('message', { ...request, nonce: 'invalid' });
+    assert.equal(child.sent.length, 0);
+    child.emit('message', request);
+    assert.equal(child.sent.length, 1);
+    const payload = child.sent[0];
+    assert.equal(payload.apiKey, key);
+    assert.equal(payload.ownerId, ownerId);
+    assert.equal(payload.nonce, nonce);
+    child.emit('message', request);
+    assert.equal(child.sent.length, 1);
+    const ack = { type: 'otto-legacy-integration-ack', ownerId, nonce, receipt: payload.receipt };
+    child.emit('message', { ...ack, ownerId: randomUUID() });
+    child.emit('message', { ...ack, nonce: randomUUID() });
+    child.emit('message', { ...ack, receipt: '0'.repeat(64) });
+    await new Promise(setImmediate);
+    assert.equal((await f.storage.store.legacyIntegration()).apiKey, key);
+    const ciphertext = await readFile(f.storage.path, 'utf8');
+    const acknowledge = f.storage.store.acknowledgeLegacyIntegration;
+    f.storage.store.acknowledgeLegacyIntegration = async () => {
+      throw new Error('Synthetic temporary settings write failure');
+    };
+    child.emit('message', ack);
+    for (let i = 0; i < 100 && child.sent.length < 2; i++)
+      await new Promise((accept) => setTimeout(accept, 10));
+    assert.deepEqual(JSON.parse(JSON.stringify(child.sent[1])), {
+      type: 'otto-legacy-integration-cleanup-deferred',
+      ownerId,
+      nonce,
+      receipt: payload.receipt,
+    });
+    assert.equal(await readFile(f.storage.path, 'utf8'), ciphertext);
+    assert.equal(f.status().phase, 'ready');
+    f.storage.store.acknowledgeLegacyIntegration = acknowledge;
+    child.emit('message', ack);
+    for (let i = 0; i < 100 && child.sent.length < 3; i++)
+      await new Promise((accept) => setTimeout(accept, 10));
+    assert.equal(child.sent[2].type, 'otto-legacy-integration-cleaned');
+    assert.equal(await f.storage.store.legacyIntegration(), undefined);
+    assert.deepEqual(await f.storage.store.environment(), before);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+    assert.equal(f.children.length, 1);
+    assert.ok(f.windows.every((window) => !JSON.stringify(window.sent).includes(key)));
+    f.crash();
+    child.emit('message', request);
+    assert.equal(child.sent.length, 3);
+  } finally {
+    await f.close();
+  }
+});
+
+test('unreadable historical app ciphertext does not block a completed profile and remains recoverable', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'upgrade',
+    allowStart: true,
+    legacyKey: 'synthetic-older-key',
+  });
+  const before = await readFile(f.storage.path, 'utf8');
+  const ciphertext = JSON.parse(before).secrets.composioApiKey;
+  const decrypt = f.storage.encryption.decryptString;
+  f.storage.encryption.decryptString = (value) => {
+    if (value.toString('base64') === ciphertext) throw new Error('Synthetic old key cannot unlock');
+    return decrypt(value);
+  };
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.status().phase, 'ready');
+    assert.deepEqual(
+      f.children.map((child) => child.kind),
+      ['engine'],
+    );
+    assert.equal(f.children[0].environment.OTTO_DESKTOP_LEGACY_INTEGRATION, undefined);
+    assert.equal(await readFile(f.storage.path, 'utf8'), before);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+    f.storage.encryption.decryptString = decrypt;
+    assert.equal((await f.storage.store.legacyIntegration()).apiKey, 'synthetic-older-key');
+  } finally {
+    await f.close();
+  }
+});
+
+test('native quit aborts storage startup without creating a late engine', async (t) => {
+  const runtime = deferred();
+  let signal;
+  let closed = 0;
+  const f = await runningDesktop(t, async () => assert.fail('Quit must fence the full engine.'), {
+    initialState: 'fresh',
+    allowStart: true,
+    prepareRuntime: async (options) => {
+      signal = options.signal;
+      return runtime.promise;
+    },
+  });
+  await f.launch();
+  for (let i = 0; !signal && i < 100; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(signal);
+  const closing = f.close();
+  await new Promise(setImmediate);
+  assert.equal(signal.aborted, true);
+  runtime.resolve({
+    env: {},
+    close: async () => {
+      closed++;
+    },
+  });
+  await closing;
+  assert.equal(closed, 1);
+  assert.deepEqual(
+    f.children.map((child) => child.kind),
+    [],
+  );
+});
 
 test('desktop proxy overrides reach only isolated source engines and retain origin validation', async (t) => {
   const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -736,11 +2269,27 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   assert.equal(serialized.includes(vaultCiphertext), false);
   await save({ theme: 'dark', launchAtLogin: true });
   assert.equal((await f.storage.store.get()).launchAtLogin, true);
+  await invoke('otto:preferences:theme', event, 'light');
+  assert.equal((await f.storage.store.get()).theme, 'light');
+  await invoke('otto:external', event, 'https://example.test/');
+  assert.deepEqual(f.externalURLs, ['https://example.test/']);
+  window.loading = false;
+  await invoke('otto:settings:open', event, 'models');
+  assert.ok(
+    window.sent.some(([channel, value]) => channel === 'otto:settings:focus' && value === 'models'),
+  );
   window.destroy();
   await assert.rejects(save({ theme: 'light' }));
   f.setReady(false);
   f.showSettings();
   const setup = f.windows.at(-1).webContents;
+  const setupEvent = { sender: setup, senderFrame: setup.mainFrame };
+  for (const [channel, value] of [
+    ['otto:preferences:theme', 'dark'],
+    ['otto:external', 'https://example.test/'],
+    ['otto:settings:open', 'models'],
+  ])
+    await assert.rejects(invoke(channel, setupEvent, value), /This action is unavailable/);
   f.status().runtime = { phase: 'error', needsWsl: true };
   for (const rejected of [
     { sender: window.webContents, senderFrame: frame },
@@ -801,21 +2350,37 @@ test('the engine token waits for the engine Otto started to report its port', as
   assert.deepEqual(requests, []);
 });
 
-async function fixture(t) {
+async function fixture(t, platform = 'win32') {
   const directory = await mkdtemp(join(tmpdir(), 'otto-desktop-settings-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'profile', 'settings.json');
   const key = randomBytes(32);
   const encryption = {
     isEncryptionAvailable: () => true,
+    isAsyncEncryptionAvailable: async () => encryption.isEncryptionAvailable(),
     getSelectedStorageBackend: () => 'synthetic-secure-store',
+    encryptStringAsync: async (value) => encryption.encryptString(value),
+    decryptStringAsync: async (value) => ({
+      result: encryption.decryptString(value),
+      shouldReEncrypt: false,
+    }),
     encryptString(value) {
+      if (platform === 'darwin') {
+        const cipher = createCipheriv('aes-128-cbc', key.subarray(0, 16), Buffer.alloc(16, 32));
+        return Buffer.concat([Buffer.from('v10'), cipher.update(value, 'utf8'), cipher.final()]);
+      }
       const nonce = randomBytes(12);
       const cipher = createCipheriv('aes-256-gcm', key, nonce);
       const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
       return Buffer.concat([nonce, cipher.getAuthTag(), encrypted]);
     },
     decryptString(value) {
+      if (platform === 'darwin') {
+        const decipher = createDecipheriv('aes-128-cbc', key.subarray(0, 16), Buffer.alloc(16, 32));
+        return Buffer.concat([decipher.update(value.subarray(3)), decipher.final()]).toString(
+          'utf8',
+        );
+      }
       const decipher = createDecipheriv('aes-256-gcm', key, value.subarray(0, 12));
       decipher.setAuthTag(value.subarray(12, 28));
       return Buffer.concat([decipher.update(value.subarray(28)), decipher.final()]).toString(
@@ -826,12 +2391,139 @@ async function fixture(t) {
   return {
     path,
     encryption,
-    store: createSettingsStore(path, encryption),
-    reopen: () => createSettingsStore(path, encryption),
+    store: createSettingsStore(path, encryption, platform),
+    reopen: () => createSettingsStore(path, encryption, platform),
   };
 }
 
-test('legacy app keys never reach the desktop engine or renderer and its vault remains unchanged', async (t) => {
+test(
+  'Windows DPAPI keeps the Vault and completed setup across real Electron restarts behind private ACLs',
+  { skip: process.platform !== 'win32', timeout: 120_000 },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-dpapi-restart-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const profile = join(directory, 'profile');
+    await mkdir(join(directory, 'electron'));
+    const engineRoot = fileURLToPath(new URL('../../', import.meta.url));
+    await protectWindowsProfile(profile, engineRoot);
+    const { transformWithEsbuild } = await import('vite');
+    const cryptoSource = fileURLToPath(
+      new URL('../../src/server/vault-crypto.ts', import.meta.url),
+    );
+    const vault = join(directory, 'vault-crypto.mjs');
+    await writeFile(
+      vault,
+      (await transformWithEsbuild(await readFile(cryptoSource, 'utf8'), cryptoSource)).code,
+    );
+    const script = join(directory, 'probe.mjs');
+    await writeFile(
+      script,
+      `import assert from 'node:assert/strict';
+import { app, safeStorage } from 'electron';
+import { createHash } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createSettingsStore } from ${JSON.stringify(new URL('../main/settings.mjs', import.meta.url).href)};
+import { sealVaultValue, openVaultValue } from ${JSON.stringify(pathToFileURL(vault).href)};
+app.setPath('userData', process.env.OTTO_STORAGE_TEST_USER_DATA);
+app.whenReady().then(async () => {
+  assert.equal(safeStorage.isEncryptionAvailable(), true);
+  const profile = process.env.OTTO_STORAGE_TEST_PROFILE;
+  const settingsPath = join(profile, 'settings.json');
+  const store = createSettingsStore(settingsPath, safeStorage);
+  if (process.argv.at(-1) === 'write')
+    await store.save({ notifications: false, launchAtLogin: true, onboardingCompleted: true });
+  const { OTTO_VAULT_KEY } = await store.environment();
+  const key = Buffer.from(OTTO_VAULT_KEY, 'base64');
+  const binding = ['synthetic-owner', 'synthetic-account'];
+  const secret = 'synthetic-private-provider-key';
+  const ciphertextPath = join(profile, 'vault');
+  if (process.argv.at(-1) === 'write')
+    await writeFile(ciphertextPath, sealVaultValue(key, binding, secret));
+  const ciphertext = await readFile(ciphertextPath, 'utf8');
+  assert.equal(openVaultValue(key, binding, ciphertext), secret);
+  assert.throws(() => openVaultValue(key, ['different-owner', binding[1]], ciphertext));
+  const settings = await readFile(settingsPath);
+  assert.equal(settings.includes(OTTO_VAULT_KEY), false);
+  assert.equal(ciphertext.includes(secret), false);
+  process.stdout.write('OTTO_STORAGE_RESULT=' + JSON.stringify({
+    keyHash: createHash('sha256').update(key).digest('hex'),
+    settingsHash: createHash('sha256').update(settings).digest('hex'),
+    preferences: await store.get(),
+  }) + '\\n');
+  app.exit(0);
+}).catch(async (error) => {
+  process.stderr.write(error.stack + '\\n');
+  app.exit(1);
+});
+`,
+    );
+    const environment = {
+      ...process.env,
+      OTTO_STORAGE_TEST_PROFILE: profile,
+      OTTO_STORAGE_TEST_USER_DATA: join(directory, 'electron'),
+    };
+    delete environment.ELECTRON_RUN_AS_NODE;
+    const execute = (file, args, env = environment) =>
+      new Promise((resolve, reject) => {
+        execFile(file, args, { env, timeout: 45_000, windowsHide: true }, (error, stdout) => {
+          if (error) reject(error);
+          else resolve(stdout);
+        });
+      });
+    const { default: electron } = await import('../node_modules/electron/index.js');
+    const run = async (mode) => {
+      const output = await execute(electron, [script, mode]);
+      const result = output.match(/OTTO_STORAGE_RESULT=([^\r\n]+)/);
+      assert.ok(result, 'The Electron process must return its storage receipt.');
+      return JSON.parse(result[1]);
+    };
+    const first = await run('write');
+    const restarted = await run('read');
+    assert.deepEqual(restarted, first);
+    assert.deepEqual(restarted.preferences, {
+      launchAtLogin: true,
+      notifications: false,
+      theme: 'system',
+      onboardingCompleted: true,
+      onboardingPreferenceStep: 'complete',
+    });
+    const acl = JSON.parse(
+      await execute(
+        join(process.env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `$ErrorActionPreference = 'Stop'
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$owner = $identity.User.Value
+$expected = @($owner, 'S-1-5-18', 'S-1-5-32-544')
+$results = foreach ($path in @($env:OTTO_STORAGE_TEST_PROFILE, (Join-Path $env:OTTO_STORAGE_TEST_PROFILE 'settings.json'), (Join-Path $env:OTTO_STORAGE_TEST_PROFILE 'vault'))) {
+  $acl = Get-Acl -LiteralPath $path
+  $expectedOwner = if ($path -eq $env:OTTO_STORAGE_TEST_PROFILE) { $owner } else { $identity.Owner.Value }
+  $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+  [pscustomobject]@{
+    private = ($rules.Count -eq 3 -and @($rules | Where-Object { $_.IdentityReference.Value -notin $expected -or $_.AccessControlType -ne 'Allow' -or $_.FileSystemRights -ne 'FullControl' }).Count -eq 0)
+    owner = ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -eq $expectedOwner)
+    protected = $acl.AreAccessRulesProtected
+  }
+}
+ConvertTo-Json -InputObject @($results) -Compress`,
+        ],
+        { ...windowsEnvironment(), OTTO_STORAGE_TEST_PROFILE: profile },
+      ),
+    );
+    assert.equal(acl.length, 3);
+    assert.ok(
+      acl.every((value) => value.private && value.owner),
+      JSON.stringify(acl),
+    );
+    assert.equal(acl[0].protected, true);
+  },
+);
+
+test('legacy app keys migrate privately and remain encrypted until the exact durable acknowledgement', async (t) => {
   const f = await fixture(t);
   await f.store.environment();
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
@@ -856,6 +2548,154 @@ test('legacy app keys never reach the desktop engine or renderer and its vault r
   assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).secrets, saved.secrets);
   assert.deepEqual(await f.reopen().environment(), { OTTO_VAULT_KEY: expectedVault });
   await assert.rejects(store.save({ composioApiKey: 'synthetic-replacement-key' }), /supported/);
+  const damaged = {
+    ...saved,
+    secrets: {
+      ...saved.secrets,
+      integrationConfiguration: f.encryption
+        .encryptString('synthetic-private-malformed-config')
+        .toString('base64'),
+    },
+  };
+  await writeFile(f.path, JSON.stringify(damaged));
+  await assert.rejects(
+    f.reopen().legacyIntegration(),
+    (error) => error.message === 'Otto could not open its saved app connection.',
+  );
+  await writeFile(f.path, JSON.stringify({ ...saved, theme: 'dark', notifications: true }));
+  const pending = await store.legacyIntegration();
+  assert.equal(pending.apiKey, secret);
+  assert.deepEqual(pending.authConfigs, { gmail: 'synthetic-retired-config' });
+  assert.deepEqual(await f.reopen().legacyIntegration(), pending);
+  await assert.rejects(store.acknowledgeLegacyIntegration('0'.repeat(64)), /changed/);
+  const replaced = {
+    ...saved,
+    secrets: {
+      ...saved.secrets,
+      composioApiKey: f.encryption
+        .encryptString('synthetic-replaced-legacy-key')
+        .toString('base64'),
+    },
+  };
+  await writeFile(f.path, JSON.stringify(replaced));
+  await assert.rejects(store.acknowledgeLegacyIntegration(pending.receipt), /changed/);
+  assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).secrets, replaced.secrets);
+  await writeFile(f.path, JSON.stringify({ ...saved, theme: 'dark', notifications: true }));
+  assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).secrets, saved.secrets);
+  await store.acknowledgeLegacyIntegration(pending.receipt);
+  assert.equal(await f.reopen().legacyIntegration(), undefined);
+  const migrated = JSON.parse(await readFile(f.path, 'utf8'));
+  assert.deepEqual(migrated.secrets, { vaultKey: saved.secrets.vaultKey });
+  assert.deepEqual(migrated.keyMetadata, {});
+  assert.equal(migrated.theme, 'dark');
+  assert.equal(migrated.notifications, true);
+  assert.deepEqual(await f.reopen().environment(), { OTTO_VAULT_KEY: expectedVault });
+});
+
+test('macOS settings unlock asynchronously without rewriting existing ciphertext or calling synchronous storage', async (t) => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    await t.test(platform, async (t) => {
+      const f = await fixture(t, platform);
+      const expected = await createSettingsStore(f.path, f.encryption, 'win32').environment();
+      const previous = await readFile(f.path, 'utf8');
+      const storage = { ...f.encryption };
+      let accessed = false;
+      if (platform === 'darwin') {
+        const permitted = deferred();
+        storage.isAsyncEncryptionAvailable = async () => {
+          accessed = true;
+          await permitted.promise;
+          return true;
+        };
+        storage.encryptStringAsync = async (value) => f.encryption.encryptString(value);
+        storage.decryptStringAsync = async (value) => ({
+          result: f.encryption.decryptString(value),
+          shouldReEncrypt: true,
+        });
+        for (const method of ['isEncryptionAvailable', 'encryptString', 'decryptString'])
+          storage[method] = () => assert.fail('macOS must not block on synchronous storage.');
+        const store = createSettingsStore(f.path, storage, platform);
+        const environment = store.environment();
+        void environment.catch(() => {});
+        for (let attempt = 0; !accessed && attempt < 100; attempt++)
+          await new Promise((accept) => setTimeout(accept, 10));
+        assert.equal(accessed, true);
+        await new Promise(setImmediate);
+        assert.equal(await readFile(f.path, 'utf8'), previous);
+        permitted.resolve();
+        assert.deepEqual(await environment, expected);
+      } else {
+        for (const method of [
+          'isAsyncEncryptionAvailable',
+          'encryptStringAsync',
+          'decryptStringAsync',
+        ])
+          storage[method] = () => assert.fail('Other platforms retain their current storage.');
+        assert.deepEqual(
+          await createSettingsStore(f.path, storage, platform).environment(),
+          expected,
+        );
+      }
+      assert.equal(await readFile(f.path, 'utf8'), previous);
+    });
+  }
+  for (const failure of ['unavailable', 'denied', 'basic_text']) {
+    const f = await fixture(t);
+    const previous = await f.store.environment();
+    const bytes = await readFile(f.path, 'utf8');
+    const storage = {
+      ...f.encryption,
+      isAsyncEncryptionAvailable: async () => failure !== 'unavailable',
+      getSelectedStorageBackend: () => failure,
+      encryptStringAsync: async () => {
+        throw new Error('Synthetic keychain denial.');
+      },
+      decryptStringAsync: async () => {
+        throw new Error('Synthetic keychain denial.');
+      },
+    };
+    const fresh = join(dirname(f.path), 'fresh.json');
+    for (const path of [fresh, f.path])
+      await assert.rejects(
+        createSettingsStore(path, storage, 'darwin').environment(),
+        /quit and reopen/,
+      );
+    await assert.rejects(readFile(fresh), { code: 'ENOENT' });
+    assert.equal(await readFile(f.path, 'utf8'), bytes);
+    assert.deepEqual(await f.reopen().environment(), previous);
+  }
+});
+
+test('macOS settings reject async decryption through a key other than the OS key', async (t) => {
+  const f = await fixture(t, 'darwin');
+  await f.store.environment();
+  const saved = JSON.parse(await readFile(f.path, 'utf8'));
+  const fallback = Buffer.from('d0d0ec9c7d77d43ac54187fa4818d17f', 'hex');
+  const cipher = createCipheriv('aes-128-cbc', fallback, Buffer.alloc(16, 32));
+  saved.secrets.vaultKey = Buffer.concat([
+    Buffer.from('v10'),
+    cipher.update(randomBytes(32).toString('base64'), 'utf8'),
+    cipher.final(),
+  ]).toString('base64');
+  await writeFile(f.path, JSON.stringify(saved));
+  const previous = await readFile(f.path, 'utf8');
+  const storage = {
+    ...f.encryption,
+    decryptStringAsync: async (value) => {
+      const decipher = createDecipheriv('aes-128-cbc', fallback, Buffer.alloc(16, 32));
+      return {
+        result: Buffer.concat([decipher.update(value.subarray(3)), decipher.final()]).toString(
+          'utf8',
+        ),
+        shouldReEncrypt: false,
+      };
+    },
+  };
+  await assert.rejects(
+    createSettingsStore(f.path, storage, 'darwin').environment(),
+    /quit and reopen/,
+  );
+  assert.equal(await readFile(f.path, 'utf8'), previous);
 });
 
 test('native onboarding replay reaches product onboarding without restarting or resetting the profile', async (t) => {
@@ -865,15 +2705,10 @@ test('native onboarding replay reaches product onboarding without restarting or 
   f.showEngine();
   const chat = f.windows.at(-1);
   f.replayOnboarding();
-  const intro = f.windows.at(-1);
-  assert.equal(intro.query.mode, 'onboarding');
-  await f.handlers.get('otto:prepare')({
-    sender: intro.webContents,
-    senderFrame: intro.webContents.mainFrame,
-  });
+  await new Promise(setImmediate);
+  assert.equal(f.windows.length, 1);
   assert.equal(chat.url, 'http://127.0.0.1:4310/onboarding?replay=1');
   assert.equal(chat.isDestroyed(), false);
-  assert.equal(intro.isDestroyed(), true);
   assert.equal(f.children.length, 0);
   assert.equal(await readFile(f.storage.path, 'utf8'), before);
 });
@@ -886,8 +2721,8 @@ test('unavailable or plaintext key stores refuse secret persistence and decrypti
     { ...f.encryption, isEncryptionAvailable: () => false },
     { ...f.encryption, getSelectedStorageBackend: () => 'basic_text' },
   ]) {
-    const store = createSettingsStore(f.path, unavailable);
-    const fresh = createSettingsStore(join(dirname(f.path), 'fresh.json'), unavailable);
+    const store = createSettingsStore(f.path, unavailable, 'win32');
+    const fresh = createSettingsStore(join(dirname(f.path), 'fresh.json'), unavailable, 'win32');
     await assert.rejects(fresh.environment());
     await assert.rejects(store.environment());
     assert.equal(await readFile(f.path, 'utf8'), previous);
@@ -921,10 +2756,14 @@ test('unsupported saved schemas fail closed without rewriting or unlocking their
   for (const value of variants) {
     const disk = JSON.stringify(value);
     await writeFile(f.path, disk);
-    const store = createSettingsStore(f.path, {
-      ...f.encryption,
-      isEncryptionAvailable: () => assert.fail('Invalid storage must not access the key store.'),
-    });
+    const store = createSettingsStore(
+      f.path,
+      {
+        ...f.encryption,
+        isEncryptionAvailable: () => assert.fail('Invalid storage must not access the key store.'),
+      },
+      'win32',
+    );
     await assert.rejects(store.get());
     await assert.rejects(store.environment());
     await assert.rejects(store.save({ theme: 'dark' }));
@@ -944,6 +2783,79 @@ test('a keyless installation creates one persistent encrypted vault across concu
   await f.store.save({ notifications: true, onboardingCompleted: true });
   assert.equal((await f.store.environment()).OTTO_VAULT_KEY, vault);
 });
+
+test('settings withhold completion when temporary bytes fail to persist', async (t) => {
+  const f = await fixture(t);
+  const environment = await f.store.environment();
+  const saved = await readFile(f.path, 'utf8');
+  const handle = await open(f.path, 'r');
+  const prototype = Object.getPrototypeOf(handle);
+  const sync = prototype.sync;
+  await handle.close();
+  let fail = true;
+  t.mock.method(prototype, 'sync', async function () {
+    if (fail && (await this.stat()).isFile())
+      throw Object.assign(new Error('Synthetic file persistence failure'), { code: 'EIO' });
+    return sync.call(this);
+  });
+  await assert.rejects(f.store.save({ onboardingCompleted: true }), { code: 'EIO' });
+  assert.equal(await readFile(f.path, 'utf8'), saved);
+  assert.equal((await f.store.get()).onboardingCompleted, false);
+  assert.deepEqual(await readdir(dirname(f.path)), ['settings.json']);
+  fail = false;
+  await f.store.save({ onboardingCompleted: true });
+  assert.equal((await f.reopen().get()).onboardingCompleted, true);
+  assert.deepEqual(await f.reopen().environment(), environment);
+});
+
+test(
+  'settings retain the published Vault key and completion through failed directory persistence and restart',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const f = await fixture(t);
+    const ancestor = await stat(dirname(dirname(f.path)));
+    const handle = await open(dirname(dirname(f.path)), 'r');
+    const prototype = Object.getPrototypeOf(handle);
+    const sync = prototype.sync;
+    await handle.close();
+    let fail = true;
+    let encrypted = 0;
+    const encrypt = f.encryption.encryptString;
+    f.encryption.encryptString = (value) => {
+      encrypted++;
+      return encrypt(value);
+    };
+    t.mock.method(prototype, 'sync', async function () {
+      const metadata = await this.stat();
+      if (fail && metadata.dev === ancestor.dev && metadata.ino === ancestor.ino)
+        throw Object.assign(new Error('Synthetic directory persistence failure'), { code: 'EIO' });
+      return sync.call(this);
+    });
+    await assert.rejects(f.store.environment(), { code: 'EIO' });
+    const saved = await readFile(f.path, 'utf8');
+    const reopened = f.reopen();
+    await assert.rejects(f.store.environment(), { code: 'EIO' });
+    await assert.rejects(reopened.environment(), { code: 'EIO' });
+    assert.equal(await readFile(f.path, 'utf8'), saved);
+    assert.equal(encrypted, 1);
+    fail = false;
+    const environment = await f.store.environment();
+    assert.deepEqual(await reopened.environment(), environment);
+    fail = true;
+    await assert.rejects(f.store.save({ onboardingCompleted: true }), { code: 'EIO' });
+    assert.equal(JSON.parse(await readFile(f.path, 'utf8')).onboardingCompleted, true);
+    await assert.rejects(f.store.get(), { code: 'EIO' });
+    await assert.rejects(f.store.environment(), { code: 'EIO' });
+    await assert.rejects(f.reopen().get(), { code: 'EIO' });
+    fail = false;
+    await f.store.save({ theme: 'dark' });
+    const restored = f.reopen();
+    assert.equal((await restored.get()).onboardingCompleted, true);
+    assert.equal((await restored.get()).theme, 'dark');
+    assert.deepEqual(await restored.environment(), environment);
+    assert.equal(encrypted, 1);
+  },
+);
 
 test('feedback screenshots stay in the trusted visible app and exclude private views and navigation races', async (t) => {
   const f = await runningDesktop(t, () => assert.fail('Capture must not make an engine request.'));
@@ -1092,7 +3004,6 @@ test('engine preload exposes no credential reveal and withholds privileged IPC e
     'applySettings',
     'getAppPreferences',
     'saveAppPreferences',
-    'prepare',
     'importRuntime',
   ])
     assert.equal(bridge[field], undefined);
@@ -1103,6 +3014,12 @@ test('engine preload exposes no credential reveal and withholds privileged IPC e
   const value = { theme: 'dark', resolvedTheme: 'dark', notifications: true, launchAtLogin: false };
   listeners.get('otto:preferences')({ sender: 'privileged-synthetic-ipc' }, value);
   assert.deepEqual(received, [value]);
+  bridge.onStatus((...values) => {
+    received = values;
+  });
+  const status = { phase: 'preparing', runtime: { phase: 'starting' } };
+  listeners.get('otto:status')({ sender: 'privileged-synthetic-ipc' }, status);
+  assert.deepEqual(received, [status]);
 });
 
 async function chatReadFixture(t) {
@@ -1191,7 +3108,7 @@ test('offline native preferences retain explicit clears and synchronize only edi
   await f.store.save({ locale: null, timeZone: null });
   await f.store.save({ quietHoursEnabled: true, quietEnd: '07:15' });
   assert.equal(f.state.calls.length, 0);
-  assert.equal((await stat(f.path)).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal((await stat(f.path)).mode & 0o777, 0o600);
   const stored = JSON.parse(await readFile(f.path, 'utf8'));
   assert.equal(stored.cached, null);
   assert.deepEqual(stored.pending, {
@@ -1323,6 +3240,7 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
   const calls = [];
   const source = createUpdateSource({
     sourceUrl,
+    os: 'darwin',
     arch,
     fetch: async (url, options) => {
       calls.push(url);
@@ -1380,6 +3298,200 @@ test('an incomplete newest release falls back to the next newer complete release
     assert.equal((await f.source.latest('0.1.0')).version, '0.2.0');
     f.release.assets = [];
     await assert.rejects(f.source.latest('0.1.0'), /incomplete/);
+  }
+});
+
+test(
+  'manual update failures fence concurrent requests and retry only after an explicit choice without exposing diagnostics',
+  { timeout: 10_000 },
+  async (t) => {
+    const failure = new Error(
+      'Synthetic updater transport failure https://updates.example.invalid/private',
+    );
+    const firstCheck = deferred();
+    const displayed = deferred();
+    const decision = deferred();
+    const prompts = [];
+    let checks = 0;
+    const updater = {
+      check: async () => {
+        checks++;
+        if (checks === 1) return firstCheck.promise;
+      },
+    };
+    const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+      prompt: (options) => {
+        prompts.push(options);
+        if (prompts.length === 1) {
+          displayed.resolve();
+          return decision.promise;
+        }
+        return { response: 0 };
+      },
+    });
+    const initial = f.checkUpdates(updater);
+    const duplicate = f.checkUpdates(updater);
+    firstCheck.reject(failure);
+    await displayed.promise;
+    const duringDialog = f.checkUpdates(updater);
+    try {
+      await new Promise(setImmediate);
+      assert.equal(checks, 1);
+      assert.equal(prompts.length, 1);
+      assert.equal(f.updateMenu.enabled, false);
+      assert.equal(JSON.stringify(prompts).includes('Synthetic updater transport failure'), false);
+      decision.resolve({ response: 0 });
+      await Promise.all([initial, duplicate, duringDialog]);
+      assert.equal(checks, 2);
+      assert.equal(prompts.length, 2);
+      assert.equal(f.updateMenu.enabled, true);
+      await f.checkUpdates(updater);
+      assert.equal(checks, 3);
+      const diagnostic = await readFile(join(f.profileRoot, 'logs/startup.log'), 'utf8');
+      assert.match(diagnostic, /Synthetic updater transport failure/);
+      assert.equal(diagnostic.includes('https://updates.example.invalid/private'), false);
+    } finally {
+      decision.resolve({ response: 1 });
+      await Promise.allSettled([initial, duplicate, duringDialog]);
+    }
+  },
+);
+
+test('declining a manual update retry and failed background checks never repeat work or show background errors', async (t) => {
+  for (const manual of [true, false]) {
+    let checks = 0;
+    const prompts = [];
+    const updater = {
+      check: async () => {
+        checks++;
+        throw new Error('Synthetic update service unavailable');
+      },
+    };
+    const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+      prompt: (options) => {
+        prompts.push(options);
+        return { response: 1 };
+      },
+    });
+    if (manual) await f.checkUpdates(updater);
+    else
+      await assert.rejects(f.checkUpdates(updater, false), /Synthetic update service unavailable/);
+    assert.equal(checks, 1);
+    assert.equal(prompts.length, manual ? 1 : 0);
+    assert.equal(JSON.stringify(prompts).includes('Synthetic update service unavailable'), false);
+    assert.equal(f.updateMenu.enabled, true);
+  }
+});
+
+test(
+  'explicit restart retries retain the verified update and never download it again',
+  { timeout: 10_000 },
+  async (t) => {
+    for (const retry of [true, false]) {
+      const candidate = { version: '0.2.0', feedUrl: 'https://updates.example.invalid/pinned' };
+      let selections = 0;
+      let preparations = 0;
+      let downloads = 0;
+      let restarts = 0;
+      const native = new EventEmitter();
+      native.setFeedURL = () => {};
+      native.checkForUpdates = () => {
+        downloads++;
+        queueMicrotask(() => native.emit('update-downloaded', {}, '', 'Otto 0.2.0'));
+      };
+      const updater = createDesktopUpdater({
+        source: {
+          latest: async () => {
+            selections++;
+            return candidate;
+          },
+        },
+        currentVersion: '0.1.0',
+        native,
+        prepareRuntime: async () => {
+          preparations++;
+        },
+        restart: async () => {
+          restarts++;
+          if (restarts === 1) throw new Error('Synthetic native restart failure');
+        },
+      });
+      t.after(() => updater.dispose());
+      const prompts = [];
+      const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+        prompt: (options) => {
+          prompts.push(options);
+          return { response: prompts.length === 2 && !retry ? 1 : 0 };
+        },
+      });
+      await f.checkUpdates(updater);
+      assert.equal(restarts, retry ? 2 : 1);
+      assert.equal(prompts.length, 2);
+      assert.equal(updater.ready, candidate);
+      assert.equal(JSON.stringify(prompts).includes('Synthetic native restart failure'), false);
+      if (!retry) {
+        await f.checkUpdates(updater);
+        assert.equal(restarts, 2);
+      }
+      assert.equal(selections, 1);
+      assert.equal(preparations, 1);
+      assert.equal(downloads, 1);
+      assert.equal(f.updateMenu.enabled, true);
+    }
+  },
+);
+
+test('background update readiness respects notification permission and quiet time without opening or repeating a dialog', async (t) => {
+  for (const scenario of [
+    { enabled: false, supported: true, quiet: false, expected: 0 },
+    { enabled: true, supported: false, quiet: false, expected: 0 },
+    { enabled: true, supported: true, quiet: true, expected: 0 },
+    { enabled: true, supported: true, quiet: false, expected: 1 },
+  ]) {
+    const candidate = { version: '0.2.0' };
+    let selections = 0;
+    const updater = createDesktopUpdater({
+      source: {
+        latest: async () => {
+          selections++;
+          return candidate;
+        },
+      },
+      currentVersion: '0.1.0',
+      prepareRuntime: async () => {},
+      restart: async () => assert.fail('Background readiness cannot restart Otto.'),
+    });
+    t.after(() => updater.dispose());
+    const prompts = [];
+    const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+      notificationsSupported: scenario.supported,
+      webPreferences: {
+        quietHoursEnabled: scenario.quiet,
+        timeZone: 'UTC',
+        quietStart: new Date(Date.now() - 3_600_000).toISOString().slice(11, 16),
+        quietEnd: new Date(Date.now() + 3_600_000).toISOString().slice(11, 16),
+      },
+      prompt: (options) => {
+        prompts.push(options);
+        return { response: 1 };
+      },
+    });
+    await f.showSettings();
+    const window = f.windows.at(-1);
+    await f.handlers.get('otto:settings:save')(
+      { sender: window.webContents, senderFrame: window.webContents.mainFrame },
+      { notifications: scenario.enabled },
+    );
+    await f.checkUpdates(updater, false);
+    await f.checkUpdates(updater, false);
+    assert.equal(prompts.length, 0);
+    assert.equal(f.notifications.length, scenario.expected);
+    assert.equal(updater.ready, candidate);
+    assert.equal(f.updateMenu.enabled, true);
+    if (scenario.expected) f.notifications[0].emit('click');
+    await f.checkUpdates(updater);
+    assert.equal(prompts.length, 1);
+    assert.equal(selections, 1);
   }
 });
 
@@ -1724,4 +3836,119 @@ test('Intel updates use their own app assets and an official Otto runtime releas
   f.manifest.platform = 'darwin-x64';
   f.runtime.platform = 'darwin-arm64';
   await assert.rejects(f.source.latest('0.1.0'));
+});
+
+test('desktop preference choices resume durably and cannot skip or regress explicit consent', async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.store.get()).onboardingPreferenceStep, 'notifications');
+  await assert.rejects(f.store.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' }));
+  await assert.rejects(f.store.save({ onboardingPreferenceStep: 'launchAtLogin' }));
+  await f.store.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
+  const reopened = f.reopen();
+  assert.equal((await reopened.get()).notifications, false);
+  assert.equal((await reopened.get()).onboardingPreferenceStep, 'launchAtLogin');
+  await reopened.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
+  await assert.rejects(
+    reopened.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' }),
+  );
+  await reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' });
+  await reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' });
+  assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
+  const saved = JSON.parse(await readFile(f.path, 'utf8'));
+  delete saved.onboardingPreferenceStep;
+  saved.onboardingCompleted = true;
+  await writeFile(f.path, JSON.stringify(saved));
+  assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
+  assert.equal((await f.reopen().get()).notifications, false);
+  assert.equal((await f.reopen().get()).launchAtLogin, false);
+});
+
+test('desktop preference steps and completion require the owned normal app and durable server completion', async (t) => {
+  let completed = false;
+  const f = await runningDesktop(
+    t,
+    async (url) =>
+      new URL(url).pathname === '/api/account'
+        ? Response.json({ settings: { usageData: false } })
+        : Response.json({ ok: true, settings: { onboardingCompleted: completed } }),
+    {
+      initialState: 'fresh',
+      allowStart: true,
+    },
+  );
+  await f.storage.store.save({ welcome: { usageData: false, continued: true } });
+  try {
+    await f.launch();
+    await f.settle();
+    const window = f.windows.at(-1);
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    const save = f.handlers.get('otto:settings:save');
+    await assert.rejects(
+      save(
+        { ...event, senderFrame: { url: window.url } },
+        { notifications: true, onboardingPreferenceStep: 'launchAtLogin' },
+      ),
+    );
+    await assert.rejects(save(event, { welcome: { usageData: true, continued: true } }));
+    await assert.rejects(save(event, { onboardingCompleted: true }));
+    await save(event, { notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
+    await save(event, { launchAtLogin: false, onboardingPreferenceStep: 'complete' });
+    assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
+    completed = true;
+    await save(event, { onboardingCompleted: true });
+    assert.equal((await f.storage.reopen().get()).onboardingCompleted, true);
+    await assert.rejects(save(event, { onboardingCompleted: false }));
+  } finally {
+    await f.close();
+  }
+});
+
+test('native readiness notification waits for full runtime readiness and reaches opted-in background users once', async (t) => {
+  for (const scenario of [
+    { enabled: true, focused: false, supported: true, expected: 1 },
+    { enabled: false, focused: false, supported: true, expected: 0 },
+    { enabled: true, focused: true, supported: true, expected: 0 },
+    { enabled: true, focused: false, supported: false, expected: 0 },
+  ]) {
+    await t.test(JSON.stringify(scenario), async (t) => {
+      const resources = deferred();
+      const storage = deferred();
+      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+        initialState: 'fresh',
+        allowStart: true,
+        prepareRuntime: async ({ onStorageReady }) => {
+          const runtime = { env: {} };
+          await onStorageReady(runtime);
+          storage.resolve();
+          await resources.promise;
+          return runtime;
+        },
+        notificationsSupported: scenario.supported,
+      });
+      try {
+        await f.storage.store.save({ notifications: scenario.enabled });
+        await f.launch();
+        await storage.promise;
+        const window = f.windows[0];
+        window.focused = scenario.focused;
+        assert.equal(f.notifications.length, 0);
+        resources.resolve();
+        await f.settle();
+        await new Promise(setImmediate);
+        assert.equal(f.notifications.length, scenario.expected);
+        f.notifyReady();
+        f.notifyReady();
+        await new Promise(setImmediate);
+        assert.equal(f.notifications.length, scenario.expected);
+        if (scenario.expected) {
+          assert.equal(window.focused, false);
+          f.notifications[0].emit('click');
+          assert.equal(window.focused, true);
+        }
+      } finally {
+        resources.resolve();
+        await f.close();
+      }
+    });
+  }
 });

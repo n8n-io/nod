@@ -447,6 +447,16 @@ jobs:
         with:
           name: desktop-windows-runtime
           path: .local/windows-runtime-assets
+      - name: Verify native Windows updates and profile preservation
+        run: node desktop/scripts/check-windows-updates.mjs
+      - name: Preserve Windows update acceptance
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-update-acceptance
+          path: .local/windows-update-acceptance/*.json
+          include-hidden-files: true
+          if-no-files-found: ignore
       - name: Check Windows workspace paths
         run: pnpm exec tsx --test --test-name-pattern="workspace paths cannot|workspace artifact reads" tests/sandbox.test.ts
       - run: pnpm run build

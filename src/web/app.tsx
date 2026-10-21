@@ -10,7 +10,8 @@ import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
 import { prefetchPageData } from './hooks/use-page-data';
 import { Button, Notice } from './components/ui';
-import { ChatSkeleton, Splash } from './components/startup';
+import { ChatSkeleton } from './components/startup';
+import { SetupProgress } from './components/setup-progress';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggleContext } from './components/sidebar-toggle';
@@ -31,6 +32,8 @@ import { resolveBrowserRegion, setDateFormat } from './lib/date-format';
 import { useBrowserTimeZone } from './hooks/use-browser-time-zone';
 import {
   desktopSettingsAvailable,
+  desktopRendererReady,
+  saveDesktopSettings,
   onFeedbackRequested,
   subscribeDesktopFocusMessage,
   subscribeDesktopSettings,
@@ -128,24 +131,16 @@ function Workspace({
     return () => window.removeEventListener('otto:focus-message', focusMessage);
   }, [state]);
   const currentPath = path === '/you' ? '/' : path;
-  const loaded = !!state;
   const hasMessages = state ? state.messages.length > 0 : null;
   useEffect(() => {
     if (hasMessages !== null)
       writeUiPreference('otto.chat-layout', hasMessages ? 'conversation' : 'welcome');
   }, [hasMessages]);
-  const [handoff, setHandoff] = useState(false);
   const [entering, setEntering] = useState(true);
   useEffect(() => {
     const timer = setTimeout(() => setEntering(false), 600);
     return () => clearTimeout(timer);
   }, []);
-  useEffect(() => {
-    if (!loaded) return;
-    setHandoff(true);
-    const timer = setTimeout(() => setHandoff(false), 700);
-    return () => clearTimeout(timer);
-  }, [loaded]);
   useEffect(() => {
     prefetchPageData([
       '/api/vault',
@@ -193,10 +188,7 @@ function Workspace({
         <div className="workspace-frame">
           <div className="workspace-body">
             <main id="workspace" className="main-workspace" tabIndex={-1}>
-              <div
-                className={`chat-route ${handoff ? 'chat-entering' : ''}`}
-                hidden={currentPath !== '/'}
-              >
+              <div className="chat-route" hidden={currentPath !== '/'}>
                 {state ? (
                   <Chat
                     ownerId={session.user!.id}
@@ -223,11 +215,6 @@ function Workspace({
                   </div>
                 ) : (
                   <ChatSkeleton />
-                )}
-                {handoff && (
-                  <div className="startup-leaving" aria-hidden="true">
-                    <ChatSkeleton />
-                  </div>
                 )}
               </div>
               {currentPath === '/trust' && <Trust onAsk={askInChat} />}
@@ -408,6 +395,8 @@ function AuthenticatedApp({
           onComplete={async () => {
             if (!session.settings!.onboardingCompleted)
               await onAccountUpdate({ onboardingCompleted: true });
+            if (desktopSettingsAvailable())
+              await saveDesktopSettings({ onboardingCompleted: true });
             if (replayingOnboarding(path)) navigate('/');
           }}
         />
@@ -469,6 +458,9 @@ function AccountApp({
 }) {
   const sessionState = useSession();
   const { session } = sessionState;
+  useEffect(() => {
+    if (!sessionState.loading) desktopRendererReady();
+  }, [sessionState.loading]);
   const legacyBrowserLink = /^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/.test(path);
   useLayoutEffect(() => {
     if (sessionState.loading || !session?.user) return;
@@ -519,7 +511,7 @@ function AccountApp({
         </p>
       </main>
     );
-  if (sessionState.loading) return <Splash />;
+  if (sessionState.loading) return <SetupProgress title="Opening Otto…" />;
   if (!session?.user || !session.settings)
     return (
       <main className="initial-loading">

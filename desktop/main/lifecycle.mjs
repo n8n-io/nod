@@ -1,8 +1,3 @@
-export function desktopSetupMode({ completed, replaying, running }) {
-  if (!completed || replaying) return 'onboarding';
-  return running ? 'settings' : 'loading';
-}
-
 export function createDesktopLifecycle({
   prepareRuntime,
   stopRuntime,
@@ -12,13 +7,13 @@ export function createDesktopLifecycle({
   onRuntimeStatus,
 }) {
   let runtime;
+  let storage;
   let warming;
   let starting;
   let installing;
   let closing;
   let closed = false;
   let failure;
-  let engineStarting = false;
   let cleanupRequired = false;
   const controllers = new Set();
 
@@ -62,6 +57,17 @@ export function createDesktopLifecycle({
         report({ message: 'Preparing your local computer.' });
         const prepared = await prepareRuntime({
           signal: controller.signal,
+          onStorageReady: async (preparedStorage) => {
+            checkOpen(controller.signal);
+            await validateStart();
+            checkOpen(controller.signal);
+            await startEngine({
+              runtime: preparedStorage,
+              signal: controller.signal,
+              pending: true,
+            });
+            storage = preparedStorage;
+          },
           onStatus: (value) =>
             report({
               message: typeof value === 'string' ? value : value.message,
@@ -98,11 +104,9 @@ export function createDesktopLifecycle({
         checkOpen(controller.signal);
         await validateStart();
         checkOpen(controller.signal);
-        engineStarting = true;
         return startEngine({ runtime: prepared, signal: controller.signal });
       })
       .finally(() => {
-        engineStarting = false;
         starting = undefined;
         controllers.delete(controller);
       });
@@ -144,9 +148,10 @@ export function createDesktopLifecycle({
       try {
         await stopEngine();
       } finally {
-        if (runtime) await runtime.close?.();
+        if (runtime || storage) await (runtime || storage).close?.();
         else if (cleanupRequired) await stopRuntime?.();
         runtime = undefined;
+        storage = undefined;
         cleanupRequired = false;
       }
     })().catch((error) => {
@@ -163,9 +168,6 @@ export function createDesktopLifecycle({
     close,
     get busy() {
       return Boolean(warming || starting || installing);
-    },
-    get engineStarting() {
-      return engineStarting;
     },
   };
 }

@@ -10,6 +10,7 @@ import { createVault } from '../src/server/vault.ts';
 import { locksTable } from '../src/server/locks.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
+import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
 
 const attachment = (name: string, mimeType: string, text: string) => ({
   name,

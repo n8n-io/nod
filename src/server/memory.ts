@@ -87,7 +87,7 @@ export async function importMemoryFile(store: PrivateObjectStore, directory: str
 }
 
 export function createMemoryService(options: {
-  pool: Pool;
+  pool: Pick<Pool, 'query'>;
   ownerId: string;
   store: PrivateObjectStore;
 }) {
