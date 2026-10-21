@@ -65,7 +65,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                          |
 | `mcp__<server>__<tool>`                                             | One tool for each tool of a connected MCP server, such as `mcp__n8n__validate_workflow`. Each call runs like `apps`, after the trust check.  |
 | `tool_search`                                                       | Finds connected MCP server tools by meaning and loads the matches for the next model call.                                                   |
-| `codemode`                                                          | Runs a model-written script that calls workspace, web and connected MCP server tools.                                                        |
+| `codemode`                                                          | Runs a model-written script that calls workspace, web, skill and connected MCP server tools.                                                 |
 
 The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its connections go only to public addresses, checked when each connection opens, IP addresses included. Otto drops any proxy, whether the model names it or the settings file sets it. Its settings live in `OTTO_DATA_ROOT/pi/web-search.json`.
 
@@ -95,6 +95,7 @@ A call acts only once every `apps` or `manage_personal_context` call issued befo
 Pi's `codemode` tool runs model-written JavaScript in a QuickJS sandbox with no network, files or timers.
 
 - Scripts can call the workspace and `pi-web-access` tools and the tools of connected MCP servers, in parallel, plus Pi's image and classifier models. That model spend goes to the usage ledger.
+- Scripts can also call `skills`, so they can read a built-in guide and a script library it ships, such as the `n8n` guide's `lib/verify.js`, which runs every test scenario of a workflow and reports only what went wrong.
 - Every other Otto tool is `model-only`, so scripts can't reach Composio apps, the browser, credentials, messages or shared files.
 - A connected MCP server tool called from a script passes the same guard, order and trust check as a direct call. If the check asks you first, the script stops and the question goes to chat.
 - Calls inside a script stay raw so the script can parse them. Codemode's output is wrapped when it returns.
