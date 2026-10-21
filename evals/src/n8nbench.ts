@@ -47,6 +47,27 @@ const healthy = (url: string) =>
     () => false,
   );
 
+function watchHealth(url: string) {
+  const failures: number[] = [];
+  let up = true;
+  const check = async () => {
+    up = await healthy(url);
+    if (!up) failures.push(Date.now());
+  };
+  const timer = setInterval(() => void check(), 15_000);
+  return {
+    failedSince: (at: number) => failures.some((time) => time >= at),
+    async ready() {
+      for (const until = Date.now() + 10 * 60_000; Date.now() < until;) {
+        if (up && (await healthy(url))) return true;
+        await new Promise((done) => setTimeout(done, 15_000));
+      }
+      return false;
+    },
+    stop: () => clearInterval(timer),
+  };
+}
+
 const percent = (part: number, whole: number) =>
   whole ? Math.round((1000 * part) / whole) / 10 : null;
 
@@ -454,6 +475,7 @@ export async function runN8nBench(options: N8nBenchOptions) {
     ),
   );
   const side = await startSidecar(options, directory);
+  const health = watchHealth(options.n8nUrl);
   try {
     const jobs = cases.flatMap((item) =>
       Array.from({ length: options.iterations }, (_, iteration) => ({ item, iteration })),
@@ -480,11 +502,12 @@ export async function runN8nBench(options: N8nBenchOptions) {
           console.log(`Budget of $${options.budget} reached; skipping ${job.item.slug}.`);
           continue;
         }
-        if (!(await healthy(options.n8nUrl))) {
-          console.log(`n8n is unavailable; stopping before ${job.item.slug}.`);
+        if (!(await health.ready())) {
+          console.log(`n8n stayed unavailable; stopping before ${job.item.slug}.`);
           next = jobs.length;
           return;
         }
+        const startedAt = Date.now();
         const run = await attempt(
           directory,
           {
@@ -499,12 +522,11 @@ export async function runN8nBench(options: N8nBenchOptions) {
           },
           options.minutes,
         );
-        if (!(await healthy(options.n8nUrl))) {
-          run.unavailable = 'n8n became unavailable during the attempt.';
+        if (health.failedSince(startedAt)) {
+          run.unavailable = 'n8n was unavailable during the attempt.';
           await writeFile(outFile, JSON.stringify(run, null, 2));
-          console.log(`${job.item.slug}#${job.iteration} discarded: n8n became unavailable.`);
-          next = jobs.length;
-          return;
+          console.log(`${job.item.slug}#${job.iteration} discarded: n8n was unavailable.`);
+          continue;
         }
         if (!existsSync(outFile)) await writeFile(outFile, JSON.stringify(run, null, 2));
         runs.push(run);
@@ -516,8 +538,9 @@ export async function runN8nBench(options: N8nBenchOptions) {
     };
     await Promise.all(Array.from({ length: options.concurrency }, worker));
     if (!options.verify) return { runs: runs.length, spent };
-    if (!(await healthy(options.n8nUrl)))
+    if (!(await health.ready()))
       throw new Error('n8n is unavailable, so the runs cannot be verified. Restart it and resume.');
+    const verifyStarted = Date.now();
     const graded: CaseIteration[] = [];
     const lookup = new Map(cases.map((item) => [item.slug, item]));
     for (let iteration = 0; iteration < options.iterations; iteration++) {
@@ -530,6 +553,10 @@ export async function runN8nBench(options: N8nBenchOptions) {
         graded.push(grade(item, run, verifiedCases.get(run.slug), expectations));
       }
     }
+    if (health.failedSince(verifyStarted))
+      throw new Error(
+        'n8n was unavailable during verification. Restart it and resume to verify again.',
+      );
     await writeFile(join(directory, 'graded.json'), JSON.stringify(graded, null, 2));
     const incomplete = runs
       .filter(infrastructure)
@@ -542,6 +569,7 @@ export async function runN8nBench(options: N8nBenchOptions) {
     console.log(JSON.stringify(headline, null, 2));
     return summary;
   } finally {
+    health.stop();
     side.child.kill('SIGTERM');
   }
 }
