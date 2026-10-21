@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { constants, createReadStream, createWriteStream } from 'node:fs';
+import { constants, createReadStream } from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -192,13 +192,11 @@ async function verifyFiles(root, release, signal) {
   }
 }
 
-async function requireDiskSpace(release, directory, inspectDisk, downloading = false) {
+async function requireDiskSpace(release, directory, inspectDisk) {
   const { bavail, bsize } = await inspectDisk(directory, { bigint: true });
   const available = bavail > 0n ? bavail * bsize : 0n;
   const required = BigInt(
-    release.files.reduce((total, file) => total + file.bytes, 0) +
-      (downloading ? release.archive.bytes : 0) +
-      512 * 1024 ** 2,
+    release.files.reduce((total, file) => total + file.bytes, 0) + 512 * 1024 ** 2,
   );
   if (available < required)
     throw Object.assign(
@@ -276,6 +274,85 @@ export async function seedRuntimeCache({
   );
 }
 
+function unpackRuntime(
+  release,
+  source,
+  { message, failure, onStatus, signal, cacheRoot, inspectDisk },
+) {
+  const key = runtimeCacheRoot(release, cacheRoot);
+  if (pending.has(key)) return pending.get(key);
+  const operation = install(
+    release,
+    async (target) => {
+      onStatus({ phase: 'installing', message, progress: 0 });
+      const expected = new Map(release.files.map((file) => [file.path, file]));
+      const seen = new Set();
+      let invalid = false;
+      let expanded = 0;
+      let received = 0;
+      let reported = 0;
+      const archive = createHash('sha256');
+      const limit = release.files.reduce(
+        (size, file) => size + Math.ceil(file.bytes / 512) * 512 + 4096,
+        1024 * 1024,
+      );
+      const counted = new Transform({
+        transform(chunk, encoding, callback) {
+          received += chunk.length;
+          if (received > release.archive.bytes) return callback(new Error(failure));
+          archive.update(chunk);
+          if (Date.now() - reported > 250) {
+            reported = Date.now();
+            onStatus({ phase: 'installing', message, progress: received / release.archive.bytes });
+          }
+          callback(null, chunk);
+        },
+      });
+      const bounded = new Transform({
+        transform(chunk, encoding, callback) {
+          expanded += chunk.length;
+          callback(
+            expanded > limit
+              ? new Error('The runtime pack exceeds its expected expanded size.')
+              : null,
+            chunk,
+          );
+        },
+      });
+      const unpack = extract({
+        cwd: target,
+        strict: true,
+        preservePaths: false,
+        noMtime: true,
+        gzip: false,
+        filter(path, entry) {
+          const file = expected.get(path);
+          if (!file || seen.has(path) || entry.type !== 'File' || entry.size !== file.bytes) {
+            invalid = true;
+            return false;
+          }
+          seen.add(path);
+          return true;
+        },
+      });
+      const input = await source();
+      try {
+        await pipeline(input, counted, createGunzip(), bounded, unpack, { signal });
+      } catch (error) {
+        if (signal?.aborted || ['ENOSPC', 'EDQUOT'].includes(error.code)) throw error;
+        throw new Error(failure, { cause: error });
+      }
+      if (received !== release.archive.bytes || archive.digest('hex') !== release.archive.sha256)
+        throw new Error(failure);
+      if (invalid || seen.size !== expected.size)
+        throw new Error('The runtime pack contains unexpected files.');
+    },
+    { onStatus, signal, cacheRoot, inspectDisk },
+  ).finally(() => pending.delete(key));
+  pending.set(key, operation);
+  return operation;
+}
+
 export async function installRuntimeArchive({
   archivePath,
   resourcesPath,
@@ -287,71 +364,21 @@ export async function installRuntimeArchive({
 }) {
   const release = supplied ? validateRuntimeRelease(supplied) : await runtimeRelease(resourcesPath);
   if (!release) throw new Error('This build has no managed runtime release.');
-  const key = runtimeCacheRoot(release, cacheRoot);
-  if (pending.has(key)) return pending.get(key);
-  const operation = (async () => {
-    onStatus({ phase: 'verifying', message: 'Checking your runtime pack…' });
-    const metadata = await lstat(archivePath);
-    if (
-      !metadata.isFile() ||
-      metadata.size !== release.archive.bytes ||
-      (await assetHash(archivePath, signal)) !== release.archive.sha256
-    )
-      throw new Error('This runtime pack does not match your Otto app. Choose the matching pack.');
-    return install(
-      release,
-      async (target) => {
-        onStatus({ phase: 'installing', message: 'Installing your local computer…' });
-        const expected = new Map(release.files.map((file) => [file.path, file]));
-        const seen = new Set();
-        let invalid = false;
-        let expanded = 0;
-        const limit = release.files.reduce(
-          (size, file) => size + Math.ceil(file.bytes / 512) * 512 + 4096,
-          1024 * 1024,
-        );
-        const bounded = new Transform({
-          transform(chunk, encoding, callback) {
-            expanded += chunk.length;
-            callback(
-              expanded > limit
-                ? new Error('The runtime pack exceeds its expected expanded size.')
-                : null,
-              chunk,
-            );
-          },
-        });
-        const unpack = extract({
-          cwd: target,
-          strict: true,
-          preservePaths: false,
-          noMtime: true,
-          gzip: false,
-          filter(path, entry) {
-            const file = expected.get(path);
-            if (!file || seen.has(path) || entry.type !== 'File' || entry.size !== file.bytes) {
-              invalid = true;
-              return false;
-            }
-            seen.add(path);
-            return true;
-          },
-        });
-        await pipeline(createReadStream(archivePath), createGunzip(), bounded, unpack, { signal });
-        if (invalid || seen.size !== expected.size)
-          throw new Error('The runtime pack contains unexpected files.');
-      },
-      { onStatus, signal, cacheRoot, inspectDisk },
-    );
-  })().finally(() => pending.delete(key));
-  pending.set(key, operation);
-  return operation;
+  const failure = 'This runtime pack does not match your Otto app. Choose the matching pack.';
+  const metadata = await lstat(archivePath);
+  if (!metadata.isFile() || metadata.size !== release.archive.bytes) throw new Error(failure);
+  return unpackRuntime(release, () => createReadStream(archivePath), {
+    message: 'Installing your local computer…',
+    failure,
+    onStatus,
+    signal,
+    cacheRoot,
+    inspectDisk,
+  });
 }
 
-async function downloadRuntime(release, options) {
-  const { resourcesPath, onStatus = () => {}, signal, cacheRoot, inspectDisk = statfs } = options;
-  const directory = dirname(runtimeCacheRoot(release, cacheRoot));
-  const path = join(directory, `${release.id}.${randomBytes(6).toString('hex')}.download`);
+function downloadRuntime(release, options) {
+  const { onStatus = () => {}, signal, cacheRoot, inspectDisk } = options;
   const downloadSignal = AbortSignal.any([
     ...(signal ? [signal] : []),
     AbortSignal.timeout(30 * 60_000),
@@ -360,64 +387,36 @@ async function downloadRuntime(release, options) {
   const address = new URL(url);
   if (address.protocol !== 'https:' || address.username || address.password)
     throw new Error('The Otto runtime download address is invalid.');
-  try {
-    downloadSignal.throwIfAborted();
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await requireDiskSpace(release, directory, inspectDisk, true);
-    let response;
-    for (let redirects = 0; redirects <= 3; redirects++) {
-      response = await (options.fetch || fetch)(url, {
-        signal: downloadSignal,
-        redirect: 'manual',
-        headers: { accept: 'application/octet-stream' },
-      });
-      if (![301, 302, 303, 307, 308].includes(response.status)) break;
-      const next = new URL(response.headers.get('location') || '', url);
-      await response.body?.cancel();
-      if (next.protocol !== 'https:' || next.username || next.password)
-        throw new Error('Otto received an unsafe runtime download address.');
-      url = next.href;
-    }
-    if (!response?.ok || !response.body)
-      throw new Error('The Otto runtime download is unavailable. Try again.');
-    let bytes = 0;
-    let reported = 0;
-    const progress = new Transform({
-      transform(chunk, encoding, callback) {
-        bytes += chunk.length;
-        if (bytes > release.archive.bytes)
-          return callback(new Error('The runtime download exceeds its expected size.'));
-        if (Date.now() - reported > 250) {
-          reported = Date.now();
-          onStatus({
-            phase: 'downloading',
-            message: 'Downloading your local computer…',
-            progress: bytes / release.archive.bytes,
-          });
-        }
-        callback(null, chunk);
-      },
-    });
-    await pipeline(
-      Readable.fromWeb(response.body),
-      progress,
-      createWriteStream(path, { mode: 0o600, flags: 'wx' }),
-      { signal: downloadSignal },
-    );
-    return await installRuntimeArchive({
-      archivePath: path,
-      resourcesPath,
+  return unpackRuntime(
+    release,
+    async () => {
+      let response;
+      for (let redirects = 0; redirects <= 3; redirects++) {
+        response = await (options.fetch || fetch)(url, {
+          signal: downloadSignal,
+          redirect: 'manual',
+          headers: { accept: 'application/octet-stream' },
+        });
+        if (![301, 302, 303, 307, 308].includes(response.status)) break;
+        const next = new URL(response.headers.get('location') || '', url);
+        await response.body?.cancel();
+        if (next.protocol !== 'https:' || next.username || next.password)
+          throw new Error('Otto received an unsafe runtime download address.');
+        url = next.href;
+      }
+      if (!response?.ok || !response.body)
+        throw new Error('The Otto runtime download is unavailable. Try again.');
+      return Readable.fromWeb(response.body);
+    },
+    {
+      message: 'Downloading your local computer…',
+      failure: 'The Otto runtime download did not complete. Try again.',
       onStatus,
       signal: downloadSignal,
       cacheRoot,
       inspectDisk,
-      release,
-    });
-  } catch (error) {
-    throw installationError(error);
-  } finally {
-    await rm(path, { force: true });
-  }
+    },
+  );
 }
 
 export async function ensureRuntimeAssets(options) {

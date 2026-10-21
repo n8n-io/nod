@@ -57,7 +57,7 @@ macOS can ask again after Otto is re-signed. Approve it in the macOS dialog. Nev
 
 ### Not enough free space to install the runtime
 
-On a Mac, the message says how much free space Otto needs and how much more to free. Otto needs room for the extracted runtime plus 512 MiB, and for the archive while it downloads. Free that space, then retry. Your conversations and settings are kept.
+On a Mac, the message says how much free space Otto needs and how much more to free. Otto needs room for the extracted runtime plus 512 MiB. Free that space, then retry. Your conversations and settings are kept.
 
 On Windows, the message reads "Otto needs more free disk space to prepare its private computer." Allow at least 20 GB, then select **Try again**.
 
