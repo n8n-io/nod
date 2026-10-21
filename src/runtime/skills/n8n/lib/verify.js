@@ -190,54 +190,8 @@ async function run(workflowId, workflow, scenario, outputs) {
   };
 }
 
-function starts(workflow) {
-  const fed = new Set(
-    Object.values(workflow.connections ?? {}).flatMap((outputs) =>
-      Object.values(outputs).flatMap((targets) =>
-        (targets ?? []).flatMap((links) => (links ?? []).map((link) => link.node)),
-      ),
-    ),
-  );
-  const feeds = new Set(
-    Object.entries(workflow.connections ?? {})
-      .filter(([, outputs]) => (outputs.main ?? []).some((links) => links?.length))
-      .map(([name]) => name),
-  );
-  return workflow.nodes
-    .filter((node) => !node.disabled && feeds.has(node.name) && !fed.has(node.name))
-    .map((node) => node.name);
-}
-
-async function check(workflowId, workflow) {
-  const issues = new Set();
-  for (const start of starts(workflow)) {
-    const result = parse(
-      await tools.mcp__n8n__test_workflow({
-        workflowId,
-        pinData: { [start]: [] },
-        triggerNodeName: start,
-      }),
-    );
-    if (result.text) return { stop: true, issues: [result.text] };
-    const error = String(result.error ?? '');
-    if (!error) continue;
-    if (!/(?:node has|nodes have) issues:/.test(error)) {
-      issues.add(error);
-      continue;
-    }
-    const single = /^The '(.+)' node has issues:/.exec(error)?.[1];
-    for (const line of error.split('\n').slice(1)) {
-      const item = line.replace(/^\s*-\s*/, '').trim();
-      if (item) issues.add(single ? `'${single}': ${item}` : item);
-    }
-  }
-  return { issues: [...issues] };
-}
-
 async function verify({ workflowId, scenarios, outputs = [] }) {
   const { workflow } = parse(await tools.mcp__n8n__get_workflow_details({ workflowId }));
-  const config = await check(workflowId, workflow);
-  if (config.stop) return { config: config.issues, scenarios: [] };
   const results = [];
   for (const scenario of scenarios) {
     const result = await run(workflowId, workflow, scenario, outputs).catch((error) => ({
@@ -247,7 +201,7 @@ async function verify({ workflowId, scenarios, outputs = [] }) {
     results.push({ scenario: scenario.name, ...rest });
     if (stop) break;
   }
-  return { config: config.issues, scenarios: results };
+  return results;
 }
 
-return { verify, check, report, references };
+return { verify, report, references };
