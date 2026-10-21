@@ -2582,7 +2582,7 @@ test('each model call yields one chat-format trace without image data', async ()
   assert.ok(!JSON.stringify(trace).includes(image));
 });
 
-test('owner context stays out of the system prompt, is added only when it changes and leaves stale copies behind', async (t) => {
+test('owner context stays out of the system prompt and compaction summaries and is added only when it changes', async (t) => {
   const { createServer } = await import('node:http');
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
   const chunk = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
@@ -2687,8 +2687,8 @@ test('owner context stays out of the system prompt, is added only when it change
   assert.equal(copies(three), 2);
   prefixKept(two, three);
   const four = await turn(forgotten, 4);
-  assert.equal(copies(four), 1);
-  assert.ok(!JSON.stringify(four).includes('Jordi Fixture'));
+  assert.equal(copies(four), 3);
+  prefixKept(three, four);
 
   await current.dispose();
   current = agent();
@@ -2696,7 +2696,7 @@ test('owner context stays out of the system prompt, is added only when it change
   const requests = bodies.length;
   promptTokens = 5_000;
   const five = await turn(forgotten, 5);
-  assert.equal(copies(five), 1);
+  assert.equal(copies(five), 3);
   prefixKept(four, five);
   const summaries = bodies.slice(requests + 1);
   assert.ok(summaries.length >= 1);

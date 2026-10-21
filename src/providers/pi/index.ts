@@ -154,36 +154,22 @@ function isOwnerContext(message: { role: string }) {
   );
 }
 
-function ownerContextLines(message: { role: string }) {
-  const { content } = message as { content?: unknown };
-  return String(content).split('\n');
-}
-
 function ownerContextCopies(ownerContext: string | undefined) {
   return (pi: ExtensionAPI) => {
     pi.on('context', ({ messages }) => {
-      const copies = messages.filter(isOwnerContext);
-      const latest = copies.at(-1);
-      if (!latest)
-        return ownerContext
-          ? {
-              messages: [
-                ...messages,
-                {
-                  role: 'custom' as const,
-                  customType: ownerContextType,
-                  content: ownerContext,
-                  display: false,
-                  timestamp: Date.now(),
-                },
-              ],
-            }
-          : undefined;
-      const current = new Set(ownerContextLines(latest));
-      const stale = new Set(
-        copies.filter((copy) => ownerContextLines(copy).some((line) => !current.has(line))),
-      );
-      if (stale.size) return { messages: messages.filter((message) => !stale.has(message)) };
+      if (!ownerContext || messages.some(isOwnerContext)) return;
+      return {
+        messages: [
+          ...messages,
+          {
+            role: 'custom' as const,
+            customType: ownerContextType,
+            content: ownerContext,
+            display: false,
+            timestamp: Date.now(),
+          },
+        ],
+      };
     });
     pi.on('session_before_compact', ({ preparation }) => {
       preparation.messagesToSummarize = preparation.messagesToSummarize.filter(
@@ -617,7 +603,7 @@ export function createPiAgent(options: {
         async prompt(text, images) {
           const owner = input.ownerContext;
           const copy = manager.buildSessionContext().messages.findLast(isOwnerContext);
-          if (owner && (!copy || ownerContextLines(copy).join('\n') !== owner))
+          if (owner && (copy as { content?: unknown } | undefined)?.content !== owner)
             await session.sendCustomMessage(
               { customType: ownerContextType, content: owner, display: false },
               { deliverAs: 'nextTurn' },
