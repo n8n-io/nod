@@ -2320,6 +2320,135 @@ test(
 );
 
 test(
+  'native handoff clicks stay aligned through page zoom, panning and viewport changes',
+  { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-pointer-native-'));
+    const server = createHttpServer((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<style>html,body{margin:0;width:100%;height:100%;overflow:hidden}button{position:fixed;left:10%;top:10%;width:10%;height:10%}</style>
+        <button id="target">Target</button><output></output><script>
+        document.addEventListener('mousedown',event=>window.lastPointer={target:event.target.id,x:event.clientX,y:event.clientY});
+        let frame=0;function paint(){document.querySelector('output').textContent=String(frame++);requestAnimationFrame(paint)}paint();
+        </script>`,
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    let socketPath = '';
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
+      headless: true,
+      daemonCommand: async (path, command, signal, timeoutMs) => {
+        socketPath = path;
+        return existingDaemonCommand(path, command, signal, timeoutMs);
+      },
+    });
+    let inspector: WebSocket | undefined;
+    try {
+      await computer.act('pointer', { action: 'open', url: `http://127.0.0.1:${address.port}` });
+      const connection = await existingDaemonCommand(socketPath, { action: 'cdp_url' });
+      const tabs = await existingDaemonCommand(socketPath, { action: 'tab_list' });
+      const tab = (tabs.tabs as Array<{ active: boolean; targetId: string }>).find(
+        (tab) => tab.active,
+      )!;
+      inspector = new WebSocket(String(connection.cdpUrl));
+      await once(inspector, 'open');
+      let sequence = 0;
+      const send = (method: string, params: Record<string, unknown>, sessionId?: string) =>
+        new Promise<Record<string, unknown>>((resolve, reject) => {
+          const id = ++sequence;
+          const receive = (event: MessageEvent) => {
+            const message = JSON.parse(String(event.data));
+            if (message.id !== id) return;
+            inspector!.removeEventListener('message', receive);
+            if (message.error) reject(new Error(message.error.message));
+            else resolve(message.result);
+          };
+          inspector!.addEventListener('message', receive);
+          inspector!.send(
+            JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }),
+          );
+        });
+      const { sessionId } = await send('Target.attachToTarget', {
+        targetId: tab.targetId,
+        flatten: true,
+      });
+      const page = (method: string, params: Record<string, unknown>) =>
+        send(method, params, String(sessionId));
+      for (const sample of [
+        { width: 1440, height: 900, dpr: 1, zoom: 1, pan: false },
+        { width: 1440, height: 900, dpr: 2, zoom: 1, pan: false },
+        { width: 1440, height: 900, dpr: 1, zoom: 2, pan: false },
+        { width: 1440, height: 900, dpr: 1, zoom: 2, pan: true },
+        { width: 800, height: 1200, dpr: 1, zoom: 1, pan: false },
+      ]) {
+        await existingDaemonCommand(socketPath, {
+          action: 'viewport',
+          width: sample.width,
+          height: sample.height,
+          deviceScaleFactor: sample.dpr,
+        });
+        await page('Emulation.setPageScaleFactor', { pageScaleFactor: sample.zoom });
+        if (sample.pan)
+          await page('Input.synthesizeScrollGesture', {
+            x: 400,
+            y: 300,
+            xDistance: -60,
+            yDistance: -60,
+            gestureSourceType: 'touch',
+          });
+        const expected = await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {const r=document.querySelector('#target').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,width:visualViewport.width,height:visualViewport.height,left:visualViewport.offsetLeft,top:visualViewport.offsetTop}})()`,
+        });
+        const point = expected.result as {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          left: number;
+          top: number;
+        };
+        const controller = new AbortController();
+        const frames = computer.view!('pointer', controller.signal)[Symbol.asyncIterator]();
+        try {
+          await frames.next();
+          await frames.next();
+          const position = {
+            x: (point.x - point.left) / point.width,
+            y: (point.y - point.top) / point.height,
+          };
+          await computer.control!('pointer', { type: 'mouse', event: 'down', ...position });
+          await computer.control!('pointer', { type: 'mouse', event: 'up', ...position });
+          const observed = await existingDaemonCommand(socketPath, {
+            action: 'evaluate',
+            script: 'window.lastPointer',
+          });
+          assert.deepEqual(
+            observed.result,
+            { target: 'target', x: point.x, y: point.y },
+            JSON.stringify(sample),
+          );
+        } finally {
+          controller.abort();
+          await frames.return?.();
+        }
+      }
+    } finally {
+      inspector?.close();
+      await computer.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'native visual browser actions solve a canvas interaction inside nested cross-origin frames',
   { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
   async () => {
@@ -2921,6 +3050,57 @@ test('automatic feedback captures exclude remote handoffs and unsent editable co
         assert.equal(await captureFeedbackScreenshot(), null);
         assert.equal(native, captures);
       } finally {
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
+test('browser handoff retains pointer input while the next frame is loading', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost', pretendToBeVisual: true });
+      Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const writes = [];
+      let frames;
+      globalThis.fetch = async (path, options = {}) => {
+        if (path.startsWith('/api/browser-handoff/stream')) return new Response(new ReadableStream({ start(controller) { frames = controller; } }));
+        writes.push([path, JSON.parse(options.body)]);
+        return Response.json({ ok: true });
+      };
+      const { act, createElement } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { BrowserHandoff } = await import('./src/web/components/browser-handoff.tsx');
+      const root = createRoot(document.querySelector('#root'));
+      const frame = new Uint8Array([0, 0, 0, 4, 255, 216, 255, 217]);
+      try {
+        await act(async () => root.render(createElement(BrowserHandoff, { turnId: 'synthetic-turn' })));
+        await act(async () => frames.enqueue(frame));
+        const image = document.querySelector('.browser-handoff-screen img');
+        let loaded = true;
+        Object.defineProperties(image, {
+          naturalWidth: { get: () => loaded ? 1280 : 0 },
+          naturalHeight: { get: () => loaded ? 800 : 0 },
+        });
+        image.getBoundingClientRect = () => ({ left: 10, top: 20, width: 640, height: 400 });
+        await act(async () => image.dispatchEvent(new dom.window.Event('load')));
+        const displayed = image.src;
+        loaded = false;
+        await act(async () => frames.enqueue(frame));
+        assert.notEqual(image.src, displayed);
+        assert.equal(image.naturalWidth, 0);
+        for (const type of ['mousedown', 'mouseup']) await act(async () => image.dispatchEvent(new dom.window.MouseEvent(type, { bubbles: true, clientX: 330, clientY: 220, button: 0 })));
+        assert.deepEqual(writes, [
+          ['/api/browser-handoff', { turnId: 'synthetic-turn', inputs: [{ type: 'mouse', event: 'down', x: 0.5, y: 0.5, button: 'left' }] }],
+          ['/api/browser-handoff', { turnId: 'synthetic-turn', inputs: [{ type: 'mouse', event: 'up', x: 0.5, y: 0.5, button: 'left' }] }],
+        ]);
+      } finally {
+        await act(async () => root.unmount());
         dom.window.close();
       }
     `,

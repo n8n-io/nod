@@ -81,7 +81,11 @@ const streamFrame = z.object({
   type: z.literal('frame'),
   seq: z.number().int(),
   data: z.string().max(4 * 1024 * 1024),
-  metadata: z.object({ deviceWidth: z.number().positive(), deviceHeight: z.number().positive() }),
+  metadata: z.object({
+    deviceWidth: z.number().positive(),
+    deviceHeight: z.number().positive(),
+    pageScaleFactor: z.number().positive().default(1),
+  }),
 });
 
 const holdMs = 30 * 60_000;
@@ -1896,7 +1900,10 @@ export function createAgentBrowserComputer(options: {
           await new Promise<void>((resolve) => (wake = resolve));
           continue;
         }
-        state.pageSize = [frame.metadata.deviceWidth, frame.metadata.deviceHeight];
+        state.pageSize = [
+          frame.metadata.deviceWidth / frame.metadata.pageScaleFactor,
+          frame.metadata.deviceHeight / frame.metadata.pageScaleFactor,
+        ];
         if (!state.injecting && !(await privateDocumentOpen(state, signal)))
           yield Buffer.from(frame.data, 'base64');
         if (socket.readyState === WebSocket.OPEN)

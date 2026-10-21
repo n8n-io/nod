@@ -1,0 +1,415 @@
+{
+  "base": "52277de24103dad09ae3bab1038b99c830dc5620",
+  "head": "21456f70cf47a49b30fffdef1681678c263f433c",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "scope": "Actual frontend code from each revision. Synthetic API responses and desktop bridge only. Every /api request intercepted; external origins blocked. No real backend, model, connected account, recipient, or OS setting used. Desktop means renderer bridge simulation, not installed Electron acceptance.",
+  "screenshots": [
+    {
+      "side": "before",
+      "name": "01-web-default",
+      "file": "01-web-default-before.png",
+      "nav": {
+        "x": 8,
+        "y": 88,
+        "width": 56,
+        "height": 216
+      },
+      "collapsed": true,
+      "modelPickerCount": 1,
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "02-desktop-default",
+      "file": "02-desktop-default-before.png",
+      "nav": {
+        "x": 12,
+        "y": 282,
+        "width": 60,
+        "height": 236
+      },
+      "collapsed": true,
+      "modelPickerCount": 1,
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "03-chat-controls",
+      "file": "03-chat-controls-before.png",
+      "toggle": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      },
+      "reactionShadow": "rgb(250, 250, 250) 2px 0px 0px, rgb(250, 250, 250) 1.97px 0.35px 0px, rgb(250, 250, 250) 1.88px 0.68px 0px, rgb(250, 250, 250) 1.73px 1px 0px, rgb(250, 250, 250) 1.53px 1.29px 0px, rgb(250, 250, 250) 1.29px 1.53px 0px, rgb(250, 250, 250) 1px 1.73px 0px, rgb(250, 250, 250) 0.68px 1.88px 0px, rgb(250, 250, 250) 0.35px 1.97px 0px, rgb(250, 250, 250) 0px 2px 0px, rgb(250, 250, 250) -0.35px 1.97px 0px, rgb(250, 250, 250) -0.68px 1.88px 0px, rgb(250, 250, 250) -1px 1.73px 0px, rgb(250, 250, 250) -1.29px 1.53px 0px, rgb(250, 250, 250) -1.53px 1.29px 0px, rgb(250, 250, 250) -1.73px 1px 0px, rgb(250, 250, 250) -1.88px 0.68px 0px, rgb(250, 250, 250) -1.97px 0.35px 0px, rgb(250, 250, 250) -2px 0px 0px, rgb(250, 250, 250) -1.97px -0.35px 0px, rgb(250, 250, 250) -1.88px -0.68px 0px, rgb(250, 250, 250) -1.73px -1px 0px, rgb(250, 250, 250) -1.53px -1.29px 0px, rgb(250, 250, 250) -1.29px -1.53px 0px, rgb(250, 250, 250) -1px -1.73px 0px, rgb(250, 250, 250) -0.68px -1.88px 0px, rgb(250, 250, 250) -0.35px -1.97px 0px, rgb(250, 250, 250) 0px -2px 0px, rgb(250, 250, 250) 0.35px -1.97px 0px, rgb(250, 250, 250) 0.68px -1.88px 0px, rgb(250, 250, 250) 1px -1.73px 0px, rgb(250, 250, 250) 1.29px -1.53px 0px, rgb(250, 250, 250) 1.53px -1.29px 0px, rgb(250, 250, 250) 1.73px -1px 0px, rgb(250, 250, 250) 1.88px -0.68px 0px, rgb(250, 250, 250) 1.97px -0.35px 0px, rgba(0, 0, 0, 0.16) 0px 1.5px 2.5px",
+      "messageOutline": "solid",
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "04-trust-controls",
+      "file": "04-trust-controls-before.png",
+      "toggle": {
+        "x": 80,
+        "y": 42,
+        "width": 32,
+        "height": 32
+      },
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "05-onboarding-answer",
+      "file": "05-onboarding-answer-before.png",
+      "micButtons": 1,
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "06-required-notifications",
+      "file": "06-required-notifications-before.png",
+      "nextDisabled": false,
+      "nextLabel": "Continue",
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "07-required-login",
+      "file": "07-required-login-before.png",
+      "nextDisabled": false,
+      "nextLabel": "Continue",
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "08-after-last-setup-action",
+      "file": "08-after-last-setup-action-before.png",
+      "result": "Final feedback onboarding step",
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "10-completed-private-actions",
+      "file": "10-completed-private-actions-before.png",
+      "remainingActions": 2,
+      "serverStatuses": {
+        "credential": "filled",
+        "payment": "submitted"
+      },
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "09-credential-font",
+      "file": "09-credential-font-before.png",
+      "font": "\"Geist Mono\", SFMono-Regular, Consolas, monospace",
+      "secretSource": "Synthetic fixture only",
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "11-vault-after-delete",
+      "file": "11-vault-after-delete-before.png",
+      "signOutVisible": false,
+      "remainingSessionRows": 1,
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "01-web-default",
+      "file": "01-web-default-after.png",
+      "nav": {
+        "x": 12,
+        "y": 292,
+        "width": 48,
+        "height": 216
+      },
+      "collapsed": true,
+      "modelPickerCount": 0,
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "02-desktop-default",
+      "file": "02-desktop-default-after.png",
+      "nav": {
+        "x": 12,
+        "y": 282,
+        "width": 60,
+        "height": 236
+      },
+      "collapsed": true,
+      "modelPickerCount": 0,
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "03-chat-controls",
+      "file": "03-chat-controls-after.png",
+      "toggle": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      },
+      "reactionShadow": "none",
+      "messageOutline": "none",
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "04-trust-controls",
+      "file": "04-trust-controls-after.png",
+      "toggle": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      },
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "05-onboarding-answer",
+      "file": "05-onboarding-answer-after.png",
+      "micButtons": 0,
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "06-required-notifications",
+      "file": "06-required-notifications-after.png",
+      "nextDisabled": true,
+      "nextLabel": "Continue",
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "07-required-login",
+      "file": "07-required-login-after.png",
+      "nextDisabled": true,
+      "nextLabel": "Start chatting",
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "08-after-last-setup-action",
+      "file": "08-after-last-setup-action-after.png",
+      "result": "Main chat after onboarding completion",
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "10-completed-private-actions",
+      "file": "10-completed-private-actions-after.png",
+      "remainingActions": 0,
+      "serverStatuses": {
+        "credential": "filled",
+        "payment": "submitted"
+      },
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "09-credential-font",
+      "file": "09-credential-font-after.png",
+      "font": "Geist, system-ui, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+      "secretSource": "Synthetic fixture only",
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "11-vault-after-delete",
+      "file": "11-vault-after-delete-after.png",
+      "signOutVisible": true,
+      "remainingSessionRows": 1,
+      "errors": []
+    }
+  ],
+  "checks": [
+    {
+      "side": "before",
+      "check": "Chat/Trust toggle positions",
+      "chat": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      },
+      "trust": {
+        "x": 80,
+        "y": 42,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "side": "after",
+      "check": "Chat/Trust toggle positions",
+      "chat": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      },
+      "trust": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      }
+    }
+  ],
+  "unexpectedApi": [],
+  "blockedExternal": [],
+  "comparisons": [
+    {
+      "file": "navigation-and-chat.png",
+      "scenarios": ["01-web-default", "02-desktop-default", "03-chat-controls", "04-trust-controls"]
+    },
+    {
+      "file": "onboarding.png",
+      "scenarios": [
+        "05-onboarding-answer",
+        "06-required-notifications",
+        "07-required-login",
+        "08-after-last-setup-action"
+      ]
+    },
+    {
+      "file": "vault-and-sign-in.png",
+      "scenarios": ["09-credential-font", "10-completed-private-actions", "11-vault-after-delete"]
+    },
+    {
+      "file": "overview.png",
+      "scenarios": [
+        "01-web-default",
+        "02-desktop-default",
+        "03-chat-controls",
+        "04-trust-controls",
+        "05-onboarding-answer",
+        "06-required-notifications",
+        "07-required-login",
+        "08-after-last-setup-action",
+        "09-credential-font",
+        "10-completed-private-actions",
+        "11-vault-after-delete"
+      ]
+    }
+  ],
+  "capturedAt": "2026-10-21T19:09:20.785Z",
+  "assertions": {
+    "noPageErrors": true,
+    "noUnexpectedApiRequests": true,
+    "noExternalRequests": true,
+    "identicalViewport": true,
+    "matchedData": true,
+    "webRailCentered": true,
+    "modelPickerRemoved": true,
+    "toggleStableAcrossPages": true,
+    "pointerEscapeOutlineRemoved": true,
+    "reactionShadowRemoved": true,
+    "onboardingMicrophoneRemoved": true,
+    "notificationsRequired": true,
+    "launchAtLoginRequired": true,
+    "vaultFontChanged": true,
+    "completedActionsRemoved": true,
+    "remainingSessionSelected": true
+  },
+  "artifacts": [
+    {
+      "file": "navigation-and-chat.png",
+      "bytes": 484387,
+      "sha256": "cc7dde27a36813f7e0f8f75fa085b468c54474dafce1ecc3af5a1125f395ca51"
+    },
+    {
+      "file": "onboarding.png",
+      "bytes": 444763,
+      "sha256": "c8589cc7302f1c468e555db963de1ee0d97fbe982a539a9f7dc1745ea51b18c6"
+    },
+    {
+      "file": "vault-and-sign-in.png",
+      "bytes": 400350,
+      "sha256": "a6d302da27db25f5a9f5565daa9d2e6605b79548df49f8751e1b2f7b120b5f9f"
+    },
+    {
+      "file": "overview.png",
+      "bytes": 526257,
+      "sha256": "c18b55e867b9174f807b29e9a2531cb4e4b625e0f97bcaa138723fcc1f418105"
+    }
+  ],
+  "browser": {
+    "comparison": "browser-pointer.png",
+    "capturedAt": "2026-10-21T19:21:01.971Z",
+    "beforeRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
+    "afterSourceObjects": {
+      "src/providers/agent-browser/index.ts": "41e6995e1ad2faf4054d26056551a796a1c27d72",
+      "src/web/components/browser-handoff.tsx": "6db497d7c93b0ddddfa285e9895e5853c58ee384"
+    },
+    "scope": "Actual agent-browser provider and native Chromium on a local synthetic page. Identical 1440x900 viewport, 2x page zoom and normalized input (0.3,0.3). No model, external website, connected account or recipient. Does not establish that all browser failures are fixed.",
+    "screenshots": [
+      {
+        "side": "before",
+        "sha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab"
+      },
+      {
+        "side": "after",
+        "sha256": "0d01e664c91c5223c2eb97f1ef56515cd095c743636aa0e770377b2d52ebb910"
+      }
+    ],
+    "observations": [
+      {
+        "name": "before",
+        "zoom": 2,
+        "input": {
+          "x": 0.3,
+          "y": 0.3
+        },
+        "expected": {
+          "x": 216,
+          "y": 135
+        },
+        "observed": {
+          "target": "",
+          "x": 432,
+          "y": 270
+        }
+      },
+      {
+        "name": "after",
+        "zoom": 2,
+        "input": {
+          "x": 0.3,
+          "y": 0.3
+        },
+        "expected": {
+          "x": 216,
+          "y": 135
+        },
+        "observed": {
+          "target": "target",
+          "x": 216,
+          "y": 135
+        }
+      }
+    ],
+    "loadingFrame": {
+      "scope": "Actual Chat and BrowserHandoff with synthetic JPEG stream in native Chrome. Supplementary behavior verification, not a visual redesign comparison.",
+      "before": {
+        "droppedAtInput": 40,
+        "naturalWidth": 0,
+        "naturalHeight": 0,
+        "displayedWidth": 1230,
+        "displayedHeight": 768.75
+      },
+      "after": {
+        "inputs": 400,
+        "accepted": 400
+      }
+    }
+  }
+}
