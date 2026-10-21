@@ -153,7 +153,7 @@ try {
 if (!archive) {
   console.log('Creating the verified Otto Runtime pack.');
   await rm(`${path}.tmp`, { force: true });
-  const images = ['images/postgres.tar.zst', 'images/browser.tar.zst', 'images/workspace.tar.zst'];
+  const images = ['images/postgres.tar.zst', 'images/workspace.tar.zst', 'images/browser.tar.zst'];
   await create(
     { cwd: assets, file: `${path}.tmp`, gzip: { level: 6 }, portable: true, noMtime: true },
     files.map((entry) => entry.path).sort((a, b) => images.indexOf(a) - images.indexOf(b)),
