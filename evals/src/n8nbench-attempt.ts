@@ -306,7 +306,7 @@ async function run(spec: N8nBenchSpec): Promise<BenchRun> {
     result.workflowIds = built.workflows.map((workflow) => workflow.id);
     result.workflowId = mainWorkflow(built.workflows);
   } catch (failure) {
-    result.error ??= failure instanceof Error ? failure.message : String(failure);
+    result.unavailable = `Could not read what the run built: ${failure instanceof Error ? failure.message : String(failure)}`;
   }
   result.seconds = Math.round((Date.now() - started) / 1000);
   return result;
@@ -531,7 +531,7 @@ async function runClaude(
     result.workflowIds = built.workflows.map((workflow) => workflow.id);
     result.workflowId = mainWorkflow(built.workflows);
   } catch (failure) {
-    result.error ??= failure instanceof Error ? failure.message : String(failure);
+    result.unavailable = `Could not read what the run built: ${failure instanceof Error ? failure.message : String(failure)}`;
   }
   await rm(folder, { recursive: true, force: true }).catch(() => {});
   result.seconds = Math.round((Date.now() - started) / 1000);
