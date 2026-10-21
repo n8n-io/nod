@@ -319,6 +319,7 @@ async function judgeExpectations(
     reason: verdict.reason,
     ...(verdict.incomplete ? { incomplete: true } : {}),
   }));
+  if (units.some((unit) => unit.incomplete)) return units;
   await mkdir(join(directory, 'expectations'), { recursive: true });
   await writeFile(file, JSON.stringify(units, null, 2));
   return units;

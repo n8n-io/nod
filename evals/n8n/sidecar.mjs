@@ -192,9 +192,7 @@ async function decide({ id, assistantText }) {
 }
 
 async function judge({ expectations, transcript, workflowId, projectId, agents = [] }) {
-  const workflowJson = workflowId
-    ? await owner.getWorkflow(workflowId).catch(() => undefined)
-    : undefined;
+  const workflowJson = workflowId ? await owner.getWorkflow(workflowId) : undefined;
   const artifactContext = await resolveArtifactContext({
     artifactRefs: agents.map((agent) => ({ type: 'agent', id: agent.id, projectId })),
     client: owner,
