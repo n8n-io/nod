@@ -372,7 +372,7 @@ function grade(
       name: scenario.name,
       pass: Boolean(result?.passed),
       reason: result?.reasoning ?? (run.workflowId ? 'Not verified.' : 'No workflow was built.'),
-      ...(result?.incomplete ? { incomplete: true } : {}),
+      ...(result?.incomplete || (!result && run.workflowId) ? { incomplete: true } : {}),
     };
   });
   return {
