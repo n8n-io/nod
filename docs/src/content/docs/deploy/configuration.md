@@ -128,6 +128,43 @@ Analytics go to the Otto team's n8n-owned EU PostHog project, even in independen
 
 For an operator-owned collector, set `OTTO_FEEDBACK_URL=https://feedback.example.com/intake` and `OTTO_FEEDBACK_RECEIPT_URL_PREFIX=https://issues.example.com/projects/otto/issues/`. A submitted receipt can then link to `https://issues.example.com/projects/otto/issues/123`, but not another project or origin. Receipt URLs cannot contain credentials, queries, fragments or encoded path separators. The collector uses Otto's existing feedback envelope and receipt contract; setting an endpoint alone does not create a compatible service. `OTTO_FEEDBACK_TOKEN`, when set, supplies the server-only `x-otto-feedback-token` header. It never goes to the browser or sandbox.
 
+## OpenTelemetry
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` to send model request metadata to your own collector. Leave it empty to keep export off.
+
+| Variable                      | What it does                                                               | Default           |
+| ----------------------------- | -------------------------------------------------------------------------- | ----------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | The base HTTP or HTTPS URL of your OTLP collector. Otto adds `/v1/traces`. | Empty; export off |
+
+```sh title=".env"
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+```
+
+Restart Otto after you set or remove the variable. For the desktop app, set it in the process environment before you start Otto. The desktop app does not read `.env`.
+
+```mermaid
+flowchart LR
+  otto[Otto server] --> collector[Your OTLP collector]
+  collector --> storage[Your trace storage and dashboards]
+```
+
+Otto sends one span for each model usage record, including helper and background work. Spans contain:
+
+- The provider and model names, request category, operation, and status.
+- The request start and end times.
+- Available input, output, and cache token counts.
+- Available cost, estimated cost, and pricing source.
+
+Requests from one turn share a trace ID. Exported IDs use a random key that changes when Otto restarts. Otto does not send internal execution IDs.
+
+The export contains no prompts, replies, tool arguments, tool results, keys, or raw errors. Custom model names are included. The collector controls storage, access, and retention.
+
+This export is separate from **Share usage data** and **Share conversation traces**. Those switches do not control it. Setting the endpoint enables this export only.
+
+Otto uses OTLP over HTTP with JSON encoding. It sends batches every five seconds and at shutdown. Each request has a five-second timeout. The queue holds at most 256 spans. Failed batches and excess spans are dropped, with no retry. Export does not delay model requests or change spending controls.
+
+This version exports model spans only. It does not export metrics, logs, browser steps, or tool spans. Use your collector to add authentication headers when it forwards spans. Otto does not send authentication headers or support OTLP over gRPC.
+
 ## Computers
 
 | Variable              | What it does                            | Default          |

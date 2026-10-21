@@ -42,6 +42,8 @@ import type { LinkPreviewProvider } from '../ports/link-preview.ts';
 import type { FeedbackDelivery } from '../ports/feedback.ts';
 import { createN8nFeedback } from '../providers/n8n/feedback.ts';
 import { createN8nTraces } from '../providers/n8n/traces.ts';
+import { createOtlpTelemetry } from '../providers/otlp/telemetry.ts';
+import type { UsageTelemetry } from '../ports/provider-usage.ts';
 import { agentModels } from '../shared/model-defaults.ts';
 import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
@@ -154,6 +156,7 @@ export interface ApplicationAdapters {
   linkPreviews?: LinkPreviewProvider;
   feedback?: FeedbackDelivery;
   traces?: ModelTraceGate;
+  telemetry?: UsageTelemetry;
   messagingSetup?: {
     verifier: ChannelSetupVerifier;
     create(environment: Record<string, string>): MessagingTransport;
@@ -313,6 +316,7 @@ export function createDefaultAdapters(
     : ownIntegrations;
   return {
     ...(analyticsEnabled(env) ? { analytics: createPostHogAnalytics() } : {}),
+    telemetry: createOtlpTelemetry(env.OTEL_EXPORTER_OTLP_ENDPOINT),
     initialize: async () => {
       await models.initialize();
       await integrationProxy?.initialize();
@@ -376,6 +380,9 @@ export async function createApplication(
     try {
       await adapters.analytics?.shutdown();
     } catch {}
+    try {
+      await adapters.telemetry?.shutdown();
+    } catch {}
     throw error;
   }
 }
@@ -434,7 +441,12 @@ async function initializeApplication(
   adapters.integrationKey?.onSecrets((values) => secrets.push(...values));
   const memoryCurator =
     adapters.memoryCurator ?? createPiMemoryCurator({ provider: adapters.model.provider });
-  const ledger = createLedger({ pool, ownerId, analytics: captureAnalytics });
+  const ledger = createLedger({
+    pool,
+    ownerId,
+    analytics: captureAnalytics,
+    telemetry: adapters.telemetry,
+  });
   await ledger.initialize();
   const { computer, workspace } = adapters;
   const curator = ledger.curator(memoryCurator);
@@ -1508,6 +1520,7 @@ async function initializeApplication(
       finishWork,
       () => runtime.dispose(),
       () => analytics.shutdown(),
+      () => adapters.telemetry?.shutdown(),
     ]) {
       try {
         await close();

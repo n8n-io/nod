@@ -61,6 +61,14 @@ Google sign-in for Easy Connect sends identity information to Google and n8n's c
 
 Your model keys and your Composio key, if you use one, stay on your installation. Keys you save in the app are stored encrypted, and Otto only shows the last four characters of a Composio key. Otto's connection doesn't need a Composio key. Provider keys never enter a prompt, Otto's workspace or its browser.
 
+## Your own telemetry
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` to send model request metadata to your own OpenTelemetry collector. Export is off when the variable is empty.
+
+The export includes provider and model names, request timing, status, token counts, and available cost. It includes custom model names. Requests from one turn share an ID that changes when Otto restarts. Internal execution IDs, messages, tool content, keys, and raw errors are excluded.
+
+This export is separate from the sharing switches in Settings. Your collector controls access, storage, and retention. See [OpenTelemetry configuration](/deploy/configuration/#opentelemetry) for setup and limits.
+
 ## Usage analytics
 
 Usage analytics are off until you turn on **Share usage data** in the first onboarding step or in **Settings → General**. They record which screens you open, how you move through them, and product events such as a task starting or a setting changing.

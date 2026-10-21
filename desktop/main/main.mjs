@@ -661,6 +661,7 @@ function baseEnvironment() {
       'OTTO_FEEDBACK_RECEIPT_URL_PREFIX',
       'OTTO_TRACES_URL',
       'OTTO_TRACES_TOKEN',
+      'OTEL_EXPORTER_OTLP_ENDPOINT',
     ]
       .filter((key) => typeof process.env[key] === 'string')
       .map((key) => [key, process.env[key]]),

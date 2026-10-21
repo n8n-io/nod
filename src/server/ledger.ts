@@ -4,7 +4,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { Agent, AgentSessionOptions } from '../ports/agent.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
-import type { ProviderUsageEvent } from '../ports/provider-usage.ts';
+import type { ProviderUsageEvent, UsageTelemetry } from '../ports/provider-usage.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel } from '../ports/decisions.ts';
 import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
@@ -85,10 +85,12 @@ export function createLedger({
   pool,
   ownerId,
   analytics,
+  telemetry,
 }: {
   pool: Pool;
   ownerId: string;
   analytics?: CaptureAnalytics;
+  telemetry?: UsageTelemetry;
 }) {
   const activeTurn = new AsyncLocalStorage<string>();
   const activeExecution = new AsyncLocalStorage<AgentSessionOptions>();
@@ -167,6 +169,7 @@ export function createLedger({
     );
     pendingUsage.set(id, { values, pending });
     analytics?.(modelUsed(usage));
+    telemetry?.record({ ...usage, turnId: attributedTurn ?? undefined });
   }
 
   function agent(base: Agent): Agent {

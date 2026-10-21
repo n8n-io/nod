@@ -30,6 +30,8 @@ import { createModelTraces } from '../src/server/traces.ts';
 import type { ModelTrace } from '../src/ports/traces.ts';
 import { setRequestAccount } from '../src/web/lib/api.ts';
 import { loadLinkPreview } from '../src/web/lib/link-previews.ts';
+import { createOtlpTelemetry } from '../src/providers/otlp/telemetry.ts';
+import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 
 test('queued and cached link previews cannot cross an owner change', async (t) => {
   const calls: Array<{ url: string; account: string | null; respond(): void }> = [];
@@ -478,7 +480,115 @@ describe('analytics privacy', () => {
       assert.ok(!JSON.stringify(captured).includes(value), value);
   });
 
-  test('agent model usage analytics carry the request duration and cached input', async () => {
+  test('OTLP sends bounded model metadata without content or internal identifiers', async (t) => {
+    const collector = Fastify();
+    const received: { body: any; contentType: string | undefined }[] = [];
+    let redirected = false;
+    collector.post('/otel/v1/traces', (request) => {
+      received.push({ body: request.body, contentType: request.headers['content-type'] });
+      return {};
+    });
+    collector.post('/refuse/v1/traces', (request, reply) => {
+      received.push({ body: request.body, contentType: request.headers['content-type'] });
+      return reply.redirect('/unexpected', 307);
+    });
+    collector.post('/unexpected', () => {
+      redirected = true;
+      return {};
+    });
+    const origin = await collector.listen({ host: '127.0.0.1', port: 0 });
+    t.after(() => collector.close());
+    const telemetry = createOtlpTelemetry(`${origin}/otel/`)!;
+    t.after(() => telemetry.shutdown());
+    const turnId = randomUUID();
+    const usage = {
+      id: randomUUID(),
+      turnId,
+      provider: 'openai',
+      model: 'fixture-model',
+      category: 'agent',
+      operation: 'request',
+      status: 'succeeded',
+      durationMs: 125,
+      inputTokens: 20,
+      outputTokens: 5,
+      cacheReadTokens: 80,
+      cacheWriteTokens: 10,
+      costUsd: 0.01,
+      pricing: 'sdk_estimate',
+      messages: ['Synthetic private message'],
+      output: 'Synthetic private reply',
+      apiKey: 'fixture-secret-value',
+      ownerId: 'fixture-owner',
+      sessionId: randomUUID(),
+    } satisfies ProviderUsageEvent & Record<string, unknown>;
+    telemetry.record(usage);
+    telemetry.record({ ...usage, id: randomUUID(), status: 'failed', costUsd: null });
+    telemetry.record({ ...usage, id: randomUUID(), turnId: randomUUID(), status: 'cancelled' });
+    assert.equal(received.length, 0);
+    await telemetry.shutdown();
+    assert.equal(received.length, 1);
+    assert.equal(received[0].contentType, 'application/json');
+    const resource = received[0].body.resourceSpans[0];
+    assert.deepEqual(resource.resource.attributes, [
+      { key: 'service.name', value: { stringValue: 'otto' } },
+    ]);
+    const spans = resource.scopeSpans[0].spans;
+    assert.equal(spans.length, 3);
+    assert.equal(spans[0].traceId, spans[1].traceId);
+    assert.notEqual(spans[0].traceId, spans[2].traceId);
+    assert.equal(new Set(spans.map((span: any) => span.spanId)).size, 3);
+    for (const span of spans) {
+      assert.match(span.traceId, /^[0-9a-f]{32}$/);
+      assert.match(span.spanId, /^[0-9a-f]{16}$/);
+      assert.equal(BigInt(span.endTimeUnixNano) - BigInt(span.startTimeUnixNano), 125_000_000n);
+    }
+    assert.deepEqual(
+      spans.map((span: any) => span.status.code),
+      [0, 2, 0],
+    );
+    const attributes = (span: any) =>
+      Object.fromEntries(span.attributes.map(({ key, value }: any) => [key, value]));
+    assert.deepEqual(attributes(spans[0])['gen_ai.usage.input_tokens'], { intValue: '110' });
+    assert.deepEqual(attributes(spans[0])['gen_ai.usage.output_tokens'], { intValue: '5' });
+    assert.deepEqual(attributes(spans[0])['otto.usage.cost_usd'], { doubleValue: 0.01 });
+    assert.equal(attributes(spans[1])['otto.usage.cost_usd'], undefined);
+    assert.deepEqual(attributes(spans[2])['otto.status'], { stringValue: 'cancelled' });
+    const body = JSON.stringify(received[0].body);
+    for (const value of [
+      usage.id,
+      turnId,
+      usage.sessionId,
+      usage.ownerId,
+      usage.apiKey,
+      usage.messages[0],
+      usage.output,
+    ])
+      assert.ok(!body.includes(value));
+
+    const refused = createOtlpTelemetry(`${origin}/refuse`)!;
+    t.after(() => refused.shutdown());
+    for (let i = 0; i < 300; i++) refused.record({ ...usage, id: randomUUID() });
+    await refused.shutdown();
+    const buffered = received[1].body.resourceSpans[0].scopeSpans[0].spans;
+    assert.equal(buffered.length, 256);
+    assert.notEqual(buffered[0].traceId, spans[0].traceId);
+    refused.record(usage);
+    await refused.shutdown();
+    assert.equal(received.length, 2);
+    assert.equal(redirected, false);
+  });
+
+  test('agent model usage analytics carry the request duration and cached input', async (t) => {
+    const collector = Fastify();
+    const spans: any[] = [];
+    collector.post('/v1/traces', (request) => {
+      spans.push(...(request.body as any).resourceSpans[0].scopeSpans[0].spans);
+      return {};
+    });
+    const telemetry = createOtlpTelemetry(await collector.listen({ host: '127.0.0.1', port: 0 }))!;
+    t.after(() => collector.close());
+    t.after(() => telemetry.shutdown());
     const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
       provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
@@ -491,6 +601,7 @@ describe('analytics privacy', () => {
       pool: { query: async () => ({ rows: [] }) } as never,
       ownerId: 'owner-fixture',
       analytics: analytics.forOwner('owner-fixture'),
+      telemetry,
     });
     const agent = ledger.agent({
       open: async (session) => ({
@@ -521,6 +632,12 @@ describe('analytics privacy', () => {
     assert.equal(used.properties.input_tokens, 2020);
     assert.equal(used.properties.cached_input_tokens, 2000);
     assert.ok(Number(used.properties.duration_ms) >= 1_500);
+    analytics.setUsageData('owner-fixture', false);
+    await opened.prompt('Synthetic private content', []);
+    await telemetry.shutdown();
+    assert.equal(spans.length, 2);
+    assert.equal(spans[0].traceId, spans[1].traceId);
+    assert.equal(captured.filter((event) => event.event === 'otto_model_used').length, 1);
   });
 
   test('model usage analytics never send custom endpoint or unbounded model names', async () => {
