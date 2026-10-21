@@ -2577,34 +2577,38 @@ test('runtime removes images outside its manifest without touching current image
   assert.equal(guest.length, 1);
 });
 
-test('removing a profile deletes only its own data and private computer', async (t) => {
-  const { removeProfile } = await import('../runtime/index.mjs');
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-remove-profile-')));
-  const home = process.env.HOME;
-  process.env.HOME = join(root, 'home');
-  t.after(async () => {
-    process.env.HOME = home;
-    await rm(root, { recursive: true, force: true });
-  });
-  const homes = join(root, 'home', '.otto-desktop');
-  const computer = (profile) =>
-    join(homes, createHash('sha256').update(profile).digest('hex').slice(0, 12));
-  const profiles = [join(root, 'Otto/profiles/local'), join(root, 'Other/profiles/local')];
-  for (const profile of profiles) {
-    await mkdir(join(profile, 'desktop-runtime'), { recursive: true });
-    await writeFile(join(profile, 'desktop-runtime/state.json'), '{}');
-    await mkdir(join(computer(profile), 'otto'), { recursive: true });
-    await writeFile(join(computer(profile), 'otto/lima.yaml'), '{}');
-  }
-  await removeProfile({ dataRoot: profiles[0] });
-  await assert.rejects(stat(profiles[0]), { code: 'ENOENT' });
-  await assert.rejects(stat(computer(profiles[0])), { code: 'ENOENT' });
-  assert.equal(await readFile(join(profiles[1], 'desktop-runtime/state.json'), 'utf8'), '{}');
-  assert.equal(await readFile(join(computer(profiles[1]), 'otto/lima.yaml'), 'utf8'), '{}');
-  await removeProfile({ dataRoot: profiles[1] });
-  await assert.rejects(stat(homes), { code: 'ENOENT' });
-  assert.deepEqual(await readdir(join(root, 'Otto/profiles')), []);
-});
+test(
+  'removing a profile deletes only its own data and private computer',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const { removeProfile } = await import('../runtime/index.mjs');
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-remove-profile-')));
+    const home = process.env.HOME;
+    process.env.HOME = join(root, 'home');
+    t.after(async () => {
+      process.env.HOME = home;
+      await rm(root, { recursive: true, force: true });
+    });
+    const homes = join(root, 'home', '.otto-desktop');
+    const computer = (profile) =>
+      join(homes, createHash('sha256').update(profile).digest('hex').slice(0, 12));
+    const profiles = [join(root, 'Otto/profiles/local'), join(root, 'Other/profiles/local')];
+    for (const profile of profiles) {
+      await mkdir(join(profile, 'desktop-runtime'), { recursive: true });
+      await writeFile(join(profile, 'desktop-runtime/state.json'), '{}');
+      await mkdir(join(computer(profile), 'otto'), { recursive: true });
+      await writeFile(join(computer(profile), 'otto/lima.yaml'), '{}');
+    }
+    await removeProfile({ dataRoot: profiles[0], resourcesPath: root });
+    await assert.rejects(stat(profiles[0]), { code: 'ENOENT' });
+    await assert.rejects(stat(computer(profiles[0])), { code: 'ENOENT' });
+    assert.equal(await readFile(join(profiles[1], 'desktop-runtime/state.json'), 'utf8'), '{}');
+    assert.equal(await readFile(join(computer(profiles[1]), 'otto/lima.yaml'), 'utf8'), '{}');
+    await removeProfile({ dataRoot: profiles[1], resourcesPath: root });
+    await assert.rejects(stat(homes), { code: 'ENOENT' });
+    assert.deepEqual(await readdir(join(root, 'Otto/profiles')), []);
+  },
+);
 
 test('local test installs refuse normal apps and cannot reuse or follow foreign profiles', async (t) => {
   const { testProfile, validateTestApplication } = await import('../scripts/test-install.mjs');

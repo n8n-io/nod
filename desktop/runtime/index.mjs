@@ -805,15 +805,29 @@ export async function removeProfile(options) {
   if (process.platform === 'win32') {
     const { removeWindowsComputer } = await import('./windows.mjs');
     await removeWindowsComputer(dataRoot);
-  } else {
-    const homes = join(homedir(), '.otto-desktop');
-    await rm(join(homes, createHash('sha256').update(dataRoot).digest('hex').slice(0, 12)), {
-      recursive: true,
-      force: true,
-    });
-    await rmdir(homes).catch(() => {});
+    return rm(dataRoot, { recursive: true, force: true });
   }
   await rm(dataRoot, { recursive: true, force: true });
+  const homes = join(homedir(), '.otto-desktop');
+  const limaHome = join(homes, createHash('sha256').update(dataRoot).digest('hex').slice(0, 12));
+  const assets = await findRuntimeAssets({
+    resourcesPath: resolve(options.resourcesPath || options.resources),
+  });
+  const exists = await access(join(limaHome, 'otto/lima.yaml')).then(
+    () => true,
+    () => false,
+  );
+  if (assets && exists)
+    await execute(join(assets, 'lima/bin/limactl'), ['delete', '--force', 'otto'], {
+      env: {
+        PATH: [join(assets, 'lima/bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter),
+        HOME: homedir(),
+        LIMA_HOME: limaHome,
+      },
+      timeout: 120_000,
+    });
+  await rm(limaHome, { recursive: true, force: true });
+  await rmdir(homes).catch(() => {});
 }
 
 async function stopComputer(options) {

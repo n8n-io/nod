@@ -65,7 +65,7 @@ On Windows, the message reads "Otto needs more free disk space to prepare its pr
 
 Retry first. Don't delete the profile, VM, database or runtime cache by hand to fix it. If it still fails, [send feedback](#send-feedback-with-a-diagnostic-report). If the chat can't open, send the setup error you see instead.
 
-To start over with nothing kept, select **Remove all data…** in the **Otto** menu, then open Otto again.
+To start over, select **Remove all data…** in the **Otto** menu, then open Otto again. It deletes your profile and private computer. See [Remove Otto](/get-started/install-desktop/#remove-otto) for what it keeps.
 
 ### Windows says WSL is missing
 

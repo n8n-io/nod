@@ -1198,10 +1198,11 @@ async function removeAllData() {
     const { removeProfile } = await import(
       pathToFileURL(join(engineRoot, 'desktop', 'runtime', 'index.mjs')).href
     );
+    app.setLoginItemSettings({ openAtLogin: false });
     const browser = session.fromPartition('persist:otto-app');
     await browser.clearStorageData();
     await browser.clearCache();
-    await removeProfile({ dataRoot: profileRoot });
+    await removeProfile({ dataRoot: profileRoot, resourcesPath: engineRoot });
     app.exit();
   }, 'Otto could not remove all its data.');
 }

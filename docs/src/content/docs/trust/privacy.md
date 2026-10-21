@@ -101,7 +101,7 @@ Memory notes come only from your own messages and the notes you add or import in
 - **Vault items.** Open the item in **Trust → Logins and cards** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
 - **Composio key.** Sign in to Easy Connect and confirm the switch in **Settings → App connections**. This deletes your saved key and disconnects the apps you connected through your project.
-- **Everything.** In the desktop app, select **Remove all data** in **Settings → General**. Otto deletes your profile and private computer from the folders above, then quits. From source, stop Otto and delete `.local/` and its Docker volumes. Uninstalling the app alone keeps your data. A service you signed in to through Otto may still list Otto as a connected app until you remove it there.
+- **Everything.** In the desktop app, select **Remove all data** in **Settings → General**. Otto deletes your profile and private computer from the folders above, then quits. From source, stop Otto and delete its `OTTO_DATA_ROOT` folder (`.local/` by default) and its Docker volumes. Uninstalling the app alone keeps your data. A service you signed in to through Otto may still list Otto as a connected app until you remove it there.
 
 :::caution
 There's no button to clear only your chat history yet. **Remove all data** deletes it along with everything else.
