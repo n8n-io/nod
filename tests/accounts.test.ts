@@ -1103,6 +1103,68 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     };
   }
 
+  test('model connections verify credential storage before opening sign-in or calling a provider', async (t) => {
+    const f = await fixture(t);
+    const { createEnvironmentKeyStore } = await import('../src/providers/environment/key-store.ts');
+    const invalidKey = 'a'.repeat(64);
+    Object.assign(f.keyStore, createEnvironmentKeyStore(invalidKey));
+    const calls = { signIn: 0, authorize: 0, catalog: 0 };
+    const signIn = stubSignIn(async () => subscriptionCredential());
+    const owner = await f.create('fixture-owner', {
+      ...f.backend,
+      signIn(input) {
+        calls.signIn++;
+        return signIn(input);
+      },
+      authorize(input) {
+        calls.authorize++;
+        return f.backend.authorize(input);
+      },
+      catalog(provider, method) {
+        calls.catalog++;
+        return f.backend.catalog(provider, method);
+      },
+    });
+    const app = Fastify();
+    owner.register(app);
+    t.after(() => app.close());
+    for (const [url, payload] of [
+      ['/api/models/oauth', { provider: 'openai' }],
+      ['/api/models/oauth', { provider: 'openrouter' }],
+      ['/api/models/keys', { provider: 'openai', key: 'fixture-provider-key' }],
+      ['/api/models/endpoints', { url: 'http://localhost:11434/v1' }],
+    ] as const) {
+      const response = await app.inject({ method: 'POST', url, payload });
+      assert.equal(response.statusCode, 400);
+      assert.ok(!response.body.includes(invalidKey));
+      assert.deepEqual(calls, { signIn: 0, authorize: 0, catalog: 0 });
+    }
+    assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 0);
+    assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 0);
+    Object.assign(f.keyStore, createEnvironmentKeyStore(Buffer.alloc(32, 77).toString('base64')));
+    const started = await app.inject({
+      method: 'POST',
+      url: '/api/models/oauth',
+      payload: { provider: 'openai' },
+    });
+    assert.equal(started.statusCode, 200);
+    const { attempt } = started.json();
+    const completed = await app.inject({
+      method: 'POST',
+      url: '/api/models/oauth/complete',
+      payload: {
+        url: `http://127.0.0.1:1455/auth/callback?state=${attempt}&code=fixture`,
+      },
+    });
+    assert.equal(completed.statusCode, 200, completed.body);
+    assert.deepEqual(owner.signInStatus(attempt), { status: 'connected' });
+    assert.deepEqual(calls, { signIn: 1, authorize: 0, catalog: 1 });
+    assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 1);
+    assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 1);
+    assert.equal((await (await owner.resolve()).read())?.type, 'oauth');
+    assert.ok(!JSON.stringify(owner.view()).includes('fixture-access'));
+  });
+
   test('model store batches owned credentials and keeps transient key failures distinct from unavailable grants', async (t) => {
     const f = await fixture(t);
     const { createDatabaseModelStore } = await import('../src/server/model-store.ts');

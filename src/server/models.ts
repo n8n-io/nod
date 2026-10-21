@@ -194,6 +194,25 @@ export function createModelService(options: {
       );
     }
   }
+  async function checkStorage() {
+    if (!options.keyStore.configured)
+      throw new ConnectionError(
+        'Configure OTTO_VAULT_KEY in server settings before saving a connection.',
+      );
+    try {
+      await options.keyStore.getKey();
+    } catch {
+      throw new ConnectionError(
+        options.keyStore.id === 'environment'
+          ? 'Check OTTO_VAULT_KEY in server settings: it must be a 32-byte key encoded as base64 that matches this Otto data. Restart Otto after changing it.'
+          : options.keyStore.id === 'keychain'
+            ? 'Otto cannot access macOS Keychain. Unlock it and allow Otto access, then try again.'
+            : options.keyStore.id === 'filesystem'
+              ? 'Otto cannot open its Vault key file. Check the file and its permissions, then try again.'
+              : 'Otto cannot open its credential storage. Check your server settings, then try again.',
+      );
+    }
+  }
   async function save(
     provider: ModelProvider,
     method: ModelMethod,
@@ -397,10 +416,7 @@ export function createModelService(options: {
   }
   async function begin(provider: 'openai' | 'openrouter', connectionId?: string) {
     if (closed) throw new ConnectionError('Model connections have stopped.');
-    if (!options.keyStore.configured)
-      throw new ConnectionError(
-        'Configure OTTO_VAULT_KEY in server settings before saving a connection.',
-      );
+    await checkStorage();
     await reload();
     const row = connectionId
       ? rows.find(
@@ -541,10 +557,7 @@ export function createModelService(options: {
       }
     },
     async addKey(provider: ModelProvider, key: string) {
-      if (!options.keyStore.configured)
-        throw new ConnectionError(
-          'Configure OTTO_VAULT_KEY in server settings before saving a connection.',
-        );
+      await checkStorage();
       const value: ModelCredential = { type: 'api_key', key };
       remember(value);
       return tracked(provider, 'api_key', async () =>
@@ -552,10 +565,7 @@ export function createModelService(options: {
       );
     },
     async addEndpoint(address: string, key?: string) {
-      if (!options.keyStore.configured)
-        throw new ConnectionError(
-          'Configure OTTO_VAULT_KEY in server settings before saving a connection.',
-        );
+      await checkStorage();
       const url = endpointAddress(address);
       if (!url)
         throw new ConnectionError('Enter a server address such as http://localhost:11434/v1.');

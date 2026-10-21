@@ -170,6 +170,7 @@ flowchart LR
 ```
 
 - Otto encrypts saved keys and sign-ins with the Vault key. The Mac keeps that key in Keychain, and the Windows app protects it with Windows DPAPI. Other source installs need `OTTO_VAULT_KEY`.
+- Otto checks credential storage before starting a connection. Fix any reported Vault key or permissions issue, then try again.
 - Keys from `.env` stay in server memory and aren't copied into the database.
 - Your browser doesn't store the key, and Otto removes it from provider errors.
 
