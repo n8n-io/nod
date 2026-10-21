@@ -38,6 +38,7 @@ export interface N8nBenchOptions {
   beforeVerify?: string;
   agent: 'otto' | 'claude-code';
   verifyConcurrency?: number;
+  claudePlugin?: string;
 }
 
 export const infrastructure = (run: BenchRun) =>
@@ -556,6 +557,7 @@ export async function runN8nBench(options: N8nBenchOptions) {
             minutes: options.minutes,
             frame: options.frame,
             agent: options.agent,
+            claudePlugin: options.claudePlugin,
           },
           options.minutes,
         );

@@ -28,6 +28,7 @@ export interface N8nBenchSpec {
   minutes: number;
   frame: string;
   agent?: 'otto' | 'claude-code';
+  claudePlugin?: string;
 }
 
 export const benchHost = 'n8n.otto-bench.example';
@@ -342,7 +343,9 @@ function claudeTurn(
   session: string | undefined,
   deadline: number,
   tools: ToolCall[],
+  plugin?: string,
 ) {
+  const allowed = plugin ? [...claudeTools, 'Skill'] : claudeTools;
   return new Promise<{ result?: ClaudeEvent; error?: string }>((resolve) => {
     const child = spawn(
       'claude',
@@ -356,10 +359,11 @@ function claudeTurn(
         '--mcp-config',
         join(folder, 'mcp.json'),
         '--strict-mcp-config',
+        ...(plugin ? ['--plugin-dir', plugin] : []),
         '--tools',
-        claudeTools.join(','),
+        allowed.join(','),
         '--allowedTools',
-        ['mcp__n8n', ...claudeTools].join(','),
+        ['mcp__n8n', ...allowed].join(','),
         '--output-format',
         'stream-json',
         '--verbose',
@@ -484,6 +488,7 @@ async function runClaude(
         session,
         deadline,
         all,
+        spec.claudePlugin,
       );
       result.turns++;
       if (!reply.result) {
