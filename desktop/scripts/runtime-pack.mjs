@@ -153,9 +153,10 @@ try {
 if (!archive) {
   console.log('Creating the verified Otto Runtime pack.');
   await rm(`${path}.tmp`, { force: true });
+  const images = ['images/postgres.tar.gz', 'images/browser.tar.gz', 'images/workspace.tar.gz'];
   await create(
     { cwd: assets, file: `${path}.tmp`, gzip: { level: 6 }, portable: true, noMtime: true },
-    files.map((entry) => entry.path),
+    files.map((entry) => entry.path).sort((a, b) => images.indexOf(a) - images.indexOf(b)),
   );
   await rename(`${path}.tmp`, path);
   archive = { file, bytes: (await lstat(path)).size, sha256: await assetHash(path) };

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { constants, createReadStream } from 'node:fs';
+import { constants, createReadStream, createWriteStream } from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -19,7 +19,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { createGunzip } from 'node:zlib';
-import { extract } from 'tar';
+import { Parser } from 'tar';
 
 const pending = new Map();
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -277,16 +277,25 @@ export async function seedRuntimeCache({
 function unpackRuntime(
   release,
   source,
-  { message, failure, onStatus, signal, cacheRoot, inspectDisk },
+  { message, failure, onStatus, signal, cacheRoot, inspectDisk = statfs },
 ) {
-  const key = runtimeCacheRoot(release, cacheRoot);
-  if (pending.has(key)) return pending.get(key);
-  const operation = install(
-    release,
-    async (target) => {
+  const root = runtimeCacheRoot(release, cacheRoot);
+  if (pending.has(root)) return pending.get(root);
+  const files = new Map(release.files.map((file) => [file.path, Promise.withResolvers()]));
+  for (const file of files.values()) file.promise.catch(() => {});
+  const done = (async () => {
+    const existing = await verifiedCache(release, signal, cacheRoot);
+    if (existing) return existing;
+    try {
+      signal?.throwIfAborted();
+      await mkdir(dirname(root), { recursive: true, mode: 0o700 });
+      await rm(root, { recursive: true, force: true });
+      await requireDiskSpace(release, dirname(root), inspectDisk);
+      for (const directory of new Set(release.files.map((file) => dirname(join(root, file.path)))))
+        await mkdir(directory, { recursive: true, mode: 0o700 });
       onStatus({ phase: 'installing', message, progress: 0 });
       const expected = new Map(release.files.map((file) => [file.path, file]));
-      const seen = new Set();
+      const writes = [];
       let invalid = false;
       let expanded = 0;
       let received = 0;
@@ -319,38 +328,74 @@ function unpackRuntime(
           );
         },
       });
-      const unpack = extract({
-        cwd: target,
+      const parser = new Parser({
         strict: true,
-        preservePaths: false,
-        noMtime: true,
-        gzip: false,
-        filter(path, entry) {
-          const file = expected.get(path);
-          if (!file || seen.has(path) || entry.type !== 'File' || entry.size !== file.bytes) {
+        onReadEntry(entry) {
+          const file = expected.get(entry.path);
+          expected.delete(entry.path);
+          if (!file || entry.type !== 'File' || entry.size !== file.bytes) {
             invalid = true;
-            return false;
+            entry.resume();
+            return;
           }
-          seen.add(path);
-          return true;
+          const path = join(root, file.path);
+          const hash = createHash('sha256');
+          const write = pipeline(
+            entry,
+            new Transform({
+              transform(chunk, encoding, callback) {
+                hash.update(chunk);
+                callback(null, chunk);
+              },
+            }),
+            createWriteStream(path, { flags: 'wx', mode: 0o600 }),
+            { signal },
+          ).then(async () => {
+            if (hash.digest('hex') !== file.sha256) throw new Error(failure);
+            await chmod(path, file.mode);
+            files.get(file.path).resolve();
+          });
+          write.catch(() => {});
+          writes.push(write);
         },
       });
       const input = await source();
       try {
-        await pipeline(input, counted, createGunzip(), bounded, unpack, { signal });
+        await pipeline(input, counted, createGunzip(), bounded, parser, { signal });
+        await Promise.all(writes);
       } catch (error) {
         if (signal?.aborted || ['ENOSPC', 'EDQUOT'].includes(error.code)) throw error;
         throw new Error(failure, { cause: error });
       }
       if (received !== release.archive.bytes || archive.digest('hex') !== release.archive.sha256)
         throw new Error(failure);
-      if (invalid || seen.size !== expected.size)
-        throw new Error('The runtime pack contains unexpected files.');
+      if (invalid || expected.size) throw new Error('The runtime pack contains unexpected files.');
+      await writeFile(join(root, '.ready.json'), JSON.stringify({ id: release.id }), {
+        mode: 0o600,
+      });
+      return root;
+    } catch (error) {
+      await rm(root, { recursive: true, force: true });
+      throw installationError(error);
+    }
+  })();
+  done.then(
+    () => {
+      for (const file of files.values()) file.resolve();
     },
-    { onStatus, signal, cacheRoot, inspectDisk },
-  ).finally(() => pending.delete(key));
-  pending.set(key, operation);
-  return operation;
+    (error) => {
+      for (const file of files.values()) file.reject(error);
+    },
+  );
+  const assets = {
+    root,
+    paths: [...files.keys()],
+    ready: (path) => files.get(path).promise,
+    done,
+  };
+  pending.set(root, assets);
+  done.catch(() => {}).finally(() => pending.delete(root));
+  return assets;
 }
 
 export async function installRuntimeArchive({
@@ -374,7 +419,7 @@ export async function installRuntimeArchive({
     signal,
     cacheRoot,
     inspectDisk,
-  });
+  }).done;
 }
 
 function downloadRuntime(release, options) {
@@ -419,9 +464,9 @@ function downloadRuntime(release, options) {
   );
 }
 
-export async function ensureRuntimeAssets(options) {
+export async function openRuntimeAssets(options) {
   const found = await findRuntimeAssets(options);
-  if (found) return found;
+  if (found) return { root: found, paths: [], ready: async () => {}, done: Promise.resolve(found) };
   const release = options.release
     ? validateRuntimeRelease(options.release)
     : await runtimeRelease(options.resourcesPath);
@@ -436,6 +481,10 @@ export async function ensureRuntimeAssets(options) {
   throw Object.assign(new Error('Choose the Otto Runtime pack to finish setting up this Mac.'), {
     code: 'RUNTIME_ARCHIVE_REQUIRED',
   });
+}
+
+export async function ensureRuntimeAssets(options) {
+  return (await openRuntimeAssets(options)).done;
 }
 
 export async function prepareRuntimeUpdate(release, options) {

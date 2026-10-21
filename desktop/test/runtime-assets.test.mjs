@@ -28,6 +28,7 @@ import {
   ensureRuntimeAssets,
   findRuntimeAssets,
   installRuntimeArchive,
+  openRuntimeAssets,
 } from '../runtime/assets.mjs';
 import {
   automaticRelease,
@@ -1195,6 +1196,34 @@ test('runtime download rejects an insecure redirect without fetching it or leavi
   await assert.rejects(ensureRuntimeAssets(options));
   assert.equal(request.mock.callCount(), 1);
   assert.deepEqual(await readdir(options.cacheRoot), []);
+});
+
+test('runtime files become ready only after their own bytes verify, and a mismatched file never does', async (t) => {
+  const options = await fixture(t);
+  const bytes = await readFile(options.archivePath);
+  const assets = await openRuntimeAssets({
+    ...options,
+    downloadUrl: 'https://runtime.example.invalid/fixture.tar.gz',
+    fetch: async () => new Response(bytes),
+  });
+  for (const file of options.release.files) {
+    await assets.ready(file.path);
+    assert.equal(await assetHash(join(assets.root, file.path)), file.sha256);
+  }
+  assert.equal(await assets.done, assets.root);
+  const tampered = await fixture(t);
+  tampered.release.files[1].sha256 = 'f'.repeat(64);
+  tampered.release.id = createHash('sha256')
+    .update(JSON.stringify(tampered.release.files))
+    .digest('hex');
+  const rejected = await openRuntimeAssets({
+    ...tampered,
+    downloadUrl: 'https://runtime.example.invalid/fixture.tar.gz',
+    fetch: async () => new Response(await readFile(tampered.archivePath)),
+  });
+  await assert.rejects(rejected.ready(tampered.release.files[1].path));
+  await assert.rejects(rejected.done);
+  assert.deepEqual(await readdir(tampered.cacheRoot), []);
 });
 
 test('runtime download rejects corrupt bytes, cleans its download and allows a verified retry', async (t) => {

@@ -10,8 +10,8 @@ import { pipeline } from 'node:stream/promises';
 import { guestConfiguration, protectNetworks } from './guest-config.mjs';
 import {
   assetHash,
-  ensureRuntimeAssets,
   findRuntimeAssets,
+  openRuntimeAssets,
   removeUnusedRuntimes,
 } from './assets.mjs';
 
@@ -131,17 +131,33 @@ async function prepare(options, onComputerStart) {
   const resourcesPath = resolve(options.resourcesPath || options.resources);
   const onStatus = options.onStatus || options.onProgress || (() => {});
   const signal = options.signal;
-  const status = (phase, message, progress) =>
-    onStatus({ phase, message, ...(progress === undefined ? {} : { progress }) });
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   const controlRoot = join(dataRoot, 'desktop-runtime');
   await mkdir(controlRoot, { recursive: true, mode: 0o700 });
-  const assets = await ensureRuntimeAssets({
+  const runtimeAssets = await openRuntimeAssets({
     resourcesPath,
     onStatus,
     signal,
     resolveDownloadUrl: options.resolveDownloadUrl,
   });
+  let downloading = runtimeAssets.paths.length > 0;
+  let waiting;
+  const status = (phase, message, progress) => {
+    const value = { phase, message, ...(progress === undefined ? {} : { progress }) };
+    if (downloading) waiting = value;
+    else onStatus(value);
+  };
+  runtimeAssets.done.then(
+    () => {
+      downloading = false;
+      if (waiting) onStatus(waiting);
+    },
+    () => {},
+  );
+  const assets = runtimeAssets.root;
+  await Promise.all(
+    runtimeAssets.paths.filter((path) => !path.startsWith('images/')).map(runtimeAssets.ready),
+  );
   const manifest = JSON.parse(await readFile(join(assets, 'manifest.json'), 'utf8'));
   if (
     manifest.version !== 1 ||
@@ -276,6 +292,7 @@ async function prepare(options, onComputerStart) {
   await waitFor(() => runDocker(['info', '--format', '{{.ServerVersion}}']), { signal });
   const prepareImage = async (name) => {
     const item = validImage(manifest.images.find((image) => image.name === name));
+    await runtimeAssets.ready(item.file);
     let installed = '';
     try {
       installed = await runDocker(['image', 'inspect', '--format', '{{.Id}}', item.reference]);
@@ -315,6 +332,7 @@ async function prepare(options, onComputerStart) {
     status,
     prepareImage,
     onStorageReady: options.onStorageReady,
+    runtimeReady: runtimeAssets.done,
   });
 }
 
@@ -499,6 +517,7 @@ export async function finishRuntime({
   status,
   prepareImage,
   onStorageReady,
+  runtimeReady,
 }) {
   status('starting', 'Preparing secure storage and tools…', 0.24);
   const images = {};
@@ -726,6 +745,7 @@ exec "$docker" "$@"
     },
     { signal },
   );
+  await runtimeReady;
   await removeStaleImages(runDocker, runGuest, manifest).catch(() => {});
   status('ready', 'Your private computer is ready.', 1);
   return runtime;
