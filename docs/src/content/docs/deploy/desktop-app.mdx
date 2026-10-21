@@ -178,6 +178,8 @@ These commands are for developers. Use the Node.js version in the root `package.
 
 The app, DMG and matching runtime archive land in `dist/desktop`. `--seed-cache` installs the runtime on your Mac, and you can skip it.
 
+The packaged engine includes only the packages in `dependencies` and what they depend on. Keep web-only packages and build tools in `devDependencies`. A desktop test fails if engine code imports one of them.
+
 | To                                  | Run                                                                                        |
 | ----------------------------------- | ------------------------------------------------------------------------------------------ |
 | Build a DMG with the runtime inside | `pnpm --dir desktop run build --full`                                                      |

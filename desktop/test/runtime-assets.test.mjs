@@ -999,6 +999,34 @@ test('bundle copy includes explicit release assets under .local while excluding 
   ]);
 });
 
+test('engine source imports only production dependencies outside the development server', async () => {
+  const { builtinModules } = await import('node:module');
+  const repository = fileURLToPath(new URL('../../', import.meta.url));
+  const manifest = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8'));
+  const allowed = new Set([...Object.keys(manifest.dependencies), ...builtinModules]);
+  const files = [join(repository, 'desktop/main/engine.mjs')];
+  const walk = async (directory) => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (path !== join(repository, 'src/web')) await walk(path);
+      } else if (/\.(?:ts|tsx|mjs)$/.test(entry.name)) files.push(path);
+    }
+  };
+  await walk(join(repository, 'src'));
+  await walk(join(repository, 'desktop/runtime'));
+  const imported = new Set();
+  for (const file of files) {
+    const source = await readFile(file, 'utf8');
+    for (const [, specifier] of source.matchAll(
+      /(?:^|\n)\s*(?:import(?!\s+type\b)[^'"]*?from\s*|export[^'"]*?from\s*|import\s*\(\s*|import\s+)['"]([^'"./][^'"]*)['"]/g,
+    ))
+      if (!specifier.startsWith('node:')) imported.add(specifier.match(/^(?:@[^/]+\/)?[^/]+/)[0]);
+  }
+  imported.delete('vite');
+  assert.deepEqual([...imported].filter((name) => !allowed.has(name)).sort(), []);
+});
+
 test('packaged engine loads dynamic dependencies and binary links outside the checkout and excludes other platforms', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'otto-packaged-dependencies-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -1021,6 +1049,35 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
     'import value from "./index.mjs"; console.log(value);',
   );
   await symlink('../synthetic-extension/cli.mjs', join(source, 'node_modules', '.bin', 'probe'));
+  await writeFile(
+    join(source, 'package.json'),
+    JSON.stringify({
+      dependencies: {
+        'synthetic-extension': '1.0.0',
+        'synthetic-linux': '1.0.0',
+        '@synthetic/intel': '1.0.0',
+      },
+      devDependencies: { 'synthetic-tool': '1.0.0' },
+    }),
+  );
+  await writeFile(
+    join(dependency, 'package.json'),
+    JSON.stringify({
+      name: 'synthetic-extension',
+      type: 'module',
+      exports: './index.mjs',
+      dependencies: { 'synthetic-helper': '2.0.0' },
+    }),
+  );
+  for (const [directory, version] of [
+    [join(source, 'node_modules', 'synthetic-helper'), '1.0.0'],
+    [join(dependency, 'node_modules', 'synthetic-helper'), '2.0.0'],
+    [join(source, 'node_modules', 'synthetic-tool'), '1.0.0'],
+  ]) {
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'package.json'), JSON.stringify({ version }));
+  }
+  await symlink('../synthetic-tool/package.json', join(source, 'node_modules', '.bin', 'tool'));
   for (const name of ['synthetic-linux', '@synthetic/intel']) {
     const directory = join(source, 'node_modules', name);
     await mkdir(directory, { recursive: true });
@@ -1030,8 +1087,23 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
     );
   }
   await copyEngineDependencies({ root: source, target });
-  for (const name of ['synthetic-linux', '@synthetic/intel'])
-    await assert.rejects(stat(join(target, 'node_modules', name)), { code: 'ENOENT' });
+  for (const path of [
+    'synthetic-linux',
+    '@synthetic/intel',
+    'synthetic-tool',
+    'synthetic-helper',
+    '.bin/tool',
+  ])
+    await assert.rejects(stat(join(target, 'node_modules', path)), { code: 'ENOENT' });
+  assert.equal(
+    JSON.parse(
+      await readFile(
+        join(target, 'node_modules/synthetic-extension/node_modules/synthetic-helper/package.json'),
+        'utf8',
+      ),
+    ).version,
+    '2.0.0',
+  );
   await rm(source, { recursive: true });
   await writeFile(
     join(target, 'probe.mjs'),
