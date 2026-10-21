@@ -121,7 +121,7 @@ export function createSession(options: {
         await post('/api/thread/stop', {});
         throw new Error('The agent made no progress and was stopped.');
       }
-      await sleep(250);
+      await sleep(1000);
     }
   }
 
@@ -447,7 +447,7 @@ export function createSession(options: {
         const status = result.rows[0]?.status;
         if (!status) throw new Error('The observed turn does not exist.');
         if (status !== 'queued' && status !== 'running') return;
-        await sleep(250);
+        await sleep(1000);
       }
       throw new Error('The scenario exceeded its time limit.');
     },
