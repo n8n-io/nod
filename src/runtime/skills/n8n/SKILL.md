@@ -71,11 +71,11 @@ Read the ones the work needs before you act, and again when the work turns to so
 
 ## Pitfalls the tools do not catch
 
-- A picker (resource locator) holds an ID in list and id mode, so a readable name such as primary or Sheet1 there points at nothing. Use an ID the user gave or you looked up with explore_node_resources, name or URL mode with the user's own value where the node offers it, or else list mode with an empty value for the user to choose.
-- A node that outputs nothing stops everything after it. When an outcome must still happen, such as a digest on a quiet day, set alwaysOutputData on the node that can output nothing and handle the empty item there; elsewhere it feeds empty items to later steps.
+- A picker (resource locator) holds an ID in list and id mode, and n8n refuses to start a workflow whose id-mode value doesn't match the service's ID format, so a name or alias there fails. Use an ID the user gave or you looked up with explore_node_resources, name or URL mode with the user's own value where the node offers it, or else list mode with an empty value for the user to choose.
+- A node that outputs nothing stops everything after it. When an outcome must still happen, such as a scheduled report when nothing is new, set alwaysOutputData on the node that can output nothing and handle the empty item there; elsewhere it feeds empty items to later steps.
 - Read an AI node's output at the path its type and version use, from get_node_types or a past execution, not from memory.
 - A response that wraps its records, such as { data: [...] }, arrives as one item. Split it out before steps that work per record.
-- When one failing item should not stop the others, such as several channels, accounts or URLs, set onError to continue on that node and report the failures.
+- When one failing item should not stop the others, such as one call per independent record, set onError to continue on that node and report the failures.
 - A polling or scheduled workflow marks or stores what it handled, after handling it, so the next run skips it.
 - Keep the model a workflow or Agent already uses unless the user asks to change it. Choose a new one from a lookup in this conversation: the node's model list through explore_node_resources, or discover_agent_assets for an Agent. Never type a model ID from memory.
 - Give every loop that goes back, such as a retry or a revision round, an exit: a counter or a maximum number of rounds. Never test it with pinned data that keeps it looping, because a test runs until it ends.
