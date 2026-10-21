@@ -1,5 +1,7 @@
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createSession } from './session.ts';
@@ -25,6 +27,7 @@ export interface N8nBenchSpec {
   n8nUrl: string;
   minutes: number;
   frame: string;
+  agent?: 'otto' | 'claude-code';
 }
 
 export const benchHost = 'n8n.otto-bench.example';
@@ -195,6 +198,8 @@ async function run(spec: N8nBenchSpec): Promise<BenchRun> {
       return result;
     }
   const opening = [seeded.note, conversation[0].text].filter(Boolean).join(' ');
+  if (spec.agent === 'claude-code')
+    return runClaude(spec, result, member.mcpApiKey, seeded, opening, conversationId, deadline);
   const unroute = routeFixtureHosts([benchHost], spec.n8nUrl);
   let stack: Stack | undefined;
   terminate = async () => {
@@ -303,6 +308,232 @@ async function run(spec: N8nBenchSpec): Promise<BenchRun> {
   } catch (failure) {
     result.error ??= failure instanceof Error ? failure.message : String(failure);
   }
+  result.seconds = Math.round((Date.now() - started) / 1000);
+  return result;
+}
+
+const claudeTools = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'TodoWrite'];
+
+interface ClaudeEvent {
+  type: string;
+  message?: {
+    content?: Array<{
+      type: string;
+      text?: string;
+      id?: string;
+      name?: string;
+      input?: unknown;
+      tool_use_id?: string;
+      content?: unknown;
+      is_error?: boolean;
+    }>;
+  };
+  result?: string;
+  total_cost_usd?: number;
+  session_id?: string;
+  is_error?: boolean;
+  usage?: Record<string, number>;
+}
+
+function claudeTurn(
+  folder: string,
+  model: string,
+  text: string,
+  session: string | undefined,
+  deadline: number,
+  tools: ToolCall[],
+) {
+  return new Promise<{ result?: ClaudeEvent; error?: string }>((resolve) => {
+    const child = spawn(
+      'claude',
+      [
+        '-p',
+        '--bare',
+        '--model',
+        model,
+        '--effort',
+        'high',
+        '--mcp-config',
+        join(folder, 'mcp.json'),
+        '--strict-mcp-config',
+        '--tools',
+        claudeTools.join(','),
+        '--allowedTools',
+        ['mcp__n8n', ...claudeTools].join(','),
+        '--output-format',
+        'stream-json',
+        '--verbose',
+        ...(session ? ['--resume', session] : []),
+        text,
+      ],
+      {
+        cwd: join(folder, 'work'),
+        env: {
+          ...process.env,
+          CLAUDE_CONFIG_DIR: join(folder, 'config'),
+          MCP_TOOL_TIMEOUT: '600000',
+          MCP_TIMEOUT: '60000',
+          DISABLE_AUTOUPDATER: '1',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    const pending = new Map<string, ToolCall>();
+    let buffer = '';
+    let stderr = '';
+    let result: ClaudeEvent | undefined;
+    const timer = setTimeout(() => child.kill('SIGTERM'), Math.max(1000, deadline - Date.now()));
+    child.stderr.on('data', (chunk) => (stderr = (stderr + chunk).slice(-4000)));
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        let event: ClaudeEvent;
+        try {
+          event = JSON.parse(line) as ClaudeEvent;
+        } catch {
+          continue;
+        }
+        if (event.type === 'result') result = event;
+        for (const block of event.message?.content ?? []) {
+          if (event.type === 'assistant' && block.type === 'tool_use' && block.id) {
+            const call: ToolCall = {
+              name: block.name ?? 'tool',
+              ...(block.name?.startsWith('mcp__n8n__')
+                ? { tool: block.name.slice('mcp__n8n__'.length) }
+                : {}),
+              input: block.input,
+              status: 'unfinished',
+              at: Date.now(),
+            };
+            pending.set(block.id, call);
+            tools.push(call);
+          }
+          if (event.type === 'assistant' && block.type === 'text' && block.text?.trim())
+            tools.push({ name: 'agent-text', input: block.text, status: 'text', at: Date.now() });
+          if (event.type === 'user' && block.type === 'tool_result' && block.tool_use_id) {
+            const call = pending.get(block.tool_use_id);
+            if (!call) continue;
+            const output = clip(block.content, 4000);
+            call.status = block.is_error ? 'failed' : 'succeeded';
+            call.ms = Date.now() - call.at;
+            if (block.is_error) call.error = output;
+            else call.output = output;
+          }
+        }
+      }
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(
+        result
+          ? { result }
+          : { error: `Claude Code ended without a result (${code}): ${stderr.slice(-600)}` },
+      );
+    });
+  });
+}
+
+async function runClaude(
+  spec: N8nBenchSpec,
+  result: BenchRun,
+  token: string,
+  seeded: { messages: Array<{ role: string; text: string }>; transcript: unknown[] },
+  opening: string,
+  conversationId: string,
+  deadline: number,
+): Promise<BenchRun> {
+  const started = Date.now();
+  const folder = await mkdtemp(join(tmpdir(), 'otto-n8nbench-claude-'));
+  await mkdir(join(folder, 'work'));
+  await mkdir(join(folder, 'config'));
+  await writeFile(
+    join(folder, 'mcp.json'),
+    JSON.stringify({
+      mcpServers: {
+        n8n: {
+          type: 'http',
+          url: new URL('/mcp-server/http', spec.n8nUrl).href,
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      },
+    }),
+  );
+  const model = spec.model.split('/').slice(1).join('/') || spec.model;
+  const { conversation, messageBudget } = spec.item.definition;
+  const all: ToolCall[] = [];
+  try {
+    await sidecar(spec.sidecar, '/proxy/start', {
+      id: conversationId,
+      conversation: conversation.map((turn, index) => (index ? turn : { ...turn, text: opening })),
+      ...(messageBudget ? { messageBudget } : {}),
+    });
+    const history = seeded.messages.length
+      ? `Earlier in this conversation:\n${seeded.messages.map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.text}`).join('\n\n')}\n\n`
+      : '';
+    let text = `${spec.frame}${opening}`;
+    let session: string | undefined;
+    for (let turn = 0; ; turn++) {
+      const sentAt = Date.now();
+      result.messages.push({ role: 'user', text, at: sentAt });
+      const reply = await claudeTurn(
+        folder,
+        model,
+        turn ? text : `${history}${text}`,
+        session,
+        deadline,
+        all,
+      );
+      result.turns++;
+      if (!reply.result) {
+        result.error = reply.error;
+        break;
+      }
+      session = reply.result.session_id ?? session;
+      result.costUsd += reply.result.total_cost_usd ?? 0;
+      if (reply.result.is_error) result.failedTurns.push(String(reply.result.result).slice(0, 300));
+      const answer = String(reply.result.result ?? '');
+      if (answer.trim()) result.messages.push({ role: 'assistant', text: answer, at: Date.now() });
+      if (Date.now() > deadline) break;
+      const decision = await sidecar<{ kind: string; message?: string }>(
+        spec.sidecar,
+        '/proxy/decide',
+        { id: conversationId, assistantText: answer },
+      );
+      if (decision.kind !== 'followUp' || !decision.message) break;
+      text = decision.message;
+    }
+  } catch (failure) {
+    result.error ??= failure instanceof Error ? failure.message : String(failure);
+  }
+  result.tools = all.filter((call) => call.name !== 'agent-text');
+  result.transcript = [
+    ...seeded.transcript,
+    ...transcriptOf(
+      [
+        ...result.messages.filter((message) => message.role === 'user'),
+        ...all
+          .filter((call) => call.name === 'agent-text')
+          .map((call) => ({ role: 'assistant' as const, text: String(call.input), at: call.at })),
+      ].sort((a, b) => a.at - b.at),
+      result.tools,
+    ),
+  ];
+  try {
+    const built = await sidecar<{
+      projectId: string;
+      workflows: Array<{ id: string; createdAt?: string; nodes?: unknown[]; settings?: unknown }>;
+      agents: Array<{ id: string; name?: string }>;
+    }>(spec.sidecar, '/artifacts', { userId: result.userId });
+    result.projectId = built.projectId;
+    result.agents = built.agents;
+    result.workflowIds = built.workflows.map((workflow) => workflow.id);
+    result.workflowId = mainWorkflow(built.workflows);
+  } catch (failure) {
+    result.error ??= failure instanceof Error ? failure.message : String(failure);
+  }
+  await rm(folder, { recursive: true, force: true }).catch(() => {});
   result.seconds = Math.round((Date.now() - started) / 1000);
   return result;
 }

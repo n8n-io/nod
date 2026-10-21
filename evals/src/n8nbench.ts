@@ -36,6 +36,7 @@ export interface N8nBenchOptions {
   baseline?: string;
   frame: string;
   beforeVerify?: string;
+  agent: 'otto' | 'claude-code';
 }
 
 export const infrastructure = (run: BenchRun) =>
@@ -99,6 +100,7 @@ async function startSidecar(options: N8nBenchOptions, directory: string, lane = 
       SIDECAR_PORT: '0',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
   });
   const log: string[] = [];
   child.stderr.on('data', (chunk) => log.push(String(chunk)));
@@ -547,6 +549,7 @@ export async function runN8nBench(options: N8nBenchOptions) {
             n8nUrl: lane.url,
             minutes: options.minutes,
             frame: options.frame,
+            agent: options.agent,
           },
           options.minutes,
         );
@@ -621,7 +624,9 @@ export async function runN8nBench(options: N8nBenchOptions) {
   } finally {
     for (const lane of lanes) {
       lane.health.stop();
-      lane.side.child.kill('SIGTERM');
+      try {
+        process.kill(-lane.side.child.pid!, 'SIGTERM');
+      } catch {}
     }
   }
 }

@@ -303,8 +303,9 @@ export async function main(args: Args) {
         baseline: text(args, 'baseline'),
         frame: text(args, 'frame') ?? 'In n8n: ',
         beforeVerify: text(args, 'before-verify'),
+        agent: choice(args, 'agent', ['otto', 'claude-code'] as const, 'otto'),
       });
-      return;
+      process.exit(0);
     }
     case 'whisperbench': {
       const data = text(args, 'data');
