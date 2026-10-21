@@ -283,6 +283,7 @@ await mkdir(diskStage, { recursive: true });
 await run('/bin/cp', ['-cR', application, join(diskStage, `${configuration.productName}.app`)]);
 await run('/bin/ln', ['-s', '/Applications', join(diskStage, 'Applications')]);
 const diskImage = join(output, full ? `Otto-full-${process.arch}.dmg` : `Otto-${process.arch}.dmg`);
+const writableImage = join(stage, 'disk.dmg');
 await run(
   '/usr/bin/hdiutil',
   [
@@ -293,11 +294,19 @@ await run(
     diskStage,
     '-ov',
     '-format',
-    'UDZO',
-    diskImage,
+    'UDRW',
+    writableImage,
   ],
   { timeout: 15 * 60_000 },
 );
+await run(
+  '/usr/bin/hdiutil',
+  ['convert', writableImage, '-format', 'ULFO', '-ov', '-o', diskImage],
+  {
+    timeout: 15 * 60_000,
+  },
+);
+await rm(writableImage, { force: true });
 let diskNotarization;
 if (signing) {
   await run('/usr/bin/codesign', [...signingArguments(signing), diskImage]);
