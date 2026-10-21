@@ -46,6 +46,7 @@ import {
 type Discovery = {
   name: string;
   needsAddress?: boolean;
+  localAddress?: string;
   oauthStatus?: 'pending' | 'connected' | 'cancelled' | 'failed' | null;
   authorizationUrl?: string;
   callbackUrl?: string;
@@ -1464,9 +1465,14 @@ export function Apps({
           )}
           {discovery?.needsAddress ? (
             <form onSubmit={(event) => void connectInstance(event)} autoComplete="off">
-              <Field label={`Your ${discovery.name} address`}>
+              <Field
+                label={`Your ${discovery.name} address`}
+                hint={discovery.localAddress && 'Found on this computer.'}
+              >
                 <Input
+                  key={discovery.localAddress}
                   name="instanceUrl"
+                  defaultValue={discovery.localAddress}
                   required
                   maxLength={2048}
                   placeholder="https://you.app.n8n.cloud"

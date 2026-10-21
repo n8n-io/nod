@@ -19,9 +19,11 @@ Otto can use every tool these servers offer, so it can read and change pages, is
 
 Otto builds, tests and changes n8n workflows and n8n Agents through your n8n instance's MCP server. Open **Apps**, select **Connect** on n8n and enter your n8n address, such as `https://you.app.n8n.cloud` or `localhost:5678`. Otto opens n8n's own sign-in and consent page. To use an access token instead, open **Use an access token instead** and paste the token from n8n under **Settings**, **Instance-level MCP**.
 
+If n8n runs on this computer at its default address, `http://localhost:5678`, the form opens with that address filled in, so connecting takes one click. Otto checks only that address when the form opens, and connects only when you select **Connect n8n**.
+
 If n8n doesn't answer, turn on MCP access in n8n under **Settings**, **Instance-level MCP**, and try again.
 
-The address can be on your computer or your local network, such as a self-hosted n8n. Only an address you enter yourself can be local, never one the model proposes. Otto sends that connection's requests and its token only to that address. `localhost` and `127.0.0.1` count as the same address when the port matches, because n8n can name itself either way.
+The address can be on your computer or your local network, such as a self-hosted n8n. Only an address you enter or confirm yourself can be local, never one the model proposes. Otto sends that connection's requests and its token only to that address. `localhost` and `127.0.0.1` count as the same address when the port matches, because n8n can name itself either way.
 
 Otto loads n8n's tools only when a task needs them, follows n8n's own guide for its tools and uses the [n8n task guide](/how-it-works/skills/), which bundles n8n's [official skills](https://github.com/n8n-io/skills). It writes workflow code to a file in its workspace, checks it with n8n, then creates and tests the workflow with sample data before it reports back. A test doesn't run the steps that send or write to another service, so Otto checks the data each of those steps would have sent. Each n8n action goes through the [trust check](/trust/approvals/), like every app action.
 

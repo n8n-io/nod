@@ -138,11 +138,11 @@ const catalogMs = 10 * 60_000;
 
 export const officialMcp = new Map<
   string,
-  { name: string; endpoint?: string; scope?: string; instancePath?: string }
+  { name: string; endpoint?: string; scope?: string; instancePath?: string; local?: string }
 >([
   ['notion', { name: 'Notion', endpoint: 'https://mcp.notion.com/mcp' }],
   ['linear', { name: 'Linear', endpoint: 'https://mcp.linear.app/mcp', scope: 'read write' }],
-  ['n8n', { name: 'n8n', instancePath: '/mcp-server/http' }],
+  ['n8n', { name: 'n8n', instancePath: '/mcp-server/http', local: 'http://localhost:5678' }],
 ]);
 
 export class DiscoveredConnectionError extends Error {
@@ -413,6 +413,22 @@ export async function createDiscoveredConnections(
     let bound = locals.get(origin);
     if (!bound) locals.set(origin, (bound = options.local(origin)));
     return bound;
+  }
+  async function nearby(service: string) {
+    const server = officialMcp.get(service);
+    if (!server?.local || !options.local) return undefined;
+    const answer = await options
+      .local(server.local)
+      .transport.http(
+        `${server.local}/.well-known/oauth-protected-resource${server.instancePath}`,
+        {},
+        'GET',
+        undefined,
+        AbortSignal.timeout(1000),
+      )
+      .catch(() => undefined);
+    const body = answer && 'body' in answer ? (answer.body as { resource?: unknown }) : null;
+    return typeof body?.resource === 'string' ? server.local : undefined;
   }
   async function addressProposal(service: string, turn?: TurnRef, connectionId?: string) {
     const server = officialMcp.get(service)!;
@@ -1256,11 +1272,11 @@ export async function createDiscoveredConnections(
         if (grant) authorizationUrl = JSON.parse(grant.value).url;
         else row = await proposal(request.params.id);
       }
+      const address = officialMcp.get(row.service)?.instancePath && !row.paths.length;
+      const localAddress = address ? await nearby(row.service) : undefined;
       return reply.header('Cache-Control', 'no-store').send({
         name: row.name,
-        ...(officialMcp.get(row.service)?.instancePath && !row.paths.length
-          ? { needsAddress: true }
-          : {}),
+        ...(address ? { needsAddress: true, localAddress } : {}),
         oauthStatus: row.oauth_status === 'completing' ? 'pending' : row.oauth_status,
         authorizationUrl,
         callbackUrl: row.paths.some((path) => path.kind === 'mcp' && path.clientIdRequired)
