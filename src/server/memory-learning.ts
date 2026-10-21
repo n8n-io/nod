@@ -18,6 +18,20 @@ const answer = z.object({ ops: z.array(z.unknown()) });
 const utc = (column: string) =>
   `to_char(${column} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
+const ownerText = `SELECT m.id,m.text,${utc('m.created_at')} AS at,(SELECT time_zone FROM preferences p WHERE p.owner_id=m.owner_id) AS zone FROM messages m
+  WHERE m.owner_id=$1 AND m.role='user' AND length(m.text)<=4000 AND NOT EXISTS (
+    SELECT 1 FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
+    WHERE offer.owner_id=m.owner_id AND offer.thread_id=m.thread_id AND task->>'title'=m.text)`;
+type OwnerText = { id: string; text: string; at: string; zone: string | null };
+const numbered = (messages: OwnerText[]) =>
+  messages.map((message, index) => ({
+    m: index + 1,
+    at: message.zone
+      ? localTimestamp(message.zone, new Date(message.at))
+      : `${message.at.slice(0, 19)}Z`,
+    text: message.text,
+  }));
+
 const sensitiveTopics =
   'health, religion, politics, sexuality, gender identity, ethnicity, immigration status and criminal history';
 const quoted =
@@ -45,6 +59,14 @@ export function createMemoryLearning(options: {
   curator: MemoryCurator;
   analytics?: CaptureAnalytics;
 }) {
+  const report = (changes: ReturnType<typeof applyOps>, actor: 'agent' | 'background') => {
+    for (const { operation } of changes)
+      options.analytics?.({
+        event: 'otto_memory_changed',
+        properties: { kind: 'note', operation, actor },
+      });
+  };
+
   async function ask(instructions: string, input: object) {
     const reply = await options.curator
       .curate({ task: 'reflect', instructions, input })
@@ -68,32 +90,21 @@ export function createMemoryLearning(options: {
     }
     const [from, after] = tree.reflected.split('/');
     const { rows } = await options.pool.query(
-      `SELECT m.id,m.text,${utc('m.created_at')} AS at,(SELECT time_zone FROM preferences p WHERE p.owner_id=m.owner_id) AS zone FROM messages m
-       WHERE m.owner_id=$1 AND m.role='user' AND m.attachments='[]'::jsonb AND length(m.text)<=4000
+      `${ownerText} AND m.attachments='[]'::jsonb
          AND m.created_at<=now()-interval '10 minutes' AND (m.created_at,m.id)>($2::timestamptz,$3::uuid)
          AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.owner_id=m.owner_id AND a.source_message_id=m.id AND a.action='OTTO_memory_save')
-         AND NOT EXISTS (
-           SELECT 1 FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
-           WHERE offer.owner_id=m.owner_id AND offer.thread_id=m.thread_id AND task->>'title'=m.text)
        ORDER BY m.created_at,m.id LIMIT ${batchSize}`,
       [options.ownerId, from, after],
     );
     if (!rows.length) return;
     const mark = `${rows.at(-1).at}/${rows.at(-1).id}`;
-    const messages: Array<{ id: string; text: string; at: string; zone: string | null }> =
-      rows.filter((row) => !unsafe(row.text));
+    const messages: OwnerText[] = rows.filter((row) => !unsafe(row.text));
     let ops: unknown[] = [];
     if (messages.length) {
       const proposed = await ask(reflectInstructions(tree.sensitive), {
         today: new Date().toISOString().slice(0, 10),
         memory: JSON.stringify(indexLayout(tree, { tentative: true })),
-        messages: messages.map((message, index) => ({
-          m: index + 1,
-          at: message.zone
-            ? localTimestamp(message.zone, new Date(message.at))
-            : `${message.at.slice(0, 19)}Z`,
-          text: message.text,
-        })),
+        messages: numbered(messages),
       });
       if (!proposed) {
         await options.memory.edit((fresh) => {
@@ -115,11 +126,7 @@ export function createMemoryLearning(options: {
       fresh.retries = 0;
       return { operations, applied: operations.length, more: rows.length === batchSize };
     });
-    for (const { operation } of result?.operations ?? [])
-      options.analytics?.({
-        event: 'otto_memory_changed',
-        properties: { kind: 'note', operation, actor: 'background' },
-      });
+    report(result?.operations ?? [], 'background');
     return result;
   }
 
@@ -139,16 +146,11 @@ export function createMemoryLearning(options: {
        recent AS (SELECT r.id FROM messages r, source WHERE r.owner_id=$1 AND r.role='user'
          AND r.thread_id IS NOT DISTINCT FROM source.thread_id AND r.created_at<=source.created_at
          ORDER BY r.created_at DESC,r.id DESC LIMIT ${recentMessages})
-       SELECT m.id,m.text,${utc('m.created_at')} AS at,(SELECT time_zone FROM preferences p WHERE p.owner_id=m.owner_id) AS zone FROM messages m
-       WHERE m.owner_id=$1 AND m.role='user' AND (m.id=ANY($2::uuid[]) OR m.id IN (SELECT id FROM recent))
-         AND length(m.text)<=4000 AND NOT EXISTS (
-           SELECT 1 FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
-           WHERE offer.owner_id=m.owner_id AND offer.thread_id=m.thread_id AND task->>'title'=m.text)
+       ${ownerText} AND (m.id=ANY($2::uuid[]) OR m.id IN (SELECT id FROM recent))
        ORDER BY m.created_at,m.id`,
       [options.ownerId, required, sourceMessageId],
     );
-    const messages: Array<{ id: string; text: string; at: string; zone: string | null }> =
-      rows.filter((row) => !unsafe(row.text));
+    const messages: OwnerText[] = rows.filter((row) => !unsafe(row.text));
     if (!required.every((id) => messages.some((message) => message.id === id)))
       throw new Error(
         'Only the owner’s own messages can be remembered, each up to 4,000 characters and without passwords, codes or card numbers. Nothing was saved.',
@@ -157,13 +159,7 @@ export function createMemoryLearning(options: {
       ...messages.filter((message) => message.id !== sourceMessageId),
       ...messages.filter((message) => message.id === sourceMessageId),
     ];
-    const numbered = ordered.map((message, index) => ({
-      m: index + 1,
-      at: message.zone
-        ? localTimestamp(message.zone, new Date(message.at))
-        : `${message.at.slice(0, 19)}Z`,
-      text: message.text,
-    }));
+    const said = numbered(ordered);
     const ask = async () =>
       answer.safeParse(
         await options.curator.curate({
@@ -172,8 +168,8 @@ export function createMemoryLearning(options: {
           input: {
             today: new Date().toISOString().slice(0, 10),
             memory: JSON.stringify(indexLayout(tree, { tentative: true })),
-            current: numbered.at(-1),
-            earlier: numbered.slice(0, -1),
+            current: said.at(-1),
+            earlier: said.slice(0, -1),
           },
         }),
       );
@@ -186,22 +182,12 @@ export function createMemoryLearning(options: {
         applyOps(fresh, reply.data.ops, ordered, new Date().toISOString(), 'stated'),
       ),
     );
-    for (const { operation } of changes)
-      options.analytics?.({
-        event: 'otto_memory_changed',
-        properties: { kind: 'note', operation, actor: 'agent' },
-      });
-    const saved = changes.flatMap((change) =>
-      change.operation === 'save' ? [{ path: change.path, text: change.text }] : [],
-    );
+    report(changes, 'agent');
     return {
-      saved,
-      archived: changes.flatMap((change) => (change.operation === 'archive' ? [change.path] : [])),
-      ...(saved.length
-        ? {}
-        : {
-            note: 'Nothing was saved. If the details are in an older message, find it with history_search and pass its id in messages.',
-          }),
+      saved: changes.flatMap(({ operation, path, text }) =>
+        operation === 'save' ? [{ path, text }] : [],
+      ),
+      archived: changes.flatMap(({ operation, path }) => (operation === 'archive' ? [path] : [])),
     };
   }
 
