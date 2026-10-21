@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -573,7 +572,7 @@ export async function runN8nBench(options: N8nBenchOptions) {
           console.log(`${job.item.slug}#${job.iteration} discarded: n8n was unavailable.`);
           continue;
         }
-        if (!existsSync(outFile)) await writeFile(outFile, JSON.stringify(run, null, 2));
+        await writeFile(outFile, JSON.stringify(run, null, 2));
         runs.push(run);
         spent += run.costUsd;
         console.log(
