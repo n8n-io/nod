@@ -112,7 +112,7 @@ The prompt has three layers, built in [`src/runtime/prompt.ts`](https://github.c
 
 The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `video-links`. Pi's own tool guidelines are appended to the static prompt, because Otto's custom prompt would otherwise drop them.
 
-Every session of a thread sends the same prompt cache key: a keyed hash of the thread ID that changes when Otto restarts. When a session's system prompt and tools match a recent request from the same thread, as they do for back-to-back background runs, the provider reads them from its cache instead of charging for them again.
+Providers that take a prompt cache key, such as OpenAI, get the same one from every session of a thread: a keyed hash of the thread ID that changes when Otto restarts. When a session's system prompt and tools match a recent request from the same thread, as they do for back-to-back background runs, the provider reads them from its cache and bills them at its cheaper cache-read rate.
 
 ## Message cadence
 
