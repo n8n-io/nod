@@ -172,6 +172,28 @@ async function run(spec: N8nBenchSpec): Promise<BenchRun> {
     credentials: spec.item.definition.credentials ?? [],
   });
   result.userId = member.userId;
+  const { conversation, messageBudget, seed } = spec.item.definition;
+  let seeded: {
+    messages: Array<{ role: string; text: string }>;
+    transcript: unknown[];
+    note: string;
+  } = {
+    messages: [],
+    transcript: [],
+    note: '',
+  };
+  if (seed)
+    try {
+      seeded = await sidecar(spec.sidecar, '/seed', {
+        userId: member.userId,
+        seed,
+        attach: conversation[0]?.attach,
+      });
+    } catch (failure) {
+      result.error = `Seeding failed: ${failure instanceof Error ? failure.message : String(failure)}`;
+      return result;
+    }
+  const opening = [seeded.note, conversation[0].text].filter(Boolean).join(' ');
   const unroute = routeFixtureHosts([benchHost], spec.n8nUrl);
   let stack: Stack | undefined;
   terminate = async () => {
@@ -191,14 +213,30 @@ async function run(spec: N8nBenchSpec): Promise<BenchRun> {
     await prepare(stack, {}, 'UTC');
     await connect(stack, member.mcpApiKey);
     const threadId = (await (await stack.request('/api/state')).json()).threadId as string;
+    if (seeded.messages.length) {
+      const { ownerId } =
+        await load<typeof import('../../src/server/config.ts')>('src/server/config.ts');
+      const now = Date.now();
+      for (const [index, message] of seeded.messages.entries())
+        await stack.pool.query(
+          'INSERT INTO messages (id,owner_id,role,text,thread_id,created_at) VALUES($1,$2,$3,$4,$5,$6)',
+          [
+            randomUUID(),
+            ownerId,
+            message.role,
+            message.text,
+            threadId,
+            new Date(now - (seeded.messages.length - index) * 60_000),
+          ],
+        );
+    }
     const session = createSession({ stack, user: { approve: false }, deadline, stallSeconds: 900 });
-    const { conversation, messageBudget } = spec.item.definition;
     await sidecar(spec.sidecar, '/proxy/start', {
       id: conversationId,
-      conversation,
+      conversation: conversation.map((turn, index) => (index ? turn : { ...turn, text: opening })),
       ...(messageBudget ? { messageBudget } : {}),
     });
-    let text = `${spec.frame}${conversation[0].text}`;
+    let text = `${spec.frame}${opening}`;
     for (;;) {
       const sentAt = new Date();
       const replyTo = await pendingConfirmation(stack, threadId);
@@ -238,7 +276,7 @@ async function run(spec: N8nBenchSpec): Promise<BenchRun> {
   try {
     if (stack) {
       result.tools = toolCalls(stack);
-      result.transcript = transcriptOf(result.messages, result.tools);
+      result.transcript = [...seeded.transcript, ...transcriptOf(result.messages, result.tools)];
       const usage = await stack.pool.query(
         `SELECT coalesce(sum(cost_usd),0)::float AS cost,
          coalesce(sum(coalesce((details->>'inputTokens')::bigint,0)+coalesce((details->>'outputTokens')::bigint,0)+coalesce((details->>'cacheReadTokens')::bigint,0)+coalesce((details->>'cacheWriteTokens')::bigint,0)),0)::float AS tokens

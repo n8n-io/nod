@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -13,6 +14,11 @@ const [
   { UserProxyLlm },
   { verifyBuildExpectations },
   { resolveArtifactContext },
+  { CaseSeedSchema },
+  { remapSeedArtifactIds, transcriptPrefixFromSeed },
+  { uniquifySeedTableNames },
+  { executePriorRuns },
+  { attachedWorkflowNote, attachedAgentNote },
 ] = await Promise.all([
   load('clients/n8n-client.ts'),
   load('run/lane-users.ts'),
@@ -20,6 +26,11 @@ const [
   load('utils/user-proxy/index.ts'),
   load('build-expectations/verifier.ts'),
   load('harness/artifacts/artifact-context.ts'),
+  load('harness/schema.ts'),
+  load('harness/conversation-seed.ts'),
+  load('harness/seed-tables.ts'),
+  load('harness/prior-runs.ts'),
+  load('utils/conversation-text.ts'),
 ]);
 
 const logger = {
@@ -58,11 +69,101 @@ async function provision({ credentials = [] }) {
   };
 }
 
-async function artifacts({ userId }) {
+async function personalProject(userId) {
   const project = list(await owner.fetch('/rest/projects')).find(
     (item) => item.type === 'personal' && item.creatorId === userId,
   );
   if (!project) throw new Error('The member has no personal project.');
+  return project;
+}
+
+const textOf = (blocks = []) =>
+  blocks
+    .flatMap((block) =>
+      block?.type === 'text' && typeof block.text === 'string' ? [block.text] : [],
+    )
+    .join('\n');
+
+async function seedCase({ userId, seed, attach }) {
+  const project = await personalProject(userId);
+  const parsed = CaseSeedSchema.parse(seed);
+  const remapped = remapSeedArtifactIds(parsed);
+  const threadId = randomUUID();
+  await owner.ensureThread(threadId, project.id);
+  for (const item of remapped.projects ?? []) await owner.createTeamProject(item.name);
+  const folders = remapped.folders ?? [];
+  const restored =
+    remapped.workflows.length ||
+    remapped.dataTables.length ||
+    remapped.agents.length ||
+    folders.length
+      ? await owner.restoreThread(
+          threadId,
+          [],
+          remapped.workflows,
+          uniquifySeedTableNames(remapped.dataTables),
+          remapped.agents,
+          { folders, uniquifyNames: false },
+        )
+      : { workflowIds: [], agentIds: [] };
+  for (const kind of ['workflows', 'agents'])
+    await owner
+      .fetch(`/rest/mcp/${kind}/toggle-access`, {
+        method: 'PATCH',
+        body: { availableInMCP: true, projectId: project.id },
+      })
+      .catch((error) => logger.warn(`MCP access for seeded ${kind}: ${error.message}`));
+  const workflows = new Map(
+    parsed.workflows.map((workflow, index) => [
+      workflow.id,
+      {
+        ...remapped.workflows[index],
+        id: restored.workflowIds[index] ?? remapped.workflows[index].id,
+      },
+    ]),
+  );
+  const agents = new Map(
+    parsed.agents.map((agent, index) => [
+      agent.id,
+      { id: restored.agentIds[index], name: remapped.agents[index].config.name },
+    ]),
+  );
+  const failedRuns = parsed.priorRuns?.length
+    ? (
+        await executePriorRuns({
+          client: owner,
+          priorRuns: parsed.priorRuns,
+          seedWorkflows: workflows,
+          logger,
+        })
+      ).filter((outcome) => !outcome.ran)
+    : [];
+  if (failedRuns.length)
+    throw new Error(
+      `A prior run did not record an execution: ${failedRuns.map((run) => run.workflow).join(', ')}`,
+    );
+  const workflow = attach?.workflow ? workflows.get(attach.workflow) : undefined;
+  const agent = attach?.agent ? agents.get(attach.agent) : undefined;
+  if ((attach?.workflow && !workflow) || (attach?.agent && !agent))
+    throw new Error('The attached seed artifact was not restored.');
+  return {
+    messages: remapped.messages
+      .filter(
+        (message) => message.type !== 'custom' && ['user', 'assistant'].includes(message.role),
+      )
+      .map((message) => ({ role: message.role, text: textOf(message.content) }))
+      .filter((message) => message.text.trim()),
+    transcript: transcriptPrefixFromSeed(remapped.messages),
+    note: workflow
+      ? attachedWorkflowNote(`${workflow.name}, id ${workflow.id}`)
+      : agent
+        ? attachedAgentNote(`${agent.name}, id ${agent.id}`)
+        : '',
+  };
+}
+
+async function artifacts({ userId }) {
+  const project = await personalProject(userId);
   const filter = encodeURIComponent(JSON.stringify({ projectId: project.id }));
   const workflows = [];
   for (const item of list(await owner.fetch(`/rest/workflows?filter=${filter}`))) {
@@ -109,6 +210,7 @@ async function judge({ expectations, transcript, workflowId, projectId, agents =
 const routes = {
   '/provision': provision,
   '/artifacts': artifacts,
+  '/seed': seedCase,
   '/proxy/start': startProxy,
   '/proxy/decide': decide,
   '/judge': judge,

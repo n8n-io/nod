@@ -109,10 +109,9 @@ export async function loadCases(directory: string): Promise<BenchCase[]> {
 
 export function supported(item: BenchCase) {
   const { definition } = item;
-  if (definition.seed) return 'seeded conversation';
   if (definition.requiresMemoryCompaction) return 'memory compaction';
   if (definition.conversation[0]?.role !== 'user') return 'starts with the assistant';
-  if (definition.conversation.some((turn) => turn.attach)) return 'attachment';
+  if (definition.conversation.slice(1).some((turn) => turn.attach)) return 'later attachment';
   return undefined;
 }
 
