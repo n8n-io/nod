@@ -416,6 +416,26 @@ export async function createPayments(
   }
 
   function registerRoutes(app: FastifyInstance) {
+    app.get<{ Params: { id: string } }>(
+      '/api/payment-requests/:id/status',
+      async (request, reply) => {
+        reply.header('Cache-Control', 'no-store');
+        if (!z.uuid().safeParse(request.params.id).success)
+          return reply.code(404).send({ error: 'This payment request is unavailable.' });
+        const result = await pool.query<{ status: string }>(
+          `SELECT CASE WHEN v.status='running' THEN 'entering' WHEN v.status IS NOT NULL THEN v.status
+           WHEN p.status='pending' AND EXISTS(SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
+             WHERE u.id=p.turn_id AND u.owner_id=p.owner_id AND th.archived_at IS NULL AND ${currentTurnSql}) THEN 'pending'
+           ELSE 'expired' END AS status
+         FROM vault_payments p LEFT JOIN vault_uses v ON v.id=p.id::text AND v.owner_id=p.owner_id
+         WHERE p.id=$1 AND p.owner_id=$2`,
+          [request.params.id, ownerId],
+        );
+        if (!result.rows[0])
+          return reply.code(404).send({ error: 'This payment request is unavailable.' });
+        return result.rows[0];
+      },
+    );
     app.get<{ Params: { id: string } }>('/api/payment-requests/:id', async (request, reply) => {
       reply.header('Cache-Control', 'no-store');
       if (!z.uuid().safeParse(request.params.id).success)

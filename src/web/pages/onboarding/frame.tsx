@@ -6,9 +6,11 @@ import { Button } from '../../components/ui';
 
 type DisplayStep = OnboardingStep | 'notifications' | 'launchAtLogin';
 
-export const desktopOnboardingSteps: readonly DisplayStep[] = onboardingSteps.flatMap<DisplayStep>(
-  (step) => (step === 'open' ? ['notifications', 'launchAtLogin', step] : [step]),
-);
+export const desktopOnboardingSteps: readonly DisplayStep[] = [
+  ...onboardingSteps,
+  'notifications',
+  'launchAtLogin',
+];
 
 export function OnboardingFrame({
   step,

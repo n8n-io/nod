@@ -138,12 +138,6 @@
   color: var(--error);
   font-size: var(--text-control);
 }
-.ob-notice {
-  scroll-margin-bottom: 96px;
-}
-.ob-notice > .notice {
-  margin: 0;
-}
 .ob-row {
   display: flex;
   align-items: flex-end;
@@ -278,10 +272,6 @@
 }
 .ob .ob-next {
   min-width: 120px;
-}
-.ob .ob-mono,
-.ob .input[type='password'] {
-  font-family: var(--font-mono);
 }
 .ob-select {
   position: relative;

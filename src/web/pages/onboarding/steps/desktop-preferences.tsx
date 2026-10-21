@@ -71,7 +71,7 @@ export function DesktopPreferencesSetup({
   }, [step]);
 
   async function choose(enabled: boolean, advance = false) {
-    if (!step || writing.current) return;
+    if (!step || writing.current || (advance && !enabled)) return;
     writing.current = true;
     setSaving(true);
     setError('');
@@ -173,13 +173,18 @@ function DesktopPreferenceQuestion({
           >
             {notifications
               ? 'I can let you know when setup is ready, a task finishes, or I need your attention — even when you’re using another app.'
-              : 'I can open when you sign in to your computer, so I’m ready when you need me.'}
+              : 'I can open when you sign in to your computer, so I’m ready when you need me.'}{' '}
+            Turn this on to continue.
+            {notifications &&
+              ' If alerts are blocked, allow Otto in your computer’s notification settings.'}
           </PreferenceBubble>,
         ]}
       />
       <Footer
         show={revealed >= sequence.length}
         busy={saving}
+        nextDisabled={!enabled}
+        nextLabel={notifications ? 'Continue' : 'Start chatting'}
         onNext={() => void choose(enabled, true)}
       />
     </section>

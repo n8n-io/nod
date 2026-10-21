@@ -48,11 +48,11 @@ The workspace and browser have separate networks, no access to your home folder,
 
 ## Onboarding during startup
 
-On a new desktop profile, the native window shows the same Welcome screen and analytics choice as the web app immediately. The private computer starts in the background. Once PostgreSQL is ready, the normal Otto server opens the remaining onboarding steps while the workspace and browser finish starting. A model and Gmail are required; Telegram, analytics sharing, notifications and Open at login are optional.
+On a new desktop profile, the native window shows the same Welcome screen and analytics choice as the web app immediately. The private computer starts in the background. Once PostgreSQL is ready, the normal Otto server opens the remaining onboarding steps while the workspace and browser finish starting. A model, Gmail, desktop notifications, and Open at login are required to finish setup. Telegram and analytics sharing are optional.
 
 Before the server starts, the native window saves only the analytics choice and whether Welcome was completed. After the ordinary account API accepts that choice, Otto records its acknowledgment and opens the main Otto window for the remaining onboarding. A restart does not repeat Welcome or overwrite the saved analytics choice; the temporary marker is removed when onboarding completes. Sign-ins, keys, connections and introduction answers use the normal server and storage from the beginning; there is no separate setup backend or credential transfer.
 
-Desktop setup also asks whether to enable notifications and open Otto at login. Each choice is saved before continuing. The web app uses the same onboarding without those native steps. A completed installation keeps its choices and skips onboarding after an update.
+Desktop setup requires notifications and Open at login to be enabled. Each preference is saved before continuing; Open at login is checked against the operating system. The notification preference does not confirm permission from the operating system. If alerts are blocked, allow Otto in the computer’s notification settings. The web app uses the same onboarding without those native steps. A completed installation keeps its choices and skips onboarding after an update.
 
 If the user finishes first, an animated Otto logo stays visible until the workspace and browser are ready. Chat stays unavailable during that wait. Runtime failures offer an explicit retry without clearing saved connections. If notifications are enabled and Otto is not focused, a single notification announces when setup is ready.
 

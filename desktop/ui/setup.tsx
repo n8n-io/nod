@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { SetupProgress } from '../../src/web/components/setup-progress';
 import { Welcome } from '../../src/web/pages/onboarding/steps/welcome';
 import { OnboardingFrame } from '../../src/web/pages/onboarding/frame';
+import { initializeFocusVisibility } from '../../src/web/lib/focus';
 import '../../src/web/theme.css';
 import '../../src/web/components/motion.css';
 import '../../src/web/components/setup-progress.css';
@@ -294,4 +295,5 @@ function Startup() {
   );
 }
 
+initializeFocusVisibility();
 createRoot(document.getElementById('root')!).render(<Startup />);

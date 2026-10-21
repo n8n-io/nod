@@ -336,6 +336,8 @@ async function runningDesktop(
     enginePageLoaded,
     readyRenderers = true,
     notificationsSupported = false,
+    updateLoginItems = () => true,
+    loginItemStatus = () => ({}),
     webPreferences = { quietHoursEnabled: false },
     openFile = open,
     environment = {},
@@ -351,10 +353,14 @@ async function runningDesktop(
   const storage = storedProfile
     ? { ...storedProfile, store: storedProfile.reopen() }
     : await fixture(t, platform);
-  if (!storedProfile)
+  if (!storedProfile && initialState !== 'fresh') {
     await storage.store.save({
-      onboardingCompleted: initialState !== 'fresh',
+      notifications: true,
+      launchAtLogin: true,
+      onboardingCompleted: true,
     });
+    await storage.store.save({ notifications: false, launchAtLogin: false });
+  }
   if (legacyKey) {
     await storage.store.environment();
     const saved = JSON.parse(await readFile(storage.path, 'utf8'));
@@ -399,9 +405,9 @@ async function runningDesktop(
       getPath: (name) => paths.get(name) || dirname(storage.path),
       getVersion: () => version,
       requestSingleInstanceLock: () => false,
-      getLoginItemSettings: () => ({ openAtLogin }),
+      getLoginItemSettings: () => ({ openAtLogin, ...loginItemStatus() }),
       setLoginItemSettings: (value) => {
-        openAtLogin = value.openAtLogin;
+        if (updateLoginItems(value)) openAtLogin = value.openAtLogin;
       },
       quit() {},
     },
@@ -1755,6 +1761,7 @@ test('session reconciliation retries after runtime startup without rebuilding th
           },
         },
       );
+      await f.storage.store.save({ notifications: true, launchAtLogin: true });
       const save = f.storage.store.save;
       f.storage.store.save = async (value) => {
         if (value.onboardingCompleted && failing && failure === 'settings')
@@ -1837,6 +1844,7 @@ test('partial onboarding restart keeps acknowledged consent and normal app progr
     assert.equal(new URL(window.url).pathname, '/onboarding');
     assert.equal(new URL(window.url).searchParams.get('welcome'), 'complete');
     assert.equal((await next.storage.store.get()).welcome.acknowledged, true);
+    await next.storage.store.save({ notifications: true, launchAtLogin: true });
     completed = true;
     await next.handlers.get('otto:settings:save')(
       { sender: window.webContents, senderFrame: window.webContents.mainFrame },
@@ -1849,7 +1857,7 @@ test('partial onboarding restart keeps acknowledged consent and normal app progr
   }
 });
 
-test('completed backend onboarding wins over a stale native Welcome answer without changing consent', async (t) => {
+test('completed backend onboarding resumes required native preferences without changing consent', async (t) => {
   const f = await runningDesktop(
     t,
     async (url, options) => {
@@ -1866,9 +1874,13 @@ test('completed backend onboarding wins over a stale native Welcome answer witho
   try {
     await f.launch();
     await f.settle();
-    assert.equal((await f.storage.store.get()).onboardingCompleted, true);
-    assert.equal((await f.storage.store.get()).welcome, undefined);
-    assert.ok(f.windows.some((window) => window.url && new URL(window.url).pathname === '/'));
+    assert.equal((await f.storage.store.get()).onboardingCompleted, false);
+    assert.equal((await f.storage.store.get()).notifications, false);
+    const recovery = f.windows.find(
+      (window) => window.url && new URL(window.url).pathname === '/onboarding',
+    );
+    assert.ok(recovery);
+    assert.equal(new URL(recovery.url).searchParams.get('preferences'), 'required');
     assert.ok(f.windows.every((window) => !window.url?.includes('welcome=complete')));
   } finally {
     await f.close();
@@ -2431,8 +2443,10 @@ app.whenReady().then(async () => {
   const profile = process.env.OTTO_STORAGE_TEST_PROFILE;
   const settingsPath = join(profile, 'settings.json');
   const store = createSettingsStore(settingsPath, safeStorage);
-  if (process.argv.at(-1) === 'write')
-    await store.save({ notifications: false, launchAtLogin: true, onboardingCompleted: true });
+  if (process.argv.at(-1) === 'write') {
+    await store.save({ notifications: true, launchAtLogin: true, onboardingCompleted: true });
+    await store.save({notifications:false});
+  }
   const { OTTO_VAULT_KEY } = await store.environment();
   const key = Buffer.from(OTTO_VAULT_KEY, 'base64');
   const binding = ['synthetic-owner', 'synthetic-account'];
@@ -2780,12 +2794,13 @@ test('a keyless installation creates one persistent encrypted vault across concu
   for (const environment of environments) assert.deepEqual(environment, { OTTO_VAULT_KEY: vault });
   assert.equal((await f.reopen().environment()).OTTO_VAULT_KEY, vault);
   assert.ok(!(await readFile(f.path, 'utf8')).includes(vault));
-  await f.store.save({ notifications: true, onboardingCompleted: true });
+  await f.store.save({ notifications: true, launchAtLogin: true, onboardingCompleted: true });
   assert.equal((await f.store.environment()).OTTO_VAULT_KEY, vault);
 });
 
 test('settings withhold completion when temporary bytes fail to persist', async (t) => {
   const f = await fixture(t);
+  await f.store.save({ notifications: true, launchAtLogin: true });
   const environment = await f.store.environment();
   const saved = await readFile(f.path, 'utf8');
   const handle = await open(f.path, 'r');
@@ -2841,6 +2856,7 @@ test(
     fail = false;
     const environment = await f.store.environment();
     assert.deepEqual(await reopened.environment(), environment);
+    await f.store.save({ notifications: true, launchAtLogin: true });
     fail = true;
     await assert.rejects(f.store.save({ onboardingCompleted: true }), { code: 'EIO' });
     assert.equal(JSON.parse(await readFile(f.path, 'utf8')).onboardingCompleted, true);
@@ -3841,22 +3857,33 @@ test('Intel updates use their own app assets and an official Otto runtime releas
 test('desktop preference choices resume durably and cannot skip or regress explicit consent', async (t) => {
   const f = await fixture(t);
   assert.equal((await f.store.get()).onboardingPreferenceStep, 'notifications');
+  await assert.rejects(f.store.save({ onboardingCompleted: true }));
+  await assert.rejects(f.store.save({ notifications: true, onboardingCompleted: true }));
+  assert.equal((await f.store.get()).onboardingCompleted, false);
   await assert.rejects(f.store.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' }));
   await assert.rejects(f.store.save({ onboardingPreferenceStep: 'launchAtLogin' }));
-  await f.store.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
-  const reopened = f.reopen();
-  assert.equal((await reopened.get()).notifications, false);
-  assert.equal((await reopened.get()).onboardingPreferenceStep, 'launchAtLogin');
-  await reopened.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
   await assert.rejects(
-    reopened.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' }),
+    f.store.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' }),
   );
-  await reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' });
-  await reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' });
+  await f.store.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' });
+  const reopened = f.reopen();
+  assert.equal((await reopened.get()).notifications, true);
+  assert.equal((await reopened.get()).onboardingPreferenceStep, 'launchAtLogin');
+  await reopened.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' });
+  await assert.rejects(
+    reopened.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' }),
+  );
+  await assert.rejects(
+    reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' }),
+  );
+  await reopened.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' });
+  await reopened.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' });
   assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
   delete saved.onboardingPreferenceStep;
   saved.onboardingCompleted = true;
+  saved.notifications = false;
+  saved.launchAtLogin = false;
   await writeFile(f.path, JSON.stringify(saved));
   assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
   assert.equal((await f.reopen().get()).notifications, false);
@@ -3865,6 +3892,8 @@ test('desktop preference choices resume durably and cannot skip or regress expli
 
 test('desktop preference steps and completion require the owned normal app and durable server completion', async (t) => {
   let completed = false;
+  let loginItemsWritable = false;
+  let loginStatus = {};
   const f = await runningDesktop(
     t,
     async (url) =>
@@ -3874,6 +3903,8 @@ test('desktop preference steps and completion require the owned normal app and d
     {
       initialState: 'fresh',
       allowStart: true,
+      updateLoginItems: () => loginItemsWritable,
+      loginItemStatus: () => loginStatus,
     },
   );
   await f.storage.store.save({ welcome: { usageData: false, continued: true } });
@@ -3891,8 +3922,31 @@ test('desktop preference steps and completion require the owned normal app and d
     );
     await assert.rejects(save(event, { welcome: { usageData: true, continued: true } }));
     await assert.rejects(save(event, { onboardingCompleted: true }));
-    await save(event, { notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
-    await save(event, { launchAtLogin: false, onboardingPreferenceStep: 'complete' });
+    await assert.rejects(
+      save(event, { notifications: false, onboardingPreferenceStep: 'launchAtLogin' }),
+    );
+    await save(event, { notifications: true, onboardingPreferenceStep: 'launchAtLogin' });
+    await assert.rejects(
+      save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
+      /login items/,
+    );
+    assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
+    assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
+    loginItemsWritable = true;
+    for (const status of [
+      { status: 'requires-approval' },
+      { executableWillLaunchAtLogin: false },
+    ]) {
+      loginStatus = status;
+      await assert.rejects(
+        save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
+        /login items/,
+      );
+      assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
+      assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
+    }
+    loginStatus = {};
+    await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
     assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
     completed = true;
     await save(event, { onboardingCompleted: true });

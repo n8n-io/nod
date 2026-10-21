@@ -171,7 +171,7 @@
   cursor: text;
 }
 .vault-password-visible {
-  font-family: var(--font-mono);
+  font-family: inherit;
 }
 .vault-password-mask {
   letter-spacing: 2px;

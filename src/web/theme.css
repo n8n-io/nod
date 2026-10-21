@@ -112,8 +112,6 @@
   --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-travel: cubic-bezier(0.65, 0, 0.35, 1);
   --reaction-pin-size: 20px;
-  --reaction-pin-edge: var(--background);
-  --reaction-pin-shadow: rgb(0 0 0 / 16%);
 }
 
 :root[data-theme='dark'] {
@@ -164,7 +162,6 @@
   --task-blue: oklch(0.36 0.06 240);
   --task-butter: oklch(0.38 0.06 100);
   --telegram: #229ed9;
-  --reaction-pin-shadow: rgb(0 0 0 / 60%);
 }
 
 :root[data-theme='dark'] .dialog-content {

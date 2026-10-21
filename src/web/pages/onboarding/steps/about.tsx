@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { ArrowUp, Mic } from 'lucide-react';
+import { ArrowUp } from 'lucide-react';
 import type { Connection } from '../../../../shared/contracts';
 import {
   interviewAnswerChars,
@@ -353,16 +353,6 @@ export function About({ arrived, onNext, onBack }: StepProps) {
               data-analytics-private
             />
             <div className="composer-tools">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                disabled
-                title="Voice input is coming soon"
-                aria-label="Voice input is coming soon"
-              >
-                <Mic size={16} aria-hidden="true" />
-              </Button>
               <Button
                 type="submit"
                 size="icon"

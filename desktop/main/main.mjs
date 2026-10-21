@@ -83,6 +83,7 @@ let engineRuntimeReady = false;
 let enginePreferencesReady = false;
 let preparing;
 let onboardingCompleted = false;
+let nativePreferencesPending = false;
 let guidedStartup = false;
 let quitting = false;
 let installingUpdate = false;
@@ -662,11 +663,13 @@ function showEngine({ focus = true } = {}) {
     engineWindows.delete(window);
     if (engineWindow === window) engineWindow = undefined;
   });
-  const destination = welcomeNavigation
-    ? `${engineOrigin}/onboarding?welcome=complete`
-    : replayingProductOnboarding
-      ? `${engineOrigin}/onboarding?replay=1`
-      : engineOrigin;
+  const destination = nativePreferencesPending
+    ? `${engineOrigin}/onboarding?preferences=required`
+    : welcomeNavigation
+      ? `${engineOrigin}/onboarding?welcome=complete`
+      : replayingProductOnboarding
+        ? `${engineOrigin}/onboarding?replay=1`
+        : engineOrigin;
   welcomeNavigation = false;
   replayingProductOnboarding = false;
   const loaded = window.loadURL(destination).catch(failed);
@@ -935,8 +938,16 @@ async function finishEnginePreparation(pending = false) {
   if (!onboardingCompleted) {
     const response = await engineRequest('/api/session');
     if (response.ok && (await response.json()).settings?.onboardingCompleted === true) {
-      applyPreferences(await settings.save({ onboardingCompleted: true }));
-      onboardingCompleted = true;
+      const saved = await settings.get();
+      if (saved.notifications && saved.launchAtLogin) {
+        applyPreferences(await settings.save({ onboardingCompleted: true }));
+        onboardingCompleted = true;
+        nativePreferencesPending = false;
+      } else {
+        nativePreferencesPending = true;
+        welcomePassed = true;
+        welcomeNavigation = false;
+      }
     }
   }
   if (!pending && !engineRuntimeReady) {
@@ -1701,9 +1712,21 @@ else {
         }
         const loginChanged = typeof value.launchAtLogin === 'boolean';
         const previousLogin = loginChanged ? app.getLoginItemSettings().openAtLogin : undefined;
-        if (loginChanged) app.setLoginItemSettings({ openAtLogin: value.launchAtLogin });
         let saved;
         try {
+          if (loginChanged) {
+            app.setLoginItemSettings({ openAtLogin: value.launchAtLogin });
+            const login = app.getLoginItemSettings();
+            if (
+              login.openAtLogin !== value.launchAtLogin ||
+              (value.launchAtLogin &&
+                ((login.status && login.status !== 'enabled') ||
+                  login.executableWillLaunchAtLogin === false))
+            )
+              throw new Error(
+                'Open at login could not be updated. Check Otto in your computer’s login items, then try again.',
+              );
+          }
           saved = await settings.save(value);
         } catch (error) {
           if (loginChanged) {
@@ -1714,6 +1737,7 @@ else {
           throw error;
         }
         onboardingCompleted = saved.onboardingCompleted;
+        if (onboardingCompleted) nativePreferencesPending = false;
         applyPreferences(saved);
         if (!['preparing', 'starting', 'error'].includes(status.phase))
           update({ message: 'Ready.' });

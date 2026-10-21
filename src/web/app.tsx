@@ -14,7 +14,7 @@ import { ChatSkeleton } from './components/startup';
 import { SetupProgress } from './components/setup-progress';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
-import { SidebarToggleContext } from './components/sidebar-toggle';
+import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
 import { captureFeedbackScreenshot } from './lib/feedback-capture';
 import { sidebarItems } from './lib/navigation';
@@ -178,73 +178,69 @@ function Workspace({
         onNavigate={navigate}
         account={account}
       />
-      <SidebarToggleContext.Provider
-        value={
-          desktopSettingsAvailable()
-            ? null
-            : { collapsed, toggle: () => setCollapsed((value) => !value) }
-        }
-      >
-        <div className="workspace-frame">
-          <div className="workspace-body">
-            <main id="workspace" className="main-workspace" tabIndex={-1}>
-              <div className="chat-route" hidden={currentPath !== '/'}>
-                {state ? (
-                  <Chat
-                    ownerId={session.user!.id}
-                    state={state}
-                    streams={streams}
-                    refresh={refresh}
-                    resetConversation={resetConversation}
-                    initialFocusMessageId={pendingMessageFocus}
-                    toolbarActions={currentPath === '/' ? toolbarActions : null}
-                    visible={currentPath === '/'}
-                    onReadLatest={unread.markRead}
-                    onFeedback={onFeedback}
-                    requestedMessage={chatRequests[0]}
-                    onRequestHandled={(id) =>
-                      setChatRequests((current) => current.filter((request) => request.id !== id))
-                    }
-                  />
-                ) : error ? (
-                  <div className="initial-loading">
-                    <Notice>{error}</Notice>
-                    <Button variant="outline" onClick={() => void refresh()}>
-                      Try again
-                    </Button>
-                  </div>
-                ) : (
-                  <ChatSkeleton />
-                )}
-              </div>
-              {currentPath === '/trust' && <Trust onAsk={askInChat} />}
-              {currentPath === '/apps' && (
-                <Apps
-                  configuration={state?.configuration}
-                  onAsk={askInChat}
-                  onManageConnection={(trigger) => account.onSettings('App connections', trigger)}
+      <div className="workspace-frame">
+        {!desktopSettingsAvailable() && (
+          <SidebarToggle collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)} />
+        )}
+        <div className="workspace-body">
+          <main id="workspace" className="main-workspace" tabIndex={-1}>
+            <div className="chat-route" hidden={currentPath !== '/'}>
+              {state ? (
+                <Chat
+                  ownerId={session.user!.id}
+                  state={state}
+                  streams={streams}
+                  refresh={refresh}
+                  resetConversation={resetConversation}
+                  initialFocusMessageId={pendingMessageFocus}
+                  toolbarActions={currentPath === '/' ? toolbarActions : null}
+                  visible={currentPath === '/'}
+                  onReadLatest={unread.markRead}
+                  onFeedback={onFeedback}
+                  onModels={(trigger) => account.onSettings('Models', trigger)}
+                  requestedMessage={chatRequests[0]}
+                  onRequestHandled={(id) =>
+                    setChatRequests((current) => current.filter((request) => request.id !== id))
+                  }
                 />
-              )}
-              {currentPath === '/channels' && <Channels />}
-              {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
-              {!sidebarItems.some((item) => item.path === currentPath) && (
-                <div className="empty-state">
-                  <h1>This page isn’t here.</h1>
-                  <Button variant="outline" onClick={() => navigate('/')}>
-                    <ArrowLeft size={16} />
-                    Back to chat
+              ) : error ? (
+                <div className="initial-loading">
+                  <Notice>{error}</Notice>
+                  <Button variant="outline" onClick={() => void refresh()}>
+                    Try again
                   </Button>
                 </div>
+              ) : (
+                <ChatSkeleton />
               )}
-              {state && (error || !connected) && (
-                <div className="connection-notice">
-                  <Notice kind={error ? 'error' : 'info'}>{error || 'Reconnecting…'}</Notice>
-                </div>
-              )}
-            </main>
-          </div>
+            </div>
+            {currentPath === '/trust' && <Trust onAsk={askInChat} />}
+            {currentPath === '/apps' && (
+              <Apps
+                configuration={state?.configuration}
+                onAsk={askInChat}
+                onManageConnection={(trigger) => account.onSettings('App connections', trigger)}
+              />
+            )}
+            {currentPath === '/channels' && <Channels />}
+            {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
+            {!sidebarItems.some((item) => item.path === currentPath) && (
+              <div className="empty-state">
+                <h1>This page isn’t here.</h1>
+                <Button variant="outline" onClick={() => navigate('/')}>
+                  <ArrowLeft size={16} />
+                  Back to chat
+                </Button>
+              </div>
+            )}
+            {state && (error || !connected) && (
+              <div className="connection-notice">
+                <Notice kind={error ? 'error' : 'info'}>{error || 'Reconnecting…'}</Notice>
+              </div>
+            )}
+          </main>
         </div>
-      </SidebarToggleContext.Provider>
+      </div>
     </div>
   );
 }
@@ -292,6 +288,7 @@ function AuthenticatedApp({
     onFeedbackHandled();
   }, [feedbackRequest, onFeedbackHandled]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [finishingOnboarding, setFinishingOnboarding] = useState(false);
   const [settingsRequest, setSettingsRequest] = useState(0);
   const [settingsTab, setSettingsTab] = useState<AccountTab>('General');
   const settingsTrigger = useRef<HTMLElement | null>(null);
@@ -368,7 +365,8 @@ function AuthenticatedApp({
   };
   const allowed = path !== '/browser' || session.capabilities.developer;
   const match = /^\/(vault|credentials|payments)\/([^/]+)\/?$/.exec(path);
-  const onboarding = !session.settings!.onboardingCompleted || replayingOnboarding(path);
+  const onboarding =
+    finishingOnboarding || !session.settings!.onboardingCompleted || replayingOnboarding(path);
   return (
     <>
       {!allowed ? (
@@ -393,10 +391,12 @@ function AuthenticatedApp({
           usageData={account.usageData}
           onUsageData={account.onUsageData}
           onComplete={async () => {
+            setFinishingOnboarding(true);
             if (!session.settings!.onboardingCompleted)
               await onAccountUpdate({ onboardingCompleted: true });
             if (desktopSettingsAvailable())
               await saveDesktopSettings({ onboardingCompleted: true });
+            setFinishingOnboarding(false);
             if (replayingOnboarding(path)) navigate('/');
           }}
         />

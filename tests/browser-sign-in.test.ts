@@ -44,6 +44,7 @@ test(
       let cancelTurnId: string | undefined;
       let changeOrigin = false;
       let held = false;
+      let retainedHold = false;
       const bindings: string[] = [];
       const removed: string[] = [];
       const computer = {
@@ -60,9 +61,13 @@ test(
           if (changeOrigin) location = 'https://other.test/account';
           return { origin: new URL(location).origin, url: location };
         },
-        async hold() {},
+        async hold(_id: string, value: boolean) {
+          retainedHold = value;
+        },
         async close() {},
         async deleteProfile(profileId: string) {
+          if (retainedHold)
+            throw Object.assign(new Error('Synthetic retained browser hold'), { statusCode: 423 });
           removed.push(profileId);
         },
       } as unknown as Computer;
@@ -257,6 +262,13 @@ test(
         [connectionId],
       );
       assert.equal((await service.sessions())[0]!.url, 'https://example.test/login');
+      await computer.hold(second.threadId, true);
+      for (const status of ['queued', 'running', 'waiting']) {
+        await pool.query('UPDATE turns SET status=$2 WHERE id=$1', [second.turnId, status]);
+        await assert.rejects(service.disconnect(connectionId), /Stop the active work/);
+        assert.equal(retainedHold, true);
+        assert.equal(removed.length, 0);
+      }
       await pool.query("UPDATE turns SET status='completed' WHERE id=$1", [second.turnId]);
       await assert.rejects(
         service.request({ action: 'use', url: 'https://example.test/', connectionId }, second),

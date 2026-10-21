@@ -110,7 +110,7 @@
 }
 .connection-key .input[type='password'],
 .connection-mono {
-  font-family: var(--font-mono);
+  font-family: inherit;
 }
 .connection-saved {
   display: flex;

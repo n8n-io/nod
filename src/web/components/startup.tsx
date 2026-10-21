@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowUp, PanelLeftClose, PanelLeftOpen, Paperclip } from 'lucide-react';
+import { ArrowUp, Paperclip } from 'lucide-react';
 import { BrandMark } from './brand';
 import { Skeleton } from './ui';
 import { readUiPreference } from '../lib/ui-preferences';
@@ -34,13 +34,6 @@ export function ChatSkeleton({
     <div className="chat-page chat-skeleton" aria-busy="true">
       {!desktopSettingsAvailable() && (
         <div className="chat-report-action" aria-hidden="true">
-          <span className="button button-ghost button-icon sidebar-toggle">
-            {readUiPreference('otto.sidebar') !== 'expanded' ? (
-              <PanelLeftOpen size={16} />
-            ) : (
-              <PanelLeftClose size={16} />
-            )}
-          </span>
           <span className="chat-title">Chat</span>
         </div>
       )}

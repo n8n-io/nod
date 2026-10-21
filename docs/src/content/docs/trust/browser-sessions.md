@@ -35,6 +35,8 @@ A session opens in one browser at a time. While you're still signing in to it in
 
 Open the session in **Trust → Logins and cards** and select **Sign out**. This deletes the saved profile. If a task is using it, stop the task first.
 
+Deleting a saved login keeps its browser session. The session remains available in Trust so you can sign out separately.
+
 ## Passkeys and manual sign-in
 
 Passkeys are turned off in Otto's browser, because your passkeys live on your own devices. A passkey request fails right away, so use another sign-in method. For a magic link or any step Otto can't finish, Otto asks you to take over its browser. See [Otto's browser](/use/browser/).

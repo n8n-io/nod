@@ -6,14 +6,7 @@ import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analy
 type AnalyticsEvents = {
   otto_onboarding_step_viewed: {
     step:
-      | 'welcome'
-      | 'brain'
-      | 'email'
-      | 'about'
-      | 'telegram'
-      | 'notifications'
-      | 'launch_at_login'
-      | 'open_source';
+      'welcome' | 'brain' | 'email' | 'about' | 'telegram' | 'notifications' | 'launch_at_login';
     direction: 'forward' | 'back';
   };
   otto_onboarding_step_skipped: { step: 'telegram' };
@@ -46,7 +39,7 @@ type AnalyticsEvents = {
   };
   otto_model_selected: {
     provider: 'openai' | 'anthropic' | 'openrouter' | 'compatible' | 'other';
-    entry: 'chat' | 'settings' | 'onboarding';
+    entry: 'settings' | 'onboarding';
     recommended: boolean;
   };
   otto_attachment_added: {
@@ -72,16 +65,7 @@ export type AnalyticsProperties<Event extends keyof AnalyticsEvents> = NonNullab
 const roles = ['assistant', 'user'];
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
   otto_onboarding_step_viewed: {
-    step: [
-      'welcome',
-      'brain',
-      'email',
-      'about',
-      'telegram',
-      'notifications',
-      'launch_at_login',
-      'open_source',
-    ],
+    step: ['welcome', 'brain', 'email', 'about', 'telegram', 'notifications', 'launch_at_login'],
     direction: ['forward', 'back'],
   },
   otto_onboarding_step_skipped: { step: ['telegram'] },
@@ -114,7 +98,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   },
   otto_model_selected: {
     provider: ['openai', 'anthropic', 'openrouter', 'compatible', 'other'],
-    entry: ['chat', 'settings', 'onboarding'],
+    entry: ['settings', 'onboarding'],
     recommended: [true, false],
   },
   otto_attachment_added: {

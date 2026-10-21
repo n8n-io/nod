@@ -29,7 +29,6 @@ import {
   Notice,
   Skeleton,
 } from '../components/ui';
-import { ModelPicker, ModelSetup } from '../components/models';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
@@ -47,7 +46,6 @@ import {
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
 import { OttoGlyph, Rise } from '../components/motion';
-import { SidebarToggle } from '../components/sidebar-toggle';
 
 function verificationFailure(
   status: SubmitMessageResponse['verificationStatus'],
@@ -175,6 +173,7 @@ export function Chat({
   requestedMessage,
   onRequestHandled,
   onFeedback,
+  onModels,
 }: {
   ownerId: string;
   state: AppState;
@@ -188,12 +187,22 @@ export function Chat({
   requestedMessage?: { id: string; text: string };
   onRequestHandled?(id: string): void;
   onFeedback?(): void;
+  onModels?(trigger: HTMLElement): void;
 }) {
   const dateFormat = useDateFormat();
   const { data: connections } = usePageData<Connection[]>('/api/apps');
   const { data: trust, refresh: refreshTrust } = usePageData<TrustView>('/api/trust');
   const trustRefreshKey = state.turns.map((turn) => `${turn.id}:${turn.status}`).join(',');
   const spendingPaused = trust?.limit?.reached === true;
+  const modelSetup = (
+    <div className="welcome model-setup">
+      <BrandMark />
+      <h2>Choose a model to start chatting</h2>
+      <Button variant="outline" onClick={(event) => onModels?.(event.currentTarget)}>
+        Open settings
+      </Button>
+    </div>
+  );
   useEffect(() => {
     void refreshTrust();
     if (!spendingPaused) return;
@@ -840,7 +849,6 @@ export function Chat({
         </>
       ) : (
         <header className="chat-report-action">
-          <SidebarToggle />
           <h1 className="chat-title">Chat</h1>
           {chatActions}
         </header>
@@ -903,7 +911,7 @@ export function Chat({
             !resetting &&
             !working &&
             !sending &&
-            (state.configuration.llmReady ? <Welcome /> : <ModelSetup />)}
+            (state.configuration.llmReady ? <Welcome /> : modelSetup)}
           <div
             className="messages"
             role="log"
@@ -1060,7 +1068,6 @@ export function Chat({
           </Notice>
         )}
         <div hidden={!state.configuration.llmReady && !working && !sending}>
-          <ModelPicker />
           <Composer
             key={threadId}
             ref={composer}
@@ -1082,9 +1089,11 @@ export function Chat({
             stopping={stopping}
           />
         </div>
-        {!state.configuration.llmReady && !working && !sending && visibleMessages.length > 0 && (
-          <ModelSetup />
-        )}
+        {!state.configuration.llmReady &&
+          !working &&
+          !sending &&
+          visibleMessages.length > 0 &&
+          modelSetup}
       </div>
       <Dialog open={resetTarget !== null} onOpenChange={(open) => !open && setResetTarget(null)}>
         <DialogContent>

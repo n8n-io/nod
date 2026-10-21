@@ -44,7 +44,7 @@ If Otto may have sent or changed something, verify the result yourself or ask Ot
 
 ## Choose the model
 
-The model picker above the message box shows the model Otto uses. Select it to choose another model from your connected providers. See [Models](/connect/models/).
+Open **Settings → Models** to choose the model Otto uses from your connected providers. See [Models](/connect/models/).
 
 ## React to messages
 

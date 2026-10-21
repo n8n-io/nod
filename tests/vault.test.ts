@@ -7,6 +7,7 @@ import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
 import { runProcess } from '../src/providers/process.ts';
 import { Trust } from '../src/web/pages/trust.tsx';
+import { SetupActions } from '../src/web/components/setup-link.tsx';
 import { pageDataCache } from '../src/web/lib/page-data-cache.ts';
 import { Composio } from '@composio/core';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -2404,6 +2405,8 @@ test(
       const described = await app.inject({ method: 'GET', url: securePath, headers });
       assert.equal(described.statusCode, 200);
       assert.equal(described.body.includes('4242424242424242'), false);
+      const statusPath = `${securePath}/status`;
+      assert.equal((await app.inject({ url: statusPath, headers })).json().status, 'pending');
       const beforeLink = fills.length;
       const replies = await Promise.all([
         app.inject({ method: 'POST', url: securePath, headers, payload: { code: '737' } }),
@@ -2411,6 +2414,21 @@ test(
       ]);
       assert.deepEqual(replies.map((response) => response.statusCode).sort(), [200, 409]);
       assert.equal(fills.length, beforeLink + 1);
+      assert.deepEqual((await app.inject({ url: statusPath, headers })).json(), {
+        status: 'submitted',
+      });
+      assert.equal(
+        (await app.inject({ url: `/api/payment-requests/${randomUUID()}/status`, headers }))
+          .statusCode,
+        404,
+      );
+      await pool.query("UPDATE vault_payments SET owner_id='foreign-owner' WHERE id=$1", [
+        linkedId,
+      ]);
+      assert.equal((await app.inject({ url: statusPath, headers })).statusCode, 404);
+      await pool.query("UPDATE vault_payments SET owner_id='local-development' WHERE id=$1", [
+        linkedId,
+      ]);
       assert.equal((await app.inject({ method: 'GET', url: securePath, headers })).statusCode, 409);
       assert.equal('securityCode' in (await vault.paymentCard(card.id)), false);
       inOtto = true;
@@ -3714,6 +3732,66 @@ test('Vault does not open or prefill a login from arbitrary query data', async (
   }
 });
 
+test('chat removes private-entry actions only after the server confirms submission', async () => {
+  const token = 'synthetic-private-entry-token';
+  const payment = randomUUID();
+  let credentialStatus: CredentialRequest['status'] = 'pending';
+  let paymentSubmitted = false;
+  let unavailable = false;
+  const missingReads = new Map<string, number>();
+  const view = await vaultPage(
+    createElement(SetupActions, {
+      actions: [
+        { href: `/vault/${token}`, setup: 'vault', label: 'Private login' },
+        { href: `/payments/${payment}`, setup: 'vault', label: 'Private payment' },
+        { href: `/vault/${token}-uncertain`, setup: 'vault', label: 'Uncertain login' },
+        { href: `/vault/${token}-expired`, setup: 'vault', label: 'Expired login' },
+        { href: `/vault/${token}-404`, setup: 'vault', label: 'Missing login' },
+        { href: `/vault/${token}-410`, setup: 'vault', label: 'Removed login' },
+      ],
+    }),
+    async (path) => {
+      const gone = /-(404|410)$/.exec(path);
+      if (gone) {
+        missingReads.set(path, (missingReads.get(path) ?? 0) + 1);
+        return Response.json({ error: 'Unavailable' }, { status: Number(gone[1]) });
+      }
+      if (unavailable) return Response.json({ error: 'Unavailable' }, { status: 503 });
+      if (path === `/api/credential-requests/${token}`)
+        return Response.json({ status: credentialStatus });
+      if (path === `/api/credential-requests/${token}-uncertain`)
+        return Response.json({ status: 'uncertain' });
+      if (path === `/api/credential-requests/${token}-expired`)
+        return Response.json({ status: 'expired' });
+      if (path === `/api/payment-requests/${payment}/status`)
+        return Response.json({ status: paymentSubmitted ? 'submitted' : 'pending' });
+      throw new Error(`Unexpected fixture request ${path}`);
+    },
+    'http://localhost:4310/',
+  );
+  const refresh = () => act(async () => window.dispatchEvent(new Event('focus')));
+  const actions = () => view.document.querySelectorAll('[data-setup="vault"]').length;
+  try {
+    assert.equal(actions(), 6);
+    credentialStatus = 'entering';
+    await refresh();
+    assert.equal(actions(), 6);
+    credentialStatus = 'filled';
+    unavailable = true;
+    await refresh();
+    assert.equal(actions(), 6);
+    unavailable = false;
+    await refresh();
+    assert.equal(actions(), 5);
+    paymentSubmitted = true;
+    await refresh();
+    assert.equal(actions(), 4);
+    assert.deepEqual([...missingReads.values()], [1, 1]);
+  } finally {
+    await view.close();
+  }
+});
+
 test('analytics routes collapse private paths to known pages', async () => {
   const { analyticsRoute, sanitizedAnalyticsUrl } =
     await import('../src/web/lib/analytics-privacy.ts');
@@ -3820,23 +3898,21 @@ captured.length = 0;
 deferPreparation = true;
 sessionStorage.removeItem('otto.onboarding.suggestions');
 suggestions = 0;
-sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 2 }));
+sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'telegram', version: 2 }));
 root = createRoot(document.getElementById('root'));
 await act(async () => render());
-for (let attempt = 0; attempt < 80 && !button('Back'); attempt++) await settle();
-assert.equal(suggestions, 0, 'suggestions wait for account preparation');
-await act(async () => button('Back').click());
 for (let attempt = 0; attempt < 80 && !button('Skip for now'); attempt++) await settle();
+assert.equal(suggestions, 0, 'suggestions wait for account preparation');
 await act(async () => button('Skip for now').click());
 await settle();
-assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'open_source', 'forward'], ['otto_onboarding_step_viewed', 'telegram', 'back'], ['otto_onboarding_step_skipped', 'telegram', undefined], ['otto_onboarding_step_viewed', 'open_source', 'forward']]);
+assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'telegram', 'forward'], ['otto_onboarding_step_skipped', 'telegram', undefined]]);
 assert.equal(captured.some(event => event.event === 'otto_onboarding_recap'), false);
 assert.equal(suggestions, 0);
 await act(async () => finishPreparation());
 for (let attempt = 0; attempt < 80 && !suggestions; attempt++) await settle();
 assert.equal(suggestions, 1);
 await act(async () => root.unmount());
-sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 1 }));
+sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'telegram', version: 1 }));
 root = createRoot(document.getElementById('root'));
 await act(async () => render());
 for (let attempt = 0; attempt < 80 && !button('Let’s go'); attempt++) await settle();
@@ -3860,7 +3936,7 @@ assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'brain', 'forward']])
 await act(async () => root.unmount());
 captured.length = 0;
 analytics.configureAnalytics(undefined, 'desktop');
-sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'open', version: 2 }));
+sessionStorage.setItem('otto.onboarding.step', JSON.stringify({ owner: 'synthetic-owner', step: 'preferences', version: 2 }));
 root = createRoot(document.getElementById('root'));
 await act(async () => render());
 for (let attempt = 0; attempt < 80 && !button('Continue'); attempt++) await settle();
@@ -3877,19 +3953,16 @@ await act(async () => document.querySelector('[role=switch]').click());
 await settle();
 assert.equal(captured.length, 1);
 await act(async () => button('Continue').click());
-for (let attempt = 0; attempt < 80 && !(document.querySelector('.ob')?.dataset.step === 'launchAtLogin' && button('Continue')); attempt++) await settle();
+for (let attempt = 0; attempt < 80 && !(document.querySelector('.ob')?.dataset.step === 'launchAtLogin' && button('Start chatting')); attempt++) await settle();
 assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'notifications', 'forward'], ['otto_onboarding_step_viewed', 'launch_at_login', 'forward']]);
-await act(async () => button('Continue').click());
-for (let attempt = 0; attempt < 80 && document.querySelector('.ob')?.dataset.step !== 'open'; attempt++) await settle();
-assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'notifications', 'forward'], ['otto_onboarding_step_viewed', 'launch_at_login', 'forward'], ['otto_onboarding_step_viewed', 'open_source', 'forward']]);
-assert.ok(captured.every(event => event.properties.surface === 'desktop'));
-await act(async () => root.unmount());
-captured.length = 0;
-root = createRoot(document.getElementById('root'));
-await act(async () => render());
+assert.equal(button('Start chatting').disabled, true);
+await act(async () => document.querySelector('[role=switch]').click());
 await settle();
-assert.equal(document.querySelector('.ob').dataset.step, 'open');
-assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'open_source', 'forward']]);
+await act(async () => button('Start chatting').click());
+await settle();
+assert.equal(document.querySelector('.ob'), null);
+assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'notifications', 'forward'], ['otto_onboarding_step_viewed', 'launch_at_login', 'forward']]);
+assert.ok(captured.every(event => event.properties.surface === 'desktop'));
 await act(async () => root.unmount());
 delete window.ottoDesktop;
 dom.window.close();
@@ -4660,13 +4733,13 @@ root=createRoot(document.getElementById('root'));
 await act(async()=>render());
 assert.equal(document.querySelector('.ob').dataset.step,'welcome');
 await act(async()=>root.unmount());
-writeStep({owner:owner.id,step:'open',version:2});
+writeStep({owner:owner.id,step:'telegram',version:2});
 root=createRoot(document.getElementById('root'));
 await act(async()=>render());
-await waitFor(()=>button('Start chatting'));
+await waitFor(()=>button('Skip for now'));
 assert.equal(suggestions,0);
 assert.ok(button('Back')&&!button('Back').disabled);
-await act(async()=>button('Start chatting').click());
+await act(async()=>button('Skip for now').click());
 await waitFor(()=>document.querySelector('main [role="status"]'));
 assert.equal(document.activeElement,document.querySelector('main'));
 assert.equal(document.querySelector('main button'),null);
@@ -4732,13 +4805,13 @@ failModels=false;
 modelsStatus='connected';
 delete window.ottoDesktop;
 pageDataCache.clear();
-writeStep({owner:owner.id,step:'open',version:2});
+writeStep({owner:owner.id,step:'telegram',version:2});
 root=createRoot(document.getElementById('root'));
 await act(async()=>render());
-await waitFor(()=>button('Start chatting'));
+await waitFor(()=>button('Skip for now'));
 await act(async()=>releasePreparation());
 failFinish=true;
-await act(async()=>button('Start chatting').click());
+await act(async()=>button('Skip for now').click());
 await waitFor(()=>finishCalls===3&&button('Try again'));
 assert.ok(sessionStorage.getItem('otto.onboarding.step'));
 failFinish=false;
@@ -4764,7 +4837,7 @@ import {join} from 'node:path';
 import {JSDOM} from 'jsdom';
 import {createSettingsStore} from './desktop/main/settings.mjs';
 const directory=await mkdtemp(join(tmpdir(),'otto-native-preferences-'));
-const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/onboarding',pretendToBeVisual:true});
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/onboarding?preferences=required',pretendToBeVisual:true});
 for(const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','getComputedStyle','sessionStorage']) Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
 Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
 globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
@@ -4787,7 +4860,6 @@ window.ottoDesktop={
   getSettings:async()=>{reads++;if(failRead)throw new Error('Synthetic native read failed');return store.get()},
   saveSettings:async change=>{saves++;if(failSave)throw new Error('Synthetic native save failed');return store.save(change)},
 };
-sessionStorage.setItem('otto.onboarding.step',JSON.stringify({owner:'synthetic-native-owner',step:'open',version:2}));
 const calls=[];
 window.fetch=globalThis.fetch=async(url,options={})=>{
  const path=new URL(url,window.location.href).pathname;calls.push(path);
@@ -4808,6 +4880,7 @@ const settle=()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,20)
 const waitFor=async condition=>{for(let at=0;at<100&&!condition();at++)await settle();assert.ok(condition())};
 const button=text=>[...document.querySelectorAll('button')].find(value=>value.textContent.trim()===text);
 await render();
+assert.equal(window.location.search,'');
 await waitFor(()=>button('Try again'));
 assert.equal(reads,1);
 assert.equal(saves,0);
@@ -4819,6 +4892,9 @@ const toggle=()=>document.querySelector('[role="switch"]');
 assert.equal((await store.get()).notifications,false);
 assert.equal(toggle().getAttribute('aria-checked'),'false');
 assert.equal(saves,0);
+assert.equal(button('Continue').disabled,true);
+await act(async()=>button('Continue').click());
+assert.equal((await store.get()).onboardingPreferenceStep,'notifications');
 const notificationToggle=toggle();
 await act(async()=>statusListener({phase:'ready',runtime:{phase:'error',error:'Synthetic runtime interrupted'}}));
 await waitFor(()=>button('Try again'));
@@ -4841,9 +4917,13 @@ assert.equal((await store.get()).onboardingPreferenceStep,'notifications');
 await act(async()=>toggle().click());
 await waitFor(()=>!toggle().disabled);
 assert.equal((await store.get()).notifications,false);
+assert.equal(button('Continue').disabled,true);
+await act(async()=>toggle().click());
+await waitFor(()=>!toggle().disabled);
 await act(async()=>button('Continue').click());
 await waitFor(()=>(document.querySelector('.ob')?.dataset.step)==='launchAtLogin');
 assert.equal((await store.get()).onboardingPreferenceStep,'launchAtLogin');
+assert.equal(button('Start chatting').disabled,true);
 await act(async()=>toggle().click());
 await waitFor(()=>!toggle().disabled);
 assert.equal((await store.get()).launchAtLogin,true);
@@ -4855,19 +4935,20 @@ await render();
 await waitFor(()=>document.querySelector('[role="switch"]'));
 assert.equal(document.querySelector('.ob').dataset.step,'launchAtLogin');
 assert.equal(toggle().getAttribute('aria-checked'),'true');
-await act(async()=>button('Continue').click());
-await waitFor(()=>button('Start chatting'));
+await act(async()=>button('Start chatting').click());
+await waitFor(()=>document.querySelector('main [role="status"]'));
 assert.equal((await store.get()).launchAtLogin,true);
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');
-assert.equal(saves,6);
+assert.equal(saves,7);
 await act(async()=>root.unmount());
 store=createSettingsStore(join(directory,'settings.json'),{});
 root=createRoot(document.getElementById('root'));
 await render();
-await waitFor(()=>button('Start chatting'));
+await waitFor(()=>document.querySelector('main [role="status"]'));
 assert.equal(document.querySelector('[role="switch"]'),null);
-assert.equal(saves,6);
+assert.equal(saves,7);
 await act(async()=>root.unmount());
+await store.save({onboardingCompleted:true});
 const {DesktopOptions,useDesktopSettings}=await import('./src/web/components/desktop-settings.tsx');
 window.ottoDesktop.onPreferences=()=>()=>{};
 function GeneralChoices(){
@@ -4880,13 +4961,13 @@ await waitFor(()=>document.querySelectorAll('[role="switch"]').length===2);
 const login=()=>document.querySelector('[role="switch"][aria-label="Open at login"]');
 const notices=()=>document.querySelector('[role="switch"][aria-label="Desktop notifications"]');
 assert.equal(login().getAttribute('aria-checked'),'true');
-assert.equal(notices().getAttribute('aria-checked'),'false');
+assert.equal(notices().getAttribute('aria-checked'),'true');
 await act(async()=>login().click());
 await waitFor(()=>!login().disabled);
 await act(async()=>notices().click());
 await waitFor(()=>!notices().disabled);
 assert.equal((await store.get()).launchAtLogin,false);
-assert.equal((await store.get()).notifications,true);
+assert.equal((await store.get()).notifications,false);
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');
 failSave=true;
 await act(async()=>login().click());
