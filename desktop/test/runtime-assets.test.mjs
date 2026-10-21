@@ -1226,6 +1226,39 @@ test('runtime files become ready only after their own bytes verify, and a mismat
   assert.deepEqual(await readdir(tampered.cacheRoot), []);
 });
 
+test('runtime download keeps a slow connection going and stops only when data stops arriving', async (t) => {
+  const options = await fixture(t);
+  const bytes = await readFile(options.archivePath);
+  const size = Math.ceil(bytes.length / 10);
+  let sent = 0;
+  const slow = await openRuntimeAssets({
+    ...options,
+    stallTimeout: 300,
+    downloadUrl: 'https://runtime.example.invalid/fixture.tar.gz',
+    fetch: async () =>
+      new Response(
+        new ReadableStream({
+          async pull(controller) {
+            await new Promise((resolve) => setTimeout(resolve, 120));
+            if (sent >= bytes.length) return controller.close();
+            controller.enqueue(bytes.subarray(sent, sent + size));
+            sent += size;
+          },
+        }),
+      ),
+  });
+  assert.equal(await slow.done, slow.root);
+  const stalled = await fixture(t);
+  const stuck = await openRuntimeAssets({
+    ...stalled,
+    stallTimeout: 300,
+    downloadUrl: 'https://runtime.example.invalid/fixture.tar.gz',
+    fetch: async () => new Response(new ReadableStream({ pull: () => new Promise(() => {}) })),
+  });
+  await assert.rejects(stuck.done, /stopped receiving data/);
+  assert.deepEqual(await readdir(stalled.cacheRoot), []);
+});
+
 test('runtime download rejects corrupt bytes, cleans its download and allows a verified retry', async (t) => {
   const options = await fixture(t);
   options.release.url = 'https://runtime.example.invalid/fixture.tar.gz';

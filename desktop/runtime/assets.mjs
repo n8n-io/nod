@@ -277,7 +277,7 @@ export async function seedRuntimeCache({
 function unpackRuntime(
   release,
   source,
-  { message, failure, onStatus, signal, cacheRoot, inspectDisk = statfs },
+  { message, failure, onStatus, onBytes = () => {}, signal, cacheRoot, inspectDisk = statfs },
 ) {
   const root = runtimeCacheRoot(release, cacheRoot);
   if (pending.has(root)) return pending.get(root);
@@ -308,6 +308,7 @@ function unpackRuntime(
       const counted = new Transform({
         transform(chunk, encoding, callback) {
           received += chunk.length;
+          onBytes();
           if (received > release.archive.bytes) return callback(new Error(failure));
           archive.update(chunk);
           if (Date.now() - reported > 250) {
@@ -364,7 +365,8 @@ function unpackRuntime(
         await pipeline(input, counted, createGunzip(), bounded, parser, { signal });
         await Promise.all(writes);
       } catch (error) {
-        if (signal?.aborted || ['ENOSPC', 'EDQUOT'].includes(error.code)) throw error;
+        if (signal?.aborted) throw signal.reason;
+        if (['ENOSPC', 'EDQUOT'].includes(error.code)) throw error;
         throw new Error(failure, { cause: error });
       }
       if (received !== release.archive.bytes || archive.digest('hex') !== release.archive.sha256)
@@ -423,18 +425,36 @@ export async function installRuntimeArchive({
 }
 
 function downloadRuntime(release, options) {
-  const { onStatus = () => {}, signal, cacheRoot, inspectDisk } = options;
-  const downloadSignal = AbortSignal.any([
-    ...(signal ? [signal] : []),
-    AbortSignal.timeout(30 * 60_000),
-  ]);
+  const {
+    onStatus = () => {},
+    signal,
+    cacheRoot,
+    inspectDisk,
+    stallTimeout = 5 * 60_000,
+  } = options;
+  const stalled = new AbortController();
+  let timer;
+  const alive = () => {
+    clearTimeout(timer);
+    timer = setTimeout(
+      () =>
+        stalled.abort(
+          new Error(
+            'The Otto runtime download stopped receiving data. Check your connection, then try again.',
+          ),
+        ),
+      stallTimeout,
+    );
+  };
+  const downloadSignal = AbortSignal.any([...(signal ? [signal] : []), stalled.signal]);
   let url = options.downloadUrl || release.url;
   const address = new URL(url);
   if (address.protocol !== 'https:' || address.username || address.password)
     throw new Error('The Otto runtime download address is invalid.');
-  return unpackRuntime(
+  const assets = unpackRuntime(
     release,
     async () => {
+      alive();
       let response;
       for (let redirects = 0; redirects <= 3; redirects++) {
         response = await (options.fetch || fetch)(url, {
@@ -457,11 +477,14 @@ function downloadRuntime(release, options) {
       message: 'Downloading your local computer…',
       failure: 'The Otto runtime download did not complete. Try again.',
       onStatus,
+      onBytes: alive,
       signal: downloadSignal,
       cacheRoot,
       inspectDisk,
     },
   );
+  assets.done.finally(() => clearTimeout(timer)).catch(() => {});
+  return assets;
 }
 
 export async function openRuntimeAssets(options) {

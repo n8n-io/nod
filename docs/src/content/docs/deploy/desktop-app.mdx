@@ -62,6 +62,7 @@ The app download is small. On first launch, Otto downloads a matching runtime pa
 
 - Otto unpacks the archive while it downloads. It uses each file only after that file matches its SHA-256 in the release, and treats the pack as installed only once the archive size and SHA-256 match too. On a Mac, the private computer starts while the container images are still downloading.
 - On a Mac, before it installs, Otto checks free space for the extracted files plus 512 MiB.
+- A slow download keeps going for as long as data arrives. If no data arrives for five minutes, the download stops and you can retry.
 - On a Mac, Otto checks every extracted file. Verified packs live in `~/Library/Application Support/Otto/runtime/<release>`. The VM mounts them read-only. After the VM starts, Otto deletes packs that no Otto VM mounts and that are more than a day old, so a downloaded update waits for its restart.
 - After its containers start, Otto removes container images from earlier runtimes. On a Mac, the freed space returns to your disk.
 - On Windows, Otto imports the pack into its WSL distribution, then deletes the archive.
