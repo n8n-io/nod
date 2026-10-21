@@ -239,6 +239,7 @@ test(
       const form = await app.inject({ url });
       assert.equal(form.statusCode, 200);
       assert.equal(form.headers['cache-control'], 'no-store');
+      assert.equal(form.json<CredentialRequest>().status, 'pending');
       assert.deepEqual(
         form.json<CredentialRequest>().fields?.map((field) => field.label),
         ['Passwort'],
@@ -255,6 +256,7 @@ test(
       assert.deepEqual((await app.inject({ url: `${url}/status` })).json(), {
         status: 'entering',
       });
+      assert.equal((await app.inject({ url })).json().status, 'entering');
       assert.equal(resumed, 0);
       let secondSettled = false;
       const second = app
@@ -273,6 +275,19 @@ test(
       assert.deepEqual((await app.inject({ url: `${url}/status` })).json(), {
         status: 'filled',
       });
+      assert.equal((await app.inject({ url })).json().status, 'filled');
+      await pool.query(
+        "UPDATE vault_uses SET owner_id='other-user' WHERE id=(SELECT id FROM credential_requests WHERE turn_id=$1)",
+        [task1.turnId],
+      );
+      assert.deepEqual((await app.inject({ url: `${url}/status` })).json(), {
+        status: 'expired',
+      });
+      assert.equal((await app.inject({ url })).json().status, 'expired');
+      await pool.query(
+        "UPDATE vault_uses SET owner_id='local-development' WHERE id=(SELECT id FROM credential_requests WHERE turn_id=$1)",
+        [task1.turnId],
+      );
       assert.equal((await second).statusCode, 409);
       assert.equal(injected, 1);
       assert.equal(resumed, 1);

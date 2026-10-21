@@ -176,6 +176,9 @@ type RequestRow = {
   selectors: CredentialInput;
   inspection: StoredInspection;
 };
+type RequestStatusRow = Pick<RequestRow, 'status' | 'operation_status'> & {
+  current_step: boolean;
+};
 type SelectionRow = {
   id: string;
   root_turn_id: string;
@@ -1192,20 +1195,30 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     return rows[0];
   }
 
+  function requestStatus(row: RequestStatusRow): CredentialRequest['status'] {
+    if (row.operation_status === 'submitted') return 'filled';
+    if (row.operation_status === 'uncertain') return 'uncertain';
+    if (row.operation_status === 'running') return 'entering';
+    return row.status === 'pending' && row.current_step ? 'pending' : 'expired';
+  }
+
   async function describe(token: string): Promise<CredentialRequest> {
     await forgetExpiredHolds();
     const { rows } = await pool.query<RequestRow & { current_step: boolean }>(
-      `SELECT r.*,(SELECT v.status FROM vault_uses v WHERE v.id=r.id AND r.status='consumed') AS operation_status,EXISTS(SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id
-        AND ${waitingTurnSql('u', 'credentials')}) AS current_step FROM credential_requests r WHERE token_hash=$1 AND owner_id=$2`,
+      `SELECT r.*,v.status AS operation_status,r.status='pending' AND EXISTS(SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id
+        AND ${waitingTurnSql('u', 'credentials')}) AS current_step
+       FROM credential_requests r LEFT JOIN vault_uses v
+         ON v.id=r.id AND v.owner_id=r.owner_id AND r.status='consumed'
+       WHERE r.token_hash=$1 AND r.owner_id=$2`,
       [tokenHash(token), owner],
     );
     const row = rows[0];
     if (!row) throw new VaultError('Credential request not found.', 404);
-    const pending = row.status === 'pending' && row.current_step;
+    const status = requestStatus(row);
     let savedEntries: CredentialRequest['savedEntries'];
     let selectedEntryId: string | undefined;
     let username: string | undefined;
-    if (pending && row.kind !== 'otp') {
+    if (status === 'pending' && row.kind !== 'otp') {
       const chosen = await selection(row.root_turn_id, row.owner_id, row.origin);
       const selected = chosen?.kind === 'identifier' ? chosen : undefined;
       username = await stagedUsername(selected);
@@ -1245,16 +1258,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       label: row.label,
       kind: row.kind,
       fields: row.inspection.fields,
-      status:
-        row.operation_status === 'submitted'
-          ? 'filled'
-          : row.operation_status === 'uncertain'
-            ? 'uncertain'
-            : row.operation_status === 'running'
-              ? 'entering'
-              : pending
-                ? 'pending'
-                : 'expired',
+      status,
       ...(savedEntries ? { savedEntries } : {}),
       ...(selectedEntryId ? { selectedEntryId } : {}),
       ...(row.kind === 'password' && username ? { username } : {}),
@@ -1900,18 +1904,17 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       scope.get<{ Params: { id: string } }>(
         '/api/credential-requests/:id/status',
         async (request) => {
-          const { rows } = await pool.query<Pick<CredentialRequest, 'status'>>(
-            `SELECT CASE WHEN v.status='submitted' THEN 'filled' WHEN v.status='uncertain' THEN 'uncertain'
-             WHEN v.status='running' THEN 'entering' WHEN r.status='pending' AND EXISTS(
+          const { rows } = await pool.query<RequestStatusRow>(
+            `SELECT r.status,v.status AS operation_status,r.status='pending' AND EXISTS(
                SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id
-               AND ${waitingTurnSql('u', 'credentials')}) THEN 'pending' ELSE 'expired' END AS status
+               AND ${waitingTurnSql('u', 'credentials')}) AS current_step
              FROM credential_requests r LEFT JOIN vault_uses v
                ON v.id=r.id AND v.owner_id=r.owner_id AND r.status='consumed'
              WHERE r.token_hash=$1 AND r.owner_id=$2`,
             [tokenHash(request.params.id), owner],
           );
           if (!rows[0]) throw new VaultError('Credential request not found.', 404);
-          return rows[0];
+          return { status: requestStatus(rows[0]) };
         },
       );
       scope.post<{ Params: { id: string } }>(
