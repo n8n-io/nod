@@ -112,7 +112,9 @@ export function firstInstruction(
       ...(context.background && context.quietHours ? { quietHours: true } : {}),
       currentMessageId: context.currentMessageId ?? null,
       replyTo: context.replyTo ?? null,
-      ...(context.previousFailure ? { previousFailure: context.previousFailure } : {}),
+      ...(context.previousFailure
+        ? { previousFailure: untrustedBlock('previous turn error', context.previousFailure) }
+        : {}),
       ...(context.background ? { connectedApps: context.connectedApps ?? [] } : {}),
       recentConversation,
       ...(context.relatedConversation?.length

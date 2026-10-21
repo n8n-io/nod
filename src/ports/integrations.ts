@@ -121,7 +121,7 @@ export class IntegrationConnectionError extends Error {
             : reason === 'timeout'
               ? 'Composio took too long to respond. Try connecting again.'
               : reason === 'invalid_request'
-                ? `Composio rejected this request (HTTP ${status}). Check that your Composio key belongs to the project you use with Otto, then try connecting again.`
+                ? `Composio rejected this request (HTTP ${status}). Try connecting again, and if it keeps failing, check this app's setup in your Composio project.`
                 : 'Composio could not complete the connection. Try connecting again shortly.',
     );
     this.statusCode =
