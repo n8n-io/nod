@@ -13,6 +13,7 @@ export interface N8nScenario {
   description?: string;
   dataSetup?: string;
   successCriteria?: string;
+  seedDataTables?: unknown[];
 }
 
 export interface N8nCase {
@@ -115,6 +116,8 @@ export function supported(item: BenchCase) {
   if (definition.requiresMemoryCompaction) return 'memory compaction';
   if (definition.conversation[0]?.role !== 'user') return 'starts with the assistant';
   if (definition.conversation.slice(1).some((turn) => turn.attach)) return 'later attachment';
+  if (definition.executionScenarios.some((scenario) => scenario.seedDataTables?.length))
+    return 'seeded data tables';
   return undefined;
 }
 
