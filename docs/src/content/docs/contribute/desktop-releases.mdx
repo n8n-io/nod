@@ -180,7 +180,11 @@ node desktop/scripts/test-install.mjs stop
 
 Test profiles live under `~/Library/Application Support/Otto Setup Test/test-profiles`. Rebuilding the test app preserves them. Reopening the same test app from Applications resumes the last selected profile, even without the installer’s launch environment. The helper accepts an installed engine directory after `build` when the cached runtime comes from another local installation.
 
-This is an ad-hoc signed local app, not a release. It reuses the cached workspace and browser images; it doesn't verify a newly built runtime image or release signing.
+By default, the test app is ad-hoc signed. Rebuilding can invalidate Keychain, Accessibility, and Screen Recording approvals even when System Settings still shows the permissions as enabled. Finish rebuilding before granting permissions. If restarting doesn't restore access, remove and re-add the test app in the affected macOS permission lists.
+
+To use an existing permanent signing identity, set `OTTO_SIGNING_IDENTITY`, `OTTO_SIGNING_KEYCHAIN`, and `OTTO_SIGNING_CERTIFICATE_SHA256` before building. `OTTO_SIGNING_MODE` defaults to `self-signed`. For `developer-id`, also set the matching `OTTO_APPLE_TEAM_ID` and `OTTO_NOTARY_PROFILE`. The installer validates the identity and signed build before replacing the installed test app. It doesn't create certificates or grant macOS permissions.
+
+The test installer reuses cached workspace and browser images. It doesn't verify a newly built runtime image or notarize the app.
 
 ## Signing limits
 
