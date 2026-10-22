@@ -8,6 +8,7 @@ import { captureAnalytics, configureAnalytics } from './lib/analytics-client';
 import { claimAccess, sessionStore } from './lib/session';
 import './styles.css';
 import './components/message-actions.css';
+import './components/telegram-chat-link.css';
 import './components/private-entry.css';
 import './components/app-discovery-dialog.css';
 import './components/composer.css';

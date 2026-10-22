@@ -79,6 +79,13 @@ async function dispatch(
     }
     case 'currentPage':
       return computer.currentPage(request.threadId, request.input);
+    case 'signInMethods':
+      if (!computer.signInMethods) throw new Error('Sign-in choices are not available.');
+      return computer.signInMethods(request.threadId, request.origin, request.methods, signal);
+    case 'selectSignInMethod':
+      if (!computer.selectSignInMethod) throw new Error('Sign-in choices are not available.');
+      await computer.selectSignInMethod(request.threadId, request.input, signal);
+      return null;
     case 'injectCredentials':
       return computer.injectCredentials(request.input);
     case 'fillCard':

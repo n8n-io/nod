@@ -25,6 +25,7 @@ import { rehypeLocalLinks } from '../lib/markdown';
 import { nextReaction, reactionName } from '../lib/reactions';
 import { MessageLinkPreviews } from './link-previews';
 import { SetupActions } from './setup-link';
+import { TelegramChatLink, useTelegramChatUrl } from './telegram-chat-link';
 import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
@@ -61,6 +62,7 @@ export const MessageText = memo(function MessageText({
   handoffTurnId?: string;
 }) {
   const content = useRef<HTMLDivElement>(null);
+  const telegramUrl = useTelegramChatUrl(text);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
   const actions = messageSetupLinks(text, origin);
   const connected = (href: string) =>
@@ -77,6 +79,7 @@ export const MessageText = memo(function MessageText({
             a: ({ href, children, node }) => {
               const link = safeMessageLink(href ?? '', origin);
               if (!link) return <span>{children}</span>;
+              if (href === telegramUrl) return <TelegramChatLink href={telegramUrl} />;
               const linkText = messageLinkText(node?.children ?? []);
               const setup = setupLink(link, linkText);
               if (setup && actions.some((action) => action.href === setup.href))
@@ -126,7 +129,7 @@ export const MessageText = memo(function MessageText({
           <BrowserHandoff key={handoffTurnId} turnId={handoffTurnId} paused={handoffPaused} />
         )}
       </div>
-      {previews && <MessageLinkPreviews content={content} text={text} />}
+      {previews && <MessageLinkPreviews key={telegramUrl} content={content} text={text} />}
     </>
   );
 });

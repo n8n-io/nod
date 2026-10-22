@@ -7,6 +7,7 @@ import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
 import { runProcess } from '../src/providers/process.ts';
 import { Trust } from '../src/web/pages/trust.tsx';
+import { Credentials } from '../src/web/pages/credentials.tsx';
 import { SetupActions } from '../src/web/components/setup-link.tsx';
 import { messageSetupLinks } from '../src/web/lib/message-links.ts';
 import { actionLink } from '../src/runtime/communication.ts';
@@ -1227,7 +1228,56 @@ test(
           const passwordUrl = await form('deleted');
           assert.deepEqual((await describe(passwordUrl)).savedEntries, []);
           assert.equal((await choose(passwordUrl, first.id)).statusCode, 409);
-          assert.equal((await choose(passwordUrl, disposable.id)).json().ok, false);
+          const replacement = (await choose(passwordUrl, disposable.id)).json<{
+            ok: boolean;
+            retryUrl: string;
+          }>();
+          assert.equal(replacement.ok, false);
+          assert.equal((await describe(passwordUrl)).status, 'expired');
+          const replacementId = replacement.retryUrl.split('/').at(-1)!;
+          assert.deepEqual((await app.inject({ url: `${passwordUrl}/flow` })).json(), {
+            nextId: replacementId,
+          });
+          assert.equal(
+            (
+              await app.inject({
+                method: 'POST',
+                url: passwordUrl,
+                payload: { password: 'synthetic-stale-password' },
+              })
+            ).statusCode,
+            409,
+          );
+          const view = await vaultPage(
+            createElement(Credentials, { id: passwordUrl.split('/').at(-1)!, embedded: true }),
+            async (url, init) => {
+              const result = await app.inject({
+                method: (init.method ?? 'GET') as 'GET' | 'POST',
+                url,
+                headers: init.body ? { 'content-type': 'application/json' } : {},
+                payload: init.body ? String(init.body) : undefined,
+              });
+              return new Response(result.body, {
+                status: result.statusCode,
+                headers: { 'content-type': 'application/json' },
+              });
+            },
+            'http://localhost:4310/?conversation=synthetic',
+          );
+          try {
+            for (
+              let attempt = 0;
+              attempt < 100 && !view.document.querySelector('input[name="password"]');
+              attempt++
+            )
+              await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+            const field = view.document.querySelector<HTMLInputElement>('input[name="password"]');
+            assert.ok(field);
+            assert.equal(field.value, '');
+            assert.equal(window.location.search, '?conversation=synthetic');
+          } finally {
+            await view.close();
+          }
           assert.equal(injections.length, before);
         },
       );
@@ -4304,14 +4354,14 @@ await act(async () => render());
 for (let attempt = 0; attempt < 80 && !button('Continue'); attempt++) await settle();
 assert.equal(document.querySelector('.ob').dataset.step, 'notifications');
 assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'notifications', 'forward']]);
-await act(async () => document.querySelector('[role=switch]').click());
+await act(async () => button('Enable notifications').click());
 await settle();
 assert.equal(captured.length, 1);
 await act(async () => button('Continue').click());
 for (let attempt = 0; attempt < 80 && !(document.querySelector('.ob')?.dataset.step === 'launchAtLogin' && button('Start chatting')); attempt++) await settle();
 assert.deepEqual(steps(), [['otto_onboarding_step_viewed', 'notifications', 'forward'], ['otto_onboarding_step_viewed', 'launch_at_login', 'forward']]);
 assert.equal(button('Start chatting').disabled, true);
-await act(async () => document.querySelector('[role=switch]').click());
+await act(async () => button('Enable open at login').click());
 await settle();
 await act(async () => button('Start chatting').click());
 await settle();
@@ -5242,66 +5292,62 @@ assert.equal(saves,0);
 assert.equal(document.querySelector('[role="switch"]'),null);
 failRead=false;
 await act(async()=>button('Try again').click());
-await waitFor(()=>document.querySelector('[role="switch"]'));
-const toggle=()=>document.querySelector('[role="switch"]');
+await waitFor(()=>button('Enable notifications'));
+const preferenceAction=()=>document.querySelector('.ob-preference-action button');
 assert.equal((await store.get()).notifications,false);
-assert.equal(toggle().getAttribute('aria-checked'),'false');
+assert.ok(preferenceAction());
 assert.equal(saves,0);
 assert.equal(button('Continue').disabled,true);
 await act(async()=>button('Continue').click());
 assert.equal((await store.get()).onboardingPreferenceStep,'notifications');
-const notificationToggle=toggle();
+const notificationAction=preferenceAction();
 await act(async()=>statusListener({phase:'ready',runtime:{phase:'error',error:'Synthetic runtime interrupted'}}));
 await waitFor(()=>button('Try again'));
-assert.equal(toggle(),notificationToggle);
+assert.equal(preferenceAction(),notificationAction);
 await act(async()=>button('Try again').click());
 await waitFor(()=>runtimeRetries===1&&!button('Try again'));
-assert.equal(toggle(),notificationToggle);
+assert.equal(preferenceAction(),notificationAction);
 assert.equal(saves,0);
 assert.equal((await store.get()).onboardingPreferenceStep,'notifications');
-await act(async()=>{toggle().click();toggle().click()});
+await act(async()=>{preferenceAction().click();preferenceAction().click()});
 await waitFor(()=>document.body.textContent.includes('Synthetic native save failed'));
 assert.equal(saves,1);
 assert.equal((await store.get()).onboardingPreferenceStep,'notifications');
-assert.equal(toggle().getAttribute('aria-checked'),'false');
+assert.ok(preferenceAction());
 failSave=false;
-await act(async()=>toggle().click());
-await waitFor(()=>!toggle().disabled);
+await act(async()=>preferenceAction().click());
+await waitFor(()=>!preferenceAction()&&!button('Continue').disabled);
 assert.equal((await store.get()).notifications,true);
 assert.equal((await store.get()).onboardingPreferenceStep,'notifications');
-await act(async()=>toggle().click());
-await waitFor(()=>!toggle().disabled);
-assert.equal((await store.get()).notifications,false);
-assert.equal(button('Continue').disabled,true);
-await act(async()=>toggle().click());
-await waitFor(()=>!toggle().disabled);
 await act(async()=>button('Continue').click());
 await waitFor(()=>(document.querySelector('.ob')?.dataset.step)==='launchAtLogin');
 assert.equal((await store.get()).onboardingPreferenceStep,'launchAtLogin');
 assert.equal(button('Start chatting').disabled,true);
-await act(async()=>toggle().click());
-await waitFor(()=>!toggle().disabled);
+await waitFor(()=>preferenceAction());
+await act(async()=>preferenceAction().click());
+await waitFor(()=>!preferenceAction()&&!button('Start chatting').disabled);
 assert.equal((await store.get()).launchAtLogin,true);
 assert.equal((await store.get()).onboardingPreferenceStep,'launchAtLogin');
 await act(async()=>root.unmount());
 store=createSettingsStore(join(directory,'settings.json'),{});
 root=createRoot(document.getElementById('root'));
 await render();
-await waitFor(()=>document.querySelector('[role="switch"]'));
+await waitFor(()=>button('Start chatting')&&!button('Start chatting').disabled);
 assert.equal(document.querySelector('.ob').dataset.step,'launchAtLogin');
-assert.equal(toggle().getAttribute('aria-checked'),'true');
+assert.equal(preferenceAction(),null);
+assert.equal((await store.get()).launchAtLogin,true);
 await act(async()=>button('Start chatting').click());
 await waitFor(()=>document.querySelector('main [role="status"]'));
 assert.equal((await store.get()).launchAtLogin,true);
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');
-assert.equal(saves,7);
+assert.equal(saves,5);
 await act(async()=>root.unmount());
 store=createSettingsStore(join(directory,'settings.json'),{});
 root=createRoot(document.getElementById('root'));
 await render();
 await waitFor(()=>document.querySelector('main [role="status"]'));
 assert.equal(document.querySelector('[role="switch"]'),null);
-assert.equal(saves,7);
+assert.equal(saves,5);
 await act(async()=>root.unmount());
 await store.save({onboardingCompleted:true});
 const {DesktopOptions,useDesktopSettings}=await import('./src/web/components/desktop-settings.tsx');
@@ -5339,3 +5385,391 @@ process.exit(0);
   });
   assert.equal(result.exitCode, 0, result.stderr);
 });
+
+test(
+  'sign-in method choices claim once and carry only active owned browser steps into the private flow',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_method_flow_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    t.after(async () => {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const turns = await seedTurns(pool);
+    const turn = await turns.turn();
+    const origin = 'https://choice.example.test';
+    let currentOrigin = origin;
+    let clicks = 0;
+    let resumed = 0;
+    let fail = false;
+    let refused = false;
+    const entered: CredentialInjection[] = [];
+    const key = randomBytes(32);
+    const options = {
+      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      page: async () => ({ origin: currentOrigin, url: `${currentOrigin}/login` }),
+      signInMethods: async (
+        _browser: string,
+        actualOrigin: string,
+        choices: { label: string; selector: string }[],
+      ) => {
+        assert.equal(actualOrigin, currentOrigin);
+        return {
+          document: 'synthetic-document',
+          methods: choices.map((choice) => ({
+            id: randomUUID(),
+            label: choice.label,
+            page: { origin: currentOrigin, url: `${currentOrigin}/login` },
+          })),
+        };
+      },
+      checkMethods: async (
+        _turn: TurnRef,
+        methods: { selector: string; page: { origin: string } }[],
+      ) => {
+        assert.ok(methods.every((method) => method.page.origin === currentOrigin));
+        if (refused) throw new Error('Synthetic trust refusal');
+      },
+      selectSignInMethod: async (
+        _browser: string,
+        choice: { origin: string; document: string; methodId: string },
+      ) => {
+        assert.equal(choice.origin, currentOrigin);
+        assert.equal(choice.document, 'synthetic-document');
+        assert.ok(choice.methodId);
+        clicks++;
+        if (fail) throw new Error('Synthetic interrupted selection');
+      },
+      inject: async (input: CredentialInjection) => {
+        entered.push(input);
+      },
+      resume: async () => {
+        resumed++;
+      },
+      retry: async () => {},
+    };
+    const vault = await createVault(pool, options);
+    vault.registerRoutes(app);
+    const requested = await vault.request(turn, 'local-development', {
+      origin,
+      label: 'Synthetic website',
+      kind: 'method',
+      methods: [
+        { label: 'Continue with Identity', selector: '#identity' },
+        { label: 'Use email', selector: '#email' },
+      ],
+    });
+    const path = `/api/credential-requests/${requested.url.split('/').at(-1)}`;
+    await turns.wait(turn);
+    const get = async (url = path) =>
+      (await app.inject({ method: 'GET', url })).json<CredentialRequest>();
+    const initial = await get();
+    assert.equal(initial.kind, 'method');
+    assert.equal(initial.status, 'pending');
+    assert.equal(initial.methods?.length, 2);
+    assert.doesNotMatch(JSON.stringify(initial), /#identity|#email|synthetic-document/);
+    const wrong = await app.inject({
+      method: 'POST',
+      url: `${path}/method`,
+      payload: { methodId: randomUUID() },
+    });
+    assert.equal(wrong.statusCode, 409);
+    assert.equal(clicks, 0);
+    let viewOpen = true;
+    let clientRequests = 0;
+    let pendingRequests = 0;
+    const view = await vaultPage(
+      createElement(Credentials, { id: initial.id, embedded: true }),
+      async (url, init) => {
+        clientRequests++;
+        pendingRequests++;
+        const result = await app.inject({
+          method: (init.method ?? 'GET') as 'GET' | 'POST',
+          url,
+          headers: init.body ? { 'content-type': 'application/json' } : {},
+          payload: init.body ? String(init.body) : undefined,
+        });
+        pendingRequests--;
+        return new Response(result.body, {
+          status: result.statusCode,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+      'http://localhost:4310/?conversation=synthetic',
+    );
+    t.after(async () => {
+      if (viewOpen) await view.close();
+    });
+    const settle = async (predicate: () => boolean) => {
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+      for (let attempt = 0; attempt < 100 && (!predicate() || pendingRequests > 0); attempt++)
+        await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+      assert.ok(predicate());
+      assert.equal(pendingRequests, 0);
+    };
+    const focus = async () => act(async () => window.dispatchEvent(new window.Event('focus')));
+    await settle(() => Boolean(view.document.querySelector('.credential-accounts button')));
+    const choice = view.document.querySelector<HTMLButtonElement>('.credential-accounts button')!;
+    choice.focus();
+    const [, duplicate] = await Promise.all([
+      act(async () => {
+        choice.click();
+        choice.click();
+      }),
+      app.inject({
+        method: 'POST',
+        url: `${path}/method`,
+        payload: { methodId: initial.methods![0].id },
+      }),
+    ]);
+    assert.ok([200, 409].includes(duplicate.statusCode));
+    await settle(
+      () =>
+        resumed === 1 &&
+        view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
+    );
+    assert.equal(view.document.activeElement, view.document.querySelector('.credential-card'));
+    assert.equal(clicks, 1);
+    assert.equal(resumed, 1);
+    assert.equal((await get()).status, 'filled');
+    assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
+    const nextTurn = await turns.resume(turn);
+    currentOrigin = 'https://identity.example.test';
+    const next = await vault.request(nextTurn, 'local-development', {
+      origin: currentOrigin,
+      label: 'Identity',
+      kind: 'identifier',
+      usernameSelector: '#email',
+      submitSelector: '#next',
+    });
+    assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
+    await turns.wait(nextTurn);
+    const flow = (await app.inject({ method: 'GET', url: `${path}/flow` })).json<{
+      nextId: string;
+    }>();
+    assert.equal(flow.nextId, next.url.split('/').at(-1));
+    const nextPath = `/api/credential-requests/${flow.nextId}`;
+    assert.equal((await get(nextPath)).origin, currentOrigin);
+    await focus();
+    await settle(() => Boolean(view.document.querySelector('input[name="username"]')));
+    assert.equal(view.document.querySelector('input[name="password"]'), null);
+    assert.equal(window.location.search, '?conversation=synthetic');
+
+    const stale = await app.inject({
+      method: 'POST',
+      url: path,
+      payload: { username: 'synthetic@example.test' },
+    });
+    assert.equal(stale.statusCode, 409);
+    assert.equal(entered.length, 0);
+    view.document.querySelector<HTMLInputElement>('input[name="username"]')!.value =
+      'synthetic@example.test';
+    await act(async () =>
+      view.document
+        .querySelector('form')!
+        .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })),
+    );
+    await settle(
+      () =>
+        resumed === 2 &&
+        entered.length === 1 &&
+        view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
+    );
+    assert.equal(entered.length, 1);
+    const passwordTurn = await turns.resume(nextTurn);
+    const password = await vault.request(passwordTurn, 'local-development', {
+      origin: currentOrigin,
+      label: 'Identity',
+      kind: 'password',
+      passwordSelector: '#password',
+      submitSelector: '#continue',
+    });
+    await turns.wait(passwordTurn);
+    await focus();
+    await settle(() => Boolean(view.document.querySelector('input[name="password"]')));
+    assert.equal(
+      view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value,
+      '',
+    );
+    assert.equal(
+      view.document.querySelector<HTMLInputElement>('input[name="username"]')!.value,
+      'synthetic@example.test',
+    );
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
+      password.url.split('/').at(-1),
+    );
+    view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value =
+      'synthetic-flow-password';
+    await act(async () =>
+      view.document
+        .querySelector('form')!
+        .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })),
+    );
+    await settle(
+      () =>
+        resumed === 3 &&
+        entered.length === 2 &&
+        view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
+    );
+    const codeTurn = await turns.resume(passwordTurn);
+    const code = await vault.request(codeTurn, 'local-development', {
+      origin: currentOrigin,
+      label: 'Identity',
+      kind: 'otp',
+      passwordSelector: '#code',
+      submitSelector: '#verify',
+    });
+    await turns.wait(codeTurn);
+    await focus();
+    await settle(() => Boolean(view.document.querySelector('input[name="code"]')));
+    view.document.querySelector<HTMLInputElement>('input[name="code"]')!.value = '732814';
+    await view.render(createElement('div'));
+    const closedRequests = clientRequests;
+    await focus();
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+    assert.equal(clientRequests, closedRequests);
+    await view.render(createElement(Credentials, { id: initial.id, embedded: true }));
+    await settle(() => Boolean(view.document.querySelector('input[name="code"]')));
+    assert.equal(view.document.querySelector<HTMLInputElement>('input[name="code"]')!.value, '');
+    assert.equal(window.location.search, '?conversation=synthetic');
+    assert.equal(window.localStorage.length, 0);
+    assert.equal(window.sessionStorage.length, 0);
+    await view.close();
+    viewOpen = false;
+
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
+      code.url.split('/').at(-1),
+    );
+    const restarted = await createVault(pool, options);
+    const reopened = Fastify();
+    restarted.registerRoutes(reopened);
+    assert.equal(
+      (await reopened.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
+      code.url.split('/').at(-1),
+    );
+    await reopened.close();
+    await pool.query(
+      'UPDATE credential_requests SET owner_id=$1 WHERE token_hash=(SELECT token_hash FROM credential_requests WHERE kind=$2 LIMIT 1)',
+      ['another-owner', 'otp'],
+    );
+    assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
+    await pool.query(
+      "UPDATE credential_requests SET owner_id='local-development' WHERE kind='otp'",
+    );
+    await pool.query('UPDATE credential_requests SET browser_id=$1 WHERE kind=$2', [
+      randomUUID(),
+      'otp',
+    ]);
+    assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
+    const failureTurn = await turns.turn();
+    const failure = await vault.request(failureTurn, 'local-development', {
+      origin: currentOrigin,
+      label: 'Identity',
+      kind: 'method',
+      methods: [{ label: 'Continue', selector: '#continue' }],
+    });
+    await turns.wait(failureTurn);
+    const failurePath = `/api/credential-requests/${failure.url.split('/').at(-1)}`;
+    const failureRequest = await get(failurePath);
+    fail = true;
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `${failurePath}/method`,
+          payload: { methodId: failureRequest.methods![0].id },
+        })
+      ).statusCode,
+      502,
+    );
+    assert.equal((await get(failurePath)).status, 'uncertain');
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `${failurePath}/method`,
+          payload: { methodId: failureRequest.methods![0].id },
+        })
+      ).statusCode,
+      409,
+    );
+    assert.equal(clicks, 2);
+    assert.equal(resumed, 3);
+    assert.deepEqual((await app.inject({ method: 'GET', url: `${failurePath}/flow` })).json(), {});
+    const expiredTurn = await turns.turn();
+    const expired = await vault.request(expiredTurn, 'local-development', {
+      origin: currentOrigin,
+      label: 'Identity',
+      kind: 'method',
+      methods: [{ label: 'Continue', selector: '#continue' }],
+    });
+    await turns.wait(expiredTurn);
+    const expiredPath = `/api/credential-requests/${expired.url.split('/').at(-1)}`;
+    const expiredRequest = await get(expiredPath);
+    await pool.query(
+      "UPDATE credential_requests SET flow_expires_at=now()-interval '1 second' WHERE turn_id=$1",
+      [expiredTurn.turnId],
+    );
+    assert.equal((await get(expiredPath)).status, 'expired');
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `${expiredPath}/method`,
+          payload: { methodId: expiredRequest.methods![0].id },
+        })
+      ).statusCode,
+      409,
+    );
+    assert.equal(clicks, 2);
+    assert.equal(
+      (await app.inject({ method: 'POST', url: `${expiredPath}/retry`, payload: {} })).statusCode,
+      200,
+    );
+    assert.equal(
+      (await app.inject({ method: 'POST', url: `${expiredPath}/retry`, payload: {} })).statusCode,
+      409,
+    );
+    const retriedTurn = await turns.resume(expiredTurn, 'credentials-retry');
+    const retried = await vault.request(retriedTurn, 'local-development', {
+      origin: currentOrigin,
+      label: 'Identity',
+      kind: 'identifier',
+      usernameSelector: '#email',
+    });
+    await turns.wait(retriedTurn);
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `${expiredPath}/flow` })).json().nextId,
+      retried.url.split('/').at(-1),
+    );
+    assert.equal(clicks, 2);
+    refused = true;
+    const refusedTurn = await turns.turn();
+    await assert.rejects(
+      vault.request(refusedTurn, 'local-development', {
+        origin: currentOrigin,
+        label: 'Identity',
+        kind: 'method',
+        methods: [{ label: 'Continue', selector: '#continue' }],
+      }),
+      /trust refusal/,
+    );
+    assert.equal(
+      (await pool.query('SELECT 1 FROM credential_requests WHERE turn_id=$1', [refusedTurn.turnId]))
+        .rowCount,
+      0,
+    );
+  },
+);

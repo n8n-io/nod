@@ -11,6 +11,16 @@ type DomNode = {
   shadowRoots?: DomNode[];
   contentDocument?: DomNode;
 };
+export type BoundSignInControl = {
+  backendNodeId: number;
+  frameId: string;
+  loaderId: string;
+  snapshot: string;
+  controls: { role: string; name: string }[];
+  origin: string;
+  url: string;
+  submits: { method: string; to: string } | null;
+};
 export type FocusedField = { origin: string; session: string; context: number };
 export type ControlQuery = {
   selector?: string;
@@ -22,6 +32,15 @@ export type ControlQuery = {
 const active = `(() => { if (!document.hasFocus()) return null; let node = document.activeElement; for (;;) { const root = node && (node.shadowRoot ?? (globalThis.__ottoRoots ?? []).find(root => root.host === node)); if (!root?.activeElement) break; node = root.activeElement; } return node && !['IFRAME', 'FRAME', 'BODY', 'HTML'].includes(node.tagName) ? node : null; })()`;
 const focusScript = `(() => { const node = ${active}; globalThis.__ottoFocused = node; return node ? node.tagName : ''; })()`;
 const submitsScript = `function (enter) { const node = this.nodeType === 1 ? this : this.parentElement; const control = enter ? node : (node?.closest('button, input') ?? node?.closest('label')?.control); const form = control?.form; const button = ['submit', 'image'].includes(control?.type); if (!form || !(button || (enter && control.tagName === 'INPUT'))) return null; const own = (name) => Object.getOwnPropertyDescriptor(HTMLFormElement.prototype, name).get.call(form); const submitter = button ? control : [...own('elements')].find((element) => ['submit', 'image'].includes(element.type)); const method = (submitter?.hasAttribute('formmethod') ? submitter.formMethod : own('method')) || 'get'; if (method === 'dialog') return null; return { method: method.toUpperCase(), to: submitter?.hasAttribute('formaction') ? submitter.formAction : own('action') }; }`;
+const signInControlSelector =
+  'button, a[href], input[type="submit"], input[type="button"], [role="button"], [role="link"]';
+const signInSnapshot = `function () {
+  if (!this.isConnected || this.ownerDocument !== document || !this.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) || this.matches(':disabled') || this.closest('[inert], [aria-disabled="true"], [aria-hidden="true"]')) return null;
+  const rect = this.getBoundingClientRect();
+  if (!rect.width || !rect.height || this.outerHTML.length > 16384) return null;
+  const references = ['aria-labelledby', 'aria-describedby'].map(name => (this.getAttribute(name) ?? '').split(/\\s+/).map(id => document.getElementById(id)?.textContent ?? ''));
+  return JSON.stringify({ origin: location.origin, url: location.href, html: this.outerHTML, href: this instanceof HTMLAnchorElement ? this.href : null, references, submits: (${submitsScript}).call(this, false) });
+}`;
 const blurScript = `(() => { const node = document.activeElement; if (node && node !== document.body && typeof node.blur === 'function') node.blur(); return ''; })()`;
 const armScript = (privateValue: boolean) =>
   `(() => { const node = ${active}; if (!node || node !== globalThis.__ottoFocused) return ''; globalThis.__ottoField = node; if (${privateValue}) (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); if (node.tagName !== 'SELECT') { if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); } return node.tagName; })()`;
@@ -129,6 +148,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
   const worlds = new Map<string, number>();
   const send = (method: string, params: object = {}, sessionId?: string) =>
     new Promise<Record<string, unknown>>((resolve, reject) => {
+      signal?.throwIfAborted();
       const id = ++next;
       const timer = setTimeout(() => {
         pending.delete(id);
@@ -462,6 +482,64 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     }
   };
 
+  const controlsFor = async (found: { backendNodeId: number; session: string }) => {
+    const { backendNodeId, session } = found;
+    const { nodes } = (await send(
+      'Accessibility.getPartialAXTree',
+      { backendNodeId, fetchRelatives: true },
+      session,
+    )) as {
+      nodes: Array<{
+        nodeId: string;
+        parentId?: string;
+        ignored?: boolean;
+        backendDOMNodeId?: number;
+        role?: { value?: unknown };
+        name?: { value?: unknown };
+      }>;
+    };
+    const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+    const controls: Array<{ role: string; name: string }> = [];
+    for (
+      let node = nodes.find((item) => item.backendDOMNodeId === backendNodeId);
+      node && controls.length < 3;
+      node = node.parentId ? byId.get(node.parentId) : undefined
+    ) {
+      const name = String(node.name?.value ?? '').trim();
+      if (!node.ignored && name) controls.push({ role: String(node.role?.value ?? ''), name });
+    }
+    return controls;
+  };
+
+  const resolveControl = async (backendNodeId: number, session: string, frameId: string) => {
+    const { object } = (await send(
+      'DOM.resolveNode',
+      {
+        backendNodeId,
+        executionContextId: await world(session, frameId),
+        objectGroup: 'otto-sign-in',
+      },
+      session,
+    )) as { object: { objectId?: string } };
+    if (!object.objectId) throw new Error('The sign-in control is no longer available.');
+    return object.objectId;
+  };
+
+  const controlSnapshot = async (objectId: string, session: string) => {
+    const { result, exceptionDetails } = (await send(
+      'Runtime.callFunctionOn',
+      {
+        objectId,
+        functionDeclaration: signInSnapshot,
+        returnByValue: true,
+      },
+      session,
+    )) as { result?: { value?: string | null }; exceptionDetails?: unknown };
+    if (exceptionDetails || !result?.value)
+      throw new Error('The sign-in control is no longer available.');
+    return result.value;
+  };
+
   return {
     async readOnly(expression: string) {
       const { result, exceptionDetails } = (await send(
@@ -553,33 +631,117 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     },
     async controls(query: ControlQuery) {
       const found = await locate(query);
-      if (!found) return [];
-      const { backendNodeId, session } = found;
-      const { nodes } = (await send(
-        'Accessibility.getPartialAXTree',
-        { backendNodeId, fetchRelatives: true },
-        session,
-      )) as {
-        nodes: Array<{
-          nodeId: string;
-          parentId?: string;
-          ignored?: boolean;
-          backendDOMNodeId?: number;
-          role?: { value?: unknown };
-          name?: { value?: unknown };
-        }>;
-      };
-      const byId = new Map(nodes.map((node) => [node.nodeId, node]));
-      const controls: Array<{ role: string; name: string }> = [];
-      for (
-        let node = nodes.find((item) => item.backendDOMNodeId === backendNodeId);
-        node && controls.length < 3;
-        node = node.parentId ? byId.get(node.parentId) : undefined
-      ) {
-        const name = String(node.name?.value ?? '').trim();
-        if (!node.ignored && name) controls.push({ role: String(node.role?.value ?? ''), name });
+      return found ? controlsFor(found) : [];
+    },
+    async signInControl(query: ControlQuery): Promise<BoundSignInControl> {
+      const found = await locate(query);
+      if (!found) throw new Error('The sign-in control could not be found.');
+      try {
+        let frame: FrameNode['frame'] | undefined;
+        let objectId: string | undefined;
+        for (const candidate of await tree(found.session)) {
+          const resolved = await resolveControl(found.backendNodeId, found.session, candidate.id);
+          const { result } = (await send(
+            'Runtime.callFunctionOn',
+            {
+              objectId: resolved,
+              functionDeclaration: 'function () { return this.ownerDocument === document; }',
+              returnByValue: true,
+            },
+            found.session,
+          )) as { result?: { value?: boolean } };
+          if (result?.value === true) {
+            frame = candidate;
+            objectId = resolved;
+            break;
+          }
+        }
+        if (!frame?.loaderId || !objectId)
+          throw new Error('The sign-in document is no longer available.');
+        const { result, exceptionDetails } = (await send(
+          'Runtime.callFunctionOn',
+          {
+            objectId,
+            functionDeclaration: `function () { return (this.nodeType === 1 ? this : this.parentElement)?.closest(${JSON.stringify(signInControlSelector)}); }`,
+            objectGroup: 'otto-sign-in',
+          },
+          found.session,
+        )) as { result?: { objectId?: string }; exceptionDetails?: unknown };
+        if (exceptionDetails || !result?.objectId)
+          throw new Error('The sign-in control is not available.');
+        const { node } = (await send(
+          'DOM.describeNode',
+          { objectId: result.objectId },
+          found.session,
+        )) as { node: { backendNodeId: number } };
+        const snapshot = await controlSnapshot(result.objectId, found.session);
+        const controls = await controlsFor({
+          backendNodeId: node.backendNodeId,
+          session: found.session,
+        });
+        if (
+          !controls[0]?.name ||
+          !['button', 'link'].includes(controls[0].role) ||
+          (await controlSnapshot(result.objectId, found.session)) !== snapshot
+        )
+          throw new Error('The sign-in control changed during inspection.');
+        const details = JSON.parse(snapshot) as {
+          origin: string;
+          url: string;
+          submits: { method: string; to: string } | null;
+        };
+        return {
+          backendNodeId: node.backendNodeId,
+          frameId: frame.id,
+          loaderId: frame.loaderId,
+          snapshot,
+          controls,
+          origin: details.origin,
+          url: details.url,
+          submits: details.submits,
+        };
+      } finally {
+        await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-sign-in' }, found.session);
       }
-      return controls;
+    },
+    async selectSignInControl(control: BoundSignInControl) {
+      let session: string | undefined;
+      for (const candidate of sessions) {
+        if (
+          (await tree(candidate)).some(
+            (frame) => frame.id === control.frameId && frame.loaderId === control.loaderId,
+          )
+        ) {
+          session = candidate;
+          break;
+        }
+      }
+      if (!session) throw new Error('The sign-in document changed.');
+      try {
+        const objectId = await resolveControl(control.backendNodeId, session, control.frameId);
+        if (
+          JSON.stringify(await controlsFor({ backendNodeId: control.backendNodeId, session })) !==
+          JSON.stringify(control.controls)
+        )
+          throw new Error('The sign-in control changed.');
+        const { result, exceptionDetails } = (await send(
+          'Runtime.callFunctionOn',
+          {
+            objectId,
+            functionDeclaration: `function (expected) { if ((${signInSnapshot}).call(this) !== expected) return false; HTMLElement.prototype.click.call(this); return true; }`,
+            arguments: [{ value: control.snapshot }],
+            returnByValue: true,
+            userGesture: true,
+          },
+          session,
+        )) as { result?: { value?: boolean }; exceptionDetails?: unknown };
+        if (exceptionDetails || result?.value !== true)
+          throw new Error('The sign-in control changed.');
+      } finally {
+        await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-sign-in' }, session).catch(
+          () => {},
+        );
+      }
     },
     async submits(query: ControlQuery, enter: boolean) {
       const target = await locate(query);

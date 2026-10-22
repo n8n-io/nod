@@ -25,7 +25,11 @@ Vault keeps your website logins and cards, under **Trust → Logins and cards**.
 
 Select the sign-in action in chat to open the private form beside the conversation. On a narrow window it fills the chat area. Close it with **Escape** or the close button; unsent values are cleared. Reopen the action to read the current status. Closing the panel does not cancel an entry already submitted to the website. Browser handoff links still open a standalone private form.
 
-A private form stays open while its task waits for you. It closes once it's used, when Otto asks for a newer one, when Otto starts on a newer message in the same conversation, or when you select **Stop**. A scheduled run or background task has its own session, so chatting with Otto never closes its form.
+When a website offers several sign-in methods, Otto shows the choices it found on that page. Select one to continue in Otto's browser. Email, password and verification-code steps appear in the same private panel as the website asks for them. A choice opens the website's real control; it does not mean sign-in succeeded.
+
+Method choices expire after 30 minutes. If the page or control changes, Otto refuses the old choice. A result that cannot be confirmed stays **unknown** and is never replayed automatically. Ask Otto to check the page before trying again. The panel follows fresh steps from the same task and browser for up to 30 minutes; a new task needs its own private link.
+
+A private form stays available while its task waits for you. It stops accepting input once used, when Otto asks for a newer one, when Otto starts on a newer message in the same conversation, or when you select **Stop**. A scheduled run or background task has its own session, so chatting with Otto never closes its form.
 
 ## How sign-in works
 

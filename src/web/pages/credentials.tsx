@@ -65,6 +65,7 @@ export function Payment(props: PrivateFormProps) {
 type PaymentStatus = 'pending' | 'entering' | 'submitted' | 'uncertain' | 'expired';
 
 function PaymentForm({ id, embedded, onClose }: PrivateFormProps) {
+  const card = useRef<HTMLDivElement>(null);
   const [request, setRequest] = useState<PaymentRequest>();
   const [status, setStatus] = useState<PaymentStatus>();
   const [error, setError] = useState('');
@@ -123,6 +124,7 @@ function PaymentForm({ id, embedded, onClose }: PrivateFormProps) {
     form.reset();
     const controller = new AbortController();
     action.current = controller;
+    if (embedded && card.current?.contains(document.activeElement)) card.current.focus();
     setSaving(true);
     setError('');
     try {
@@ -158,7 +160,13 @@ function PaymentForm({ id, embedded, onClose }: PrivateFormProps) {
   }
   return (
     <PrivateFormFrame embedded={embedded}>
-      <div className="credential-card credential-payment" data-analytics-private aria-busy={saving}>
+      <div
+        className="credential-card credential-payment"
+        ref={card}
+        tabIndex={embedded ? -1 : undefined}
+        data-analytics-private
+        aria-busy={saving}
+      >
         <h1>
           {status === 'submitted'
             ? 'Card submitted'
@@ -214,6 +222,7 @@ function PaymentForm({ id, embedded, onClose }: PrivateFormProps) {
 }
 
 function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormProps) {
+  const card = useRef<HTMLDivElement>(null);
   const [activeId, setActiveId] = useState(id);
   const generation = useRef(0);
   const updates = useRef(0);
@@ -225,20 +234,44 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
   const [enterNew, setEnterNew] = useState(false);
   const [revealed, setRevealed] = useState(false);
   useEffect(() => {
-    if (request?.status !== 'entering' && request?.status !== 'pending') return;
+    if (!request || (request.status === 'uncertain' && !retried)) return;
     const controller = new AbortController();
-    const refresh = () => {
+    const refresh = async () => {
       if (action.current) return;
       const version = ++updates.current;
-      void api<CredentialRequest>(`/api/credential-requests/${encodeURIComponent(activeId)}`, {
-        signal: controller.signal,
-        cache: 'no-store',
-      })
-        .then((value) => {
-          if (!controller.signal.aborted && version === updates.current) setRequest(value);
-        })
-        .catch(() => {});
+      const path = `/api/credential-requests/${encodeURIComponent(activeId)}`;
+      try {
+        const value = await api<CredentialRequest>(path, {
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        if (controller.signal.aborted || version !== updates.current) return;
+        setRequest(value);
+        if (value.status === 'filled' || value.status === 'expired' || retried) {
+          const flow = await api<{ nextId?: string }>(`${path}/flow`, {
+            signal: controller.signal,
+            cache: 'no-store',
+          });
+          if (
+            !controller.signal.aborted &&
+            version === updates.current &&
+            flow.nextId &&
+            /^[A-Za-z0-9_-]{43}$/.test(flow.nextId) &&
+            flow.nextId !== activeId
+          ) {
+            if (!embedded) window.history.replaceState(null, '', `/vault/${flow.nextId}`);
+            onRequestChange?.(flow.nextId);
+            setRequest(null);
+            setError('');
+            setEnterNew(false);
+            setRevealed(false);
+            setRetried(false);
+            setActiveId(flow.nextId);
+          }
+        }
+      } catch {}
     };
+    void refresh();
     const unsubscribe = subscribeAppEvents(undefined, {
       open: refresh,
       error() {},
@@ -252,7 +285,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
       unsubscribe();
       window.removeEventListener('focus', refresh);
     };
-  }, [activeId, request?.status]);
+  }, [activeId, request?.status, retried, embedded]);
   useEffect(() => {
     const current = ++generation.current;
     const controller = new AbortController();
@@ -296,6 +329,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
     const controller = new AbortController();
     action.current = controller;
     const current = generation.current;
+    if (embedded && card.current?.contains(document.activeElement)) card.current.focus();
     setSaving(true);
     setError('');
     try {
@@ -336,7 +370,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
   function submitted(result: { ok: boolean; retryUrl?: string; error?: string }) {
     if (result.ok === true) {
       setRequest((current) => (current ? { ...current, status: 'filled' } : current));
-      if (!embedded) returnToChat();
+
       return;
     }
     const retry = new URL(result.retryUrl || '', window.location.origin);
@@ -359,6 +393,14 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
     setEnterNew(true);
     setError(result.error ?? '');
     setActiveId(match[1]);
+  }
+  function useMethod(methodId: string) {
+    return perform(
+      '/method',
+      { methodId },
+      submitted,
+      'This method could not continue. Ask Otto to check the sign-in page.',
+    );
   }
   function useSaved(entryId: string) {
     return perform(
@@ -393,6 +435,8 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
     <PrivateFormFrame embedded={embedded}>
       <div
         className="credential-card"
+        ref={card}
+        tabIndex={embedded ? -1 : undefined}
         aria-busy={saving || (!request && !error)}
         data-analytics-private
       >
@@ -412,7 +456,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
             <div className="success-mark">
               <Check size={24} />
             </div>
-            <h1>Details submitted</h1>
+            <h1>{request?.kind === 'method' ? 'Continuing sign-in' : 'Details submitted'}</h1>
             <p>Otto will continue from the website’s response.</p>
             <BackToChat onClose={onClose} />
           </div>
@@ -460,6 +504,22 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
                 </p>
               </div>
             </header>
+            {request?.kind === 'method' && (
+              <div className="credential-accounts">
+                <h2>Choose how to sign in</h2>
+                {request.methods?.map((method) => (
+                  <Button
+                    key={method.id}
+                    variant="outline"
+                    disabled={saving}
+                    onClick={() => void useMethod(method.id)}
+                  >
+                    <span>{method.label}</span>
+                    <ArrowUpRight size={16} aria-hidden="true" />
+                  </Button>
+                ))}
+              </div>
+            )}
             {request && choosingSaved && (
               <div className="credential-accounts">
                 <h2>Choose a login</h2>
@@ -498,7 +558,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
                 Choose a saved login
               </Button>
             )}
-            {request && !choosingSaved && (
+            {request && request.kind !== 'method' && !choosingSaved && (
               <form
                 className="form-stack"
                 autoComplete="off"

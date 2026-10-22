@@ -2987,6 +2987,92 @@ test('redaction masks secure links, common token strings and secret assignments 
   );
 });
 
+test('Telegram chat cards require paired owned metadata and preserve ordinary links', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://otto.fixture.invalid',
+        pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'Event', 'MouseEvent', 'MutationObserver']) globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const requests = [];
+      fetch = (url, options) => new Promise((resolve) => requests.push({url, options, resolve}));
+      const { createElement: h, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { MessageText } = await import('./src/web/components/message.tsx');
+      const { setRequestAccount } = await import('./src/web/lib/api.ts');
+      setRequestAccount('synthetic-owner');
+      const root = createRoot(document.getElementById('root'));
+      let key = 0;
+      const owned = 'https://t.me/otto_owned_bot';
+      const paired = { ready: true, channels: [{provider:'telegram', enabled:true, accountHandle:'@otto_owned_bot', allowedUserId:'123', mode:'polling'}] };
+      const render = async (text) => { await act(async () => root.render(h(MessageText, {key:++key, text}))); };
+      const respond = async (request, data, status=200) => {
+        assert.equal(request.url, '/api/channel-settings');
+        await act(async () => request.resolve(new Response(JSON.stringify(data), {status, headers:{'content-type':'application/json'}})));
+      };
+      await render('[Ordinary](https://example.com)');
+      assert.equal(requests.length, 0);
+      const links = [owned, 'https://t.me/another_bot', owned+'?start=synthetic-pairing', owned+'#fragment', owned+'/', 'http://t.me/otto_owned_bot', 'https://t.me:443/otto_owned_bot', 'https://t.me.evil.invalid/otto_owned_bot'];
+      await render(links.map((href,i) => '[Link '+i+']('+href+')').join('\n\n'));
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].options.headers.get('X-Otto-Account'), 'synthetic-owner');
+      assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      await respond(requests[0], paired);
+      const card = document.querySelector('[data-setup="telegram"]');
+      assert.ok(card);
+      assert.equal(document.querySelectorAll('[data-setup="telegram"]').length, 1);
+      assert.equal(card.getAttribute('href'), owned);
+      assert.equal(card.getAttribute('target'), '_blank');
+      assert.equal(card.getAttribute('rel'), 'noopener noreferrer');
+      assert.equal(card.getAttribute('referrerpolicy'), 'no-referrer');
+      assert.deepEqual([...document.querySelectorAll('a')].map(a => a.getAttribute('href')), links);
+      for (const type of ['click','contextmenu']) {
+        const event = new MouseEvent(type, {bubbles:true,cancelable:true,ctrlKey:true});
+        card.addEventListener(type, e => {assert.equal(e.defaultPrevented, false);e.preventDefault();}, {once:true});
+        card.dispatchEvent(event);
+      }
+      await act(async () => window.dispatchEvent(new Event('focus')));
+      assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      await respond(requests.at(-1), {ready:true,channels:[]});
+      assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      for (const override of [{enabled:false},{allowedUserId:undefined},{webhookStatus:'registration_pending'},{pairingExpiresAt:'2099-01-01T00:00:00Z'},{accountHandle:'@another_bot'}]) {
+        await render('[Open]('+owned+')');
+        await respond(requests.at(-1), {ready:true,channels:[{...paired.channels[0],...override}]});
+        assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      }
+      await render('[Open]('+owned+')');
+      await respond(requests.at(-1), {error:'unavailable'}, 503);
+      assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      await render('[Open]('+owned+')');
+      const old = requests.at(-1);
+      setRequestAccount('second-synthetic-owner');
+      await render('[Open]('+owned+')');
+      const current = requests.at(-1);
+      assert.equal(old.options.signal.aborted, true);
+      assert.equal(current.options.headers.get('X-Otto-Account'), 'second-synthetic-owner');
+      await respond(old, paired);
+      assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      await respond(current, {ready:true,channels:[]});
+      await act(async () => window.dispatchEvent(new Event('popstate')));
+      const unfinished = requests.at(-1);
+      await act(async () => root.unmount());
+      assert.equal(unfinished.options.signal.aborted, true);
+      const count = requests.length;
+      window.dispatchEvent(new Event('focus'));
+      window.dispatchEvent(new Event('popstate'));
+      assert.equal(requests.length, count);
+      dom.window.close();
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
 test('composer uploads preserve retry bytes, cancellation, previews and failed-send recovery', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
@@ -4563,6 +4649,193 @@ test(
       assert.deepEqual(sent, []);
     } finally {
       await computer.dispose();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'native sign-in methods bind observed controls and refuse changed or repeated selections',
+  { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 90_000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-method-native-'));
+    const received: string[] = [];
+    const changes: Record<string, string> = {
+      replaced: 'primary.replaceWith(primary.cloneNode(true))',
+      renamed: "primary.textContent = 'Delete account'",
+      accessibleName: "primary.setAttribute('aria-label', 'Delete account')",
+      destination: "primary.form.action = '/other'",
+      disabled: 'primary.disabled = true',
+      hidden: "primary.style.display = 'none'",
+      base: "document.querySelector('base').href = '/other/'",
+    };
+    const server = createHttpServer(async (request, response) => {
+      if (request.method === 'POST') {
+        received.push(request.url!);
+        response.writeHead(303, { location: '/done' });
+        response.end();
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      if (request.url === '/done') {
+        response.end('<h1>Selected</h1>');
+        return;
+      }
+      if (request.url === '/framed' || request.url === '/foreign') {
+        const source =
+          request.url === '/foreign'
+            ? `http://localhost:${(server.address() as { port: number }).port}/inner`
+            : '/inner';
+        response.end(
+          `<iframe title="Sign in" src="${source}" style="width:700px;height:400px"></iframe><button id="reload-frame" onclick="document.querySelector('iframe').contentWindow.location.reload()">Reload frame</button>`,
+        );
+        return;
+      }
+      const change = changes[request.url!.slice(1)] ?? '';
+      response.end(
+        `<base href="/"><form action="selected" method="post"><button id="primary"><span>Continue with Example</span></button><button id="alternate" formaction="/alternate">Use another account</button></form><a id="link" href="linked">Continue with Link</a><button id="change" onclick="${change}">Change control</button>`,
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
+      headless: true,
+    });
+    const worker = await harness({ computer });
+    const client = worker.client(directory, { timeoutMs: 30_000 });
+    const act = (input: BrowserAction) => client.act('fixture', input);
+    const choices = [
+      { label: 'Misleading label', selector: '#primary span' },
+      { label: 'Another misleading label', selector: '#alternate' },
+    ];
+    try {
+      await act({ action: 'open', url: origin });
+      await assert.rejects(
+        client.signInMethods!('fixture', origin, [
+          { label: 'First', selector: '#primary' },
+          { label: 'Second', selector: '#primary span' },
+        ]),
+      );
+      const bound = await client.signInMethods!('fixture', origin, choices);
+      assert.deepEqual(
+        bound.methods.map(({ label }) => label),
+        ['Continue with Example', 'Use another account'],
+      );
+      assert.deepEqual(bound.methods[0]!.page.submits, {
+        method: 'POST',
+        to: origin + '/selected',
+      });
+      assert.deepEqual(bound.methods[1]!.page.submits, {
+        method: 'POST',
+        to: origin + '/alternate',
+      });
+      const selection = { origin, document: bound.document, methodId: bound.methods[0]!.id };
+      await assert.rejects(client.selectSignInMethod!('other', selection));
+      await client.selectSignInMethod!('fixture', selection);
+      await act({ action: 'wait', url: '**/done' });
+      assert.deepEqual(received, ['/selected']);
+      await assert.rejects(client.selectSignInMethod!('fixture', selection));
+      await assert.rejects(
+        client.selectSignInMethod!('fixture', { ...selection, methodId: bound.methods[1]!.id }),
+      );
+      for (const change of [...Object.keys(changes), 'navigation', 'origin', 'closed']) {
+        await act({ action: 'open', url: origin + '/' + change });
+        const stale = await client.signInMethods!('fixture', origin, choices);
+        if (change === 'navigation') await act({ action: 'reload' });
+        else if (change === 'closed') await client.close('fixture');
+        else if (change !== 'origin') await act({ action: 'click', selector: '#change' });
+        await assert.rejects(
+          client.selectSignInMethod!('fixture', {
+            origin: change === 'origin' ? 'https://another.example' : origin,
+            document: stale.document,
+            methodId: stale.methods[0]!.id,
+          }),
+        );
+        assert.deepEqual(received, ['/selected']);
+      }
+      await act({ action: 'open', url: origin + '/base' });
+      const linked = await client.signInMethods!('fixture', origin, [
+        { label: 'Ignored', selector: '#link' },
+      ]);
+      await act({ action: 'click', selector: '#change' });
+      await assert.rejects(
+        client.selectSignInMethod!('fixture', {
+          origin,
+          document: linked.document,
+          methodId: linked.methods[0]!.id,
+        }),
+      );
+      assert.deepEqual(received, ['/selected']);
+      await act({ action: 'open', url: origin });
+      const snapshot = (await act({ action: 'snapshot' })).text;
+      const ref = /button "Continue with Example"[^\n]*ref=(e\d+)/.exec(snapshot)?.[1];
+      assert.ok(ref);
+      const referenced = await client.signInMethods!('fixture', origin, [
+        { label: 'Ignored', selector: '@' + ref },
+      ]);
+      assert.equal(referenced.methods[0]!.label, 'Continue with Example');
+      for (const path of ['/framed', '/foreign']) {
+        await act({ action: 'open', url: origin + path });
+        const framedSnapshot = (await act({ action: 'snapshot' })).text;
+        const framedRef = /button "Continue with Example"[^\n]*ref=(e\d+)/.exec(
+          framedSnapshot,
+        )?.[1];
+        assert.ok(framedRef, framedSnapshot);
+        const inspect = () =>
+          client.signInMethods!('fixture', origin, [
+            { label: 'Ignored', selector: '@' + framedRef },
+          ]);
+        if (path === '/foreign') {
+          await assert.rejects(inspect());
+          continue;
+        }
+        const framed = await inspect();
+        assert.equal(framed.methods[0]!.label, 'Continue with Example');
+        await act({ action: 'click', selector: '#reload-frame' });
+        await assert.rejects(
+          client.selectSignInMethod!('fixture', {
+            origin,
+            document: framed.document,
+            methodId: framed.methods[0]!.id,
+          }),
+        );
+        const refreshedSnapshot = (await act({ action: 'snapshot' })).text;
+        const refreshedRef = /button "Continue with Example"[^\n]*ref=(e\d+)/.exec(
+          refreshedSnapshot,
+        )?.[1];
+        assert.ok(refreshedRef, refreshedSnapshot);
+        const refreshed = await client.signInMethods!('fixture', origin, [
+          { label: 'Ignored', selector: '@' + refreshedRef },
+        ]);
+        assert.equal(refreshed.document, framed.document);
+        await client.selectSignInMethod!('fixture', {
+          origin,
+          document: refreshed.document,
+          methodId: refreshed.methods[0]!.id,
+        });
+        const deadline = Date.now() + 5000;
+        while (received.length < 2 && Date.now() < deadline) await delay(10);
+        assert.deepEqual(received, ['/selected', '/selected']);
+      }
+      const controller = new AbortController();
+      controller.abort();
+      await assert.rejects(
+        client.selectSignInMethod!(
+          'fixture',
+          { origin, document: referenced.document, methodId: referenced.methods[0]!.id },
+          controller.signal,
+        ),
+      );
+      assert.deepEqual(received, ['/selected', '/selected']);
+    } finally {
+      await worker.close();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(directory, { recursive: true, force: true });

@@ -702,6 +702,22 @@ async function initializeApplication(
     retry: retryCredentials,
     inject: computer.injectCredentials,
     page: computer.currentPage,
+    signInMethods: computer.signInMethods,
+    selectSignInMethod: computer.selectSignInMethod,
+    checkMethods: async (turn, methods) => {
+      for (const { selector, page } of methods) {
+        const step = { action: 'click' as const, selector };
+        const verdict = await trust.check(
+          turn,
+          'OTTO_browser',
+          browserStepArgs({ step, page, typed: [], subagent: false }),
+        );
+        if (verdict.confirm)
+          throw new Error(
+            'This control needs the normal browser confirmation before it can run. Choose only sign-in methods covered by the owner’s request.',
+          );
+      }
+    },
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
     icon,
     onOwnerUse: (entry, client) => vaultAccess.ownerUse(entry, client),
@@ -1228,6 +1244,16 @@ async function initializeApplication(
         return result;
       },
       requestCredential: async (turn, input) => {
+        if (input.kind === 'method') {
+          if (input.savedLoginId !== undefined)
+            throw new Error('Choose the observed method before choosing its saved login.');
+          return vault.request(turn, ownerId, {
+            origin: input.origin,
+            label: input.label,
+            kind: 'method',
+            methods: input.methods,
+          });
+        }
         const { savedLoginId, ...request } = input;
         if (savedLoginId !== undefined && request.kind === 'otp')
           throw new Error('Saved logins cannot supply verification codes.');

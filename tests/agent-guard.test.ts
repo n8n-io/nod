@@ -663,6 +663,13 @@ test('secure credential pause prevents subsequent tools in the same execution se
     {
       origin: 'https://example.com',
       label: 'Example',
+      kind: 'identifier' as const,
+      usernameSelector: '@username',
+      submitSelector: '@submit',
+    },
+    {
+      origin: 'https://example.com',
+      label: 'Example',
       kind: 'password' as const,
       passwordSelector: '@password',
       submitSelector: '@submit',
@@ -675,10 +682,37 @@ test('secure credential pause prevents subsequent tools in the same execution se
       submitSelector: '@submit',
       emailCode: true,
     },
+    {
+      origin: 'https://example.com',
+      label: 'Example',
+      kind: 'method' as const,
+      methods: [{ label: 'Continue with Identity', selector: '@identity' }],
+    },
   ]) {
     let managed = false;
+    const requested: unknown[] = [];
     const result = await fixture(
       async (tools) => {
+        for (const invalid of [
+          { kind: 'method' },
+          { kind: 'method', methods: [] },
+          { kind: 'method', methods: [{ label: 'Continue with Identity' }] },
+          { kind: 'method', methods: [{ label: 'Continue with Identity', selector: '' }] },
+          {
+            kind: 'password',
+            methods: [{ label: 'Continue with Identity', selector: '@identity' }],
+          },
+        ])
+          await assert.rejects(
+            call(tools, 'sign_in', {
+              origin: 'https://example.com',
+              label: 'Example',
+              message: 'Example needs this sign-in step.',
+              action: 'Open secure step',
+              ...invalid,
+            }),
+          );
+        assert.deepEqual(requested, []);
         await call(tools, 'sign_in', {
           ...input,
           message: 'Example needs this sign-in step.',
@@ -692,6 +726,10 @@ test('secure credential pause prevents subsequent tools in the same execution se
         );
       },
       {
+        requestCredential: async (request) => {
+          requested.push(request);
+          return { url: '/credentials/fixture' };
+        },
         manage: async () => {
           managed = true;
           return {};
@@ -701,5 +739,6 @@ test('secure credential pause prevents subsequent tools in the same execution se
     assert.equal(result.result.status, 'waiting_credentials');
     assert.equal(result.aborted, true);
     assert.equal(managed, false);
+    assert.deepEqual(requested, [input]);
   }
 });

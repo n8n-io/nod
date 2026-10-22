@@ -1,5 +1,28 @@
 # Feedback fixes: before and after
 
+## Approved implementation
+
+These comparisons show the approved changes in actual application components, with the previous branch head `aad7d5c2` as the baseline. Each side uses synthetic content; external requests are intercepted. The desktop bridge is simulated.
+
+| Area                                       | Before and after                                                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| Message interactions and branded picker    | [Desktop](approved/messages-before-after.png), [narrow dark](approved/messages-mobile-before-after.png) |
+| Inline composer files and upload state     | [Composer](approved/composer-before-after.png)                                                          |
+| Settings page and desktop shortcuts        | [Settings and navigation](approved/settings-navigation-before-after.png)                                |
+| Compact cards and MCP OAuth/API key        | [App connections](approved/connections-before-after.png)                                                |
+| Simplified paired Telegram link            | [Telegram](approved/telegram-before-after.png)                                                          |
+| Sign-in, payment and add-card beside chat  | [Private forms](approved/private-forms-before-after.png)                                                |
+| Observed website sign-in methods           | [Method selection](approved/sign-in-methods-before-after.png)                                           |
+| Getting-started actions and enabled states | [Desktop preferences](approved/getting-started-before-after.png)                                        |
+
+[Raw captures](approved/raw) and the [capture manifest](approved/manifest.json) retain image hashes and source attribution. The captures were made at successive implementation checkpoints, including uncommitted working source; they are not presented as captures of the final commit. Later safety and lifecycle fixes are verified separately by tests. The method comparison uses the prior chat-choice interaction on the left and the newly supported private method response on the right.
+
+The original MCP baseline was invalid because full navigation dropped the fixture's revision selector. It was preserved locally and replaced with a matched baseline that retains fixture selectors across navigation. Getting-started images use pointer modality; the original keyboard-focus captures remain preserved locally.
+
+These images establish presentation and fixture behavior, not live OAuth, payment, native OS permissions or installed-app acceptance. The [coverage report](feedback-coverage.md) distinguishes implemented scope, deferred work and the local-only channel handoff limit.
+
+## Earlier fixes
+
 The first eleven comparisons use read-only snapshots of the branch base and captured application source at a matched 1280 × 800 viewport, with the same synthetic product state and interactions. The baseline captures were preserved; all eleven after captures were refreshed on 2026-10-21 against the corrected source revision.
 
 - Before: `e79bf5d2fcfcadb093102c31f1e240b44cd210ce`

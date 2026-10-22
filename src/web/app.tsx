@@ -447,7 +447,14 @@ function AuthenticatedApp({
               initialTab={settingsTab}
               openRequest={settingsRequest}
               onOpenChange={(open) => {
-                if (!open) navigate('/');
+                if (!open) {
+                  navigate('/');
+                  window.requestAnimationFrame(() =>
+                    document
+                      .querySelector<HTMLElement>('.composer-editor[contenteditable="true"]')
+                      ?.focus(),
+                  );
+                }
               }}
               onTabChange={(tab, replace) => {
                 if (replace) {
