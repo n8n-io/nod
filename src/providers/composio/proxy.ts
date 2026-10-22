@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID, sign } from 'node:crypto';
 import { z } from 'zod';
 import type { IntegrationFile, IntegrationConnectionBrowser } from '../../ports/integrations.ts';
 import type { CredentialKeyStore } from '../../ports/key-store.ts';
+import type { IntegrationIdentityCheckpoint } from '../../ports/integration-identity.ts';
 import { loadIntegrationIdentity } from './identity.ts';
 
 const stateSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
@@ -22,6 +23,7 @@ export function createComposioProxy(options: {
   dataRoot: string;
   ownerId: string;
   keyStore: CredentialKeyStore;
+  checkpoint?: IntegrationIdentityCheckpoint;
   browser?: IntegrationConnectionBrowser;
   url?: string;
   request?: typeof fetch;
@@ -60,14 +62,17 @@ export function createComposioProxy(options: {
     return identity;
   }
   const request: typeof fetch = async (input, init) => {
-    await initialize();
     const value = new Request(input, init);
+    value.signal.throwIfAborted();
+    await initialize();
+    value.signal.throwIfAborted();
     const url = new URL(value.url);
     if (url.pathname.startsWith('/api/v3.1/')) url.pathname = `/v2${url.pathname}`;
     if (url.origin !== origin || !/^\/v2\/(?:api\/v3\.1|connect|files|access)\//.test(url.pathname))
       throw new Error('The integration request destination is invalid.');
-    if (!url.pathname.startsWith('/v2/access/')) await enroll();
+    if (!url.pathname.startsWith('/v2/access/')) await enroll(value.signal);
     const body = Buffer.from(await value.arrayBuffer());
+    value.signal.throwIfAborted();
     if (body.length > (url.pathname === '/v2/files/upload' ? 21 : 16) * 1024 * 1024)
       throw new Error('The integration request is too large.');
     const timestamp = String(Math.floor(Date.now() / 1000));
@@ -75,7 +80,7 @@ export function createComposioProxy(options: {
     const current = requiredIdentity();
     const bodyHash = createHash('sha256').update(body).digest('hex');
     const canonical = [
-      'otto-composio-v1',
+      'nod-composio-v1',
       value.method,
       origin,
       `${url.pathname}${url.search}`,
@@ -85,12 +90,12 @@ export function createComposioProxy(options: {
     ].join('\n');
     const headers = new Headers({
       Accept: 'application/json',
-      'x-otto-public-key': current.publicKey,
-      'x-otto-timestamp': timestamp,
-      'x-otto-request-id': requestId,
-      'x-otto-signature': sign(null, Buffer.from(canonical), current.key).toString('base64url'),
+      'x-nod-public-key': current.publicKey,
+      'x-nod-timestamp': timestamp,
+      'x-nod-request-id': requestId,
+      'x-nod-signature': sign(null, Buffer.from(canonical), current.key).toString('base64url'),
     });
-    if (url.pathname === '/v2/files/upload') headers.set('x-otto-content-sha256', bodyHash);
+    if (url.pathname === '/v2/files/upload') headers.set('x-nod-content-sha256', bodyHash);
     if (value.headers.has('content-type'))
       headers.set('content-type', value.headers.get('content-type')!);
     return (options.request ?? fetch)(url, {
@@ -102,7 +107,7 @@ export function createComposioProxy(options: {
     });
   };
   const client = new Composio({
-    apiKey: 'otto-managed-proxy',
+    apiKey: 'nod-managed-proxy',
     userApiKey: null,
     orgApiKey: null,
     baseURL: origin,
@@ -161,7 +166,8 @@ export function createComposioProxy(options: {
     ) as unknown;
   }
   let enrolling: Promise<void> | undefined;
-  async function enroll() {
+  async function enroll(signal: AbortSignal) {
+    signal.throwIfAborted();
     enrolling ??= (async () => {
       const result = z
         .object({ state: z.literal('enabled'), userId: z.string() })
@@ -173,7 +179,19 @@ export function createComposioProxy(options: {
       enrolling = undefined;
       throw error;
     });
-    await enrolling;
+    let abort = () => {};
+    try {
+      await Promise.race([
+        enrolling,
+        new Promise<never>((_, reject) => {
+          abort = () => reject(signal.reason);
+          signal.addEventListener('abort', abort, { once: true });
+        }),
+      ]);
+      signal.throwIfAborted();
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
   }
   return {
     client,
@@ -207,7 +225,7 @@ export function createComposioProxy(options: {
             .string()
             .min(20)
             .max(24_000)
-            .regex(/^otto-file\.[A-Za-z0-9._-]+$/),
+            .regex(/^nod-file\.[A-Za-z0-9._-]+$/),
         })
         .strict()
         .parse(

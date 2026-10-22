@@ -47,10 +47,6 @@ nod prints a link with `#access=` when it starts, and your browser keeps the coo
 
 Every release is notarized by Apple. If macOS still blocks it, open **System Settings → Privacy & Security** and select **Open Anyway**. A managed Mac may need approval from your IT team.
 
-### nod doesn't update to nod
-
-nod is a separate app with its own profile, so nod never updates to it. [Install nod](/get-started/install-desktop/) and set it up again. nod keeps its data until you delete it.
-
 ### macOS asks for Keychain access after an update
 
 macOS can ask again after nod is re-signed. Approve it in the macOS dialog. Never type your Mac password into the nod chat.

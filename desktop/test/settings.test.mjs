@@ -2064,11 +2064,11 @@ test('desktop proxy overrides reach only isolated source engines and retain orig
           const url = new URL(request.url);
           assert.equal(url.origin, ${JSON.stringify(expected)});
           assert.equal(request.headers.has('x-api-key'), false);
-          assert.ok(request.headers.get('x-otto-signature'));
+          assert.ok(request.headers.get('x-nod-signature'));
           requests++;
           if (url.pathname === '/v2/access/enroll') {
             assert.equal(request.method, 'POST');
-            const userId = 'otto_' + createHash('sha256').update(Buffer.from(request.headers.get('x-otto-public-key'), 'base64url')).digest('hex');
+            const userId = 'nod_' + createHash('sha256').update(Buffer.from(request.headers.get('x-nod-public-key'), 'base64url')).digest('hex');
             return Response.json({ state: 'enabled', userId });
           }
           assert.equal(url.pathname, '/v2/api/v3.1/toolkits');
@@ -2077,6 +2077,14 @@ test('desktop proxy overrides reach only isolated source engines and retain orig
         };
         const { createDefaultAdapters } = await import('./src/server/composition.ts');
         const { pool } = await import('./src/server/db.ts');
+        let identity;
+        pool.query = async (sql, values) => {
+          if (sql.startsWith('SELECT public_key FROM integration_identities'))
+            return { rows: identity ? [{ public_key: identity }] : [], rowCount: identity ? 1 : 0 };
+          if (sql.startsWith('INSERT INTO integration_identities')) identity = values[1];
+          return { rows: [], rowCount: 1 };
+        };
+        pool.connect = async () => ({ query: (...args) => pool.query(...args), release() {} });
         if (${Boolean(scenario.invalid)}) {
           assert.throws(() => createDefaultAdapters(), /proxy address/);
           assert.equal(requests, 0);

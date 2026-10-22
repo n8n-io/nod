@@ -1,6 +1,6 @@
 # Feedback fixes: before and after
 
-These captures predate the Otto-to-nod rename. They preserve the original branding and UI from the revisions listed below.
+These captures preserve the original branding and UI from the revisions listed below.
 
 ## Approved implementation
 

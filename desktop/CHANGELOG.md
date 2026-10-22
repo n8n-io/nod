@@ -6,7 +6,7 @@ Releases from before the rename to nod are the `desktop-v*` [GitHub releases](ht
 
 ### Breaking changes
 
-- Rename Otto to nod. [#398](https://github.com/n8n-io/nod/pull/398) (09037cd)
+- Adopt nod product naming. [#398](https://github.com/n8n-io/nod/pull/398) (09037cd)
 
 ### Features
 

@@ -47,7 +47,7 @@ if(fragment.length>16000)throw new Error();
 const value=JSON.parse(decodeURIComponent(fragment));
 if(!value||Object.keys(value).sort().join(',')!=='challenge,id,proof'||value.id!==expected.id||typeof value.proof!=='string'||value.proof.length>6000||typeof value.challenge!=='string'||value.challenge.length>512)throw new Error();
 const parts=value.challenge.split('\n');
-if(parts.length!==5||parts[0]!=='otto-proxy-connect-v2'||parts[1]!==expected.id||parts[2]!==location.origin||!/^[a-f0-9]{64}$/.test(parts[3])||!/^[A-Za-z0-9_-]{43}$/.test(parts[4]))throw new Error();
+if(parts.length!==5||parts[0]!=='nod-proxy-connect-v2'||parts[1]!==expected.id||parts[2]!==location.origin||!/^[a-f0-9]{64}$/.test(parts[3])||!/^[A-Za-z0-9_-]{43}$/.test(parts[4]))throw new Error();
 const signature=new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},saved.key,new TextEncoder().encode(value.challenge)));valid();if(Date.now()>=saved.expiresAt||signature.length!==64)throw new Error();
 location.replace(brokerOrigin+'/v2/connect/native-proof#'+encodeURIComponent(JSON.stringify({proof:value.proof,signature:encoded(signature)})));
 }else{

@@ -12,6 +12,7 @@ import { constants } from 'node:fs';
 import { access, link, lstat, mkdir, open, realpath, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { CredentialKeyStore } from '../../ports/key-store.ts';
+import type { IntegrationIdentityCheckpoint } from '../../ports/integration-identity.ts';
 
 async function readProtected(path: string) {
   let file;
@@ -87,7 +88,21 @@ export async function loadIntegrationIdentity(options: {
   dataRoot: string;
   ownerId: string;
   keyStore: CredentialKeyStore;
+  checkpoint?: IntegrationIdentityCheckpoint;
 }) {
+  const expected = await options.checkpoint?.read();
+  const name = createHash('sha256').update(options.ownerId).digest('hex');
+  if (expected !== undefined) {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(expected))
+      throw new Error('nod’s saved app identity is invalid. Restore its app data to reconnect.');
+    for (const extension of ['encrypted', 'public'])
+      if (
+        !(await readProtected(
+          join(options.dataRoot, 'integration-identity', `${name}.${extension}`),
+        ))
+      )
+        throw new Error('nod’s saved app identity is missing. Restore its app data to reconnect.');
+  }
   if (!options.keyStore.configured)
     throw new Error('Unlock or configure nod’s key store before connecting apps.');
   const encryptionKey = Buffer.from(await options.keyStore.getKey());
@@ -109,12 +124,11 @@ export async function loadIntegrationIdentity(options: {
       )
         throw new Error('The integration identity directory permissions are unsafe.');
     }
-    const name = createHash('sha256').update(options.ownerId).digest('hex');
     const path = join(directory, `${name}.encrypted`);
     const markerPath = join(directory, `${name}.public`);
     const marker = await readProtected(markerPath);
     let encrypted = await readProtected(path);
-    const binding = Buffer.from(JSON.stringify(['otto-integration-identity-v1', options.ownerId]));
+    const binding = Buffer.from(JSON.stringify(['nod-integration-identity-v1', options.ownerId]));
     if (!encrypted) {
       if (marker)
         throw new Error('nod’s saved app identity is missing. Restore its app data to reconnect.');
@@ -151,14 +165,17 @@ export async function loadIntegrationIdentity(options: {
     const publicKey = createPublicKey(key).export({ format: 'jwk' }).x;
     if (!publicKey || Buffer.from(publicKey, 'base64url').length !== 32)
       throw new Error('The integration identity is invalid.');
+    if (expected !== undefined && expected !== publicKey)
+      throw new Error('nod’s saved app identity changed. Restore its app data to reconnect.');
     if (!marker) await publish(markerPath, Buffer.from(publicKey));
     if ((await readProtected(markerPath))?.toString() !== publicKey)
       throw new Error('nod’s saved app identity changed. Restore its app data to reconnect.');
     await persist(directory, dataRoot);
+    await options.checkpoint?.commit(publicKey);
     return {
       key,
       publicKey,
-      userId: `otto_${createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex')}`,
+      userId: `nod_${createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex')}`,
     };
   } finally {
     encryptionKey.fill(0);

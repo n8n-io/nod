@@ -236,7 +236,7 @@ app.whenReady().then(async () => {
     assert.equal(entry.publicKey, first.publicKey);
     assert.equal(
       entry.managedOwner,
-      `otto_${createHash('sha256').update(Buffer.from(first.publicKey, 'base64url')).digest('hex')}`,
+      `nod_${createHash('sha256').update(Buffer.from(first.publicKey, 'base64url')).digest('hex')}`,
     );
     assert.equal(
       verify(

@@ -52,6 +52,7 @@ import {
 } from '../src/ports/integrations.ts';
 import { createComposioProvider } from '../src/providers/composio/integrations.ts';
 import { createComposioProxy } from '../src/providers/composio/proxy.ts';
+import { createIntegrationIdentityCheckpoint } from '../src/server/integration-identity.ts';
 import {
   createIntegrationBrowser,
   renderIntegrationBrowser,
@@ -60,7 +61,11 @@ import { createDiscoveredTransport, safeRemoteFetch } from '../src/providers/dis
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
-import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
+import {
+  createIntegrations,
+  eventOverview,
+  initializeIntegrationSchema,
+} from '../src/server/integrations.ts';
 import { noMailCheck } from '../src/server/integration-result.ts';
 import { cachedIcons } from '../src/server/link-previews.ts';
 import { createErrorRedactor } from '../src/server/redaction.ts';
@@ -162,14 +167,14 @@ test('installation identity persistence failures withhold signatures and preserv
         keyStore: installationKeyStore,
         url: 'https://proxy.example.test',
         request: (async (_input, init) => {
-          calls.push(new Headers(init?.headers).get('x-otto-public-key')!);
+          calls.push(new Headers(init?.headers).get('x-nod-public-key')!);
           return Response.json({
             state: 'enabled',
             userId:
-              'otto_' +
+              'nod_' +
               createHash('sha256')
                 .update(
-                  Buffer.from(new Headers(init?.headers).get('x-otto-public-key')!, 'base64url'),
+                  Buffer.from(new Headers(init?.headers).get('x-nod-public-key')!, 'base64url'),
                 )
                 .digest('hex'),
           });
@@ -228,7 +233,7 @@ test('encrypted installation identities stay bound to their owner and fail witho
     'different owner',
   ]) {
     await t.test(variant, async () => {
-      const dataRoot = await mkdtemp(join(tmpdir(), 'otto-encrypted-identity-'));
+      const dataRoot = await mkdtemp(join(tmpdir(), 'nod-encrypted-identity-'));
       t.after(() => rm(dataRoot, { recursive: true, force: true }));
       const options = {
         dataRoot,
@@ -246,7 +251,7 @@ test('encrypted installation identities stay bound to their owner and fail witho
       const encrypted = await readFile(path);
       const decipher = createDecipheriv('aes-256-gcm', installationKey, encrypted.subarray(0, 12));
       decipher.setAAD(
-        Buffer.from(JSON.stringify(['otto-integration-identity-v1', options.ownerId])),
+        Buffer.from(JSON.stringify(['nod-integration-identity-v1', options.ownerId])),
       );
       decipher.setAuthTag(encrypted.subarray(12, 28));
       const plaintext = Buffer.concat([decipher.update(encrypted.subarray(28)), decipher.final()]);
@@ -256,7 +261,7 @@ test('encrypted installation identities stay bound to their owner and fail witho
       assert.equal(await readFile(marker, 'utf8'), publicKey);
       assert.equal(
         proxy.userId,
-        `otto_${createHash('sha256').update(Buffer.from(publicKey!, 'base64url')).digest('hex')}`,
+        `nod_${createHash('sha256').update(Buffer.from(publicKey!, 'base64url')).digest('hex')}`,
       );
       if (variant === 'unavailable vault') {
         options.keyStore = {
@@ -301,7 +306,7 @@ test('encrypted installation identities stay bound to their owner and fail witho
 });
 
 test('a locked vault never creates a replacement installation identity', async (t) => {
-  const dataRoot = await mkdtemp(join(tmpdir(), 'otto-locked-identity-'));
+  const dataRoot = await mkdtemp(join(tmpdir(), 'nod-locked-identity-'));
   t.after(() => rm(dataRoot, { recursive: true, force: true }));
   const proxy = createComposioProxy({
     dataRoot,
@@ -317,6 +322,206 @@ test('a locked vault never creates a replacement installation identity', async (
   assert.deepEqual(await readdir(dataRoot), []);
 });
 
+test(
+  'installation identity checkpoints prevent replacement after file loss and recover interrupted first initialization',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `identity_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const root = await mkdtemp(join(tmpdir(), 'nod-identity-checkpoint-'));
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+      await rm(root, { recursive: true, force: true });
+    });
+    function options(ownerId: string) {
+      return {
+        dataRoot: join(root, ownerId),
+        ownerId,
+        keyStore: installationKeyStore,
+        checkpoint: createIntegrationIdentityCheckpoint(pool, ownerId),
+        request: (async () =>
+          assert.fail('Identity setup must not make a request.')) as typeof fetch,
+      };
+    }
+    await t.test('concurrent first starts publish one owner-bound key', async () => {
+      const proxies = [
+        createComposioProxy(options('concurrent-owner')),
+        createComposioProxy(options('concurrent-owner')),
+        createComposioProxy(options('another-owner')),
+      ];
+      await Promise.all(proxies.map((proxy) => proxy.initialize()));
+      assert.equal(proxies[0].userId, proxies[1].userId);
+      assert.notEqual(proxies[0].userId, proxies[2].userId);
+      const checkpoint = createIntegrationIdentityCheckpoint(pool, 'concurrent-owner');
+      const key = await checkpoint.read();
+      assert.ok(key);
+      const otherKey = await createIntegrationIdentityCheckpoint(pool, 'another-owner').read();
+      assert.ok(otherKey);
+      await assert.rejects(checkpoint.commit(otherKey), /identity changed/);
+      assert.equal(await checkpoint.read(), key);
+      const restarted = createComposioProxy(options('concurrent-owner'));
+      await restarted.initialize();
+      assert.equal(restarted.userId, proxies[0].userId);
+    });
+    for (const lost of ['files', 'directory', 'profile']) {
+      await t.test(`established identity fails closed after losing its ${lost}`, async () => {
+        const saved = options(`lost-${lost}`);
+        const proxy = createComposioProxy(saved);
+        await proxy.initialize();
+        const publicKey = await saved.checkpoint.read();
+        const directory = join(saved.dataRoot, 'integration-identity');
+        if (lost === 'files') {
+          for (const entry of await readdir(directory)) await rm(join(directory, entry));
+        } else {
+          await rm(lost === 'directory' ? directory : saved.dataRoot, { recursive: true });
+        }
+        const restarted = createComposioProxy({
+          ...saved,
+          checkpoint: createIntegrationIdentityCheckpoint(pool, saved.ownerId),
+          keyStore: {
+            ...installationKeyStore,
+            getKey: async () =>
+              assert.fail('A missing established identity must not generate a key.'),
+          },
+        });
+        await assert.rejects(restarted.initialize(), /identity is missing/);
+        assert.throws(() => restarted.userId);
+        assert.equal(await saved.checkpoint.read(), publicKey);
+        if (lost === 'files') assert.deepEqual(await readdir(directory), []);
+        else await assert.rejects(stat(directory), { code: 'ENOENT' });
+      });
+    }
+    await t.test('valid replacement files cannot overwrite the committed identity', async () => {
+      const saved = options('replaced-owner');
+      const proxy = createComposioProxy(saved);
+      await proxy.initialize();
+      const expected = await saved.checkpoint.read();
+      const replacementRoot = join(root, 'replacement');
+      const replacement = createComposioProxy({
+        ...saved,
+        dataRoot: replacementRoot,
+        checkpoint: undefined,
+      });
+      await replacement.initialize();
+      assert.notEqual(replacement.userId, proxy.userId);
+      const directory = join(saved.dataRoot, 'integration-identity');
+      for (const entry of await readdir(directory))
+        await copyFile(
+          join(replacementRoot, 'integration-identity', entry),
+          join(directory, entry),
+        );
+      const restarted = createComposioProxy(saved);
+      await assert.rejects(restarted.initialize(), /identity changed/);
+      assert.throws(() => restarted.userId);
+      assert.equal(await saved.checkpoint.read(), expected);
+    });
+    await t.test(
+      'first initialization resumes after the public marker failed to persist',
+      async (t) => {
+        const saved = options('interrupted-marker');
+        const probe = await open(join(root, 'sync-probe'), 'wx', 0o600);
+        const prototype = Object.getPrototypeOf(probe);
+        const sync = prototype.sync;
+        await probe.close();
+        t.mock.method(prototype, 'sync', async function (this: typeof probe) {
+          const metadata = await this.stat();
+          if (metadata.isFile() && metadata.size === 43)
+            throw new Error('Synthetic public marker failure');
+          return sync.call(this);
+        });
+        const first = createComposioProxy(saved);
+        await assert.rejects(first.initialize(), /public marker failure/);
+        assert.throws(() => first.userId);
+        assert.equal(await saved.checkpoint.read(), undefined);
+        const directory = join(saved.dataRoot, 'integration-identity');
+        const entries = await readdir(directory);
+        assert.equal(entries.length, 1);
+        assert.match(entries[0], /\.encrypted$/);
+        const encrypted = await readFile(join(directory, entries[0]));
+        t.mock.restoreAll();
+        const restarted = createComposioProxy(options(saved.ownerId));
+        await restarted.initialize();
+        assert.deepEqual(await readFile(join(directory, entries[0])), encrypted);
+        const publicKey = await saved.checkpoint.read();
+        assert.ok(publicKey);
+        assert.equal(
+          restarted.userId,
+          `nod_${createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex')}`,
+        );
+      },
+    );
+    for (const phase of ['before commit', 'after commit']) {
+      await t.test(
+        `first initialization recovers an error ${phase} without changing its key`,
+        async () => {
+          const saved = options(phase.replaceAll(' ', '-'));
+          const failing = createComposioProxy({
+            ...saved,
+            checkpoint: {
+              read: () => saved.checkpoint.read(),
+              async commit(key) {
+                if (phase === 'after commit') await saved.checkpoint.commit(key);
+                throw new Error('Synthetic checkpoint failure');
+              },
+            },
+          });
+          await assert.rejects(failing.initialize(), /checkpoint failure/);
+          assert.throws(() => failing.userId);
+          const directory = join(saved.dataRoot, 'integration-identity');
+          const entries = await readdir(directory);
+          assert.equal(entries.length, 2);
+          const before = await Promise.all(
+            entries.map((entry) => readFile(join(directory, entry))),
+          );
+          const publicKey =
+            before[entries.findIndex((entry) => entry.endsWith('.public'))].toString();
+          assert.equal(
+            await saved.checkpoint.read(),
+            phase === 'after commit' ? publicKey : undefined,
+          );
+          const restarted = createComposioProxy(options(saved.ownerId));
+          await restarted.initialize();
+          assert.equal(await saved.checkpoint.read(), publicKey);
+          assert.deepEqual(
+            await Promise.all(entries.map((entry) => readFile(join(directory, entry)))),
+            before,
+          );
+          assert.equal(
+            restarted.userId,
+            `nod_${createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex')}`,
+          );
+        },
+      );
+    }
+    await t.test(
+      'owned app records fence a missing checkpoint without fencing other owners or providers',
+      async () => {
+        await initializeIntegrationSchema(pool);
+        await pool.query(
+          "INSERT INTO app_connections(owner_id,slug,provider_id,account_id) VALUES ('lost-checkpoint','gmail','composio','synthetic-account'), ('other-provider','fixture','fixture','synthetic-other')",
+        );
+        const saved = options('lost-checkpoint');
+        const proxy = createComposioProxy(saved);
+        await assert.rejects(proxy.initialize(), /identity is missing/);
+        assert.throws(() => proxy.userId);
+        await assert.rejects(stat(saved.dataRoot), { code: 'ENOENT' });
+        for (const owner of ['new-owner', 'other-provider']) {
+          const fresh = createComposioProxy(options(owner));
+          await fresh.initialize();
+          assert.match(fresh.userId, /^nod_[a-f0-9]{64}$/);
+        }
+      },
+    );
+  },
+);
+
 test('managed integration requests bind SDK calls to a private persisted installation and never retry execution', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => {
     throw new Error('Unexpected external request in the managed integration fixture.');
@@ -325,7 +530,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   t.after(() => rm(root, { recursive: true, force: true }));
   const calls: Array<{ path: string; body: Record<string, unknown>; key: string }> = [];
   let failExecution = false;
-  let uploadResponse = 'otto-file.synthetic-owned-capability';
+  let uploadResponse = 'nod-file.synthetic-owned-capability';
   let uploadName = 'synthetic.bin';
   let failUpload = false;
   let pairingStatus: unknown = { pairingConfirmed: false };
@@ -341,18 +546,18 @@ test('managed integration requests bind SDK calls to a private persisted install
     const value = new Request(input, init);
     const url = new URL(value.url);
     const bytes = Buffer.from(await value.arrayBuffer());
-    const key = value.headers.get('x-otto-public-key')!;
+    const key = value.headers.get('x-nod-public-key')!;
     const bodyHash = createHash('sha256').update(bytes).digest('hex');
     const signedHash =
-      url.pathname === '/v2/files/upload' ? value.headers.get('x-otto-content-sha256') : bodyHash;
+      url.pathname === '/v2/files/upload' ? value.headers.get('x-nod-content-sha256') : bodyHash;
     assert.equal(signedHash, bodyHash);
     const canonical = [
-      'otto-composio-v1',
+      'nod-composio-v1',
       value.method,
       url.origin,
       `${url.pathname}${url.search}`,
-      value.headers.get('x-otto-timestamp'),
-      value.headers.get('x-otto-request-id'),
+      value.headers.get('x-nod-timestamp'),
+      value.headers.get('x-nod-request-id'),
       signedHash,
     ].join('\n');
     assert.ok(
@@ -360,7 +565,7 @@ test('managed integration requests bind SDK calls to a private persisted install
         null,
         Buffer.from(canonical),
         createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: key }, format: 'jwk' }),
-        Buffer.from(value.headers.get('x-otto-signature')!, 'base64url'),
+        Buffer.from(value.headers.get('x-nod-signature')!, 'base64url'),
       ),
     );
     assert.equal(value.headers.has('x-api-key'), false);
@@ -375,7 +580,7 @@ test('managed integration requests bind SDK calls to a private persisted install
     if (url.pathname === '/v2/access/enroll')
       return Response.json({
         state: 'enabled',
-        userId: 'otto_' + createHash('sha256').update(Buffer.from(key, 'base64url')).digest('hex'),
+        userId: 'nod_' + createHash('sha256').update(Buffer.from(key, 'base64url')).digest('hex'),
       });
     if (url.pathname === '/v2/api/v3.1/connected_accounts/ca_fixture_existing') {
       assert.equal(value.method, 'GET');
@@ -882,6 +1087,81 @@ test('managed integration requests bind SDK calls to a private persisted install
   );
 });
 
+test('shared enrollment lets one caller abort without sending its action or cancelling another caller', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-enrollment-abort-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let releaseEnrollment = () => {};
+  const enrollment = new Promise<void>((resolve) => {
+    releaseEnrollment = resolve;
+  });
+  let reportStarted = () => {};
+  const started = new Promise<void>((resolve) => {
+    reportStarted = resolve;
+  });
+  const accounts: string[] = [];
+  let enrollments = 0;
+  let enrollmentSignal: AbortSignal | undefined;
+  const proxy = createComposioProxy({
+    dataRoot: root,
+    ownerId: 'enrollment-owner',
+    keyStore: installationKeyStore,
+    url: 'https://proxy.example.test',
+    request: async (input, init) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).pathname === '/v2/access/enroll') {
+        enrollments++;
+        enrollmentSignal = request.signal;
+        reportStarted();
+        await enrollment;
+        return Response.json({ state: 'enabled', userId: proxy.userId });
+      }
+      assert.equal(new URL(request.url).pathname, '/v2/files/upload');
+      const body = await request.json();
+      accounts.push(body.accountId);
+      return Response.json({
+        name: body.name,
+        mimetype: body.mimeType,
+        s3key: 'nod-file.synthetic-owned-capability',
+      });
+    },
+  });
+  const file = {
+    name: 'synthetic.txt',
+    mimeType: 'text/plain',
+    bytes: Buffer.from('Synthetic attachment'),
+  };
+  const controller = new AbortController();
+  const reason = new Error('The caller stopped its action.');
+  const stopped = proxy.upload(
+    'session',
+    'GMAIL_SEND_EMAIL',
+    file,
+    'ca_stopped',
+    controller.signal,
+  );
+  const rejected = stopped.then(
+    () => false,
+    (error: unknown) => error === reason,
+  );
+  await started;
+  const survivor = proxy.upload('session', 'GMAIL_SEND_EMAIL', file, 'ca_survivor');
+  try {
+    await delay(0);
+    controller.abort(reason);
+    assert.equal(await Promise.race([rejected, delay(1000, false, { ref: false })]), true);
+    assert.equal(enrollmentSignal?.aborted, false);
+    assert.equal(enrollments, 1);
+    assert.deepEqual(accounts, []);
+    releaseEnrollment();
+    assert.equal((await survivor).s3key, 'nod-file.synthetic-owned-capability');
+    assert.deepEqual(accounts, ['ca_survivor']);
+    assert.equal(enrollments, 1);
+  } finally {
+    releaseEnrollment();
+    await Promise.allSettled([stopped, survivor]);
+  }
+});
+
 test('connection bridge binds a single browser bootstrap to one installation attempt and closes on completion', async (t) => {
   const browser = createIntegrationBrowser();
   t.after(() => browser.close());
@@ -1090,7 +1370,7 @@ test('app consent advances in one tab and consumes its non-exportable browser ke
     if (scenario === 'wrong-tab') storage.clear();
     failDelete = scenario === 'delete-failed';
     const challenge = [
-      'otto-proxy-connect-v2',
+      'nod-proxy-connect-v2',
       id,
       scenario === 'wrong-origin' ? 'https://attacker.example.test' : origin,
       randomBytes(32).toString('hex'),
@@ -1151,7 +1431,7 @@ for (const desktop of [false, true]) {
     `default proxy routing preserves encrypted identity and account access after ${desktop ? 'desktop' : 'server'} restart`,
     { skip: !process.env.TEST_DATABASE_URL },
     async (t) => {
-      const root = await mkdtemp(join(tmpdir(), 'otto-default-proxy-'));
+      const root = await mkdtemp(join(tmpdir(), 'nod-default-proxy-'));
       t.after(() => rm(root, { recursive: true, force: true }));
       const db = await hostedDatabase();
       t.after(() => db.close());
@@ -7240,7 +7520,7 @@ test('managed uploads retain the selected account across separate operation sess
       const request = new Request(input, init);
       const url = new URL(request.url);
       assert.equal(url.origin, 'https://proxy.example.test');
-      assert.ok(request.headers.has('x-otto-signature'));
+      assert.ok(request.headers.has('x-nod-signature'));
       assert.equal(request.headers.has('x-api-key'), false);
       if (url.pathname === '/v2/access/enroll')
         return Response.json({ state: 'enabled', userId: proxy.userId });
@@ -7269,7 +7549,7 @@ test('managed uploads retain the selected account across separate operation sess
       return Response.json({
         name: body.name,
         mimetype: body.mimeType,
-        s3key: 'otto-file.private-owned-capability',
+        s3key: 'nod-file.private-owned-capability',
       });
     },
   });
@@ -7289,7 +7569,7 @@ test('managed uploads retain the selected account across separate operation sess
       {
         name: file.name,
         mimetype: file.mimeType,
-        s3key: 'otto-file.private-owned-capability',
+        s3key: 'nod-file.private-owned-capability',
       },
     );
   assert.deepEqual(

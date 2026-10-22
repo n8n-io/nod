@@ -488,7 +488,7 @@ async function main() {
               event.markerHash === initialIdentity.markerHash &&
               event.publicKey === initialIdentity.publicKey &&
               event.managedOwner ===
-                `otto_${sha256(Buffer.from(initialIdentity.publicKey, 'base64url'))}` &&
+                `nod_${sha256(Buffer.from(initialIdentity.publicKey, 'base64url'))}` &&
               typeof event.identityProof === 'string' &&
               verify(
                 null,

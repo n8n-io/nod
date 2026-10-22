@@ -14,7 +14,6 @@ pnpm --dir docs build   # fails on a broken link
 | `src/assets/`              | Logos and screenshots, with synthetic data only.                                                  |
 | `src/styles/theme.css`     | The nod theme, from the n8n brand palette.                                                        |
 | `src/pages/waitlist.astro` | The waitlist page at `/waitlist/`. Sign-ups go to the waitlist workflow on n8n, then Customer.io. |
-| `public/_redirects`        | Redirects from renamed pages, so shared links keep working.                                       |
 | `astro.config.mjs`         | Sidebar sections, plugins and the site address.                                                   |
 | `research/`                | Hash evidence the secret-scanning self-test reads.                                                |
 

@@ -59,7 +59,7 @@ Preview pages and images are fetched without your browser's cookies. After you s
 
 OpenAI API connections use GPT Decisions at OpenAI. OpenRouter sends decision checks to TypeSafe. An optional `TYPESAFE_API_KEY` selects TypeSafe directly, regardless of your chat connection. See [Decision checks](/connect/models/#decision-checks) for routing and billing.
 
-nod creates a random cryptographic identity for each installation. The desktop app encrypts its private signing key with a key protected by the operating system. App updates preserve it. The connection service stores the public identity, admitted account references, usage counters and expiring connection state. It verifies signed requests and account ownership; knowing an identifier alone does not grant access.
+nod creates a random cryptographic identity for each installation and encrypts its private signing key with the installation's Vault key. On desktop, the operating system protects that Vault key. Source installs use a [configured or locally stored Vault key](/deploy/configuration/#vault). The connection service stores the public identity, admitted account references, usage counters and expiring connection state. It verifies signed requests and account ownership; knowing an identifier alone does not grant access.
 
 You still authorize each app, such as Gmail, with its provider. No separate Google sign-in is needed to use the connection service. The Composio project key stays on that service. Your model keys stay encrypted on your installation. Provider keys never enter a prompt, nod's workspace or its browser.
 
@@ -101,6 +101,8 @@ Memory notes come only from your own messages and the notes you add or import in
 - **Vault items.** Open the item in **Trust → Logins and cards** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
 - **Everything.** In the desktop app, select **Remove all data** in **Settings → General**. nod deletes your profile and private computer from the folders above, then quits. From source, stop nod and delete its `NOD_DATA_ROOT` folder (`.local/` by default) and its Docker volumes. Uninstalling the app alone keeps your data. A service you signed in to through nod may still list nod as a connected app until you remove it there.
+
+Disconnecting an app does not erase the connection service's installation or revocation records. **Remove all data** deletes local data, not those records. To request their removal from n8n's service, use **Send feedback**; for a custom service, contact its operator.
 
 :::caution
 There's no button to clear only your chat history yet. **Remove all data** deletes it along with everything else.

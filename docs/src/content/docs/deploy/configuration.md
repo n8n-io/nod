@@ -58,6 +58,8 @@ Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an O
 
 nod routes Composio connections through n8n's connection service by default. Users connect each app directly from onboarding or **Apps**, without creating a Composio account, entering a project key or signing in separately to use the connection service.
 
+`COMPOSIO_API_KEY`, `COMPOSIO_WEBHOOK_SECRET` and `COMPOSIO_*_AUTH_CONFIG_ID` are no longer read by nod. Remove them from your environment and reconnect apps in **Apps**.
+
 | Variable                 | What it does                                                                                      | Default                      |
 | ------------------------ | ------------------------------------------------------------------------------------------------- | ---------------------------- |
 | `NOD_COMPOSIO_PROXY_URL` | Selects a trusted connection service for source/server installs and isolated desktop development. | `https://composio.n8n.cloud` |

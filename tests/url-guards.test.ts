@@ -309,6 +309,15 @@ test('connection navigation permits secure providers and same-origin app consent
   for (const suffix of ['?', '#', '?#', '?unexpected=yes', '#unexpected'])
     assert.throws(() => connectionUrl(bridge + suffix, origin));
   for (const value of [
+    `http://localhost:54321/${'a'.repeat(43)}`,
+    `http://[::1]:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.2:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.1.example.test:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.1/${'a'.repeat(43)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(42)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(44)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(42)}%2f`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}/extra`,
     'http://elsewhere.example/consent',
     'http://localhost:4310/consent',
     'javascript:alert(1)',

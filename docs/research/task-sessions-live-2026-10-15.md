@@ -2,7 +2,7 @@
 
 All 22 checks passed with `openai/gpt-6.1-sol` on 15 October 2026.
 
-The tested code was `2a143d42b92f88ca1a0402a16565edf1871f382d`, from [PR #272](https://github.com/n8n-io/nod/pull/272). The run used the normal app, model, task workers, API, database and browser UI. It used a separate database schema and workspace. All requests and document content were made for this check.
+The tested code was `2a143d42b92f88ca1a0402a16565edf1871f382d`, from [PR #272](https://github.com/n8n-io/otto/pull/272). The run used the normal app, model, task workers, API, database and browser UI. It used a separate database schema and workspace. All requests and document content were made for this check.
 
 ## Cases and results
 

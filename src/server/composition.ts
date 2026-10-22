@@ -65,6 +65,7 @@ import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService, endpointAddress } from './models.ts';
 import { createIntegrationBrowser } from './integration-browser.ts';
+import { createIntegrationIdentityCheckpoint } from './integration-identity.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createSkillLibrary } from '../providers/pi/skills.ts';
 import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
@@ -274,6 +275,7 @@ export function createDefaultAdapters(
     dataRoot,
     ownerId,
     keyStore,
+    checkpoint: createIntegrationIdentityCheckpoint(pool, ownerId),
     browser: integrationBrowser,
     url: !desktopMode || env.NOD_DESKTOP_USER_DATA ? env.NOD_COMPOSIO_PROXY_URL : undefined,
   });
