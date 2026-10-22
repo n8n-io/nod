@@ -2,6 +2,31 @@
 
 Releases from before the rename to nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.2.0 - 2026-10-22
+
+### Fixes
+
+- **desktop:** Keep one vault key across the Windows release check's restarts. [#415](https://github.com/n8n-io/nod/pull/415) (cc64f5b)
+- **privacy:** Scrub feedback reports, make them opt-in, drop computer name and weekly ID. [#414](https://github.com/n8n-io/nod/pull/414) (3d87f3d)
+
+### Documentation
+
+- Update screenshots and video for nod. [#413](https://github.com/n8n-io/nod/pull/413) (083762c)
+
+### Other changes
+
+- Restore #394 and #395 after the nod 0.1.1 build. [commit](https://github.com/n8n-io/nod/commit/b0db4d9fc1e4f0ff78918914a3d5d0ac7b287ca9) (b0db4d9)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.1.1...cc64f5b2b9846912ff47a1089428a12f6d115b78)
+
+<details>
+<summary>Build details</summary>
+
+Source: `cc64f5b2b9846912ff47a1089428a12f6d115b78`
+Previous release: `nod-v0.1.1`
+
+</details>
+
 ## 0.1.1 - 2026-10-22
 
 ### Breaking changes
