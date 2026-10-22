@@ -208,13 +208,18 @@ try {
   ]);
   if (started.exitCode) throw new Error('Could not start the isolated workspace container.');
   containerStarted = true;
+  const browserImageName = environment.NOD_E2E_BROWSER_IMAGE || 'nod-eval-browser';
   const browserImage = await runProcess('docker', [
+    'image',
     'inspect',
-    'nod-browser',
+    browserImageName,
     '--format',
-    '{{.Image}}',
+    '{{.Id}}',
   ]);
-  if (browserImage.exitCode) throw new Error('Start the nod browser container first.');
+  if (browserImage.exitCode)
+    throw new Error(
+      `Docker image ${browserImageName} is missing. Run pnpm run eval:capability doctor --fix, or set NOD_E2E_BROWSER_IMAGE to a browser image built with --target eval.`,
+    );
   const fixtureScripts = join(directory, 'browser-fixtures');
   await mkdir(fixtureScripts);
   const signupOperatorPath = join(fixtureScripts, 'signup-operator.json');
