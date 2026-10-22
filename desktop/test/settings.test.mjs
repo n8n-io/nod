@@ -2496,7 +2496,10 @@ public static class NodTokenPrivilege {
   }
 }
 '@
-[NodTokenPrivilege]::Remove([Diagnostics.Process]::GetProcessById([int]$env:NOD_TEST_PROCESS).Handle, 'SeSecurityPrivilege')`,
+$process = [Diagnostics.Process]::GetProcessById([int]$env:NOD_TEST_PROCESS).Handle
+foreach ($name in 'SeSecurityPrivilege', 'SeRestorePrivilege', 'SeBackupPrivilege', 'SeTakeOwnershipPrivilege') {
+  [NodTokenPrivilege]::Remove($process, $name)
+}`,
       ],
       { ...windowsEnvironment(), NOD_TEST_PROCESS: String(process.pid) },
     );
