@@ -2356,7 +2356,7 @@ test('ChatGPT sign-in validates callbacks, exchanges PKCE once, verifies the acc
 
   const declined = await start();
   const beforeDeclined = grants.length;
-  const declinedResult = assert.rejects(declined.result, /declined/);
+  const declinedResult = assert.rejects(declined.result, /canceled/);
   assert.equal(
     (
       await fetch(
@@ -2392,8 +2392,14 @@ test('ChatGPT sign-in validates callbacks, exchanges PKCE once, verifies the acc
   );
   await assert.rejects(refused.result, (error: Error) => {
     assert.ok(error instanceof ModelAuthError);
-    assert.match(error.message, /invalid_grant/);
-    assert.equal((error.cause as { statusCode?: number }).statusCode, 400);
+    assert.match(error.message, /Plus or Pro/);
+    assert.deepEqual(
+      [
+        (error.cause as { statusCode?: number }).statusCode,
+        (error.cause as { code?: string }).code,
+      ],
+      [400, 'invalid_grant'],
+    );
     return true;
   });
 

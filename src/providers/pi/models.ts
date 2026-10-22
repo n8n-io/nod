@@ -213,7 +213,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     }
     const token = tokenSchema.parse(await response.json());
     if (!token.scope.split(/\s+/).includes(planScope))
-      throw new ModelAuthError('Allow nod to use your ChatGPT plan, then connect again.', true);
+      throw new ModelAuthError('Allow nod to use your ChatGPT plan, then try again.', true);
     return token;
   }
   function definition(model: Model<Api>): ModelDefinition {
@@ -385,9 +385,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             callback.searchParams.has('code')
           )
             throw new ModelAuthError('This sign-in callback is invalid.');
-          const declined = new ModelAuthError(
-            'ChatGPT sign-in was declined. Start a new connection.',
-          );
+          const declined = canceled();
           claimed = true;
           refuse(declined);
           throw declined;
@@ -456,7 +454,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         throw new ModelAuthError(
           error instanceof Error && 'code' in error && error.code === 'EADDRINUSE'
             ? 'Port 1455 is already in use. Close the other nod app or another sign-in, then try again.'
-            : 'ChatGPT sign-in could not start. Try again.',
+            : 'ChatGPT sign-in couldn’t start. Try again.',
         );
       }
       exchange = (async (): Promise<ModelCredential> => {
@@ -482,7 +480,9 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           if (payload.nonce !== nonce || typeof payload.sub !== 'string' || !payload.sub)
             throw new Error('Invalid ID token.');
           if (saved && payload.sub !== saved.accountId)
-            throw new ModelAuthError('Use Add connection for a different ChatGPT account.');
+            throw new ModelAuthError(
+              'That’s a different ChatGPT account. Add it as a new connection instead.',
+            );
           return {
             type: 'oauth',
             access: token.access_token,
@@ -498,9 +498,9 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           throw new ModelAuthError(
             signal.aborted
               ? 'ChatGPT sign-in was canceled.'
-              : error instanceof TokenRejected && error.code
-                ? `OpenAI refused the ChatGPT sign-in (${error.code}). Start a new connection and check your account access.`
-                : 'ChatGPT sign-in failed. Start a new connection and check your account access.',
+              : error instanceof TokenRejected && error.statusCode < 500
+                ? 'OpenAI didn’t approve this connection. Use a ChatGPT Plus or Pro plan, or add an API key.'
+                : 'ChatGPT sign-in didn’t finish. Try again.',
             false,
             { cause: error },
           );

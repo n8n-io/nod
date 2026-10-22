@@ -1847,7 +1847,9 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         inputs.push(input);
         return stubSignIn(async () => {
           if (input.previous?.type === 'oauth' && input.previous.accountId !== accountId)
-            throw new ModelAuthError('Use Add connection for a different ChatGPT account.');
+            throw new ModelAuthError(
+              'That’s a different ChatGPT account. Add it as a new connection instead.',
+            );
           return { ...subscriptionCredential(), accountId };
         })(input);
       },

@@ -4815,7 +4815,7 @@ for(const direction of ['forward','back']){
 }
 models={connections:[],selection:null};
 await mount(Brain);
-await click('Sign in with ChatGPT');
+await click('Continue with ChatGPT');
 await waitFor(()=>oauth);
 assert.equal(advances,0);
 models={connections:[{...connection,provider:'openai',method:'subscription'}],selection:{connectionId:connection.id,modelId:connection.models[0].id,effort:'off'}};
