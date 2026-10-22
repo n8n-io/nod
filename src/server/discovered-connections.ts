@@ -914,9 +914,11 @@ export async function createDiscoveredConnections(
       }));
     catalogs.set(key, { at: Date.now(), value });
     value.catch(() => {
-      if (catalogs.get(key)?.value === value) catalogs.delete(key);
+      if (catalogs.get(key)?.value !== value) return;
+      if (cached) catalogs.set(key, cached);
+      else catalogs.delete(key);
     });
-    return value;
+    return cached ? value.catch(() => cached.value) : value;
   }
   async function tokenFor(
     row: AccountRow,
