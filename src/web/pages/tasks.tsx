@@ -409,10 +409,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
     <div className="content-page secondary-page tasks-page">
       <PlanToast />
       <header className="page-heading secondary-heading">
-        <div>
-          <PageTitle path="/tasks" />
-          <p>What nod is working on, what’s scheduled and what’s done.</p>
-        </div>
+        <PageTitle path="/tasks" />
         {view === 'scheduled' && (
           <div className="secondary-heading-actions">
             <NewPlan onAsk={onAsk} />

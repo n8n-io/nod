@@ -115,12 +115,14 @@ export function VaultSiteAccess({
 export function VaultSessionDetails({
   session,
   autoFocus,
+  backLabel,
   onClose,
   onRemoved,
   onAsk,
 }: {
   session: VaultSession;
   autoFocus?: boolean;
+  backLabel: string;
   onClose(): void;
   onRemoved(id: string): void;
   onAsk?(text: string): void;
@@ -129,7 +131,7 @@ export function VaultSessionDetails({
   return (
     <VaultSurface label={session.label} autoFocus={autoFocus} onClose={onClose}>
       <div className="vault-bar">
-        <VaultBackButton onClick={onClose} />
+        <VaultBackButton label={backLabel} onClick={onClose} />
       </div>
       <div className="vault-hero">
         <span className="vault-hero-icon" aria-hidden="true">

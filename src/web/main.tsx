@@ -20,7 +20,7 @@ import './components/app-connection-dialog.css';
 import './pages/channels.css';
 import './pages/tasks.css';
 import './pages/memory.css';
-import './pages/trust.css';
+import './pages/usage.css';
 import './pages/plan-controls.css';
 import './components/emoji-picker.css';
 import './components/attachment-images.css';
@@ -82,6 +82,12 @@ sessionStore.subscribe(() => {
   );
 });
 
+if (window.location.pathname === '/trust')
+  window.history.replaceState(
+    null,
+    '',
+    `${window.location.search.startsWith('?add=') ? `/vault${window.location.search}` : '/usage'}${window.location.hash}`,
+  );
 window.addEventListener('hashchange', async () => {
   if (await claimAccess()) await sessionStore.refresh();
 });

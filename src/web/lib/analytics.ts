@@ -50,7 +50,6 @@ type AnalyticsEvents = {
   nod_task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
   nod_tab_viewed:
     | { page: 'tasks'; tab: 'current' | 'scheduled' | 'previous' }
-    | { page: 'trust'; tab: 'activity' | 'saved' }
     | { page: 'apps'; tab: 'all' | 'connected' };
   nod_ui_error: {
     area: 'application' | 'onboarding' | 'chat' | 'settings' | 'apps' | 'models';
@@ -108,8 +107,8 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   },
   nod_task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
   nod_tab_viewed: {
-    page: ['tasks', 'trust', 'apps'],
-    tab: ['current', 'scheduled', 'previous', 'activity', 'saved', 'all', 'connected'],
+    page: ['tasks', 'apps'],
+    tab: ['current', 'scheduled', 'previous', 'all', 'connected'],
   },
   nod_ui_error: {
     area: ['application', 'onboarding', 'chat', 'settings', 'apps', 'models'],

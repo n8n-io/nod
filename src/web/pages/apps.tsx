@@ -722,10 +722,7 @@ export function Apps({
   return (
     <div className="content-page secondary-page apps-page" ref={page}>
       <header className="page-heading secondary-heading">
-        <div>
-          <PageTitle path="/apps" />
-          <p>Your tools, connected to nod.</p>
-        </div>
+        <PageTitle path="/apps" />
       </header>
       {configuration && <SetupNotice configuration={configuration} />}
       {error && !manageError && <Notice onDismiss={() => setError('')}>{error}</Notice>}

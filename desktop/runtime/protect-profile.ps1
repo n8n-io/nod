@@ -8,4 +8,4 @@ foreach ($sid in @($owner, (New-Object System.Security.Principal.SecurityIdentif
   $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
   $acl.AddAccessRule($rule)
 }
-Set-Acl -LiteralPath $root -AclObject $acl
+(Get-Item -LiteralPath $root).SetAccessControl($acl)

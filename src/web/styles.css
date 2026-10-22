@@ -1337,12 +1337,6 @@ input[type='range']:disabled {
   font-weight: 500;
   line-height: 1.125;
 }
-.page-heading p {
-  font-size: var(--text-control);
-  color: var(--muted-foreground);
-  margin-top: 8px;
-  line-height: 1.6;
-}
 .page-empty,
 .empty-state {
   display: flex;

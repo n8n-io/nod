@@ -196,7 +196,7 @@ function channelText(text: string) {
     }
     if (
       /^\/(?:vault|credentials|payments|approvals)\//.test(url.pathname) ||
-      (url.pathname === '/trust' && url.searchParams.has('add'))
+      (['/vault', '/trust'].includes(url.pathname) && url.searchParams.has('add'))
     ) {
       if (!/^https?:\/\//.test(value)) {
         secureAction = true;

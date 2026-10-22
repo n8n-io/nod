@@ -308,7 +308,7 @@ export async function createVaultAccess(
               ? error.message
               : status === 400
                 ? 'Check the request.'
-                : 'The Vault activity is unavailable.',
+                : 'Login and card activity is unavailable.',
         });
       });
       scope.get<{ Querystring: { at?: string; id?: string; origin?: string; item?: string } }>(
