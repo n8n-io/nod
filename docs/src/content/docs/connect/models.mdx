@@ -47,12 +47,16 @@ Open the account menu and select **Models**. Onboarding shows the same options b
 <Steps>
 
 1. Next to **OpenAI**, select **Connect ChatGPT**.
-2. Sign in to ChatGPT in the browser tab that opens.
+2. Sign in to ChatGPT in the browser tab that opens, and allow nod to use your ChatGPT plan.
 3. Return to nod. If the browser ends on a page that doesn't load, copy its full address into **Callback URL** and select **Complete sign-in**.
 
 </Steps>
 
+nod uses OpenAI's [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) for open-source and locally hosted apps. Requests go to the OpenAI API and use your plan's included usage. ChatGPT lists nod under [Settings → Usage](https://chatgpt.com/settings/usage), where you can see and limit its usage or disconnect it. OpenAI decides which plans and workspaces can use it. If yours can't, connect an OpenAI API key instead.
+
 ChatGPT sign-in listens for the browser on port `1455` of your computer. If another program uses that port, nod stops with an error before it opens OpenAI.
+
+A ChatGPT connection made with an earlier version of nod needs one reconnect in **Models**.
 
 </TabItem>
 <TabItem label="Anthropic">

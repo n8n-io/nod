@@ -129,8 +129,8 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
             I can really help.
           </Bubble>,
           <Bubble>
-            I <strong>check with you before I send, post or delete</strong> anything you didn’t ask
-            for.
+            I’m <strong>built to check with you before I send, post or delete</strong> anything you
+            didn’t ask for.
           </Bubble>,
           ...(usage
             ? [

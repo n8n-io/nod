@@ -135,7 +135,11 @@ export function createModelService(options: {
   }
   function remember(value: ModelCredential) {
     const values = (
-      value.type === 'oauth' ? [value.access, value.refresh] : value.key ? [value.key] : []
+      value.type === 'oauth'
+        ? [value.access, value.refresh, value.idToken]
+        : value.key
+          ? [value.key]
+          : []
     ).filter((secret) => !secrets.has(secret));
     for (const secret of values) secrets.add(secret);
     if (values.length) for (const observer of observers) observer(values);
@@ -237,13 +241,6 @@ export function createModelService(options: {
       const previous = state.connections.find((row) => row.id === id);
       if (replace && !previous)
         throw new ConnectionError('This model connection was removed. Start a new connection.');
-      if (
-        replace &&
-        value.type === 'oauth' &&
-        previous?.credential?.type === 'oauth' &&
-        previous.credential.accountId !== value.accountId
-      )
-        throw new ConnectionError('Use Add connection for a different ChatGPT account.');
       if (!previous && state.connections.length >= 20)
         throw new ConnectionError('Remove an unused model connection before adding another.');
       const label =
@@ -417,6 +414,7 @@ export function createModelService(options: {
       connectionChanged(provider, provider === 'openai' ? 'subscription' : 'oauth', 'failed');
       throw error;
     }
+    const saved = await store.read();
     await reload();
     const row = connectionId
       ? rows.find(
@@ -441,7 +439,11 @@ export function createModelService(options: {
     try {
       const auth =
         provider === 'openai'
-          ? await backend.signIn({ signal: controller.signal })
+          ? await backend.signIn({
+              signal: controller.signal,
+              hostId: saved.hostId,
+              previous: saved.connections.find((item) => item.id === row?.id)?.credential,
+            })
           : backend.authorize({
               provider,
               redirectUri: `${options.origin}/api/models/oauth/callback`,

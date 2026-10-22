@@ -1,6 +1,6 @@
 ---
 title: Conversation traces
-description: What nod sends to the nod team when you turn on conversation traces, what it removes on your computer first, and how traces avoid identifying you.
+description: What nod sends to the nod team when you turn on conversation traces, what it removes on your computer first, and how traces are pseudonymised.
 sidebar:
   order: 12
 ---
@@ -69,14 +69,14 @@ The invoice number stays, because it isn't personal. Checks that need a valid nu
 nod removes what it can recognize. A trace can still contain personal details written in other forms, such as another person's name in a sentence or a street address in plain text. Turn traces on only if you're comfortable with that.
 :::
 
-## How traces avoid identifying you
+## How traces are pseudonymised
 
 - **No account or device ID.** A trace carries no account, installation or device identifier, and no analytics ID.
-- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever nod restarts. It can't be used to link traces to you, to other days or to other nod data such as feedback reports.
+- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever nod restarts. Its key never leaves your computer, so the ID alone doesn't link traces to you, to other days or to other nod data such as feedback reports.
 - **No owner context.** nod replaces your saved memory, learned skills and format preferences with `[owner context omitted]`.
 - **No images.** Images are replaced with `[image]`.
 
-These steps remove the direct links to you. What a conversation says can still identify you, for example a detail the scrubber doesn't recognize, so treat traces as private data rather than anonymous data.
+These steps remove the direct links to you. Traces are still pseudonymised, not anonymous: what a conversation says can identify you, for example a detail the scrubber doesn't recognize.
 
 ## Where traces go
 
@@ -107,7 +107,7 @@ Official desktop builds take the token from the `NOD_TRACES_TOKEN` secret of the
 
 ## Where this is enforced
 
-[`src/server/traces.ts`](https://github.com/n8n-io/nod/blob/main/src/server/traces.ts) (switch, layers and anonymous IDs) · [`src/server/personal-data.ts`](https://github.com/n8n-io/nod/blob/main/src/server/personal-data.ts) (personal data detectors) · [`src/providers/pi/traces.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/traces.ts) (images and owner context) · [`src/providers/n8n/traces.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/n8n/traces.ts) (sending) · [`deployment/n8n/traces.mjs`](https://github.com/n8n-io/nod/blob/main/deployment/n8n/traces.mjs) (the service)
+[`src/server/traces.ts`](https://github.com/n8n-io/nod/blob/main/src/server/traces.ts) (switch, layers and pseudonymous IDs) · [`src/server/personal-data.ts`](https://github.com/n8n-io/nod/blob/main/src/server/personal-data.ts) (personal data detectors) · [`src/providers/pi/traces.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/traces.ts) (images and owner context) · [`src/providers/n8n/traces.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/n8n/traces.ts) (sending) · [`deployment/n8n/traces.mjs`](https://github.com/n8n-io/nod/blob/main/deployment/n8n/traces.mjs) (the service)
 
 ## Related resources
 
