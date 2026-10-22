@@ -61,7 +61,7 @@ OpenAI API connections use GPT Decisions at OpenAI. OpenRouter sends decision ch
 
 nod creates a random cryptographic identity for each installation and encrypts its private signing key with the installation's Vault key. On desktop, the operating system protects that Vault key. Source installs use a [configured or locally stored Vault key](/deploy/configuration/#vault). The connection service stores the public identity, admitted account references, usage counters and expiring connection state. It verifies signed requests and account ownership; knowing an identifier alone does not grant access.
 
-You still authorize each app, such as Gmail, with its provider. No separate Google sign-in is needed to use the connection service. The Composio project key stays on that service. Your model keys stay encrypted on your installation. Provider keys never enter a prompt, nod's workspace or its browser.
+You authorize each app, such as Gmail, with its provider. The Composio project key stays on the connection service. Your model keys stay encrypted on your installation. Provider keys never enter a prompt, nod's workspace or its browser.
 
 ## Your own telemetry
 
