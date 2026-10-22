@@ -108,6 +108,7 @@ test(
     let executed = 0;
     const fixtureKey = randomBytes(32);
     const vault = await createVault(db.pool, {
+      requestKey: Buffer.alloc(32, 42),
       keyStore: { id: 'fixture', configured: true, getKey: async () => fixtureKey },
       inject: async () => {
         injected++;

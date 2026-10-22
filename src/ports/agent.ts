@@ -144,10 +144,10 @@ export interface RuntimeContext {
     input: {
       origin: string;
       label: string;
-      savedLoginId?: string;
     } & (
       | {
           kind: CredentialKind;
+          savedLoginId?: string;
           usernameSelector?: string;
           passwordSelector?: string | string[];
           submitSelector?: string;

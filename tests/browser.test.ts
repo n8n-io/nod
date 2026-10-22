@@ -29,6 +29,7 @@ import {
 } from '../src/providers/agent-browser/screens.ts';
 import { runProcess } from '../src/providers/process.ts';
 import { containerBrowserOptions } from '../src/providers/container-browser/config.ts';
+import { openDevtools } from '../src/providers/agent-browser/devtools.ts';
 import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
 import {
   browserNamespace,
@@ -3011,7 +3012,10 @@ test('Telegram chat cards require paired owned metadata and preserve ordinary li
       let key = 0;
       const owned = 'https://t.me/otto_owned_bot';
       const paired = { ready: true, channels: [{provider:'telegram', enabled:true, accountHandle:'@otto_owned_bot', allowedUserId:'123', mode:'polling'}] };
-      const render = async (text) => { await act(async () => root.render(h(MessageText, {key:++key, text}))); };
+      const render = async (text, replace = true) => {
+        if (replace) key++;
+        await act(async () => root.render(h('div', {key}, ...(Array.isArray(text) ? text : [text]).map((text, index) => h(MessageText, {key:index, text})))));
+      };
       const respond = async (request, data, status=200) => {
         assert.equal(request.url, '/api/channel-settings');
         await act(async () => request.resolve(new Response(JSON.stringify(data), {status, headers:{'content-type':'application/json'}})));
@@ -3037,8 +3041,12 @@ test('Telegram chat cards require paired owned metadata and preserve ordinary li
         card.addEventListener(type, e => {assert.equal(e.defaultPrevented, false);e.preventDefault();}, {once:true});
         card.dispatchEvent(event);
       }
+      card.focus();
+      const beforeRefresh = requests.length;
       await act(async () => window.dispatchEvent(new Event('focus')));
-      assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      assert.equal(requests.length, beforeRefresh + 1);
+      assert.equal(document.querySelector('[data-setup="telegram"]'), card);
+      assert.equal(document.activeElement, card);
       await respond(requests.at(-1), {ready:true,channels:[]});
       assert.equal(document.querySelector('[data-setup="telegram"]'), null);
       for (const override of [{enabled:false},{allowedUserId:undefined},{webhookStatus:'registration_pending'},{pairingExpiresAt:'2099-01-01T00:00:00Z'},{accountHandle:'@another_bot'}]) {
@@ -3049,7 +3057,27 @@ test('Telegram chat cards require paired owned metadata and preserve ordinary li
       await render('[Open]('+owned+')');
       await respond(requests.at(-1), {error:'unavailable'}, 503);
       assert.equal(document.querySelector('[data-setup="telegram"]'), null);
-      await render('[Open]('+owned+')');
+      const beforeShared = requests.length;
+      await render(Array(3).fill('[Open]('+owned+')'));
+      assert.equal(requests.length, beforeShared + 1);
+      await respond(requests.at(-1), paired);
+      const cards = [...document.querySelectorAll('[data-setup="telegram"]')];
+      assert.equal(cards.length, 3);
+      await render(Array(4).fill('[Open]('+owned+')'), false);
+      assert.equal(requests.length, beforeShared + 1);
+      assert.equal(document.querySelectorAll('[data-setup="telegram"]').length, 4);
+      await act(async () => window.dispatchEvent(new Event('focus')));
+      assert.equal(requests.length, beforeShared + 2);
+      const replaced = requests.at(-1);
+      await act(async () => window.dispatchEvent(new Event('popstate')));
+      assert.equal(requests.length, beforeShared + 3);
+      assert.equal(replaced.options.signal.aborted, true);
+      assert.deepEqual([...document.querySelectorAll('[data-setup="telegram"]')].slice(0,3), cards);
+      await respond(replaced, {ready:true,channels:[]});
+      assert.equal(document.querySelectorAll('[data-setup="telegram"]').length, 4);
+      await respond(requests.at(-1), {error:'unavailable'}, 503);
+      assert.equal(document.querySelectorAll('[data-setup="telegram"]').length, 4);
+      await act(async () => window.dispatchEvent(new Event('focus')));
       const old = requests.at(-1);
       setRequestAccount('second-synthetic-owner');
       await render('[Open]('+owned+')');
@@ -4662,6 +4690,9 @@ test(
   async () => {
     const directory = await mkdtemp(join(tmpdir(), 'otto-method-native-'));
     const received: string[] = [];
+    const cancelling = new AbortController();
+    const cancelled = deferred();
+    let cancelledMethod: string | undefined;
     const changes: Record<string, string> = {
       replaced: 'primary.replaceWith(primary.cloneNode(true))',
       renamed: "primary.textContent = 'Delete account'",
@@ -4670,8 +4701,18 @@ test(
       disabled: 'primary.disabled = true',
       hidden: "primary.style.display = 'none'",
       base: "document.querySelector('base').href = '/other/'",
+      covered:
+        "const cover=document.createElement('button');cover.style.cssText='position:fixed;inset:0;z-index:1000';cover.textContent='Cover';cover.onclick=()=>fetch('/covered',{method:'POST'});document.body.append(cover)",
+      changedOnPress: "primary.addEventListener('mousedown',()=>primary.form.action='/other')",
+      removedOnRelease: "primary.addEventListener('mouseup',()=>primary.remove())",
     };
     const server = createHttpServer(async (request, response) => {
+      if (request.url === '/pressed') {
+        cancelling.abort();
+        await cancelled.promise;
+        response.end();
+        return;
+      }
       if (request.method === 'POST') {
         received.push(request.url!);
         response.writeHead(303, { location: '/done' });
@@ -4683,31 +4724,54 @@ test(
         response.end('<h1>Selected</h1>');
         return;
       }
-      if (request.url === '/framed' || request.url === '/foreign') {
+      if (['/framed', '/foreign', '/duplicate'].includes(request.url!)) {
         const source =
           request.url === '/foreign'
             ? `http://localhost:${(server.address() as { port: number }).port}/inner`
             : '/inner';
         response.end(
-          `<iframe title="Sign in" src="${source}" style="width:700px;height:400px"></iframe><button id="reload-frame" onclick="document.querySelector('iframe').contentWindow.location.reload()">Reload frame</button>`,
+          `
+          ${request.url === '/duplicate' ? '<button id="primary">Continue with Example</button>' : ''}
+          <iframe title="Sign in" src="${source}" style="width:700px;height:400px;margin:70px 100px;border:12px solid"></iframe><button id="reload-frame" onclick="document.querySelector('iframe').contentWindow.location.reload()">Reload frame</button>`,
+        );
+        return;
+      }
+      if (request.url === '/cancel') {
+        response.end(
+          '<form action="/selected" method="post"><button id="primary" onmousedown="const xhr=new XMLHttpRequest();xhr.open(\'POST\',\'/pressed\',false);xhr.send()">Continue with Example</button></form><button id="ordinary" onclick="if(event.isTrusted)fetch(\'/ordinary\',{method:\'POST\'})">Continue browsing</button>',
         );
         return;
       }
       const change = changes[request.url!.slice(1)] ?? '';
+      const primary =
+        request.url === '/image'
+          ? '<input id="primary" type="image" onclick="if(!event.isTrusted)event.preventDefault()" alt="Continue with Example" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22240%22 height=%2240%22%3E%3Crect width=%22240%22 height=%2240%22 fill=%22gray%22/%3E%3C/svg%3E">'
+          : '<button id="primary" onclick="if(!event.isTrusted)event.preventDefault()"><span>Continue with Example</span></button>';
       response.end(
-        `<base href="/"><form action="selected" method="post"><button id="primary"><span>Continue with Example</span></button><button id="alternate" formaction="/alternate">Use another account</button></form><a id="link" href="linked">Continue with Link</a><button id="change" onclick="${change}">Change control</button>`,
+        `<base href="/"><form action="selected" method="post">${primary}<button id="alternate" formaction="/alternate">Use another account</button></form><a id="link" href="linked">Continue with Link</a><button id="change" onclick="${change}">Change control</button>`,
       );
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
     const origin = `http://127.0.0.1:${address.port}`;
+    let socketPath = '';
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
       privateNetwork: true,
       headless: true,
+      daemonCommand: async (path, command, signal, timeoutMs) => {
+        socketPath = path;
+        return existingDaemonCommand(path, command, signal, timeoutMs);
+      },
     });
+    const selectMethod = computer.selectSignInMethod!;
+    computer.selectSignInMethod = async (id, input, signal) => {
+      if (input.methodId === cancelledMethod)
+        signal?.addEventListener('abort', () => cancelled.resolve(), { once: true });
+      return selectMethod(id, input, signal);
+    };
     const worker = await harness({ computer });
     const client = worker.client(directory, { timeoutMs: 30_000 });
     const act = (input: BrowserAction) => client.act('fixture', input);
@@ -4777,21 +4841,21 @@ test(
       const snapshot = (await act({ action: 'snapshot' })).text;
       const ref = /button "Continue with Example"[^\n]*ref=(e\d+)/.exec(snapshot)?.[1];
       assert.ok(ref);
-      const referenced = await client.signInMethods!('fixture', origin, [
-        { label: 'Ignored', selector: '@' + ref },
-      ]);
-      assert.equal(referenced.methods[0]!.label, 'Continue with Example');
+      await assert.rejects(
+        client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: '@' + ref }]),
+        /concrete CSS selectors/,
+      );
+      await assert.rejects(
+        client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: 'button' }]),
+      );
+      await act({ action: 'open', url: origin + '/duplicate' });
+      await assert.rejects(
+        client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: '#primary' }]),
+      );
       for (const path of ['/framed', '/foreign']) {
         await act({ action: 'open', url: origin + path });
-        const framedSnapshot = (await act({ action: 'snapshot' })).text;
-        const framedRef = /button "Continue with Example"[^\n]*ref=(e\d+)/.exec(
-          framedSnapshot,
-        )?.[1];
-        assert.ok(framedRef, framedSnapshot);
         const inspect = () =>
-          client.signInMethods!('fixture', origin, [
-            { label: 'Ignored', selector: '@' + framedRef },
-          ]);
+          client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: '#primary' }]);
         if (path === '/foreign') {
           await assert.rejects(inspect());
           continue;
@@ -4806,14 +4870,7 @@ test(
             methodId: framed.methods[0]!.id,
           }),
         );
-        const refreshedSnapshot = (await act({ action: 'snapshot' })).text;
-        const refreshedRef = /button "Continue with Example"[^\n]*ref=(e\d+)/.exec(
-          refreshedSnapshot,
-        )?.[1];
-        assert.ok(refreshedRef, refreshedSnapshot);
-        const refreshed = await client.signInMethods!('fixture', origin, [
-          { label: 'Ignored', selector: '@' + refreshedRef },
-        ]);
+        const refreshed = await inspect();
         assert.equal(refreshed.document, framed.document);
         await client.selectSignInMethod!('fixture', {
           origin,
@@ -4826,14 +4883,86 @@ test(
       }
       const controller = new AbortController();
       controller.abort();
-      await assert.rejects(
-        client.selectSignInMethod!(
-          'fixture',
-          { origin, document: referenced.document, methodId: referenced.methods[0]!.id },
-          controller.signal,
-        ),
-      );
+      await assert.rejects(client.selectSignInMethod!('fixture', selection, controller.signal));
       assert.deepEqual(received, ['/selected', '/selected']);
+      await act({ action: 'open', url: origin + '/image' });
+      const image = await client.signInMethods!('fixture', origin, [
+        { label: 'Ignored', selector: '#primary' },
+      ]);
+      assert.equal(image.methods[0]!.label, 'Continue with Example');
+      assert.deepEqual(image.methods[0]!.page.submits, {
+        method: 'POST',
+        to: origin + '/selected',
+      });
+      await client.selectSignInMethod!('fixture', {
+        origin,
+        document: image.document,
+        methodId: image.methods[0]!.id,
+      });
+      await act({ action: 'wait', url: '**/done' });
+      assert.deepEqual(received, ['/selected', '/selected', '/selected']);
+      await assert.rejects(
+        client.selectSignInMethod!('fixture', {
+          origin,
+          document: image.document,
+          methodId: image.methods[0]!.id,
+        }),
+      );
+
+      for (const [index, path] of ['/framed', '/foreign'].entries()) {
+        await act({ action: 'open', url: origin + path });
+        const connection = await existingDaemonCommand(socketPath, { action: 'cdp_url' });
+        const tabs = await existingDaemonCommand(socketPath, { action: 'tab_list' });
+        const tab = (tabs.tabs as { active: boolean; targetId: string }[]).find(
+          (value) => value.active,
+        )!;
+        let inspector = await openDevtools(String(connection.cdpUrl), tab.targetId);
+        try {
+          const bound = await inspector.signInControl({ pixel: { x: 150, y: 100 } });
+          assert.equal(
+            bound.origin,
+            path === '/foreign' ? `http://localhost:${address.port}` : origin,
+          );
+          assert.equal(bound.targetFrameId === bound.frameId, path === '/foreign');
+          assert.notEqual(bound.loaderId, await inspector.document());
+          if (path === '/framed') {
+            await act({ action: 'click', selector: '#reload-frame' });
+            await assert.rejects(inspector.selectSignInControl(bound));
+          }
+          inspector.close();
+          inspector = await openDevtools(String(connection.cdpUrl), tab.targetId);
+          const current = await inspector.signInControl({ pixel: { x: 150, y: 100 } });
+          inspector.close();
+          inspector = await openDevtools(String(connection.cdpUrl), tab.targetId);
+          await inspector.selectSignInControl(current);
+          const deadline = Date.now() + 5000;
+          while (received.length < 4 + index && Date.now() < deadline) await delay(10);
+          assert.deepEqual(received, Array(4 + index).fill('/selected'));
+          await assert.rejects(inspector.selectSignInControl(current));
+        } finally {
+          inspector.close();
+        }
+      }
+      await act({ action: 'open', url: origin + '/cancel' });
+      const interrupted = await client.signInMethods!('fixture', origin, [
+        { label: 'Ignored', selector: '#primary' },
+      ]);
+      cancelledMethod = interrupted.methods[0]!.id;
+      const interruptedSelection = {
+        origin,
+        document: interrupted.document,
+        methodId: cancelledMethod,
+      };
+      await assert.rejects(
+        client.selectSignInMethod!('fixture', interruptedSelection, cancelling.signal),
+      );
+      assert.equal(cancelling.signal.aborted, true);
+      assert.deepEqual(received, Array(5).fill('/selected'));
+      await assert.rejects(client.selectSignInMethod!('fixture', interruptedSelection));
+      await act({ action: 'click', selector: '#ordinary' });
+      const deadline = Date.now() + 5000;
+      while (received.length < 6 && Date.now() < deadline) await delay(10);
+      assert.deepEqual(received, [...Array(5).fill('/selected'), '/ordinary']);
     } finally {
       await worker.close();
       server.closeAllConnections();

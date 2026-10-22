@@ -276,6 +276,7 @@ test(
       };
       let vaultInjections = 0;
       const vault = await createVault(pool, {
+        requestKey: Buffer.alloc(32, 42),
         keyStore,
         page: async () => ({ url: 'https://1.1.1.1/login', origin: 'https://1.1.1.1' }),
         inject: async (input) => {

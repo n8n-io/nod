@@ -154,6 +154,7 @@ type VaultOptions = {
   retry(turnId: string): Promise<void>;
   inject(input: CredentialInjection): Promise<CredentialSubmission | void>;
   keyStore: CredentialKeyStore;
+  requestKey: Buffer;
   page?(threadId: string, step?: BrowserAction): Promise<BrowserPage>;
   signInMethods?(
     threadId: string,
@@ -504,6 +505,8 @@ function cardVersion(entry: CardRow) {
 }
 
 export async function createVault(pool: Pool, options: VaultOptions) {
+  if (!Buffer.isBuffer(options.requestKey) || options.requestKey.length !== 32)
+    throw new Error('Invalid private request key.');
   await pool.query(`
     ${locksTable};
     CREATE TABLE IF NOT EXISTS vault_entries (
@@ -1168,7 +1171,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function requestToken(id: string, ownerId = owner) {
-    return createHmac('sha256', await key())
+    return createHmac('sha256', options.requestKey)
       .update(JSON.stringify(['otto-sign-in', ownerId, id]))
       .digest('base64url');
   }

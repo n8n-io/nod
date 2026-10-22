@@ -14,6 +14,7 @@ type DomNode = {
 export type BoundSignInControl = {
   backendNodeId: number;
   frameId: string;
+  targetFrameId: string;
   loaderId: string;
   snapshot: string;
   controls: { role: string; name: string }[];
@@ -33,7 +34,7 @@ const active = `(() => { if (!document.hasFocus()) return null; let node = docum
 const focusScript = `(() => { const node = ${active}; globalThis.__ottoFocused = node; return node ? node.tagName : ''; })()`;
 const submitsScript = `function (enter) { const node = this.nodeType === 1 ? this : this.parentElement; const control = enter ? node : (node?.closest('button, input') ?? node?.closest('label')?.control); const form = control?.form; const button = ['submit', 'image'].includes(control?.type); if (!form || !(button || (enter && control.tagName === 'INPUT'))) return null; const own = (name) => Object.getOwnPropertyDescriptor(HTMLFormElement.prototype, name).get.call(form); const submitter = button ? control : [...own('elements')].find((element) => ['submit', 'image'].includes(element.type)); const method = (submitter?.hasAttribute('formmethod') ? submitter.formMethod : own('method')) || 'get'; if (method === 'dialog') return null; return { method: method.toUpperCase(), to: submitter?.hasAttribute('formaction') ? submitter.formAction : own('action') }; }`;
 const signInControlSelector =
-  'button, a[href], input[type="submit"], input[type="button"], [role="button"], [role="link"]';
+  'button, a[href], input[type="submit"], input[type="button"], input[type="image"], [role="button"], [role="link"]';
 const signInSnapshot = `function () {
   if (!this.isConnected || this.ownerDocument !== document || !this.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) || this.matches(':disabled') || this.closest('[inert], [aria-disabled="true"], [aria-hidden="true"]')) return null;
   const rect = this.getBoundingClientRect();
@@ -146,9 +147,10 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
   const sessions = new Set<string>();
   const following = new Set<Promise<unknown>>();
   const worlds = new Map<string, number>();
-  const send = (method: string, params: object = {}, sessionId?: string) =>
+  const bindings = new Map<string, (payload: string) => void>();
+  const send = (method: string, params: object = {}, sessionId?: string, cleanup = false) =>
     new Promise<Record<string, unknown>>((resolve, reject) => {
-      signal?.throwIfAborted();
+      if (!cleanup) signal?.throwIfAborted();
       const id = ++next;
       const timer = setTimeout(() => {
         pending.delete(id);
@@ -185,6 +187,8 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       sessionId?: string;
       params?: {
         sessionId?: string;
+        name?: string;
+        payload?: string;
         targetInfo?: { type?: string };
       };
     };
@@ -193,6 +197,8 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       pending.delete(message.id!);
       if (message.error) waiter.reject(new Error(message.error.message ?? 'Inspector error.'));
       else waiter.resolve(message.result ?? {});
+    } else if (message.method === 'Runtime.bindingCalled' && message.params?.name) {
+      bindings.get(message.params.name)?.(message.params.payload ?? '');
     } else if (
       message.method === 'Target.attachedToTarget' &&
       message.params?.targetInfo?.type === 'iframe' &&
@@ -349,7 +355,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     return results;
   }
 
-  const locate = async (query: ControlQuery) => {
+  const locate = async (query: ControlQuery, hitTest = false) => {
     let backendNodeId: number | undefined;
     let session = page;
     const describe = async (params: Record<string, unknown>) =>
@@ -365,7 +371,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       const y = at(query.pixel?.y ?? query.point!.y * view.clientHeight, view.clientHeight);
       ({ backendNodeId } = (await send(
         'DOM.getNodeForLocation',
-        { x, y, ignorePointerEventsNone: true },
+        { x, y, ignorePointerEventsNone: !hitTest },
         page,
       )) as { backendNodeId?: number });
       const owner = backendNodeId
@@ -386,7 +392,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
             {
               x: Math.round(x - model.content[0]!),
               y: Math.round(y - model.content[1]!),
-              ignorePointerEventsNone: true,
+              ignorePointerEventsNone: !hitTest,
             },
             child,
           ).catch(() => undefined)) as { backendNodeId?: number } | undefined;
@@ -480,6 +486,40 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     } finally {
       await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, found.session);
     }
+  };
+
+  const signInSelector = async (selector: string) => {
+    const seen = new Set<string>();
+    let found: { backendNodeId: number; session: string } | undefined;
+    for (const session of [...sessions].reverse()) {
+      for (const frame of await tree(session)) {
+        if (seen.has(frame.id)) continue;
+        seen.add(frame.id);
+        const { result, exceptionDetails } = (await send(
+          'Runtime.evaluate',
+          {
+            contextId: await world(session, frame.id),
+            expression: `(() => { const nodes = document.querySelectorAll(${JSON.stringify(selector)}); if (nodes.length > 1) throw new Error('Ambiguous sign-in control'); return nodes[0] ?? null; })()`,
+            objectGroup: 'otto-sign-in',
+          },
+          session,
+        )) as { result?: { objectId?: string }; exceptionDetails?: unknown };
+        if (exceptionDetails || (result?.objectId && found))
+          throw new Error('The sign-in selector must identify one control.');
+        if (result?.objectId) {
+          const { node } = (await send(
+            'DOM.describeNode',
+            { objectId: result.objectId },
+            session,
+          )) as {
+            node: { backendNodeId: number };
+          };
+          found = { backendNodeId: node.backendNodeId, session };
+        }
+        await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-sign-in' }, session);
+      }
+    }
+    return found;
   };
 
   const controlsFor = async (found: { backendNodeId: number; session: string }) => {
@@ -634,12 +674,13 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       return found ? controlsFor(found) : [];
     },
     async signInControl(query: ControlQuery): Promise<BoundSignInControl> {
-      const found = await locate(query);
+      const found = query.selector ? await signInSelector(query.selector) : await locate(query);
       if (!found) throw new Error('The sign-in control could not be found.');
       try {
+        const frames = await tree(found.session);
         let frame: FrameNode['frame'] | undefined;
         let objectId: string | undefined;
-        for (const candidate of await tree(found.session)) {
+        for (const candidate of frames) {
           const resolved = await resolveControl(found.backendNodeId, found.session, candidate.id);
           const { result } = (await send(
             'Runtime.callFunctionOn',
@@ -693,6 +734,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         return {
           backendNodeId: node.backendNodeId,
           frameId: frame.id,
+          targetFrameId: frames[0]!.id,
           loaderId: frame.loaderId,
           snapshot,
           controls,
@@ -707,8 +749,10 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     async selectSignInControl(control: BoundSignInControl) {
       let session: string | undefined;
       for (const candidate of sessions) {
+        const frames = await tree(candidate);
         if (
-          (await tree(candidate)).some(
+          frames[0]?.id === control.targetFrameId &&
+          frames.some(
             (frame) => frame.id === control.frameId && frame.loaderId === control.loaderId,
           )
         ) {
@@ -717,30 +761,142 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         }
       }
       if (!session) throw new Error('The sign-in document changed.');
+      const name = `ottoSignIn${crypto.randomUUID().replaceAll('-', '')}`;
+      let pressed = false;
+      let outcome: boolean | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let context: number | undefined;
       try {
         const objectId = await resolveControl(control.backendNodeId, session, control.frameId);
-        if (
-          JSON.stringify(await controlsFor({ backendNodeId: control.backendNodeId, session })) !==
-          JSON.stringify(control.controls)
-        )
-          throw new Error('The sign-in control changed.');
-        const { result, exceptionDetails } = (await send(
+        context = await world(session, control.frameId);
+        await send('DOM.scrollIntoViewIfNeeded', { backendNodeId: control.backendNodeId }, session);
+        const { quads } = (await send(
+          'DOM.getContentQuads',
+          { backendNodeId: control.backendNodeId },
+          session,
+        )) as { quads: number[][] };
+        const quad = quads.find((value) => value.length === 8 && value.every(Number.isFinite));
+        if (!quad) throw new Error('The sign-in control is no longer visible.');
+        const point = {
+          x: (quad[0]! + quad[2]! + quad[4]! + quad[6]!) / 4,
+          y: (quad[1]! + quad[3]! + quad[5]! + quad[7]!) / 4,
+        };
+        if (session !== page) {
+          const { backendNodeId } = (await send(
+            'DOM.getFrameOwner',
+            { frameId: control.targetFrameId },
+            page,
+          )) as { backendNodeId: number };
+          const { model } = (await send('DOM.getBoxModel', { backendNodeId }, page)) as {
+            model: { content: number[] };
+          };
+          const content = model.content;
+          if (
+            content[1] !== content[3] ||
+            content[0] !== content[6] ||
+            content[2] !== content[4] ||
+            content[5] !== content[7]
+          )
+            throw new Error('The sign-in frame could not be located safely.');
+          point.x += content[0]!;
+          point.y += content[1]!;
+        }
+        const check = async () => {
+          if (
+            (await controlSnapshot(objectId, session!)) !== control.snapshot ||
+            JSON.stringify(
+              await controlsFor({ backendNodeId: control.backendNodeId, session: session! }),
+            ) !== JSON.stringify(control.controls)
+          )
+            throw new Error('The sign-in control changed.');
+          const hit = await locate({ pixel: point }, true);
+          if (!hit || hit.session !== session) throw new Error('The sign-in control is covered.');
+          const hitId = await resolveControl(hit.backendNodeId, session!, control.frameId);
+          const { result, exceptionDetails } = (await send(
+            'Runtime.callFunctionOn',
+            {
+              objectId,
+              functionDeclaration: 'function (hit) { return this === hit || this.contains(hit); }',
+              arguments: [{ objectId: hitId }],
+              returnByValue: true,
+            },
+            session,
+          )) as { result?: { value?: boolean }; exceptionDetails?: unknown };
+          if (exceptionDetails || result?.value !== true)
+            throw new Error('The sign-in control is covered.');
+        };
+        await check();
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point }, page);
+        await check();
+        await send('Runtime.enable', {}, session);
+        await send('Runtime.addBinding', { name, executionContextId: context }, session);
+        const clicked = new Promise<boolean>((resolve) => {
+          bindings.set(name, (payload) => {
+            outcome = payload === 'accepted';
+            resolve(outcome);
+          });
+          timer = setTimeout(() => resolve(false), 5000);
+        });
+        await send(
           'Runtime.callFunctionOn',
           {
             objectId,
-            functionDeclaration: `function (expected) { if ((${signInSnapshot}).call(this) !== expected) return false; HTMLElement.prototype.click.call(this); return true; }`,
-            arguments: [{ value: control.snapshot }],
-            returnByValue: true,
-            userGesture: true,
+            functionDeclaration: `function (name, expected) {
+            const node = this;
+            const guard = event => {
+              const valid = event.isTrusted && event.composedPath().includes(node) && (${signInSnapshot}).call(node) === expected;
+              if (!valid) { event.preventDefault(); event.stopImmediatePropagation(); }
+              if (!valid || event.type === 'click') globalThis[name](valid ? 'accepted' : 'changed');
+            };
+            globalThis[name + 'Guard'] = guard;
+            for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) window.addEventListener(type, guard, true);
+          }`,
+            arguments: [{ value: name }, { value: control.snapshot }],
           },
           session,
-        )) as { result?: { value?: boolean }; exceptionDetails?: unknown };
-        if (exceptionDetails || result?.value !== true)
-          throw new Error('The sign-in control changed.');
-      } finally {
-        await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-sign-in' }, session).catch(
-          () => {},
         );
+        pressed = true;
+        await send(
+          'Input.dispatchMouseEvent',
+          { type: 'mousePressed', ...point, button: 'left', buttons: 1, clickCount: 1 },
+          page,
+        );
+        if (outcome === false) throw new Error('The sign-in control changed.');
+        await check();
+        await send(
+          'Input.dispatchMouseEvent',
+          { type: 'mouseReleased', ...point, button: 'left', buttons: 0, clickCount: 1 },
+          page,
+        );
+        pressed = false;
+        if (!(await clicked)) throw new Error('The sign-in control did not receive the click.');
+      } finally {
+        if (pressed)
+          await send(
+            'Input.dispatchMouseEvent',
+            { type: 'mouseReleased', x: -1, y: -1, button: 'left', buttons: 0 },
+            page,
+            true,
+          ).catch(() => {});
+        clearTimeout(timer);
+        bindings.delete(name);
+        if (context !== undefined)
+          await send(
+            'Runtime.evaluate',
+            {
+              contextId: context,
+              expression: `(() => { const name = ${JSON.stringify(name)}; const guard = globalThis[name + 'Guard']; for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) window.removeEventListener(type, guard, true); delete globalThis[name + 'Guard']; })()`,
+            },
+            session,
+            true,
+          ).catch(() => {});
+        await send('Runtime.removeBinding', { name }, session, true).catch(() => {});
+        await send(
+          'Runtime.releaseObjectGroup',
+          { objectGroup: 'otto-sign-in' },
+          session,
+          true,
+        ).catch(() => {});
       }
     },
     async submits(query: ControlQuery, enter: boolean) {

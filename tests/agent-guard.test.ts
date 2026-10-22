@@ -686,7 +686,7 @@ test('secure credential pause prevents subsequent tools in the same execution se
       origin: 'https://example.com',
       label: 'Example',
       kind: 'method' as const,
-      methods: [{ label: 'Continue with Identity', selector: '@identity' }],
+      methods: [{ label: 'Continue with Identity', selector: '#identity' }],
     },
   ]) {
     let managed = false;
@@ -699,8 +699,21 @@ test('secure credential pause prevents subsequent tools in the same execution se
           { kind: 'method', methods: [{ label: 'Continue with Identity' }] },
           { kind: 'method', methods: [{ label: 'Continue with Identity', selector: '' }] },
           {
+            kind: 'method',
+            methods: [{ label: 'Continue with Identity', selector: 'a'.repeat(2049) }],
+          },
+          {
+            kind: 'method',
+            methods: [{ label: 'Continue with Identity', selector: '#identity', extra: true }],
+          },
+          {
+            kind: 'method',
+            savedLoginId: '11111111-1111-4111-8111-111111111111',
+            methods: [{ label: 'Continue with Identity', selector: '#identity' }],
+          },
+          {
             kind: 'password',
-            methods: [{ label: 'Continue with Identity', selector: '@identity' }],
+            methods: [{ label: 'Continue with Identity', selector: '#identity' }],
           },
         ])
           await assert.rejects(

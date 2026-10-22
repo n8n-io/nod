@@ -74,6 +74,7 @@ import { createPublicLinkPreviewProvider } from '../providers/public-web/link-pr
 import { createAgentRuntime } from '../runtime/index.ts';
 import { coreSkills } from '../runtime/prompt.ts';
 import { createApp } from './app.ts';
+import { accessKey } from './access.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
 import { learnWritingStyle } from './writing-style.ts';
 import { createChatVerification } from './chat-verification.ts';
@@ -698,6 +699,7 @@ async function initializeApplication(
     analytics: captureAnalytics,
     refresh,
     keyStore: adapters.keyStore,
+    requestKey: Buffer.from(await accessKey(dataRoot), 'base64url'),
     resume: resumeAfterCredentials,
     retry: retryCredentials,
     inject: computer.injectCredentials,
@@ -1245,10 +1247,11 @@ async function initializeApplication(
       },
       requestCredential: async (turn, input) => {
         if (input.kind === 'method') {
-          if (input.savedLoginId !== undefined)
-            throw new Error('Choose the observed method before choosing its saved login.');
+          const origin = credentialOrigin(input.origin);
+          const access = await permitVault(turn, { origin, kind: 'sign_in' });
+          if ('question' in access) return { [appConfirmation]: access.question };
           return vault.request(turn, ownerId, {
-            origin: input.origin,
+            origin,
             label: input.label,
             kind: 'method',
             methods: input.methods,

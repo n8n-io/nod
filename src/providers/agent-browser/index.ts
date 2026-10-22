@@ -1773,27 +1773,12 @@ export function createAgentBrowserComputer(options: {
         for (const method of methods) {
           signal?.throwIfAborted();
           const target = selector(method.selector);
-          const ref = referenceOf(target);
-          let query: { selector: string } | { pixel: { x: number; y: number } } = {
-            selector: target,
-          };
-          if (ref) {
-            if (!state.refs.has(ref)) throw new BrowserActionError('browser_target_changed');
-            await command(state, { action: 'scrollintoview', selector: `@${ref}` }, { signal });
-            const box = z
-              .object({
-                x: z.number(),
-                y: z.number(),
-                width: z.number().positive(),
-                height: z.number().positive(),
-              })
-              .passthrough()
-              .parse(
-                await command(state, { action: 'boundingbox', selector: `@${ref}` }, { signal }),
-              );
-            query = { pixel: { x: box.x + box.width / 2, y: box.y + box.height / 2 } };
-          }
-          const control = await devtools.signInControl(query);
+          if (referenceOf(target))
+            throw new BrowserActionError(
+              'browser_target_changed',
+              'Sign-in method choices need concrete CSS selectors. Inspect the current page and use a selector for each visible control.',
+            );
+          const control = await devtools.signInControl({ selector: target });
           if (
             control.origin !== origin ||
             [...controls.values()].some(

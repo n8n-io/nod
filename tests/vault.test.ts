@@ -170,6 +170,7 @@ test(
     });
     let failNext = false;
     const vault = await createVault(pool, {
+      requestKey: Buffer.alloc(32, 42),
       keyStore: {
         id: 'fixture',
         configured: true,
@@ -394,22 +395,31 @@ test(
       options: `-c search_path=${schema}`,
     });
     const app = Fastify();
-    const fixtureKey = randomBytes(32);
-    const { turn, wait } = await seedTurns(pool);
+    let keyReads = 0;
+    const { turn, wait, resume } = await seedTurns(pool);
     const otpTask = await turn();
     let calls = 0;
     const resumed: string[] = [];
-    const vault = await createVault(pool, {
-      keyStore: { id: 'fixture', configured: true, getKey: async () => fixtureKey },
+    const options = {
+      requestKey: randomBytes(32),
+      keyStore: {
+        id: 'unavailable',
+        configured: false,
+        getKey: async () => {
+          keyReads++;
+          throw new Error('Synthetic Vault key unavailable');
+        },
+      },
       retry: async () => {},
-      inject: async (input) => {
+      inject: async (input: CredentialInjection) => {
         calls++;
         if (calls === 1) throw new Error(`Provider leaked ${input.code}`);
       },
-      resume: async (turnId) => {
+      resume: async (turnId: string) => {
         resumed.push(turnId);
       },
-    });
+    };
+    const vault = await createVault(pool, options);
     vault.registerRoutes(app);
     try {
       const request = await vault.request(otpTask, 'local-development', {
@@ -447,6 +457,43 @@ test(
       );
       assert.deepEqual(resumed, [otpTask.turnId]);
       assert.equal(calls, 2);
+      const nextTurn = await resume(otpTask);
+      const next = await vault.request(nextTurn, 'local-development', {
+        origin: 'https://example.com',
+        label: 'Verification',
+        kind: 'otp',
+        passwordSelector: '#next-code',
+      });
+      await wait(nextTurn);
+      const restarted = await createVault(pool, options);
+      const reopened = Fastify();
+      restarted.registerRoutes(reopened);
+      try {
+        const continuation = (await reopened.inject({ url: `${url}/flow` })).json();
+        assert.equal(continuation.nextId, next.url.split('/').at(-1));
+        const nextUrl = `/api/credential-requests/${continuation.nextId}`;
+        assert.equal((await reopened.inject({ url: nextUrl })).json().status, 'pending');
+        assert.equal(
+          (await reopened.inject({ method: 'POST', url, payload: { code: '324681' } })).statusCode,
+          409,
+        );
+        assert.equal(
+          (await reopened.inject({ method: 'POST', url: nextUrl, payload: { code: '324681' } }))
+            .statusCode,
+          200,
+        );
+        assert.equal(calls, 3);
+        assert.equal(keyReads, 0);
+        const rows = JSON.stringify((await pool.query('SELECT * FROM credential_requests')).rows);
+        for (const secret of [
+          next.url.split('/').at(-1)!,
+          '324681',
+          options.requestKey.toString('base64url'),
+        ])
+          assert.equal(rows.includes(secret), false);
+      } finally {
+        await reopened.close();
+      }
       assert.equal((await pool.query('SELECT * FROM vault_entries')).rowCount, 0);
       assert.equal(
         JSON.stringify((await pool.query('SELECT * FROM credential_requests')).rows).includes(
@@ -482,6 +529,7 @@ test(
     const retried: string[] = [];
     let failInjection = false;
     const vault = await createVault(pool, {
+      requestKey: Buffer.alloc(32, 42),
       keyStore: { id: 'fixture', configured: true, getKey: async () => key },
       inject: async () => {
         injected++;
@@ -608,6 +656,7 @@ async function vaultFixture() {
     url: 'https://example.com/login',
   });
   const vault = await createVault(pool, {
+    requestKey: Buffer.alloc(32, 42),
     keyStore: { id: 'fixture', configured: true, getKey: async () => randomBytes(32) },
     page: () => inspecting(),
     inject: async () => {
@@ -976,6 +1025,7 @@ test(
     const resumed: string[] = [];
     let app = Fastify();
     const options = {
+      requestKey: Buffer.alloc(32, 42),
       keyStore: { id: 'fixture', configured: true, getKey: async () => key },
       page: async () => ({ origin: 'https://example.com', url: 'https://example.com/login' }),
       inject: async (input: CredentialInjection) => {
@@ -1341,6 +1391,7 @@ test(
     let pageOrigin = origin;
     let app = Fastify();
     const options = {
+      requestKey: Buffer.alloc(32, 42),
       keyStore: { id: 'fixture', configured: true, getKey: async () => key },
       page: async () => ({ origin: pageOrigin, url: `${pageOrigin}/login` }),
       inject: async (input: CredentialInjection) => {
@@ -1522,6 +1573,7 @@ test(
       const app = Fastify({ logger: false });
       registerLocalAccess(app, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
+        requestKey: Buffer.alloc(32, 42),
         keyStore: { id: 'synthetic', configured: true, getKey: async () => key },
         inject: async () => assert.fail('Cards must never enter a website login.'),
         resume: async () => assert.fail('Card management must not resume a task.'),
@@ -1643,6 +1695,7 @@ test(
         ]);
         let unlocked = false;
         const locked = await createVault(pool, {
+          requestKey: Buffer.alloc(32, 42),
           keyStore: {
             id: 'synthetic',
             configured: true,
@@ -1709,6 +1762,7 @@ test(
       const instance = Fastify({ logger: false });
       registerLocalAccess(instance, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
+        requestKey: Buffer.alloc(32, 42),
         keyStore: checkedKeyStore(pool, { id: 'fixture', configured: true, getKey }),
         inject: async () => assert.fail('Viewing or editing a login must not fill a browser.'),
         resume: async () => assert.fail('Viewing or editing a login must not resume a turn.'),
@@ -1972,6 +2026,7 @@ test(
       let observedOrigin = origin;
       let unavailable = false;
       const options = {
+        requestKey: Buffer.alloc(32, 42),
         keyStore: { id: 'fixture', configured: true, getKey: async () => key },
         page: async () => ({ origin: observedOrigin, url: observedOrigin + '/login' }),
         inject: async (input: CredentialInjection) => {
@@ -2299,6 +2354,7 @@ test(
         CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
       `);
       const vault = await createVault(pool, {
+        requestKey: Buffer.alloc(32, 42),
         keyStore: checkedKeyStore(pool, {
           id: 'synthetic',
           configured: true,
@@ -3084,6 +3140,7 @@ test(
     let emails: VerificationEmail[] | undefined;
     const currentCode = '492615';
     const vault = await createVault(pool, {
+      requestKey: Buffer.alloc(32, 42),
       keyStore: { id: 'fixture', configured: true, getKey: async () => randomKey },
       page: async (id) => {
         const current = origins.get(id) ?? origin;
@@ -3463,6 +3520,7 @@ test(
     });
     let injected = 0;
     const vault = await createVault(pool, {
+      requestKey: Buffer.alloc(32, 42),
       keyStore: { id: 'fixture', configured: true, getKey: async () => randomBytes(32) },
       page: async () => ({ origin, url: `${origin}/login` }),
       inject: async (input) => {
@@ -3894,6 +3952,7 @@ test(
     let requestSignal: AbortSignal | null | undefined;
     const key = randomBytes(32);
     const vault = await createVault(pool, {
+      requestKey: Buffer.alloc(32, 42),
       keyStore: { id: 'fixture', configured: true, getKey: async () => key },
       page: async () => ({
         origin: 'https://panel.example.test',
@@ -4529,6 +4588,7 @@ test(
       await seedTurns(pool);
       const key = randomBytes(32);
       const vault = await createVault(pool, {
+        requestKey: Buffer.alloc(32, 42),
         keyStore: { id: 'synthetic', configured: true, getKey: async () => key },
         inject: async () => {},
         resume: async () => {},
@@ -5390,386 +5450,415 @@ test(
   'sign-in method choices claim once and carry only active owned browser steps into the private flow',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
-    const schema = `test_method_flow_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const app = Fastify();
-    t.after(async () => {
-      await app.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    });
-    const turns = await seedTurns(pool);
-    const turn = await turns.turn();
-    const origin = 'https://choice.example.test';
-    let currentOrigin = origin;
-    let clicks = 0;
-    let resumed = 0;
-    let fail = false;
-    let refused = false;
-    const entered: CredentialInjection[] = [];
-    const key = randomBytes(32);
-    const options = {
-      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
-      page: async () => ({ origin: currentOrigin, url: `${currentOrigin}/login` }),
-      signInMethods: async (
-        _browser: string,
-        actualOrigin: string,
-        choices: { label: string; selector: string }[],
-      ) => {
-        assert.equal(actualOrigin, currentOrigin);
-        return {
-          document: 'synthetic-document',
-          methods: choices.map((choice) => ({
-            id: randomUUID(),
-            label: choice.label,
-            page: { origin: currentOrigin, url: `${currentOrigin}/login` },
-          })),
+    for (const scenario of [
+      'staged continuity',
+      'uncertain selection',
+      'expired retry',
+      'trust refusal',
+    ])
+      await t.test(scenario, async (t) => {
+        const schema = `test_method_flow_${randomUUID().replaceAll('-', '')}`;
+        const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+        await admin.query(`CREATE SCHEMA ${schema}`);
+        const pool = new pg.Pool({
+          connectionString: process.env.TEST_DATABASE_URL,
+          options: `-c search_path=${schema}`,
+        });
+        const app = Fastify();
+        t.after(async () => {
+          await app.close();
+          await pool.end();
+          await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+          await admin.end();
+        });
+        const turns = await seedTurns(pool);
+        const origin = 'https://choice.example.test';
+        let currentOrigin = origin;
+        let clicks = 0;
+        let resumed = 0;
+        const fail = scenario === 'uncertain selection';
+        const refused = scenario === 'trust refusal';
+        const entered: CredentialInjection[] = [];
+        const key = randomBytes(32);
+        const options = {
+          requestKey: Buffer.alloc(32, 42),
+          keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+          page: async () => ({ origin: currentOrigin, url: `${currentOrigin}/login` }),
+          signInMethods: async (
+            _browser: string,
+            actualOrigin: string,
+            choices: { label: string; selector: string }[],
+          ) => {
+            assert.equal(actualOrigin, currentOrigin);
+            return {
+              document: 'synthetic-document',
+              methods: choices.map((choice) => ({
+                id: randomUUID(),
+                label: choice.label,
+                page: { origin: currentOrigin, url: `${currentOrigin}/login` },
+              })),
+            };
+          },
+          checkMethods: async (
+            _turn: TurnRef,
+            methods: { selector: string; page: { origin: string } }[],
+          ) => {
+            assert.ok(methods.every((method) => method.page.origin === currentOrigin));
+            if (refused) throw new Error('Synthetic trust refusal');
+          },
+          selectSignInMethod: async (
+            _browser: string,
+            choice: { origin: string; document: string; methodId: string },
+          ) => {
+            assert.equal(choice.origin, currentOrigin);
+            assert.equal(choice.document, 'synthetic-document');
+            assert.ok(choice.methodId);
+            clicks++;
+            if (fail) throw new Error('Synthetic interrupted selection');
+          },
+          inject: async (input: CredentialInjection) => {
+            entered.push(input);
+          },
+          resume: async () => {
+            resumed++;
+          },
+          retry: async () => {},
         };
-      },
-      checkMethods: async (
-        _turn: TurnRef,
-        methods: { selector: string; page: { origin: string } }[],
-      ) => {
-        assert.ok(methods.every((method) => method.page.origin === currentOrigin));
-        if (refused) throw new Error('Synthetic trust refusal');
-      },
-      selectSignInMethod: async (
-        _browser: string,
-        choice: { origin: string; document: string; methodId: string },
-      ) => {
-        assert.equal(choice.origin, currentOrigin);
-        assert.equal(choice.document, 'synthetic-document');
-        assert.ok(choice.methodId);
-        clicks++;
-        if (fail) throw new Error('Synthetic interrupted selection');
-      },
-      inject: async (input: CredentialInjection) => {
-        entered.push(input);
-      },
-      resume: async () => {
-        resumed++;
-      },
-      retry: async () => {},
-    };
-    const vault = await createVault(pool, options);
-    vault.registerRoutes(app);
-    const requested = await vault.request(turn, 'local-development', {
-      origin,
-      label: 'Synthetic website',
-      kind: 'method',
-      methods: [
-        { label: 'Continue with Identity', selector: '#identity' },
-        { label: 'Use email', selector: '#email' },
-      ],
-    });
-    const path = `/api/credential-requests/${requested.url.split('/').at(-1)}`;
-    await turns.wait(turn);
-    const get = async (url = path) =>
-      (await app.inject({ method: 'GET', url })).json<CredentialRequest>();
-    const initial = await get();
-    assert.equal(initial.kind, 'method');
-    assert.equal(initial.status, 'pending');
-    assert.equal(initial.methods?.length, 2);
-    assert.doesNotMatch(JSON.stringify(initial), /#identity|#email|synthetic-document/);
-    const wrong = await app.inject({
-      method: 'POST',
-      url: `${path}/method`,
-      payload: { methodId: randomUUID() },
-    });
-    assert.equal(wrong.statusCode, 409);
-    assert.equal(clicks, 0);
-    let viewOpen = true;
-    let clientRequests = 0;
-    let pendingRequests = 0;
-    const view = await vaultPage(
-      createElement(Credentials, { id: initial.id, embedded: true }),
-      async (url, init) => {
-        clientRequests++;
-        pendingRequests++;
-        const result = await app.inject({
-          method: (init.method ?? 'GET') as 'GET' | 'POST',
-          url,
-          headers: init.body ? { 'content-type': 'application/json' } : {},
-          payload: init.body ? String(init.body) : undefined,
+        const vault = await createVault(pool, options);
+        vault.registerRoutes(app);
+        const get = async (url: string) =>
+          (await app.inject({ method: 'GET', url })).json<CredentialRequest>();
+        if (scenario === 'uncertain selection') {
+          const failureTurn = await turns.turn();
+          const failure = await vault.request(failureTurn, 'local-development', {
+            origin: currentOrigin,
+            label: 'Identity',
+            kind: 'method',
+            methods: [{ label: 'Continue', selector: '#continue' }],
+          });
+          await turns.wait(failureTurn);
+          const failurePath = `/api/credential-requests/${failure.url.split('/').at(-1)}`;
+          const failureRequest = await get(failurePath);
+          assert.equal(
+            (
+              await app.inject({
+                method: 'POST',
+                url: `${failurePath}/method`,
+                payload: { methodId: failureRequest.methods![0].id },
+              })
+            ).statusCode,
+            502,
+          );
+          assert.equal((await get(failurePath)).status, 'uncertain');
+          assert.equal(
+            (
+              await app.inject({
+                method: 'POST',
+                url: `${failurePath}/method`,
+                payload: { methodId: failureRequest.methods![0].id },
+              })
+            ).statusCode,
+            409,
+          );
+          assert.equal(clicks, 1);
+          assert.equal(resumed, 0);
+          assert.deepEqual(
+            (await app.inject({ method: 'GET', url: `${failurePath}/flow` })).json(),
+            {},
+          );
+          return;
+        }
+        if (scenario === 'expired retry') {
+          const expiredTurn = await turns.turn();
+          const expired = await vault.request(expiredTurn, 'local-development', {
+            origin: currentOrigin,
+            label: 'Identity',
+            kind: 'method',
+            methods: [{ label: 'Continue', selector: '#continue' }],
+          });
+          await turns.wait(expiredTurn);
+          const expiredPath = `/api/credential-requests/${expired.url.split('/').at(-1)}`;
+          const expiredRequest = await get(expiredPath);
+          await pool.query(
+            "UPDATE credential_requests SET flow_expires_at=now()-interval '1 second' WHERE turn_id=$1",
+            [expiredTurn.turnId],
+          );
+          assert.equal((await get(expiredPath)).status, 'expired');
+          assert.equal(
+            (
+              await app.inject({
+                method: 'POST',
+                url: `${expiredPath}/method`,
+                payload: { methodId: expiredRequest.methods![0].id },
+              })
+            ).statusCode,
+            409,
+          );
+          assert.equal(clicks, 0);
+          assert.equal(
+            (await app.inject({ method: 'POST', url: `${expiredPath}/retry`, payload: {} }))
+              .statusCode,
+            200,
+          );
+          assert.equal(
+            (await app.inject({ method: 'POST', url: `${expiredPath}/retry`, payload: {} }))
+              .statusCode,
+            409,
+          );
+          const retriedTurn = await turns.resume(expiredTurn, 'credentials-retry');
+          const retried = await vault.request(retriedTurn, 'local-development', {
+            origin: currentOrigin,
+            label: 'Identity',
+            kind: 'identifier',
+            usernameSelector: '#email',
+          });
+          await turns.wait(retriedTurn);
+          assert.equal(
+            (await app.inject({ method: 'GET', url: `${expiredPath}/flow` })).json().nextId,
+            retried.url.split('/').at(-1),
+          );
+          assert.equal(clicks, 0);
+          return;
+        }
+        if (scenario === 'trust refusal') {
+          const refusedTurn = await turns.turn();
+          await assert.rejects(
+            vault.request(refusedTurn, 'local-development', {
+              origin: currentOrigin,
+              label: 'Identity',
+              kind: 'method',
+              methods: [{ label: 'Continue', selector: '#continue' }],
+            }),
+            /trust refusal/,
+          );
+          assert.equal(
+            (
+              await pool.query('SELECT 1 FROM credential_requests WHERE turn_id=$1', [
+                refusedTurn.turnId,
+              ])
+            ).rowCount,
+            0,
+          );
+          return;
+        }
+        const turn = await turns.turn();
+        const requested = await vault.request(turn, 'local-development', {
+          origin,
+          label: 'Synthetic website',
+          kind: 'method',
+          methods: [
+            { label: 'Continue with Identity', selector: '#identity' },
+            { label: 'Use email', selector: '#email' },
+          ],
         });
-        pendingRequests--;
-        return new Response(result.body, {
-          status: result.statusCode,
-          headers: { 'content-type': 'application/json' },
+        const path = `/api/credential-requests/${requested.url.split('/').at(-1)}`;
+        await turns.wait(turn);
+        const initial = await get(path);
+        assert.equal(initial.kind, 'method');
+        assert.equal(initial.status, 'pending');
+        assert.equal(initial.methods?.length, 2);
+        assert.doesNotMatch(JSON.stringify(initial), /#identity|#email|synthetic-document/);
+        const wrong = await app.inject({
+          method: 'POST',
+          url: `${path}/method`,
+          payload: { methodId: randomUUID() },
         });
-      },
-      'http://localhost:4310/?conversation=synthetic',
-    );
-    t.after(async () => {
-      if (viewOpen) await view.close();
-    });
-    const settle = async (predicate: () => boolean) => {
-      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
-      for (let attempt = 0; attempt < 100 && (!predicate() || pendingRequests > 0); attempt++)
-        await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
-      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
-      assert.ok(predicate());
-      assert.equal(pendingRequests, 0);
-    };
-    const focus = async () => act(async () => window.dispatchEvent(new window.Event('focus')));
-    await settle(() => Boolean(view.document.querySelector('.credential-accounts button')));
-    const choice = view.document.querySelector<HTMLButtonElement>('.credential-accounts button')!;
-    choice.focus();
-    const [, duplicate] = await Promise.all([
-      act(async () => {
-        choice.click();
-        choice.click();
-      }),
-      app.inject({
-        method: 'POST',
-        url: `${path}/method`,
-        payload: { methodId: initial.methods![0].id },
-      }),
-    ]);
-    assert.ok([200, 409].includes(duplicate.statusCode));
-    await settle(
-      () =>
-        resumed === 1 &&
-        view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
-    );
-    assert.equal(view.document.activeElement, view.document.querySelector('.credential-card'));
-    assert.equal(clicks, 1);
-    assert.equal(resumed, 1);
-    assert.equal((await get()).status, 'filled');
-    assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
-    const nextTurn = await turns.resume(turn);
-    currentOrigin = 'https://identity.example.test';
-    const next = await vault.request(nextTurn, 'local-development', {
-      origin: currentOrigin,
-      label: 'Identity',
-      kind: 'identifier',
-      usernameSelector: '#email',
-      submitSelector: '#next',
-    });
-    assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
-    await turns.wait(nextTurn);
-    const flow = (await app.inject({ method: 'GET', url: `${path}/flow` })).json<{
-      nextId: string;
-    }>();
-    assert.equal(flow.nextId, next.url.split('/').at(-1));
-    const nextPath = `/api/credential-requests/${flow.nextId}`;
-    assert.equal((await get(nextPath)).origin, currentOrigin);
-    await focus();
-    await settle(() => Boolean(view.document.querySelector('input[name="username"]')));
-    assert.equal(view.document.querySelector('input[name="password"]'), null);
-    assert.equal(window.location.search, '?conversation=synthetic');
+        assert.equal(wrong.statusCode, 409);
+        assert.equal(clicks, 0);
+        let viewOpen = true;
+        let clientRequests = 0;
+        let pendingRequests = 0;
+        const view = await vaultPage(
+          createElement(Credentials, { id: initial.id, embedded: true }),
+          async (url, init) => {
+            clientRequests++;
+            pendingRequests++;
+            const result = await app.inject({
+              method: (init.method ?? 'GET') as 'GET' | 'POST',
+              url,
+              headers: init.body ? { 'content-type': 'application/json' } : {},
+              payload: init.body ? String(init.body) : undefined,
+            });
+            pendingRequests--;
+            return new Response(result.body, {
+              status: result.statusCode,
+              headers: { 'content-type': 'application/json' },
+            });
+          },
+          'http://localhost:4310/?conversation=synthetic',
+        );
+        t.after(async () => {
+          if (viewOpen) await view.close();
+        });
+        const settle = async (predicate: () => boolean) => {
+          await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+          for (let attempt = 0; attempt < 100 && (!predicate() || pendingRequests > 0); attempt++)
+            await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+          await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+          assert.ok(predicate());
+          assert.equal(pendingRequests, 0);
+        };
+        const focus = async () => act(async () => window.dispatchEvent(new window.Event('focus')));
+        await settle(() => Boolean(view.document.querySelector('.credential-accounts button')));
+        const choice = view.document.querySelector<HTMLButtonElement>(
+          '.credential-accounts button',
+        )!;
+        choice.focus();
+        const [, duplicate] = await Promise.all([
+          act(async () => {
+            choice.click();
+            choice.click();
+          }),
+          app.inject({
+            method: 'POST',
+            url: `${path}/method`,
+            payload: { methodId: initial.methods![0].id },
+          }),
+        ]);
+        assert.ok([200, 409].includes(duplicate.statusCode));
+        await settle(
+          () =>
+            resumed === 1 &&
+            view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
+        );
+        assert.equal(view.document.activeElement, view.document.querySelector('.credential-card'));
+        assert.equal(clicks, 1);
+        assert.equal(resumed, 1);
+        assert.equal((await get(path)).status, 'filled');
+        assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
+        const nextTurn = await turns.resume(turn);
+        currentOrigin = 'https://identity.example.test';
+        const next = await vault.request(nextTurn, 'local-development', {
+          origin: currentOrigin,
+          label: 'Identity',
+          kind: 'identifier',
+          usernameSelector: '#email',
+          submitSelector: '#next',
+        });
+        assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
+        await turns.wait(nextTurn);
+        const flow = (await app.inject({ method: 'GET', url: `${path}/flow` })).json<{
+          nextId: string;
+        }>();
+        assert.equal(flow.nextId, next.url.split('/').at(-1));
+        const nextPath = `/api/credential-requests/${flow.nextId}`;
+        assert.equal((await get(nextPath)).origin, currentOrigin);
+        await focus();
+        await settle(() => Boolean(view.document.querySelector('input[name="username"]')));
+        assert.equal(view.document.querySelector('input[name="password"]'), null);
+        assert.equal(window.location.search, '?conversation=synthetic');
 
-    const stale = await app.inject({
-      method: 'POST',
-      url: path,
-      payload: { username: 'synthetic@example.test' },
-    });
-    assert.equal(stale.statusCode, 409);
-    assert.equal(entered.length, 0);
-    view.document.querySelector<HTMLInputElement>('input[name="username"]')!.value =
-      'synthetic@example.test';
-    await act(async () =>
-      view.document
-        .querySelector('form')!
-        .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })),
-    );
-    await settle(
-      () =>
-        resumed === 2 &&
-        entered.length === 1 &&
-        view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
-    );
-    assert.equal(entered.length, 1);
-    const passwordTurn = await turns.resume(nextTurn);
-    const password = await vault.request(passwordTurn, 'local-development', {
-      origin: currentOrigin,
-      label: 'Identity',
-      kind: 'password',
-      passwordSelector: '#password',
-      submitSelector: '#continue',
-    });
-    await turns.wait(passwordTurn);
-    await focus();
-    await settle(() => Boolean(view.document.querySelector('input[name="password"]')));
-    assert.equal(
-      view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value,
-      '',
-    );
-    assert.equal(
-      view.document.querySelector<HTMLInputElement>('input[name="username"]')!.value,
-      'synthetic@example.test',
-    );
-    assert.equal(
-      (await app.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
-      password.url.split('/').at(-1),
-    );
-    view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value =
-      'synthetic-flow-password';
-    await act(async () =>
-      view.document
-        .querySelector('form')!
-        .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })),
-    );
-    await settle(
-      () =>
-        resumed === 3 &&
-        entered.length === 2 &&
-        view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
-    );
-    const codeTurn = await turns.resume(passwordTurn);
-    const code = await vault.request(codeTurn, 'local-development', {
-      origin: currentOrigin,
-      label: 'Identity',
-      kind: 'otp',
-      passwordSelector: '#code',
-      submitSelector: '#verify',
-    });
-    await turns.wait(codeTurn);
-    await focus();
-    await settle(() => Boolean(view.document.querySelector('input[name="code"]')));
-    view.document.querySelector<HTMLInputElement>('input[name="code"]')!.value = '732814';
-    await view.render(createElement('div'));
-    const closedRequests = clientRequests;
-    await focus();
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
-    assert.equal(clientRequests, closedRequests);
-    await view.render(createElement(Credentials, { id: initial.id, embedded: true }));
-    await settle(() => Boolean(view.document.querySelector('input[name="code"]')));
-    assert.equal(view.document.querySelector<HTMLInputElement>('input[name="code"]')!.value, '');
-    assert.equal(window.location.search, '?conversation=synthetic');
-    assert.equal(window.localStorage.length, 0);
-    assert.equal(window.sessionStorage.length, 0);
-    await view.close();
-    viewOpen = false;
+        const stale = await app.inject({
+          method: 'POST',
+          url: path,
+          payload: { username: 'synthetic@example.test' },
+        });
+        assert.equal(stale.statusCode, 409);
+        assert.equal(entered.length, 0);
+        view.document.querySelector<HTMLInputElement>('input[name="username"]')!.value =
+          'synthetic@example.test';
+        await act(async () =>
+          view.document
+            .querySelector('form')!
+            .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })),
+        );
+        await settle(
+          () =>
+            resumed === 2 &&
+            entered.length === 1 &&
+            view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
+        );
+        assert.equal(entered.length, 1);
+        const passwordTurn = await turns.resume(nextTurn);
+        const password = await vault.request(passwordTurn, 'local-development', {
+          origin: currentOrigin,
+          label: 'Identity',
+          kind: 'password',
+          passwordSelector: '#password',
+          submitSelector: '#continue',
+        });
+        await turns.wait(passwordTurn);
+        await focus();
+        await settle(() => Boolean(view.document.querySelector('input[name="password"]')));
+        assert.equal(
+          view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value,
+          '',
+        );
+        assert.equal(
+          view.document.querySelector<HTMLInputElement>('input[name="username"]')!.value,
+          'synthetic@example.test',
+        );
+        assert.equal(
+          (await app.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
+          password.url.split('/').at(-1),
+        );
+        view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value =
+          'synthetic-flow-password';
+        await act(async () =>
+          view.document
+            .querySelector('form')!
+            .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })),
+        );
+        await settle(
+          () =>
+            resumed === 3 &&
+            entered.length === 2 &&
+            view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
+        );
+        const codeTurn = await turns.resume(passwordTurn);
+        const code = await vault.request(codeTurn, 'local-development', {
+          origin: currentOrigin,
+          label: 'Identity',
+          kind: 'otp',
+          passwordSelector: '#code',
+          submitSelector: '#verify',
+        });
+        await turns.wait(codeTurn);
+        await focus();
+        await settle(() => Boolean(view.document.querySelector('input[name="code"]')));
+        view.document.querySelector<HTMLInputElement>('input[name="code"]')!.value = '732814';
+        await view.render(createElement('div'));
+        const closedRequests = clientRequests;
+        await focus();
+        await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+        assert.equal(clientRequests, closedRequests);
+        await view.render(createElement(Credentials, { id: initial.id, embedded: true }));
+        await settle(() => Boolean(view.document.querySelector('input[name="code"]')));
+        assert.equal(
+          view.document.querySelector<HTMLInputElement>('input[name="code"]')!.value,
+          '',
+        );
+        assert.equal(window.location.search, '?conversation=synthetic');
+        assert.equal(window.localStorage.length, 0);
+        assert.equal(window.sessionStorage.length, 0);
+        await view.close();
+        viewOpen = false;
 
-    assert.equal(
-      (await app.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
-      code.url.split('/').at(-1),
-    );
-    const restarted = await createVault(pool, options);
-    const reopened = Fastify();
-    restarted.registerRoutes(reopened);
-    assert.equal(
-      (await reopened.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
-      code.url.split('/').at(-1),
-    );
-    await reopened.close();
-    await pool.query(
-      'UPDATE credential_requests SET owner_id=$1 WHERE token_hash=(SELECT token_hash FROM credential_requests WHERE kind=$2 LIMIT 1)',
-      ['another-owner', 'otp'],
-    );
-    assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
-    await pool.query(
-      "UPDATE credential_requests SET owner_id='local-development' WHERE kind='otp'",
-    );
-    await pool.query('UPDATE credential_requests SET browser_id=$1 WHERE kind=$2', [
-      randomUUID(),
-      'otp',
-    ]);
-    assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
-    const failureTurn = await turns.turn();
-    const failure = await vault.request(failureTurn, 'local-development', {
-      origin: currentOrigin,
-      label: 'Identity',
-      kind: 'method',
-      methods: [{ label: 'Continue', selector: '#continue' }],
-    });
-    await turns.wait(failureTurn);
-    const failurePath = `/api/credential-requests/${failure.url.split('/').at(-1)}`;
-    const failureRequest = await get(failurePath);
-    fail = true;
-    assert.equal(
-      (
-        await app.inject({
-          method: 'POST',
-          url: `${failurePath}/method`,
-          payload: { methodId: failureRequest.methods![0].id },
-        })
-      ).statusCode,
-      502,
-    );
-    assert.equal((await get(failurePath)).status, 'uncertain');
-    assert.equal(
-      (
-        await app.inject({
-          method: 'POST',
-          url: `${failurePath}/method`,
-          payload: { methodId: failureRequest.methods![0].id },
-        })
-      ).statusCode,
-      409,
-    );
-    assert.equal(clicks, 2);
-    assert.equal(resumed, 3);
-    assert.deepEqual((await app.inject({ method: 'GET', url: `${failurePath}/flow` })).json(), {});
-    const expiredTurn = await turns.turn();
-    const expired = await vault.request(expiredTurn, 'local-development', {
-      origin: currentOrigin,
-      label: 'Identity',
-      kind: 'method',
-      methods: [{ label: 'Continue', selector: '#continue' }],
-    });
-    await turns.wait(expiredTurn);
-    const expiredPath = `/api/credential-requests/${expired.url.split('/').at(-1)}`;
-    const expiredRequest = await get(expiredPath);
-    await pool.query(
-      "UPDATE credential_requests SET flow_expires_at=now()-interval '1 second' WHERE turn_id=$1",
-      [expiredTurn.turnId],
-    );
-    assert.equal((await get(expiredPath)).status, 'expired');
-    assert.equal(
-      (
-        await app.inject({
-          method: 'POST',
-          url: `${expiredPath}/method`,
-          payload: { methodId: expiredRequest.methods![0].id },
-        })
-      ).statusCode,
-      409,
-    );
-    assert.equal(clicks, 2);
-    assert.equal(
-      (await app.inject({ method: 'POST', url: `${expiredPath}/retry`, payload: {} })).statusCode,
-      200,
-    );
-    assert.equal(
-      (await app.inject({ method: 'POST', url: `${expiredPath}/retry`, payload: {} })).statusCode,
-      409,
-    );
-    const retriedTurn = await turns.resume(expiredTurn, 'credentials-retry');
-    const retried = await vault.request(retriedTurn, 'local-development', {
-      origin: currentOrigin,
-      label: 'Identity',
-      kind: 'identifier',
-      usernameSelector: '#email',
-    });
-    await turns.wait(retriedTurn);
-    assert.equal(
-      (await app.inject({ method: 'GET', url: `${expiredPath}/flow` })).json().nextId,
-      retried.url.split('/').at(-1),
-    );
-    assert.equal(clicks, 2);
-    refused = true;
-    const refusedTurn = await turns.turn();
-    await assert.rejects(
-      vault.request(refusedTurn, 'local-development', {
-        origin: currentOrigin,
-        label: 'Identity',
-        kind: 'method',
-        methods: [{ label: 'Continue', selector: '#continue' }],
-      }),
-      /trust refusal/,
-    );
-    assert.equal(
-      (await pool.query('SELECT 1 FROM credential_requests WHERE turn_id=$1', [refusedTurn.turnId]))
-        .rowCount,
-      0,
-    );
+        assert.equal(
+          (await app.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
+          code.url.split('/').at(-1),
+        );
+        const restarted = await createVault(pool, options);
+        const reopened = Fastify();
+        restarted.registerRoutes(reopened);
+        assert.equal(
+          (await reopened.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
+          code.url.split('/').at(-1),
+        );
+        await reopened.close();
+        await pool.query(
+          'UPDATE credential_requests SET owner_id=$1 WHERE token_hash=(SELECT token_hash FROM credential_requests WHERE kind=$2 LIMIT 1)',
+          ['another-owner', 'otp'],
+        );
+        assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
+        await pool.query(
+          "UPDATE credential_requests SET owner_id='local-development' WHERE kind='otp'",
+        );
+        await pool.query('UPDATE credential_requests SET browser_id=$1 WHERE kind=$2', [
+          randomUUID(),
+          'otp',
+        ]);
+        assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
+      });
   },
 );

@@ -77,6 +77,8 @@ test(
     const workspaceFiles = new Map<string, Uint8Array>();
     const browserActs: Array<Record<string, unknown>> = [];
     let browserUrl = 'https://bank.example.test/transfer';
+    let allowMethodBrowser = false;
+    let methodBindings = 0;
     let dialogOpen = false;
     let formTarget = 'https://bank.example.test/transfer/send';
     let appOutage = false;
@@ -161,7 +163,7 @@ test(
                   const result = await options.tools
                     .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
                     .execute(
-                      plan.tool === 'browser'
+                      plan.tool === 'browser' || plan.tool === 'sign_in'
                         ? { action: plan.action, ...plan.args }
                         : { action: plan.action, args: plan.args },
                     );
@@ -175,6 +177,24 @@ test(
           dispose() {},
         },
         computer: fakeComputer({
+          signInMethods: async (_browser, origin, methods) => {
+            methodBindings++;
+            return {
+              document: 'synthetic-sign-in-document',
+              methods: methods.map((method) => ({
+                id: randomUUID(),
+                label: method.label,
+                page: {
+                  origin,
+                  url: `${origin}/sign-in`,
+                  controls: [{ role: 'button', name: method.label }],
+                },
+              })),
+            };
+          },
+          selectSignInMethod: async () => {
+            throw new Error('This fixture never selects a method.');
+          },
           act: async (_id, input) => {
             browserActs.push({ ...input });
             return { text: 'Synthetic bank page', url: 'https://bank.example.test/transfer' };
@@ -286,6 +306,9 @@ test(
               : task === 'review'
                 ? {
                     run:
+                      (allowMethodBrowser &&
+                        (input as { action?: { name?: string } }).action?.name ===
+                          'OTTO_browser') ||
                       asked.has(
                         (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
                           ?.text ?? '',
@@ -1483,6 +1506,63 @@ test(
           assert.equal((await approvalsFor(changed))[0].status, 'expired');
           assert.equal(uploads.length, 1);
           assert.equal(sends(), before + 1);
+        },
+      );
+      await t.test(
+        'sign-in method selection needs exact-origin consent before binding controls',
+        async () => {
+          const input = {
+            origin: 'https://bank.example.test',
+            label: 'Synthetic bank',
+            kind: 'method',
+            methods: [{ label: 'Continue with Identity', selector: '@identity' }],
+            message: 'Choose a sign-in method.',
+          };
+          allowMethodBrowser = true;
+          try {
+            const checks = fallbackChecks.length;
+            const held = await propose('Choose sign-in', input, 'sign_in');
+            const [card] = await approvalsFor(held);
+            assert.ok(card);
+            assert.equal(card.action, 'OTTO_vault_allow');
+            assert.equal(card.status, 'pending');
+            assert.deepEqual(card.args, { origin: input.origin, kind: 'sign_in' });
+            assert.equal(methodBindings, 0);
+            assert.equal(
+              (await pool.query('SELECT 1 FROM credential_requests WHERE turn_id=$1', [held]))
+                .rowCount,
+              0,
+            );
+            assert.ok(
+              fallbackChecks
+                .slice(checks)
+                .some(
+                  (check) =>
+                    (check as { action?: { name?: string } }).action?.name === 'OTTO_sign_in',
+                ),
+            );
+            const declined = await request('POST', '/api/messages', {
+              text: 'No',
+              replyToMessageId: card.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            await waitFor(declined.json().turnId, 'succeeded');
+            assert.equal((await approvalsFor(held))[0].status, 'declined');
+            const text = `Sign in to the synthetic bank ${randomUUID()}`;
+            asked.add(text);
+            const permitted = await propose('Choose sign-in', input, 'sign_in', text);
+            assert.deepEqual(await approvalsFor(permitted), []);
+            assert.equal(methodBindings, 1);
+            const [form] = (
+              await pool.query(
+                'SELECT origin,kind,status FROM credential_requests WHERE turn_id=$1',
+                [permitted],
+              )
+            ).rows;
+            assert.deepEqual(form, { origin: input.origin, kind: 'method', status: 'pending' });
+          } finally {
+            allowMethodBrowser = false;
+          }
         },
       );
     } finally {
