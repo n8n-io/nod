@@ -311,6 +311,33 @@ test(
       submitMessage: (text, attachments, options) => messages.submit(text, attachments, options),
       configuration: () => configuration({ llmReady: true }),
     });
+    let permissionFailure: 'async' | 'sync' | undefined;
+    let appControlAvailable = true;
+    let permissionChecks = 0;
+    let permissionGranted = true;
+    const computerPolicy = createComputerPolicy({
+      pool: db.pool,
+      ownerId,
+      computer: {
+        get appControlAvailable() {
+          return appControlAvailable;
+        },
+        shell: async () => assert.fail('This fixture does not run computer commands.'),
+        permissions: () => {
+          permissionChecks++;
+          const failure = new Error('synthetic-private-helper-detail');
+          if (permissionFailure === 'sync') throw failure;
+          if (permissionFailure === 'async') return Promise.reject(failure);
+          return Promise.resolve({ accessibility: permissionGranted, screen: permissionGranted });
+        },
+        dispose() {},
+      },
+      check: async () => assert.fail('This fixture does not check computer actions.'),
+      request: async () => assert.fail('This fixture does not request computer actions.'),
+      lock: (_turn, write) => write(),
+      signalFor: () => undefined,
+    });
+    computerPolicy.registerRoutes(app);
     const personal = createPersonalService({
       pool: db.pool,
       ownerId,
@@ -470,6 +497,7 @@ test(
     }
     try {
       await db.initializeDatabase();
+      await computerPolicy.initialize();
       await thread.initializeThreads();
       await personal.initialize({ workers: false });
       const approved = await createApprovals(
@@ -558,6 +586,74 @@ test(
           { allowed: false, details: { reason: verdict.confirm ? verdict.reason : 'unrequested' } },
         );
       };
+
+      await t.test(
+        'computer permission failures stay distinct from denial and recover without exposing other owners',
+        async () => {
+          try {
+            await db.pool.query(
+              'INSERT INTO computer_settings(owner_id,enabled) VALUES($1,true),($2,false)',
+              [ownerId, 'foreign-permission-owner'],
+            );
+            await db.pool.query(
+              'INSERT INTO computer_apps(owner_id,bundle_id,name) VALUES($1,$2,$3),($4,$5,$6)',
+              [
+                ownerId,
+                'fixture.OwnerApp',
+                'Owner fixture',
+                'foreign-permission-owner',
+                'fixture.ForeignApp',
+                'Foreign fixture',
+              ],
+            );
+            const before = permissionChecks;
+            const unauthorized = await app.inject({
+              url: '/api/computer',
+              headers: { host: `localhost:${port}` },
+            });
+            assert.equal(unauthorized.statusCode, 401);
+            assert.equal(permissionChecks, before);
+            for (const failure of ['async', 'sync'] as const) {
+              permissionFailure = failure;
+              const failed = await request('GET', '/api/computer');
+              assert.equal(failed.statusCode, 409);
+              assert.equal(typeof failed.json().error, 'string');
+              assert.equal(failed.body.includes('synthetic-private-helper-detail'), false);
+              assert.equal('permissions' in failed.json(), false);
+            }
+            permissionFailure = undefined;
+            const recovered = await request(
+              'GET',
+              '/api/computer?ownerId=foreign-permission-owner',
+            );
+            assert.equal(recovered.statusCode, 200);
+            assert.deepEqual(recovered.json().permissions, { accessibility: true, screen: true });
+            assert.equal(recovered.json().enabled, true);
+            assert.deepEqual(recovered.json().apps, [
+              { bundleId: 'fixture.OwnerApp', name: 'Owner fixture' },
+            ]);
+            permissionGranted = false;
+            const denied = await request('GET', '/api/computer');
+            assert.equal(denied.statusCode, 200);
+            assert.deepEqual(denied.json().permissions, { accessibility: false, screen: false });
+            const disabled = await request('PATCH', '/api/computer', { enabled: false });
+            assert.equal(disabled.statusCode, 200);
+            assert.equal(disabled.json().enabled, false);
+            appControlAvailable = false;
+            permissionFailure = 'async';
+            const checks = permissionChecks;
+            const missing = await request('GET', '/api/computer');
+            assert.equal(missing.statusCode, 200);
+            assert.equal(missing.json().appControlAvailable, false);
+            assert.equal(missing.json().enabled, false);
+            assert.equal(permissionChecks, checks);
+          } finally {
+            permissionFailure = undefined;
+            permissionGranted = true;
+            appControlAvailable = true;
+          }
+        },
+      );
 
       await t.test(
         'confirmation generation fails closed without saving a message or an actionable approval',
@@ -2570,6 +2666,7 @@ test(
     const requests: { action: string; args: Record<string, unknown>; allowed: unknown }[] = [];
     const computer: OwnerComputer = {
       appControlAvailable: true,
+      permissions: async () => ({ accessibility: true, screen: true }),
       shell: async (command, { signal }) => {
         ran.push(command);
         shellSignals.push(signal);

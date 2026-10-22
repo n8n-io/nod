@@ -163,12 +163,18 @@ export function createComputerPolicy(options: {
 
   async function status(): Promise<ComputerStatus> {
     const appControlAvailable = computer.appControlAvailable === true;
-    const permissions = appControlAvailable
-      ? await (computer.permissions?.() ?? Promise.reject()).catch(() => ({
-          accessibility: false,
-          screen: false,
-        }))
-      : { accessibility: false, screen: false };
+    let permissions = { accessibility: false, screen: false };
+    if (appControlAvailable) {
+      try {
+        if (!computer.permissions) throw new Error();
+        permissions = await computer.permissions();
+      } catch {
+        throw Object.assign(
+          new Error('Otto could not check Mac permissions. Try again, or quit and reopen Otto.'),
+          { statusCode: 409 },
+        );
+      }
+    }
     return {
       available: Boolean(options.computer),
       appControlAvailable,

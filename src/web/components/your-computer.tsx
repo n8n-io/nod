@@ -31,10 +31,15 @@ export function useComputer() {
     }
     try {
       const value = await api<ComputerStatus>('/api/computer', { signal: request.signal });
-      if (active.current && reading.current === request) setStatus(value);
+      if (active.current && reading.current === request) {
+        setStatus(value);
+        setError('');
+      }
     } catch (cause) {
-      if (!quiet && active.current && reading.current === request && !request.signal.aborted)
+      if (active.current && reading.current === request && !request.signal.aborted) {
+        setStatus(null);
         setError(errorMessage(cause));
+      }
     } finally {
       if (reading.current === request) {
         reading.current = null;

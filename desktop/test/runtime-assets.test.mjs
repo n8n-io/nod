@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
 import {
   copyFile,
+  cp,
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   stat,
   symlink,
@@ -37,7 +41,11 @@ import {
   isReleaseMerge,
   prepareRelease,
 } from '../../.github/scripts/prepare-desktop-release.mjs';
-import { verifyRuntimeRelease } from '../scripts/release-tools.mjs';
+import {
+  signingConfiguration,
+  signingMetadata,
+  verifyRuntimeRelease,
+} from '../scripts/release-tools.mjs';
 
 async function releaseRepository(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-release-history-')));
@@ -2904,4 +2912,150 @@ test('local test installs refuse normal apps and cannot reuse or follow foreign 
   await assert.rejects(testProfile(profiles, 'unowned'), /not created by the test installer/);
   assert.equal(await readFile(saved, 'utf8'), 'synthetic preserved account data');
   assert.deepEqual(await readdir(foreign), ['test-profile.json']);
+});
+
+test('local test installs honor permanent signing and preserve the previous app on signing failure', async (t) => {
+  const source = (await readFile(new URL('../scripts/test-install.mjs', import.meta.url), 'utf8'))
+    .replace(/^import[\s\S]*?;\n/gm, '')
+    .replace(/^export /gm, '')
+    .replace("await import('@electron/packager')", '({ packager: globalThis.packager })');
+  for (const mode of ['permanent', 'ad-hoc', 'failed', 'invalid']) {
+    await t.test(mode, async (t) => {
+      const temporary = await realpath(await mkdtemp(join(tmpdir(), 'otto-test-signing-')));
+      t.after(() => rm(temporary, { recursive: true, force: true }));
+      const root = join(temporary, 'repo');
+      const home = join(temporary, 'home');
+      const installed = join(home, 'Applications', 'Otto Setup Test.app');
+      const appPackage = join('Contents', 'Resources', 'app', 'package.json');
+      const previous = {
+        name: 'otto-setup-test',
+        productName: 'Otto Setup Test',
+        ottoBuild: { testProfile: true, source: 'previous' },
+      };
+      const release = { id: 'synthetic-runtime', platform: `darwin-${process.arch}` };
+      const engine = join(temporary, 'engine');
+      await mkdir(engine);
+      await writeFile(join(engine, 'runtime-release.json'), JSON.stringify(release));
+      await mkdir(dirname(join(installed, appPackage)), { recursive: true });
+      await writeFile(join(installed, appPackage), JSON.stringify(previous));
+      await mkdir(join(root, 'desktop'), { recursive: true });
+      await writeFile(
+        join(root, 'desktop', 'package.json'),
+        JSON.stringify({ devDependencies: { electron: '44.5.0' } }),
+      );
+      const env =
+        mode === 'ad-hoc'
+          ? {}
+          : {
+              OTTO_SIGNING_MODE: 'self-signed',
+              OTTO_SIGNING_IDENTITY: mode === 'invalid' ? '-' : 'Otto Synthetic Test Identity',
+              OTTO_SIGNING_KEYCHAIN: join(temporary, 'synthetic.keychain'),
+              OTTO_SIGNING_CERTIFICATE_SHA256: 'a'.repeat(64),
+            };
+      const events = [];
+      const context = {
+        constants,
+        cp,
+        lstat,
+        mkdir,
+        readFile,
+        realpath,
+        rename,
+        rm,
+        writeFile,
+        dirname,
+        join,
+        resolve,
+        fileURLToPath,
+        pathToFileURL,
+        randomUUID,
+        assetHash,
+        homedir: () => home,
+        process: {
+          env,
+          argv: [],
+          execPath: process.execPath,
+          arch: process.arch,
+          platform: 'darwin',
+        },
+        console: { log() {}, warn() {} },
+        runtimeRelease: async () => release,
+        findRuntimeAssets: async () => join(temporary, 'assets'),
+        signingConfiguration: () => signingConfiguration(env),
+        signingMetadata,
+        verifyIdentity: async (signing) => {
+          events.push('verify-identity');
+          signing.certificateSha256 = signing.expectedCertificate;
+        },
+        signApplication: async (_application, version, signing) => {
+          events.push('sign-permanent');
+          assert.equal(version, '44.5.0');
+          assert.equal(signing.identity, env.OTTO_SIGNING_IDENTITY);
+          assert.equal(signing.certificateSha256, env.OTTO_SIGNING_CERTIFICATE_SHA256);
+          if (mode === 'failed') throw new Error('Synthetic signer failure.');
+        },
+        verifyApplicationRuntime: async () => {
+          events.push('verify-runtime');
+        },
+        packager: async ({ dir, out, name }) => {
+          const built = join(out, 'packaged');
+          await mkdir(dirname(join(built, `${name}.app`, appPackage)), { recursive: true });
+          await cp(join(dir, 'package.json'), join(built, `${name}.app`, appPackage));
+          await writeFile(join(built, 'LICENSE'), 'synthetic license');
+          await writeFile(join(built, 'LICENSES.chromium.html'), 'synthetic license');
+          return [built];
+        },
+        run: async (command, args, options) => {
+          if (command === process.execPath) {
+            const stage = options.env.OTTO_DESKTOP_STAGE;
+            await mkdir(join(stage, 'app'), { recursive: true });
+            await mkdir(join(stage, 'engine'));
+            await cp(
+              join(engine, 'runtime-release.json'),
+              join(stage, 'engine', 'runtime-release.json'),
+            );
+            await writeFile(
+              join(stage, 'app', 'package.json'),
+              JSON.stringify({ version: '0.1.0', ottoBuild: { release: true } }),
+            );
+          } else if (command === '/usr/bin/codesign' && args.includes('--sign')) {
+            assert.equal(args[args.indexOf('--sign') + 1], '-');
+            events.push('sign-ad-hoc');
+          }
+          return '';
+        },
+      };
+      const url = pathToFileURL(join(root, 'desktop', 'scripts', 'test-install.mjs')).href;
+      await runInNewContext(
+        `(async () => { ${source.replaceAll('import.meta.url', JSON.stringify(url))}\nglobalThis.buildTest = build; })()`,
+        context,
+      );
+      if (['failed', 'invalid'].includes(mode)) {
+        await assert.rejects(
+          context.buildTest(engine),
+          mode === 'failed' ? /signer failure/ : /permanent certificate identity/,
+        );
+        assert.deepEqual(JSON.parse(await readFile(join(installed, appPackage), 'utf8')), previous);
+        assert.ok(!events.includes('sign-ad-hoc'));
+        assert.ok(!events.includes('verify-runtime'));
+      } else {
+        await context.buildTest(engine);
+        assert.deepEqual(
+          events,
+          mode === 'permanent'
+            ? ['verify-identity', 'sign-permanent', 'verify-runtime']
+            : ['sign-ad-hoc', 'verify-runtime'],
+        );
+        const saved = JSON.parse(await readFile(join(installed, appPackage), 'utf8'));
+        assert.equal(saved.ottoBuild.testProfile, true);
+        assert.equal(saved.ottoBuild.release, undefined);
+        const receipt = JSON.parse(
+          await readFile(join(root, '.local', 'desktop-test-install', 'installed.json'), 'utf8'),
+        );
+        assert.equal(receipt.signing.mode, mode === 'permanent' ? 'self-signed' : 'ad-hoc');
+        if (mode === 'permanent')
+          assert.equal(receipt.signing.certificateSha256, env.OTTO_SIGNING_CERTIFICATE_SHA256);
+      }
+    });
+  }
 });

@@ -6,7 +6,14 @@ import { dirname, join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assetHash, findRuntimeAssets, runtimeRelease } from '../runtime/assets.mjs';
-import { run, verifyApplicationRuntime } from './release-tools.mjs';
+import {
+  run,
+  signApplication,
+  signingConfiguration,
+  signingMetadata,
+  verifyApplicationRuntime,
+  verifyIdentity,
+} from './release-tools.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const name = 'Otto Setup Test';
@@ -88,6 +95,9 @@ async function stop() {
 }
 
 async function build(source = '/Applications/Otto.app/Contents/Resources/engine') {
+  const signing =
+    process.env.OTTO_SIGNING_IDENTITY === undefined ? undefined : signingConfiguration();
+  if (signing) await verifyIdentity(signing);
   const release = await runtimeRelease(resolve(source));
   if (!release || release.platform !== `darwin-${process.arch}`)
     throw new Error('Choose an installed engine with a matching runtime-release.json.');
@@ -179,14 +189,18 @@ async function build(source = '/Applications/Otto.app/Contents/Resources/engine'
   await mkdir(licenses);
   for (const file of ['LICENSE', 'LICENSES.chromium.html'])
     await cp(join(paths[0], file), join(licenses, file));
-  await run(
-    '/usr/bin/codesign',
-    ['--force', '--deep', '--sign', '-', '--preserve-metadata=entitlements', built],
-    {
-      timeout: 10 * 60_000,
-    },
-  );
-  await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', built]);
+  if (signing) await signApplication(built, desktop.devDependencies.electron, signing);
+  else {
+    console.warn(
+      'Ad-hoc test builds can invalidate macOS permissions when rebuilt. Finish rebuilding before granting Accessibility and Screen Recording.',
+    );
+    await run(
+      '/usr/bin/codesign',
+      ['--force', '--deep', '--sign', '-', '--preserve-metadata=entitlements', built],
+      { timeout: 10 * 60_000 },
+    );
+    await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', built]);
+  }
   await verifyApplicationRuntime(built, desktop.devDependencies.electron);
   await validateTestApplication(built);
   await mkdir(dirname(application), { recursive: true });
@@ -219,6 +233,7 @@ async function build(source = '/Applications/Otto.app/Contents/Resources/engine'
         source: configuration.ottoBuild.source,
         modified: configuration.ottoBuild.modified,
         runtime: release.id,
+        signing: signing ? signingMetadata(signing) : { mode: 'ad-hoc' },
         installedAt: new Date().toISOString(),
       },
       null,
