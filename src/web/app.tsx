@@ -220,8 +220,12 @@ function Workspace({
                 <ChatSkeleton />
               )}
             </div>
-            {currentPath === '/activity' && <Activity />}
-            {currentPath === '/logins' && <Logins onAsk={askInChat} />}
+            {(currentPath === '/activity' || currentPath === '/logins') && (
+              <>
+                <Activity hidden={currentPath !== '/activity'} />
+                <Logins hidden={currentPath !== '/logins'} onAsk={askInChat} />
+              </>
+            )}
             {currentPath === '/apps' && (
               <Apps configuration={state?.configuration} onAsk={askInChat} />
             )}

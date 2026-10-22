@@ -61,7 +61,8 @@ export function setupLink(
 }
 
 export function safeMessageLink(link: string, origin: string): SafeLink | null {
-  const value = renamedPaths.get(link) ?? link;
+  const path = link.startsWith(`${origin}/`) ? link.slice(origin.length) : link;
+  const value = renamedPaths.get(path) ?? link;
   if (!value || /[\u0000-\u0020\u007f<>"'\\]/.test(value)) return null;
   const absolute = /^https?:\/\//i.test(value);
   if (

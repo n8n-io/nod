@@ -40,7 +40,22 @@ function subtitle(item: VaultItem) {
   return item.username || originLabel(item.origin);
 }
 
-export function Logins({ onAsk }: { onAsk?(text: string): void }) {
+function requested() {
+  const search =
+    window.location.pathname === '/logins' && !window.location.hash ? window.location.search : '';
+  return {
+    add: search === '?add=login' ? 'login' : search === '?add=card' ? 'card' : null,
+    item: /^\?item=([\w-]+)$/.exec(search)?.[1],
+  } as const;
+}
+
+export function Logins({
+  hidden = false,
+  onAsk,
+}: {
+  hidden?: boolean;
+  onAsk?(text: string): void;
+}) {
   const {
     data: entries,
     error: loadError,
@@ -50,19 +65,16 @@ export function Logins({ onAsk }: { onAsk?(text: string): void }) {
   } = usePageData<VaultListEntry[]>('/api/vault');
   const sessions = usePageData<VaultSession[]>('/api/vault/sessions');
   const phone = usePhone();
-  const requested = window.location.hash ? '' : window.location.search;
-  const addRequested =
-    requested === '?add=login' ? 'login' : requested === '?add=card' ? 'card' : null;
-  const itemRequested = /^\?item=([\w-]+)$/.exec(requested)?.[1];
+  const [request] = useState(requested);
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState(false);
   const [website, setWebsite] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [adding, setAdding] = useState<'login' | 'card' | null>(addRequested);
-  const [selectedId, setSelectedId] = useState<string | null | undefined>(itemRequested);
-  const [fromActivity] = useState(itemRequested);
+  const [adding, setAdding] = useState<'login' | 'card' | null>(request.add);
+  const [selectedId, setSelectedId] = useState<string | null | undefined>(request.item);
+  const [fromActivity, setFromActivity] = useState(request.item);
   const [savingNew, setSavingNew] = useState(false);
-  const [chosen, setChosen] = useState(Boolean(addRequested || itemRequested));
+  const [chosen, setChosen] = useState(Boolean(request.add || request.item));
   const returnTo = useRef<string | null>(null);
   const newTrigger = useRef<HTMLButtonElement>(null);
   const openingDialog = useRef(false);
@@ -86,8 +98,19 @@ export function Logins({ onAsk }: { onAsk?(text: string): void }) {
   const backToActivity = Boolean(fromActivity) && selected?.id === fromActivity;
 
   useEffect(() => {
-    if (window.location.search) window.history.replaceState(null, '', '/logins');
-  }, []);
+    if (hidden || !window.location.search) return;
+    const { add, item } = requested();
+    window.history.replaceState(null, '', '/logins');
+    if (add) {
+      setAdding(add);
+      setChosen(true);
+    } else if (item) {
+      setAdding(null);
+      setSelectedId(item);
+      setFromActivity(item);
+      setChosen(true);
+    }
+  }, [hidden]);
 
   useEffect(() => {
     if (pageMode || !returnTo.current) return;
@@ -115,6 +138,9 @@ export function Logins({ onAsk }: { onAsk?(text: string): void }) {
   function closeDetail() {
     if (split) return;
     if (backToActivity) {
+      setChosen(false);
+      setSelectedId(null);
+      setFromActivity(undefined);
       window.history.back();
       return;
     }
@@ -221,6 +247,7 @@ export function Logins({ onAsk }: { onAsk?(text: string): void }) {
     <VaultDetails
       key={selected.id}
       entry={selected}
+      visible={!hidden}
       autoFocus={chosen && selectedId === selected.id}
       backLabel={backToActivity ? 'Activity' : 'Logins and payment'}
       onClose={closeDetail}
@@ -255,6 +282,7 @@ export function Logins({ onAsk }: { onAsk?(text: string): void }) {
         split && 'is-split',
         pageMode && 'is-detail',
       )}
+      hidden={hidden}
     >
       {!pageMode && (
         <header className="page-heading secondary-heading">
@@ -338,8 +366,8 @@ export function Logins({ onAsk }: { onAsk?(text: string): void }) {
               aria-label="Search logins and cards"
               onChange={(event) => setQuery(event.target.value)}
             />
-            {!entries ? (
-              loading && <Loading label="Opening logins and cards…" />
+            {!entries || (!sessions.data && !sessions.error) ? (
+              (loading || sessions.loading) && <Loading label="Opening logins and cards…" />
             ) : !items.length ? (
               <div className="secondary-empty">
                 <h2>Nothing saved yet</h2>

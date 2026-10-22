@@ -47,9 +47,11 @@ export function VaultDetails({
   onClose,
   onSaved,
   onDeleted,
+  visible = true,
   children,
 }: {
   entry: VaultEntry;
+  visible?: boolean;
   autoFocus?: boolean;
   backLabel: string;
   onClose(): void;
@@ -119,6 +121,10 @@ export function VaultDetails({
 
   const hideSecretsRef = useRef(hideSecrets);
   hideSecretsRef.current = hideSecrets;
+
+  useEffect(() => {
+    if (!visible) hideRevealed();
+  }, [visible]);
 
   async function loadDetails() {
     detailsRequest.current?.abort();

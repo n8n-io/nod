@@ -460,8 +460,10 @@ test('Save links open only an empty local form without accepting secret query da
     assert.deepEqual(safeMessageLink(path, origin), expected);
     assert.deepEqual(safeMessageLink(`${origin}${path}`, origin), expected);
     assert.deepEqual(safeMessageLink(`/trust?add=${kind}`, origin), expected);
+    assert.deepEqual(safeMessageLink(`${origin}/trust?add=${kind}`, origin), expected);
   }
-  assert.deepEqual(safeMessageLink('/trust', origin), { href: '/activity', kind: 'navigation' });
+  for (const link of ['/trust', `${origin}/trust`])
+    assert.deepEqual(safeMessageLink(link, origin), { href: '/activity', kind: 'navigation' });
   for (const query of [
     '?add=card&cardNumber=4242424242424242',
     '?add=login&origin=https%3A%2F%2Fexample.test',

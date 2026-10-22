@@ -557,7 +557,7 @@ function Statement({
   );
 }
 
-export function Activity() {
+export function Activity({ hidden = false }: { hidden?: boolean }) {
   const trust = usePageData<TrustView>('/api/trust');
   const vault = usePageData<VaultActivity>('/api/vault/activity');
   const preferences = usePageData<AccountPreferences>('/api/preferences');
@@ -579,18 +579,20 @@ export function Activity() {
   const ready = Boolean(trust.data && vault.data && preferences.data && entries.data);
   useEffect(() => {
     const id = (window.history.state as { activity?: string } | null)?.activity;
-    if (!ready || !id) return;
+    if (hidden || !ready || !id) return;
     window.history.replaceState(null, '');
     [...document.querySelectorAll<HTMLElement>('[data-vault-activity]')]
       .find((row) => row.dataset.vaultActivity === id)
       ?.focus();
-  }, [ready]);
+  }, [ready, hidden]);
   const error = trust.error || vault.error || preferences.error;
+  const itemsError = entries.error || sessions.error;
   return (
-    <div className="content-page secondary-page">
+    <div className="content-page secondary-page" hidden={hidden}>
       <header className="page-heading secondary-heading">
         <PageTitle path="/activity" />
       </header>
+      {itemsError && <Notice>{itemsError}</Notice>}
       {trust.data && vault.data && preferences.data ? (
         <div className="activity">
           <Sentence
