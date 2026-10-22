@@ -178,7 +178,7 @@ node desktop/scripts/test-install.mjs open first-run
 node desktop/scripts/test-install.mjs stop
 ```
 
-Test profiles live under `~/Library/Application Support/Otto Setup Test/test-profiles`. Rebuilding the test app preserves them. The helper accepts an installed engine directory after `build` when the cached runtime comes from another local installation.
+Test profiles live under `~/Library/Application Support/Otto Setup Test/test-profiles`. Rebuilding the test app preserves them. Reopening the same test app from Applications resumes the last selected profile, even without the installer’s launch environment. The helper accepts an installed engine directory after `build` when the cached runtime comes from another local installation.
 
 This is an ad-hoc signed local app, not a release. It reuses the cached workspace and browser images; it doesn't verify a newly built runtime image or release signing.
 

@@ -15,9 +15,20 @@ import {
   Tray,
   utilityProcess,
 } from 'electron';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
-import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { hostname } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -55,14 +66,51 @@ const testInstall =
   JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')).ottoBuild?.testProfile ===
     true;
 app.setName(testInstall ? 'Otto Setup Test' : 'Otto');
-const developmentDataRoot =
+const defaultDataRoot = join(app.getPath('appData'), testInstall ? 'Otto Setup Test' : 'Otto');
+const testProfileSelection = testInstall
+  ? join(
+      defaultDataRoot,
+      'test-installs',
+      `${createHash('sha256').update(desktopRoot).digest('hex')}.json`,
+    )
+  : undefined;
+let developmentDataRoot =
   !app.isPackaged || testInstall ? process.env.OTTO_DESKTOP_USER_DATA : undefined;
+if (testProfileSelection && !developmentDataRoot) {
+  try {
+    developmentDataRoot = JSON.parse(await readFile(testProfileSelection, 'utf8')).path;
+    if (typeof developmentDataRoot !== 'string' || !developmentDataRoot)
+      throw new Error('The saved test profile is invalid. Reopen it with the test installer.');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
 if (developmentDataRoot && !isAbsolute(developmentDataRoot))
   throw new Error('The development profile path must be absolute.');
-app.setPath(
-  'userData',
-  developmentDataRoot || join(app.getPath('appData'), testInstall ? 'Otto Setup Test' : 'Otto'),
-);
+if (testProfileSelection && developmentDataRoot) {
+  if (
+    !(await lstat(developmentDataRoot)).isDirectory() ||
+    (await realpath(developmentDataRoot)) !== developmentDataRoot
+  )
+    throw new Error(
+      'The test profile must be a real directory. Reopen it with the test installer.',
+    );
+  const marker = JSON.parse(await readFile(join(developmentDataRoot, 'test-profile.json'), 'utf8'));
+  if (marker.version !== 1 || marker.kind !== 'otto-setup-test')
+    throw new Error('This profile was not created by the test installer.');
+  await mkdir(dirname(testProfileSelection), { recursive: true, mode: 0o700 });
+  const temporary = `${testProfileSelection}.${randomUUID()}.pending`;
+  try {
+    await writeFile(temporary, JSON.stringify({ path: developmentDataRoot }), {
+      flag: 'wx',
+      mode: 0o600,
+    });
+    await rename(temporary, testProfileSelection);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+app.setPath('userData', developmentDataRoot || defaultDataRoot);
 const profileRoot = join(app.getPath('userData'), 'profiles', 'local');
 const windowsUpdates = join(process.env.LOCALAPPDATA || app.getPath('temp'), 'Otto', 'updates');
 const settings = createSettingsStore(join(profileRoot, 'settings.json'), safeStorage);

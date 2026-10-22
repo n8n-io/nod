@@ -20,21 +20,30 @@ It's off by default and works on macOS only. Otto still does most work in its ow
 | Screenshot   | Takes a picture of one app window, even when another window covers it                 |
 | Act          | Presses a button, sets a value, opens a menu or types text and keys into that one app |
 
-Otto acts on Mac apps without moving your mouse or taking keyboard focus, so you can keep working.
+Otto sends actions to the selected app without moving your mouse. Some actions, such as raising a window, can bring it forward.
+
+When you ask for a screenshot, Otto can attach the app window image to your conversation. Screenshots it takes only to inspect an app stay in the model's context.
 
 ## Turn it on
 
-Onboarding asks you to allow **Accessibility** and **Screen Recording**, then turns on **Let Otto use your computer**. You can skip that step.
+Onboarding asks you to allow **Accessibility** and **Screen Recording**. After granting both, return to Otto and select **Continue** to turn on **Let Otto use your computer**. You can select **Not now** to skip the step.
+
+If permissions can't be checked, select **Try again** or **Not now**. Otto keeps the feature off until you turn it on.
+
+A source install without the computer helper offers files and commands only. Select **Continue** to enable those; no Accessibility or Screen Recording grants are needed.
 
 Later, open **Settings**. Under **Your computer** you can turn it on or off, see both permissions and allow a missing one, and remove a Mac app Otto may use.
 
 ## Permissions
 
-Mac app control runs through Otto Computer Use, a helper bundled with the desktop app. macOS lists the permissions under Otto. When you run Otto from source, it lists them under the terminal app that started Otto.
+Mac app control runs through Otto Computer Use, a helper bundled with the desktop app. Allow the app named in the macOS permission prompt under **System Settings → Privacy & Security**. Return to Otto after changing a permission so it can check again.
 
-Commands run with an empty environment inside a macOS sandbox profile. The profile blocks:
+If macOS asks you to quit, reopen Otto from Applications. Your setup progress is saved.
 
-- Otto's own data folder.
+Commands run with a clean environment inside a macOS sandbox profile. The profile blocks:
+
+- Otto's data and install folders.
+- Your `Library` folder and hidden files and folders directly in your home folder, including browser profiles and command-line credentials.
 - Keychain services.
 - Writes to LaunchAgents, login items and shell startup files.
 - Apple Events, and the `open`, `osascript`, `automator` and `shortcuts` commands.
@@ -49,10 +58,11 @@ Otto never uses these, even if you ask:
 
 - Terminal apps: Terminal, iTerm, Warp, Ghostty, kitty and Alacritty.
 - Script Editor, Automator and Shortcuts.
+- Passwords, Keychain Access and System Settings.
 - Otto itself.
 - macOS security prompts and the login window.
 
-What Otto reads or sees on your Mac goes to your selected model. Otto treats it as data, never as instructions.
+What Otto reads or sees on your Mac goes to your selected model. Otto marks these results as untrusted data.
 
 ## Stop Otto
 
@@ -60,14 +70,18 @@ Otto uses one Mac app step at a time, across all tasks. While it does, the menu 
 
 **Stop** ends the task at once. An action already sent to an app can't be taken back. Otto marks it uncertain and never runs it again.
 
+Turning off **Let Otto use your computer** stops computer work in progress. Removing an allowed app stops work in that app and prevents pending confirmations from using its old access. An action already sent may still have completed.
+
 ## Limits
 
 :::caution[What this doesn't cover]
 
 - Electron apps, such as Slack or VS Code, often show only a few controls. Otto takes a screenshot when it can't read enough.
 - The sandbox profile is a deny list, not an allow list. It blocks the known escapes (Otto's keys and data, the Keychain, Docker and VM sockets, other processes' arguments, Launch Services, launchd and cron), but a deny list can still miss a new route.
-- The source install can run commands only. Mac app control needs the desktop app.
+- A source install can run commands. To use Mac apps too, build the helper with `pnpm run computer:build` before starting Otto.
 - A command you approve runs as you. It can change or delete any file the profile doesn't block.
+- The shell can't access `~/.Trash`. Otto asks you to move unwanted files to Trash yourself.
+- Native app screenshots aren't masked. Content visible in the selected app can reach your model, including sensitive information.
 
 :::
 

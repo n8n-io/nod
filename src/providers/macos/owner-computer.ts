@@ -1,13 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
+import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
-import type {
-  ComputerPermissionKind,
-  MacApp,
-  MacAppAction,
-  OwnerComputer,
-} from '../../ports/owner-computer.ts';
+import type { ComputerPermissionKind, MacApp, OwnerComputer } from '../../ports/owner-computer.ts';
 
 const outputBytes = 256 * 1024;
 const defaultTimeoutMs = 10 * 60_000;
@@ -20,13 +15,10 @@ export function sandboxProfile(denyRead: string[] = []) {
 (allow default)
 (deny process-info* (target others))
 (deny file-read* file-write* (subpath (param "DATA")))
-(deny file-read* file-write* (subpath (string-append (param "HOME") "/Library/Keychains")))
-(deny file-read* file-write* (subpath (string-append (param "HOME") "/.docker")))
-(deny file-read* file-write* (subpath (string-append (param "HOME") "/.otto-desktop")))
-(deny file-read* file-write* (subpath (string-append (param "HOME") "/.colima")) (subpath (string-append (param "HOME") "/.lima")) (subpath (string-append (param "HOME") "/.orbstack")) (subpath (string-append (param "HOME") "/.rd")))
-(deny file-read* file-write* (subpath (string-append (param "HOME") "/.ssh")) (subpath (string-append (param "HOME") "/.aws")) (subpath (string-append (param "HOME") "/.gnupg")) (subpath (string-append (param "HOME") "/.config/gh")) (subpath (string-append (param "HOME") "/.config/gcloud")) (subpath (string-append (param "HOME") "/.kube")) (literal (string-append (param "HOME") "/.netrc")))
+(deny file-read* file-write* (subpath (string-append (param "HOME") "/Library")) (regex (string-append "^" (param "HOME") "/\\\\.[^/]+($|/)")))
 ${extra}
 (deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd") (global-name "com.apple.security.agent"))
+(deny mach-lookup (local-name-prefix "com.apple.axserver") (global-name-prefix "com.apple.axserver") (global-name-prefix "com.apple.windowserver") (global-name-prefix "com.apple.replayd") (global-name-prefix "com.apple.ScreenCaptureKit"))
 (deny lsopen)
 (deny file-write* (subpath (string-append (param "HOME") "/Library/LaunchAgents")) (subpath "/Library/LaunchAgents") (subpath "/Library/LaunchDaemons") (subpath (string-append (param "HOME") "/Library/Application Support/com.apple.backgroundtaskmanagementagent")) (regex (string-append "^" (param "HOME") "/\\\\.(zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile|bash_login|zlogout)$")))
 (deny appleevent-send)
@@ -71,23 +63,42 @@ export function createMacComputer(options: {
   dataRoot: string;
   helper?: string;
   denyRead?: string[];
+  helperTimeoutMs?: number;
 }): OwnerComputer {
   const home = homedir();
   const profile = sandboxProfile((options.denyRead ?? []).map(realpath));
   const data = realpath(options.dataRoot);
   let helper: ChildProcessWithoutNullStreams | undefined;
   let nextId = 0;
-  const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
-  const trees = new Map<string, Map<string, string>>();
+  const pending = new Map<
+    number,
+    {
+      child: ChildProcessWithoutNullStreams;
+      resolve(value: unknown): void;
+      reject(error: Error): void;
+    }
+  >();
+
+  function stop(child: ChildProcessWithoutNullStreams, error: Error) {
+    if (helper === child) helper = undefined;
+    child.kill('SIGKILL');
+    for (const [id, waiting] of pending) {
+      if (waiting.child !== child) continue;
+      pending.delete(id);
+      waiting.reject(error);
+    }
+  }
 
   function start() {
     if (helper) return helper;
     if (!options.helper || !existsSync(options.helper))
       throw new Error(
-        'Mac app control needs the Otto desktop app. Use the shell action for files and commands.',
+        'Mac app control needs Otto Computer Use. For a source install, run pnpm run computer:build, or use the Otto desktop app. The shell action is still available.',
       );
     const child = spawn(options.helper, [], { stdio: ['pipe', 'pipe', 'pipe'], env: {} });
+    helper = child;
     child.stderr.resume();
+    child.stdin.on('error', () => stop(child, new Error('Otto Computer Use is unavailable.')));
     createInterface({ input: child.stdout }).on('line', (line) => {
       let message: { id?: number; ok?: boolean; result?: unknown; error?: string };
       try {
@@ -102,17 +113,10 @@ export function createMacComputer(options: {
       else
         waiting.reject(new Error(permissionMessage(message.error ?? 'The Mac app step failed.')));
     });
-    child.on('exit', () => {
-      if (helper === child) helper = undefined;
-      for (const waiting of pending.values())
-        waiting.reject(
-          new Error('Otto Computer Use stopped. Try the step again after a fresh look.'),
-        );
-      pending.clear();
-      trees.clear();
-    });
-    child.on('error', () => {});
-    helper = child;
+    child.on('close', () =>
+      stop(child, new Error('Otto Computer Use stopped. Look again to check what completed.')),
+    );
+    child.on('error', () => stop(child, new Error('Otto Computer Use is unavailable.')));
     return child;
   }
 
@@ -120,18 +124,34 @@ export function createMacComputer(options: {
     signal?.throwIfAborted();
     const child = start();
     const id = ++nextId;
+    const timeoutMs =
+      options.helperTimeoutMs ??
+      (request.op === 'act' && request.action === 'type' ? 120_000 : 60_000);
     return new Promise<T>((resolve, reject) => {
       const abort = () => {
-        pending.delete(id);
-        reject(signal!.reason instanceof Error ? signal!.reason : new Error('Task cancelled.'));
+        stop(
+          child,
+          signal!.reason instanceof Error ? signal!.reason : new Error('Task cancelled.'),
+        );
       };
+      const timer = setTimeout(
+        () =>
+          stop(
+            child,
+            new Error('Otto Computer Use timed out. Look again to check what completed.'),
+          ),
+        timeoutMs,
+      );
       signal?.addEventListener('abort', abort, { once: true });
       pending.set(id, {
+        child,
         resolve: (value) => {
+          clearTimeout(timer);
           signal?.removeEventListener('abort', abort);
           resolve(value as T);
         },
         reject: (error) => {
+          clearTimeout(timer);
           signal?.removeEventListener('abort', abort);
           reject(error);
         },
@@ -141,6 +161,15 @@ export function createMacComputer(options: {
   }
 
   return {
+    get appControlAvailable() {
+      if (!options.helper) return false;
+      try {
+        accessSync(options.helper, constants.X_OK);
+        return statSync(options.helper).isFile();
+      } catch {
+        return false;
+      }
+    },
     shell(command, { signal, timeoutMs = defaultTimeoutMs }) {
       signal.throwIfAborted();
       return new Promise((resolve, reject) => {
@@ -216,39 +245,28 @@ export function createMacComputer(options: {
         { op: 'look', app },
         signal,
       );
-      const labels = new Map<string, string>();
-      for (const line of result.tree.split('\n')) {
-        const ref = /\[ref=(e\d+)\]$/.exec(line)?.[1];
-        if (ref && !labels.has(ref))
-          labels.set(
-            ref,
-            line
-              .trim()
-              .replace(/^- /, '')
-              .replace(/ \[ref=e\d+\]$/, ''),
-          );
-      }
-      trees.clear();
-      trees.set(result.app.bundleId, labels);
       return {
         app: result.app,
         tree: result.truncated ? `${result.tree}\n[tree truncated]` : result.tree,
       };
     },
-    label: (bundleId, ref) => trees.get(bundleId)?.get(ref),
+    inspect: (app, ref, signal) =>
+      call<{ label: string; token: string }>({ op: 'inspect', app, ref }, signal),
     act: async (action, signal) => {
       await call({ op: 'act', ...action }, signal);
     },
     async screenshot(app, signal) {
       const result = await call<{ app: MacApp; png: string }>({ op: 'screenshot', app }, signal);
-      return { app: result.app, png: Buffer.from(result.png, 'base64') };
+      const png = Buffer.from(result.png, 'base64');
+      if (!png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
+        throw new Error('Otto Computer Use did not return a PNG screenshot.');
+      return { app: result.app, png };
     },
     permissions: () => call<Record<ComputerPermissionKind, boolean>>({ op: 'status' }),
     requestPermission: (kind) =>
       call<Record<ComputerPermissionKind, boolean>>({ op: 'request', permission: kind }),
     dispose() {
-      helper?.kill();
-      helper = undefined;
+      if (helper) stop(helper, new Error('Otto Computer Use stopped.'));
     },
   };
 }
@@ -257,6 +275,6 @@ function permissionMessage(error: string) {
   if (error === 'accessibility_permission')
     return 'Otto needs Accessibility permission to use Mac apps. Ask the owner to allow it in Settings, under Your computer.';
   if (error === 'screen_permission')
-    return 'Otto needs Screen Recording permission to see app windows. Ask the owner to allow it in Settings, under Your computer.';
+    return 'macOS refused screen capture. Ask the owner to review Screen Recording permission in macOS Settings, then retry the screenshot.';
   return error;
 }

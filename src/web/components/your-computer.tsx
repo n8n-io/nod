@@ -1,55 +1,92 @@
-import { useEffect, useId, useState } from 'react';
-import { Laptop } from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Check, Laptop } from 'lucide-react';
 import type { ComputerPermission, ComputerStatus } from '../../shared/computer';
 import { api, errorMessage, post } from '../lib/api';
 import { Button, Notice, Switch } from './ui';
 
 export const computerPermissions = [
-  ['accessibility', 'Accessibility', 'Use your Mac apps'],
-  ['screen', 'Screen Recording', 'See app windows'],
+  ['accessibility', 'Accessibility', 'Click and type in your apps'],
+  ['screen', 'Screen Recording', 'Take screenshots of app windows'],
 ] as const;
 
 export function useComputer() {
   const [status, setStatus] = useState<ComputerStatus | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const active = useRef(false);
+  const writing = useRef(false);
+  const reading = useRef<AbortController | null>(null);
   const missing =
-    status?.available === true && !(status.permissions.accessibility && status.permissions.screen);
+    status?.appControlAvailable === true &&
+    !(status.permissions.accessibility && status.permissions.screen);
 
-  useEffect(() => {
-    let current = true;
-    api<ComputerStatus>('/api/computer')
-      .then((value) => current && setStatus(value))
-      .catch((cause) => current && setError(errorMessage(cause)));
-    return () => {
-      current = false;
-    };
+  const refresh = useCallback(async (quiet = false) => {
+    if (writing.current || reading.current) return;
+    const request = new AbortController();
+    reading.current = request;
+    if (!quiet) {
+      setError('');
+      setChecking(true);
+    }
+    try {
+      const value = await api<ComputerStatus>('/api/computer', { signal: request.signal });
+      if (active.current && reading.current === request) setStatus(value);
+    } catch (cause) {
+      if (!quiet && active.current && reading.current === request && !request.signal.aborted)
+        setError(errorMessage(cause));
+    } finally {
+      if (reading.current === request) {
+        reading.current = null;
+        if (active.current) setChecking(false);
+      }
+    }
   }, []);
 
   useEffect(() => {
-    if (!missing) return;
-    let current = true;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== 'visible') return;
-      void api<ComputerStatus>('/api/computer')
-        .then((value) => current && setStatus(value))
-        .catch(() => {});
-    }, 2000);
-    return () => {
-      current = false;
-      window.clearInterval(timer);
+    active.current = true;
+    void refresh();
+    const visible = () => {
+      if (document.visibilityState === 'visible') void refresh();
     };
-  }, [missing]);
+    window.addEventListener('focus', visible);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      active.current = false;
+      reading.current?.abort();
+      reading.current = null;
+      window.removeEventListener('focus', visible);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!missing) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh(true);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [missing, refresh]);
 
   async function run(change: () => Promise<ComputerStatus>) {
+    if (writing.current) return null;
+    writing.current = true;
+    reading.current?.abort();
+    reading.current = null;
     setBusy(true);
+    setChecking(false);
     setError('');
     try {
-      setStatus(await change());
+      const value = await change();
+      if (!active.current) return null;
+      setStatus(value);
+      return value;
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (active.current) setError(errorMessage(cause));
+      return null;
     } finally {
-      setBusy(false);
+      writing.current = false;
+      if (active.current) setBusy(false);
     }
   }
 
@@ -57,6 +94,8 @@ export function useComputer() {
     status,
     error,
     busy,
+    checking,
+    refresh,
     setEnabled: (enabled: boolean) =>
       run(() =>
         api<ComputerStatus>('/api/computer', {
@@ -82,22 +121,37 @@ export function ComputerPermissions({
 }: {
   status: ComputerStatus;
   busy: boolean;
-  onAllow(permission: ComputerPermission): void;
+  onAllow?(permission: ComputerPermission): void;
 }) {
+  if (!status.appControlAvailable) return null;
+  const next = computerPermissions.find(([key]) => !status.permissions[key])?.[0];
   return (
-    <ul className="computer-permissions">
+    <ul className="computer-permissions" data-guided={!onAllow || undefined} aria-live="polite">
       {computerPermissions.map(([key, name, unlocks]) => (
         <li key={key}>
           <span>
-            <strong>{unlocks}</strong>
-            <small>{name}</small>
+            <strong>{name}</strong>
+            <small>{unlocks}</small>
           </span>
           {status.permissions[key] ? (
-            <small>Allowed</small>
-          ) : (
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => onAllow(key)}>
-              Allow
+            <span className="computer-permission-state" data-allowed>
+              <Check size={15} aria-hidden="true" />
+              Allowed
+            </span>
+          ) : onAllow ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              aria-label={`Allow ${name}`}
+              onClick={() => onAllow(key)}
+            >
+              Allow {name}
             </Button>
+          ) : (
+            <span className="computer-permission-state" data-next={key === next || undefined}>
+              {key === next ? 'Next' : 'Needed'}
+            </span>
           )}
         </li>
       ))}
@@ -106,7 +160,7 @@ export function ComputerPermissions({
 }
 
 export function YourComputer() {
-  const { status, error, busy, allow, remove, setEnabled } = useComputer();
+  const { status, error, busy, allow, remove, setEnabled, refresh } = useComputer();
   const id = useId();
 
   return (
@@ -114,6 +168,11 @@ export function YourComputer() {
       <h4 id={id} data-analytics-public>
         Your computer
       </h4>
+      {!status && !error && (
+        <p className="computer-note" role="status">
+          Checking computer permissions…
+        </p>
+      )}
       {status && !status.available ? (
         <p className="computer-note">Otto can use your computer only on a Mac.</p>
       ) : (
@@ -136,8 +195,17 @@ export function YourComputer() {
               Otto asks before it acts unless your request covers it. What Otto reads or sees on
               screen is sent to your selected model.
             </p>
-            <ComputerPermissions status={status} busy={busy} onAllow={(key) => void allow(key)} />
-            <h5>Mac apps Otto may use</h5>
+            {status.appControlAvailable ? (
+              <ComputerPermissions status={status} busy={busy} onAllow={(key) => void allow(key)} />
+            ) : (
+              <p className="computer-note">
+                Files and commands are available. Mac app control isn't available in this
+                installation.
+              </p>
+            )}
+            {(status.appControlAvailable || status.apps.length > 0) && (
+              <h5>Mac apps Otto may use</h5>
+            )}
             {status.apps.length ? (
               <ul className="computer-apps">
                 {status.apps.map((app) => {
@@ -155,7 +223,7 @@ export function YourComputer() {
                         size="sm"
                         variant="ghost"
                         disabled={busy}
-                        aria-label={`Remove ${app.name}`}
+                        aria-label={`Remove ${app.name}${ambiguous ? ` (${app.bundleId})` : ''}`}
                         onClick={() => void remove(app.bundleId)}
                       >
                         Remove
@@ -164,15 +232,22 @@ export function YourComputer() {
                   );
                 })}
               </ul>
-            ) : (
+            ) : status.appControlAvailable ? (
               <p className="computer-note">
-                None yet. Otto asks the first time it needs a Mac app.
+                None yet. Otto asks before using an app your request doesn't cover.
               </p>
-            )}
+            ) : null}
           </>
         )
       )}
-      {error && <Notice>{error}</Notice>}
+      {error && (
+        <Notice>
+          {error}{' '}
+          <Button variant="ghost" disabled={busy} onClick={() => void refresh()}>
+            Try again
+          </Button>
+        </Notice>
+      )}
     </section>
   );
 }

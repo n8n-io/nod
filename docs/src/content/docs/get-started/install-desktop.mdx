@@ -27,6 +27,8 @@ flowchart LR
 
 You need macOS 14 or later, on Apple silicon or Intel. The app and its runtime are about 1.8 GB to download.
 
+A new private computer needs 26 GiB of free disk space, plus space for runtime files still downloading. Setup shows how much to free if there isn't enough.
+
 <Steps>
 
 1. Open the [releases page](https://github.com/n8n-io/otto/releases) and find the newest **Otto** release. Download `Otto-arm64.dmg` for Apple silicon or `Otto-x64.dmg` for Intel.
@@ -145,6 +147,7 @@ If you deleted Otto's folders by hand, Otto removes the private computer they le
 | macOS blocks the first launch         | Install the newest release. On a managed Mac, ask your IT team to allow Otto.                                       |
 | Otto 0.1.12 or earlier doesn't update | Install the newest release once, as above. Your data is kept.                                                       |
 | Setup stops with an error             | Select **Try again**. If it fails again, send the error with **Send feedback…** from the menu bar or tray icon.     |
+| Setup needs more disk space           | Free the amount shown on the disk containing your home folder, then select **Try again**. Keep Otto's saved data.   |
 | Otto asks for a runtime file          | Select **Choose runtime file** and pick the `Otto-Runtime-…` file from the same release.                            |
 | Windows can't download the runtime    | Put `Otto-Runtime-win32-x64.tar.gz` from the same release next to `Otto-Setup-x64.exe` and run the installer again. |
 | A scheduled task didn't run           | Check that Otto was open and your computer was awake at that time.                                                  |

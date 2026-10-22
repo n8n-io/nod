@@ -137,7 +137,11 @@ export interface RuntimeContext {
   delta(text: string, streamId?: string, done?: boolean): void;
   publish(path: string, name?: string): Promise<Artifact>;
   readWorkspaceFile?(path: string, maxBytes: number): Promise<Uint8Array>;
-  publishScreenshot?(bytes: Uint8Array, name?: string): Promise<Artifact>;
+  publishScreenshot?(
+    bytes: Uint8Array,
+    name?: string,
+    source?: Artifact['source'],
+  ): Promise<Artifact>;
   publishBrowserFile?(file: {
     bytes: Uint8Array;
     name: string;

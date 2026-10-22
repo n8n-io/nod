@@ -43,15 +43,17 @@
   min-height: var(--control-height-sm);
   font-size: var(--text-control);
 }
-.computer-permissions > li > span {
+.computer-permissions > li > span:first-child {
   display: grid;
+  gap: 4px;
 }
 .computer-permissions strong {
-  font-weight: 400;
+  font-weight: 500;
 }
 .computer-permissions small {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
+  line-height: 1.4;
 }
 .computer-apps > li > span {
   display: grid;
@@ -59,4 +61,34 @@
 .computer-apps small {
   color: var(--muted-foreground);
   font-size: 12px;
+}
+.computer-permissions {
+  gap: 0;
+}
+.computer-permissions > li {
+  padding: 12px 0;
+}
+.computer-permissions > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.computer-permission-state {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.computer-permission-state[data-allowed] {
+  color: var(--success);
+}
+.computer-permission-state[data-next] {
+  color: var(--foreground);
+  font-weight: 500;
+}
+@media (max-width: 480px) {
+  .computer-permissions:not([data-guided]) > li {
+    flex-wrap: wrap;
+  }
 }

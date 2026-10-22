@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { existsSync } from 'node:fs';
 import {
   chmod,
@@ -14,9 +14,10 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import type { WorkspaceSession } from '../src/ports/computer.ts';
@@ -37,7 +38,7 @@ import {
   workspaceFile,
 } from '../src/providers/docker/index.ts';
 import { runProcess, serviceEnvironment } from '../src/providers/process.ts';
-import { createMacComputer } from '../src/providers/macos/owner-computer.ts';
+import { createMacComputer, sandboxProfile } from '../src/providers/macos/owner-computer.ts';
 import { prepareLocalDirectories } from '../scripts/local-database.ts';
 
 test('local startup protects data through its private root and preserves workspace mount traversal', async () => {
@@ -167,7 +168,307 @@ test('runtime subprocesses do not inherit provider keys and stop at bounds', asy
   }
 });
 
-if (process.platform === 'darwin')
+if (process.platform !== 'win32') {
+  test('Mac helper startup failures settle every request and allow a clean restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-helper-'));
+    const helper = join(root, 'helper');
+    const started = join(root, 'started');
+    const computer = createMacComputer({ dataRoot: root, helper });
+    try {
+      await writeFile(
+        helper,
+        `#!/bin/sh\nIFS= read -r request\nprintf started > '${started}'\nexit 7\n`,
+        {
+          mode: 0o600,
+        },
+      );
+      assert.equal(computer.appControlAvailable, false);
+      await assert.rejects(
+        Promise.race([
+          computer.permissions!(),
+          delay(2000).then(() => {
+            throw new Error('helper request never settled');
+          }),
+        ]),
+        /unavailable|stopped/,
+      );
+      assert.equal(existsSync(started), false);
+      await chmod(helper, 0o700);
+      assert.equal(computer.appControlAvailable, true);
+      await assert.rejects(
+        Promise.race([
+          computer.permissions!(),
+          delay(2000).then(() => {
+            throw new Error('restarted helper request never settled');
+          }),
+        ]),
+        /stopped/,
+      );
+      assert.equal(await readFile(started, 'utf8'), 'started');
+    } finally {
+      computer.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('cancelling a Mac helper request stops its pending outside action', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-helper-'));
+    const helper = join(root, 'helper.cjs');
+    const started = join(root, 'started');
+    const effect = join(root, 'effect');
+    const computer = createMacComputer({ dataRoot: root, helper });
+    try {
+      await writeFile(
+        helper,
+        `#!${process.execPath}\nconst fs = require('node:fs');\nprocess.stdin.once('data', () => { fs.writeFileSync(${JSON.stringify(started)}, 'ready'); setTimeout(() => fs.writeFileSync(${JSON.stringify(effect)}, 'too late'), 200); });\n`,
+        { mode: 0o700 },
+      );
+      const controller = new AbortController();
+      const result = computer.apps!(controller.signal);
+      await ready(started);
+      controller.abort(new Error('Task cancelled.'));
+      await assert.rejects(result, /cancelled/);
+      await delay(300);
+      assert.equal(existsSync(effect), false);
+    } finally {
+      computer.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('Mac helper deadlines stop hung work and reject empty screenshots', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-helper-'));
+    const helper = join(root, 'helper.cjs');
+    const effect = join(root, 'effect');
+    const computer = createMacComputer({ dataRoot: root, helper, helperTimeoutMs: 150 });
+    try {
+      await writeFile(
+        helper,
+        `#!${process.execPath}\nconst fs = require('node:fs');\nprocess.stdin.once('data', () => setTimeout(() => fs.writeFileSync(${JSON.stringify(effect)}, 'too late'), 250));\n`,
+        { mode: 0o700 },
+      );
+      await assert.rejects(computer.permissions!(), /timed out/);
+      await delay(350);
+      assert.equal(existsSync(effect), false);
+      await writeFile(
+        helper,
+        `#!${process.execPath}\nconst readline = require('node:readline');\nreadline.createInterface({ input: process.stdin }).on('line', line => { const request = JSON.parse(line); process.stdout.write(JSON.stringify({ id: request.id, ok: true, result: { app: { name: 'Fixture', bundleId: 'fixture' }, png: '' } }) + '\\n'); });\n`,
+      );
+      await assert.rejects(computer.screenshot!('fixture', new AbortController().signal), /PNG/);
+    } finally {
+      computer.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('Mac helper permission failures reach the caller without losing other helper errors', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-helper-'));
+    const helper = join(root, 'helper.cjs');
+    const computer = createMacComputer({ dataRoot: root, helper });
+    try {
+      await writeFile(
+        helper,
+        `#!${process.execPath}\nconst readline = require('node:readline');\nreadline.createInterface({ input: process.stdin }).on('line', line => { const request = JSON.parse(line); const result = request.op === 'status' ? { ok: true, result: { accessibility: true, screen: true } } : { ok: false, error: request.op === 'screenshot' ? 'screen_permission' : 'fixture-app-failure' }; process.stdout.write(JSON.stringify({ id: request.id, ...result }) + '\\n'); });\n`,
+        { mode: 0o700 },
+      );
+      const signal = new AbortController().signal;
+      await assert.rejects(computer.screenshot!('fixture', signal), (error: Error) => {
+        assert.ok(error instanceof Error);
+        assert.notEqual(error.message, 'screen_permission');
+        return true;
+      });
+      await assert.rejects(computer.apps!(signal), { message: 'fixture-app-failure' });
+      assert.deepEqual(await computer.permissions!(), { accessibility: true, screen: true });
+    } finally {
+      computer.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+if (process.platform === 'darwin') {
+  test('native Mac helper observes apps it opens without another request waking its run loop', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-native-launch-'));
+    const name = `Otto Launch Fixture ${randomUUID()}`;
+    const bundleId = `org.example.otto-launch-fixture.${randomUUID()}`;
+    const app = join(homedir(), 'Applications', `${name}.app`);
+    const helper = join(root, 'helper');
+    const source = join(root, 'fixture.swift');
+    const pidFile = join(root, 'fixture.pid');
+    const computer = createMacComputer({ dataRoot: root, helper, helperTimeoutMs: 10_000 });
+    try {
+      await mkdir(join(app, 'Contents/MacOS'), { recursive: true });
+      await writeFile(
+        join(app, 'Contents/Info.plist'),
+        `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleName</key><string>${name}</string><key>CFBundleIdentifier</key><string>${bundleId}</string><key>CFBundleExecutable</key><string>fixture</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`,
+      );
+      await writeFile(
+        source,
+        `import AppKit
+let application = NSApplication.shared
+application.setActivationPolicy(.regular)
+try! String(ProcessInfo.processInfo.processIdentifier).write(toFile: ${JSON.stringify(pidFile)}, atomically: true, encoding: .utf8)
+application.run()
+`,
+      );
+      for (const [output, input] of [
+        [join(app, 'Contents/MacOS/fixture'), source],
+        [helper, fileURLToPath(new URL('../desktop/computer-use/main.swift', import.meta.url))],
+      ]) {
+        const build = await runProcess('/usr/bin/swiftc', ['-O', '-o', output!, input!], {
+          timeoutMs: 30_000,
+        });
+        assert.equal(build.exitCode, 0, build.stderr);
+      }
+      const signal = AbortSignal.timeout(15_000);
+      assert.equal(
+        (await computer.apps!(signal)).some((app) => app.bundleId === bundleId),
+        false,
+      );
+      const opened = await computer.open!(name, signal);
+      assert.equal(opened.bundleId, bundleId);
+      assert.equal((await computer.resolve!(bundleId, signal))?.bundleId, bundleId);
+      assert.equal(
+        (await computer.apps!(signal)).some((app) => app.bundleId === bundleId),
+        true,
+      );
+    } finally {
+      computer.dispose();
+      const pid = await readFile(pidFile, 'utf8').catch(() => undefined);
+      if (pid) {
+        try {
+          process.kill(Number(pid), 'SIGTERM');
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+        }
+      }
+      await rm(app, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('owner shell cannot connect to accessibility, input or screen capture services', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-ui-services-'));
+    const source = join(root, 'probe.c');
+    const program = join(root, 'probe');
+    const computer = createMacComputer({ dataRoot: join(root, 'data') });
+    try {
+      await writeFile(
+        source,
+        `#include <mach/mach.h>
+#include <servers/bootstrap.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+  mach_port_t port;
+  kern_return_t result;
+  if (strcmp(argv[1], "serve") == 0) {
+    mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &port);
+    mach_port_insert_right(mach_task_self(), port, port, MACH_MSG_TYPE_MAKE_SEND);
+    result = bootstrap_register(bootstrap_port, argv[2], port);
+    printf("%d\\n", result);
+    fflush(stdout);
+    if (result != KERN_SUCCESS) return 1;
+    sleep(30);
+    return 0;
+  }
+  result = bootstrap_look_up(bootstrap_port, argv[2], &port);
+  printf("%d\\n", result);
+  return result == KERN_SUCCESS ? 0 : 1;
+}
+`,
+      );
+      const build = spawnSync('/usr/bin/clang', ['-o', program, source], { encoding: 'utf8' });
+      assert.equal(build.status, 0, build.stderr);
+      for (const prefix of [
+        'com.apple.axserver',
+        'com.apple.windowserver',
+        'com.apple.replayd',
+        'com.apple.ScreenCaptureKit',
+      ]) {
+        const service = `${prefix}.otto-fixture.${randomUUID()}`;
+        const server = spawn(program, ['serve', service]);
+        try {
+          const [ready] = await once(server.stdout, 'data', {
+            signal: AbortSignal.timeout(5000),
+          });
+          assert.equal(String(ready).trim(), '0');
+          assert.equal(spawnSync(program, ['lookup', service]).status, 0);
+          const result = await computer.shell(`'${program}' lookup '${service}'`, {
+            signal: new AbortController().signal,
+          });
+          assert.notEqual(result.exitCode, 0, prefix);
+        } finally {
+          const closed = once(server, 'close');
+          server.kill('SIGKILL');
+          await closed;
+        }
+      }
+    } finally {
+      computer.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('owner shell cannot read or overwrite browser sessions and account stores through aliases', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-owner-home-'));
+    try {
+      const home = await realpath(root);
+      const paths = [
+        'Library/Application Support/Google/Chrome/Default/Cookies',
+        'Library/Application Support/Firefox/Profiles/fixture/cookies.sqlite',
+        'Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies',
+        'Library/Group Containers/group.com.apple.notes/NoteStore.sqlite',
+        '.codex/auth.json',
+        '.claude.json',
+        '.config/gh/hosts.yml',
+        '.npmrc',
+      ];
+      await mkdir(join(home, 'Documents'));
+      await writeFile(join(home, 'Documents', 'public.txt'), 'synthetic document');
+      for (const path of paths) {
+        await mkdir(join(home, path, '..'), { recursive: true });
+        await writeFile(join(home, path), 'synthetic private account');
+      }
+      await symlink(join(home, 'Library'), join(home, 'Documents', 'alias'));
+      const run = (command: string) =>
+        spawnSync(
+          '/usr/bin/sandbox-exec',
+          [
+            '-p',
+            sandboxProfile(),
+            '-D',
+            `DATA=${join(home, 'data')}`,
+            '-D',
+            `HOME=${home}`,
+            '/bin/zsh',
+            '-f',
+            '-c',
+            command,
+          ],
+          { encoding: 'utf8' },
+        );
+      assert.equal(
+        run(`cat '${join(home, 'Documents', 'public.txt')}'`).stdout,
+        'synthetic document',
+      );
+      for (const path of [
+        ...paths,
+        'Documents/alias/Application Support/Google/Chrome/Default/Cookies',
+      ]) {
+        const file = join(home, path);
+        const read = run(`cat '${file}'`);
+        assert.notEqual(read.status, 0, path);
+        assert.doesNotMatch(read.stdout, /synthetic private account/);
+        assert.notEqual(run(`printf changed > '${file}'`).status, 0, path);
+        assert.equal(await readFile(file, 'utf8'), 'synthetic private account');
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("commands on the owner's computer get no keys and cannot reach Otto's data or other apps", async () => {
     const root = await mkdtemp(join(tmpdir(), 'otto-computer-'));
     const install = await mkdtemp(join(tmpdir(), 'otto-install-'));
@@ -187,16 +488,10 @@ if (process.platform === 'darwin')
       assert.notEqual(env.exitCode, 0);
       assert.doesNotMatch(env.output, /fixture-env-key/);
       assert.equal((await run('echo hi | grep -c hi')).output.trim(), '1');
-      assert.notEqual((await run('open -a Chess')).exitCode, 0);
+      assert.notEqual((await run("open -a '/nonexistent/otto-fixture.app'")).exitCode, 0);
       assert.notEqual((await run('osascript -e "return 1"')).exitCode, 0);
       assert.notEqual((await run('launchctl submit -l otto.fixture -- /bin/true')).exitCode, 0);
       assert.notEqual((await run('touch ~/Library/LaunchAgents/otto-fixture.plist')).exitCode, 0);
-      spawnSync('osascript', ['-e', 'tell application "Chess" to quit']);
-      await run(
-        'swift -e \'import AppKit; _ = NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Chess.app"))\'',
-      );
-      await delay(1000);
-      assert.equal(spawnSync('pgrep', ['-x', 'Chess']).status, 1);
       await assert.rejects(computer.shell('sleep 5', { signal, timeoutMs: 50 }), /stopped/);
     } finally {
       await rm(install, { recursive: true, force: true });
@@ -206,6 +501,7 @@ if (process.platform === 'darwin')
       await rm(root, { recursive: true, force: true });
     }
   });
+}
 
 // Supervised workspace commands: cancellation, bounds, uncertain fencing and file containment.
 

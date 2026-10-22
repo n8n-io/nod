@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   appendFile,
+  lstat,
   mkdir,
   mkdtemp,
   open,
   readFile,
+  realpath,
   readdir,
   rename,
   rm,
@@ -342,6 +344,7 @@ async function runningDesktop(
     platform = process.platform === 'win32' ? 'win32' : 'darwin',
     packaged = false,
     buildMetadata,
+    mainURL = new URL('../main/main.mjs', import.meta.url).href,
     version = '0.0.0-test',
     argv = [],
     prompt = () => assert.fail('No restart prompt is needed.'),
@@ -424,11 +427,13 @@ async function runningDesktop(
     fileURLToPath,
     pathToFileURL,
     mkdir,
+    lstat,
     appendFile,
     readFile: (file, ...args) =>
-      buildMetadata && file === fileURLToPath(new URL('../package.json', import.meta.url))
+      buildMetadata && file === fileURLToPath(new URL('../package.json', mainURL))
         ? Promise.resolve(JSON.stringify({ ottoBuild: buildMetadata }))
         : readFile(file, ...args),
+    realpath,
     open: openFile,
     rename,
     stat,
@@ -436,6 +441,7 @@ async function runningDesktop(
     rm,
     randomUUID,
     randomBytes,
+    createHash,
     createServer,
     AbortController,
     AbortSignal,
@@ -602,10 +608,7 @@ async function runningDesktop(
   const source = (await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8'))
     .replaceAll('\r\n', '\n')
     .replace(/^import[\s\S]*?;\n/gm, '')
-    .replaceAll(
-      'import.meta.url',
-      JSON.stringify(new URL('../main/main.mjs', import.meta.url).href),
-    );
+    .replaceAll('import.meta.url', JSON.stringify(mainURL));
   await runInNewContext(
     `(async () => {
     ${source}
@@ -2050,6 +2053,63 @@ test('native quit aborts storage startup without creating a late engine', async 
   assert.deepEqual(
     f.children.map((child) => child.kind),
     [],
+  );
+});
+
+test('isolated packaged reopening without launch environment keeps its selected profile', async (t) => {
+  const storage = await fixture(t, 'darwin');
+  await mkdir(dirname(storage.path), { recursive: true });
+  const selected = join(await realpath(dirname(storage.path)), 'review-profile');
+  await mkdir(selected);
+  await writeFile(
+    join(selected, 'test-profile.json'),
+    JSON.stringify({ version: 1, kind: 'otto-setup-test' }),
+  );
+  await writeFile(join(selected, 'saved-progress'), 'synthetic onboarding progress');
+  const options = {
+    storedProfile: storage,
+    initialState: 'fresh',
+    packaged: true,
+    buildMetadata: { testProfile: true },
+  };
+  const opened = await runningDesktop(t, () => assert.fail('No engine should launch.'), {
+    ...options,
+    environment: { OTTO_DESKTOP_USER_DATA: selected },
+  });
+  const reopened = await runningDesktop(t, () => assert.fail('No engine should launch.'), options);
+  assert.equal(reopened.profileRoot, opened.profileRoot);
+  assert.equal(reopened.profileRoot, join(selected, 'profiles', 'local'));
+  assert.equal(
+    await readFile(join(selected, 'saved-progress'), 'utf8'),
+    'synthetic onboarding progress',
+  );
+  const otherApplication = await runningDesktop(t, () => assert.fail('No engine should launch.'), {
+    ...options,
+    mainURL: pathToFileURL(join(dirname(storage.path), 'other-app', 'main', 'main.mjs')).href,
+  });
+  assert.notEqual(otherApplication.profileRoot, reopened.profileRoot);
+  const production = await runningDesktop(t, () => assert.fail('No engine should launch.'), {
+    ...options,
+    buildMetadata: { release: true },
+    environment: { OTTO_DESKTOP_USER_DATA: selected },
+  });
+  assert.equal(production.profileRoot, join(dirname(storage.path), 'Otto', 'profiles', 'local'));
+  await rename(selected, `${selected}-moved`);
+  await symlink(`${selected}-moved`, selected, 'dir');
+  await assert.rejects(
+    runningDesktop(t, () => assert.fail('No engine should launch.'), options),
+    /real directory/,
+  );
+  await rm(selected);
+  await rename(`${selected}-moved`, selected);
+  await writeFile(join(selected, 'test-profile.json'), '{}');
+  await assert.rejects(
+    runningDesktop(t, () => assert.fail('No engine should launch.'), options),
+    /not created by the test installer/,
+  );
+  assert.equal(
+    await readFile(join(selected, 'saved-progress'), 'utf8'),
+    'synthetic onboarding progress',
   );
 });
 

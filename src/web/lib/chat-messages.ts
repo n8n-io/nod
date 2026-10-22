@@ -50,7 +50,8 @@ export function collapseScreenshotMessages(messages: Message[]) {
       Boolean(message.turnId) &&
       message.attachments.length === 1 &&
       artifact.mimeType === 'image/png' &&
-      ((!message.text && artifact.source === 'browser_screenshot') ||
+      ((!message.text &&
+        (artifact.source === 'browser_screenshot' || artifact.source === 'computer_screenshot')) ||
         message.text === 'Browser screenshot.' ||
         message.text === `Browser screenshot: ${artifact.name}`) &&
       !message.reaction &&

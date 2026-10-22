@@ -109,6 +109,104 @@ async function call(tools: Map<string, AgentTool>, name: string, args: Record<st
   return tools.get(name)!.execute(args);
 }
 
+test('computer actions share the turn admission gate with connected apps', async () => {
+  for (const [asking, following] of [
+    ['computer', 'computer'],
+    ['apps', 'computer'],
+    ['computer', 'apps'],
+  ]) {
+    const executed: string[] = [];
+    const invoke = async (action: string, admit?: (asks: boolean) => Promise<void>) => {
+      const asks = action === 'ask';
+      await admit?.(asks);
+      if (asks) return { [appConfirmation]: 'Run the synthetic action?' };
+      executed.push(action);
+      return {};
+    };
+    const { result } = await fixture(
+      async (tools) => {
+        const args = (tool: string, action: string) =>
+          tool === 'computer' ? { action: 'shell', command: action } : { action, args: {} };
+        const outcomes = await Promise.allSettled([
+          call(tools, asking!, args(asking!, 'ask')),
+          call(tools, following!, args(following!, 'run')),
+        ]);
+        assert.equal(outcomes[0]?.status, 'fulfilled');
+        assert.equal(outcomes[1]?.status, 'rejected');
+      },
+      {
+        computer: (args, admit) => invoke(String(args.command), admit),
+        integration: (action, _args, _signal, admit) => invoke(action, admit),
+      },
+    );
+    assert.equal(result.status, 'waiting_user');
+    assert.deepEqual(executed, [], `${asking} must fence a later ${following} action`);
+  }
+});
+
+test('computer screenshots are delivered only when requested and after capture succeeds', async () => {
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=',
+    'base64',
+  );
+  for (const mode of ['observe', 'share', 'confirm', 'cancel', 'unavailable'] as const) {
+    const controller = new AbortController();
+    const captured: string[] = [];
+    const delivered: Uint8Array[] = [];
+    const running = fixture(
+      async (tools) => {
+        const action = mode === 'observe' ? 'screenshot' : 'share_screenshot';
+        const pending = call(tools, 'computer', {
+          action,
+          app: 'Synthetic Calculator',
+          ...(action === 'share_screenshot' ? { name: 'calculation.png' } : {}),
+        });
+        if (mode === 'cancel' || mode === 'unavailable') await assert.rejects(pending);
+        else {
+          const result = await pending;
+          if (mode === 'observe') assert.ok(result.content.some((part) => part.type === 'image'));
+          if (mode === 'share') {
+            assert.ok(!result.content.some((part) => part.type === 'image'));
+            assert.match(JSON.stringify(result), /calculation\.png/);
+          }
+        }
+      },
+      {
+        signal: controller.signal,
+        computer: async (args, admit) => {
+          assert.deepEqual(args, { action: 'screenshot', app: 'Synthetic Calculator' });
+          await admit?.(mode === 'confirm');
+          if (mode === 'confirm') return { [appConfirmation]: 'Allow the synthetic capture?' };
+          captured.push(String(args.action));
+          if (mode === 'cancel') controller.abort(new Error('Capture cancelled.'));
+          return { app: { name: 'Synthetic Calculator' }, png: png.toString('base64') };
+        },
+        ...(mode === 'unavailable'
+          ? {}
+          : {
+              publishScreenshot: async (bytes, name, source) => {
+                assert.equal(source, 'computer_screenshot');
+                delivered.push(bytes);
+                return {
+                  id: randomUUID(),
+                  name: name!,
+                  mimeType: 'image/png',
+                  size: bytes.byteLength,
+                  url: '/api/files/synthetic-calculation',
+                  source,
+                };
+              },
+            }),
+      },
+    );
+    if (mode === 'cancel') await assert.rejects(running, /Capture cancelled/);
+    else await running;
+    assert.equal(delivered.length, mode === 'share' ? 1 : 0, mode);
+    if (mode === 'share') assert.deepEqual(Buffer.from(delivered[0]!), png);
+    if (mode === 'unavailable' || mode === 'confirm') assert.deepEqual(captured, [], mode);
+  }
+});
+
 test('mail that grants account access stays out of app tool results and workspace files', async () => {
   const secrets = [
     '318742',

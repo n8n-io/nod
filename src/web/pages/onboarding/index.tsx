@@ -102,7 +102,14 @@ export function Onboarding({
   const [completionFailed, setCompletionFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(!desktop);
-  const [computerReady, setComputerReady] = useState(false);
+  const [computerReady, setComputerReady] = useState(() => {
+    const stored = readStep<{ owner: string; version?: number; computerReady?: boolean }>();
+    return (
+      stored?.owner === user.id &&
+      stored.version === onboardingVersion &&
+      stored.computerReady === true
+    );
+  });
   const [runtimeError, setRuntimeError] = useState('');
   const [error, setError] = useState('');
   const preparationRequest = useRef<AbortController | null>(null);
@@ -116,7 +123,7 @@ export function Onboarding({
   } | null>(null);
 
   useEffect(() => {
-    writeStep({ owner: user.id, step, version: onboardingVersion });
+    writeStep({ owner: user.id, step, version: onboardingVersion, computerReady });
     if (
       (step !== 'open' || (preferencesReady && computerReady)) &&
       (viewed.current?.owner !== user.id ||
@@ -326,7 +333,7 @@ export function Onboarding({
   return (
     <OnboardingFrame
       step={step}
-      steps={desktop ? desktopOnboardingSteps : onboardingSteps}
+      steps={desktop ? desktopOnboardingSteps : computerOnboardingSteps}
       onFeedback={onFeedback}
       mainRef={main}
     >

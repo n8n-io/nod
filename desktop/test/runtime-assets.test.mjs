@@ -1253,6 +1253,197 @@ test('runtime installation refuses insufficient storage without removing saved c
   assert.equal(await readFile(join(saved, 'saved'), 'utf8'), 'preserved');
 });
 
+test('native runtime checks VM storage even when runtime assets are cached', async (t) => {
+  const source = await readFile(new URL('../runtime/index.mjs', import.meta.url), 'utf8');
+  const preparation = source.slice(
+    source.indexOf('async function prepare('),
+    source.indexOf('function validImage('),
+  );
+  const { requireComputerDiskSpace } = await import('../runtime/index.mjs');
+  for (const scenario of [
+    { name: 'new VM', existing: false, free: 13, rejected: true },
+    { name: 'new VM with room', existing: false, free: 30 },
+    {
+      name: 'new VM during download',
+      existing: false,
+      free: 27,
+      downloading: true,
+      rejected: true,
+    },
+    { name: 'existing VM without headroom', existing: true, free: 1, rejected: true },
+    { name: 'existing complete VM', existing: true, free: 3 },
+    { name: 'missing image', existing: true, free: 13, missing: true, rejected: true },
+  ]) {
+    await t.test(scenario.name, async () => {
+      const dataRoot = resolve('synthetic-profile');
+      const home = resolve('synthetic-home');
+      const assets = resolve('synthetic-assets');
+      const identity = createHash('sha256').update(dataRoot).digest('hex').slice(0, 12);
+      const limaHome = join(home, '.otto-desktop', identity);
+      const image = {
+        name: 'workspace',
+        reference: 'synthetic:workspace',
+        file: 'images/workspace.tar.zst',
+        id: `sha256:${'a'.repeat(64)}`,
+        sha256: 'a'.repeat(64),
+      };
+      const manifest = {
+        version: 1,
+        platform: 'darwin-arm64',
+        guest: { file: 'guest.img', sha256: 'b'.repeat(64) },
+        dockerGuest: { file: 'docker-guest.tar.gz', sha256: 'c'.repeat(64) },
+        images: [image],
+      };
+      const commands = [];
+      const checked = [];
+      let loaded = false;
+      const runtime = runInNewContext(`${preparation}; ({ prepare })`, {
+        process: { platform: 'darwin', arch: 'arm64' },
+        resolve,
+        join,
+        delimiter: ':',
+        homedir: () => home,
+        mkdir: async () => {},
+        chmod: async () => {},
+        writeFile: async () => {},
+        rename: async () => {},
+        access: async () => {
+          if (!scenario.existing) throw Object.assign(new Error('Absent'), { code: 'ENOENT' });
+        },
+        readFile: async (path) => {
+          if (path.endsWith('manifest.json')) return JSON.stringify(manifest);
+          if (path.endsWith('lima.yaml'))
+            return JSON.stringify({
+              mounts: [{ mountPoint: '/opt/otto-assets', writable: false, location: assets }],
+            });
+          return JSON.stringify({ version: 1, limaHome, port: 54329, password: 'd'.repeat(64) });
+        },
+        createHash,
+        randomBytes: () => Buffer.from('synthetic'),
+        openRuntimeAssets: async () => ({
+          root: assets,
+          paths: scenario.downloading ? ['manifest.json'] : [],
+          ready: async () => {},
+          done: scenario.downloading ? new Promise(() => {}) : Promise.resolve(),
+        }),
+        runtimeRelease: async () => ({ files: [{ bytes: 2 * 1024 ** 3 }] }),
+        stat: async () => ({ dev: 1 }),
+        hostCpus: () => [0, 1],
+        totalmem: () => 8 * 1024 ** 3,
+        guestConfiguration: () => ({ disk: '24GiB' }),
+        requireComputerDiskSpace,
+        statfs: async () => assert.fail('The fixture must inject its disk capacity'),
+        fileHash: async () => image.sha256,
+        validImage: (value) => value,
+        execute: async (_command, args) => {
+          commands.push(args);
+          if (args[0] === 'image') return scenario.missing && !loaded ? '' : image.id;
+          if (args.includes('load')) loaded = true;
+          return '';
+        },
+        waitFor: async (operation) => operation(),
+        finishRuntime: async (options) => {
+          await options.prepareImage('workspace');
+          return 'ready';
+        },
+      });
+      const starting = runtime.prepare(
+        {
+          dataRoot,
+          resourcesPath: assets,
+          preserveRuntimeCache: true,
+          inspectDisk: async (directory) => {
+            checked.push(directory);
+            return { bavail: BigInt(scenario.free) * 1024n ** 3n, bsize: 1n };
+          },
+        },
+        () => {},
+      );
+      if (scenario.rejected) {
+        await assert.rejects(starting, (error) => {
+          assert.equal(error.code, 'RUNTIME_DISK_SPACE');
+          assert.match(error.message, /GiB.*Free at least.*retry/s);
+          return true;
+        });
+        assert.equal(
+          commands.some((args) => args.includes('load')),
+          false,
+        );
+        if (!scenario.missing)
+          assert.equal(
+            commands.some((args) => ['create', 'start'].includes(args[0])),
+            false,
+          );
+      } else assert.equal(await starting, 'ready');
+      assert.ok(checked.length > 0);
+      assert.ok(checked.every((directory) => directory === limaHome));
+    });
+  }
+});
+
+test('runtime preflight counts allocated VM blocks and preserves room for unfinished downloads', async () => {
+  const { requireComputerDiskSpace } = await import('../runtime/index.mjs');
+  const gib = 1024n ** 3n;
+  const directory = resolve('synthetic-computer');
+  const options = {
+    grow: true,
+    inspectDisk: async () => ({ bavail: 13n * gib, bsize: 1n }),
+    inspectFile: async () => ({ size: 24n * gib, blocks: 0n }),
+  };
+  await assert.rejects(requireComputerDiskSpace(directory, options), {
+    code: 'RUNTIME_DISK_SPACE',
+  });
+  options.inspectFile = async () => ({ size: 24n * gib, blocks: (16n * gib) / 512n });
+  options.inspectDisk = async () => ({ bavail: 10n * gib, bsize: 1n });
+  await requireComputerDiskSpace(directory, options);
+  await assert.rejects(requireComputerDiskSpace(directory, { ...options, extraBytes: 2n * gib }), {
+    code: 'RUNTIME_DISK_SPACE',
+  });
+  await assert.rejects(
+    requireComputerDiskSpace(directory, {
+      ...options,
+      inspectFile: async () => {
+        throw Object.assign(new Error('Synthetic unreadable VM disk'), { code: 'EACCES' });
+      },
+    }),
+    { code: 'EACCES' },
+  );
+});
+
+test('runtime disk failures give recovery guidance and stop readiness polling', async () => {
+  const { execute, waitFor } = await import('../runtime/index.mjs');
+  for (const [output, code] of [
+    ['No space left on device', 'RUNTIME_DISK_SPACE'],
+    ['Disk quota exceeded', 'RUNTIME_DISK_SPACE'],
+    ['/bin/bash: Input/output error', 'RUNTIME_STORAGE_IO'],
+  ]) {
+    await assert.rejects(
+      execute(process.execPath, [
+        '-e',
+        `process.stderr.write(${JSON.stringify(output)}); process.exit(1)`,
+      ]),
+      (error) => {
+        assert.equal(error.code, code);
+        assert.match(error.message, /space|storage/i);
+        assert.match(error.message, /retry|Try again/);
+        return true;
+      },
+    );
+    let attempts = 0;
+    await assert.rejects(
+      waitFor(
+        async () => {
+          attempts++;
+          throw Object.assign(new Error('Synthetic storage failure'), { code });
+        },
+        { attempts: 3, interval: 0 },
+      ),
+      { code },
+    );
+    assert.equal(attempts, 1);
+  }
+});
+
 test('runtime download rejects an insecure redirect without fetching it or leaving partial bytes', async (t) => {
   const options = await fixture(t);
   options.release.url = 'https://runtime.example.invalid/fixture.tar.gz';
@@ -1953,6 +2144,71 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
       await lifecycle.close();
     }
     assert.equal(stopped, 1);
+  }
+});
+
+test('runtime preloads verified legacy and current image archives and rejects damaged or escaping paths', async (t) => {
+  const { preloadRuntimeImages } = await import('../runtime/index.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'otto-image-compatibility-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'images'));
+  await mkdir(join(root, 'docker-host', 'docker'), { recursive: true });
+  const receipt = join(root, 'loaded.json');
+  await writeFile(
+    join(root, 'docker-host', 'docker', 'docker'),
+    `#!${process.execPath}\nconst fs = require('node:fs');\nif (process.argv[2] === 'image') process.exit(1);\nfs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify(process.argv.slice(2)));\n`,
+    { mode: 0o755 },
+  );
+  const bytes = Buffer.from('synthetic image archive');
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  for (const extension of ['gz', 'zst']) {
+    const file = `images/workspace.tar.${extension}`;
+    await writeFile(join(root, file), bytes);
+    const image = {
+      name: 'workspace',
+      reference: 'synthetic:workspace',
+      id: `sha256:${digest}`,
+      sha256: digest,
+      file,
+    };
+    await writeFile(join(root, 'manifest.json'), JSON.stringify({ images: [image] }));
+    assert.deepEqual(
+      await preloadRuntimeImages({
+        dataRoot: root,
+        assets: root,
+        inspectDisk: async () => ({ bavail: 1024n ** 3n, bsize: 4096n }),
+      }),
+      ['workspace'],
+    );
+    assert.deepEqual(JSON.parse(await readFile(receipt, 'utf8')), [
+      'load',
+      '--input',
+      join(root, file),
+    ]);
+    await rm(receipt);
+    await writeFile(join(root, file), 'damaged image');
+    await assert.rejects(
+      preloadRuntimeImages({
+        dataRoot: root,
+        assets: root,
+        inspectDisk: async () => ({ bavail: 1024n ** 3n, bsize: 4096n }),
+      }),
+      /damaged/,
+    );
+    await assert.rejects(stat(receipt), { code: 'ENOENT' });
+    await writeFile(
+      join(root, 'manifest.json'),
+      JSON.stringify({ images: [{ ...image, file: `images/../../workspace.tar.${extension}` }] }),
+    );
+    await assert.rejects(
+      preloadRuntimeImages({
+        dataRoot: root,
+        assets: root,
+        inspectDisk: async () => ({ bavail: 1024n ** 3n, bsize: 4096n }),
+      }),
+      /invalid/,
+    );
+    await assert.rejects(stat(receipt), { code: 'ENOENT' });
   }
 });
 

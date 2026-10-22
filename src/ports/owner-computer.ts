@@ -6,12 +6,14 @@ export type ComputerPermissionKind = 'accessibility' | 'screen';
 export interface MacAppAction {
   app: string;
   action: 'press' | 'set' | 'focus' | 'showMenu' | 'raise' | 'type' | 'key';
+  targetToken: string;
   ref?: string;
   value?: string;
   text?: string;
   key?: string;
 }
 export interface OwnerComputer {
+  readonly appControlAvailable?: boolean;
   shell(
     command: string,
     options: { signal: AbortSignal; timeoutMs?: number },
@@ -21,7 +23,11 @@ export interface OwnerComputer {
   identify?(app: string, signal: AbortSignal): Promise<MacApp | null>;
   open?(app: string, signal: AbortSignal): Promise<MacApp>;
   look?(app: string, signal: AbortSignal): Promise<{ app: MacApp; tree: string }>;
-  label?(app: string, ref: string): string | undefined;
+  inspect?(
+    app: string,
+    ref: string | undefined,
+    signal: AbortSignal,
+  ): Promise<{ label: string; token: string }>;
   act?(action: MacAppAction, signal: AbortSignal): Promise<void>;
   screenshot?(app: string, signal: AbortSignal): Promise<{ app: MacApp; png: Buffer }>;
   permissions?(): Promise<Record<ComputerPermissionKind, boolean>>;

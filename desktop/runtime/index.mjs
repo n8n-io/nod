@@ -10,6 +10,8 @@ import {
   rename,
   rm,
   rmdir,
+  stat,
+  statfs,
   writeFile,
 } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -23,6 +25,7 @@ import {
   findRuntimeAssets,
   openRuntimeAssets,
   removeUnusedRuntimes,
+  runtimeRelease,
 } from './assets.mjs';
 
 export { installRuntimeArchive } from './assets.mjs';
@@ -35,6 +38,52 @@ async function fileHash(path) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk);
   return hash.digest('hex');
+}
+
+export async function requireComputerDiskSpace(
+  directory,
+  { grow = false, extraBytes = 0n, inspectDisk = statfs, inspectFile = stat } = {},
+) {
+  const { bavail, bsize } = await inspectDisk(directory, { bigint: true });
+  const available = bavail > 0n ? bavail * bsize : 0n;
+  let required = 2n * 1024n ** 3n + extraBytes;
+  if (grow) {
+    const disk = await inspectFile(join(directory, 'otto/diffdisk'), { bigint: true }).catch(
+      (error) => {
+        if (error.code !== 'ENOENT') throw error;
+      },
+    );
+    const remaining = 24n * 1024n ** 3n - (disk?.blocks ?? 0n) * 512n;
+    if (remaining > 0n) required += remaining;
+  }
+  if (available < required)
+    throw Object.assign(
+      new Error(
+        `Otto needs ${(Math.ceil((Number(required) / 1024 ** 3) * 10) / 10).toFixed(1)} GiB of free space to prepare its private computer. Free at least ${(Math.ceil((Number(required - available) / 1024 ** 3) * 100) / 100).toFixed(2)} GiB on the disk containing your home folder, then retry. Your saved conversations and settings are kept.`,
+      ),
+      { code: 'RUNTIME_DISK_SPACE' },
+    );
+}
+
+function runtimeStorageError(error) {
+  if (
+    ['ENOSPC', 'EDQUOT'].includes(error.code) ||
+    /no space left on device|disk quota exceeded/i.test(error.output || '')
+  )
+    return Object.assign(
+      new Error(
+        'Otto ran out of disk space while preparing its private computer. Free disk space, then choose Try again. Keep your profile and saved data.',
+      ),
+      { code: 'RUNTIME_DISK_SPACE' },
+    );
+  if (error.code === 'EIO' || /input\/output error/i.test(error.output || ''))
+    return Object.assign(
+      new Error(
+        'Otto could not read or write its private computer disk. Check free space and storage health, then quit and reopen Otto to retry. Keep your profile and saved data.',
+      ),
+      { code: 'RUNTIME_STORAGE_IO' },
+    );
+  return error;
 }
 
 export function execute(
@@ -92,12 +141,21 @@ export function execute(
       if (signal?.aborted) return reject(new Error('Otto setup was cancelled.'));
       if (spawnError)
         return reject(
-          new Error(`Otto could not launch its bundled runtime (${spawnError.code || 'unknown'}).`),
+          runtimeStorageError(
+            Object.assign(
+              new Error(
+                `Otto could not launch its bundled runtime (${spawnError.code || 'unknown'}).`,
+              ),
+              { code: spawnError.code },
+            ),
+          ),
         );
       if (timedOut) return reject(new Error('Otto runtime setup took too long. Please retry.'));
       if (code !== 0)
         return reject(
-          Object.assign(new Error(`Otto runtime command failed (${code}).`), { output }),
+          runtimeStorageError(
+            Object.assign(new Error(`Otto runtime command failed (${code}).`), { output }),
+          ),
         );
       resolveRun(output.trim());
     });
@@ -122,7 +180,10 @@ export async function waitFor(operation, { signal, attempts = 240, interval = 25
     try {
       return await operation();
     } catch (error) {
-      if (error.code === 'OTTO_CONTAINER_STOPPED') throw error;
+      if (
+        ['OTTO_CONTAINER_STOPPED', 'RUNTIME_DISK_SPACE', 'RUNTIME_STORAGE_IO'].includes(error.code)
+      )
+        throw error;
       failure = error;
     }
     await delay(interval, undefined, { signal });
@@ -165,6 +226,8 @@ async function prepare(options, onComputerStart) {
     () => {},
   );
   const assets = runtimeAssets.root;
+  const release = runtimeAssets.paths.length ? await runtimeRelease(resourcesPath) : undefined;
+  const downloadBytes = BigInt(release?.files.reduce((total, file) => total + file.bytes, 0) ?? 0);
   await Promise.all(
     runtimeAssets.paths.filter((path) => !path.startsWith('images/')).map(runtimeAssets.ready),
   );
@@ -179,7 +242,7 @@ async function prepare(options, onComputerStart) {
   for (const entry of [manifest.guest, manifest.dockerGuest, ...manifest.images]) {
     if (
       !/^[a-f0-9]{64}$/.test(entry.sha256) ||
-      !/^(guest\.img|docker-guest\.tar\.gz|images\/(workspace|browser|postgres)\.tar\.zst)$/.test(
+      !/^(guest\.img|docker-guest\.tar\.gz|images\/(workspace|browser|postgres)\.tar\.(gz|zst))$/.test(
         entry.file,
       )
     )
@@ -189,6 +252,18 @@ async function prepare(options, onComputerStart) {
   const limaHome = join(homedir(), '.otto-desktop', identity);
   await mkdir(limaHome, { recursive: true, mode: 0o700 });
   await chmod(limaHome, 0o700);
+  const checkDisk = async (grow) => {
+    let extraBytes = 0n;
+    if (downloading && downloadBytes) {
+      const [cache, computer] = await Promise.all([stat(assets), stat(limaHome)]);
+      if (cache.dev === computer.dev) extraBytes = downloadBytes;
+    }
+    await requireComputerDiskSpace(limaHome, {
+      grow,
+      extraBytes,
+      inspectDisk: options.inspectDisk,
+    });
+  };
   const lima = join(assets, 'lima/bin/limactl');
   const docker = join(assets, 'docker-host/docker/docker');
   const path = [join(assets, 'lima/bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter);
@@ -254,6 +329,7 @@ async function prepare(options, onComputerStart) {
     await access(join(limaHome, vm, 'lima.yaml'));
     exists = true;
   } catch {}
+  await checkDisk(!exists);
   if (!exists) {
     status('preparing', 'Preparing your private computer…', 0.08);
     const config = guestConfiguration({
@@ -312,6 +388,7 @@ async function prepare(options, onComputerStart) {
     await runtimeAssets.ready(item.file);
     if ((await fileHash(join(assets, item.file))) !== item.sha256)
       throw new Error('An Otto computer image is damaged. Reinstall this build.');
+    await checkDisk(true);
     await runLima(
       [
         'shell',
@@ -352,13 +429,13 @@ function validImage(item) {
   if (
     !['workspace', 'browser', 'postgres'].includes(item.name) ||
     !/^sha256:[a-f0-9]{64}$/.test(item.id) ||
-    !/^images\/(workspace|browser|postgres)\.tar\.zst$/.test(item.file)
+    !/^images\/(workspace|browser|postgres)\.tar\.(gz|zst)$/.test(item.file)
   )
     throw new Error('The Otto computer image is invalid.');
   return item;
 }
 
-export async function preloadRuntimeImages({ dataRoot, assets, signal }) {
+export async function preloadRuntimeImages({ dataRoot, assets, signal, inspectDisk }) {
   const root = resolve(dataRoot);
   const identity = createHash('sha256').update(root).digest('hex').slice(0, 12);
   const env = {
@@ -382,6 +459,10 @@ export async function preloadRuntimeImages({ dataRoot, assets, signal }) {
     if (installed === item.id) continue;
     if ((await assetHash(join(assets, item.file), signal)) !== item.sha256)
       throw new Error('An Otto computer image is damaged. Reinstall this build.');
+    await requireComputerDiskSpace(join(homedir(), '.otto-desktop', identity), {
+      grow: true,
+      inspectDisk,
+    });
     await runDocker(['load', '--input', join(assets, item.file)], { timeout: 600_000 });
     loaded.push(item.name);
   }

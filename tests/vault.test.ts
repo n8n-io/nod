@@ -3762,6 +3762,7 @@ let suggestions = 0;
 window.fetch = globalThis.fetch = async (url) => {
   const path = new URL(url, window.location.href).pathname;
   if (path === '/api/account/prepare') return deferPreparation ? new Promise(resolve => {finishPreparation = () => resolve(Response.json({ok:true}));}) : Response.json({ ok: true });
+  if (path === '/api/computer') return Response.json({available:false,appControlAvailable:false,enabled:false,permissions:{accessibility:false,screen:false},apps:[]});
   if (path === '/api/apps') return Response.json([]);
   if (path === '/api/onboarding/suggestions') {suggestions++; return Response.json({ok:true});}
   if (path === '/api/models') return Response.json({ connections: [{ id: 'synthetic', status: 'connected', models: [] }], selection: null });
@@ -4575,6 +4576,7 @@ window.fetch = globalThis.fetch = async (url, options = {}) => {
     releasePreparation=()=>resolve(Response.json({ok:true}));
     options.signal.addEventListener('abort',()=>{aborted++;reject(new DOMException('Aborted','AbortError'))},{once:true});
   });
+  if (path === '/api/computer') {assert.equal(options.method,undefined);return Response.json({available:false,appControlAvailable:false,enabled:false,permissions:{accessibility:false,screen:false},apps:[]});}
   if (path === '/api/preferences') return Response.json({timeZone:'Europe/Lisbon'});
   if (path === '/api/models') return failModels ? Response.json({error:'Synthetic model service is unavailable'}, {status:503}) : Response.json({connections:modelConnected?[{id:'synthetic-model',provider:'anthropic',method:'api_key',status:modelsStatus,label:'Synthetic model',managed:false,models:[]}]:[],selection:null});
   if (path === '/api/apps') return Response.json([{slug:'gmail',name:'Gmail',status:'disconnected'}]);
@@ -4789,10 +4791,13 @@ window.ottoDesktop={
 };
 sessionStorage.setItem('otto.onboarding.step',JSON.stringify({owner:'synthetic-native-owner',step:'open',version:2}));
 const calls=[];
+let computerReads=0;
+let failComputer=true;
 window.fetch=globalThis.fetch=async(url,options={})=>{
  const path=new URL(url,window.location.href).pathname;calls.push(path);
  if(path==='/api/account/prepare')return new Promise(()=>{});
  if(path==='/api/models')return Response.json({connections:[{id:'synthetic',status:'connected',models:[]}],selection:null});
+ if(path==='/api/computer'){assert.equal(options.method,undefined,'skipping computer setup never grants access');computerReads++;return failComputer?Response.json({error:'Synthetic computer status failed'},{status:503}):Response.json({available:true,appControlAvailable:true,enabled:false,permissions:{accessibility:false,screen:false},apps:[]});}
  if(path==='/api/preferences')return Response.json({timeZone:'Europe/Lisbon'});
  if(path==='/api/onboarding/suggestions')return Response.json({ok:true});
  throw new Error('Unexpected request '+path);
@@ -4856,7 +4861,17 @@ await waitFor(()=>document.querySelector('[role="switch"]'));
 assert.equal(document.querySelector('.ob').dataset.step,'launchAtLogin');
 assert.equal(toggle().getAttribute('aria-checked'),'true');
 await act(async()=>button('Continue').click());
+await waitFor(()=>document.querySelector('.ob')?.dataset.step==='computer'&&button('Try again'));
+assert.equal(button('Start chatting'),undefined,'a failed computer status must not silently complete setup');
+assert.equal(computerReads,1);
+failComputer=false;
+await act(async()=>button('Try again').click());
+await waitFor(()=>button('Not now'));
+assert.equal(document.querySelector('.ob').dataset.step,'computer');
+assert.equal(computerReads,2);
+await act(async()=>button('Not now').click());
 await waitFor(()=>button('Start chatting'));
+assert.equal(JSON.parse(sessionStorage.getItem('otto.onboarding.step')).computerReady,true);
 assert.equal((await store.get()).launchAtLogin,true);
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');
 assert.equal(saves,6);
@@ -4865,6 +4880,7 @@ store=createSettingsStore(join(directory,'settings.json'),{});
 root=createRoot(document.getElementById('root'));
 await render();
 await waitFor(()=>button('Start chatting'));
+assert.equal(computerReads,2,'resuming keeps the explicit computer choice');
 assert.equal(document.querySelector('[role="switch"]'),null);
 assert.equal(saves,6);
 await act(async()=>root.unmount());

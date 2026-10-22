@@ -1429,10 +1429,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             maxBytes,
           ),
         ),
-      publishScreenshot: (bytes, name) => {
+      publishScreenshot: (bytes, name, source = 'browser_screenshot') => {
         const fileName =
           name && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/.test(name) ? name : 'screenshot.png';
-        return attach(bytes, fileName, 'image/png', '', true, 'browser_screenshot');
+        return attach(bytes, fileName, 'image/png', '', true, source);
       },
       publishBrowserFile: attachFile,
     });

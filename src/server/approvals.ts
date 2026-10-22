@@ -232,6 +232,10 @@ export async function createApprovals(
     const details = options.details ? JSON.stringify(options.details) : undefined;
     turn = { ...turn };
     const allowed = options.allowed === true;
+    const actions =
+      action === 'OTTO_computer' || action === 'OTTO_computer_app'
+        ? ['OTTO_computer', 'OTTO_computer_app']
+        : [action];
     const expectedRevision = options.expectedRevision;
     options.signal?.throwIfAborted();
     await options.admit?.(!allowed);
@@ -280,12 +284,12 @@ export async function createApprovals(
       let previous = (
         background
           ? await client.query(
-              "SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=$3 AND args=$4::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
-              [chain.map((item) => item.id), ownerId, action, snapshot],
+              "SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=ANY($3::text[]) AND args=$4::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
+              [chain.map((item) => item.id), ownerId, actions, snapshot],
             )
           : await client.query(
-              "SELECT * FROM approvals WHERE thread_id=$1 AND owner_id=$2 AND source_message_id=$3 AND action=$4 AND args=$5::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
-              [turn.threadId, ownerId, authorMessageId, action, snapshot],
+              "SELECT * FROM approvals WHERE thread_id=$1 AND owner_id=$2 AND source_message_id=$3 AND action=ANY($4::text[]) AND args=$5::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
+              [turn.threadId, ownerId, authorMessageId, actions, snapshot],
             )
       ).rows[0];
       if (
@@ -326,11 +330,11 @@ export async function createApprovals(
             `SELECT a.*,m.text AS question FROM approvals a
              JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id AND u.thread_id=a.thread_id
              JOIN messages m ON m.id=a.confirmation_message_id AND m.owner_id=a.owner_id AND m.thread_id=a.thread_id AND m.role='assistant'
-             WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.action=$3 AND a.args=$4::jsonb
+             WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.action=ANY($3::text[]) AND a.args=$4::jsonb
                AND a.status='pending' AND u.status IN ('running','waiting') AND u.channel=$5
                AND a.expected_revision IS NOT DISTINCT FROM $6::integer
              ORDER BY a.id LIMIT 1`,
-            [ownerId, turn.threadId, action, snapshot, current.channel, expectedRevision ?? null],
+            [ownerId, turn.threadId, actions, snapshot, current.channel, expectedRevision ?? null],
           )
         ).rows[0];
         if (pending)

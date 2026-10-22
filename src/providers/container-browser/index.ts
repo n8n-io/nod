@@ -34,9 +34,19 @@ export function createContainerBrowserComputer(options: {
     timeoutMs: options.timeoutMs,
     drainTimeoutMs: options.drainTimeoutMs,
     launch: () =>
-      launch('docker', ['exec', '-i', '--user', 'node', container, 'node', '/app/bridge.mjs'], {
-        env: serviceEnvironment(),
-        shell: false,
-      }),
+      launch(
+        'docker',
+        [
+          'exec',
+          '-i',
+          '--user',
+          'node',
+          container,
+          '/bin/sh',
+          '-c',
+          'if [ -f /app/bridge.mjs ]; then exec node /app/bridge.mjs; else exec node --import tsx /app/src/providers/container-browser/bridge.ts; fi',
+        ],
+        { env: serviceEnvironment(), shell: false },
+      ),
   });
 }

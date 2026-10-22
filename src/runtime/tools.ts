@@ -464,7 +464,7 @@ export const toolDefinitions = {
   ),
   computer: defineTool(
     'computer',
-    "Act on the owner's own Mac, outside your workspace. Use it only when the task concerns the owner's files, Mac apps or screen; otherwise use the workspace. Load the your-computer skill first. shell {command, timeoutSeconds?} runs zsh in the owner's home folder with an empty environment; prefer moving files to ~/.Trash over deleting them. apps lists running Mac apps. open {app} opens a Mac app in the background by name or bundle ID. look {app} returns the app's accessibility tree with refs; refs expire at the next look. screenshot {app} captures the app's window, even when covered. act {app, step, ref?, value?, text?, key?} works in the app without focus or the mouse: press, set (value), focus, showMenu and raise take a ref from a fresh look; type sends text to the focused field; key sends a combination such as cmd+s. Look again after acting to verify. The first use of a Mac app asks the owner; commands and actions their words don't cover also ask.",
+    "Act on the owner's own Mac, outside your workspace. Use it only when the task concerns the owner's files, Mac apps or screen; otherwise use the workspace. Load the your-computer skill first. shell {command, timeoutSeconds?} runs zsh in the owner's home folder with a restricted environment; ask the owner to move files to Trash when needed. apps lists running Mac apps. open {app} opens a Mac app in the background by name or bundle ID. look {app} returns the app's accessibility tree with refs; refs expire after an action or another look. screenshot {app} captures the app's window for you to inspect. share_screenshot {app, name?} captures the app's window and attaches the PNG to your reply. act {app, step, ref?, value?, text?, key?} works in the app without the mouse: press, set (value), focus, showMenu and raise take a ref from a fresh look; type sends text to the focused field; key sends a combination such as cmd+s. Look again after every action to verify and before the next action. First use of an app runs when the owner's words cover it; commands and actions their words don't cover ask the owner.",
     Type.Union([
       Type.Object(
         {
@@ -481,13 +481,46 @@ export const toolDefinitions = {
       ),
       Type.Object(
         {
+          action: Type.Literal('share_screenshot'),
+          app: Type.String({ minLength: 1 }),
+          name: Type.Optional(Type.String({ maxLength: 84 })),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
           action: Type.Literal('act'),
           app: Type.String({ minLength: 1 }),
-          step: literals(['press', 'set', 'focus', 'showMenu', 'raise', 'type', 'key']),
-          ref: Type.Optional(Type.String()),
-          value: Type.Optional(Type.String()),
-          text: Type.Optional(Type.String()),
-          key: Type.Optional(Type.String()),
+          step: literals(['press', 'focus', 'showMenu', 'raise']),
+          ref: Type.String({ pattern: '^e\\d+$' }),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('act'),
+          app: Type.String({ minLength: 1 }),
+          step: Type.Literal('set'),
+          ref: Type.String({ pattern: '^e\\d+$' }),
+          value: Type.String(),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('act'),
+          app: Type.String({ minLength: 1 }),
+          step: Type.Literal('type'),
+          text: Type.String(),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('act'),
+          app: Type.String({ minLength: 1 }),
+          step: Type.Literal('key'),
+          key: Type.String({ minLength: 1, maxLength: 40 }),
         },
         { additionalProperties: false },
       ),
@@ -827,10 +860,20 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     ...(context.computer
       ? [
           bind(toolDefinitions.computer, async (p) => {
-            const result = await confirm(await context.computer!(p));
+            if (p.action === 'share_screenshot' && !context.publishScreenshot)
+              throw new Error('Screenshot publishing is unavailable.');
+            const request =
+              p.action === 'share_screenshot' ? { action: 'screenshot', app: p.app } : p;
+            const result = await confirm(await context.computer!(request));
             signal.throwIfAborted();
             if (result && typeof result === 'object' && 'png' in result) {
               const { png, ...rest } = result as { png: string };
+              if (p.action === 'share_screenshot')
+                return context.publishScreenshot!(
+                  Buffer.from(png, 'base64'),
+                  p.name,
+                  'computer_screenshot',
+                );
               return {
                 content: [
                   { type: 'text', text: JSON.stringify(rest) },

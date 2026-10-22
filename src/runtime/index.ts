@@ -52,7 +52,7 @@ const parallelTools = new Set([
   'task',
   'react_to_message',
 ]);
-const orderedTools = new Set(['apps', 'manage_personal_context', 'skills']);
+const orderedTools = new Set(['apps', 'computer', 'manage_personal_context', 'skills']);
 const admissions = new AsyncLocalStorage<{
   asked: boolean;
   admit(asks: boolean): Promise<void>;
@@ -462,6 +462,10 @@ export function createAgentRuntime(dependencies: {
             context.integration(action, args, callSignal, admissions.getStore()?.admit),
           manage: (action: string, args: Record<string, unknown>) =>
             context.manage(action, args, admissions.getStore()?.admit),
+          computer:
+            context.computer &&
+            ((args: Record<string, unknown>) =>
+              context.computer!(args, admissions.getStore()?.admit)),
         },
         computer: browser,
         pageVisited: dependencies.pageVisited,

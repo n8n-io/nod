@@ -1667,6 +1667,20 @@ test(
           const runs = calls.length;
           assert.deepEqual(await repeat(done), (await stored(done)).result);
           assert.equal(calls.length, runs);
+          const computerTurn = await begin('Synthetic computer request.');
+          const computerArgs = {
+            action: 'act',
+            app: 'Fixture',
+            bundleId: 'fixture.App',
+            step: 'press',
+            ref: 'e1',
+            control: 'Button "Delete"',
+          };
+          await propose(computerTurn, 'OTTO_computer_app', computerArgs);
+          await assert.rejects(
+            approvals.request(computerTurn, 'OTTO_computer', computerArgs, { allowed: true }),
+            /pending or uncertain/,
+          );
           await thread.stopThread();
         },
       );
@@ -2347,6 +2361,188 @@ test(
 );
 
 test(
+  'computer revocation clears observations and fences older approvals across restarts',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_computer_revoke_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    t.after(async () => {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const turn = { threadId: randomUUID(), turnId: randomUUID() };
+    const signal = new AbortController().signal;
+    const target = { name: 'Fixture', bundleId: 'fixture.App' };
+    let observed = false;
+    let covered = false;
+    let executions = 0;
+    let saved: { action: string; args: Record<string, unknown>; revision?: number } | undefined;
+    const options: Parameters<typeof createComputerPolicy>[0] = {
+      pool,
+      ownerId: 'revocation-owner',
+      computer: {
+        shell: async () => {
+          executions++;
+          return { exitCode: 0, output: '' };
+        },
+        resolve: async () => target,
+        look: async () => {
+          observed = true;
+          return { app: target, tree: '- Button [ref=e1]' };
+        },
+        inspect: async () => {
+          if (!observed) throw new Error('A fresh look is required.');
+          return { label: 'Button', token: 'fixture-target' };
+        },
+        act: async () => {
+          executions++;
+        },
+        dispose() {
+          observed = false;
+        },
+      },
+      check: async () => (covered ? { confirm: false } : { confirm: true, reason: 'unrequested' }),
+      request: async (_turn, action, args, request) => {
+        if (request.allowed && typeof request.run === 'function') return request.run();
+        saved = {
+          action,
+          args: structuredClone(args),
+          revision: request.expectedRevision as number | undefined,
+        };
+        return { [appConfirmation]: 'Use the fixture app?' };
+      },
+      lock: (_turn, write) => write(),
+      signalFor: () => signal,
+    };
+    const policy = createComputerPolicy(options);
+    await policy.initialize();
+    policy.registerRoutes(app);
+    const run = (args: Record<string, unknown>) => policy.run(turn, args, { rooted: true }, signal);
+    await app.inject({ method: 'PATCH', url: '/api/computer', payload: { enabled: true } });
+
+    await t.test(
+      'removing an idle app invalidates its cached observation before inspection',
+      async () => {
+        covered = true;
+        await run({ action: 'look', app: target.name });
+        await app.inject({ method: 'DELETE', url: `/api/computer/apps/${target.bundleId}` });
+        await assert.rejects(
+          run({ action: 'act', app: target.name, step: 'press', ref: 'e1' }),
+          /fresh look/,
+        );
+        assert.equal(executions, 0);
+      },
+    );
+
+    await t.test(
+      'removing an app invalidates an earlier first-use grant while a fresh yes still works',
+      async () => {
+        await app.inject({ method: 'DELETE', url: `/api/computer/apps/${target.bundleId}` });
+        covered = false;
+        await run({ action: 'look', app: target.name });
+        const older = saved!;
+        covered = true;
+        await run({ action: 'look', app: target.name });
+        await app.inject({ method: 'DELETE', url: `/api/computer/apps/${target.bundleId}` });
+        const restarted = createComputerPolicy(options);
+        await restarted.initialize();
+        await assert.rejects(
+          restarted.execute(older.action, older.args, {
+            turnId: turn.turnId,
+            expectedRevision: older.revision,
+          }),
+          (error: Error & { notRun?: boolean }) => error.notRun === true,
+        );
+        assert.deepEqual((await app.inject('/api/computer')).json().apps, []);
+        covered = false;
+        await run({ action: 'look', app: target.name });
+        await restarted.execute(saved!.action, saved!.args, {
+          turnId: turn.turnId,
+          expectedRevision: saved!.revision,
+        });
+        assert.deepEqual((await app.inject('/api/computer')).json().apps, [target]);
+      },
+    );
+
+    await t.test(
+      'switching off clears observations and invalidates an older command after re-enabling',
+      async () => {
+        covered = true;
+        await run({ action: 'look', app: target.name });
+        covered = false;
+        await run({ action: 'shell', command: 'fixture-command' });
+        const older = saved!;
+        const before = executions;
+        await app.inject({ method: 'PATCH', url: '/api/computer', payload: { enabled: false } });
+        await app.inject({ method: 'PATCH', url: '/api/computer', payload: { enabled: true } });
+        await assert.rejects(
+          run({ action: 'act', app: target.name, step: 'press', ref: 'e1' }),
+          /fresh look/,
+        );
+        await assert.rejects(
+          policy.execute(older.action, older.args, {
+            turnId: turn.turnId,
+            expectedRevision: older.revision,
+          }),
+          (error: Error & { notRun?: boolean }) => error.notRun === true,
+        );
+        assert.equal(executions, before);
+      },
+    );
+
+    await t.test(
+      'revocation removes a grant committed while it waits for the settings lock',
+      async () => {
+        await app.inject({ method: 'DELETE', url: `/api/computer/apps/${target.bundleId}` });
+        const granting = await pool.connect();
+        try {
+          await granting.query('BEGIN');
+          await granting.query('SELECT 1 FROM computer_settings WHERE owner_id=$1 FOR SHARE', [
+            options.ownerId,
+          ]);
+          const revoking = app.inject({
+            method: 'DELETE',
+            url: `/api/computer/apps/${target.bundleId}`,
+          });
+          const result = revoking.then((response) => response);
+          const deadline = Date.now() + 5000;
+          let waiting = false;
+          while (!waiting && Date.now() < deadline) {
+            waiting = Boolean(
+              (
+                await admin.query(
+                  "SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'INSERT INTO computer_settings(owner_id,revision)%'",
+                )
+              ).rowCount,
+            );
+            if (!waiting) await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          assert.equal(waiting, true);
+          await granting.query(
+            'INSERT INTO computer_apps(owner_id,bundle_id,name) VALUES($1,$2,$3)',
+            [options.ownerId, target.bundleId, target.name],
+          );
+          await granting.query('COMMIT');
+          assert.equal((await result).statusCode, 200);
+          assert.deepEqual((await app.inject('/api/computer')).json().apps, []);
+        } finally {
+          await granting.query('ROLLBACK');
+          granting.release();
+        }
+      },
+    );
+  },
+);
+
+test(
   'your computer stays off until the owner turns it on, asks before a new Mac app, refuses blocked apps and checks every step',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
@@ -2367,13 +2563,17 @@ test(
     const ran: string[] = [];
     const shellSignals: AbortSignal[] = [];
     let covered = false;
-    let label = 'Button "Delete all"';
+    let blocked = false;
+    const label = 'Button "Delete all"';
+    let hold: ((signal: AbortSignal) => Promise<void>) | undefined;
     const checks: Record<string, unknown>[] = [];
     const requests: { action: string; args: Record<string, unknown>; allowed: unknown }[] = [];
     const computer: OwnerComputer = {
+      appControlAvailable: true,
       shell: async (command, { signal }) => {
         ran.push(command);
         shellSignals.push(signal);
+        await hold?.(signal);
         return { exitCode: 0, output: '' };
       },
       resolve: async (name) =>
@@ -2389,9 +2589,14 @@ test(
         app: { name: 'Notes', bundleId },
         tree: `- ${label} [ref=e1]`,
       }),
-      label: (_bundleId, ref) => (ref === 'e1' ? label : undefined),
-      act: async (step) => {
+      inspect: async (_bundleId, ref) => {
+        if (ref !== undefined && ref !== 'e1') throw new Error(`Unknown ref ${ref}.`);
+        return { label, token: 'fixture-target' };
+      },
+      act: async (step, signal) => {
+        assert.equal(step.targetToken, 'fixture-target');
         ran.push(`${step.action} ${step.ref}`);
+        await hold?.(signal);
       },
       dispose() {},
     };
@@ -2405,15 +2610,22 @@ test(
       },
       request: async (_turn, action, args, options) => {
         requests.push({ action, args, allowed: options.allowed });
+        if (blocked)
+          throw new Error('This exact action already has a pending or uncertain outcome.');
+        if (options.allowed && typeof options.run === 'function') return options.run();
         return { [appConfirmation]: 'question' };
       },
       lock: (_turnId, write) => write(),
-      signalFor: (id) => (id === turn.turnId ? signal : undefined),
+      signalFor: (id) =>
+        id === turn.turnId ? signal : id === resume.turnId ? resume.signal : undefined,
     });
     await policy.initialize();
     policy.registerRoutes(app);
     const turn = { threadId: randomUUID(), turnId: randomUUID() };
-    const signal = new AbortController().signal;
+    const controller = new AbortController();
+    const { signal } = controller;
+    const resumed = new AbortController();
+    const resume = { turnId: randomUUID(), signal: resumed.signal };
     const run = (args: Record<string, unknown>, rooted = true) =>
       policy.run(turn, args, { rooted }, signal);
 
@@ -2424,6 +2636,27 @@ test(
       payload: { enabled: true },
     });
     assert.equal(on.json().enabled, true);
+    await assert.rejects(
+      policy.execute(
+        'OTTO_computer',
+        { action: 'shell', command: 'fixture-expired' },
+        { turnId: randomUUID() },
+      ),
+      (error: Error & { notRun?: boolean }) => error.notRun === true,
+    );
+    assert.deepEqual(ran, []);
+
+    covered = true;
+    blocked = true;
+    await assert.rejects(run({ action: 'look', app: 'Reminders' }), /pending or uncertain/);
+    assert.equal(
+      (await app.inject('/api/computer'))
+        .json()
+        .apps.some((entry: { name: string }) => entry.name === 'Reminders'),
+      false,
+    );
+    blocked = false;
+    covered = false;
 
     await run({ action: 'shell', command: 'rm -rf ~/Documents' });
     assert.deepEqual(requests.at(-1), {
@@ -2437,6 +2670,16 @@ test(
     await assert.rejects(run({ action: 'open', app: 'Script Editor' }), /never uses/);
     await assert.rejects(run({ action: 'look', app: 'a/b' }), /not a path/);
     await assert.rejects(run({ action: 'open', app: 'EvilTerm' }), /never uses/);
+    for (const app of [
+      'Passwords',
+      'com.apple.Passwords',
+      'System Settings',
+      'System Preferences',
+      'com.apple.systempreferences',
+    ]) {
+      await assert.rejects(run({ action: 'look', app }), /never uses/);
+      await assert.rejects(run({ action: 'open', app }), /never uses/);
+    }
 
     await run({ action: 'look', app: 'Notes' });
     assert.equal(requests.at(-1)?.action, 'OTTO_computer_app');
@@ -2456,7 +2699,7 @@ test(
     await run({ action: 'look', app: 'Calendar' });
     covered = false;
     await run({ action: 'look', app: 'Calendar' });
-    assert.equal(requests.length, asked);
+    assert.equal(requests.length, asked + 1);
 
     covered = true;
     await run({ action: 'look', app: 'Mail' }, false);
@@ -2478,7 +2721,6 @@ test(
     );
     assert.deepEqual(ran, []);
 
-    label = 'Button "Archive"';
     await assert.rejects(
       policy.execute(
         'OTTO_computer',
@@ -2496,17 +2738,133 @@ test(
     );
     assert.deepEqual(ran, []);
 
+    covered = true;
+    await run({ action: 'open', app: 'Calculator' }, false);
+    assert.equal(
+      (await app.inject('/api/computer'))
+        .json()
+        .apps.some((entry: { name: string }) => entry.name === 'Calculator'),
+      false,
+    );
+    await run({ action: 'act', app: 'Mail', step: 'press', ref: 'e1' }, false);
+    assert.equal(
+      (await app.inject('/api/computer'))
+        .json()
+        .apps.some((entry: { name: string }) => entry.name === 'Mail'),
+      false,
+    );
+    assert.equal(checks.at(-1)?.targetToken, 'fixture-target');
+
+    let started!: () => void;
+    let starting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    hold = (signal) =>
+      new Promise<void>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        started();
+      });
+    const pending = policy.execute(
+      'OTTO_computer',
+      {
+        action: 'act',
+        app: 'Notes',
+        bundleId: 'fixture.Notes',
+        step: 'press',
+        ref: 'e1',
+        targetToken: 'fixture-target',
+      },
+      { turnId: turn.turnId },
+    );
+    const revoked = assert.rejects(pending, /removed/);
+    await starting;
+    await pool.query('INSERT INTO computer_apps(owner_id,bundle_id,name) VALUES($1,$2,$3)', [
+      'foreign-owner',
+      'fixture.Notes',
+      'Notes',
+    ]);
+    await app.inject({ method: 'DELETE', url: '/api/computer/apps/fixture.Notes' });
+    await revoked;
+    assert.equal(
+      (
+        await pool.query('SELECT 1 FROM computer_apps WHERE owner_id=$1 AND bundle_id=$2', [
+          'foreign-owner',
+          'fixture.Notes',
+        ])
+      ).rowCount,
+      1,
+    );
+    await assert.rejects(
+      policy.execute(
+        'OTTO_computer',
+        {
+          action: 'act',
+          app: 'Notes',
+          bundleId: 'fixture.Notes',
+          step: 'press',
+          ref: 'e1',
+          targetToken: 'fixture-target',
+        },
+        { turnId: turn.turnId },
+      ),
+      (error: Error & { notRun?: boolean }) => error.notRun === true,
+    );
+    hold = undefined;
+
+    const revision = (
+      await pool.query('SELECT revision FROM computer_settings WHERE owner_id=$1', [
+        'computer-owner',
+      ])
+    ).rows[0].revision;
+
     await policy.execute(
       'OTTO_computer',
       { action: 'shell', command: 'sleep 1' },
-      { turnId: turn.turnId },
+      { turnId: turn.turnId, expectedRevision: revision },
     );
-    assert.equal(shellSignals.at(-1), signal);
+    assert.equal(shellSignals.at(-1)?.aborted, false);
+    await policy.execute(
+      'OTTO_computer',
+      { action: 'shell', command: 'fixture-resume' },
+      { turnId: resume.turnId, expectedRevision: revision },
+    );
+    assert.equal(shellSignals.at(-1)?.aborted, false);
+    resumed.abort();
+    assert.equal(shellSignals.at(-1)?.aborted, true);
+
+    starting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    hold = (signal) =>
+      new Promise<void>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        started();
+      });
+    const shell = policy.execute(
+      'OTTO_computer',
+      { action: 'shell', command: 'fixture-wait' },
+      { turnId: turn.turnId, expectedRevision: revision },
+    );
+    const disabled = assert.rejects(shell, /turned off/);
+    await starting;
 
     await app.inject({ method: 'PATCH', url: '/api/computer', payload: { enabled: false } });
+    await disabled;
+    assert.equal(shellSignals.at(-1)?.aborted, true);
     await assert.rejects(
-      policy.execute('OTTO_computer', { action: 'shell', command: 'ls' }),
+      policy.execute('OTTO_computer', { action: 'shell', command: 'ls' }, { turnId: turn.turnId }),
       (error: Error & { notRun?: boolean }) => error.notRun === true,
     );
+    await app.inject({ method: 'PATCH', url: '/api/computer', payload: { enabled: true } });
+    controller.abort();
+    await assert.rejects(
+      policy.execute(
+        'OTTO_computer',
+        { action: 'shell', command: 'fixture-stopped' },
+        { turnId: turn.turnId },
+      ),
+      (error: Error) => error.name === 'AbortError',
+    );
+    assert.equal(ran.at(-1), 'fixture-wait');
   },
 );

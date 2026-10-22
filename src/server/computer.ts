@@ -27,6 +27,8 @@ const blockedApps = [
   'com.apple.loginwindow',
   'com.apple.UserNotificationCenter',
   'com.apple.keychainaccess',
+  'com.apple.Passwords',
+  'com.apple.systempreferences',
   'com.apple.systempreferences.securityandprivacy',
 ];
 const blockedNames = [
@@ -41,6 +43,9 @@ const blockedNames = [
   'automator',
   'shortcuts',
   'keychain access',
+  'passwords',
+  'system settings',
+  'system preferences',
   'otto',
 ];
 
@@ -100,6 +105,15 @@ export function createComputerPolicy(options: {
   const { pool, ownerId, request } = options;
   const computer = options.computer ?? { shell: unavailable, dispose() {} };
   const active = new Map<string, ReturnType<typeof setTimeout>>();
+  let access = new AbortController();
+  const apps = new Map<string, AbortController>();
+
+  function operation(signal: AbortSignal, app?: string) {
+    if (!app) return AbortSignal.any([signal, access.signal]);
+    let controller = apps.get(app);
+    if (!controller) apps.set(app, (controller = new AbortController()));
+    return AbortSignal.any([signal, access.signal, controller.signal]);
+  }
 
   function touch(name: string) {
     clearTimeout(active.get(name));
@@ -108,7 +122,7 @@ export function createComputerPolicy(options: {
       setTimeout(() => {
         active.delete(name);
         options.using?.([...active.keys()]);
-      }, 30_000),
+      }, 30_000).unref(),
     );
     options.using?.([...active.keys()]);
   }
@@ -117,8 +131,9 @@ export function createComputerPolicy(options: {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS computer_settings (
         owner_id text PRIMARY KEY, enabled boolean NOT NULL DEFAULT false,
-        updated_at timestamptz NOT NULL DEFAULT now()
+        revision integer NOT NULL DEFAULT 0, updated_at timestamptz NOT NULL DEFAULT now()
       );
+      ALTER TABLE computer_settings ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 0;
       CREATE TABLE IF NOT EXISTS computer_apps (
         owner_id text NOT NULL, bundle_id text NOT NULL, name text NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (owner_id, bundle_id)
@@ -126,14 +141,14 @@ export function createComputerPolicy(options: {
     `);
   }
 
-  async function enabled() {
-    return Boolean(
+  async function settings() {
+    return (
       (
-        await pool.query<{ enabled: boolean }>(
-          'SELECT enabled FROM computer_settings WHERE owner_id=$1',
+        await pool.query<{ enabled: boolean; revision: number }>(
+          'SELECT enabled,revision FROM computer_settings WHERE owner_id=$1',
           [ownerId],
         )
-      ).rows[0]?.enabled,
+      ).rows[0] ?? { enabled: false, revision: 0 }
     );
   }
 
@@ -147,13 +162,17 @@ export function createComputerPolicy(options: {
   }
 
   async function status(): Promise<ComputerStatus> {
-    const permissions = await (computer.permissions?.() ?? Promise.reject()).catch(() => ({
-      accessibility: false,
-      screen: false,
-    }));
+    const appControlAvailable = computer.appControlAvailable === true;
+    const permissions = appControlAvailable
+      ? await (computer.permissions?.() ?? Promise.reject()).catch(() => ({
+          accessibility: false,
+          screen: false,
+        }))
+      : { accessibility: false, screen: false };
     return {
       available: Boolean(options.computer),
-      enabled: await enabled(),
+      appControlAvailable,
+      enabled: (await settings()).enabled,
       permissions,
       apps: await allowedApps(),
     };
@@ -194,14 +213,24 @@ export function createComputerPolicy(options: {
     return { app, running: false };
   }
 
-  async function remember(turnId: string, app: MacApp) {
+  async function remember(turnId: string, app: MacApp, revision: number, signal: AbortSignal) {
     refuse(app);
     if (!app.bundleId || app.bundleId === app.name) return;
     await options.lock(turnId, async () => {
-      await pool.query(
-        'INSERT INTO computer_apps(owner_id,bundle_id,name) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',
-        [ownerId, app.bundleId, app.name],
+      signal.throwIfAborted();
+      const result = await pool.query(
+        `WITH allowed AS (
+           SELECT owner_id FROM computer_settings
+           WHERE owner_id=$1 AND enabled AND revision=$4 FOR SHARE
+         )
+         INSERT INTO computer_apps(owner_id,bundle_id,name)
+         SELECT owner_id,$2,$3 FROM allowed
+         ON CONFLICT(owner_id,bundle_id) DO UPDATE SET name=EXCLUDED.name
+         RETURNING bundle_id`,
+        [ownerId, app.bundleId, app.name, revision],
       );
+      if (!result.rowCount)
+        throw new Error('Computer access changed before the app could be remembered.');
     });
   }
 
@@ -222,7 +251,10 @@ export function createComputerPolicy(options: {
     },
     signal: AbortSignal,
   ) {
-    if (!(await enabled()))
+    signal = operation(signal);
+    signal.throwIfAborted();
+    const { enabled, revision } = await settings();
+    if (!enabled)
       throw new Error(
         'Your computer is off. The owner can turn it on in Settings, under Your computer.',
       );
@@ -231,21 +263,38 @@ export function createComputerPolicy(options: {
       const verdict = await options.check(turn, 'OTTO_computer', input);
       return request(turn, 'OTTO_computer', input, {
         ...provenance,
+        signal,
+        expectedRevision: revision,
         allowed: !verdict.confirm,
+        run: () =>
+          execute('OTTO_computer', input, {
+            turnId: turn.turnId,
+            signal,
+            expectedRevision: revision,
+          }),
         details: verdict.confirm ? { reason: verdict.reason } : {},
       });
     }
     if (input.action === 'apps') {
       if (!computer.apps) throw new Error('Mac app control needs the Otto desktop app.');
+      await provenance.admit?.(false);
       return (await computer.apps(signal)).filter((app) => !isBlockedApp(app));
     }
     const { app, running } = await target(input.app, signal, input.action === 'open');
+    signal = operation(signal, app.bundleId);
     refuse(app);
     const allowed = await permitted(app);
     if (input.action === 'open' && running) {
-      if (allowed) return { app, running: true, next: 'Look at the app before acting in it.' };
-    } else if (allowed && input.action !== 'act' && input.action !== 'open')
+      if (allowed) {
+        await provenance.admit?.(false);
+        signal.throwIfAborted();
+        return { app, running: true, next: 'Look at the app before acting in it.' };
+      }
+    } else if (allowed && input.action !== 'act' && input.action !== 'open') {
+      await provenance.admit?.(false);
+      signal.throwIfAborted();
       return observe(input.action, app, signal);
+    }
     let args: Record<string, unknown> = {
       action: input.action,
       app: app.name,
@@ -258,12 +307,14 @@ export function createComputerPolicy(options: {
       if (step === 'set' && value === undefined) throw new Error('Pass value for set.');
       if (['press', 'focus', 'showMenu', 'raise', 'set'].includes(step) && !ref)
         throw new Error('Pass the ref from a fresh look.');
-      const control = ref ? computer.label?.(app.bundleId, ref) : undefined;
-      if (ref && !control) throw new Error(`Unknown ref ${ref}. Look at ${app.name} again first.`);
+      if (!computer.inspect) throw new Error('Mac app control needs the Otto desktop app.');
+      const target = await computer.inspect(app.bundleId, ref, signal);
       args = {
         ...args,
         step,
-        ...(ref ? { ref, control } : {}),
+        control: target.label,
+        targetToken: target.token,
+        ...(ref ? { ref } : {}),
         ...(value !== undefined ? { value } : {}),
         ...(text !== undefined ? { text } : {}),
         ...(key !== undefined ? { key } : {}),
@@ -271,13 +322,20 @@ export function createComputerPolicy(options: {
     }
     if (input.action === 'open' && running) args = { ...args, running: true };
     const verdict = await options.check(turn, 'OTTO_computer', args);
-    if (!verdict.confirm && !allowed && provenance.rooted && !(input.action === 'open' && !running))
-      await remember(turn.turnId, app);
-    if (!verdict.confirm && (input.action === 'look' || input.action === 'screenshot'))
-      return observe(input.action, app, signal);
-    return request(turn, allowed ? 'OTTO_computer' : 'OTTO_computer_app', args, {
+    const action = allowed ? 'OTTO_computer' : 'OTTO_computer_app';
+    return request(turn, action, args, {
       ...provenance,
+      signal,
+      expectedRevision: revision,
       allowed: !verdict.confirm,
+      run: () =>
+        execute(action, args, {
+          turnId: turn.turnId,
+          signal,
+          expectedRevision: revision,
+          rememberApp: provenance.rooted === true,
+          read: true,
+        }),
       details: verdict.confirm ? { reason: verdict.reason } : {},
     });
   }
@@ -285,15 +343,42 @@ export function createComputerPolicy(options: {
   async function execute(
     action: string,
     args: Record<string, unknown>,
-    provenance?: { turnId?: string },
+    provenance?: {
+      turnId?: string;
+      signal?: AbortSignal;
+      expectedRevision?: number;
+      rememberApp?: boolean;
+      read?: boolean;
+    },
   ) {
-    if (!(await enabled()))
-      throw Object.assign(new Error('Your computer was turned off before this ran.'), {
-        notRun: true,
-      });
-    const signal =
-      (provenance?.turnId ? options.signalFor(provenance.turnId) : undefined) ??
-      new AbortController().signal;
+    const currentSignal =
+      provenance?.signal ?? (provenance?.turnId ? options.signalFor(provenance.turnId) : undefined);
+    if (!currentSignal || !provenance?.turnId)
+      throw Object.assign(new Error('This turn is no longer running.'), { notRun: true });
+    const app = { name: String(args.app), bundleId: String(args.bundleId) };
+    const signal = operation(currentSignal, args.action === 'shell' ? undefined : app.bundleId);
+    const revision = provenance.expectedRevision ?? 0;
+    await options.lock(provenance.turnId, async () => {
+      signal.throwIfAborted();
+      const current = await settings();
+      if (!current.enabled)
+        throw Object.assign(new Error('Your computer was turned off before this ran.'), {
+          notRun: true,
+        });
+      if (current.revision !== revision)
+        throw Object.assign(new Error('Computer access changed. Ask the owner again.'), {
+          notRun: true,
+        });
+      if (args.action !== 'shell') {
+        refuse(app);
+        if (action === 'OTTO_computer' && !(await permitted(app)))
+          throw Object.assign(new Error(`Access to ${app.name} was removed before this ran.`), {
+            notRun: true,
+          });
+      }
+      signal.throwIfAborted();
+    });
+    signal.throwIfAborted();
     if (args.action === 'shell') {
       const { command, timeoutSeconds } = computerInput.parse(args) as {
         command: string;
@@ -304,35 +389,46 @@ export function createComputerPolicy(options: {
         timeoutMs: timeoutSeconds ? timeoutSeconds * 1000 : undefined,
       });
     }
-    const app = { name: String(args.app), bundleId: String(args.bundleId) };
-    refuse(app);
+    const rememberAllowed = () =>
+      action === 'OTTO_computer_app' && provenance?.turnId && provenance.rememberApp !== false
+        ? remember(provenance.turnId, app, revision, signal)
+        : Promise.resolve();
     if (args.action === 'open') {
       const opened = args.running ? app : await computer.open!(app.bundleId, signal);
+      signal.throwIfAborted();
       refuse(opened);
-      if (action === 'OTTO_computer_app' && provenance?.turnId)
-        await remember(provenance.turnId, opened);
+      if (action === 'OTTO_computer_app' && provenance?.turnId && provenance.rememberApp !== false)
+        await remember(provenance.turnId, opened, revision, signal);
       touch(opened.name);
       return { app: opened, next: 'Look at the app before acting in it.' };
     }
-    if (action === 'OTTO_computer_app' && provenance?.turnId)
-      await remember(provenance.turnId, app);
-    if (args.action === 'look' || args.action === 'screenshot')
+    if (args.action === 'look' || args.action === 'screenshot') {
+      if (provenance?.read) {
+        const result = await observe(args.action, app, signal);
+        signal.throwIfAborted();
+        await rememberAllowed();
+        return result;
+      }
+      await rememberAllowed();
       return `The owner allowed Otto to use ${app.name}. ${args.action === 'look' ? 'Look' : 'Take the screenshot'} again to continue.`;
-    if (typeof args.ref === 'string' && computer.label?.(app.bundleId, args.ref) !== args.control)
-      throw Object.assign(
-        new Error(`${app.name} changed since this was checked. Look again before acting.`),
-        { notRun: true },
-      );
+    }
+    if (typeof args.targetToken !== 'string' || !args.targetToken)
+      throw Object.assign(new Error(`${app.name} needs a fresh look before acting.`), {
+        notRun: true,
+      });
     touch(app.name);
     const step: MacAppAction = {
       app: app.bundleId,
       action: args.step as MacAppAction['action'],
+      targetToken: args.targetToken,
       ...(typeof args.ref === 'string' ? { ref: args.ref } : {}),
       ...(typeof args.value === 'string' ? { value: args.value } : {}),
       ...(typeof args.text === 'string' ? { text: args.text } : {}),
       ...(typeof args.key === 'string' ? { key: args.key } : {}),
     };
     await computer.act!(step, signal);
+    signal.throwIfAborted();
+    await rememberAllowed();
     return { done: true, next: 'Look again to verify the result.' };
   }
 
@@ -341,10 +437,16 @@ export function createComputerPolicy(options: {
     app.patch('/api/computer', async (req) => {
       const { enabled: on } = z.object({ enabled: z.boolean() }).strict().parse(req.body);
       await pool.query(
-        `INSERT INTO computer_settings(owner_id,enabled) VALUES($1,$2)
-         ON CONFLICT(owner_id) DO UPDATE SET enabled=$2,updated_at=now()`,
+        `INSERT INTO computer_settings(owner_id,enabled,revision) VALUES($1,$2,CASE WHEN $2 THEN 0 ELSE 1 END)
+         ON CONFLICT(owner_id) DO UPDATE SET enabled=$2,
+           revision=computer_settings.revision+CASE WHEN $2 THEN 0 ELSE 1 END,updated_at=now()`,
         [ownerId, on],
       );
+      if (!on) {
+        access.abort(new Error('Your computer was turned off.'));
+        access = new AbortController();
+        computer.dispose();
+      }
       return status();
     });
     app.post('/api/computer/permissions', async (req) => {
@@ -352,7 +454,7 @@ export function createComputerPolicy(options: {
         .object({ permission: z.enum(['accessibility', 'screen']) })
         .strict()
         .parse(req.body);
-      if (!computer.requestPermission)
+      if (!computer.appControlAvailable || !computer.requestPermission)
         throw Object.assign(new Error('Mac app control needs the Otto desktop app.'), {
           statusCode: 409,
         });
@@ -360,10 +462,28 @@ export function createComputerPolicy(options: {
       return status();
     });
     app.delete<{ Params: { bundleId: string } }>('/api/computer/apps/:bundleId', async (req) => {
-      await pool.query('DELETE FROM computer_apps WHERE owner_id=$1 AND bundle_id=$2', [
-        ownerId,
-        req.params.bundleId,
-      ]);
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `INSERT INTO computer_settings(owner_id,revision) VALUES($1,1)
+           ON CONFLICT(owner_id) DO UPDATE SET revision=computer_settings.revision+1,updated_at=now()`,
+          [ownerId],
+        );
+        await client.query('DELETE FROM computer_apps WHERE owner_id=$1 AND bundle_id=$2', [
+          ownerId,
+          req.params.bundleId,
+        ]);
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+      apps.get(req.params.bundleId)?.abort(new Error('Access to this Mac app was removed.'));
+      apps.delete(req.params.bundleId);
+      computer.dispose();
       return status();
     });
   }

@@ -300,6 +300,14 @@ test(
       runTurn: async (context) => {
         runs.push(context);
         if (context.prompt === 'limit race fixture') throw new Error(spendingLimitReached);
+        if (context.prompt === 'computer-screenshot-fixture') {
+          await context.publishScreenshot!(
+            Buffer.from('synthetic native screenshot'),
+            'calculator.png',
+            'computer_screenshot',
+          );
+          return { status: 'succeeded' };
+        }
         if (context.prompt.startsWith('session-fixture')) {
           await sessionGates.get(context.prompt);
           return { status: 'succeeded' };
@@ -1078,6 +1086,28 @@ test(
           } finally {
             dependencies.writeArtifact = undefined;
           }
+        },
+      );
+
+      await t.test(
+        'native screenshots reach the owned conversation as downloadable images',
+        async () => {
+          const { turnId } = await thread.submitUserMessage('computer-screenshot-fixture');
+          await waitFor(settled(turnId));
+          assert.equal(await turnStatus(turnId), 'succeeded');
+          const delivered = (
+            await db.pool.query(
+              "SELECT attachments FROM messages WHERE turn_id=$1 AND owner_id=$2 AND role='assistant'",
+              [turnId, ownerId],
+            )
+          ).rows.flatMap((row) => row.attachments);
+          assert.equal(delivered.length, 1);
+          assert.equal(delivered[0].name, 'calculator.png');
+          assert.equal(delivered[0].source, 'computer_screenshot');
+          const image = await request('GET', delivered[0].url);
+          assert.equal(image.statusCode, 200);
+          assert.match(image.headers['content-type']!, /^image\/png/);
+          assert.equal(image.body, 'synthetic native screenshot');
         },
       );
 

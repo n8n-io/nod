@@ -9,6 +9,7 @@ import { createServer as createHttpServer } from 'node:http';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import type { Static } from '@sinclair/typebox';
@@ -1663,6 +1664,104 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
     },
   };
 }
+
+test('container bridge selects current and legacy entrypoints without replaying failed work', async (t) => {
+  const { build } = await import('esbuild');
+  for (const [layout, fail] of [
+    ['current', false],
+    ['legacy', false],
+    ['both', false],
+    ['both', true],
+    ['legacy', true],
+  ] as const) {
+    await t.test(`${layout}${fail ? ' fails after execution' : ''}`, async () => {
+      const root = await mkdtemp('/tmp/sk-entrypoint-');
+      await writeFile(join(root, 'package.json'), JSON.stringify({ type: 'module' }));
+      const starts = join(root, 'starts');
+      const socketPath = join(root, 'control.sock');
+      const fixture = workerComputer();
+      const worker = await startContainerBrowserWorker({
+        socketPath,
+        dataRoot: root,
+        createComputer: async () => fixture.computer,
+      });
+      let launched = 0;
+      const computer = createContainerBrowserComputer({
+        dataRoot: root,
+        container: 'otto-browser-entrypoint',
+        timeoutMs: 2000,
+        drainTimeoutMs: 100,
+        spawn: (command, args, options) => {
+          launched++;
+          assert.equal(command, 'docker');
+          assert.deepEqual(args.slice(0, 5), [
+            'exec',
+            '-i',
+            '--user',
+            'node',
+            'otto-browser-entrypoint',
+          ]);
+          assert.equal(options.shell, false);
+          return spawn(
+            args[5],
+            args.slice(6).map((value) => value.replaceAll('/app/', `${root}/`)),
+            {
+              ...options,
+              stdio: ['pipe', 'pipe', 'pipe'],
+            },
+          );
+        },
+      });
+      try {
+        for (const shape of layout === 'both' ? ['current', 'legacy'] : [layout]) {
+          const source = `
+import { appendFileSync } from 'node:fs';
+import { runBrowserBridge } from ${JSON.stringify(fileURLToPath(new URL('../src/providers/container-browser/bridge.ts', import.meta.url)))};
+appendFileSync(${JSON.stringify(starts)}, ${JSON.stringify(shape + '\n')});
+const code: number = await runBrowserBridge({input:process.stdin,output:process.stdout,socketPath:${JSON.stringify(socketPath)}});
+process.exitCode = ${fail ? '1' : 'code'};
+process.stdin.destroy();
+`;
+          const path = join(
+            root,
+            shape === 'current' ? 'bridge.mjs' : 'src/providers/container-browser/bridge.ts',
+          );
+          if (shape === 'current') {
+            const bundled = await build({
+              stdin: { contents: source, loader: 'ts', resolveDir: process.cwd() },
+              bundle: true,
+              platform: 'node',
+              format: 'esm',
+              define: {
+                'import.meta.url': JSON.stringify(
+                  new URL('../src/providers/container-browser/bridge.ts', import.meta.url).href,
+                ),
+              },
+              write: false,
+            });
+            await writeFile(path, bundled.outputFiles[0].contents);
+          } else {
+            await mkdir(join(root, 'src/providers/container-browser'), { recursive: true });
+            await writeFile(path, source);
+          }
+        }
+        const action = computer.act('entrypoint', { action: 'snapshot' });
+        if (fail) await assert.rejects(action, /did not finish safely/);
+        else assert.equal((await action).text, 'Synthetic page');
+        assert.equal(launched, 1);
+        assert.equal(
+          await readFile(starts, 'utf8'),
+          `${layout === 'legacy' ? 'legacy' : 'current'}\n`,
+        );
+        assert.equal(fixture.calls.filter((call) => call.method === 'act').length, 1);
+      } finally {
+        await computer.dispose().catch(() => {});
+        await worker.close();
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
 
 test('a live view acknowledges applied input or fails', { timeout: 10_000 }, async (t) => {
   const inputs: unknown[] = [];
