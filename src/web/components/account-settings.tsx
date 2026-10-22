@@ -629,7 +629,7 @@ export function AccountSettings({
                     </Button>
                   )}
                 </section>
-                <YourComputer />
+                {open && <YourComputer />}
               </>
             )}
             {tab === 'Memory' && (

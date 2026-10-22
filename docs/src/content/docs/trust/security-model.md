@@ -39,15 +39,15 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 
 - Only your messages, a schedule's instruction, your standing instruction and your approvals carry authority. Pages, emails, files and tool results can't create permission.
 - App actions beyond reads and drafts need a review match against your request or your yes. See [Approvals](/trust/approvals/).
-- On [your computer](/use/your-computer/), every command, app opening and app action needs a review match or your yes. The first look or screenshot of a Mac app also needs that check. Native app control refuses known terminal and scripting apps, Passwords, Keychain Access, System Settings, nod itself and known macOS security-prompt apps. This uses a list of bundle IDs and names; unlisted apps may not be blocked.
+- On [your computer](/use/your-computer/), every command, app launch and app action needs a review match or your yes. Looking at or capturing a Mac app that isn't already allowed also needs that check. Native app control refuses known terminal and scripting apps, Passwords, Keychain Access, System Settings, nod itself and known macOS security-prompt apps. This uses a list of bundle IDs and names; unlisted apps may not be blocked.
 - A confirmation is bound to the exact action and arguments, and runs once.
 - Background work nod starts itself reads and drafts, and does only what your [standing instruction](/trust/approvals/#standing-instructions) asks. Anything else waits for your yes, and a payment always needs your approval.
 
 ### Secrets
 
-- No tool returns a saved password, code or card to the model.
+- Vault tools do not return saved passwords, codes or cards to the model.
 - nod is told never to ask for a password, code, card or API key in chat; it opens private entry instead. While a verification code is pending in the conversation that asked for it, a message that ends with its only 4–8 digit number (digits 0–9) is taken as the code, whatever the wording around it, and a message with a code-length number anywhere else is refused. While a card's security code is pending, only a code sent by itself or labeled CVV, CVC or security code, as in "my CVC is 123", is taken, and any other message with a 3- or 4-digit number is refused. A code sent as a reply to a closed request, or by itself until 10 minutes after nod starts on a newer message, is refused too. None of these reach the model. Digits in other scripts and any other secret you type into chat reach the model.
-- Known secret values are removed from tool output and masked in nod's browser screenshots. Native app screenshots aren't masked.
+- Known secret values are removed from tool output and masked in nod's browser screenshots. Native app screenshots are unmasked and may show passwords, codes, cards or other private content to your model.
 - Provider keys never enter the workspace, the browser or a prompt.
 
 ### Browser
