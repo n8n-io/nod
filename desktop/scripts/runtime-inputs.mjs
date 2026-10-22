@@ -11,6 +11,7 @@ const inputs = [
   'package.json',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
+  'patches',
   'desktop/pnpm-lock.yaml',
   'desktop/pnpm-workspace.yaml',
   'desktop/runtime/downloads.json',

@@ -23,7 +23,13 @@ export function telegramState(setup: ChannelSetupSummary | undefined) {
   };
 }
 
-export function useChannelSettings({ watchTelegram }: { watchTelegram: boolean }) {
+export function useChannelSettings({
+  watchTelegram,
+  watchWhatsApp = false,
+}: {
+  watchTelegram: boolean;
+  watchWhatsApp?: boolean;
+}) {
   const [data, setData] = useState<ChannelResponse | null>(null);
   const [settings, setSettings] = useState<ChannelSettings | null>(null);
   const [error, setError] = useState('');
@@ -34,7 +40,10 @@ export function useChannelSettings({ watchTelegram }: { watchTelegram: boolean }
   const request = useRef<AbortController | null>(null);
   const action = useRef<AbortController | null>(null);
   const telegram = settings?.channels.find((item) => item.provider === 'telegram');
-  const waiting = watchTelegram && telegramState(telegram).waiting;
+  const whatsapp = settings?.channels.find((item) => item.provider === 'whatsapp');
+  const waiting =
+    (watchTelegram && telegramState(telegram).waiting) ||
+    (watchWhatsApp && whatsapp?.enabled && whatsapp.mode === 'linked');
 
   async function load() {
     request.current?.abort();

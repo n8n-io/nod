@@ -39,6 +39,7 @@
     "@fastify/static": "^10.1.5",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@sinclair/typebox": "^0.34.41",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "agent-browser": "0.39.1",
     "chat": "^4.42.0",
     "dotenv": "^18.0.8",

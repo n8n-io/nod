@@ -180,6 +180,98 @@ test(
         200,
       );
       assert.deepEqual(await settings.environment(), { TELEGRAM_ENABLED: 'false' });
+      const linkedApp = Fastify();
+      let link = {
+        state: 'awaiting_scan' as import('../src/shared/contracts.ts').ChannelLinkStatus['state'],
+        pairingId: randomUUID(),
+        qr: 'synthetic-private-qr',
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+      };
+      let unlinks = 0;
+      const unlink = async () => {
+        if (link.state !== 'logged_out') unlinks++;
+        link = { ...link, state: 'logged_out' };
+      };
+      const linked = await createChannelSettings(pool, {
+        ownerId: 'local-development',
+        keyStore: options.keyStore,
+        verifier: createChatSdkSetupVerifier({
+          fetch: async () => {
+            throw new Error('No network for QR setup.');
+          },
+        }),
+        apply: async (environment) => {
+          applied = environment;
+          if (environment.WHATSAPP_ENABLED === 'true' && link.state === 'logged_out')
+            link = { ...link, state: 'awaiting_scan', pairingId: randomUUID() };
+        },
+        linkStatus: async () => link,
+        unlink,
+        cancelPairing: async (id) => {
+          if (id !== link.pairingId || link.state === 'connected') return false;
+          await unlink();
+          return true;
+        },
+      });
+      linked.registerRoutes(linkedApp);
+      try {
+        const save = (payload: object) =>
+          linkedApp.inject({ method: 'PUT', url: '/api/channel-settings/whatsapp', payload });
+        assert.equal((await save({ mode: 'bot', policyConfirmed: true })).statusCode, 400);
+        assert.equal(
+          (await save({ mode: 'bot', allowedNumber: '34600000000', policyConfirmed: false }))
+            .statusCode,
+          400,
+        );
+        assert.equal(
+          (await save({ mode: 'bot', allowedNumber: '34600000000', policyConfirmed: true }))
+            .statusCode,
+          200,
+        );
+        assert.equal(applied.WHATSAPP_MODE, 'bot');
+        const qr = await linkedApp.inject('/api/channel-settings/whatsapp/pairing');
+        assert.equal(qr.headers['cache-control'], 'no-store');
+        assert.equal(qr.json().qr, link.qr);
+        const metadata = await linkedApp.inject('/api/channel-settings');
+        assert.doesNotMatch(metadata.body, /synthetic-private-qr|pairingId/);
+        assert.doesNotMatch(
+          JSON.stringify((await pool.query('SELECT * FROM channel_settings')).rows),
+          /synthetic-private-qr|34600000000/,
+        );
+        const cancel = (pairingId: string) =>
+          linkedApp.inject({
+            method: 'DELETE',
+            url: '/api/channel-settings/whatsapp/pairing',
+            payload: { pairingId },
+          });
+        link.state = 'connected';
+        assert.equal((await cancel(link.pairingId)).json().channel.enabled, true);
+        assert.equal(unlinks, 0);
+        const oldId = link.pairingId;
+        assert.equal(
+          (
+            await linkedApp.inject({
+              method: 'POST',
+              url: '/api/channel-settings/whatsapp/pairing',
+              payload: {},
+            })
+          ).statusCode,
+          200,
+        );
+        assert.notEqual(link.pairingId, oldId);
+        assert.equal((await cancel(oldId)).json().channel.enabled, true);
+        assert.equal((await cancel(link.pairingId)).json().channel.enabled, false);
+        assert.equal(unlinks, 2);
+        assert.equal(
+          (await pool.query("SELECT ciphertext FROM channel_settings WHERE provider='whatsapp'"))
+            .rows[0].ciphertext,
+          null,
+        );
+        const foreign = await createChannelSettings(pool, { ownerId: 'other-owner', ...options });
+        assert.deepEqual((await foreign.status()).channels, []);
+      } finally {
+        await linkedApp.close();
+      }
       assert.equal(removals, 1);
       const attempts = registrations.length;
       settings = await createChannelSettings(pool, { ...options, ownerId: 'local-development' });
@@ -366,7 +458,7 @@ test(
   },
 );
 
-async function outboxFixture(t: TestContext, max?: number) {
+async function outboxFixture(t: TestContext, max?: number, provider = 'telegram') {
   const schema = `test_channel_outbox_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -387,7 +479,7 @@ async function outboxFixture(t: TestContext, max?: number) {
   const transport: MessagingTransport = {
     channels: [
       {
-        id: 'telegram',
+        id: provider,
         status: 'configured',
         missing: [],
         accountId: 'bot',
@@ -421,7 +513,7 @@ async function outboxFixture(t: TestContext, max?: number) {
     replyToMessageId?: string,
   ) => {
     incoming.push({
-      channelId: 'telegram',
+      channelId: provider,
       accountId: 'bot',
       senderId,
       messageId,
@@ -434,7 +526,7 @@ async function outboxFixture(t: TestContext, max?: number) {
   const turnOf = async (messageId: string) =>
     (
       await pool.query('SELECT turn_id,channel FROM channel_inbox WHERE source_id=$1', [
-        `channel:telegram:bot:${messageId}`,
+        `channel:${provider}:bot:${messageId}`,
       ])
     ).rows[0] as { turn_id: string; channel: string };
   const reply = async (turnId: string, text: string, id: string, offsetSeconds: number) => {
@@ -777,64 +869,69 @@ test(
   },
 );
 
-test(
-  'Telegram task commands keep native reply targets, send receipts once and do not start a model turn',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
-    const anchor = randomUUID();
-    const calls: Array<{ command: string; target?: string; hasReply?: boolean }> = [];
-    let commits = 0;
-    const channels = await create({
-      taskCommand: async (_client, command, target, hasReply) => {
-        calls.push({ command, target, hasReply });
-        return {
-          threadId,
-          replies: [{ text: 'Fixture task status', replyToMessageId: target }],
-          afterCommit: async () => {
-            assert.equal(
-              (await pool.query("SELECT state FROM channel_inbox WHERE text='/stop'")).rows[0]
-                .state,
-              'submitted',
-            );
-            commits++;
-          },
-        };
-      },
-    });
-    try {
-      receive('111', 'initial', 'chat-a');
-      await channels.drain();
-      await reply((await turnOf('initial')).turn_id, 'Task started', anchor, 0);
-      await channels.drain();
-      receive('111', 'stop-task', 'chat-a', '/stop', 'provider-1-file');
-      await channels.drain();
-      assert.deepEqual(calls, [{ command: 'stop', target: anchor, hasReply: true }]);
-      assert.equal((await turnOf('stop-task')).turn_id, null);
-      assert.equal(posts.at(-1)!.replyToMessageId, 'provider-1');
-      assert.equal(
-        (
-          await pool.query(
-            "SELECT m.delivered_channel=i.channel AS same_channel FROM messages m JOIN channel_outbox o ON o.message_id=m.id JOIN channel_inbox i USING(source_id) WHERE i.text='/stop'",
-          )
-        ).rows[0].same_channel,
-        true,
+for (const provider of ['telegram', 'whatsapp'])
+  test(
+    `${provider} task commands keep native reply targets, send receipts once and do not start a model turn`,
+    { skip: !process.env.TEST_DATABASE_URL },
+    async (t) => {
+      const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(
+        t,
+        undefined,
+        provider,
       );
-      assert.equal(commits, 1);
-      await channels.drain();
-      assert.equal(commits, 1);
-      receive('222', 'foreign-stop', 'chat-a', '/stop', 'provider-1');
-      await channels.drain();
-      assert.deepEqual(calls.at(-1), { command: 'stop', target: undefined, hasReply: true });
-      receive('111', 'list-tasks', 'chat-a', '/tasks@fixture_bot');
-      await channels.drain();
-      assert.deepEqual(calls.at(-1), { command: 'tasks', target: undefined, hasReply: false });
-      assert.equal((await pool.query('SELECT count(*)::int AS n FROM turns')).rows[0].n, 1);
-    } finally {
-      await channels.close();
-    }
-  },
-);
+      const anchor = randomUUID();
+      const calls: Array<{ command: string; target?: string; hasReply?: boolean }> = [];
+      let commits = 0;
+      const channels = await create({
+        taskCommand: async (_client, command, target, hasReply) => {
+          calls.push({ command, target, hasReply });
+          return {
+            threadId,
+            replies: [{ text: 'Fixture task status', replyToMessageId: target }],
+            afterCommit: async () => {
+              assert.equal(
+                (await pool.query("SELECT state FROM channel_inbox WHERE text='/stop'")).rows[0]
+                  .state,
+                'submitted',
+              );
+              commits++;
+            },
+          };
+        },
+      });
+      try {
+        receive('111', 'initial', 'chat-a');
+        await channels.drain();
+        await reply((await turnOf('initial')).turn_id, 'Task started', anchor, 0);
+        await channels.drain();
+        receive('111', 'stop-task', 'chat-a', '/stop', 'provider-1-file');
+        await channels.drain();
+        assert.deepEqual(calls, [{ command: 'stop', target: anchor, hasReply: true }]);
+        assert.equal((await turnOf('stop-task')).turn_id, null);
+        assert.equal(posts.at(-1)!.replyToMessageId, 'provider-1');
+        assert.equal(
+          (
+            await pool.query(
+              "SELECT m.delivered_channel=i.channel AS same_channel FROM messages m JOIN channel_outbox o ON o.message_id=m.id JOIN channel_inbox i USING(source_id) WHERE i.text='/stop'",
+            )
+          ).rows[0].same_channel,
+          true,
+        );
+        assert.equal(commits, 1);
+        await channels.drain();
+        assert.equal(commits, 1);
+        receive('222', 'foreign-stop', 'chat-a', '/stop', 'provider-1');
+        await channels.drain();
+        assert.deepEqual(calls.at(-1), { command: 'stop', target: undefined, hasReply: true });
+        receive('111', 'list-tasks', 'chat-a', '/tasks@fixture_bot');
+        await channels.drain();
+        assert.deepEqual(calls.at(-1), { command: 'tasks', target: undefined, hasReply: false });
+        assert.equal((await pool.query('SELECT count(*)::int AS n FROM turns')).rows[0].n, 1);
+      } finally {
+        await channels.close();
+      }
+    },
+  );
 
 test(
   'Telegram webhook setup binds only the confirmed Start sender',
@@ -1156,11 +1253,12 @@ test(
         }
         assert.match(
           target,
-          /^https:\/\/api\.telegram\.org\/bot987:fixture-not-live\/send(?:Photo|Document|Video)$/,
+          /^https:\/\/api\.telegram\.org\/bot987:fixture-not-live\/send(?:Photo|Document|Video|Voice)$/,
         );
         assert.ok(init?.body instanceof FormData);
         const body = init.body;
-        const media = body.get('photo') ?? body.get('document') ?? body.get('video');
+        const media =
+          body.get('photo') ?? body.get('document') ?? body.get('video') ?? body.get('voice');
         assert.ok(media instanceof File);
         const method = target.split('/').at(-1)!;
         sent.push({
@@ -1305,7 +1403,37 @@ test(
       await channels.drain();
       assert.equal(sent.length, 2);
 
+      const voiceBytes = Buffer.from('synthetic Ogg voice fixture');
+      const voice = await storeArtifact(voiceBytes, 'reply.ogg', 'audio/ogg', threadId);
+      filePaths.push(join(dataRoot, 'artifacts', voice.id));
+      const voiceReply = await addReply(turnId, [voice]);
+      await channels.drain();
+      assert.equal(sent.at(-1)!.method, 'sendVoice');
+      assert.equal(sent.at(-1)!.name, 'reply.ogg');
+      assert.deepEqual(Buffer.from(sent.at(-1)!.file), voiceBytes);
+      assert.equal((await state(voiceReply)).state, 'sent');
+      assert.deepEqual(
+        (
+          await pool.query('SELECT provider_message_ids FROM channel_outbox WHERE message_id=$1', [
+            voiceReply,
+          ])
+        ).rows[0].provider_message_ids.at(-1),
+        '123456:103',
+      );
+
       failDocument = true;
+      const captionedImage = await addReply(turnId, [image], '**Image result**');
+      const beforeCaption = texts.length;
+      await channels.drain();
+      assert.ok(sent.at(-1)!.caption.trim());
+      assert.equal(texts.length, beforeCaption);
+      assert.equal((await state(captionedImage)).state, 'sent');
+      const captionFailure = await addReply(turnId, [document], 'Document result');
+      await channels.drain();
+      assert.equal((await state(captionFailure)).state, 'uncertain');
+      const captionAttempts = sent.length;
+      await channels.drain();
+      assert.equal(sent.length, captionAttempts);
       const partial = await addReply(turnId, [image, document]);
       await channels.drain();
       assert.equal((await state(partial)).state, 'sent');

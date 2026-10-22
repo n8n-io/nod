@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
@@ -11,6 +14,17 @@ import { locksTable } from '../src/server/locks.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
+import { createWhatsAppLinkedTransport } from '../src/providers/chat-sdk/whatsapp.ts';
+import { createChannelSessionStore } from '../src/server/channel-session.ts';
+import { createChannelMedia } from '../src/server/channel-media.ts';
+import { createSpeech } from '../src/server/speech.ts';
+import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
+import { createArtifactService } from '../src/server/artifacts.ts';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Artifact } from '../src/shared/contracts.ts';
+import type { InboundMessage } from '../src/ports/messaging.ts';
 
 const attachment = (name: string, mimeType: string, text: string) => ({
   name,
@@ -32,6 +46,600 @@ const fixtureEnv = {
   WHATSAPP_ALLOWED_NUMBER: '351910000000',
   WHATSAPP_POLICY_CONFIRMED: 'true',
 };
+
+test('Signal session changes never write key material to the process console', (t) => {
+  const require = createRequire(import.meta.url);
+  const { SessionRecord } = require('libsignal');
+  const output: unknown[][] = [];
+  for (const method of ['info', 'warn', 'error', 'log'] as const)
+    t.mock.method(console, method, (...args: unknown[]) => {
+      output.push(args);
+    });
+  const record = new SessionRecord();
+  const entry = SessionRecord.createEntry();
+  entry.indexInfo = { closed: -1, baseKey: Buffer.from('synthetic-private-session-key') };
+  record.closeSession(entry);
+  record.openSession(entry);
+  assert.equal(entry.indexInfo.closed, -1);
+  assert.deepEqual(output, []);
+});
+
+test(
+  'WhatsApp links privately, admits only its owner, fences echoes across restart, and reconnects without repeating sends',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_whatsapp_link_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+    const key = Buffer.alloc(32, 7);
+    try {
+      for (const mode of ['bot', 'self-chat'] as const)
+        await t.test(mode, async () => {
+          type Options = Parameters<typeof createWhatsAppLinkedTransport>[0];
+          type Factory = NonNullable<Options['createSocket']>;
+          const sockets: { events: EventEmitter; config: Parameters<Factory>[0] }[] = [];
+          const sent: {
+            jid: string;
+            content: Record<string, unknown>;
+            id: string;
+            quoted: unknown;
+          }[] = [];
+          const collected: InboundMessage[] = [];
+          const reacted: string[] = [];
+          let downloads = 0;
+          let logouts = 0;
+          let failSend = false;
+          let failClear = false;
+          const own = mode === 'self-chat' ? '12345678' : '99999999';
+          const owner = '12345678';
+          const accountId = `linked:${own}`;
+          const jid = `${owner}@s.whatsapp.net`;
+          const store = createChannelSessionStore({ pool, ownerId: `fixture-${mode}`, keyStore });
+          const createSocket: Factory = (config) => {
+            const events = new EventEmitter();
+            sockets.push({ events, config });
+            return {
+              ev: events,
+              user: { id: `${own}:1@s.whatsapp.net`, name: 'Fixture' },
+              signalRepository: {
+                lidMapping: {
+                  getPNForLID: async (lid: string) => (lid === '55555555@lid' ? jid : null),
+                },
+              },
+              end: () => {},
+              logout: async () => {
+                logouts++;
+              },
+              sendPresenceUpdate: async () => {},
+              sendMessage: async (
+                destination: string,
+                content: Record<string, unknown>,
+                input: { messageId: string; quoted?: unknown },
+              ) => {
+                sent.push({ jid: destination, content, id: input.messageId, quoted: input.quoted });
+                if (failSend) throw new Error('The provider may have accepted this message.');
+                return { key: { id: input.messageId } };
+              },
+            } as unknown as ReturnType<Factory>;
+          };
+          const download = (async () => {
+            downloads++;
+            const stream = new PassThrough();
+            stream.end(Buffer.from('synthetic image'));
+            return stream;
+          }) as NonNullable<Options['download']>;
+          const open = () =>
+            createWhatsAppLinkedTransport({
+              mode,
+              allowedNumber: owner,
+              store: {
+                async open() {
+                  const session = await store.open();
+                  return {
+                    ...session,
+                    async clear() {
+                      if (failClear) {
+                        failClear = false;
+                        throw new Error('Synthetic key deletion failure.');
+                      }
+                      await session.clear();
+                    },
+                  };
+                },
+              },
+              createSocket,
+              download,
+            });
+          let transport = open();
+          try {
+            const initial = await transport.pairing!();
+            assert.ok(initial.pairingId);
+            assert.equal(sockets[0].config.logger?.level, 'silent');
+            assert.equal(sockets[0].config.maxMsgRetryCount, 0);
+            assert.equal(sockets[0].config.shouldSyncHistoryMessage?.({}), false);
+            sockets[0].events.emit('connection.update', { qr: 'synthetic-qr' });
+            assert.equal((await transport.pairing!()).qr, 'synthetic-qr');
+            assert.equal(await transport.cancelPairing!('another-setup'), false);
+            const me = { id: `${own}:1@s.whatsapp.net`, name: 'Fixture' };
+            sockets[0].events.emit('creds.update', { me, registered: true });
+            sockets[0].events.emit('connection.update', { connection: 'open' });
+            assert.equal((await transport.pairing!()).qr, undefined);
+            assert.equal(await transport.cancelPairing!(initial.pairingId!), false);
+            await sockets[0].config.auth.keys.set({
+              session: { fixture: Uint8Array.from([1, 2, 3]) },
+            });
+            const envelope = (id: string, remoteJid = jid, fromMe = mode === 'self-chat') => ({
+              key: { id, remoteJid, fromMe },
+              messageTimestamp: Math.floor(Date.now() / 1000),
+              message: { conversation: 'Fixture request' },
+            });
+            sockets[0].events.emit('messages.upsert', {
+              type: 'notify',
+              messages: [
+                envelope('owner'),
+                envelope('intruder', '87654321@s.whatsapp.net', false),
+                envelope('group', '12345678@g.us'),
+                { ...envelope('old'), messageTimestamp: Math.floor(Date.now() / 1000) - 3600 },
+                {
+                  ...envelope('image'),
+                  message: {
+                    imageMessage: {
+                      caption: 'Inspect this image',
+                      mimetype: 'image/jpeg',
+                      fileLength: 15,
+                      url: 'https://mmg.whatsapp.net/fixture',
+                    },
+                  },
+                },
+                {
+                  ...envelope('reaction'),
+                  message: { reactionMessage: { key: { id: 'task-prompt' }, text: '👍' } },
+                },
+                {
+                  ...envelope('quoted'),
+                  message: {
+                    extendedTextMessage: {
+                      text: 'Continue this task',
+                      contextInfo: { stanzaId: 'task-prompt' },
+                    },
+                  },
+                },
+              ],
+            });
+            sockets[0].events.emit('messages.upsert', {
+              type: 'append',
+              requestId: 'history-request',
+              messages: [envelope('history')],
+            });
+            await transport.poll!(
+              async (message) => {
+                collected.push(message);
+              },
+              undefined,
+              async (reaction) => {
+                reacted.push(reaction.messageId);
+              },
+            );
+            assert.deepEqual(
+              collected.map((message) => message.messageId),
+              ['owner', 'image', 'quoted'],
+            );
+            assert.equal(collected[2].replyToMessageId, 'task-prompt');
+            assert.deepEqual(reacted, ['task-prompt']);
+            assert.equal(downloads, 0);
+            assert.deepEqual(
+              Buffer.from(await collected[1].attachments![0].read()),
+              Buffer.from('synthetic image'),
+            );
+            assert.equal(downloads, 1);
+            sockets[0].events.emit('messages.upsert', {
+              type: 'notify',
+              messages: [
+                {
+                  ...envelope('bad-media'),
+                  message: {
+                    imageMessage: { mimetype: 'image/jpeg', url: 'http://127.0.0.1/private' },
+                  },
+                },
+              ],
+            });
+            await transport.poll!(async (message) => {
+              collected.push(message);
+            });
+            await assert.rejects(collected.at(-1)!.attachments![0].read(), /address/);
+            assert.equal(downloads, 1);
+            const result = await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: '**Task complete**',
+              replyToMessageId: 'task-prompt',
+              replyToText: 'Fixture task question',
+              attachments: [attachment('reply.ogg', 'audio/ogg', 'synthetic voice')],
+            });
+            assert.equal(sent[0].content.text, '*Task complete*');
+            assert.equal(sent[1].content.ptt, true);
+            assert.deepEqual(
+              result.ids,
+              sent.map((message) => message.id),
+            );
+            assert.equal(
+              (sent[0].quoted as { message: { conversation: string } }).message.conversation,
+              'Fixture task question',
+            );
+            const beforeImage = sent.length;
+            const imageReply = await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: '**Image result**',
+              attachments: [attachment('result.png', 'image/png', 'synthetic image')],
+            });
+            assert.equal(sent.length, beforeImage + 1);
+            assert.equal(sent.at(-1)!.content.caption, '*Image result*');
+            assert.equal(sent.at(-1)!.content.text, undefined);
+            assert.deepEqual(imageReply.ids, [sent.at(-1)!.id]);
+            failSend = true;
+            await assert.rejects(
+              transport.post({
+                channelId: 'whatsapp',
+                accountId,
+                threadId: jid,
+                text: 'Uncertain fixture reply',
+              }),
+            );
+            const uncertainId = sent.at(-1)!.id;
+            failSend = false;
+            await transport.close();
+            await assert.rejects(
+              Promise.resolve(
+                sockets[0].config.auth.keys.set({ session: { fixture: Uint8Array.from([9]) } }),
+              ),
+            );
+            transport = open();
+            await transport.pairing!();
+            const resumed = sockets.at(-1)!;
+            assert.deepEqual(
+              Buffer.from((await resumed.config.auth.keys.get('session', ['fixture'])).fixture),
+              Buffer.from([1, 2, 3]),
+            );
+            resumed.events.emit('connection.update', { connection: 'open' });
+            const beforeEcho = collected.length;
+            resumed.events.emit('messages.upsert', {
+              type: 'notify',
+              messages: [envelope(uncertainId), envelope(result.id)],
+            });
+            await transport.poll!(async (message) => {
+              collected.push(message);
+            });
+            assert.equal(collected.length, beforeEcho);
+            const beforeDisconnect = sockets.length;
+            resumed.events.emit('connection.update', {
+              connection: 'close',
+              lastDisconnect: { error: { output: { statusCode: 428 } } },
+            });
+            assert.equal((await transport.pairing!()).state, 'disconnected');
+            const attempts = sent.length;
+            await assert.rejects(
+              transport.post({
+                channelId: 'whatsapp',
+                accountId,
+                threadId: jid,
+                text: 'Wait for connection',
+              }),
+            );
+            const deadline = Date.now() + 5000;
+            while (sockets.length === beforeDisconnect && Date.now() < deadline)
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            assert.ok(sockets.length > beforeDisconnect);
+            sockets.at(-1)!.events.emit('connection.update', { connection: 'open' });
+            assert.equal(sent.length, attempts);
+            assert.equal((await transport.pairing!()).state, 'connected');
+            failClear = true;
+            await assert.rejects(transport.unlink!(), /key deletion failure/);
+            assert.equal((await transport.pairing!()).state, 'failed');
+            assert.equal(transport.channels[0].available, false);
+            await transport.unlink!();
+            await transport.unlink!();
+            assert.equal(logouts, 1);
+            assert.equal(
+              (
+                await pool.query(
+                  'SELECT count(*)::int AS n FROM channel_session_keys WHERE owner_id=$1',
+                  [`fixture-${mode}`],
+                )
+              ).rows[0].n,
+              0,
+            );
+            assert.equal((await transport.pairing!()).state, 'logged_out');
+          } finally {
+            await transport.close();
+          }
+        });
+    } finally {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test('Telegram media keeps native replies and checks the sender before any download', async () => {
+  const bytes = Buffer.from('synthetic image bytes');
+  const requests: string[] = [];
+  let filePath = 'photos/fixture.jpg';
+  const transport = createChatSdkTransport({} as pg.Pool, fixtureEnv, {
+    fetch: async (input, init) => {
+      requests.push(String(input));
+      if (String(input).endsWith('/getFile')) {
+        assert.equal(JSON.parse(String(init?.body)).file_id, 'fixture-image');
+        return Response.json({
+          ok: true,
+          result: { file_path: filePath, file_size: bytes.length },
+        });
+      }
+      assert.equal(
+        String(input),
+        'https://api.telegram.org/file/bot987:fixture-not-live/photos/fixture.jpg',
+      );
+      assert.equal(init?.redirect, 'error');
+      return new Response(bytes);
+    },
+  });
+  const receive = (message: object) =>
+    transport.receive({
+      channelId: 'telegram',
+      method: 'POST',
+      query: {},
+      headers: { 'x-telegram-bot-api-secret-token': fixtureEnv.TELEGRAM_WEBHOOK_SECRET_TOKEN },
+      body: Buffer.from(JSON.stringify({ update_id: 123, message })),
+    });
+  const message = {
+    message_id: 42,
+    date: Math.floor(Date.now() / 1000),
+    from: { id: 123456, is_bot: false, first_name: 'Fixture' },
+    chat: { id: 123456, type: 'private' },
+    caption: 'Read this image',
+    photo: [{ file_id: 'fixture-image', file_size: bytes.length }],
+    reply_to_message: { message_id: 41 },
+  };
+  const result = await receive(message);
+  assert.equal(result.messages?.length, 1);
+  assert.equal(result.messages[0].text, 'Read this image');
+  assert.equal(result.messages[0].replyToMessageId, '123456:41');
+  assert.equal(requests.length, 0);
+  assert.deepEqual(Buffer.from(await result.messages[0].attachments![0].read()), bytes);
+  requests.length = 0;
+  assert.equal(
+    (
+      await receive({
+        ...message,
+        from: { ...message.from, id: 654321 },
+        chat: { ...message.chat, id: 654321 },
+      })
+    ).messages?.length,
+    0,
+  );
+  assert.equal(
+    (await receive({ ...message, chat: { id: -123456, type: 'group' } })).messages?.length,
+    0,
+  );
+  assert.equal(requests.length, 0);
+  filePath = '../../private-fixture';
+  await assert.rejects(result.messages[0].attachments![0].read(), /unavailable/);
+  assert.equal(requests.length, 1);
+  requests.length = 0;
+  const oversized = await receive({
+    ...message,
+    photo: [{ file_id: 'fixture-image', file_size: 21 * 1024 * 1024 }],
+  });
+  await assert.rejects(oversized.messages![0].attachments![0].read(), /too large/);
+  assert.equal(requests.length, 0);
+  const voice = await receive({
+    ...message,
+    photo: undefined,
+    caption: undefined,
+    voice: { file_id: 'fixture-voice', file_size: 12 },
+  });
+  assert.equal(voice.messages![0].attachments![0].voice, true);
+  assert.equal(voice.messages![0].text, '');
+});
+
+test('speech uses a bounded transcription request and generates Ogg voice output without exposing credentials', async () => {
+  const bytes = Buffer.from('synthetic voice bytes');
+  const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  const provider = createOpenAISpeechProvider({
+    apiKey: 'fixture-never-live',
+    fetch: async (input, init) => {
+      if (String(input).endsWith('/transcriptions')) {
+        assert.ok(init?.body instanceof FormData);
+        assert.equal(init.body.get('model'), 'gpt-transcribe');
+        assert.equal(init.body.get('response_format'), 'json');
+        const file = init.body.get('file');
+        assert.ok(file instanceof File);
+        assert.deepEqual(Buffer.from(await file.arrayBuffer()), bytes);
+        return Response.json({
+          text: 'Read the attached image.',
+          usage: { type: 'duration', seconds: 60 },
+        });
+      }
+      assert.equal(JSON.parse(String(init?.body)).response_format, 'opus');
+      return new Response(bytes);
+    },
+  });
+  const speech = createSpeech({
+    ...provider,
+    transcribe: (audio, signal) =>
+      provider.transcribe!(audio, signal, (event) => usage.push(event)),
+    synthesize: (text, signal) => provider.synthesize(text, signal, (event) => usage.push(event)),
+  });
+  assert.equal(
+    await speech.transcribe({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }),
+    'Read the attached image.',
+  );
+  assert.deepEqual(await speech.synthesize('Fixture reply'), {
+    bytes,
+    mimeType: 'audio/ogg',
+    fileName: 'reply.ogg',
+  });
+  await assert.rejects(
+    speech.transcribe({ bytes: Buffer.alloc(1), mimeType: 'text/plain', name: 'voice.txt' }),
+  );
+  assert.equal(usage.length, 2);
+  assert.notEqual(usage[0].id, usage[1].id);
+  assert.equal(usage[0].costUsd, 0.0045);
+  assert.equal(usage[1].costUsd, null);
+  assert.doesNotMatch(
+    JSON.stringify(usage),
+    /fixture-never-live|Read the attached image|synthetic voice bytes/,
+  );
+});
+
+test(
+  'channel media persists owned files before acknowledgement, rejects other senders, and does not replay after restart',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_channel_receive_media_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const root = await mkdtemp(join(tmpdir(), 'nod-channel-media-'));
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+      await rm(root, { recursive: true, force: true });
+    });
+    const owner = 'fixture-owner';
+    const threadId = await createFixtureTables(pool, owner);
+    await pool.query(
+      'CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid,name text,mime_type text,size int,storage_path text)',
+    );
+    const artifacts = createArtifactService({ database: pool, ownerId: owner, localRoot: root });
+    let reads = 0;
+    let message: InboundMessage;
+    const submissions: { text: string; attachments: Artifact[] }[] = [];
+    const privateCodes: string[] = [];
+    const transport = (): MessagingTransport => ({
+      channels: [
+        {
+          id: 'telegram',
+          status: 'configured',
+          accountId: 'fixture-account',
+          allowedSenderIds: ['fixture-sender'],
+          missing: [],
+        },
+      ],
+      receive: async () => ({ status: 200, body: 'ok', messages: [message] }),
+      post: async () => ({ id: 'fixture-reply' }),
+      close: async () => {},
+    });
+    const open = async () => {
+      const app = Fastify();
+      const channels = await createChannels(pool, {
+        ownerId: owner,
+        transport: transport(),
+        intervalMs: 600_000,
+        subscribe: () => () => {},
+        media: createChannelMedia({ artifacts, speech: { transcribe: async () => '483729' } }),
+        activeThread: async () => ({ id: threadId }),
+        present: async () => 'Fixture media notice',
+        answer: async () => {
+          throw new Error('A file must not approve an action.');
+        },
+        acceptVerification: async (text) => {
+          privateCodes.push(text);
+          return { messageText: 'Code entered privately.' };
+        },
+        submit: async (text, sourceId, client, channel, _messageId, answer, _reply, files) => {
+          assert.equal(answer, undefined);
+          submissions.push({ text, attachments: files ?? [] });
+          return fixtureTurn(client, threadId, owner, channel, sourceId);
+        },
+      });
+      channels.registerRoutes(app);
+      return { app, channels };
+    };
+    let fixture = await open();
+    t.after(() => fixture.app.close());
+    const send = () =>
+      fixture.app.inject({ method: 'POST', url: '/api/webhooks/telegram', payload: {} });
+    const file = {
+      ...attachment('image.png', 'image/png', 'fixture image'),
+      read: async () => {
+        reads++;
+        return Buffer.from('fixture image');
+      },
+    };
+    message = {
+      channelId: 'telegram',
+      accountId: 'fixture-account',
+      senderId: 'intruder',
+      messageId: 'foreign',
+      threadId: 'fixture-chat',
+      text: '',
+      attachments: [file],
+      sentAt: new Date(),
+    };
+    await send();
+    assert.equal(reads, 0);
+    message = {
+      ...message,
+      senderId: 'fixture-sender',
+      messageId: 'owned-image',
+      text: 'Inspect this image',
+    };
+    assert.equal((await send()).statusCode, 200);
+    await fixture.channels.drain();
+    assert.equal(reads, 1);
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0].text, 'Inspect this image');
+    assert.equal(submissions[0].attachments.length, 1);
+    assert.deepEqual(
+      await artifacts.readArtifact(submissions[0].attachments[0].id),
+      Buffer.from('fixture image'),
+    );
+    await fixture.app.close();
+    fixture = await open();
+    await send();
+    await fixture.channels.drain();
+    assert.equal(reads, 1);
+    assert.equal(submissions.length, 1);
+    message = {
+      ...message,
+      messageId: 'private-voice',
+      text: '',
+      attachments: [{ ...file, name: 'voice.ogg', mimeType: 'audio/ogg', voice: true }],
+    };
+    await send();
+    await fixture.channels.drain();
+    assert.deepEqual(privateCodes, ['483729']);
+    assert.equal(submissions.length, 1);
+    assert.equal(
+      (await pool.query('SELECT count(*)::int AS count FROM artifacts')).rows[0].count,
+      1,
+    );
+    const receipt = (
+      await pool.query('SELECT text,attachments FROM channel_inbox WHERE source_id=$1', [
+        'channel:telegram:fixture-account:private-voice',
+      ])
+    ).rows[0];
+    assert.equal(receipt.text, 'Code entered privately.');
+    assert.deepEqual(receipt.attachments, []);
+    assert.equal(
+      JSON.stringify((await pool.query('SELECT text FROM channel_inbox')).rows).includes('483729'),
+      false,
+    );
+  },
+);
 
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`${locksTable};

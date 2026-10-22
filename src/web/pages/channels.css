@@ -2,6 +2,26 @@
   container-type: inline-size;
 }
 
+.channel-wizard-step > form {
+  display: grid;
+  gap: 20px;
+}
+
+fieldset.channel-requirements {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+fieldset.channel-requirements label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .channels-group + .channels-group {
   margin-top: 40px;
 }

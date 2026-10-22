@@ -7,6 +7,7 @@ import type { ExecutionScope } from '../shared/execution.ts';
 import type { ProviderUsageEvent, UsageTelemetry } from '../ports/provider-usage.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel } from '../ports/decisions.ts';
+import type { SpeechProvider } from '../ports/speech.ts';
 import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
@@ -276,6 +277,42 @@ export function createLedger({
     );
   }
 
+  function speech(base: SpeechProvider): SpeechProvider {
+    const report = (usage: ProviderUsageEvent) => {
+      record(usage);
+      activeExecution.getStore()?.onEvent({ type: 'provider_usage', usage });
+    };
+    return {
+      ...base,
+      async synthesize(text, signal, onUsage) {
+        if (await limitReached()) throw new Error(spendingLimitReached);
+        try {
+          return await base.synthesize(text, signal, (usage) => {
+            report(usage);
+            onUsage?.(usage);
+          });
+        } finally {
+          await flushUsage();
+        }
+      },
+      ...(base.transcribe
+        ? ({
+            async transcribe(audio, signal, onUsage) {
+              if (await limitReached()) throw new Error(spendingLimitReached);
+              try {
+                return await base.transcribe!(audio, signal, (usage) => {
+                  report(usage);
+                  onUsage?.(usage);
+                });
+              } finally {
+                await flushUsage();
+              }
+            },
+          } satisfies Pick<SpeechProvider, 'transcribe'>)
+        : {}),
+    };
+  }
+
   async function limits() {
     const row = (
       await pool.query(
@@ -474,6 +511,7 @@ export function createLedger({
     agent,
     curator,
     decisions,
+    speech,
     action,
     limitReached,
     checkIn,

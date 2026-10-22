@@ -8,6 +8,32 @@ export function createSpeech(provider: SpeechProvider) {
       throw Object.assign(new Error('Speech is not configured.'), { statusCode: 503 });
   }
   return {
+    async transcribe(
+      audio: { bytes: Uint8Array; mimeType: string; name: string },
+      signal?: AbortSignal,
+    ) {
+      available(signal);
+      if (!provider.transcribe) throw new Error('Voice transcription is not configured.');
+      if (
+        !audio.bytes.length ||
+        audio.bytes.length > 25 * 1024 * 1024 ||
+        !audio.mimeType.startsWith('audio/')
+      )
+        throw new Error('The voice message cannot be transcribed.');
+      try {
+        const text = z
+          .string()
+          .trim()
+          .min(1)
+          .max(100_000)
+          .parse(await provider.transcribe(audio, signal));
+        signal?.throwIfAborted();
+        return text;
+      } catch {
+        signal?.throwIfAborted();
+        throw new Error('Voice transcription failed.');
+      }
+    },
     async synthesize(input: string, signal?: AbortSignal): Promise<GeneratedAudio> {
       available(signal);
       const text = z.string().trim().min(1).max(4096).parse(input);

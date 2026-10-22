@@ -46,6 +46,8 @@ import { createOtlpTelemetry } from '../providers/otlp/telemetry.ts';
 import type { UsageTelemetry } from '../ports/provider-usage.ts';
 import { agentModels } from '../shared/model-defaults.ts';
 import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
+import { createWhatsAppLinkedTransport } from '../providers/chat-sdk/whatsapp.ts';
+import { combineMessagingTransports } from '../providers/chat-sdk/combined.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
@@ -90,6 +92,8 @@ import { localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
 import { createChannelSettings, initializeChannelSettings } from './channel-settings.ts';
+import { createChannelMedia } from './channel-media.ts';
+import { createChannelSessionStore } from './channel-session.ts';
 import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
 import { createAccountStore } from './account-store.ts';
 import { createModelTraces, type ModelTraceGate } from './traces.ts';
@@ -308,6 +312,7 @@ export function createDefaultAdapters(
     speech: createOpenAISpeechProvider({
       apiKey: env.OPENAI_API_KEY,
       speechModel: env.TTS_MODEL,
+      transcriptionModel: env.STT_MODEL,
       voice: env.TTS_VOICE,
     }),
     integrations,
@@ -319,7 +324,29 @@ export function createDefaultAdapters(
     decisions,
     messagingSetup: {
       verifier: createChatSdkSetupVerifier(),
-      create: (environment) => createChatSdkTransport(pool, { ...env, ...environment }),
+      create: (environment) => {
+        const configured = { ...env, ...environment };
+        const mode =
+          environment.WHATSAPP_MODE ??
+          (environment.WHATSAPP_ENABLED === 'true' && environment.WHATSAPP_ACCESS_TOKEN
+            ? 'cloud'
+            : configured.WHATSAPP_MODE);
+        if (
+          configured.WHATSAPP_ENABLED !== 'true' ||
+          configured.WHATSAPP_POLICY_CONFIRMED !== 'true' ||
+          (mode !== 'bot' && mode !== 'self-chat') ||
+          (mode === 'bot' && !/^\d{7,15}$/.test(configured.WHATSAPP_ALLOWED_NUMBER ?? ''))
+        )
+          return createChatSdkTransport(pool, configured);
+        return combineMessagingTransports(
+          createChatSdkTransport(pool, { ...configured, WHATSAPP_ENABLED: 'false' }),
+          createWhatsAppLinkedTransport({
+            mode,
+            allowedNumber: configured.WHATSAPP_ALLOWED_NUMBER,
+            store: createChannelSessionStore({ pool, ownerId, keyStore }),
+          }),
+        );
+      },
     },
     linkPreviews: createPublicLinkPreviewProvider(),
     feedback: createN8nFeedback({
@@ -537,7 +564,7 @@ async function initializeApplication(
       adapters.observe?.(turnId, event);
     },
   });
-  const speech = createSpeech(adapters.speech);
+  const speech = createSpeech(ledger.speech(adapters.speech));
   const memoryStore = createPostgresObjectStore({ database: pool, ownerId });
   await memoryStore.initialize();
   await importMemoryFile(memoryStore, join(dataRoot, 'objects', 'memory'));
@@ -1433,6 +1460,14 @@ async function initializeApplication(
         ownerId,
         keyStore: adapters.keyStore,
         verifier: setup.verifier,
+        linkStatus: async () => {
+          if (!channels) throw new Error('Messaging is not ready.');
+          return channels.pairing();
+        },
+        unlink: async () => {
+          await channels?.unlink();
+        },
+        cancelPairing: async (pairingId) => (await channels?.cancelPairing(pairingId)) ?? false,
         apply: async (environment) => {
           if (!channels) throw new Error('Messaging is not ready.');
           await channels.replaceTransport(setup.create(environment));
@@ -1452,6 +1487,7 @@ async function initializeApplication(
       ownerId,
       present: communication.present,
       resolveAttachments: artifacts.readThreadArtifacts,
+      media: createChannelMedia({ artifacts, speech }),
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
@@ -1513,9 +1549,18 @@ async function initializeApplication(
           events.off('event', onEvent);
         };
       },
-      submit: async (text, sourceId, client, channel, messageId, answer, replyToMessageId) =>
+      submit: async (
+        text,
+        sourceId,
+        client,
+        channel,
+        messageId,
+        answer,
+        replyToMessageId,
+        attachments,
+      ) =>
         (
-          await userMessages.submit(text, [], {
+          await userMessages.submit(text, attachments, {
             sourceId,
             channel,
             client,

@@ -7588,6 +7588,43 @@ test(
         taskUsd: null,
       });
       assert.equal(await ledger.checkIn(task, resumed), undefined);
+      const speechLedger = createLedger({ pool, ownerId: 'speech-owner' });
+      await pool.query(
+        "INSERT INTO spending_limits(owner_id,monthly_usd) VALUES('speech-owner',1)",
+      );
+      let transcriptionRequests = 0;
+      const speech = speechLedger.speech({
+        id: 'fixture',
+        configured: true,
+        async synthesize() {
+          throw new Error('Not used.');
+        },
+        async transcribe(_audio, _signal, report) {
+          transcriptionRequests++;
+          const usage = {
+            id: randomUUID(),
+            provider: 'fixture',
+            category: 'agent' as const,
+            operation: 'transcribe',
+            model: 'fixture',
+            status: 'succeeded' as const,
+            durationMs: 1,
+            costUsd: 0.6,
+          };
+          report?.(usage);
+          report?.(usage);
+          return 'Synthetic transcript';
+        },
+      });
+      const audio = { bytes: new Uint8Array([1]), mimeType: 'audio/ogg', name: 'voice.ogg' };
+      await speech.transcribe!(audio);
+      await speech.transcribe!(audio);
+      await assert.rejects(speech.transcribe!(audio), /spending limit was reached/);
+      assert.equal(transcriptionRequests, 2);
+      const billedSpeech = await pool.query(
+        "SELECT count(*)::int AS n,sum(cost_usd)::float8 AS spent FROM model_usage WHERE owner_id='speech-owner'",
+      );
+      assert.deepEqual(billedSpeech.rows[0], { n: 2, spent: 1.2 });
     } finally {
       await app.close();
       await pool.end();

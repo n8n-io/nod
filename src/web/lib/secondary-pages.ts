@@ -104,6 +104,21 @@ export function telegramIdentity(id: string, name?: string, username?: string) {
 
 export function channelLabel(setup: ChannelSetupSummary | undefined, configured: boolean) {
   if (!setup?.enabled) return configured ? 'Configuration present' : 'Not connected';
+  if (setup.mode === 'linked') {
+    const states = {
+      connecting: 'Connecting to WhatsApp',
+      awaiting_scan: 'Scan the QR code to finish setup',
+      connected:
+        setup.linkMode === 'self-chat'
+          ? 'Chat with nod in Message yourself'
+          : 'Only your selected number can message nod',
+      disconnected: 'Reconnecting to WhatsApp',
+      logged_out: 'Link the WhatsApp account again',
+      expired: 'QR setup expired',
+      failed: 'Connection needs attention',
+    };
+    return states[setup.connectionState ?? 'connecting'];
+  }
   if (setup.webhookStatus === 'registration_pending') return 'Connection needs a retry';
   if (setup.pairingExpiresAt) {
     if (Date.parse(setup.pairingExpiresAt) <= Date.now()) return 'Start link expired';

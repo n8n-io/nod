@@ -43,13 +43,14 @@ Keys set here become server-managed connections. They stay in server memory and 
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `LLM_PROVIDER`               | The provider of the first model choice: `openai`, `anthropic`, `openrouter` or `compatible`. A model you pick in the app takes priority. | `openai`                                                                                                           |
 | `LLM_MODEL`                  | The first model choice.                                                                                                                  | `gpt-6.1-sol`, `claude-opus-5-5` or `openai/gpt-6.1-sol` by provider, or the server's first model for `compatible` |
-| `OPENAI_API_KEY`             | Adds an OpenAI connection. It also turns on voice replies.                                                                               | Empty                                                                                                              |
+| `OPENAI_API_KEY`             | Adds an OpenAI connection. It also turns on voice transcription and voice replies.                                                       | Empty                                                                                                              |
 | `ANTHROPIC_API_KEY`          | Adds an Anthropic connection.                                                                                                            | Empty                                                                                                              |
 | `OPENROUTER_API_KEY`         | Adds an OpenRouter connection.                                                                                                           | Empty                                                                                                              |
 | `OPENAI_COMPATIBLE_BASE_URL` | Adds an [OpenAI-compatible server](/connect/local-models/), such as Ollama at `http://localhost:11434/v1`. Local nod only.               | Empty                                                                                                              |
 | `OPENAI_COMPATIBLE_API_KEY`  | The key for that server, if it needs one.                                                                                                | Empty                                                                                                              |
 | `TYPESAFE_API_KEY`           | Selects direct Jev for reading approval replies, regardless of the chat connection.                                                      | Empty                                                                                                              |
 | `TTS_MODEL`                  | The OpenAI speech model for voice replies.                                                                                               | `gpt-4o-mini-tts`                                                                                                  |
+| `STT_MODEL`                  | The OpenAI model for incoming voice messages.                                                                                            | `gpt-transcribe`                                                                                                   |
 | `TTS_VOICE`                  | The voice for voice replies. Not in `.env.example`.                                                                                      | `coral`                                                                                                            |
 
 Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an OpenRouter connection uses Jev through OpenRouter. Direct Anthropic, ChatGPT subscription and OpenAI-compatible connections use the selected chat model for this check. Your selected model still writes messages. See [Decision checks](/connect/models/#decision-checks) for billing, data routing, and failure behavior.
@@ -86,19 +87,22 @@ Saved credentials can't be read without it. Keep a copy somewhere safe, outside 
 
 Set up Telegram and WhatsApp in **Channels** instead. The app checks the account and saves the settings encrypted, and those override these variables. See [Channels](/use/channels/).
 
-| Variable                        | What it does                                                                             | Default |
-| ------------------------------- | ---------------------------------------------------------------------------------------- | ------- |
-| `TELEGRAM_ENABLED`              | `true` turns on Telegram.                                                                | `false` |
-| `TELEGRAM_BOT_TOKEN`            | The bot token from BotFather.                                                            | Empty   |
-| `TELEGRAM_WEBHOOK_SECRET_TOKEN` | The secret Telegram sends with each webhook call: 16 to 256 letters, digits, `_` or `-`. | Empty   |
-| `TELEGRAM_ALLOWED_USER_ID`      | The only Telegram user ID nod answers.                                                   | Empty   |
-| `WHATSAPP_ENABLED`              | `true` turns on WhatsApp.                                                                | `false` |
-| `WHATSAPP_POLICY_CONFIRMED`     | `true` confirms your use is allowed under the WhatsApp terms. Required.                  | `false` |
-| `WHATSAPP_ACCESS_TOKEN`         | The WhatsApp Cloud API access token from Meta.                                           | Empty   |
-| `WHATSAPP_APP_SECRET`           | The Meta app secret. nod uses it to check webhook signatures.                            | Empty   |
-| `WHATSAPP_PHONE_NUMBER_ID`      | The ID of the business sender number.                                                    | Empty   |
-| `WHATSAPP_VERIFY_TOKEN`         | The token Meta sends when it verifies the webhook.                                       | Empty   |
-| `WHATSAPP_ALLOWED_NUMBER`       | The only phone number nod answers, 7 to 15 digits.                                       | Empty   |
+| Variable                        | What it does                                                                                                                 | Default                                      |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `TELEGRAM_ENABLED`              | `true` turns on Telegram.                                                                                                    | `false`                                      |
+| `TELEGRAM_BOT_TOKEN`            | The bot token from BotFather.                                                                                                | Empty                                        |
+| `TELEGRAM_WEBHOOK_SECRET_TOKEN` | The secret Telegram sends with each webhook call: 16 to 256 letters, digits, `_` or `-`.                                     | Empty                                        |
+| `TELEGRAM_ALLOWED_USER_ID`      | The only Telegram user ID nod answers.                                                                                       | Empty                                        |
+| `WHATSAPP_ENABLED`              | `true` turns on WhatsApp.                                                                                                    | `false`                                      |
+| `WHATSAPP_MODE`                 | `bot` links a separate number. `self-chat` links your own number. `cloud` uses Meta Cloud API.                               | `bot` in `.env.example`; otherwise Cloud API |
+| `WHATSAPP_POLICY_CONFIRMED`     | `true` confirms your use is allowed under the WhatsApp terms. Required.                                                      | `false`                                      |
+| `WHATSAPP_ACCESS_TOKEN`         | The WhatsApp Cloud API access token from Meta.                                                                               | Empty                                        |
+| `WHATSAPP_APP_SECRET`           | The Meta app secret. nod uses it to check webhook signatures.                                                                | Empty                                        |
+| `WHATSAPP_PHONE_NUMBER_ID`      | The ID of the business sender number.                                                                                        | Empty                                        |
+| `WHATSAPP_VERIFY_TOKEN`         | The token Meta sends when it verifies the webhook.                                                                           | Empty                                        |
+| `WHATSAPP_ALLOWED_NUMBER`       | Your personal number, with country code, 7 to 15 digits. Required for `bot` and Cloud API. Self-chat uses the linked number. | Empty                                        |
+
+For QR setup, use **Channels** to scan the code. The `bot` and `self-chat` modes do not use the Meta access token, app secret, business phone number ID or webhook token. The saved device keys stay encrypted in the database. See [WhatsApp setup](/use/channels/#set-up-a-channel).
 
 ## Analytics and feedback
 

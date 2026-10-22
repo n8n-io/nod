@@ -15,6 +15,7 @@ import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 import { analyticsRoutes, createAnalytics } from '../src/server/analytics.ts';
 import { gunzipSync } from 'node:zlib';
+import { createChannelSessionStore } from '../src/server/channel-session.ts';
 
 test('analytics drops revoked owner queues while preserving another owner and rechecks dispatch consent', async (t) => {
   const received: { distinct_id: string; event: string }[] = [];
@@ -64,6 +65,68 @@ test('analytics drops revoked owner queues while preserving another owner and re
 });
 
 test(
+  'linked channel keys bind owner and slot, survive restart, and refuse stale writes and deletion',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `test_channel_keys_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+    const key = randomBytes(32);
+    const ownerStore = createChannelSessionStore({ pool, ownerId: 'fixture-owner', keyStore });
+    const foreignStore = createChannelSessionStore({ pool, ownerId: 'fixture-other', keyStore });
+    try {
+      const first = await ownerStore.open();
+      const other = await foreignStore.open();
+      await first.set({
+        creds: 'synthetic-owner-credentials',
+        'session:fixture': 'synthetic-session-key',
+      });
+      await other.set({ creds: 'synthetic-other-credentials' });
+      const ciphertext = (
+        await pool.query('SELECT owner_id,slot,ciphertext FROM channel_session_keys')
+      ).rows;
+      assert.equal(JSON.stringify(ciphertext).includes('synthetic-'), false);
+      assert.equal(await first.get('creds'), 'synthetic-owner-credentials');
+      assert.equal(await other.get('creds'), 'synthetic-other-credentials');
+      assert.equal(await other.get('session:fixture'), undefined);
+      const resumed = await ownerStore.open();
+      assert.equal(await resumed.get('creds'), 'synthetic-owner-credentials');
+      await assert.rejects(first.set({ creds: 'stale-write' }), /changed/);
+      await assert.rejects(first.clear(), /changed/);
+      await first.close();
+      assert.equal(await resumed.get('creds'), 'synthetic-owner-credentials');
+      await pool.query(
+        "UPDATE channel_session_keys SET ciphertext=(SELECT ciphertext FROM channel_session_keys WHERE owner_id='fixture-other' AND slot='creds') WHERE owner_id='fixture-owner' AND slot='creds'",
+      );
+      await assert.rejects(resumed.get('creds'));
+      await resumed.set({ creds: 'synthetic-owner-credentials' });
+      await pool.query(
+        "UPDATE channel_session_keys SET ciphertext=(SELECT ciphertext FROM channel_session_keys WHERE owner_id='fixture-owner' AND slot='creds') WHERE owner_id='fixture-owner' AND slot='session:fixture'",
+      );
+      await assert.rejects(resumed.get('session:fixture'));
+      await resumed.clear();
+      await assert.rejects(resumed.set({ creds: 'late-write' }), /closed/);
+      const fresh = await ownerStore.open();
+      assert.equal(await fresh.get('creds'), undefined);
+      assert.equal(await other.get('creds'), 'synthetic-other-credentials');
+      await assert.rejects(fresh.set({ creds: 'x'.repeat(1024 * 1024 + 1) }));
+      assert.equal(await fresh.get('creds'), undefined);
+      await fresh.close();
+      await other.close();
+    } finally {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
   'application loads encrypted channel setup, replaces transports, and continues replies within their channel',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 45000 },
   async (t) => {
@@ -80,10 +143,32 @@ test(
     process.env.PGBOSS_SCHEMA = bossSchema;
     process.env.NOD_DATA_ROOT = join(objects, 'runtime');
     const { pool } = await import('../src/server/db.ts');
-    const { createApplication } = await import('../src/server/composition.ts');
+    const { createApplication, createDefaultAdapters } =
+      await import('../src/server/composition.ts');
     const { dataRoot, port } = await import('../src/server/config.ts');
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+    const defaults = createDefaultAdapters({
+      WHATSAPP_ENABLED: 'true',
+      WHATSAPP_MODE: 'bot',
+      WHATSAPP_POLICY_CONFIRMED: 'true',
+      WHATSAPP_ALLOWED_NUMBER: '34600000000',
+    });
+    for (const mode of [undefined, 'cloud']) {
+      const cloud = await defaults.messagingSetup!.create({
+        WHATSAPP_ENABLED: 'true',
+        WHATSAPP_POLICY_CONFIRMED: 'true',
+        WHATSAPP_ALLOWED_NUMBER: '34600000000',
+        WHATSAPP_ACCESS_TOKEN: 'synthetic-meta-token',
+        WHATSAPP_APP_SECRET: 'a'.repeat(32),
+        WHATSAPP_PHONE_NUMBER_ID: '555000',
+        WHATSAPP_VERIFY_TOKEN: 'synthetic-verify-token',
+        ...(mode ? { WHATSAPP_MODE: mode } : {}),
+      });
+      assert.equal(cloud.pairing, undefined);
+      assert.equal(cloud.channels.find((item) => item.id === 'whatsapp')?.accountId, '555000');
+      await cloud.close();
+    }
     const verifier = {
       verify: async () => {
         return {
@@ -234,6 +319,26 @@ test(
         origin: headers.origin,
       }).register(application.app);
       await application.app.ready();
+      assert.equal(
+        (
+          await application.app.inject({
+            url: '/api/channel-settings/whatsapp/pairing',
+            headers: { host: headers.host },
+          })
+        ).statusCode,
+        401,
+      );
+      assert.equal(
+        (
+          await application.app.inject({
+            method: 'POST',
+            url: '/api/channel-settings/whatsapp/pairing',
+            headers: { ...headers, origin: 'https://attacker.example' },
+            payload: {},
+          })
+        ).statusCode,
+        403,
+      );
       for (const route of analyticsRoutes.keys()) {
         const [method, url] = route.split(' ');
         assert.ok(application.app.hasRoute({ method: method as 'GET', url }), route);

@@ -76,9 +76,9 @@ Mobile web uses the same compact previews. Open a preview to read the steps, rep
 
 ## Telegram without a task page
 
-Telegram shows each task as messages nod writes in your language. The first one says what it is starting. Questions, approval requests and the result reply to that message, so they stay linked to the task.
+Telegram and WhatsApp show each task as messages nod writes in your language. The first one says what it is starting. Questions, approval requests and the result reply to that message, so they stay linked to the task.
 
-Use Telegram's **Reply** control to send an update or answer to a task. Other messages go to the main chat. These commands answer from nod's task records, and nod words the reply:
+Use the chat app's **Reply** control to send an update or answer to a task. Other messages go to the main chat. These commands answer from nod's task records, and nod words the reply:
 
 | Command   | Result                                                                                                  |
 | --------- | ------------------------------------------------------------------------------------------------------- |
@@ -90,7 +90,7 @@ The task list sends one message per task. You can reply to that message, the tas
 
 A status message that shows a pending question keeps a link to that exact question. Your approval applies only to the saved action it shows. An old status message cannot approve a later action.
 
-Telegram and web use the same task record and saved session. Task commands do not grant permission for an outside action. Private sign-in and payment steps still use nod's private forms.
+Telegram, WhatsApp and web use the same task record and saved session. Task commands do not grant permission for an outside action. Private sign-in and payment steps still use nod's private forms.
 
 ## Statuses
 

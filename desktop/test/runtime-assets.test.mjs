@@ -2407,7 +2407,11 @@ test('runtime fingerprints cover dependencies and every source the images use, a
   await writeFile(lockPath, `${lockSource}\nsyntheticDependencyChange: true\n`);
   assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
   await writeFile(lockPath, lockSource);
-  for (const path of ['src/shared/public-address.ts', 'src/providers/docker/save-video.py']) {
+  for (const path of [
+    'src/shared/public-address.ts',
+    'src/providers/docker/save-video.py',
+    'patches/libsignal@6.0.0.patch',
+  ]) {
     const file = join(root, path);
     const source = await readFile(file, 'utf8');
     await writeFile(file, `${source}\n// synthetic runtime change\n`);

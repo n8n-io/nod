@@ -13,7 +13,7 @@ import type {
   MessagingWebhookResult,
 } from '../../ports/messaging.ts';
 import { telegramSecret, telegramUserId } from '../../ports/channel-settings.ts';
-import { telegramMessage, telegramPairing } from './telegram.ts';
+import { telegramMessage, telegramPairing, telegramAttachments } from './telegram.ts';
 
 type Environment = Record<string, string | undefined>;
 
@@ -140,6 +140,7 @@ export function createChatSdkTransport(
 ): MessagingTransport {
   const env = { ...environment };
   const request = options.fetch ?? fetch;
+  const mediaRequest = request;
   const configuration = channelConfiguration(env);
   const configured = (provider: string) =>
     configuration.some(
@@ -353,10 +354,24 @@ export function createChatSdkTransport(
         const parsed = telegramMessage.safeParse(update.success ? update.data.message : undefined);
         if (!parsed.success || String(parsed.data.from.id) !== String(parsed.data.chat.id))
           return accepted();
+        if (
+          env.TELEGRAM_ALLOWED_USER_ID &&
+          String(parsed.data.from.id) !== env.TELEGRAM_ALLOWED_USER_ID
+        )
+          return accepted();
+        const attachments = telegramAttachments(parsed.data, env.TELEGRAM_BOT_TOKEN!, mediaRequest);
+        const text = parsed.data.text || parsed.data.caption || '';
+        if (!text && !attachments.length) return accepted();
         const start = /^\/start(?:\s+(\S+))?$/.exec(parsed.data.text);
         if (env.TELEGRAM_ALLOWED_USER_ID && start) return accepted();
-        const { reply_to_message: replied, ...rawMessage } = parsed.data;
-        const message = telegram.parseMessage(rawMessage);
+        const replied = parsed.data.reply_to_message;
+        const message = telegram.parseMessage({
+          message_id: parsed.data.message_id,
+          date: parsed.data.date,
+          chat: parsed.data.chat,
+          from: parsed.data.from,
+          text,
+        });
         const replyId = replied
           ? telegram.parseMessage({
               message_id: replied.message_id,
@@ -380,7 +395,8 @@ export function createChatSdkTransport(
             messageId: message.id,
             replyToMessageId: replyId,
             threadId: message.threadId,
-            text: message.text,
+            text,
+            ...(attachments.length ? { attachments } : {}),
             sentAt: message.metadata.dateSent,
           },
         ]);
@@ -426,6 +442,36 @@ export function createChatSdkTransport(
           }
       return accepted(messages, reactions);
     },
+    async typing(input) {
+      if (
+        !input.active ||
+        input.channelId !== 'telegram' ||
+        !telegram ||
+        !channels.some(
+          (channel) =>
+            channel.id === input.channelId &&
+            channel.accountId === input.accountId &&
+            channel.status === 'configured',
+        )
+      )
+        return;
+      const target = telegram.decodeThreadId(input.threadId);
+      const response = await request(
+        `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendChatAction`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: target.chatId,
+            ...(target.messageThreadId ? { message_thread_id: target.messageThreadId } : {}),
+            action: 'typing',
+          }),
+          signal: AbortSignal.timeout(5000),
+          redirect: 'error',
+        },
+      );
+      if (!response.ok) throw new Error('Typing status is unavailable.');
+    },
     async react(input) {
       input.signal?.throwIfAborted();
       if (
@@ -470,24 +516,70 @@ export function createChatSdkTransport(
       await bot.initialize();
       const thread = bot.thread(input.threadId);
       const unsent = attachments.filter((file) => !file.size || file.size > telegramFileBytes);
+      const caption =
+        input.channelId === 'telegram' &&
+        attachments.length === 1 &&
+        !unsent.length &&
+        !attachments[0].mimeType.startsWith('audio/') &&
+        input.text.trim() &&
+        input.text.length <= 1024
+          ? input.text
+          : '';
       let id = '';
       const ids: string[] = [];
       const post = (message: Parameters<typeof thread.reply>[1]) =>
         input.replyToMessageId
           ? thread.reply(input.replyToMessageId, message)
           : thread.post(message);
-      for (const part of input.channelId === 'telegram' ? chunks(input.text) : [input.text]) {
+      for (const part of input.channelId === 'telegram'
+        ? chunks(caption ? '' : input.text)
+        : [input.text]) {
         const sent = await post({ markdown: part });
         id ||= sent.id;
         ids.push(sent.id);
       }
       for (const file of attachments) {
         if (unsent.includes(file)) continue;
+        if (input.channelId === 'telegram' && /^audio\/(ogg|mpeg|mp4)$/.test(file.mimeType)) {
+          const decoded = telegram!.decodeThreadId(input.threadId);
+          const body = new FormData();
+          body.set('chat_id', decoded.chatId);
+          if (decoded.messageThreadId)
+            body.set('message_thread_id', String(decoded.messageThreadId));
+          if (input.replyToMessageId)
+            body.set(
+              'reply_parameters',
+              JSON.stringify({ message_id: Number(input.replyToMessageId.split(':').at(-1)) }),
+            );
+          let bytes: Uint8Array;
+          try {
+            bytes = await file.read();
+          } catch {
+            unsent.push(file);
+            continue;
+          }
+          body.set('voice', new Blob([Uint8Array.from(bytes)], { type: file.mimeType }), file.name);
+          const response = await request(
+            `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendVoice`,
+            { method: 'POST', body, signal: AbortSignal.timeout(60_000), redirect: 'error' },
+          );
+          if (!response.ok) throw new Error('Voice delivery was not confirmed.');
+          const sent = z
+            .object({
+              ok: z.literal(true),
+              result: z.object({ message_id: z.number().int().positive() }),
+            })
+            .parse(await response.json());
+          const voiceId = `${decoded.chatId}:${sent.result.message_id}`;
+          id ||= voiceId;
+          ids.push(voiceId);
+          continue;
+        }
         await file
           .read()
           .then((bytes) =>
             post({
-              markdown: '',
+              markdown: caption,
               attachments: [
                 {
                   type:
@@ -511,6 +603,7 @@ export function createChatSdkTransport(
               ids.push(sent.id);
             },
             () => {
+              if (caption) throw new Error('Media delivery was not confirmed.');
               unsent.push(file);
             },
           );

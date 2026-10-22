@@ -6,5 +6,19 @@ export interface GeneratedAudio {
 export interface SpeechProvider {
   id: string;
   configured: boolean;
-  synthesize(text: string, signal?: AbortSignal): Promise<GeneratedAudio>;
+  synthesize(
+    text: string,
+    signal?: AbortSignal,
+    report?: (usage: ProviderUsageEvent) => void,
+  ): Promise<GeneratedAudio>;
+  transcribe?(
+    audio: {
+      bytes: Uint8Array;
+      mimeType: string;
+      name: string;
+    },
+    signal?: AbortSignal,
+    report?: (usage: ProviderUsageEvent) => void,
+  ): Promise<string>;
 }
+import type { ProviderUsageEvent } from './provider-usage.ts';

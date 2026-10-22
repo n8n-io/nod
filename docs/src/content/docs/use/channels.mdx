@@ -15,15 +15,15 @@ nod uses your conversation language for pairing notices and private-step guidanc
 
 ## Before you start
 
-|                     | Telegram                                 | WhatsApp                                                     |
-| ------------------- | ---------------------------------------- | ------------------------------------------------------------ |
-| You need            | A Telegram bot, made with BotFather      | A Meta app with the WhatsApp Cloud API and a business number |
-| Works on a laptop   | Yes. nod checks for new messages itself. | Needs a public HTTPS address that reaches nod                |
-| Who can message nod | Only the Telegram account you pair       | Only the number you enter                                    |
-| Files from nod      | Sent after the reply, up to 50 MB each   | Not sent. Open nod to get them.                              |
-| When nod can write  | Any time                                 | Only within 24 hours of your last message                    |
+|                     | Telegram                            | WhatsApp with a QR code                     |
+| ------------------- | ----------------------------------- | ------------------------------------------- |
+| You need            | A Telegram bot, made with BotFather | A registered WhatsApp account               |
+| Works on a laptop   | Yes                                 | Yes                                         |
+| Who can message nod | Only the Telegram account you pair  | Your personal number, or your own self-chat |
+| Files from nod      | Images, documents, video and audio  | Images, documents, video and audio          |
+| When nod can write  | While nod runs                      | While nod runs and WhatsApp is connected    |
 
-nod reads the text of your messages. To give nod a file, attach it in the nod app.
+The QR connection does not need a Meta developer account, an API token, or a public callback address. It uses Baileys, an unofficial WhatsApp client. WhatsApp can restrict the account or change how it connects. Check the WhatsApp terms before you connect.
 
 A long reply arrives as several messages. If a file doesn't arrive, open nod to get it. When the model can't write a required notice, that channel message stays blocked and isn't retried automatically.
 
@@ -51,19 +51,30 @@ If the link doesn't work for you, select **Enter your user ID instead** and use 
 
 <Steps>
 
-1. In **Before you begin**, check that you have a Meta app with WhatsApp, a business sender number and a public HTTPS callback. Confirm the WhatsApp terms.
-2. In **Choose the numbers**, enter the **Business phone number ID** from Meta and **Your WhatsApp number**, as digits without `+`.
-3. In **Verify your business app**, paste the **Business access token** and **Meta app secret**.
-4. In **Set up message delivery**, enter the **Public HTTPS callback** and choose a **Webhook verification token**. Select **Verify and save**.
-5. In Meta, enter the same callback URL and token, then subscribe the app to messages.
+1. Choose **Separate bot number** or **Use my own number**.
+2. For a bot number, register a second number in WhatsApp or the WhatsApp Business app. Enter your personal number in nod, with the country code and without `+` or spaces. Only your personal number can start work.
+3. Read the account risk and terms. Select **Show QR code**.
+4. On the phone for the account you will link, open **Settings → Linked Devices → Link a Device**. Scan the code in nod. A code expires after one minute. The setup expires after five minutes.
+5. For a bot number, message the linked number from your personal WhatsApp. For your own number, open **Message yourself** and write there.
 
 </Steps>
 
-This connects a business number, not your personal WhatsApp inbox.
+nod ignores groups, status updates, other senders and message history. In self-chat, nod ignores its own replies. Your other chats stay outside the nod conversation.
+
+Closing an unfinished setup cancels that setup. Once connected, closing the panel keeps WhatsApp connected. Select **Disconnect** to remove the saved link. You can also remove nod from **Linked Devices** on your phone. To get a new link after a sign-out, select **Finish setup**, then **Start again**.
+
+<details>
+<summary>Use the Meta Cloud API</summary>
+
+Select **Use Meta Cloud API instead** in the setup panel. You need a Meta app with WhatsApp, a business sender number and a public HTTPS callback. Enter the business phone number ID, your personal number, the business access token and the Meta app secret. Set a webhook verification token. Save the setup, then use the same callback and token in Meta and subscribe to messages.
+
+The Cloud API replies only within 24 hours of your last message. Its file support is limited: open nod to get files. The QR connection supports files directly.
 
 :::caution[Keep nod private]
 Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest of nod. The desktop app doesn't provide a public address, so WhatsApp suits nod running on a server.
 :::
+
+</details>
 
 </TabItem>
 </Tabs>
@@ -74,6 +85,28 @@ Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest o
 When you run nod from source, you can set the `TELEGRAM_*` and `WHATSAPP_*` values listed in `.env.example` and restart. The **Channels** page is easier, because it checks your details and pairs your account.
 
 </details>
+
+## Files and voice messages
+
+Send an image, document, video or audio file with your message. Captions stay with the file. Reply directly to a task message or its file to continue that task. A reply to a pending question goes to the session that asked it.
+
+nod accepts up to ten files per message, with a combined limit of 50 MB. Telegram's hosted file API limits each incoming file to 20 MB. A voice message has a 25 MB limit. nod checks the sender before it downloads a file. Files belong to your shared conversation workspace.
+
+Voice messages are sent to OpenAI for transcription. They need `OPENAI_API_KEY` in the server environment. `STT_MODEL` selects the transcription model; its default is `gpt-transcribe`. Without speech setup, nod asks you to send text. Text and file messages still work.
+
+Use text to approve an action. A file or voice attachment does not approve it.
+
+Ask nod for a voice reply to get a native voice note. `TTS_MODEL` and `TTS_VOICE` select the speech model and voice. The audio is generated by AI. Speech calls use the spending-limit check and have usage records. Where the API returns usage, nod calculates an API-price estimate. A speech response without usage is marked unpriced.
+
+nod sends files up to 50 MB each. Large or unavailable files stay available in nod. Long replies are split into messages. nod shows typing status while work runs.
+
+For a short reply with one image, video or document, the text is its caption. Longer replies, voice replies and replies with several files send the text in a separate message.
+
+## Connection and delivery
+
+nod saves the WhatsApp device keys encrypted in its database. The keys stay on the server. They do not enter the model, sandbox, analytics or chat. The QR code is available only in the private setup panel and is not saved in channel settings.
+
+After a restart or network loss, nod uses the saved link to connect again. Replies that have not started sending wait while WhatsApp is disconnected. A send with an unclear result is not repeated automatically. This prevents duplicate messages; check nod if a reply does not arrive.
 
 ## Private steps happen in the nod app
 
@@ -117,9 +150,9 @@ These commands prepare a report without starting a task. Your selected model wri
 | `/usage`  | This month's spending and app actions, with a PDF statement |
 | `/memory` | A short summary of what nod remembers, with the full export |
 
-Telegram receives the PDF and the export as documents. On WhatsApp, open nod to get them.
+Telegram and the WhatsApp QR connection receive the PDF and export as documents. With the WhatsApp Cloud API, open nod to get them.
 
-Telegram also has task controls. `/tasks` lists open tasks, with one message per task. Reply to a task message with `/status` to see its goal, steps and state, or `/stop` to stop only that task. `/stop` without a reply stops all active work and closes open tasks. Progress, questions and results stay linked to the same task. See [Track tasks](/use/tasks/#telegram-without-a-task-page).
+Both channels have task controls. `/tasks` lists open tasks, with one message per task. Reply to a task message with `/status` to see its goal, steps and state, or `/stop` to stop only that task. `/stop` without a reply stops all active work and closes open tasks. Progress, questions and results stay linked to the same task. See [Track tasks](/use/tasks/#telegram-without-a-task-page).
 
 ## Related resources
 

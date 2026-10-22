@@ -63,6 +63,10 @@ nod creates a random cryptographic identity for each installation and encrypts i
 
 You authorize each app, such as Gmail, with its provider. The Composio project key stays on the connection service. Your model keys stay encrypted on your installation. Provider keys never enter a prompt, nod's workspace or its browser.
 
+Incoming voice messages go to OpenAI for transcription when speech is configured, including when you use another provider for chat. Text for a voice reply also goes to OpenAI. The audio and transcript follow the same owned file and message rules as other channel content. See [Files and voice messages](/use/channels/#files-and-voice-messages).
+
+The WhatsApp QR connection links nod as a device on the account you select. nod stores its device credentials and Signal keys encrypted on your installation. The QR code stays in the private setup panel. Session recordings exclude that panel. Disconnect removes the saved device keys. Group messages and other chats do not enter the nod conversation.
+
 ## Your own telemetry
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` to send model request metadata to your own OpenTelemetry collector. Export is off when the variable is empty.
