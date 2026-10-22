@@ -116,12 +116,6 @@ export async function safeRemoteFetch(
       (incoming) => {
         if (incoming.statusCode && incoming.statusCode >= 300 && incoming.statusCode < 400) {
           incoming.destroy();
-          if (prepared.redirect === 'error') {
-            reject(
-              new Error('The server redirected the request, which this connection does not allow.'),
-            );
-            return;
-          }
           const location = incoming.headers.location;
           if (!location || redirects <= 0) {
             reject(new Error('The connection redirected too many times or without a location.'));
@@ -130,6 +124,14 @@ export async function safeRemoteFetch(
           const next = URL.parse(location, url);
           if (!next) {
             reject(new Error('The connection redirected to an invalid address.'));
+            return;
+          }
+          if (prepared.redirect === 'error' && next.origin !== url.origin) {
+            reject(
+              new Error(
+                'The server redirected the request to another address, which this connection does not allow.',
+              ),
+            );
             return;
           }
           const headers = new Headers(prepared.headers);
