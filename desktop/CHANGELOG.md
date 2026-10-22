@@ -2,6 +2,37 @@
 
 Releases from before the rename to nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.1.1 - 2026-10-22
+
+### Breaking changes
+
+- Use OpenAI's official Sign in with ChatGPT and soften safety claims. [#406](https://github.com/n8n-io/nod/pull/406) (a6e8c17)
+
+### Fixes
+
+- **desktop:** Open at login works on macOS. [#407](https://github.com/n8n-io/nod/pull/407) (5a1b3c9)
+- **onboarding:** Clip the sent answer while its row opens. [commit](https://github.com/n8n-io/nod/commit/ee121af4d233455ab5c1adb869bd1f759029905c) (ee121af)
+- **onboarding:** Grow the interview typing row open as well as closed. [commit](https://github.com/n8n-io/nod/commit/a2314fb19fb4fadcb00b11b02bf4af76b1db6296) (a2314fb)
+- **onboarding:** Smooth message reveals and tighten motion. [commit](https://github.com/n8n-io/nod/commit/7b5a7f36cb58eb4789ff1c76a91d43fa9d3b7912) (7b5a7f3)
+
+<details>
+<summary>Maintenance (2 changes)</summary>
+
+- **n8n:** Use the renamed nod credential names. [#405](https://github.com/n8n-io/nod/pull/405) (a7c69d6)
+- **traces:** Send traces to the LangSmith project by ID. [#404](https://github.com/n8n-io/nod/pull/404) (79550e2)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.1.0...5a1b3c9394fd33287d209699b08d2c32c1540f6b)
+
+<details>
+<summary>Build details</summary>
+
+Source: `5a1b3c9394fd33287d209699b08d2c32c1540f6b`
+Previous release: `nod-v0.1.0`
+
+</details>
+
 ## 0.1.0 - 2026-10-22
 
 ### Breaking changes

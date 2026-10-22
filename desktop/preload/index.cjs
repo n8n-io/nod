@@ -1,5 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+const invoke = (channel, ...values) =>
+  ipcRenderer.invoke(channel, ...values).catch((error) => {
+    throw new Error(
+      String(error?.message).replace(/^Error invoking remote method '[^']+': (?:\w*Error: )?/, ''),
+    );
+  });
+
 function subscribe(channel, listener) {
   const receive = (_event, value) => listener(value);
   ipcRenderer.on(channel, receive);
@@ -7,14 +14,14 @@ function subscribe(channel, listener) {
 }
 
 contextBridge.exposeInMainWorld('nodDesktop', {
-  ready: () => ipcRenderer.invoke('nod:renderer-ready'),
-  status: () => ipcRenderer.invoke('nod:status'),
-  getSettings: () => ipcRenderer.invoke('nod:settings:get'),
-  saveSettings: (input) => ipcRenderer.invoke('nod:settings:save', input),
-  getPreferences: () => ipcRenderer.invoke('nod:preferences:get'),
-  prepare: (options) => ipcRenderer.invoke('nod:prepare', options),
-  importRuntime: () => ipcRenderer.invoke('nod:runtime:import'),
-  installWsl: () => ipcRenderer.invoke('nod:runtime:install-wsl'),
+  ready: () => invoke('nod:renderer-ready'),
+  status: () => invoke('nod:status'),
+  getSettings: () => invoke('nod:settings:get'),
+  saveSettings: (input) => invoke('nod:settings:save', input),
+  getPreferences: () => invoke('nod:preferences:get'),
+  prepare: (options) => invoke('nod:prepare', options),
+  importRuntime: () => invoke('nod:runtime:import'),
+  installWsl: () => invoke('nod:runtime:install-wsl'),
   onStatus: (listener) => subscribe('nod:status', listener),
   onPreferences: (listener) => subscribe('nod:preferences', listener),
 });
