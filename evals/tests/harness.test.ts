@@ -1825,16 +1825,25 @@ test('persisted background sessions and child captures count each request and to
           ? ledger
           : sql.includes('FROM turns')
             ? [{ id: 'background', background: true, status: 'succeeded', started_at: new Date(0) }]
-            : sql.includes('FROM approvals')
+            : sql.includes('FROM messages')
               ? [
+                  { role: 'user', text: 'Check today.', created_at: '2026-10-22T21:40:00Z' },
                   {
-                    turn_id: 'background',
-                    action: 'GMAIL_SEND_EMAIL',
-                    status: 'expired',
-                    args: {},
+                    role: 'assistant',
+                    text: 'The call has ended.',
+                    created_at: '2026-10-22T21:41:00Z',
                   },
                 ]
-              : [],
+              : sql.includes('FROM approvals')
+                ? [
+                    {
+                      turn_id: 'background',
+                      action: 'GMAIL_SEND_EMAIL',
+                      status: 'expired',
+                      args: {},
+                    },
+                  ]
+                : [],
       }),
     },
     request: async () => Response.json({ notes: [], archive: [] }),
@@ -1845,6 +1854,11 @@ test('persisted background sessions and child captures count each request and to
   const read = () =>
     collect({ task: 'Synthetic request', stack, session, world: {}, visits: [], seconds: 1 });
   const run = await read();
+  const messages = run.transcript().split('\n\n').slice(-2);
+  assert.deepEqual(
+    messages.map((line) => Date.parse(line.slice(1, line.indexOf(']')))),
+    [Date.parse('2026-10-22T21:40:00Z'), Date.parse('2026-10-22T21:41:00Z')],
+  );
   assert.deepEqual(run.usage, { modelCalls: 4, tokens: 36, costUsd: 1.5 });
   assert.deepEqual(run.approvals, [
     { turnId: 'background', action: 'GMAIL_SEND_EMAIL', status: 'expired', args: {} },

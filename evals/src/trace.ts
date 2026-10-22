@@ -391,7 +391,7 @@ export async function collect(options: {
           })),
         ]
           .sort((a, b) => a.at - b.at)
-          .map((item) => item.text)
+          .map((item) => `[${new Date(item.at).toISOString()}] ${item.text}`)
           .join('\n\n');
       };
       for (const cap of [6000, 3000, 1500]) {
