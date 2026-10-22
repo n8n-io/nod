@@ -260,9 +260,7 @@ export function Logins({ onAsk }: { onAsk?(text: string): void }) {
         <header className="page-heading secondary-heading">
           <div>
             <PageTitle path="/logins" />
-            <p>
-              nod signs in and pays with these. The model never sees your passwords or card numbers.
-            </p>
+            <p>The model never sees your passwords or card numbers.</p>
           </div>
           <div className="secondary-heading-actions">
             <Popover.Root open={menu} onOpenChange={setMenu}>

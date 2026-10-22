@@ -589,10 +589,7 @@ export function Activity() {
   return (
     <div className="content-page secondary-page">
       <header className="page-heading secondary-heading">
-        <div>
-          <PageTitle path="/activity" />
-          <p>What nod did and spent, and what it does on its own.</p>
-        </div>
+        <PageTitle path="/activity" />
       </header>
       {trust.data && vault.data && preferences.data ? (
         <div className="activity">
