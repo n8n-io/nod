@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { copyFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,11 @@ const installation = await mkdtemp(join(tmpdir(), 'nod-installed-preview-'));
 const foreign = await mkdtemp(join(tmpdir(), 'nod-foreign-folder-'));
 const alone = await mkdtemp(join(tmpdir(), 'nod-installer-alone-'));
 const receipt = { installed: false, engine: false, wsl: false };
-const environment = { ...windowsEnvironment(), ELECTRON_RUN_AS_NODE: '1' };
+const environment = {
+  ...windowsEnvironment(),
+  ELECTRON_RUN_AS_NODE: '1',
+  NOD_VAULT_KEY: randomBytes(32).toString('base64'),
+};
 try {
   console.log('Checking that installation preserves other files.');
   await writeFile(join(foreign, 'keep.txt'), 'synthetic user file');
@@ -94,7 +99,7 @@ if (process.env.WORKSPACE_CONTAINER) {
   const port = listener.address().port;
   await new Promise((accept) => listener.close(accept));
   const token = randomBytes(32).toString('base64url');
-  Object.assign(process.env, { NODE_ENV: 'production', PORT: String(port), NOD_DESKTOP: 'true', NOD_DESKTOP_OWNER_ID: '60000000-0000-4000-8000-000000000001', NOD_DESKTOP_AUTH_TOKEN: token, NOD_VAULT_KEY: randomBytes(32).toString('base64'), NOD_WEB_ROOT: resolve('dist/web'), NOD_ANALYTICS_ENABLED: 'false' });
+  Object.assign(process.env, { NODE_ENV: 'production', PORT: String(port), NOD_DESKTOP: 'true', NOD_DESKTOP_OWNER_ID: '60000000-0000-4000-8000-000000000001', NOD_DESKTOP_AUTH_TOKEN: token, NOD_WEB_ROOT: resolve('dist/web'), NOD_ANALYTICS_ENABLED: 'false' });
   const { default: pg } = await import('pg');
   const database = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await database.connect();
