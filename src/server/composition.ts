@@ -1555,6 +1555,7 @@ async function initializeApplication(
       clearTimeout(timer);
     }
   }
+  app.addHook('onReady', async () => activity.start());
   app.addHook('onClose', async () => {
     stopConnectionInventory();
     const failures: unknown[] = [];

@@ -914,11 +914,13 @@ test(
           const activity = createActivity({ pool: db.pool, ownerId });
           const threadId = (await thread.activeThread(db.pool)).id;
           const ids: string[] = [];
+          const sessions: string[] = [];
           t.after(async () => {
             activity.close();
-            await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=ANY($1::uuid[])", [
-              ids,
-            ]);
+            await db.pool.query('DELETE FROM turn_events WHERE turn_id=ANY($1::uuid[])', [ids]);
+            await db.pool.query('DELETE FROM messages WHERE turn_id=ANY($1::uuid[])', [ids]);
+            await db.pool.query('DELETE FROM tasks WHERE session_id=ANY($1::uuid[])', [sessions]);
+            await db.pool.query('DELETE FROM turns WHERE id=ANY($1::uuid[])', [ids]);
           });
           const start = Date.now() - 60_000;
           const at = (seconds: number) => new Date(start + seconds * 1000);
@@ -946,11 +948,12 @@ test(
           const chat = await turn('user');
           await event(chat, 'started', 1);
           await event(chat, 'step', 2, 'Reading the synthetic page.');
-          await event(chat, 'tool_start', 3, 'browser', 'example.com');
-          await event(chat, 'tool_start', 4, 'apps');
+          await event(chat, 'tool_start', 3, 'apps');
+          await event(chat, 'tool_start', 4, 'browser', 'example.com');
           await event(chat, 'step', 5, 'Comparing two synthetic prices.');
           const session = randomUUID();
           const taskId = randomUUID();
+          sessions.push(session);
           await db.pool.query(
             `INSERT INTO tasks(id,owner_id,title,done_when,now_text,session_id)
              VALUES($1,$2,'Synthetic task','Done','Starting',$3)`,
@@ -959,6 +962,7 @@ test(
           const resumed = await turn('resume', session);
           await event(resumed, 'step', 1, 'Checking synthetic seats.');
           const quietSession = randomUUID();
+          sessions.push(quietSession);
           await db.pool.query(
             `INSERT INTO tasks(id,owner_id,title,done_when,now_text,session_id)
              VALUES($1,$2,'Quiet synthetic task','Done','Reading the synthetic page.',$3)`,
@@ -993,15 +997,30 @@ test(
             [live.get(resumed)?.title, live.get(resumed)?.step, live.get(resumed)?.taskId],
             ['Synthetic task', 'Checking synthetic seats.', taskId],
           );
-          assert.equal(live.get(spoke)?.step, null);
+          assert.deepEqual([live.get(spoke)?.step, live.get(spoke)?.site], [null, null]);
           assert.deepEqual(
             [live.get(quiet)?.title, live.get(quiet)?.step, live.get(quiet)?.site],
             ['Quiet synthetic task', 'Reading the synthetic page.', 'example.com'],
           );
           for (const turnId of [schedule, background, finished])
             assert.equal(live.has(turnId), false, turnId);
-          await event(finished, 'tool_start', 3, 'apps');
+          await event(finished, 'steered', 3);
           assert.ok((await activity.current()).some((item) => item.turnId === finished));
+          const otherThread = randomUUID();
+          await db.pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'another-owner')", [
+            otherThread,
+          ]);
+          const other = randomUUID();
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,started_at)
+             VALUES($1,'another-owner',$2,$2,'user','activity fixture','running',now())`,
+            [other, otherThread],
+          );
+          t.after(async () => {
+            await db.pool.query('DELETE FROM turns WHERE id=$1', [other]);
+            await db.pool.query('DELETE FROM threads WHERE id=$1', [otherThread]);
+          });
+          assert.ok(!(await activity.current()).some((item) => item.turnId === other));
         },
       );
 
@@ -1061,6 +1080,31 @@ test(
             `I couldn't finish this. ${spendingLimitReached}`,
           ]);
         for (const turnId of background.slice(0, 2)) assert.deepEqual(await notices(turnId), []);
+        const taskSession = randomUUID();
+        const taskMessage = await transaction(
+          (client) =>
+            thread.insertAssistantMessage(
+              client,
+              { threadId: chat.threadId, turnId: chat.turnId },
+              'Synthetic check-in task.',
+            ),
+          db.pool,
+        );
+        await db.pool.query(
+          `INSERT INTO tasks(id,owner_id,title,done_when,now_text,session_id,message_id)
+           VALUES($1,$2,'Synthetic check-in','Done','Checking',$3,$4)`,
+          [randomUUID(), ownerId, taskSession, taskMessage],
+        );
+        const checkIn = await thread.enqueueTurn('limit task check-in fixture', {
+          source: 'schedule',
+          sourceId: `schedule:limit:${randomUUID()}:2`,
+          sessionId: taskSession,
+          background: true,
+        });
+        await waitFor(settled(checkIn));
+        assert.deepEqual(await notices(checkIn), [
+          `I couldn't finish this. ${spendingLimitReached}`,
+        ]);
       });
 
       await t.test(

@@ -642,12 +642,22 @@ test(
       ]);
       await channels.drain();
       assert.equal(shown.length, 1);
+      t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+      t.mock.timers.tick(61_000);
+      await channels.drain();
+      t.mock.timers.reset();
+      assert.deepEqual(shown.at(-1), {
+        after: 1,
+        threadId: 'chat-a1',
+        messageId: 'a1',
+        status: 'Checking synthetic seats.',
+      });
       live = [
         work(a1.channel, 'Comparing two synthetic fares.', 'Synthetic trip'),
         work(b1.channel, null),
       ];
       await channels.drain();
-      assert.deepEqual(shown.slice(1), [
+      assert.deepEqual(shown.slice(2), [
         {
           after: 1,
           threadId: 'chat-a1',
@@ -656,11 +666,14 @@ test(
         },
         { after: 1, threadId: 'chat-b1', messageId: 'b1' },
       ]);
+      live = [work(a1.channel, 'Opening http://localhost:5678/home to build it.')];
+      await channels.drain();
+      assert.deepEqual(shown.at(-1), { after: 1, threadId: 'chat-a1', messageId: 'a1' });
       live = [];
       await channels.drain();
       live = [work(b1.channel, null)];
       await channels.drain();
-      assert.equal(shown.length, 4);
+      assert.equal(shown.length, 6);
     } finally {
       await channels.close();
     }

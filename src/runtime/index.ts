@@ -641,6 +641,10 @@ export function createAgentRuntime(dependencies: {
             if (messages.length) {
               checkInSpent = checkInStrikes = 0;
               speakNext = true;
+              pendingReplies = pendingReplies.then(() =>
+                context.emit('steered', '', { execution }).catch(() => {}),
+              );
+              void pendingReplies.catch(() => {});
             }
             return messages;
           }),
@@ -668,7 +672,10 @@ export function createAgentRuntime(dependencies: {
                 lastNote = '';
               } else {
                 lastNote = text;
-                const step = (dependencies.redactError ?? String)(text).replace(/\s+/g, ' ');
+                const step = (dependencies.redactError ?? String)(text.split('\n')[0]!).replace(
+                  /\s+/g,
+                  ' ',
+                );
                 pendingReplies = pendingReplies.then(() =>
                   context.emit('step', step, { execution }).catch(() => {}),
                 );

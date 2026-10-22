@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import Markdown from 'react-markdown';
 import { ArrowDown, Check, Globe2, LoaderCircle, Trash2, User } from 'lucide-react';
 import type {
   Activity,
@@ -90,8 +91,16 @@ function Working({ item, label = 'nod is working' }: { item?: Activity; label?: 
             {item.title && <strong>{item.title}</strong>}
             {detail && (
               <span key={detail}>
-                {!item.step && <Globe2 size={14} aria-hidden="true" />}
-                {detail}
+                {item.step ? (
+                  <Markdown allowedElements={[]} unwrapDisallowed>
+                    {item.step}
+                  </Markdown>
+                ) : (
+                  <>
+                    <Globe2 size={14} aria-hidden="true" />
+                    {item.site}
+                  </>
+                )}
               </span>
             )}
           </span>

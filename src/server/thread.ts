@@ -811,7 +811,7 @@ async function failTurn(
     return { ...turn, taskMessageId: task?.message_id as string | undefined };
   }, pool);
   if (!turn) return false;
-  if (!turn.owner_started) return true;
+  if (!turn.owner_started && !turn.taskMessageId) return true;
   const presented = await present?.(
     turn.thread_id,
     error === interrupted ? { kind: 'interrupted' } : { kind: 'failed', error },
@@ -944,7 +944,9 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
 
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   if (stopping) return;
-  for (const turn of await claimTurns(threadId)) {
+  const claimed = await claimTurns(threadId);
+  if (claimed.length) refresh();
+  for (const turn of claimed) {
     const execute = () => executeTurn(turn, dependencies);
     const work = (dependencies.observeTurn ? dependencies.observeTurn(turn.id, execute) : execute())
       .catch((error) => console.error(`Turn ${turn.id} did not finish: ${describeFailure(error)}`))

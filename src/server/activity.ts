@@ -15,9 +15,10 @@ const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,COALESCE(u.start
   LEFT JOIN LATERAL (SELECT id,title,now_text FROM tasks WHERE owner_id=u.owner_id AND session_id=u.session_id
     ORDER BY created_at DESC LIMIT 1) t ON true
   CROSS JOIN LATERAL (SELECT
-    (SELECT site FROM turn_events WHERE turn_id=u.id AND site IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 1) AS site,
+    (SELECT site FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete','tool_failed')
+       ORDER BY created_at DESC,id DESC LIMIT 1) AS site,
     (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id
-       AND type IN ('started','step','tool_start','tool_complete','tool_failed','agent_start')) AS worked,
+       AND type IN ('started','steered','step','tool_start','tool_complete','tool_failed','agent_start')) AS worked,
     (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id AND type='final') AS finished,
     (SELECT max(created_at) FROM messages WHERE turn_id=u.id AND owner_id=u.owner_id AND role='assistant') AS spoke) w
   WHERE u.owner_id=$1 AND u.status IN ('queued','running') AND ${ownerStarted()}
@@ -74,11 +75,13 @@ export function createActivity({ pool, ownerId }: { pool: Pool; ownerId: string 
     }, 250);
     timer.unref?.();
   };
-  events.on('event', listen);
 
   return {
     read,
     current: async () => visible(await read()),
+    start() {
+      events.on('event', listen);
+    },
     close() {
       events.off('event', listen);
       clearTimeout(timer);

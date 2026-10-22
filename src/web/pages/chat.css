@@ -383,6 +383,10 @@
   vertical-align: -2px;
 }
 .chat-page .working-text > span {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   color: var(--text-secondary);
   animation: working-step 240ms var(--ease-enter);
 }

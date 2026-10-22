@@ -39,19 +39,23 @@ class Telegram extends TelegramAdapter {
     return this.telegramFetch('sendMessageDraft', {
       chat_id: this.decodeThreadId(threadId).chatId,
       draft_id: 1,
-      text: text.slice(0, 4096),
+      text: Array.from(text).slice(0, 4096).join(''),
     });
   }
 }
 
 class WhatsApp extends WhatsAppAdapter {
-  typing(messageId: string) {
-    return this.graphApiRequest(`/${this.phoneNumberId}/messages`, {
-      messaging_product: 'whatsapp',
-      status: 'read',
-      message_id: messageId,
-      typing_indicator: { type: 'text' },
-    });
+  async typing(messageId: string) {
+    const result = await this.graphApiRequest<{ success?: boolean }>(
+      `/${this.phoneNumberId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: messageId,
+        typing_indicator: { type: 'text' },
+      },
+    );
+    if (result.success === false) throw new Error('WhatsApp did not show typing.');
   }
 }
 

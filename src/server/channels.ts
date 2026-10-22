@@ -999,13 +999,22 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
 
   const presence = new Map<string, { at: number; status: string }>();
   async function presenceStep() {
-    if (closed || replacing || !transport.presence || !options.activity) return;
+    if (
+      closed ||
+      replacing ||
+      !transport.presence ||
+      !options.activity ||
+      !channels.some((channel) => channel.status === 'configured' && channel.presenceMs)
+    )
+      return;
     const live = new Map<string, string>();
     for (const item of await options.activity())
       if (item.channel !== 'web')
         live.set(item.channel, [item.title, item.step].filter(Boolean).join(': '));
     for (const channel of presence.keys()) if (!live.has(channel)) presence.delete(channel);
-    for (const [channel, status] of live) {
+    for (const [channel, text] of live) {
+      const safe = channelText(text);
+      const status = safe.secureAction || safe.artifact ? '' : safe.text;
       const row = (
         await pool.query<ChannelIdentity & { source_id: string; thread_id: string; at: Date }>(
           `SELECT provider,account_id,sender_id,source_id,thread_id,received_at AS at FROM channel_inbox
@@ -1025,14 +1034,27 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         (last?.status === status && Date.now() - last.at < settings.presenceMs)
       )
         continue;
+      if (closed || replacing) return;
       presence.set(channel, { at: Date.now(), status });
-      await transport.presence({
-        channelId: row.provider,
-        accountId: row.account_id,
-        threadId: row.thread_id,
-        messageId: row.source_id.slice(prefix.length),
-        ...(status ? { status } : {}),
-      });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          transport.presence({
+            channelId: row.provider,
+            accountId: row.account_id,
+            threadId: row.thread_id,
+            messageId: row.source_id.slice(prefix.length),
+            ...(status ? { status } : {}),
+          }),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Presence did not answer in time.')), 5000);
+          }),
+        ]);
+      } catch (cause) {
+        logFailure('channel_presence_failed', cause);
+      } finally {
+        clearTimeout(timer);
+      }
     }
   }
 

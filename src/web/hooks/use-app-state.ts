@@ -16,6 +16,7 @@ export function useAppState(accountId?: string) {
   const resetRequest = useRef<Promise<string> | null>(null);
   const active = useRef(false);
   const stateRequest = useRef<AbortController | null>(null);
+  const activitySeen = useRef(0);
   const refreshAfterRequest = useRef(false);
   const advanceThread = useCallback((next: string) => {
     if (next === threadId.current) return;
@@ -42,6 +43,7 @@ export function useAppState(accountId?: string) {
   const refresh = useCallback(async () => {
     if (!active.current) return;
     const version = ++requestVersion.current;
+    const seen = activitySeen.current;
     refreshAfterRequest.current = false;
     stateRequest.current?.abort();
     const controller = new AbortController();
@@ -60,7 +62,9 @@ export function useAppState(accountId?: string) {
           .filter((turn) => turn.status === 'failed' || turn.status === 'cancelled')
           .map((turn) => turn.id),
       });
-      setState(next);
+      setState((current) =>
+        current && activitySeen.current !== seen ? { ...next, activity: current.activity } : next,
+      );
       setError('');
     } catch (cause) {
       if (active.current && !controller.signal.aborted && version === requestVersion.current)
@@ -129,7 +133,8 @@ export function useAppState(accountId?: string) {
           if (data.type === 'activity' && Array.isArray(data.items)) {
             const activity = data.items;
             setState((current) => (current ? { ...current, activity } : current));
-            pageDataCache.revalidateActive('/api/tasks/');
+            activitySeen.current++;
+            pageDataCache.revalidateActive('/api/tasks');
           }
           if (data.type === 'refresh') {
             pageDataCache.revalidateActive();

@@ -1354,6 +1354,7 @@ test('a previous turn error reaches the next turn only as neutralised untrusted 
 test('a turn posts its opening line and final reply, shows the lines between as live steps and answers a message sent mid-turn', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-narration-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
+  let continued: string[] = [];
   const runtime = createAgentRuntime({
     agent: {
       open: async (input) => ({
@@ -1363,7 +1364,7 @@ test('a turn posts its opening line and final reply, shows the lines between as 
         prompt: async (text) => {
           for (const words of [
             'Reading the synthetic comments.',
-            'Found three synthetic threads.',
+            'Found three synthetic threads.\nAll of them mention pricing.',
           ]) {
             input.onEvent({ type: 'message_start' });
             input.onEvent({ type: 'text_delta', text: words });
@@ -1371,7 +1372,7 @@ test('a turn posts its opening line and final reply, shows the lines between as 
             await input.tools
               .find((item) => item.name === 'manage_personal_context')!
               .execute({ action: 'memory_find', args: { query: 'synthetic' } });
-            await input.nextMessages?.();
+            continued.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
           }
           const answer = /without an answer/.test(text) ? '' : 'The synthetic summary is ready.';
           input.onEvent({ type: 'message_start' });
@@ -1403,7 +1404,10 @@ test('a turn posts its opening line and final reply, shows the lines between as 
       [
         'Summarize the synthetic comments without an answer',
         undefined,
-        ['Reading the synthetic comments.', 'Found three synthetic threads.'],
+        [
+          'Reading the synthetic comments.',
+          'Found three synthetic threads.\nAll of them mention pricing.',
+        ],
         ['Found three synthetic threads.'],
       ],
       [
@@ -1415,13 +1419,17 @@ test('a turn posts its opening line and final reply, shows the lines between as 
       [
         'Summarize the synthetic comments while the owner steers',
         task,
-        ['Found three synthetic threads.', 'The synthetic summary is ready.'],
+        [
+          'Found three synthetic threads.\nAll of them mention pricing.',
+          'The synthetic summary is ready.',
+        ],
         ['Reading the synthetic comments.'],
       ],
     ] as const) {
       const posted: string[] = [];
       const events: Array<[string, string]> = [];
       let steered = false;
+      continued = [];
       const result = await runtime.runTurn({
         ...context(directory),
         turnId: randomUUID(),
@@ -1448,6 +1456,14 @@ test('a turn posts its opening line and final reply, shows the lines between as 
       assert.deepEqual(
         events.filter(([type]) => type === 'step').map(([, summary]) => summary),
         steps,
+      );
+      assert.equal(
+        continued.some((text) => text.includes('Also count them')),
+        prompt.endsWith('steers'),
+      );
+      assert.equal(
+        events.some(([type]) => type === 'steered'),
+        prompt.endsWith('steers'),
       );
       assert.equal(events.filter(([type]) => type === 'final').length, 1);
       assert.ok(
