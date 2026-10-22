@@ -242,6 +242,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install Electron and desktop tooling
         run: pnpm --dir desktop install --frozen-lockfile
+      - name: Download the Electron binary before the tests
+        run: node desktop/node_modules/electron/install.js
       - name: Install NSIS for native update acceptance
         if: github.event_name == 'workflow_dispatch'
         run: choco install nsis --yes --no-progress
