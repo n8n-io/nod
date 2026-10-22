@@ -336,6 +336,55 @@ test(
         bytes bytea NOT NULL CHECK(octet_length(bytes)<=16777216),
         PRIMARY KEY(owner_id,object_key)
       )`);
+      const [creating, catalog, contender] = await Promise.all([
+        f.database.connect(),
+        f.database.connect(),
+        f.database.connect(),
+      ]);
+      let initialized: Promise<unknown> | undefined;
+      try {
+        await creating.query('BEGIN');
+        await createPostgresObjectStore({ database: creating, ownerId: 'owner-one' }).initialize();
+        await catalog.query('BEGIN');
+        await catalog.query('LOCK TABLE pg_catalog.pg_type IN SHARE MODE');
+        await contender.query('BEGIN');
+        await contender.query("SET LOCAL statement_timeout='2s'");
+        const pid = (await contender.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+        initialized = createPostgresObjectStore({
+          database: contender,
+          ownerId: 'owner-two',
+        })
+          .initialize()
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        const deadline = Date.now() + 2000;
+        let waiting = false;
+        while (!waiting && Date.now() < deadline) {
+          waiting = Boolean(
+            (
+              await f.database.query(
+                "SELECT 1 FROM pg_locks WHERE pid=$1 AND relation='pg_catalog.pg_type'::regclass AND NOT granted",
+                [pid],
+              )
+            ).rowCount,
+          );
+          if (!waiting) await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        assert.equal(waiting, true);
+        await creating.query('COMMIT');
+        await catalog.query('COMMIT');
+        assert.ifError(await initialized);
+        await contender.query('COMMIT');
+      } finally {
+        await Promise.allSettled([creating.query('ROLLBACK'), catalog.query('ROLLBACK')]);
+        await initialized;
+        await Promise.allSettled([contender.query('ROLLBACK')]);
+        creating.release();
+        catalog.release();
+        contender.release();
+      }
       await Promise.all([first.initialize(), second.initialize()]);
       const borrowed = await f.database.connect();
       try {
@@ -379,6 +428,15 @@ test(
       await assert.rejects(first.remove(key, { expectedVersion: '' }), /unavailable/);
       await restored.remove(key, { expectedVersion: saved!.version });
       assert.equal(await first.read(key, 100), undefined);
+      assert.equal((await second.read(key, 100))?.bytes.toString(), 'foreign');
+      await f.database.query('DROP TABLE nod_locks');
+      await f.database.query('CREATE TYPE nod_locks AS (marker text)');
+      await assert.rejects(first.initialize(), /Private file storage is temporarily unavailable/);
+      assert.equal(
+        (await f.database.query("SELECT relkind FROM pg_class WHERE oid=to_regclass('nod_locks')"))
+          .rows[0].relkind,
+        'c',
+      );
       assert.equal((await second.read(key, 100))?.bytes.toString(), 'foreign');
     } finally {
       await f.close();
