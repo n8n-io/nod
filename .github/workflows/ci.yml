@@ -277,41 +277,6 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
 
-  windows-release-check-once:
-    name: Windows release check on this branch (temporary)
-    needs: scope
-    runs-on: windows-2025
-    timeout-minutes: 50
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: '24.21.0'
-          cache: pnpm
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        with:
-          go-version: '1.26.8'
-          cache: false
-      - run: |
-          pnpm install --frozen-lockfile
-          pnpm --dir desktop install --frozen-lockfile
-          choco install nsis --yes --no-progress
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: desktop-windows-runtime
-          path: .local/windows-runtime-assets
-          run-id: 39795017107
-          github-token: ${{ github.token }}
-      - run: pnpm run build
-      - run: node desktop/scripts/build-windows.mjs
-      - run: node desktop/scripts/check-windows.mjs
-
   secrets:
     name: Secret scanning
     runs-on: blacksmith-2vcpu-ubuntu-2404
