@@ -67,7 +67,7 @@ jobs:
     timeout-minutes: 45
     services:
       postgres:
-        image: ${{ needs.scope.outputs.core == 'true' && 'postgres:17-alpine' || '' }}
+        image: ${{ (needs.scope.outputs.core == 'true' || needs.scope.outputs.evals == 'true') && 'postgres:17-alpine' || '' }}
         env:
           POSTGRES_USER: nod
           POSTGRES_PASSWORD: nod-ci
