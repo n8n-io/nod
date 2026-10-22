@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@whiskeysockets/baileys@7.0.0-rc14':
-    hash: cc98ef6eecf871a95e11ae4d7fbab2bc95efd339fd621107aa58d8173255a73e
+    hash: 4b39b1d960dd03c09cc725741416fca69f6b7fefefedd5cbe55c31dee50a78aa
     path: patches/@whiskeysockets__baileys@7.0.0-rc14.patch
   libsignal@6.0.0:
     hash: c85a97bad5f112bb1fb62d6824af84561f086399ac2934b1e450eaad8a535447
@@ -50,7 +50,7 @@ importers:
         version: 0.34.52
       '@whiskeysockets/baileys':
         specifier: 7.0.0-rc14
-        version: 7.0.0-rc14(patch_hash=cc98ef6eecf871a95e11ae4d7fbab2bc95efd339fd621107aa58d8173255a73e)(sharp@0.35.5(@types/node@24.19.2))
+        version: 7.0.0-rc14(patch_hash=4b39b1d960dd03c09cc725741416fca69f6b7fefefedd5cbe55c31dee50a78aa)(sharp@0.35.5(@types/node@24.19.2))
       agent-browser:
         specifier: 0.39.1
         version: 0.39.1
@@ -6169,7 +6169,7 @@ snapshots:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
 
-  '@whiskeysockets/baileys@7.0.0-rc14(patch_hash=cc98ef6eecf871a95e11ae4d7fbab2bc95efd339fd621107aa58d8173255a73e)(sharp@0.35.5(@types/node@24.19.2))':
+  '@whiskeysockets/baileys@7.0.0-rc14(patch_hash=4b39b1d960dd03c09cc725741416fca69f6b7fefefedd5cbe55c31dee50a78aa)(sharp@0.35.5(@types/node@24.19.2))':
     dependencies:
       '@cacheable/node-cache': 1.7.6
       '@hapi/boom': 9.1.4
