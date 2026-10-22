@@ -9,6 +9,7 @@ import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
 import { AppDiscoveryDialog } from './app-discovery-dialog';
 import { ServiceLogo } from './service-logo';
+import { Notice } from './ui';
 import { usePrivateEntry } from './private-entry';
 
 const icons = { vault: KeyRound, website: Globe2, app: Link2, browser: MonitorSmartphone };
@@ -240,6 +241,7 @@ export function SetupActions({
   const [discoveryHref, setDiscoveryHref] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState('');
+  const [accessRenewed, setAccessRenewed] = useState(false);
   const request = useRef<AbortController | null>(null);
   const timer = useRef<number | undefined>(undefined);
   const opened = useRef(new Set<string>());
@@ -256,6 +258,7 @@ export function SetupActions({
   }
   useEffect(() => {
     close();
+    setAccessRenewed(false);
     return () => {
       request.current?.abort();
       window.clearTimeout(timer.current);
@@ -304,6 +307,7 @@ export function SetupActions({
     });
     setOpening(true);
     setError('');
+    setAccessRenewed(false);
     const deadline = Date.now() + 10 * 60_000;
     const fail = (message: string) => {
       if (!current()) return;
@@ -328,6 +332,11 @@ export function SetupActions({
           fail('This sign-in link is no longer available. Ask nod to connect again.');
           return;
         }
+        setSignIn((value) =>
+          current() && value?.url === href && !value.signInRequired && app.signInRequired === true
+            ? { ...value, signInRequired: true }
+            : value,
+        );
         if (app.pairingConfirmed === true) {
           setSignIn((value) =>
             current() && value?.url === href && !value.pairingConfirmed
@@ -368,10 +377,12 @@ export function SetupActions({
         opened: opened.current.has(href),
         reopened: opened.current.has(href),
         pairingConfirmed,
+        signInRequired: app.signInRequired === true,
       };
       flushSync(() => setSignIn(pending));
       timer.current = window.setTimeout(() => void check(), 5000);
-      if (!pending.opened) {
+      if (pending.signInRequired) popup?.close();
+      else if (!pending.opened) {
         if (external) {
           await openConnection(href);
           opened.current.add(href);
@@ -395,9 +406,14 @@ export function SetupActions({
   const pending = actions.filter(
     (action) => !completed.has(action.href) && !privateCompleted.has(action.href),
   );
-  if (!pending.length && !signIn && !discoveryHref) return null;
+  if (!pending.length && !signIn && !discoveryHref && !accessRenewed) return null;
   return (
     <>
+      {accessRenewed && (
+        <Notice kind="success">
+          Browser sign-in renewed. <a href="/apps">Open Apps</a> to connect the app again.
+        </Notice>
+      )}
       {pending.length > 0 && (
         <div className="setup-group">
           {pending.map((action) => (
@@ -430,6 +446,10 @@ export function SetupActions({
         opening={opening}
         error={error}
         onClose={close}
+        onAccessRenewed={() => {
+          close();
+          setAccessRenewed(true);
+        }}
         onOpened={() => {
           if (!signIn?.url) return;
           opened.current.add(signIn.url);

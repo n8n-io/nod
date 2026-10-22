@@ -183,14 +183,12 @@ function NoteDetail({
   onChange,
   onForget,
   onBack,
-  onDirtyChange,
 }: {
   note: MemoryNote;
   history: MemoryArchived[];
   onChange(body: { text?: string; expires?: string | null; confirm?: true }): Promise<void>;
   onForget(): Promise<void>;
   onBack?: () => void;
-  onDirtyChange?(dirty: boolean): void;
 }) {
   const format = useDateFormat();
   const [mode, setMode] = useState<'view' | 'edit' | 'expires' | 'forget'>('view');
@@ -198,13 +196,6 @@ function NoteDetail({
   const [expires, setExpires] = useState(note.expires ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const dirty =
-    (mode === 'edit' && text.trim() !== note.text) ||
-    (mode === 'expires' && (expires || null) !== note.expires);
-  useEffect(() => {
-    onDirtyChange?.(dirty);
-    return () => onDirtyChange?.(false);
-  }, [dirty, onDirtyChange]);
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError('');
@@ -387,13 +378,11 @@ function SkillDetail({
   onChange,
   onForget,
   onBack,
-  onDirtyChange,
 }: {
   skill: LearnedSkill;
   onChange(body: { description: string; body: string }): Promise<void>;
   onForget(): Promise<void>;
   onBack?: () => void;
-  onDirtyChange?(dirty: boolean): void;
 }) {
   const format = useDateFormat();
   const [mode, setMode] = useState<'view' | 'edit' | 'forget'>('view');
@@ -401,12 +390,6 @@ function SkillDetail({
   const [body, setBody] = useState(skill.body);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const dirty =
-    mode === 'edit' && (description.trim() !== skill.description || body.trim() !== skill.body);
-  useEffect(() => {
-    onDirtyChange?.(dirty);
-    return () => onDirtyChange?.(false);
-  }, [dirty, onDirtyChange]);
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError('');
@@ -793,13 +776,7 @@ function ImportNotes({
   );
 }
 
-export function Memory({
-  onDone,
-  onDirtyChange,
-}: {
-  onDone(): void;
-  onDirtyChange?(dirty: boolean): void;
-}) {
+export function Memory({ onDone }: { onDone(): void }) {
   const { data: view, error: loadError, loading, update } = usePageData<MemoryView>('/api/memory');
   const format = useDateFormat();
   const [compact, panelRef] = useCompact();
@@ -811,25 +788,14 @@ export function Memory({
   const importButton = useRef<HTMLButtonElement>(null);
   const [settingError, setSettingError] = useState('');
   const [exporting, setExporting] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(0);
-  useEffect(() => {
-    onDirtyChange?.(dirty || saving > 0 || exporting);
-    return () => onDirtyChange?.(false);
-  }, [dirty, saving, exporting, onDirtyChange]);
 
   async function send(path: string, method: string, body?: object) {
-    setSaving((count) => count + 1);
-    try {
-      const next = await api<MemoryUpdate>(path, {
-        method,
-        ...(body ? { body: JSON.stringify(body) } : {}),
-      });
-      update(() => next);
-      return next;
-    } finally {
-      setSaving((count) => count - 1);
-    }
+    const next = await api<MemoryUpdate>(path, {
+      method,
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    update(() => next);
+    return next;
   }
   async function setting(body: { saving?: boolean; sensitive?: boolean }) {
     setSettingError('');
@@ -983,7 +949,6 @@ export function Memory({
     <NoteDetail
       key={`${note.path}:${note.updated}`}
       note={note}
-      onDirtyChange={setDirty}
       history={(view?.archive ?? []).filter(
         (item) => item.path === note.path || item.by === note.path,
       )}
@@ -1021,7 +986,6 @@ export function Memory({
     <SkillDetail
       key={`${skill.name}:${skill.updated}`}
       skill={skill}
-      onDirtyChange={setDirty}
       onBack={back}
       onChange={async (body) => {
         await send(`/api/memory/skills/${skill.name}`, 'PATCH', body);

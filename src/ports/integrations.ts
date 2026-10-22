@@ -1,16 +1,30 @@
-import type { IntegrationService, IntegrationServiceInfo } from '../shared/integrations.ts';
+import type {
+  IntegrationService,
+  IntegrationServiceInfo,
+  IntegrationAccessAttempt,
+  IntegrationAccessProgress,
+  IntegrationManagedAccess,
+} from '../shared/integrations.ts';
 import type { Connection } from '../shared/contracts.ts';
 export type { IntegrationService, IntegrationServiceInfo } from '../shared/integrations.ts';
-export interface IntegrationConnectionBrowser {
-  open(
+export interface IntegrationAccessProvider {
+  origin: string;
+  accessStatus(): Promise<IntegrationManagedAccess>;
+  startAccess(
+    browserKey: unknown,
+    origin: string,
+    challenge: string,
+    signal?: AbortSignal,
+    native?: { returnPath: string },
+  ): Promise<IntegrationAccessAttempt>;
+  pollAccess(id: string, signal?: AbortSignal): Promise<IntegrationAccessProgress>;
+  completeAccess(
     id: string,
-    brokerOrigin: string,
-    start: (browserKey: unknown, origin: string, native: { returnPath: string }) => Promise<string>,
-  ): Promise<string>;
-  owns(url: string): boolean;
-  remote(url: string): string | undefined;
-  finish(id: string): void;
-  close(): Promise<void>;
+    challenge: string,
+    signal?: AbortSignal,
+  ): Promise<IntegrationManagedAccess>;
+  cancelAccess(id: string): Promise<{ cancelled: true }>;
+  revokeAccess(): Promise<IntegrationManagedAccess>;
 }
 export type ConnectedApp = Pick<
   Connection,
@@ -83,7 +97,7 @@ export interface IntegrationInboxPoll {
 export class IntegrationInboxCursorExpired extends Error {}
 export class IntegrationCatalogAccessDenied extends Error {
   constructor() {
-    super('The app catalog is unavailable. Try again later.');
+    super('App discovery requires Toolkit read access on the Composio project key.');
   }
 }
 export class IntegrationConnectionError extends Error {
@@ -91,19 +105,25 @@ export class IntegrationConnectionError extends Error {
   constructor(
     readonly reason:
       'authorization' | 'permission' | 'rate_limit' | 'timeout' | 'unavailable' | 'invalid_request',
-    readonly phase: 'session' | 'link',
+    readonly phase: 'session' | 'auth_config' | 'link',
     readonly status?: number,
   ) {
+    const access =
+      phase === 'auth_config'
+        ? 'Auth configs read access'
+        : 'Session management read and write access';
     super(
-      reason === 'authorization' || reason === 'permission'
-        ? 'The connection service could not authorize this request. Try connecting again, and contact support if it keeps failing.'
-        : reason === 'rate_limit'
-          ? 'The connection service is receiving too many requests. Wait a moment, then try connecting again.'
-          : reason === 'timeout'
-            ? 'The connection service took too long to respond. Try connecting again.'
-            : reason === 'invalid_request'
-              ? 'The connection service rejected this request. Try connecting again, and contact support if it keeps failing.'
-              : 'The connection service could not complete the connection. Try connecting again shortly.',
+      reason === 'authorization'
+        ? `Composio rejected this key or its permissions. Create a key in the same Composio project with ${access}, then replace it in nod and try again.`
+        : reason === 'permission'
+          ? `Connecting apps requires ${access} on the Composio project key. Create a key with that permission, then replace it in nod and try again.`
+          : reason === 'rate_limit'
+            ? 'Composio is receiving too many requests. Wait a moment, then try connecting again.'
+            : reason === 'timeout'
+              ? 'Composio took too long to respond. Try connecting again.'
+              : reason === 'invalid_request'
+                ? `Composio rejected this request (HTTP ${status}). Try connecting again, and if it keeps failing, check this app's setup in your Composio project.`
+                : 'Composio could not complete the connection. Try connecting again shortly.',
     );
     this.statusCode =
       reason === 'authorization' || reason === 'permission'
@@ -113,6 +133,15 @@ export class IntegrationConnectionError extends Error {
           : reason === 'timeout'
             ? 504
             : 502;
+  }
+}
+export class IntegrationAuthConfigurationError extends Error {
+  constructor(reason: 'ambiguous' | 'unavailable') {
+    super(
+      reason === 'ambiguous'
+        ? 'This app has multiple custom sign-in configurations. Ask your nod administrator to select one.'
+        : "This app's custom sign-in configuration is unavailable. Ask your nod administrator to enable it for sessions.",
+    );
   }
 }
 export interface VerificationEmailQuery {
@@ -153,7 +182,8 @@ export interface IntegrationProvider {
   id: string;
   configured: boolean;
   configurationId?: string;
-  ownsConnectionUrl?(url: string): boolean;
+  setApiKey?(apiKey?: string, authConfigs?: Partial<Record<IntegrationService, string>>): void;
+  verifyApiKey?(apiKey: string): Promise<boolean>;
   supportedServices?: readonly IntegrationService[];
   listServices?(): Promise<IntegrationServiceInfo[]>;
   webhooksConfigured: boolean;
@@ -167,7 +197,7 @@ export interface IntegrationProvider {
     ownerId: string,
     url: string,
     signal?: AbortSignal,
-  ): Promise<{ pairingConfirmed: boolean }>;
+  ): Promise<{ pairingConfirmed: boolean; signInRequired?: boolean }>;
   createSession(
     ownerId: string,
     accounts: Partial<Record<IntegrationService, string | string[]>>,

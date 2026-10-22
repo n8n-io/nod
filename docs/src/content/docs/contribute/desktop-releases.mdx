@@ -100,7 +100,7 @@ Private releases use the configured n8n download service for first-run downloads
 
 </Steps>
 
-nod releases are tagged `nod-v*`, and the n8n download service at `webhook/nod/desktop` serves only those.
+nod releases are tagged `nod-v*`, and the n8n download service at `webhook/nod/desktop` serves only those. Releases from before the rename are tagged `desktop-v*` and stay on the separate `otto-desktop` service, so installed Otto apps keep updating among themselves and never see a nod release. nod versions start again at 0.1.0. The `nod-v0.0.0` tag marks the `desktop-v0.1.18` commit, so the first nod release notes cover the changes since Otto 0.1.18.
 
 There's no daily release. Only a merged release pull request, which changes `desktop/release.json`, starts **Build desktop release**; other merges to `main` don't run it. The [capability evals](/contribute/evals/) don't gate publication.
 
@@ -141,6 +141,7 @@ On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/nod/instal
 | Situation             | What to know                                                                                                                                                                 |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Not enough storage    | nod needs the runtime's extracted size plus 512 MiB, and downloads also reserve the archive size. The error says how much to free. Free it and retry. Existing data is kept. |
+| Moving from Otto      | Otto apps never update to nod, and nod starts with a fresh profile. Install nod by hand or with the Terminal installer. Otto keeps its data until you delete it.             |
 | Setup was interrupted | Retry it.                                                                                                                                                                    |
 | It still fails        | Open **Send feedback** in Chat to review and send the diagnostic report. If Chat can't open, send the visible setup error.                                                   |
 | Starting over         | Select **Remove all data…** in the **nod** menu. It deletes the profile and private computer, keeps the runtime, and quits.                                                  |

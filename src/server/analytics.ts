@@ -395,6 +395,7 @@ export const analyticsRoutes = new Map<
   ['DELETE /api/models/connections/:id', settings('models', 'disconnect')],
   ['PUT /api/trust/limit', settings('trust', 'update')],
   ['PATCH /api/memory', settings('memory', 'update')],
+  ['PUT /api/integrations/key', settings('apps', 'update')],
   [
     'POST /api/link-preview/opened',
     (request) => {
@@ -416,6 +417,7 @@ export const analyticsRoutes = new Map<
         : undefined;
     },
   ],
+  ['DELETE /api/integrations/key', settings('apps', 'disconnect')],
 ]);
 
 export function registerAnalyticsRoutes(app: FastifyInstance, capture: CaptureAnalytics) {

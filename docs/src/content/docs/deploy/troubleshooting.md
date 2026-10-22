@@ -47,6 +47,10 @@ nod prints a link with `#access=` when it starts, and your browser keeps the coo
 
 Every release is notarized by Apple. If macOS still blocks it, open **System Settings → Privacy & Security** and select **Open Anyway**. A managed Mac may need approval from your IT team.
 
+### Otto doesn't update to nod
+
+nod is a separate app with its own profile, so Otto never updates to it. [Install nod](/get-started/install-desktop/) and set it up again. Otto keeps its data until you delete it.
+
 ### macOS asks for Keychain access after an update
 
 macOS can ask again after nod is re-signed. Approve it in the macOS dialog. Never type your Mac password into the nod chat.
@@ -73,11 +77,21 @@ Select **Install WSL** in nod, approve the administrator request, restart the PC
 
 ChatGPT sign-in receives its callback on port 1455. Another nod app or another sign-in is using it. Close it, then try again.
 
-### An app connection fails
+### Composio says "Invalid API key"
 
-Return to **Apps** and select **Connect** again. Complete the authorization in the same browser tab; a copied, expired or already used link cannot finish a connection. If the system's encrypted storage is locked, unlock it and restart nod.
+If you use your own Composio key, a valid key without the right permissions can show this error. Composio's [permission troubleshooting](https://docs.composio.dev/kb/guide/platform-project-api-key-permissions) explains why. Saving a key in nod doesn't verify every permission needed to connect Gmail.
 
-If the connection service is unavailable or reports a limit, try again later. If the problem persists, [send feedback with a diagnostic report](/deploy/troubleshooting/#send-feedback-with-a-diagnostic-report).
+For Gmail sign-in, check **Auth configs → Read only** and **Session management → Read and write**. Keep the other permissions listed in [Apps](/connect/apps/), including **Connected accounts** and **Session tool execution**.
+
+You can't edit a key's permissions. Create a replacement in the same Composio project and save it in **Settings → App connections → My Composio key**. If your server sets `COMPOSIO_API_KEY`, replace the environment value and restart nod. Then select **Connect Gmail** again. Your existing connected accounts belong to that project.
+
+nod's connection doesn't need a personal Composio key. If the error persists there, [send feedback](/deploy/troubleshooting/#send-feedback-with-a-diagnostic-report).
+
+### Apps disconnected after switching connection
+
+Switching between nod's connection and your own Composio key disconnects the apps connected through the one you left, because their accounts belong to that project. Connect them again in **Apps**.
+
+If nod says it couldn't disconnect an app, it kept your current connection. Apps it disconnected before that stay disconnected, so connect them again if you don't switch. Check your network and try again.
 
 ## Channels
 

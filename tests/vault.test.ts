@@ -4270,7 +4270,7 @@ test('analytics routes collapse private paths to known pages', async () => {
     ['/tasks/', '/tasks'],
     ['/settings', '/settings'],
     ['/settings/models?private=synthetic', '/settings'],
-    ['/settings/apps#synthetic', '/not-found'],
+    ['/settings/apps#synthetic', '/settings'],
     ['/settings/memory', '/settings'],
     ['/settings/unknown-private-section', '/not-found'],
     ['/settings-typo', '/not-found'],
@@ -4461,13 +4461,18 @@ globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.win
 globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
 globalThis.location = window.location;
 const requests=[];
+const integrationStatus = {mode:'own',switchable:true,keyWritable:true,suffix:'K7Q9',managed:null};
 window.XMLHttpRequest = undefined;
 globalThis.XMLHttpRequest = undefined;
 window.fetch = globalThis.fetch = async (url, init={}) => {
   const path = new URL(url,window.location.href).pathname;
   if (path==='/api/configuration') return Response.json({integrationsReady:true});
-  if (path==='/api/apps') return Response.json([{slug:'gmail',status:'connected',connectionId:'synthetic-gmail-connection',accountId:'synthetic-gmail-account',accountEmail:'synthetic-private-inbox@example.test'}]);
+  if (path==='/api/apps') return Response.json([{slug:'gmail',status:'disconnected'}]);
   if (path==='/api/models') return Response.json({connections:[{id:'synthetic-compatible',provider:'compatible',method:'api_key',label:'synthetic-private-lan-host',status:'connected',managed:false,models:[]}],selection:null,local:true});
+  if (path==='/api/integrations/key') {
+    assert.equal(init.method ?? 'GET', 'GET');
+    return Response.json(integrationStatus);
+  }
   requests.push({url:String(url),body:init.body instanceof ArrayBuffer ? (new Uint8Array(init.body)[0]===31 ? gunzipSync(Buffer.from(init.body)) : Buffer.from(init.body)).toString() : init.body && typeof init.body.text === 'function' ? await init.body.text() : init.body});
   return Response.json(path.endsWith('/config') ? {sessionRecording:{sampleRate:null,minimumDurationMilliseconds:null,masking:{maskAllInputs:false},urlTriggers:[],eventTriggers:[],linkedFlag:null,urlBlocklist:[],scriptConfig:{script:'posthog-recorder'},version:1},hasFeatureFlags:false} : {status:1});
 };
@@ -4541,7 +4546,10 @@ document.body.append(emailContainer);
 const emailRoot = createRoot(emailContainer);
 await act(async () => {emailRoot.render(createElement(Email,{arrived:'back',onNext() {},onBack() {}})); await new Promise(resolve => setTimeout(resolve,50));});
 await act(async () => {await new Promise(resolve => setTimeout(resolve,50));});
-assert.ok(emailContainer.textContent.includes('synthetic-private-inbox@example.test'));
+const changeConnection = emailContainer.querySelector('.ob-email-summary button');
+assert.ok(changeConnection);
+await act(async () => changeConnection.click());
+assert.ok(emailContainer.textContent.includes('K7Q9'));
 const { Brain } = await import('./src/web/pages/onboarding/steps/brain.tsx');
 const brainContainer = document.createElement('div');
 document.body.append(brainContainer);
@@ -4563,6 +4571,7 @@ function decodeSnapshot(value) {
 const snapshots = recordings.flatMap(event => event.properties.$snapshot_data).map(decodeSnapshot);
 assert.ok(snapshots.some(event => event.type === 2));
 assert.ok(snapshots.some(event => event.type === 3));
+assert.doesNotMatch(JSON.stringify(snapshots), /K7Q9/);
 assert.match(JSON.stringify(snapshots), /Connected to/);
 assert.doesNotMatch(JSON.stringify(snapshots), /synthetic-private/);
 await act(async () => emailRoot.unmount());
@@ -4763,6 +4772,7 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
   if(path==='/api/models/oauth')return Response.json({attempt:'fixture-oauth',url:'https://auth.openai.com/authorize?fixture=1'});
   if(path==='/api/models/oauth/status/fixture-oauth')return new Promise(resolve=>{oauth=()=>resolve(Response.json({status:'connected'}));});
   if(path==='/api/configuration')return Response.json({integrationsReady:true});
+  if(path==='/api/integrations/key')return Response.json({mode:'own',switchable:false,keyWritable:false,suffix:null,managed:null});
   if(path==='/api/apps')return failApps?Response.json({error:'Fixture account refresh failed'},{status:503}):Response.json([{slug:'gmail',name:'Gmail',status:gmailConnected?'connected':'disconnected',connectionId:gmailConnected||disconnectPending?'fixture-account':undefined,accountId:gmailConnected||disconnectPending?'fixture-gmail':undefined,reconnectRequired:gmailReconnect,disconnectPending}]);
   if(path==='/api/apps/gmail/accounts/fixture-account/disconnect'){
     assert.equal(options.method,'POST');
@@ -4815,16 +4825,16 @@ disconnectPending=true;
 await mount(Email);
 await waitFor(()=>button('Retry disconnection'));
 assert.equal(disconnectCalls,0,'uncertain disconnection is never retried automatically');
-assert.ok(button('Connect Gmail').disabled);
+assert.ok(button('Connect').disabled);
 assert.ok(button('Continue').disabled);
 await click('Retry disconnection');
 assert.equal(disconnectCalls,1);
 assert.match(document.body.textContent,/Fixture disconnection unavailable/);
-assert.ok(button('Connect Gmail').disabled);
+assert.ok(button('Connect').disabled);
 assert.equal(advances,0);
 failDisconnect=false;
 await click('Retry disconnection');
-await waitFor(()=>button('Connect Gmail')&&!button('Connect Gmail').disabled);
+await waitFor(()=>button('Connect')&&!button('Connect').disabled);
 assert.equal(disconnectCalls,2);
 assert.equal(button('Retry disconnection'),undefined);
 assert.doesNotMatch(document.body.textContent,/Fixture disconnection unavailable/);
@@ -4832,7 +4842,7 @@ assert.equal(advances,0,'recovered disconnection still requires Gmail consent');
 await mount(Email);
 await act(async()=>{for(const action of document.querySelectorAll('.ob-footer-end button'))action.click();});
 assert.equal(advances,0,'unconnected Gmail cannot be skipped');
-await click('Connect Gmail');
+await click('Connect');
 await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt:'B'.repeat(43)}}));
 assert.equal(advances,0,'foreign callback cannot advance');
 failApps=true;
@@ -4856,7 +4866,7 @@ for(const direction of ['forward','back']){
 for(const direction of ['forward','back']){
   gmailConnected=false; gmailCompleted=false;
   await mount(Email,direction);
-  await click('Connect Gmail');
+  await click('Connect');
   gmailConnected=true; gmailCompleted=true;
   await act(async()=>window.dispatchEvent(new Event('focus')));
   await waitFor(()=>button('Continue')&&!button('Continue').disabled);
@@ -4864,7 +4874,7 @@ for(const direction of ['forward','back']){
 }
 gmailConnected=false; gmailCompleted=false; gmailMissing=false;
 await mount(Email);
-await click('Connect Gmail');
+await click('Connect');
 gmailConnected=true;
 await act(async()=>window.dispatchEvent(new Event('focus')));
 await waitFor(()=>document.querySelector('[data-gmail="connected"]'));
@@ -4875,7 +4885,7 @@ await act(async()=>window.dispatchEvent(new Event('focus')));
 await waitFor(()=>advances===1);
 gmailConnected=false; gmailCompleted=false; gmailMissing=false;
 await mount(Email);
-await click('Connect Gmail');
+await click('Connect');
 gmailMissing=true;
 await act(async()=>window.dispatchEvent(new Event('focus')));
 await waitFor(()=>document.body.textContent.includes('Gmail didn’t connect'));
@@ -5118,6 +5128,7 @@ window.fetch = globalThis.fetch = async (url, options = {}) => {
   if (path === '/api/models') return failModels ? Response.json({error:'Synthetic model service is unavailable'}, {status:503}) : Response.json({connections:modelConnected?[{id:'synthetic-model',provider:'anthropic',method:'api_key',status:modelsStatus,label:'Synthetic model',managed:false,models:[]}]:[],selection:null});
   if (path === '/api/apps') return Response.json([{slug:'gmail',name:'Gmail',status:'disconnected'}]);
   if (path === '/api/configuration') return Response.json({integrationsReady:true});
+  if (path === '/api/integrations/key') return Response.json({mode:'own',switchable:true,keyWritable:true,suffix:null,managed:null});
   if (path === '/api/channel-settings') return Response.json({ready:false,channels:[]});
   if (path === '/api/onboarding/suggestions') {suggestions++;return Response.json({ok:true});}
   return Response.json({error:'Unexpected synthetic request'}, {status:404});
@@ -5170,18 +5181,10 @@ pageDataCache.clear();
 writeStep({owner:owner.id,step:'email',version:2});
 root=createRoot(document.getElementById('root'));
 await act(async()=>render());
-await waitFor(()=>button('Connect Gmail')&&!button('Connect Gmail').disabled);
-const gmailCard=document.querySelector('.ob-email-gmail');
-await act(async()=>statusListener({phase:'ready',runtime:{phase:'error',error:'Synthetic runtime interrupted'}}));
-await waitFor(()=>button('Try again'));
-assert.equal(gmailCard.isConnected,true);
-assert.equal(gmailCard.closest('[inert]'),null);
-const beforeEmailRetry=runtimeRetries;
-await act(async()=>button('Try again').click());
-await waitFor(()=>runtimeRetries===beforeEmailRetry+1);
-await act(async()=>releaseRetry());
-await waitFor(()=>!button('Try again'));
-assert.equal(gmailCard.isConnected,true);
+await waitFor(()=>button('Change'));
+await act(async()=>button('Change').click());
+await waitFor(()=>document.querySelector('.connection-choice input[type="password"]'));
+await recoverWithDraft(document.querySelector('.connection-choice input[type="password"]'),'synthetic-project-draft');
 assert.equal(document.querySelector('.ob').dataset.step,'email');
 await act(async()=>root.unmount());
 sessionStorage.clear();
@@ -5191,7 +5194,10 @@ root=createRoot(document.getElementById('root'));
 await act(async()=>render());
 await waitFor(()=>document.querySelector('.ob')?.dataset.step==='email');
 assert.equal(window.location.search,'');
-await waitFor(()=>button('Connect Gmail')&&!button('Connect Gmail').disabled);
+await waitFor(()=>button('Change'));
+await act(async()=>button('Change').click());
+await waitFor(()=>document.querySelector('input[type="password"]'));
+assert.equal(document.querySelector('input[type="password"]').value,'','draft credentials are not persisted with the step');
 await act(async()=>root.unmount());
 writeStep({owner:'foreign-owner',step:'email',version:2});
 root=createRoot(document.getElementById('root'));

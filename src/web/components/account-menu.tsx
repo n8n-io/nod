@@ -3,7 +3,7 @@ import { KeyRound, Monitor, Moon, Settings, Sun } from 'lucide-react';
 import type { AccountTheme, AccountUser } from '../../shared/account';
 import { desktopSettingsAvailable } from '../lib/desktop';
 
-export type AccountTab = 'General' | 'Models' | 'Memory';
+export type AccountTab = 'General' | 'Models' | 'App connections' | 'Memory';
 export interface AccountControls {
   user: AccountUser;
   theme: AccountTheme;

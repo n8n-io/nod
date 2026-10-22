@@ -7,10 +7,27 @@ sidebar:
 ---
 
 import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import trustVideo from '../../../assets/video/trust-layer.mp4?url';
+import trustPoster from '../../../assets/video/trust-layer-poster.jpg?url';
+import trustCaptions from '../../../assets/video/trust-layer.vtt?url&no-inline';
 
 Trust decides what nod can do in your apps and on websites. Vault decides how nod uses your saved logins and cards, and it never shows them to the model.
 
 nod can sign in to a website, read a report, prepare a reply and complete a checkout. The model plans that work. A separate check decides which app actions, browser steps and sign-ins can run. It sees your words and the action, never the pages or emails nod read: for a browser step, that's the website, the control's label and what nod typed. It asks you when your words don't cover the action. Every payment waits for your approval.
+
+<video
+  controls
+  preload="none"
+  poster={trustPoster}
+  width="1920"
+  height="1080"
+  aria-label="A narrated tour of the trust check in nod's chat"
+>
+  <source src={trustVideo} type="video/mp4" />
+  <track kind="captions" src={trustCaptions} srclang="en" label="English" />
+</video>
+
+Watch the check at work, with synthetic data: what runs right away, when nod asks, how it reads your reply, sign-ins and payments, what nod does on its own, and the $5 check-in. nod writes its own messages, so the wording you see will differ.
 
 <CardGrid>
   <LinkCard

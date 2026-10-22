@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { Check, LoaderCircle } from 'lucide-react';
+import { Check, KeyRound, LoaderCircle } from 'lucide-react';
 import type { AppSetupStatus, Configuration, Connection } from '../../../../shared/contracts';
 import { connectedGmail } from '../../../../shared/onboarding';
-import { Rise } from '../../../components/motion';
+import {
+  ConnectionChoice,
+  connectionRoutes,
+  useConnectionChoice,
+} from '../../../components/connection-choice';
+import { NodGlyph, Rise } from '../../../components/motion';
+import { AppAccessRecovery } from '../../../components/app-connection-dialog';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
 import { api, errorMessage } from '../../../lib/api';
@@ -49,7 +55,16 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   const [stale, setStale] = useState(false);
   const [pollFailing, setPollFailing] = useState(false);
   const [error, setError] = useState('');
+  const [signInRequired, setSignInRequired] = useState(false);
+  const [accessRenewed, setAccessRenewed] = useState(false);
+  const [setupExpanded, setSetupExpanded] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const choice = useConnectionChoice('onboarding', () => {
+    setCompleted(false);
+    setError('');
+    setSetupExpanded(false);
+  });
+  const keyStatus = choice.status;
   const request = useRef<AbortController | null>(null);
   const attempt = useRef<string | undefined>(undefined);
   const active = useRef(false);
@@ -60,6 +75,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     setSignInUrl(undefined);
     setStale(false);
     setPollFailing(false);
+    setSignInRequired(false);
   }
 
   useEffect(() => {
@@ -137,6 +153,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
           settle('failed');
           return true;
         }
+        if (app.signInRequired === true) setSignInRequired(true);
         if (app.pairingConfirmed === true && !confirmed) {
           confirmed = true;
           setPairingConfirmed(true);
@@ -191,6 +208,23 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   const disconnections = gmail.filter((connection) => connection.disconnectPending);
   const account = gmail.find(connectedGmail);
   const connected = !!account;
+  const keyNeeded = !!keyStatus && choice.mode !== keyStatus.mode;
+  const personalSetup = !!keyStatus?.switchable;
+  const compactSetup =
+    personalSetup &&
+    choice.ready &&
+    !keyNeeded &&
+    !choice.dirty &&
+    !choice.view.editing &&
+    !choice.view.error &&
+    !choice.view.notice &&
+    !choice.loadError;
+  const showGmail =
+    disconnections.length > 0 ||
+    (!!keyStatus &&
+      (!personalSetup ||
+        !!pending ||
+        (choice.ready && !keyNeeded && !choice.dirty && !choice.view.editing)));
   const loading = (!configuration.data && !configuration.error) || (!apps.data && !apps.error);
   const unavailable: keyof typeof unavailableReasons | undefined = loading
     ? undefined
@@ -201,7 +235,15 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         : gmail.some((connection) => connection.status !== 'not_configured')
           ? undefined
           : 'gmail';
-  const canConnect = !disconnections.length && !recovering && !loading && !unavailable;
+  const canConnect =
+    !disconnections.length &&
+    !recovering &&
+    !loading &&
+    !unavailable &&
+    !keyNeeded &&
+    choice.ready &&
+    !choice.switching &&
+    !choice.signingIn;
 
   useEffect(() => {
     if (
@@ -209,14 +251,29 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
       !completed ||
       !connected ||
       !canConnect ||
+      !showGmail ||
       pending ||
       apps.refreshing ||
-      apps.error
+      apps.error ||
+      choice.dirty ||
+      choice.view.editing
     )
       return;
     setCompleted(false);
     onNext();
-  }, [arrived, completed, connected, canConnect, pending, apps.refreshing, apps.error, onNext]);
+  }, [
+    arrived,
+    completed,
+    connected,
+    canConnect,
+    showGmail,
+    pending,
+    apps.refreshing,
+    apps.error,
+    choice.dirty,
+    choice.view.editing,
+    onNext,
+  ]);
 
   async function connect() {
     if (request.current || !canConnect) return;
@@ -239,6 +296,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     setPending('opening');
     setPairingConfirmed(false);
     setError('');
+    setAccessRenewed(false);
     let next: 'waiting' | undefined;
     try {
       const response = await api<{ url: string; attempt?: string }>('/api/apps/gmail/connect', {
@@ -301,7 +359,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
 
   async function reload() {
     setReloading(true);
-    await Promise.all([configuration.refresh(), refreshApps()]);
+    await Promise.all([configuration.refresh(), refreshApps(), choice.reload()]);
     if (active.current) setReloading(false);
   }
 
@@ -330,7 +388,29 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         ))}
       </div>
     );
-  else if (account) status = null;
+  else if (account)
+    status = personalSetup ? null : (
+      <p className="ob-email-done">
+        {account.accountEmail ? (
+          <>
+            Signed in as <strong data-analytics-private>{account.accountEmail}</strong>
+          </>
+        ) : (
+          'Signed in.'
+        )}
+      </p>
+    );
+  else if (signInRequired)
+    status = (
+      <AppAccessRecovery
+        key={signInUrl}
+        onCancel={cancel}
+        onRenewed={() => {
+          cancel();
+          setAccessRenewed(true);
+        }}
+      />
+    );
   else if (gmailState === 'waiting')
     status = (
       <div className="ob-email-waiting">
@@ -364,7 +444,19 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         </Button>
       </div>
     );
-  else status = <p className="ob-email-muted">Sign in to Gmail and review what nod can access.</p>;
+  else if (!personalSetup)
+    status = (
+      <div className="ob-email-notes">
+        <p>
+          {keyStatus?.mode === 'nod'
+            ? 'Google will ask you to sign in to Composio, the service nod uses to connect apps.'
+            : 'Google will ask you to sign in and allow access to your inbox.'}
+        </p>
+        {keyStatus && !keyStatus.switchable && (
+          <p className="ob-email-muted">{connectionRoutes[keyStatus.mode]}</p>
+        )}
+      </div>
+    );
 
   return (
     <section className="ob-step ob-email" data-analytics-public onClick={done ? undefined : skip}>
@@ -380,60 +472,114 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
           </Bubble>,
         ]}
       />
-      <Rise show={revealed >= 3} className="ob-email-card">
-        <div className="ob-email-gmail" data-gmail={gmailState}>
-          <div className="ob-email-head">
-            <span className="ob-email-tile">
-              <img src="/logos/gmail.svg" alt="" width={24} height={24} />
-            </span>
-            <div className="ob-email-title">
-              <p className="ob-email-name">Gmail</p>
-              {account ? (
-                <p className="ob-email-muted" data-analytics-private>
-                  {account.accountEmail ?? 'Signed in.'}
-                </p>
+      <Rise
+        show={revealed >= 3}
+        className={personalSetup ? 'ob-email-card ob-email-card-personal' : 'ob-email-card'}
+      >
+        {(!personalSetup || !compactSetup || setupExpanded) && (
+          <ConnectionChoice
+            state={choice}
+            disabled={!!pending || !!recovering}
+            className="ob-email-choice"
+          />
+        )}
+        {showGmail && (
+          <div className="ob-email-gmail" data-gmail={gmailState}>
+            <div className="ob-email-head">
+              <span className="ob-email-tile">
+                <img src="/logos/gmail.svg" alt="" width={24} height={24} />
+              </span>
+              <div className="ob-email-title">
+                <p className="ob-email-name">Gmail</p>
+                {account && personalSetup ? (
+                  <p className="ob-email-muted" data-analytics-private>
+                    {account.accountEmail ?? 'Signed in.'}
+                  </p>
+                ) : (
+                  <p className="ob-email-muted">
+                    {personalSetup
+                      ? 'Choose the inbox you want to connect.'
+                      : 'Start with one inbox. You can add more apps later.'}
+                  </p>
+                )}
+              </div>
+              {connected ? (
+                <span className="ob-email-chip">
+                  <Check size={14} strokeWidth={2.5} aria-hidden="true" />
+                  Connected
+                </span>
               ) : (
-                <p className="ob-email-muted">Choose the inbox you want to connect.</p>
+                gmailState !== 'waiting' && (
+                  <Button
+                    variant={personalSetup ? 'default' : 'outline'}
+                    className="ob-gmail-connect"
+                    disabled={!canConnect || gmailState === 'opening'}
+                    onClick={() => void connect()}
+                  >
+                    {gmailState === 'opening' && (
+                      <LoaderCircle size={16} className="spin" aria-hidden="true" />
+                    )}
+                    {personalSetup ? 'Connect Gmail' : 'Connect'}
+                  </Button>
+                )
               )}
             </div>
-            {connected ? (
-              <span className="ob-email-chip">
-                <Check size={14} strokeWidth={2.5} aria-hidden="true" />
-                Connected
-              </span>
-            ) : (
-              gmailState !== 'waiting' && (
-                <Button
-                  className="ob-gmail-connect"
-                  disabled={!canConnect || gmailState === 'opening'}
-                  onClick={() => void connect()}
-                >
-                  {gmailState === 'opening' && (
-                    <LoaderCircle size={16} className="spin" aria-hidden="true" />
-                  )}
-                  Connect Gmail
-                </Button>
-              )
+            {status}
+            {accessRenewed && (
+              <p role="status" className="ob-email-muted">
+                Browser sign-in renewed. Connect Gmail again.
+              </p>
+            )}
+            {pollFailing && (
+              <p role="alert" className="ob-email-error">
+                Can’t check on the sign-in right now. Still trying.
+              </p>
+            )}
+            {error && (
+              <p role="alert" className="ob-email-error" data-analytics-private>
+                {error}
+              </p>
             )}
           </div>
-          {status}
-          {pollFailing && (
-            <p role="alert" className="ob-email-error">
-              Can’t check on the sign-in right now. Still trying.
-            </p>
-          )}
-          {error && (
-            <p role="alert" className="ob-email-error" data-analytics-private>
-              {error}
-            </p>
-          )}
-        </div>
+        )}
+        {personalSetup && compactSetup && keyStatus && (
+          <div
+            className={
+              connected ? 'ob-email-summary ob-email-summary-connected' : 'ob-email-summary'
+            }
+          >
+            {!connected && (
+              <p ref={choice.view.savedKey} tabIndex={-1}>
+                {keyStatus.mode === 'nod' ? (
+                  <NodGlyph size={16} mode="still" />
+                ) : (
+                  <KeyRound size={16} aria-hidden="true" />
+                )}
+                <span>
+                  {keyStatus.mode === 'nod' ? 'Using Easy Connect' : 'Using your Composio key'}
+                </span>
+              </p>
+            )}
+            <button
+              ref={(node) => {
+                choice.view.tiles.current.nod = node;
+              }}
+              type="button"
+              className="connection-link"
+              disabled={!!pending || !!recovering}
+              aria-expanded={setupExpanded}
+              onClick={() => setSetupExpanded((value) => !value)}
+            >
+              {setupExpanded ? 'Done' : connected ? 'Change connection' : 'Change'}
+            </button>
+          </div>
+        )}
       </Rise>
       <Footer
         show={revealed >= 4}
         onBack={onBack}
         onNext={onNext}
-        nextDisabled={!connected || !!disconnections.length || !!recovering}
+        nextDisabled={!connected || !showGmail || !!disconnections.length || !!recovering}
       />
     </section>
   );

@@ -330,6 +330,7 @@ async function runningDesktop(
     reportReady = true,
     initialState = 'running',
     storedProfile,
+    legacyKey,
     prepareRuntime,
     nativePageLoaded,
     enginePageLoaded,
@@ -359,6 +360,18 @@ async function runningDesktop(
       onboardingCompleted: true,
     });
     await storage.store.save({ notifications: false, launchAtLogin: false });
+  }
+  if (legacyKey) {
+    await storage.store.environment();
+    const saved = JSON.parse(await readFile(storage.path, 'utf8'));
+    saved.secrets.composioApiKey = storage.encryption.encryptString(legacyKey).toString('base64');
+    saved.keyMetadata.composioApiKey = {
+      suffix: legacyKey.slice(-4),
+      source: 'manual',
+      updatedAt: '2026-10-08T00:00:00.000Z',
+    };
+    await writeFile(storage.path, JSON.stringify(saved));
+    storage.store = storage.reopen();
   }
   const windows = [];
   const children = [];
@@ -1937,51 +1950,105 @@ test('workspace failure leaves the pending backend intact and an explicit retry 
   }
 });
 
-test('native upgrades preserve the existing settings and vault through successful or failed startup', async (t) => {
-  for (const failed of [false, true]) {
-    await t.test(failed ? 'failed runtime' : 'ready runtime', async (t) => {
-      const storage = await fixture(t);
-      await storage.store.save({
-        onboardingCompleted: true,
-        notifications: true,
-        launchAtLogin: true,
-        theme: 'dark',
-      });
-      const environment = await storage.store.environment();
-      const saved = JSON.parse(await readFile(storage.path, 'utf8'));
-      saved.secrets.composioApiKey = 'retired-ciphertext-must-not-be-unlocked';
-      saved.keyMetadata = {
-        composioApiKey: { suffix: 'test', source: 'manual', updatedAt: '2026-01-01T00:00:00.000Z' },
-      };
-      const previous = JSON.stringify(saved, null, 2);
-      await writeFile(storage.path, previous);
-      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
-        initialState: 'upgrade',
-        allowStart: true,
-        storedProfile: storage,
-        prepareRuntime: async ({ onStorageReady }) => {
-          const runtime = { env: {} };
-          await onStorageReady(runtime);
-          if (failed) throw new Error('Synthetic browser startup failure');
-          return runtime;
-        },
-      });
-      try {
-        await f.launch();
-        await f.settle();
-        assert.equal(f.status().phase, failed ? 'error' : 'ready');
-        assert.equal(f.children[0].environment.NOD_VAULT_KEY, environment.NOD_VAULT_KEY);
-        assert.deepEqual(
-          JSON.parse(JSON.stringify(f.children[0].sent)),
-          failed ? [] : [{ type: 'nod-runtime-ready' }],
-        );
-        assert.equal((await f.storage.store.get()).onboardingCompleted, true);
-        assert.equal((await f.storage.store.get()).theme, 'dark');
-        assert.equal(await readFile(storage.path, 'utf8'), previous);
-      } finally {
-        await f.close();
-      }
+test('native upgrade binds legacy cleanup to its owned child and retains ciphertext when cleanup is deferred', async (t) => {
+  const key = 'synthetic-private-upgrade-key';
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'upgrade',
+    allowStart: true,
+    legacyKey: key,
+  });
+  const before = await f.storage.store.environment();
+  try {
+    await f.launch();
+    await f.settle();
+    const child = f.children[0];
+    assert.deepEqual(JSON.parse(JSON.stringify(child.sent)), [{ type: 'nod-runtime-ready' }]);
+    child.sent.length = 0;
+    assert.equal(child.environment.NOD_DESKTOP_LEGACY_INTEGRATION, 'true');
+    assert.equal(JSON.stringify(child.environment).includes(key), false);
+    assert.equal(JSON.stringify(await f.storage.store.get()).includes(key), false);
+    const ownerId = child.environment.NOD_DESKTOP_OWNER_ID;
+    const nonce = randomUUID();
+    const request = { type: 'nod-legacy-integration-request', ownerId, nonce };
+    child.emit('message', { ...request, ownerId: randomUUID() });
+    child.emit('message', { ...request, nonce: 'invalid' });
+    assert.equal(child.sent.length, 0);
+    child.emit('message', request);
+    assert.equal(child.sent.length, 1);
+    const payload = child.sent[0];
+    assert.equal(payload.apiKey, key);
+    assert.equal(payload.ownerId, ownerId);
+    assert.equal(payload.nonce, nonce);
+    child.emit('message', request);
+    assert.equal(child.sent.length, 1);
+    const ack = { type: 'nod-legacy-integration-ack', ownerId, nonce, receipt: payload.receipt };
+    child.emit('message', { ...ack, ownerId: randomUUID() });
+    child.emit('message', { ...ack, nonce: randomUUID() });
+    child.emit('message', { ...ack, receipt: '0'.repeat(64) });
+    await new Promise(setImmediate);
+    assert.equal((await f.storage.store.legacyIntegration()).apiKey, key);
+    const ciphertext = await readFile(f.storage.path, 'utf8');
+    const acknowledge = f.storage.store.acknowledgeLegacyIntegration;
+    f.storage.store.acknowledgeLegacyIntegration = async () => {
+      throw new Error('Synthetic temporary settings write failure');
+    };
+    child.emit('message', ack);
+    for (let i = 0; i < 100 && child.sent.length < 2; i++)
+      await new Promise((accept) => setTimeout(accept, 10));
+    assert.deepEqual(JSON.parse(JSON.stringify(child.sent[1])), {
+      type: 'nod-legacy-integration-cleanup-deferred',
+      ownerId,
+      nonce,
+      receipt: payload.receipt,
     });
+    assert.equal(await readFile(f.storage.path, 'utf8'), ciphertext);
+    assert.equal(f.status().phase, 'ready');
+    f.storage.store.acknowledgeLegacyIntegration = acknowledge;
+    child.emit('message', ack);
+    for (let i = 0; i < 100 && child.sent.length < 3; i++)
+      await new Promise((accept) => setTimeout(accept, 10));
+    assert.equal(child.sent[2].type, 'nod-legacy-integration-cleaned');
+    assert.equal(await f.storage.store.legacyIntegration(), undefined);
+    assert.deepEqual(await f.storage.store.environment(), before);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+    assert.equal(f.children.length, 1);
+    assert.ok(f.windows.every((window) => !JSON.stringify(window.sent).includes(key)));
+    f.crash();
+    child.emit('message', request);
+    assert.equal(child.sent.length, 3);
+  } finally {
+    await f.close();
+  }
+});
+
+test('unreadable historical app ciphertext does not block a completed profile and remains recoverable', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'upgrade',
+    allowStart: true,
+    legacyKey: 'synthetic-older-key',
+  });
+  const before = await readFile(f.storage.path, 'utf8');
+  const ciphertext = JSON.parse(before).secrets.composioApiKey;
+  const decrypt = f.storage.encryption.decryptString;
+  f.storage.encryption.decryptString = (value) => {
+    if (value.toString('base64') === ciphertext) throw new Error('Synthetic old key cannot unlock');
+    return decrypt(value);
+  };
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.status().phase, 'ready');
+    assert.deepEqual(
+      f.children.map((child) => child.kind),
+      ['engine'],
+    );
+    assert.equal(f.children[0].environment.NOD_DESKTOP_LEGACY_INTEGRATION, undefined);
+    assert.equal(await readFile(f.storage.path, 'utf8'), before);
+    assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+    f.storage.encryption.decryptString = decrypt;
+    assert.equal((await f.storage.store.legacyIntegration()).apiKey, 'synthetic-older-key');
+  } finally {
+    await f.close();
   }
 });
 
@@ -2076,43 +2143,26 @@ test('desktop proxy overrides reach only isolated source engines and retain orig
       const expected = allowed ? scenario.url : 'https://composio.n8n.cloud';
       const script = `
         import assert from 'node:assert/strict';
-        import { createHash } from 'node:crypto';
         let requests = 0;
         globalThis.fetch = async (resource, options) => {
           const request = new Request(resource, options);
-          const url = new URL(request.url);
-          assert.equal(url.origin, ${JSON.stringify(expected)});
+          assert.equal(request.url, ${JSON.stringify(expected)} + '/v1/access/status');
+          assert.equal(request.method, 'POST');
           assert.equal(request.headers.has('x-api-key'), false);
-          assert.ok(request.headers.get('x-nod-signature'));
+          assert.ok(request.headers.get('x-otto-signature'));
           requests++;
-          if (url.pathname === '/v2/access/enroll') {
-            assert.equal(request.method, 'POST');
-            const userId = 'nod_' + createHash('sha256').update(Buffer.from(request.headers.get('x-nod-public-key'), 'base64url')).digest('hex');
-            return Response.json({ state: 'enabled', userId });
-          }
-          assert.equal(url.pathname, '/v2/api/v3.1/toolkits');
-          assert.equal(request.method, 'GET');
-          return Response.json({ items: [] });
+          return Response.json({ state: 'sign_in_required' });
         };
         const { createDefaultAdapters } = await import('./src/server/composition.ts');
         const { pool } = await import('./src/server/db.ts');
-        let identity;
-        pool.query = async (sql, values) => {
-          if (sql.startsWith('SELECT public_key FROM integration_identities'))
-            return { rows: identity ? [{ public_key: identity }] : [], rowCount: identity ? 1 : 0 };
-          if (sql.startsWith('INSERT INTO integration_identities')) identity = values[1];
-          return { rows: [], rowCount: 1 };
-        };
-        pool.connect = async () => ({ query: (...args) => pool.query(...args), release() {} });
         if (${Boolean(scenario.invalid)}) {
           assert.throws(() => createDefaultAdapters(), /proxy address/);
           assert.equal(requests, 0);
         } else {
           const adapters = createDefaultAdapters();
-          adapters.keyStore.getKey = async () => Buffer.alloc(32, 7);
-          await adapters.integrations.listServices();
-          assert.equal(requests, 2);
-          await adapters.integrationBrowser.close();
+          assert.deepEqual(await adapters.integrationAccess.status(), { state: 'sign_in_required', email: null });
+          assert.equal(requests, 1);
+          await adapters.integrationAccess.close();
         }
         await pool.end();
       `;
@@ -2506,48 +2556,73 @@ ConvertTo-Json -InputObject @($results) -Compress`,
   },
 );
 
-test('startup reads preserve older settings for rollback until an owner preference changes', async (t) => {
+test('legacy app keys migrate privately and remain encrypted until the exact durable acknowledgement', async (t) => {
   const f = await fixture(t);
-  await f.store.save({
-    theme: 'dark',
-    notifications: true,
-    launchAtLogin: true,
-    onboardingCompleted: true,
-  });
-  const expected = await f.store.environment();
+  await f.store.environment();
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
-  saved.secrets.composioApiKey = 'unreadable-retired-ciphertext';
-  saved.secrets.integrationConfiguration = 'unreadable-retired-config';
-  saved.keyMetadata = {
-    composioApiKey: { suffix: 'test', source: 'manual', updatedAt: '2026-01-01T00:00:00.000Z' },
+  const secret = 'synthetic-retired-composio-key';
+  saved.secrets.composioApiKey = f.encryption.encryptString(secret).toString('base64');
+  saved.secrets.integrationConfiguration = f.encryption
+    .encryptString(JSON.stringify({ COMPOSIO_GMAIL_AUTH_CONFIG_ID: 'synthetic-retired-config' }))
+    .toString('base64');
+  saved.keyMetadata.composioApiKey = {
+    suffix: secret.slice(-4),
+    source: 'manual',
+    updatedAt: '2026-10-08T00:00:00.000Z',
   };
-  const previous = JSON.stringify(saved, null, 2);
-  await writeFile(f.path, previous);
-  const store = createSettingsStore(f.path, {
-    ...f.encryption,
-    decryptString: () => assert.fail('Reading preferences must not decrypt retired app keys.'),
-    decryptStringAsync: () => assert.fail('Reading preferences must not decrypt retired app keys.'),
-  });
-  const settings = await store.get();
-  assert.equal(settings.theme, 'dark');
-  assert.equal(settings.notifications, true);
-  assert.equal(settings.onboardingCompleted, true);
-  assert.equal(await readFile(f.path, 'utf8'), previous);
-  const blocked = createSettingsStore(f.path, {
-    ...f.encryption,
-    isEncryptionAvailable: () => false,
-    isAsyncEncryptionAvailable: async () => false,
-  });
-  await assert.rejects(blocked.environment(), /unlock/i);
-  assert.equal(await readFile(f.path, 'utf8'), previous);
-  assert.deepEqual(await f.reopen().environment(), expected);
-  assert.equal(await readFile(f.path, 'utf8'), previous);
-  await store.save({ theme: 'light' });
-  const current = JSON.parse(await readFile(f.path, 'utf8'));
-  assert.equal(current.theme, 'light');
-  assert.deepEqual(current.secrets, { vaultKey: saved.secrets.vaultKey });
-  assert.equal(Object.hasOwn(current, 'keyMetadata'), false);
-  assert.deepEqual(await f.reopen().environment(), expected);
+  await writeFile(f.path, JSON.stringify(saved));
+  const store = f.reopen();
+  const expectedVault = f.encryption.decryptString(Buffer.from(saved.secrets.vaultKey, 'base64'));
+  assert.deepEqual(await store.environment(), { NOD_VAULT_KEY: expectedVault });
+  assert.equal(Object.hasOwn(await store.get(), 'keys'), false);
+  assert.equal(Object.hasOwn(await store.get(), 'hasComposioKey'), false);
+  assert.equal(store.revealKey, undefined);
+  await store.save({ theme: 'dark', notifications: true });
+  assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).secrets, saved.secrets);
+  assert.deepEqual(await f.reopen().environment(), { NOD_VAULT_KEY: expectedVault });
+  await assert.rejects(store.save({ composioApiKey: 'synthetic-replacement-key' }), /supported/);
+  const damaged = {
+    ...saved,
+    secrets: {
+      ...saved.secrets,
+      integrationConfiguration: f.encryption
+        .encryptString('synthetic-private-malformed-config')
+        .toString('base64'),
+    },
+  };
+  await writeFile(f.path, JSON.stringify(damaged));
+  await assert.rejects(
+    f.reopen().legacyIntegration(),
+    (error) => error.message === 'nod could not open its saved app connection.',
+  );
+  await writeFile(f.path, JSON.stringify({ ...saved, theme: 'dark', notifications: true }));
+  const pending = await store.legacyIntegration();
+  assert.equal(pending.apiKey, secret);
+  assert.deepEqual(pending.authConfigs, { gmail: 'synthetic-retired-config' });
+  assert.deepEqual(await f.reopen().legacyIntegration(), pending);
+  await assert.rejects(store.acknowledgeLegacyIntegration('0'.repeat(64)), /changed/);
+  const replaced = {
+    ...saved,
+    secrets: {
+      ...saved.secrets,
+      composioApiKey: f.encryption
+        .encryptString('synthetic-replaced-legacy-key')
+        .toString('base64'),
+    },
+  };
+  await writeFile(f.path, JSON.stringify(replaced));
+  await assert.rejects(store.acknowledgeLegacyIntegration(pending.receipt), /changed/);
+  assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).secrets, replaced.secrets);
+  await writeFile(f.path, JSON.stringify({ ...saved, theme: 'dark', notifications: true }));
+  assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).secrets, saved.secrets);
+  await store.acknowledgeLegacyIntegration(pending.receipt);
+  assert.equal(await f.reopen().legacyIntegration(), undefined);
+  const migrated = JSON.parse(await readFile(f.path, 'utf8'));
+  assert.deepEqual(migrated.secrets, { vaultKey: saved.secrets.vaultKey });
+  assert.deepEqual(migrated.keyMetadata, {});
+  assert.equal(migrated.theme, 'dark');
+  assert.equal(migrated.notifications, true);
+  assert.deepEqual(await f.reopen().environment(), { NOD_VAULT_KEY: expectedVault });
 });
 
 test('macOS settings unlock asynchronously without rewriting existing ciphertext or calling synchronous storage', async (t) => {
@@ -2699,10 +2774,15 @@ test('unsupported saved schemas fail closed without rewriting or unlocking their
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
   const variants = [
     { ...saved, version: 2 },
+    { ...saved, provider: 'openai' },
     { ...saved, notifications: undefined },
-    { ...saved, secrets: null },
-    { ...saved, secrets: { vaultKey: 123 } },
+    { ...saved, secrets: { ...saved.secrets, openaiApiKey: 'unsupported-ciphertext' } },
     { ...saved, secrets: { ...saved.secrets, vaultKey: '' } },
+    {
+      ...saved,
+      keyMetadata: { composioApiKey: { ...saved.keyMetadata.composioApiKey, source: 'saved' } },
+    },
+    { ...saved, keyMetadata: null },
     null,
     [],
   ];
