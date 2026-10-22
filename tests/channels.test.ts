@@ -36,7 +36,38 @@ import { contactCards } from '../src/shared/channel-content.ts';
 import { contactAttachment } from '../src/providers/chat-sdk/content.ts';
 
 test('audio waveform reads refuse foreign URLs, oversized streams, redirects and cancelled work', async (t) => {
-  const ids = Array.from({ length: 3 }, () => randomUUID());
+  const ids = Array.from({ length: 5 }, () => randomUUID());
+  const opus = (count: number, granule = 0n) => {
+    const head = Buffer.alloc(19);
+    head.write('OpusHead');
+    head[8] = 1;
+    head[9] = 1;
+    const packets = [
+      head,
+      Buffer.from('OpusTags'),
+      ...Array.from({ length: count }, () => Buffer.from([25, 0])),
+    ];
+    return Buffer.concat(
+      packets.map((packet, index) => {
+        const page = Buffer.alloc(28 + packet.length);
+        page.write('OggS');
+        page[5] = index === 0 ? 2 : index === packets.length - 1 ? 4 : 0;
+        page.writeBigUInt64LE(granule, 6);
+        page.writeUInt32LE(1, 14);
+        page.writeUInt32LE(index, 18);
+        page[26] = 1;
+        page[27] = packet.length;
+        packet.copy(page, 28);
+        let crc = 0;
+        for (const byte of page) {
+          crc ^= byte << 24;
+          for (let bit = 0; bit < 8; bit++) crc = (crc << 1) ^ (crc < 0 ? 0x04c11db7 : 0);
+        }
+        page.writeUInt32LE(crc >>> 0, 22);
+        return page;
+      }),
+    );
+  };
   let reads = 0;
   let redirectReads = 0;
   let started!: () => void;
@@ -55,6 +86,12 @@ test('audio waveform reads refuse foreign URLs, oversized streams, redirects and
     } else if (request.url === `/api/artifacts/${ids[2]}`) {
       response.writeHead(302, { Location: '/foreign' });
       response.end();
+    } else if (
+      request.url === `/api/artifacts/${ids[3]}` ||
+      request.url === `/api/artifacts/${ids[4]}`
+    ) {
+      response.writeHead(200, { 'Content-Type': 'audio/ogg' });
+      response.end(request.url.endsWith(ids[3]) ? opus(5001) : opus(1, 0x100000000n));
     } else {
       redirectReads++;
       response.end();
@@ -97,6 +134,11 @@ test('audio waveform reads refuse foreign URLs, oversized streams, redirects and
     loadAudioWaveform(`/api/artifacts/${ids[2]}`, 10, 1, new AbortController().signal),
   );
   assert.equal(redirectReads, 0);
+  for (const id of ids.slice(3))
+    await assert.rejects(
+      loadAudioWaveform(`/api/artifacts/${id}`, 100, 1, new AbortController().signal),
+      /Waveform unavailable/,
+    );
 });
 
 test('WhatsApp setup closes the replacement generation despite stale polls and late restart responses', async () => {
@@ -616,6 +658,21 @@ test(
               (sent.at(-1)!.content.location as { degreesLatitude: number }).degreesLatitude,
               41.4,
             );
+            await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: '',
+              attachments: [
+                attachment(
+                  'name-only.vcf',
+                  'text/vcard',
+                  'BEGIN:VCARD\r\nFN:Synthetic\r\nEND:VCARD',
+                ),
+              ],
+            });
+            assert.equal(sent.at(-1)!.content.contacts, undefined);
+            assert.ok(sent.at(-1)!.content.document);
             failSend = true;
             await assert.rejects(
               transport.post({
@@ -718,7 +775,7 @@ test('Telegram media keeps native replies and checks the sender before any downl
     fetch: async (input, init) => {
       requests.push(String(input));
       if (String(input).endsWith('/getFile')) {
-        assert.equal(JSON.parse(String(init?.body)).file_id, 'fixture-image');
+        assert.ok(['fixture-image', 'preview'].includes(JSON.parse(String(init?.body)).file_id));
         return Response.json({
           ok: true,
           result: { file_path: filePath, file_size: bytes.length },
@@ -854,6 +911,26 @@ test('Telegram media keeps native replies and checks the sender before any downl
       0,
     );
   }
+  const animated = await receive({
+    ...message,
+    photo: undefined,
+    sticker: {
+      file_id: 'animation',
+      file_size: 12,
+      is_animated: true,
+      thumbnail: { file_id: 'preview', file_size: 12 },
+    },
+  });
+  assert.deepEqual(
+    animated.messages![0].attachments!.map((file) => [file.mimeType, file.source]),
+    [
+      ['application/x-tgsticker', 'sticker'],
+      ['image/jpeg', 'sticker'],
+    ],
+  );
+  filePath = 'photos/fixture.jpg';
+  assert.deepEqual(Buffer.from(await animated.messages![0].attachments![1].read()), bytes);
+  requests.length = 0;
   assert.equal(
     (await receive({ ...message, photo: undefined, location: { latitude: 91, longitude: 2.17 } }))
       .messages?.length,
@@ -971,6 +1048,7 @@ test(
     const presentations: { kind: string; reason?: string }[] = [];
     let voiceFailure: Error | undefined;
     let modelConfigured = true;
+    let verificationPending = false;
     let speechConfigured = true;
     let transcript = '483729';
     const speech = createSpeech({
@@ -1013,6 +1091,7 @@ test(
         subscribe: () => () => {},
         media: createChannelMedia({ artifacts, speech }),
         modelConfigured: () => modelConfigured,
+        verificationPending: async () => verificationPending,
         activeThread: async () => ({ id: threadId }),
         present: async (_thread, presentation) => {
           presentations.push(presentation);
@@ -1209,6 +1288,12 @@ test(
     const savedCards = (await artifacts.readArtifact(contacts.id)).toString('utf8');
     assert.equal(savedCards, cards.join('\r\n'));
     assert.equal(contactCards(savedCards).length, 17);
+    assert.equal(contactAttachment(['', '  ']).length, 0);
+    assert.equal(
+      contactCards('BEGIN:VCARD\r\nN:Doe;John;Quincy;Dr.;Jr.\r\nTEL:+34600000000\r\nEND:VCARD')[0]
+        .name,
+      'Dr. John Quincy Doe Jr.',
+    );
     const beforeVoice = reads;
     const beforeSubmissions = submissions.length;
     message = {
@@ -1228,6 +1313,43 @@ test(
       )
     ).rows;
     assert.equal(notices.length, 1);
+    verificationPending = true;
+    speechConfigured = false;
+    const beforeNotice = presentations.length;
+    await sendId('voice-no-model-no-speech');
+    await fixture.channels.drain();
+    assert.equal(presentations.length, beforeNotice);
+    speechConfigured = true;
+    transcript = 'Synthetic ordinary voice request';
+    const beforeOrdinary = submissions.length;
+    await sendId('ordinary-voice-without-model');
+    await fixture.channels.drain();
+    assert.equal(submissions.length, beforeOrdinary);
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT 1 FROM channel_inbox WHERE text LIKE '%Synthetic ordinary voice request%'",
+        )
+      ).rowCount,
+      0,
+    );
+    transcript = '483729';
+    const codeCount = privateCodes.length;
+    const artifactCount = (await pool.query('SELECT count(*)::int AS count FROM artifacts')).rows[0]
+      .count;
+    await sendId('voice-code-without-model');
+    await fixture.channels.drain();
+    assert.equal(privateCodes.length, codeCount + 1);
+    assert.equal(privateCodes.at(-1), transcript);
+    assert.equal(
+      (await pool.query('SELECT count(*)::int AS count FROM artifacts')).rows[0].count,
+      artifactCount,
+    );
+    assert.equal(
+      (await pool.query("SELECT 1 FROM channel_inbox WHERE text LIKE '%483729%'")).rowCount,
+      0,
+    );
+    verificationPending = false;
     modelConfigured = true;
     speechConfigured = false;
     await sendId('voice-without-speech');
@@ -1279,6 +1401,9 @@ test(
     const sent: Array<{ channelId: string; accountId: string; threadId: string; text: string }> =
       [];
     let injections = 0;
+    let modelReady = true;
+    let voiceHold: Promise<void> | undefined;
+    let voiceStarted: (() => void) | undefined;
     let verification: Awaited<ReturnType<typeof createChatVerification>> | undefined;
     let beginHeld!: () => void;
     let releaseHeld!: () => void;
@@ -1309,6 +1434,13 @@ test(
                 senderId: 'fixture-owner',
                 threadId: 'fixture-thread',
                 ...input,
+                ...(input.voice
+                  ? {
+                      attachments: [
+                        { ...attachment('voice.ogg', 'audio/ogg', 'synthetic voice'), voice: true },
+                      ],
+                    }
+                  : {}),
                 sentAt: new Date(),
               },
             ],
@@ -1326,7 +1458,25 @@ test(
       const channels = await createChannels(pool, {
         ownerId: 'local-development',
         transport: transport(),
+        modelConfigured: () => modelReady,
+        verificationPending: async (channel) =>
+          Boolean((await verification?.pending(channel))?.length),
+        media: createChannelMedia({
+          artifacts: {
+            storeArtifact: async () => {
+              throw new Error('Private voice must not be stored.');
+            },
+          },
+          speech: {
+            transcribe: async () => {
+              voiceStarted?.();
+              await voiceHold;
+              return '481927';
+            },
+          },
+        }),
         present: async (thread) => {
+          assert.equal(modelReady, true);
           assert.equal(thread, threadId);
           return 'Usa o pedido de verificação na conversa correspondente.';
         },
@@ -1517,7 +1667,9 @@ test(
         "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
         [codeTurnId],
       );
-      assert.equal((await send('vault-code', 'Código: 481 927')).statusCode, 200);
+      modelReady = false;
+      assert.equal((await send('vault-code', '', 'telegram', { voice: true })).statusCode, 200);
+      modelReady = true;
       await fixture.channels.drain();
       assert.equal(vaultInjections, 1);
       assert.deepEqual(submitted, ['2026']);
@@ -1605,6 +1757,73 @@ test(
       });
       await fixture.channels.drain();
       assert.equal(vaultInjections, 3);
+      assert.doesNotMatch(
+        JSON.stringify(
+          (await pool.query('SELECT text FROM channel_inbox UNION ALL SELECT text FROM messages'))
+            .rows,
+        ),
+        /481927/,
+      );
+      await pool.query(
+        "UPDATE turns SET status='running',waiting_reason=NULL,finished_at=NULL WHERE id=$1",
+        [nextCodeTurn],
+      );
+      await vault.request({ threadId, turnId: nextCodeTurn }, 'local-development', {
+        origin: 'https://1.1.1.1',
+        label: 'Synthetic held voice',
+        kind: 'otp',
+        passwordSelector: '#code',
+      });
+      await pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
+        [nextCodeTurn],
+      );
+      modelReady = false;
+      assert.equal(
+        (
+          await send('unknown-native-voice', '', 'telegram', {
+            voice: true,
+            replyToMessageId: 'unknown-native-question',
+          })
+        ).statusCode,
+        200,
+      );
+      await fixture.channels.drain();
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT o.state FROM channel_outbox o JOIN channel_inbox i USING(source_id) WHERE i.source_id LIKE '%:unknown-native-voice'",
+          )
+        ).rows[0].state,
+        'sent',
+      );
+      let releaseVoice!: () => void;
+      const beganVoice = new Promise<void>((resolve) => {
+        voiceStarted = resolve;
+      });
+      voiceHold = new Promise<void>((resolve) => {
+        releaseVoice = resolve;
+      });
+      const voice = send('closed-during-voice', '', 'telegram', { voice: true });
+      await beganVoice;
+      await pool.query(
+        "UPDATE credential_requests SET status='submitted' WHERE turn_id=$1 AND status='pending'",
+        [nextCodeTurn],
+      );
+      modelReady = true;
+      releaseVoice();
+      assert.equal((await voice).statusCode, 200);
+      await fixture.channels.drain();
+      assert.equal(vaultInjections, 3);
+      assert.deepEqual(submitted, ['2026']);
+      assert.deepEqual(
+        (
+          await pool.query(
+            "SELECT state,text FROM channel_inbox WHERE source_id LIKE '%:closed-during-voice'",
+          )
+        ).rows,
+        [{ state: 'discarded', text: '' }],
+      );
       assert.doesNotMatch(
         JSON.stringify(
           (await pool.query('SELECT text FROM channel_inbox UNION ALL SELECT text FROM messages'))

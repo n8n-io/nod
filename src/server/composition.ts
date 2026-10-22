@@ -1496,6 +1496,7 @@ async function initializeApplication(
       resolveAttachments: artifacts.readThreadArtifacts,
       media: createChannelMedia({ artifacts, speech }),
       modelConfigured: () => adapters.model.configured,
+      verificationPending: async (channel) => (await chatVerification.pending(channel)).length > 0,
       attributeMediaUsage: ledger.attributeMediaUsage,
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,

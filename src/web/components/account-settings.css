@@ -154,7 +154,7 @@
   text-align: left;
   cursor: pointer;
 }
-.account-theme-previews > button:hover:not(:disabled) {
+.account-theme-previews > button:where(:hover:not(:disabled)) {
   border-color: var(--border);
   background: var(--control-hover);
 }

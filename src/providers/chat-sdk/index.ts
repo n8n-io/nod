@@ -619,6 +619,7 @@ export function createChatSdkTransport(
           } catch {}
           const native =
             contacts.length === 1 &&
+            Buffer.byteLength(contacts[0].vcard) <= 2048 &&
             /^\+?(?:[\s().-]*\d)+[\s().-]*$/.test(contacts[0].phones[0] ?? '')
               ? contacts.map((contact) => ({
                   method: 'sendContact',
@@ -631,10 +632,17 @@ export function createChatSdkTransport(
               : location?.success
                 ? [
                     {
-                      method: 'sendLocation',
+                      method:
+                        location.data.name || location.data.address ? 'sendVenue' : 'sendLocation',
                       data: {
                         latitude: location.data.latitude,
                         longitude: location.data.longitude,
+                        ...(location.data.name || location.data.address
+                          ? {
+                              title: location.data.name || location.data.address,
+                              address: location.data.address || location.data.name,
+                            }
+                          : {}),
                       },
                     },
                   ]

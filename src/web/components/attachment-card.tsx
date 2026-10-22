@@ -215,7 +215,11 @@ export function MessageAttachments({
             item.name === 'location.json' ||
             item.source === 'contact' ||
             /\.vcf$/i.test(item.name) ? (
-              <SharedMessageCard key={item.id} item={item} />
+              <SharedMessageCard
+                key={item.id}
+                item={item}
+                selected={drawer.selectedId === item.id}
+              />
             ) : attachmentKind(item.mimeType ?? '', item.name) === 'audio' ? (
               <AudioPlayer key={item.id} item={item} selected={drawer.selectedId === item.id} />
             ) : (

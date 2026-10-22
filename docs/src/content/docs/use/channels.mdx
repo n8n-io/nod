@@ -88,9 +88,9 @@ When you run nod from source, you can set the `TELEGRAM_*` and `WHATSAPP_*` valu
 
 ## Files and voice messages
 
-In nod chat, audio has an inline player with a waveform, play and pause, seek, elapsed time and playback speed. The waveform is processed locally. Long or unsupported audio can still play without a waveform.
+In nod chat, audio has an inline player with a waveform, play and pause, seek, elapsed time and playback speed. The waveform is processed locally for Ogg Opus voice notes. Before decoding, nod checks the stream, packet duration and page checksums. Long or unsupported audio can still play without a waveform.
 
-A sticker is a conversation message, not a request to review a file. Static stickers appear without a file-card background. Animated formats remain files that nod can inspect. A sticker sent as a reply stays linked to that message.
+A sticker is a conversation message, not a request to review a file. Static stickers appear without a file-card background. Animated formats keep their original file. Telegram also supplies a visual preview when its message includes a thumbnail. A sticker sent as a reply stays linked to that message.
 
 A file message sent before model setup gets a setup notice without a media download or transcription. If a chat model is connected but speech is not set up, nod asks for an OpenAI API key in **Settings → Models**.
 
@@ -102,7 +102,7 @@ Shared contacts show a contact card. The original vCard stays available to downl
 
 A `.vcf` reply can arrive as a native contact. Telegram supports one native card with a vCard of at most 2048 bytes; larger or grouped cards arrive as a file. A valid `location.json` reply can arrive as a native location. The [Telegram API](https://core.telegram.org/bots/api#sendcontact) defines its native contact limit.
 
-Each provider message has one file. Album files arrive as separate messages and are not combined. The shared intake has a safety cap of ten files and 50 MB, but the current adapters do not create a multi-file message. Telegram's hosted file API limits each incoming file to 20 MB. A voice message has a 25 MB limit. nod checks the sender before it downloads a file. Files belong to your shared conversation workspace.
+A message usually has one file. An animated Telegram sticker can include its original file and an image preview. Album files arrive as separate messages and are not combined. The shared intake has a safety cap of ten files and 50 MB, and current adapters attach at most an original sticker and its preview. Telegram's hosted file API limits each incoming file to 20 MB. A voice message has a 25 MB limit. nod checks the sender before it downloads a file. Files belong to your shared conversation workspace.
 
 nod prepares at most four file messages at a time. If the channel is busy, send the message again after the current files finish. A caption and its transcript must fit within 100,000 characters. A failed save removes files that have no saved record.
 

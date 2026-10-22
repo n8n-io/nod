@@ -36,16 +36,14 @@ export const telegramMessage = z.object({
       first_name: z.string().max(200),
       last_name: z.string().max(200).optional(),
       phone_number: z.string().max(100),
-      vcard: z
-        .string()
-        .max(256 * 1024)
-        .optional(),
+      vcard: z.string().optional(),
     })
     .optional(),
   sticker: telegramFile
     .extend({
       is_animated: z.boolean().default(false),
       is_video: z.boolean().default(false),
+      thumbnail: telegramFile.optional(),
     })
     .optional(),
   from: z.object({
@@ -102,7 +100,7 @@ export function telegramAttachments(
           : video
             ? 'video/mp4'
             : 'application/octet-stream'));
-  return [
+  const attachments: MessagingAttachment[] = [
     {
       name:
         file.file_name ??
@@ -185,6 +183,15 @@ export function telegramAttachments(
       },
     },
   ];
+  if (sticker?.thumbnail && (sticker.is_animated || sticker.is_video))
+    attachments.push(
+      ...telegramAttachments(
+        { ...message, sticker: undefined, photo: [sticker.thumbnail] },
+        token,
+        request,
+      ).map((file) => ({ ...file, name: 'sticker-preview.jpg', source: 'sticker' as const })),
+    );
+  return attachments;
 }
 
 export function telegramPairing(

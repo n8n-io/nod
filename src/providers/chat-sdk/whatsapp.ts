@@ -638,7 +638,12 @@ export function createWhatsAppLinkedTransport(options: {
         const contacts = /^(?:text\/(?:x-)?vcard)$/.test(file.mimeType)
           ? contactCards(bytes.toString('utf8'))
           : [];
-        if (contacts.length) {
+        if (
+          contacts.length &&
+          contacts.every((contact) =>
+            contact.phones.some((phone) => /^\+?(?:[\s().-]*\d)+[\s().-]*$/.test(phone)),
+          )
+        ) {
           ids.push(
             await send(
               input.threadId,

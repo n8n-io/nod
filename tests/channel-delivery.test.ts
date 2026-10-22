@@ -1474,7 +1474,7 @@ test(
             },
           });
         }
-        if (/\/send(?:Contact|Location)$/.test(target)) {
+        if (/\/send(?:Contact|Location|Venue)$/.test(target)) {
           const data = JSON.parse(String(init?.body));
           native.push({ method: target.split('/').at(-1)!, data });
           assert.equal(String(data.chat_id), '123456');
@@ -1678,6 +1678,25 @@ test(
       );
       assert.equal(native[0].data.vcard, contactText);
       assert.equal(native[1].data.latitude, 41.4);
+      for (const details of [
+        { name: 'Synthetic park', address: 'Synthetic address' },
+        { name: 'Synthetic park' },
+        { address: 'Synthetic address' },
+      ]) {
+        const artifact = await storeArtifact(
+          Buffer.from(JSON.stringify({ latitude: 41.4, longitude: 2.17, ...details })),
+          'location.json',
+          'application/json',
+          threadId,
+        );
+        filePaths.push(join(dataRoot, 'artifacts', artifact.id));
+        const reply = await addReply(turnId, [artifact]);
+        await channels.drain();
+        assert.equal((await state(reply)).state, 'sent');
+        assert.equal(native.at(-1)!.method, 'sendVenue');
+        assert.equal(native.at(-1)!.data.title, details.name || details.address);
+        assert.equal(native.at(-1)!.data.address, details.address || details.name);
+      }
       const grouped = await storeArtifact(
         Buffer.from(`${contactText}\r\n${contactText}`),
         'group.vcf',
@@ -1689,7 +1708,39 @@ test(
       await channels.drain();
       assert.equal((await state(groupedReply)).state, 'sent');
       assert.equal(sent.at(-1)!.method, 'sendDocument');
-      assert.equal(native.length, 2);
+      assert.equal(native.length, 5);
+      const sizedContact = (size: number) => {
+        const card = contactText.replace('END:VCARD', 'NOTE:\r\nEND:VCARD');
+        return card.replace('NOTE:', `NOTE:${'a'.repeat(size - Buffer.byteLength(card))}`);
+      };
+      for (const [name, text, nativeExpected] of [
+        [
+          'line-endings.vcf',
+          `${contactText.replaceAll('\r\n', '\n').replace('END:VCARD', '')}${'NOTE:a\n'.repeat(280)}END:VCARD`,
+          false,
+        ],
+        ['location.json', sizedContact(2200), false],
+        ['exact.vcf', sizedContact(2048), true],
+        ['over.vcf', sizedContact(2049), false],
+      ] as const) {
+        const bytes = Buffer.from(text);
+        const artifact = await storeArtifact(bytes, name, 'text/vcard', threadId);
+        filePaths.push(join(dataRoot, 'artifacts', artifact.id));
+        const beforeNative: number = native.length;
+        const beforeFiles: number = sent.length;
+        const reply = await addReply(turnId, [artifact]);
+        await channels.drain();
+        assert.equal((await state(reply)).state, 'sent');
+        assert.equal(native.length, beforeNative + Number(nativeExpected));
+        if (nativeExpected) {
+          assert.equal(Buffer.byteLength(native.at(-1)!.data.vcard as string), 2048);
+          assert.equal(sent.length, beforeFiles);
+        } else {
+          assert.equal(sent.length, beforeFiles + 1);
+          assert.equal(sent.at(-1)!.method, 'sendDocument');
+          assert.deepEqual(Buffer.from(sent.at(-1)!.file), bytes);
+        }
+      }
       failDocument = true;
       const captionedImage = await addReply(turnId, [image], '**Image result**');
       const beforeCaption = texts.length;

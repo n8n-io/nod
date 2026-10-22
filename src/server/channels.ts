@@ -89,6 +89,7 @@ interface ChannelOptions {
   resolveAttachments?: (threadId: string, ids: string[]) => Promise<MessagingAttachment[]>;
   media?: ChannelMedia;
   modelConfigured?: () => boolean;
+  verificationPending?: (channel: string) => Promise<boolean>;
   attributeMediaUsage?(client: PoolClient, ids: string[], turnId: string): Promise<void>;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
   activeThread?: (client: PoolClient) => Promise<{ id: string }>;
@@ -537,6 +538,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         ])
       ).rows[0];
       const hasMedia = Boolean(parsed.data.attachments?.length);
+      const modelMissingAtIntake = hasMedia && options.modelConfigured?.() === false;
       if (recorded && hasMedia) return;
       const mediaThreadId = hasMedia
         ? (await transaction(async (client) => options.activeThread?.(client), pool))?.id
@@ -562,7 +564,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         return false;
       }
       if (closed || replacing || receiveSignal.aborted || !permitted(identity)) return;
-      if (hasMedia && options.modelConfigured?.() === false) {
+      const requestModelSetup = async () => {
         await transaction(async (client) => {
           if (!(await currentConversation(client))) return;
           await replyWithoutTurn(
@@ -572,6 +574,16 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           );
         }, pool);
         options.refresh?.();
+      };
+      if (
+        hasMedia &&
+        modelMissingAtIntake &&
+        !(
+          parsed.data.attachments?.some((file) => file.voice) &&
+          (await options.verificationPending?.(conversationChannel(identity)))
+        )
+      ) {
+        await requestModelSetup();
         return;
       }
       if (hasMedia) {
@@ -591,6 +603,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             text = 'Review the attached files and briefly describe what they contain.';
         } catch (error) {
           if (closed || replacing || receiveSignal.aborted || !permitted(identity)) return;
+          if (modelMissingAtIntake || options.modelConfigured?.() === false) {
+            await requestModelSetup();
+            return;
+          }
           await transaction(async (client) => {
             if (!(await currentConversation(client))) return;
             return replyWithoutTurn(
@@ -704,7 +720,11 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             ...(target ? { replyToMessageId: target } : {}),
             ...(recorded ? { receiptOnly: true } : {}),
             persistOrdinary: async (client) => {
-              if (recorded) return;
+              if (
+                recorded ||
+                (hasMedia && (modelMissingAtIntake || options.modelConfigured?.() === false))
+              )
+                return;
               await persist(client);
               ordinaryPersisted = true;
             },
@@ -770,13 +790,22 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               await client.query('RELEASE SAVEPOINT channel_verification_receipt');
             },
           });
-          if (!verification && !ordinaryPersisted && !recorded)
+          if (!verification && !ordinaryPersisted && !recorded) {
+            if (hasMedia && (modelMissingAtIntake || options.modelConfigured?.() === false)) {
+              await requestModelSetup();
+              return;
+            }
             throw new Error('Verification did not persist its receipt.');
+          }
         } catch (cause) {
           const conflict =
             cause instanceof Error && 'statusCode' in cause && cause.statusCode === 409;
           if (!conflict) throw cause;
           if (recorded) return;
+          if (hasMedia && (modelMissingAtIntake || options.modelConfigured?.() === false)) {
+            await requestModelSetup();
+            return;
+          }
           await transaction(async (client) => {
             if (!(await currentConversation(client))) return;
             return replyWithoutTurn(
@@ -789,6 +818,15 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         }
       }
       if (recorded) return;
+      if (
+        !verification &&
+        !ordinaryPersisted &&
+        hasMedia &&
+        (modelMissingAtIntake || options.modelConfigured?.() === false)
+      ) {
+        await requestModelSetup();
+        return;
+      }
       if (!ordinaryPersisted && !verificationPersisted) await transaction(persist, pool);
     } catch (cause) {
       logFailure('channel_accept_failed', cause);

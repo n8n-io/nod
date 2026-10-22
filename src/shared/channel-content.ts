@@ -38,8 +38,9 @@ export function contactCards(text: string) {
       return match ? [{ key: match[1].toUpperCase(), value: match[2] }] : [];
     });
     const first = (key: string) => fields.find((field) => field.key === key)?.value ?? '';
+    const [family, given, additional, prefix, suffix] = first('N').split(';');
     const name = unescape(
-      first('FN') || first('N').split(';').filter(Boolean).reverse().join(' '),
+      first('FN') || [prefix, given, additional, family, suffix].filter(Boolean).join(' '),
     ).slice(0, 200);
     if (!name) return [];
     return [

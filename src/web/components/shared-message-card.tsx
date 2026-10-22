@@ -7,7 +7,13 @@ import { ownedArtifactUrl } from '../lib/attachment-url';
 import type { ImagePreview } from './attachment-images';
 import { Button } from './ui';
 
-export function SharedMessageCard({ item }: { item: ImagePreview }) {
+export function SharedMessageCard({
+  item,
+  selected = false,
+}: {
+  item: ImagePreview;
+  selected?: boolean;
+}) {
   const locationFile = item.source === 'location' || item.name === 'location.json';
   const [content, setContent] = useState<
     { location: SharedLocation } | { contacts: ReturnType<typeof contactCards> }
@@ -54,7 +60,7 @@ export function SharedMessageCard({ item }: { item: ImagePreview }) {
   });
   const mapUrl = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`;
   return (
-    <div className="shared-message-card">
+    <div className="shared-message-card" aria-current={selected || undefined}>
       {location ? (
         <>
           {map ? (

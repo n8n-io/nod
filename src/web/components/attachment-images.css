@@ -58,13 +58,13 @@
   object-fit: cover;
 }
 
-.attachment-image-gallery.is-single .attachment-image-tile.is-image {
+.attachment-image-gallery.is-single .attachment-image-tile.is-image:not(.is-sticker) {
   width: fit-content;
   max-width: 100%;
   height: auto;
 }
 
-.attachment-image-gallery.is-single .is-image img {
+.attachment-image-gallery.is-single .is-image:not(.is-sticker) img {
   display: block;
   width: auto;
   max-width: 100%;

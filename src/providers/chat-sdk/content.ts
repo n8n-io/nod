@@ -17,8 +17,8 @@ export function locationAttachment(input: unknown): MessagingAttachment[] {
 }
 
 export function contactAttachment(cards: string[]): MessagingAttachment[] {
-  if (!cards.length) return [];
-  const text = cards.join('\r\n');
+  const text = cards.filter((card) => card.trim()).join('\r\n');
+  if (!text) return [];
 
   return [
     {

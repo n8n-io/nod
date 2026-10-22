@@ -21,6 +21,19 @@ The demo uses the real setup components with synthetic API responses. No account
 
 The Chromium fixture checks both WhatsApp modes, Telegram owner confirmation, cancellation, QR recording exclusion and no WhatsApp status requests after the setup panel closes. The mobile capture uses a 390-pixel viewport.
 
+## Media demo
+
+[Watch the media demo](channel-media-demo.mp4).
+
+The media fixture uses the real message components, a synthetic Ogg recording, a sticker, a contact and a location. It checks waveform decoding, play, pause, seek, keyboard seek, playback speed and one active player. It also checks mobile layout, cleanup after unmount and map loading only after a click. The fixture blocks external map requests.
+
+| Screen                               | Capture                                                                |
+| ------------------------------------ | ---------------------------------------------------------------------- |
+| Voice, location, contact and sticker | [Ready](channel-media-ready.png), [playing](channel-media-playing.png) |
+| Mobile                               | [390-pixel view](channel-media-mobile.png)                             |
+
+These captures prove the stated browser behavior. They do not prove live media delivery, speech transcription or map tile loading.
+
 ## Manual live check
 
 Live verification is pending at the owner's request. Use accounts that you control and disposable test content. Keep tokens and QR codes in the private setup UI. Do not attach them to the PR.
@@ -29,10 +42,11 @@ Live verification is pending at the owner's request. Use accounts that you contr
 2. In **Channels**, connect Telegram. Create a bot with BotFather, enter its token in the private panel, press **Start** in Telegram, then confirm your account in nod. Check that a different Telegram account cannot start work.
 3. Connect WhatsApp with a separate bot number. Register that number in WhatsApp first. Enter your personal number in nod. On the bot account's phone, open **Linked Devices → Link a Device**, then scan the QR shown in nod. Check that your personal number can start work and another number cannot.
 4. Repeat WhatsApp setup with **Use my own number**. Send a request in **Message yourself**. Check that an outgoing message in another direct chat does not start a nod turn or receive a nod reply. Check that nod's own reply causes no loop.
-5. For each channel, send text, an image with a caption, a document, a video and a voice note. Check the shared web conversation and returned files. Ask for a voice reply and check that it arrives as a native voice note.
-6. Start two tasks. Answer each task's question with a native reply to its message or file. Check `/tasks`, `/status` and `/stop`. A reply to one task must continue only that task. A file, voice note or reaction must not approve an action.
-7. With a disposable sign-in, answer the current code question by native reply. Check that the raw code and source voice note do not enter normal chat storage. A reply to a closed sign-in question must not fill another pending sign-in.
-8. Restart nod. Check that the WhatsApp link returns. Interrupt the network, restore it, then check a new message. Stop work during an upload. Check that stopped work does not save a late file or send a late result. An uncertain send must not repeat automatically.
-9. Disconnect WhatsApp, confirm that its saved keys are removed, then make a new link. Close unfinished setup and check that its old QR cannot finish setup. Check Telegram disconnect and reconnect.
+5. For each channel, send text, an image with a caption, a document, a video, a voice note, a sticker, a location and a shared contact. Check the shared web conversation and returned files. In web, play and seek the voice note, change its speed, open the map and download the original contact. A sticker must reach the model as its own message. Ask for a voice reply and check that it arrives as a native voice note. Ask for a contact and a location reply. Telegram sends grouped or oversized contact cards as files.
+6. Before a model is connected, send a voice note and check the Models setup notice. With a model but no speech API key, check the speech setup notice. Use a separate disposable profile for this check.
+7. Start two tasks. Answer each task's question with a native reply to its message or file. Check `/tasks`, `/status` and `/stop`. A reply to one task must continue only that task. A file, voice note or reaction must not approve an action.
+8. With a disposable sign-in, answer the current code question by native reply. Check that the raw code and source voice note do not enter normal chat storage. A reply to a closed sign-in question must not fill another pending sign-in.
+9. Restart nod. Check that the WhatsApp link returns. Interrupt the network, restore it, then check a new message. Stop work during an upload. Check that stopped work does not save a late file or send a late result. An uncertain send must not repeat automatically.
+10. Disconnect WhatsApp, confirm that its saved keys are removed, then make a new link. Close unfinished setup and check that its old QR cannot finish setup. Check Telegram disconnect and reconnect.
 
 Record the platform, provider mode, results and any error. Keep private content out of screenshots. The Meta Cloud API remains a separate text path with its existing reply window and file notice.

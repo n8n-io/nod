@@ -43,7 +43,8 @@
   scroll-margin-block: 72px 96px;
 }
 
-.attachment-card.is-selected {
+.attachment-card.is-selected,
+.shared-message-card[aria-current='true'] {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
