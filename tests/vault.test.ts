@@ -4784,7 +4784,7 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
   throw new Error('Unexpected fixture request '+path);
 };
 await mount(Brain);
-await act(async()=>[...document.querySelectorAll('.ob-brain-card')].find(item=>item.textContent.includes('Anthropic')).click());
+await act(async()=>[...document.querySelectorAll('.ob-brain-option')].find(item=>item.textContent.includes('Anthropic')).click());
 await waitFor(()=>document.querySelector('#ob-brain-key-anthropic'));
 await act(async()=>{const input=document.querySelector('#ob-brain-key-anthropic');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'synthetic-model-key');input.dispatchEvent(new Event('input',{bubbles:true}));});
 await click('Connect');
@@ -4805,7 +4805,8 @@ for(const direction of ['forward','back']){
 }
 models={connections:[],selection:null};
 await mount(Brain);
-await click('Continue with ChatGPT');
+await act(async()=>[...document.querySelectorAll('.ob-brain-option')].find(item=>item.textContent.includes('OpenAI')).click());
+await click('Sign in with ChatGPT');
 await waitFor(()=>oauth);
 assert.equal(advances,0);
 models={connections:[{...connection,provider:'openai',method:'subscription'}],selection:{connectionId:connection.id,modelId:connection.models[0].id,effort:'off'}};
@@ -5139,8 +5140,8 @@ await waitFor(()=>document.querySelector('.ob')?.dataset.step==='brain');
 assert.equal(window.location.search,'');
 assert.ok(calls.includes('/api/account/prepare'));
 assert.equal(calls.some(path=>path.startsWith('/api/desktop/setup')),false);
-await waitFor(()=>[...document.querySelectorAll('.ob-brain-card')].some(item=>item.textContent.includes('Anthropic')));
-await act(async()=>[...document.querySelectorAll('.ob-brain-card')].find(item=>item.textContent.includes('Anthropic')).click());
+await waitFor(()=>[...document.querySelectorAll('.ob-brain-option')].some(item=>item.textContent.includes('Anthropic')));
+await act(async()=>[...document.querySelectorAll('.ob-brain-option')].find(item=>item.textContent.includes('Anthropic')).click());
 await waitFor(()=>document.querySelector('#ob-brain-key-anthropic'));
 async function recoverWithDraft(input, draft) {
   const fill=value=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true}))};

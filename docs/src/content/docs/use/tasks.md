@@ -25,16 +25,16 @@ Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and own
 
 ## What a card shows
 
-| Part           | What it tells you                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------------------- |
-| Title          | The task in a few words                                                                           |
-| Status         | Where the task stands, such as **Working** or **Needs you**                                       |
-| Now line       | While nod browses, the website it's on. Otherwise what nod is doing, or the question it asked you |
-| **Waiting on** | Who nod is waiting for, and how, such as an email reply                                           |
-| **Next check** | When nod will look again                                                                          |
-| **Done when**  | What finished looks like                                                                          |
+| Part           | What it tells you                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| Title          | The task in a few words                                                                    |
+| Status         | Where the task stands, such as **Working** or **Needs you**                                |
+| Now line       | What nod is doing, with the website it's on while it browses, or the question it asked you |
+| **Waiting on** | Who nod is waiting for, and how, such as an email reply                                    |
+| **Next check** | When nod will look again                                                                   |
+| **Done when**  | What finished looks like                                                                   |
 
-The same compact task preview appears in chat and on the Tasks page. It shows the title, status, current activity and, when steps are available, a segmented step bar. Select the preview to open its available steps and controls in place. Select it again to close the details. While a task works, its card shows its latest step, such as the website it's on, and the task posts a short update in chat when a new step adds real value. Inside the details, select **Show activity** to read what it said, with the steps in between grouped under each update. This view does not show private model reasoning.
+The same compact task preview appears in chat and on the Tasks page. It shows the title, status, current activity and, when steps are available, a segmented step bar. Select the preview to open its available steps and controls in place. Select it again to close the details. While a task works, its card says what it's doing and, while it browses, the website it's on, and the task posts a short update in chat when a new step adds real value. Inside the details, select **Show activity** to read what it said, with the steps in between grouped under each update. This view does not show private model reasoning.
 
 ![Two compact task previews in chat, one Working and one Needs you.](../../../assets/screens/task-sessions-chat.png)
 

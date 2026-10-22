@@ -182,6 +182,12 @@ a {
 ::selection {
   background: var(--selection);
 }
+.message-user .message-body ::selection,
+.ob-user-bubble::selection,
+.ob-user-bubble ::selection {
+  background: var(--brand-pink);
+  color: var(--black);
+}
 h1,
 h2,
 h3,
