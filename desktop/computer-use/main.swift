@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon
 import ScreenCaptureKit
 
 struct Failure: Error { let message: String }
@@ -243,10 +244,31 @@ let keyCodes: [String: CGKeyCode] = [
   "return": 36, "enter": 76, "tab": 48, "space": 49, "delete": 51, "escape": 53,
   "left": 123, "right": 124, "down": 125, "up": 126, "home": 115, "end": 119,
   "pageup": 116, "pagedown": 121, "forwarddelete": 117,
-  "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11,
-  "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "o": 31, "u": 32, "i": 34, "p": 35,
-  "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
 ]
+
+func keyCode(_ name: String, _ flags: CGEventFlags, source: TISInputSource? = nil) throws -> CGKeyCode {
+  if let code = keyCodes[name] { return code }
+  guard name.count == 1,
+    let keyboard = source ?? TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+    let pointer = TISGetInputSourceProperty(keyboard, kTISPropertyUnicodeKeyLayoutData) else {
+    throw Failure(message: "Cannot resolve \(name) in the current keyboard layout. Use a visible app control instead.")
+  }
+  let data = Unmanaged<CFData>.fromOpaque(pointer).takeUnretainedValue()
+  let layout = UnsafeRawPointer(CFDataGetBytePtr(data)!).assumingMemoryBound(to: UCKeyboardLayout.self)
+  let modifiers = flags.contains(.maskCommand) ? UInt32(cmdKey >> 8) : 0
+  for code in CGKeyCode(0)..<128 {
+    var dead: UInt32 = 0
+    var length = 0
+    var characters = [UniChar](repeating: 0, count: 8)
+    let result = UCKeyTranslate(layout, code, UInt16(kUCKeyActionDown), modifiers,
+      UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysMask), &dead,
+      characters.count, &length, &characters)
+    if result == noErr && String(utf16CodeUnits: characters, count: length).lowercased() == name {
+      return code
+    }
+  }
+  throw Failure(message: "Cannot resolve \(name) in the current keyboard layout. Use a visible app control instead.")
+}
 
 func post(_ pid: pid_t, _ request: [String: Any]) throws {
   let source = CGEventSource(stateID: .privateState)
@@ -265,7 +287,7 @@ func post(_ pid: pid_t, _ request: [String: Any]) throws {
     return
   }
   let parts = (request["key"] as? String ?? "").lowercased().split(separator: "+").map(String.init)
-  guard let last = parts.last, let code = keyCodes[last] else {
+  guard let last = parts.last else {
     throw Failure(message: "Unknown key \(request["key"] ?? "").")
   }
   var flags: CGEventFlags = []
@@ -278,6 +300,7 @@ func post(_ pid: pid_t, _ request: [String: Any]) throws {
     default: throw Failure(message: "Unknown modifier \(modifier).")
     }
   }
+  let code = try keyCode(last, flags)
   for down in [true, false] {
     guard let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else {
       throw Failure(message: "Mac keyboard input is unavailable. Look again to check what completed.")

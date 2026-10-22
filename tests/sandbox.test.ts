@@ -38,7 +38,11 @@ import {
   workspaceFile,
 } from '../src/providers/docker/index.ts';
 import { runProcess, serviceEnvironment } from '../src/providers/process.ts';
-import { createMacComputer, sandboxProfile } from '../src/providers/macos/owner-computer.ts';
+import {
+  createMacComputer,
+  resolveComputerPath,
+  sandboxProfile,
+} from '../src/providers/macos/owner-computer.ts';
 import { prepareLocalDirectories } from '../scripts/local-database.ts';
 
 test('local startup protects data through its private root and preserves workspace mount traversal', async () => {
@@ -146,6 +150,34 @@ test('workspace paths cannot address host files or other task directories', () =
     assert.throws(() => workspaceFile('task-a', path));
   assert.throws(() => threadIdentity('../escape'));
 });
+
+test(
+  'future computer data paths resolve existing parent aliases before initialization',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nod-future-data-'));
+    try {
+      const canonical = await realpath(root);
+      await mkdir(join(root, 'parent'));
+      await symlink(join(root, 'parent'), join(root, 'alias'));
+      const future = join(root, 'alias', 'fresh', 'data');
+      const resolved = resolveComputerPath(future);
+      assert.equal(resolved, join(canonical, 'parent', 'fresh', 'data'));
+      await mkdir(future, { recursive: true });
+      assert.equal(resolved, await realpath(future));
+      assert.equal(resolveComputerPath(future), resolved);
+      await symlink('missing-parent', join(root, 'future-alias'));
+      assert.equal(
+        resolveComputerPath(join(root, 'future-alias', 'data')),
+        join(canonical, 'missing-parent', 'data'),
+      );
+      await writeFile(join(root, 'file'), 'synthetic file');
+      assert.throws(() => resolveComputerPath(join(root, 'file', 'data')));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test('runtime subprocesses do not inherit provider keys and stop at bounds', async () => {
   const previous = process.env.OPENAI_API_KEY;
@@ -287,6 +319,58 @@ if (process.platform !== 'win32') {
 }
 
 if (process.platform === 'darwin') {
+  test('Mac shortcut keys resolve layout characters without posting keyboard events', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nod-keyboard-layout-'));
+    try {
+      const source = await readFile(
+        new URL('../desktop/computer-use/main.swift', import.meta.url),
+        'utf8',
+      );
+      const keyboard = source.slice(source.indexOf('let keyCodes:'), source.indexOf('func post('));
+      const fixture = join(root, 'keyboard.swift');
+      const executable = join(root, 'keyboard');
+      await writeFile(
+        fixture,
+        `import AppKit
+import Carbon
+struct Failure: Error { let message: String }
+${keyboard}
+func layout(_ id: String) -> TISInputSource {
+  let sources = TISCreateInputSourceList(
+    [kTISPropertyInputSourceID as String: "com.apple.keylayout." + id] as CFDictionary,
+    true
+  ).takeRetainedValue() as! [TISInputSource]
+  precondition(sources.count == 1)
+  return sources[0]
+}
+let us = layout("US")
+let french = layout("French")
+let german = layout("German")
+precondition(try! keyCode("a", .maskCommand, source: us) == 0)
+precondition(try! keyCode("a", .maskCommand, source: french) == 12)
+precondition(try! keyCode("q", .maskCommand, source: french) == 0)
+precondition(try! keyCode("a", [.maskCommand, .maskShift], source: french) == 12)
+precondition(try! keyCode("z", .maskCommand, source: us) == 6)
+precondition(try! keyCode("z", .maskCommand, source: german) == 16)
+precondition(try! keyCode("left", .maskCommand, source: french) == 123)
+do {
+  _ = try keyCode("🌍", .maskCommand, source: french)
+  fatalError("An unavailable key must be refused")
+} catch is Failure {}
+print("layout shortcuts passed")
+`,
+      );
+      const built = await runProcess('/usr/bin/swiftc', ['-O', '-o', executable, fixture], {
+        timeoutMs: 30_000,
+      });
+      assert.equal(built.exitCode, 0, built.stderr);
+      const result = await runProcess(executable, [], { timeoutMs: 10_000 });
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.equal(result.stdout.trim(), 'layout shortcuts passed');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   test('native Mac helper observes apps it opens without another request waking its run loop', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nod-native-launch-'));
     const name = `nod Launch Fixture ${randomUUID()}`;

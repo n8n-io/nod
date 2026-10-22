@@ -1,7 +1,15 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs';
+import {
+  accessSync,
+  constants,
+  existsSync,
+  lstatSync,
+  readlinkSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { ComputerPermissionKind, MacApp, OwnerComputer } from '../../ports/owner-computer.ts';
 
@@ -35,11 +43,17 @@ ${fixed}
 `;
 }
 
-function realpath(path: string) {
+export function resolveComputerPath(path: string): string {
+  const absolute = resolve(path);
   try {
-    return realpathSync(path);
-  } catch {
-    return path;
+    return realpathSync(absolute);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (lstatSync(absolute, { throwIfNoEntry: false })?.isSymbolicLink())
+      return resolveComputerPath(resolve(dirname(absolute), readlinkSync(absolute)));
+    const parent = dirname(absolute);
+    if (parent === absolute) throw error;
+    return join(resolveComputerPath(parent), basename(absolute));
   }
 }
 
@@ -78,7 +92,7 @@ export function createMacComputer(options: {
   const protectedPaths = new Set(
     [...(options.denyRead ?? []), ...(options.helper ? [options.helper] : [])].flatMap((path) => [
       resolve(path),
-      realpath(resolve(path)),
+      resolveComputerPath(resolve(path)),
     ]),
   );
   for (const path of [...protectedPaths]) {
@@ -89,12 +103,12 @@ export function createMacComputer(options: {
     ) {
       if (directory.toLowerCase().endsWith('.app')) {
         protectedPaths.add(directory);
-        protectedPaths.add(realpath(directory));
+        protectedPaths.add(resolveComputerPath(directory));
       }
     }
   }
   const profile = sandboxProfile([...protectedPaths]);
-  const data = realpath(options.dataRoot);
+  const data = resolveComputerPath(options.dataRoot);
   let helper: ChildProcessWithoutNullStreams | undefined;
   let nextId = 0;
   const pending = new Map<
