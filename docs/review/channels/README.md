@@ -2,6 +2,8 @@
 
 PR: [n8n-io/nod#423](https://github.com/n8n-io/nod/pull/423).
 
+See the [security review and finite load checks](security.md).
+
 ## Setup demo
 
 ![Synthetic channel setup demo](channels-demo.gif)

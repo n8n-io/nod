@@ -134,6 +134,9 @@ test(
           let failSend = false;
           let failClear = false;
           let failLogout = false;
+          let abortDownload: AbortController | undefined;
+          let lateStream: PassThrough | undefined;
+          let oversizedDownload = false;
           const own = mode === 'self-chat' ? '12345678' : '99999999';
           const owner = '12345678';
           const accountId = `linked:${own}`;
@@ -171,7 +174,15 @@ test(
           const download = (async () => {
             downloads++;
             const stream = new PassThrough();
-            stream.end(Buffer.from('synthetic image'));
+            if (abortDownload) {
+              lateStream = stream;
+              abortDownload.abort();
+            } else
+              stream.end(
+                oversizedDownload
+                  ? Buffer.alloc(50 * 1024 * 1024 + 1)
+                  : Buffer.from('synthetic image'),
+              );
             return stream;
           }) as NonNullable<Options['download']>;
           const open = () =>
@@ -292,6 +303,20 @@ test(
               Buffer.from('synthetic image'),
             );
             assert.equal(downloads, 1);
+            oversizedDownload = true;
+            await assert.rejects(collected[1].attachments![0].read(), /too large/);
+            oversizedDownload = false;
+            abortDownload = new AbortController();
+            const late = collected[1].attachments![0].read(abortDownload.signal);
+            const release = setTimeout(() => lateStream?.end(), 100);
+            try {
+              await assert.rejects(late);
+              assert.equal(lateStream?.destroyed, true);
+            } finally {
+              clearTimeout(release);
+              lateStream?.destroy();
+              abortDownload = undefined;
+            }
             sockets[0].events.emit('messages.upsert', {
               type: 'notify',
               messages: [
@@ -307,7 +332,7 @@ test(
               collected.push(message);
             });
             await assert.rejects(collected.at(-1)!.attachments![0].read(), /address/);
-            assert.equal(downloads, 1);
+            assert.equal(downloads, 3);
             if (mode === 'self-chat') {
               await assert.rejects(
                 transport.post({

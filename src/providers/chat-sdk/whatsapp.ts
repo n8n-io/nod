@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { parseMarkdown, type Root } from 'chat';
 import { splitMessage } from '@chat-adapter/whatsapp';
 import type { ChannelSession, ChannelSessionStore } from '../../ports/channel-session.ts';
+import { MessagingAttachmentError } from '../../ports/messaging.ts';
 import type {
   InboundMessage,
   InboundReaction,
@@ -256,7 +257,7 @@ export function createWhatsAppLinkedTransport(options: {
           )
             throw new Error('The WhatsApp file address is invalid.');
           if (Number(media.fileLength ?? 0) > 50 * 1024 * 1024)
-            throw new Error('The WhatsApp file is too large.');
+            throw new MessagingAttachmentError(50 * 1024 * 1024);
           const stream = await (options.download ?? downloadMediaMessage)(
             { ...message, message: content },
             'stream',
@@ -267,10 +268,11 @@ export function createWhatsAppLinkedTransport(options: {
           const abort = () => stream.destroy(new Error('The WhatsApp download stopped.'));
           operation.addEventListener('abort', abort, { once: true });
           try {
+            operation.throwIfAborted();
             for await (const part of stream) {
               operation.throwIfAborted();
               size += part.length;
-              if (size > 50 * 1024 * 1024) throw new Error('The WhatsApp file is too large.');
+              if (size > 50 * 1024 * 1024) throw new MessagingAttachmentError(50 * 1024 * 1024);
               bytes.push(part);
             }
             return Buffer.concat(bytes, size);

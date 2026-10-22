@@ -63,7 +63,7 @@ The manual check must cover QR setup in both modes; an image and a voice request
 
 ## Focused security review
 
-The review uses the [Cloudflare security audit skill](https://github.com/cloudflare/security-audit-skill/blob/main/skills/security-audit/SKILL.md) for a scoped standard audit. It covers the changed messaging, setup, speech and key-storage paths. It is a partial audit of Nod. Independent finding and final-record checks are in progress.
+The review uses the [Cloudflare security audit skill](https://github.com/cloudflare/security-audit-skill/blob/main/skills/security-audit/SKILL.md) for a scoped standard audit. It covers the changed messaging, setup, speech and key-storage paths. It is a partial audit of Nod. Two hunter waves, two post-wave critics, a distinct final critic, independent candidate checks and fresh final-record checks are complete. Both structured validators pass. See the [findings, fixes and remaining provider check](../review/channels/security.md).
 
 The review found direct Signal console calls that could print keys, a lost native reply target before private-code dispatch and dropped cancellation options in Baileys media downloads. The PR fixes these paths. It also restricts self-chat LIDs to the linked account's own LID. Source review and synthetic checks cover owner and sender boundaries, native reply correlation, private-code handling, provider file addresses, size limits, QR privacy, stale key writes, cancellation and uncertain delivery. Trust, Vault and payment policy are unchanged.
 
