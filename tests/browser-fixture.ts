@@ -248,14 +248,14 @@ export async function fakeDevtools(model: DevtoolsModel) {
     };
     const evaluate = (frame: DevtoolsFrame, expression: string) => {
       if (model.evaluate) return model.evaluate(expression);
-      if (expression.includes('globalThis.__ottoScripted')) {
+      if (expression.includes('globalThis.__nodScripted')) {
         const key = `${model.document}:${frame.id}`;
         let world = worlds.get(key);
         if (!world) worlds.set(key, (world = {}));
         return runInNewContext(expression, world);
       }
       const here = model.focused === frame.id;
-      if (expression.includes('globalThis.__ottoMaskedStyles')) {
+      if (expression.includes('globalThis.__nodMaskedStyles')) {
         model.masked = expression.includes("if (!true) return ''");
         return '';
       }
@@ -263,7 +263,7 @@ export async function fakeDevtools(model: DevtoolsModel) {
         if (here) model.focused = model.field = undefined;
         return '';
       }
-      if (expression.includes('__ottoField = node')) {
+      if (expression.includes('__nodField = node')) {
         if (!here) return '';
         model.armed = model.field;
         model.values.set(model.field!, '');
@@ -274,7 +274,7 @@ export async function fakeDevtools(model: DevtoolsModel) {
         const field = model.field!;
         const node = { tagName: 'INPUT', isConnected: true };
         return runInNewContext(expression, {
-          __ottoField: node,
+          __nodField: node,
           document: {
             hasFocus: () => model.focused === frame.id,
             get activeElement() {
@@ -350,7 +350,7 @@ export async function fakeDevtools(model: DevtoolsModel) {
       if (
         message.method === 'Runtime.evaluate' &&
         model.failMasks &&
-        String(message.params.expression).includes('globalThis.__ottoMaskedStyles') &&
+        String(message.params.expression).includes('globalThis.__nodMaskedStyles') &&
         String(message.params.expression).includes("if (!true) return ''")
       )
         return reply({ exceptionDetails: { text: 'Synthetic mask failure.' } });
@@ -358,7 +358,7 @@ export async function fakeDevtools(model: DevtoolsModel) {
         return reply({
           result: {
             value:
-              message.params.expression === 'globalThis.__ottoRoots = [];'
+              message.params.expression === 'globalThis.__nodRoots = [];'
                 ? ''
                 : evaluate(
                     model.frames[Number(message.params.contextId)]!,

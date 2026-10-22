@@ -367,10 +367,10 @@ export function AccountSettings({
     const key = `${openRequest}:${value}`;
     if (recordedTab.current === key) return;
     recordedTab.current = key;
-    captureAnalytics('otto_settings_viewed', {
+    captureAnalytics('nod_settings_viewed', {
       tab: value
         .toLowerCase()
-        .replace(' ', '_') as AnalyticsProperties<'otto_settings_viewed'>['tab'],
+        .replace(' ', '_') as AnalyticsProperties<'nod_settings_viewed'>['tab'],
     });
   }
   const id = useId();
@@ -578,7 +578,7 @@ export function AccountSettings({
                     />
                   </div>
                   <p id={`${id}-usage-data`} className="field-hint" data-analytics-public>
-                    Help us make Otto better by sharing how you use it. Never your messages.{' '}
+                    Help us make nod better by sharing how you use it. Never your messages.{' '}
                     <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
                       What’s shared
                     </a>
@@ -604,8 +604,8 @@ export function AccountSettings({
                         />
                       </div>
                       <p id={`${id}-traces`} className="field-hint" data-analytics-public>
-                        Send Otto’s conversations, including what it reads and does, to the Otto
-                        team at n8n to improve Otto. Your name, email addresses, phone numbers, card
+                        Send nod’s conversations, including what it reads and does, to the nod team
+                        at n8n to improve nod. Your name, email addresses, phone numbers, card
                         numbers and IBANs are removed first, and traces carry no account or device
                         ID. Kept for 14 days and never used to train AI models.
                       </p>

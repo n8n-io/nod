@@ -83,7 +83,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     editorProps: {
       attributes: {
         role: 'textbox',
-        'aria-label': 'Message Otto',
+        'aria-label': 'Message nod',
         'aria-multiline': 'true',
         'aria-describedby': 'composer-keyboard-hint',
         class: 'composer-editor message-text',
@@ -201,7 +201,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       return;
     }
     const first = files[0];
-    captureAnalytics('otto_attachment_added', {
+    captureAnalytics('nod_attachment_added', {
       method,
       kind: first.type.startsWith('image/')
         ? 'image'
@@ -313,7 +313,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <div className="reply-context composer-reply">
           <CornerUpLeft size={16} />
           <div>
-            <strong>Replying to {replyTo.role === 'assistant' ? 'Otto' : 'yourself'}</strong>
+            <strong>Replying to {replyTo.role === 'assistant' ? 'nod' : 'yourself'}</strong>
             <span>{replyTo.text || 'Attachment'}</span>
           </div>
           <Button
@@ -463,7 +463,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 variant="ghost"
                 size="icon"
                 className="stop-button"
-                aria-label="Stop Otto"
+                aria-label="Stop nod"
                 title="Stop"
                 disabled={stopping}
                 onClick={onStop}

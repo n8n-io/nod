@@ -1,5 +1,5 @@
 type UiPreference =
-  'otto.sidebar' | 'otto.chat-layout' | 'otto.artifact-width' | `otto.feedback.discovery.${string}`;
+  'nod.sidebar' | 'nod.chat-layout' | 'nod.artifact-width' | `nod.feedback.discovery.${string}`;
 
 export function readUiPreference(key: UiPreference) {
   try {

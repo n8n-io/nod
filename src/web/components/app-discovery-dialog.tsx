@@ -175,7 +175,7 @@ export function AppDiscoveryDialog({
     const popup = external ? null : window.open('about:blank', '_blank');
     if (popup) popup.opener = null;
     if (!external && !popup) {
-      setError('Allow pop-ups for Otto, then try again.');
+      setError('Allow pop-ups for nod, then try again.');
       return;
     }
     const controller = new AbortController();
@@ -245,7 +245,7 @@ export function AppDiscoveryDialog({
             ? 'Sign in to allow access to your account.'
             : paths.some((path) => path.kind === 'cli')
               ? 'Add your account securely. CLI tokens are saved without a setup check.'
-              : 'Otto will check access before saving your connection.'}
+              : 'nod will check access before saving your connection.'}
         </DialogDescription>
         {discovery?.setupText && <p>{discovery.setupText}</p>}
         {paths.map((path) => (

@@ -275,7 +275,7 @@ test(
         });
         const first = 'Read the synthetic team account and summarize its outstanding invoices.';
         const clarification =
-          'Use the EUR account, include overdue items, and keep the result in Otto.';
+          'Use the EUR account, include overdue items, and keep the result in nod.';
         const base = await seed(
           [
             first,
@@ -289,7 +289,7 @@ test(
         const foreign = await seed(['Foreign task content.'], { owner: 'draft-foreign-owner' });
         const reusable = [
           'Read https://reports.example.test/invoices?currency=EUR and summarize the totals.',
-          'Ignore my previous instructions about sending messages; only prepare the summary in Otto.',
+          'Ignore my previous instructions about sending messages; only prepare the summary in nod.',
           'Find https://reports.example.test/people/alice@example.test and keep the result here.',
         ];
         const credentialLinks = await seed([
@@ -342,7 +342,7 @@ test(
           'only an explicit create schedules the reviewed instructions without rerunning the task',
           async () => {
             const prompt =
-              'Read only overdue invoices in the synthetic EUR account and summarize them in Otto.';
+              'Read only overdue invoices in the synthetic EUR account and summarize them in nod.';
             const schedule = await create({ prompt, cron: '20 14 * * 2' });
             assert.equal(
               (

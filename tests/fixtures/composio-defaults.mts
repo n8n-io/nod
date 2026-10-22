@@ -73,7 +73,7 @@ type State = {
   ownConnectionId?: string;
   ownAttempt?: string;
 };
-const root = process.env.OTTO_DATA_ROOT!;
+const root = process.env.NOD_DATA_ROOT!;
 const statePath = join(root, 'backend.json');
 const state: State =
   input.phase === 'initial'
@@ -382,7 +382,7 @@ try {
     ownerId,
     provider,
     standbyProviders: adapters.standbyIntegrations,
-    baseUrl: process.env.OTTO_PUBLIC_URL!,
+    baseUrl: process.env.NOD_PUBLIC_URL!,
     wake: async () => assert.fail('Periodic fixture workers must not dispatch queued work.'),
   });
   service.registerRoutes(app);
@@ -396,7 +396,7 @@ try {
   const keyStatus = async () =>
     (await app.inject({ method: 'GET', url: '/api/integrations/key' })).json();
   assert.deepEqual(await keyStatus(), {
-    mode: managed ? 'otto' : 'own',
+    mode: managed ? 'nod' : 'own',
     switchable: managed || switching,
     keyWritable: managed || switching,
     managed: managed
@@ -664,7 +664,7 @@ try {
       assert.equal(refused.statusCode, 400);
       assert.equal(provider.configurationId, state.configurationId);
       assert.deepEqual(await keyStatus(), {
-        mode: 'otto',
+        mode: 'nod',
         switchable: true,
         keyWritable: true,
         managed: managedStatus(),
@@ -808,7 +808,7 @@ try {
         suffix: null,
       });
       assert.deepEqual((await request('DELETE')).json(), {
-        mode: 'otto',
+        mode: 'nod',
         switchable: true,
         keyWritable: false,
         managed: managedStatus(),
@@ -871,7 +871,7 @@ try {
       const switched = calls.length;
       const removed = await app.inject({ method: 'DELETE', url: '/api/integrations/key' });
       assert.deepEqual(removed.json(), {
-        mode: 'otto',
+        mode: 'nod',
         switchable: true,
         keyWritable: true,
         managed: managedStatus(),

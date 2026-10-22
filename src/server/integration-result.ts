@@ -141,7 +141,7 @@ export async function privateEmailResult(
         verification
           ? 'Verification email content is private. Use sign_in with emailCode:true to retrieve and enter its code.'
           : undefined,
-      () => 'Otto could not check whether this email is for signing in, so its content is private.',
+      () => 'nod could not check whether this email is for signing in, so its content is private.',
     ));
   if (hidden) {
     const safe = Object.fromEntries(

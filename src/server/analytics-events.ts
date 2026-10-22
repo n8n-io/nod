@@ -249,16 +249,16 @@ const taskProperties = z.object({
 export const analyticsEvent = z.discriminatedUnion('event', [
   z
     .object({
-      event: z.literal('otto_onboarding_completed'),
+      event: z.literal('nod_onboarding_completed'),
       properties: z.object({ model_provider: analyticsModelProvider }).strict().optional(),
     })
     .strict(),
-  z.object({ event: z.literal('otto_conversation_reset') }).strict(),
-  z.object({ event: z.literal('otto_chat_stopped') }).strict(),
-  z.object({ event: z.literal('otto_task_stopped') }).strict(),
+  z.object({ event: z.literal('nod_conversation_reset') }).strict(),
+  z.object({ event: z.literal('nod_chat_stopped') }).strict(),
+  z.object({ event: z.literal('nod_task_stopped') }).strict(),
   z
     .object({
-      event: z.literal('otto_feedback_sent'),
+      event: z.literal('nod_feedback_sent'),
       properties: z
         .object({
           category: z.enum(['bug', 'feature', 'other']).optional(),
@@ -268,10 +268,10 @@ export const analyticsEvent = z.discriminatedUnion('event', [
         .strict(),
     })
     .strict(),
-  z.object({ event: z.literal('otto_turn_started'), properties: turnProperties.strict() }).strict(),
+  z.object({ event: z.literal('nod_turn_started'), properties: turnProperties.strict() }).strict(),
   z
     .object({
-      event: z.literal('otto_turn_completed'),
+      event: z.literal('nod_turn_completed'),
       properties: turnProperties
         .extend({
           outcome: z.enum([
@@ -293,7 +293,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_settings_updated'),
+      event: z.literal('nod_settings_updated'),
       properties: z
         .object({
           section: z.enum([
@@ -313,7 +313,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_schedule_changed'),
+      event: z.literal('nod_schedule_changed'),
       properties: z
         .object({
           operation: z.enum(['create', 'update', 'delete']),
@@ -326,7 +326,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_connection_changed'),
+      event: z.literal('nod_connection_changed'),
       properties: connectionProperties
         .extend({
           status: z.enum(['started', 'connected', 'failed', 'disconnected']),
@@ -342,7 +342,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_service_used'),
+      event: z.literal('nod_service_used'),
       properties: connectionProperties
         .extend({
           operation_phase: z.literal('preparation').optional(),
@@ -355,13 +355,13 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_connection_observed'),
+      event: z.literal('nod_connection_observed'),
       properties: connectionProperties.strict(),
     })
     .strict(),
   z
     .object({
-      event: z.literal('otto_vault_imported'),
+      event: z.literal('nod_vault_imported'),
       properties: z
         .object({
           domains: z
@@ -374,7 +374,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_vault_changed'),
+      event: z.literal('nod_vault_changed'),
       properties: z
         .object({
           item_type: z.enum(['login', 'card']),
@@ -385,16 +385,16 @@ export const analyticsEvent = z.discriminatedUnion('event', [
         .strict(),
     })
     .strict(),
-  z.object({ event: z.literal('otto_task_started'), properties: taskProperties.strict() }).strict(),
+  z.object({ event: z.literal('nod_task_started'), properties: taskProperties.strict() }).strict(),
   z
     .object({
-      event: z.literal('otto_task_linked'),
+      event: z.literal('nod_task_linked'),
       properties: taskProperties.strict(),
     })
     .strict(),
   z
     .object({
-      event: z.literal('otto_task_updated'),
+      event: z.literal('nod_task_updated'),
       properties: taskProperties
         .extend({
           outcome: taskOutcome,
@@ -407,7 +407,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_frustration_signal'),
+      event: z.literal('nod_frustration_signal'),
       properties: z
         .object({
           signal: frustrationSignal,
@@ -420,7 +420,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_memory_changed'),
+      event: z.literal('nod_memory_changed'),
       properties: z
         .object({
           kind: z.enum(['note', 'skill']),
@@ -432,7 +432,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_tool_used'),
+      event: z.literal('nod_tool_used'),
       properties: z
         .object({
           tool: analyticsTool,
@@ -445,7 +445,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_confirmation_changed'),
+      event: z.literal('nod_confirmation_changed'),
       properties: z
         .object({
           status: z.enum(['asked', 'approved', 'declined', 'executed', 'expired', 'uncertain']),
@@ -457,7 +457,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_model_used'),
+      event: z.literal('nod_model_used'),
       properties: z
         .object({
           provider: analyticsModelProvider,
@@ -476,7 +476,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_task_analysis'),
+      event: z.literal('nod_task_analysis'),
       properties: z
         .object({
           outcome: z.enum(['analyzed', 'unavailable', 'invalid', 'failed', 'queue_full']),
@@ -490,7 +490,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_model_connection_changed'),
+      event: z.literal('nod_model_connection_changed'),
       properties: modelConnectionProperties
         .extend({ status: z.enum(['connected', 'disconnected', 'failed']) })
         .strict(),
@@ -498,7 +498,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_model_connection_observed'),
+      event: z.literal('nod_model_connection_observed'),
       properties: modelConnectionProperties
         .extend({
           selected: z.boolean(),
@@ -510,7 +510,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_link_opened'),
+      event: z.literal('nod_link_opened'),
       properties: z
         .object({
           domain,
@@ -522,7 +522,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_website_visited'),
+      event: z.literal('nod_website_visited'),
       properties: z
         .object({ domain, via: z.enum(['browser', 'fetch']), subagent: z.boolean() })
         .strict(),
@@ -530,7 +530,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
-      event: z.literal('otto_secure_entry_changed'),
+      event: z.literal('nod_secure_entry_changed'),
       properties: z
         .object({
           kind: z.enum(['sign_in', 'payment', 'code']),

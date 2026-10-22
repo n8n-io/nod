@@ -32,9 +32,9 @@ test(
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
-    const runtimeRoot = await mkdtemp(join(tmpdir(), 'otto-test-runtime-'));
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'nod-test-runtime-'));
     t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
-    process.env.OTTO_DATA_ROOT = runtimeRoot;
+    process.env.NOD_DATA_ROOT = runtimeRoot;
     const { createApplication } = await import('../src/server/composition.ts');
     const { pool } = await import('../src/server/db.ts');
     const { dataRoot, ownerId, port } = await import('../src/server/config.ts');
@@ -307,8 +307,7 @@ test(
                 ? {
                     run:
                       (allowMethodBrowser &&
-                        (input as { action?: { name?: string } }).action?.name ===
-                          'OTTO_browser') ||
+                        (input as { action?: { name?: string } }).action?.name === 'NOD_browser') ||
                       asked.has(
                         (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
                           ?.text ?? '',
@@ -396,7 +395,7 @@ test(
       assert.deepEqual(
         (
           await pool.query(
-            "SELECT id FROM approvals WHERE owner_id=$1 AND action='OTTO_schedule_cancel' AND args=$2::jsonb AND status<>'expired'",
+            "SELECT id FROM approvals WHERE owner_id=$1 AND action='NOD_schedule_cancel' AND args=$2::jsonb AND status<>'expired'",
             [ownerId, { id: schedule.id }],
           )
         ).rows,
@@ -566,7 +565,7 @@ test(
           const held = await propose('click', { selector: '@e7' }, 'browser');
           const [card] = await approvalsFor(held);
           assert.equal(card.status, 'pending');
-          assert.equal(card.action, 'OTTO_browser');
+          assert.equal(card.action, 'NOD_browser');
           assert.equal(card.args.website, 'https://bank.example.test');
           assert.deepEqual(card.args.control, [{ role: 'button', name: 'Authorize payment' }]);
           assert.deepEqual(
@@ -574,7 +573,7 @@ test(
               fallbackChecks as Array<{
                 action?: { name: string; arguments: { control?: unknown } };
               }>
-            ).findLast((item) => item.action?.name === 'OTTO_browser')?.action?.arguments.control,
+            ).findLast((item) => item.action?.name === 'NOD_browser')?.action?.arguments.control,
             [{ role: 'button', name: 'Authorize payment' }],
           );
           assert.equal(clicks().length, before);
@@ -1524,7 +1523,7 @@ test(
             const held = await propose('Choose sign-in', input, 'sign_in');
             const [card] = await approvalsFor(held);
             assert.ok(card);
-            assert.equal(card.action, 'OTTO_vault_allow');
+            assert.equal(card.action, 'NOD_vault_allow');
             assert.equal(card.status, 'pending');
             assert.deepEqual(card.args, { origin: input.origin, kind: 'sign_in' });
             assert.equal(methodBindings, 0);
@@ -1538,7 +1537,7 @@ test(
                 .slice(checks)
                 .some(
                   (check) =>
-                    (check as { action?: { name?: string } }).action?.name === 'OTTO_sign_in',
+                    (check as { action?: { name?: string } }).action?.name === 'NOD_sign_in',
                 ),
             );
             const declined = await request('POST', '/api/messages', {

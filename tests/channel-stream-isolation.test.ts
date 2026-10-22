@@ -19,14 +19,14 @@ test(
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
     const schema = `test_channel_stream_${suffix}`;
     const bossSchema = `test_channel_stream_boss_${suffix}`;
-    const dataRoot = await mkdtemp(join(tmpdir(), 'otto-channel-stream-'));
+    const dataRoot = await mkdtemp(join(tmpdir(), 'nod-channel-stream-'));
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
     const databaseUrl = new URL(process.env.TEST_DATABASE_URL!);
     databaseUrl.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = databaseUrl.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
-    process.env.OTTO_DATA_ROOT = dataRoot;
+    process.env.NOD_DATA_ROOT = dataRoot;
     const db = await import('../src/server/db.ts');
     const thread = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');

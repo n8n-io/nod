@@ -71,7 +71,7 @@ These screenshots demonstrate frontend behavior. They do not establish live cred
 
 ## Browser input
 
-The native pointer comparison was recaptured from frozen source snapshots `e79bf5d2` and `4b5bee4a` using the same [capture harness at `5aa801d3`](https://github.com/n8n-io/otto/blob/5aa801d3d38d9e03a88bb47ab808aab5b6acf28b/docs/review/feedback-media/capture-browser-pointer.mjs) for both. Both runs use the same local synthetic page, 1440 × 900 viewport, 2× page zoom, normalized input, decoded magenta JPEG readiness check, and background restoration before screenshots. The baseline still misses at CSS (432, 270); the fixed provider hits the center at (216, 135).
+The native pointer comparison was recaptured from frozen source snapshots `e79bf5d2` and `4b5bee4a` using the same [capture harness at `5aa801d3`](https://github.com/n8n-io/nod/blob/5aa801d3d38d9e03a88bb47ab808aab5b6acf28b/docs/review/feedback-media/capture-browser-pointer.mjs) for both. Both runs use the same local synthetic page, 1440 × 900 viewport, 2× page zoom, normalized input, decoded magenta JPEG readiness check, and background restoration before screenshots. The baseline still misses at CSS (432, 270); the fixed provider hits the center at (216, 135).
 
 The marker in this screenshot harness is magenta, RGB (255, 0, 255). Both runs measured decoded pixel (255, 0, 254, 255), then verified that the HTML and body backgrounds were restored to RGB (250, 250, 250) before their screenshot. This capture procedure is separate from the multi-scenario integration test’s marker colors. The branch base `e79bf5d2` is reachable from the PR history and has the identical provider source object as original baseline `21456f70`; the new before image was captured from `e79bf5d2`, and the original image keeps its original provenance. [Pointer measurements](browser-pointer-results.json) record each revision, source object, readiness procedure, marker pixel, and screenshot digest. The [original red capture](browser-screenshots/pointer-before-original.png), which used the first two frames without a marker check, is preserved separately and is no longer the official before image.
 
@@ -88,7 +88,7 @@ node --import tsx docs/review/feedback-media/capture-browser-pointer.mjs \
 
 The current [reproduction harness](capture-browser-pointer.mjs) adds bounded CDP failure cleanup and descriptive marker timeout/EOF errors. The comparison PNGs remain from the original capture, whose harness revision and hash are recorded separately from the current reproduction script.
 
-Set `OTTO_TEST_BROWSER_EXECUTABLE` when Chrome is installed elsewhere. The harness uses read-only Git archives, the same installed dependencies for both revisions, and disposable browser profiles. It removes its snapshots and profiles after capture and does not start Vite.
+Set `NOD_TEST_BROWSER_EXECUTABLE` when Chrome is installed elsewhere. The harness uses read-only Git archives, the same installed dependencies for both revisions, and disposable browser profiles. It removes its snapshots and profiles after capture and does not start Vite.
 
 The loading-frame evidence remains the separate `ec9c7eeb` run against `browser-handoff.tsx` object `861a4f983fda119f6e6171bec86e7c1fdca8380e`, including the later `onLoad` update; it has not been relabelled as a new capture.
 

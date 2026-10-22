@@ -459,8 +459,8 @@ test('only intended app paths and credential-free HTTP URLs become links', () =>
     'https://example.com/"onclick="alert',
   ])
     assert.equal(safeMessageLink(value, origin), null, value);
-  assert.deepEqual(safeMessageLink('https://example.com/docs?q=otto#usage', origin), {
-    href: 'https://example.com/docs?q=otto#usage',
+  assert.deepEqual(safeMessageLink('https://example.com/docs?q=nod#usage', origin), {
+    href: 'https://example.com/docs?q=nod#usage',
     kind: 'external',
   });
   assert.deepEqual(safeMessageLink('/api/artifacts/file-id', origin), {

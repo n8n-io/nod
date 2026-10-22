@@ -44,7 +44,7 @@
         "authenticationStarted": 0,
         "authenticationCompleted": 0,
         "catalogRequests": 0,
-        "error": "Otto cannot open its credential storage. Check your server settings, then try again.",
+        "error": "nod cannot open its credential storage. Check your server settings, then try again.",
         "counts": {
           "connections": 0,
           "grants": 0

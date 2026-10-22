@@ -1,18 +1,18 @@
 name: Bug report
-description: Report something in Otto that doesn't work as described
+description: Report something in nod that doesn't work as described
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        > This form is for bugs only. Ask questions and share ideas in [Discussions](https://github.com/n8n-io/otto/discussions).
-        > Never report a security vulnerability here. Follow the [security policy](https://github.com/n8n-io/otto/blob/main/SECURITY.md) instead.
+        > This form is for bugs only. Ask questions and share ideas in [Discussions](https://github.com/n8n-io/nod/discussions).
+        > Never report a security vulnerability here. Follow the [security policy](https://github.com/n8n-io/nod/blob/main/SECURITY.md) instead.
         > Don't paste API keys, passwords, tokens, access links, private conversations or other people's data. Describe them instead.
   - type: textarea
     id: description
     attributes:
       label: What happened?
-      description: What Otto did, including any error message.
+      description: What nod did, including any error message.
     validations:
       required: true
   - type: textarea
@@ -21,7 +21,7 @@ body:
       label: Steps to reproduce
       description: Use synthetic data where you can.
       placeholder: |
-        1. Ask Otto to ...
+        1. Ask nod to ...
         2. Approve ...
         3. See ...
     validations:
@@ -43,7 +43,7 @@ body:
   - type: dropdown
     id: install
     attributes:
-      label: How do you run Otto?
+      label: How do you run nod?
       options:
         - Desktop app
         - From source (pnpm start)
@@ -54,8 +54,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Otto version
-      description: 'Desktop: Otto → About Otto. Source: `git rev-parse --short HEAD`.'
+      label: nod version
+      description: 'Desktop: nod → About nod. Source: `git rev-parse --short HEAD`.'
       placeholder: ex. 0.1.10 or 6c3af62
     validations:
       required: true

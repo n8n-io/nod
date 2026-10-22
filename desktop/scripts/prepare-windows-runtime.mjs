@@ -12,7 +12,7 @@ import { run } from './release-tools.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const assets = resolve(
-  process.env.OTTO_RUNTIME_ASSETS || join(root, '.local/windows-runtime-assets'),
+  process.env.NOD_RUNTIME_ASSETS || join(root, '.local/windows-runtime-assets'),
 );
 const context = join(root, '.local/windows-rootfs-context');
 await mkdir(context, { recursive: true });
@@ -20,7 +20,7 @@ await mkdir(assets, { recursive: true });
 if (!process.argv.includes('--prebuilt-images'))
   await run(process.execPath, ['desktop/scripts/prepare-runtime.mjs', '--images-only'], {
     cwd: root,
-    env: { ...process.env, OTTO_RUNTIME_ASSETS: assets, OTTO_DESKTOP_TARGET: 'win32-x64' },
+    env: { ...process.env, NOD_RUNTIME_ASSETS: assets, NOD_DESKTOP_TARGET: 'win32-x64' },
     stdio: 'inherit',
     timeout: 3_600_000,
   });
@@ -69,7 +69,7 @@ for (const notice of lock.notices) {
   await mkdir(dirname(file), { recursive: true });
   await download(notice.url, notice.sha256, file);
 }
-const image = 'otto-windows-rootfs:preview';
+const image = 'nod-windows-rootfs:preview';
 await run('docker', ['build', '--platform', 'linux/amd64', '--tag', image, context], {
   stdio: 'inherit',
   timeout: 1_200_000,

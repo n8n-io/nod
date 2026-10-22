@@ -14,7 +14,7 @@ concurrency:
 jobs:
   auto-merge:
     if: >-
-      github.repository == 'n8n-io/otto' &&
+      github.repository == 'n8n-io/nod' &&
       github.actor == 'dependabot[bot]' &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&

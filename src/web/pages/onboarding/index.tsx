@@ -117,7 +117,7 @@ export function Onboarding({
         viewed.current.direction !== arrived)
     ) {
       viewed.current = { owner: user.id, step, direction: arrived };
-      captureAnalytics('otto_onboarding_step_viewed', {
+      captureAnalytics('nod_onboarding_step_viewed', {
         step,
         direction: arrived,
       });
@@ -160,7 +160,7 @@ export function Onboarding({
         clearStored();
       })
       .catch((cause) => {
-        capture('otto_ui_error', { area: 'onboarding', action: 'save' });
+        capture('nod_ui_error', { area: 'onboarding', action: 'save' });
         if (active.current) {
           setCompletionFailed(true);
           setError(errorMessage(cause));
@@ -213,7 +213,7 @@ export function Onboarding({
     } catch {
       if (!request.signal.aborted) {
         setPreparation('failed');
-        capture('otto_ui_error', { area: 'onboarding', action: 'prepare' });
+        capture('nod_ui_error', { area: 'onboarding', action: 'prepare' });
       }
     } finally {
       if (preparationRequest.current === request) preparationRequest.current = null;
@@ -257,7 +257,7 @@ export function Onboarding({
   }
 
   function skipped() {
-    if (step === 'telegram') captureAnalytics('otto_onboarding_step_skipped', { step });
+    if (step === 'telegram') captureAnalytics('nod_onboarding_step_skipped', { step });
   }
 
   function next() {
@@ -273,7 +273,7 @@ export function Onboarding({
 
   if (finishing) {
     const failure =
-      runtimeError || error || (preparation === 'failed' ? 'Otto couldn’t finish setup.' : '');
+      runtimeError || error || (preparation === 'failed' ? 'nod couldn’t finish setup.' : '');
     return (
       <SetupProgress
         title={failure ? 'Setup needs another try.' : 'Finishing setup…'}

@@ -27,7 +27,7 @@ import {
 import { appConfirmation } from '../src/ports/agent.ts';
 import type { ApprovalDescription, ApprovalExecutionContext } from '../src/server/approvals.ts';
 test('localhost access requires the owner key and rejects foreign Host, Origin and cross-site requests', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-access-'));
+  const root = await mkdtemp(join(tmpdir(), 'nod-access-'));
   const app = Fastify();
   try {
     const key = await accessKey(root);
@@ -46,7 +46,7 @@ test('localhost access requires the owner key and rejects foreign Host, Origin a
     app.post('/api/fixture', async () => ({ ok: true }));
     app.get('/api/privacy', async () => ({ content: null }));
     const settingsPages = ['/settings', '/settings/models', '/settings/apps', '/settings/memory'];
-    for (const path of settingsPages) app.get(path, async () => 'Otto');
+    for (const path of settingsPages) app.get(path, async () => 'nod');
     app.get('/api/settings', async () => ({ private: true }));
     const navigation = {
       host: 'localhost:4310',
@@ -69,12 +69,12 @@ test('localhost access requires the owner key and rejects foreign Host, Origin a
       (
         await app.inject({
           url: '/api/settings',
-          headers: { ...navigation, cookie: `otto-access-4310=${key}` },
+          headers: { ...navigation, cookie: `nod-access-4310=${key}` },
         })
       ).statusCode,
       403,
     );
-    const cookie = `otto-access-4310=${key}`;
+    const cookie = `nod-access-4310=${key}`;
     for (const headers of [
       { host: 'attacker.example:4310', cookie },
       { host: 'localhost:4311', cookie },
@@ -92,11 +92,11 @@ test('localhost access requires the owner key and rejects foreign Host, Origin a
       { host: 'localhost:4310', origin: 'http://localhost:4310' },
       {
         host: 'localhost:4310',
-        cookie: `otto-access-4310=${randomBytes(32).toString('base64url')}`,
+        cookie: `nod-access-4310=${randomBytes(32).toString('base64url')}`,
       },
-      { host: 'localhost:4310', cookie: `otto-access-4311=${key}` },
-      { host: 'localhost:4310', cookie: `otto-access-4310=${requestKeys[0]}` },
-      { host: 'localhost:4310', 'x-otto-desktop-token': key },
+      { host: 'localhost:4310', cookie: `nod-access-4311=${key}` },
+      { host: 'localhost:4310', cookie: `nod-access-4310=${requestKeys[0]}` },
+      { host: 'localhost:4310', 'x-nod-desktop-token': key },
     ])
       assert.equal(
         (await app.inject({ method: 'POST', url: '/api/fixture', headers })).statusCode,
@@ -195,7 +195,7 @@ test(
     await add('user', 'Responde em português de Portugal.', { days: 3 });
     await add(
       'user',
-      'Continua, por favor. https://otto.example/payments/private-payment /api/artifacts/private-artifact',
+      'Continua, por favor. https://nod.example/payments/private-payment /api/artifacts/private-artifact',
       { days: 2 },
     );
     await add('user', 'ok', { days: 1 });
@@ -301,7 +301,7 @@ test('communication blocks unsupported confirmations unless their frozen facts p
     captured.length = 0;
     await assert.rejects(
       communication.describe(proposal),
-      /^Error: Otto could not write an accurate confirmation for this action/,
+      /^Error: nod could not write an accurate confirmation for this action/,
     );
     assert.deepEqual(captured[1], {
       purpose: 'confirmation_review',
@@ -319,7 +319,7 @@ test(
   'approvals preserve explicit-request authority, execute confirmed snapshots once and fence owners',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 60_000 },
   async (t) => {
-    const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), 'otto-approvals-')));
+    const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), 'nod-approvals-')));
     const previousDirectory = process.cwd();
     process.chdir(fixtureRoot);
     t.after(async () => {
@@ -781,7 +781,7 @@ test(
       );
 
       await t.test(
-        'a first task the owner tapped is Otto wording and never counts as their request',
+        'a first task the owner tapped is nod wording and never counts as their request',
         async () => {
           const title = 'Reply about revision rounds';
           await begin('Check my inbox.');
@@ -897,7 +897,7 @@ test(
             turn: { threadId: string; turnId: string },
             args: Record<string, unknown>,
           ) => {
-            const id = await propose(turn, 'OTTO_vault_allow', args);
+            const id = await propose(turn, 'NOD_vault_allow', args);
             await finish(turn.turnId);
             await confirm(id, true);
             await execute(id);
@@ -913,7 +913,7 @@ test(
           };
           const session = await access.authorize(group, target);
           assert.ok('details' in session);
-          assert.deepEqual(reviews.at(-1)?.action.name, 'OTTO_browser_session');
+          assert.deepEqual(reviews.at(-1)?.action.name, 'NOD_browser_session');
           const groupResumed = await confirmAccess(group, session.args);
           const afterGroup = reviews.length;
           assert.deepEqual(await access.authorize(groupResumed, target), {
@@ -948,7 +948,7 @@ test(
               })),
           );
           aligned = (input) =>
-            input.action?.name === 'OTTO_sign_in' &&
+            input.action?.name === 'NOD_sign_in' &&
             input.action.arguments.website === site &&
             input.userMessages?.at(-1)?.text === 'Download my bank statement now.';
           const requested = await begin('Download my bank statement now.');
@@ -969,20 +969,20 @@ test(
       );
 
       await t.test('payments from a chat app are approved outside it', async () => {
-        assert.equal(await trust.inOtto(await begin('Buy hinges at shop.example.test.')), true);
+        assert.equal(await trust.inNod(await begin('Buy hinges at shop.example.test.')), true);
         assert.equal(
-          await trust.inOtto(
+          await trust.inNod(
             await begin('Buy hinges at shop.example.test.', { channel: 'telegram:synthetic' }),
           ),
           false,
         );
         assert.equal(
-          await trust.inOtto(
+          await trust.inNod(
             await begin('Buy hinges at shop.example.test.', { channel: 'whatsapp:synthetic' }),
           ),
           false,
         );
-        assert.equal(await trust.inOtto(await begin('Synthetic event', { source: 'event' })), true);
+        assert.equal(await trust.inNod(await begin('Synthetic event', { source: 'event' })), true);
       });
 
       await t.test(
@@ -1221,7 +1221,7 @@ test(
               ).rows[0].id,
             );
             await tasks.inherit(relayed);
-            await trust.check(relayed, 'OTTO_browser', { website: 'https://dentist.example.test' });
+            await trust.check(relayed, 'NOD_browser', { website: 'https://dentist.example.test' });
             await finish(relayed.turnId, 'succeeded');
             return reviews.at(-1)!;
           };
@@ -1353,7 +1353,7 @@ test(
             ).rows[0].id,
           );
           await tasks.inherit(worker);
-          await trust.check(worker, 'OTTO_browser', { website: 'https://tables.example.test' });
+          await trust.check(worker, 'NOD_browser', { website: 'https://tables.example.test' });
           assert.deepEqual(
             reviews
               .at(-1)!
@@ -1407,7 +1407,7 @@ test(
             ).rows[0].id,
           );
           await tasks.inherit(worker);
-          await trust.check(worker, 'OTTO_browser', { website: 'https://tables.example.test' });
+          await trust.check(worker, 'NOD_browser', { website: 'https://tables.example.test' });
           const words = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
           assert.deepEqual(words.slice(-2), [request, 'Fixture town.']);
           assert.equal(words.includes('Book any fixture table right away.'), false);
@@ -1494,7 +1494,7 @@ test(
               ...(mutation.includes('$2') ? [target] : []),
             ]);
             await assert.rejects(
-              approvals.request(turn, 'OTTO_schedule_cancel', args, { sourceMessageId }),
+              approvals.request(turn, 'NOD_schedule_cancel', args, { sourceMessageId }),
               /direct request/,
             );
             assert.equal(await proposal(turn.turnId), undefined);
@@ -1503,7 +1503,7 @@ test(
             const turn = await begin('Stop the regular check-ins.', { source });
             const sourceMessageId = await steer(turn.turnId, 'Stop the regular check-ins.');
             await assert.rejects(
-              approvals.request(turn, 'OTTO_schedule_cancel', args, { sourceMessageId }),
+              approvals.request(turn, 'NOD_schedule_cancel', args, { sourceMessageId }),
               /direct request/,
             );
             assert.equal(await proposal(turn.turnId), undefined);
@@ -1534,7 +1534,7 @@ test(
             ...(mutation.includes('$1') ? [turn.turnId] : []),
           ]);
           await assert.rejects(
-            approvals.request(turn, 'OTTO_schedule_create', args, { allowed: true }),
+            approvals.request(turn, 'NOD_schedule_create', args, { allowed: true }),
             /direct request|no longer active/,
           );
           assert.equal(await proposal(turn.turnId), undefined);
@@ -1549,13 +1549,13 @@ test(
             const before = calls.length;
             const origin = await begin('A useful change is ready.', { source: 'event' });
             const args = { notificationRule: 'Original preference.' };
-            const id = await propose(origin, 'OTTO_notification_preferences_update', args);
+            const id = await propose(origin, 'NOD_notification_preferences_update', args);
             await finish(origin.turnId);
             let unrelated: string | undefined;
             if (explicit)
               unrelated = await propose(
                 await begin('Another useful decision.', { source: 'event' }),
-                'OTTO_notification_preferences_update',
+                'NOD_notification_preferences_update',
                 { notificationRule: 'A separate proposal.' },
               );
             const revised = await messages.submit('Update my preferences to be shorter.', [], {
@@ -1572,7 +1572,7 @@ test(
             assert.equal(await confirm(id, true), undefined);
             const next = await propose(
               await running(revised.turnId),
-              'OTTO_notification_preferences_update',
+              'NOD_notification_preferences_update',
               {
                 notificationRule: 'Shorter preference.',
               },
@@ -1587,7 +1587,7 @@ test(
           }
           const before = calls.length;
           const origin = await begin('A useful change is ready.', { source: 'event' });
-          const id = await propose(origin, 'OTTO_notification_preferences_update', {
+          const id = await propose(origin, 'NOD_notification_preferences_update', {
             notificationRule: 'Original preference.',
           });
           const confirmationMessageId = (await stored(id)).confirmation_message_id;
@@ -1623,14 +1623,14 @@ test(
           ]);
           const before = calls.length;
           const results = await Promise.all(
-            turns.map((turn) => approvals.request(turn, 'OTTO_schedule_cancel', args)),
+            turns.map((turn) => approvals.request(turn, 'NOD_schedule_cancel', args)),
           );
           for (const result of results) assert.ok(result[appConfirmation]);
           assert.equal(results[0][appConfirmation], results[1][appConfirmation]);
           const records = (
             await db.pool.query(
               'SELECT * FROM approvals WHERE owner_id=$1 AND thread_id=$2 AND action=$3 AND args=$4::jsonb',
-              [ownerId, turns[0]!.threadId, 'OTTO_schedule_cancel', args],
+              [ownerId, turns[0]!.threadId, 'NOD_schedule_cancel', args],
             )
           ).rows;
           assert.equal(records.length, 1);
@@ -1642,11 +1642,11 @@ test(
             1,
           );
           const original = turns.find((turn) => turn.turnId === records[0].turn_id)!;
-          await assert.rejects(approvals.request(original, 'OTTO_schedule_cancel', args), {
+          await assert.rejects(approvals.request(original, 'NOD_schedule_cancel', args), {
             statusCode: 409,
           });
           const other = await begin('A different schedule needs a pause.', { source: 'event' });
-          await propose(other, 'OTTO_schedule_cancel', { id: randomUUID() });
+          await propose(other, 'NOD_schedule_cancel', { id: randomUUID() });
           assert.equal(await assistantMessages(other.turnId), 1);
           assert.equal(calls.length, before);
         },
@@ -1655,7 +1655,7 @@ test(
       await t.test(
         'a direct run uses its exact snapshot, records nothing, and an action asked in its request fences it',
         async () => {
-          const action = 'OTTO_notification_preferences_update';
+          const action = 'NOD_notification_preferences_update';
           const origin = await begin('Only notify me about urgent reports.');
           const args = { notificationRule: 'Original preference.' };
           const snapshot = structuredClone(args);
@@ -1717,7 +1717,7 @@ test(
             await thread.enqueueTurn('Synthetic unrelated continuation', { source: 'resume' }),
           );
           await assert.rejects(
-            approvals.request(generic, 'OTTO_notification_preferences_update', {}),
+            approvals.request(generic, 'NOD_notification_preferences_update', {}),
             /direct request/,
           );
           assert.equal(await proposal(generic.turnId), undefined);
@@ -1735,7 +1735,7 @@ test(
         'only a rendered status in the reply channel blocks a bare confirmation',
         async (t) => {
           const turn = await begin('Prepare the fixture notification.');
-          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+          const id = await propose(turn, 'NOD_notification_preferences_update', {
             notificationRule: 'Fixture rule',
           });
           const saved = await stored(id);
@@ -1792,7 +1792,7 @@ test(
             );
           });
           const args = { notificationRule: 'Synthetic original' };
-          await approvals.request(turn, 'OTTO_notification_preferences_update', args);
+          await approvals.request(turn, 'NOD_notification_preferences_update', args);
           const saved = await proposal(turn.turnId);
           args.notificationRule = 'Substituted after proposal';
           await finish(turn.turnId);
@@ -1865,7 +1865,7 @@ test(
       await t.test('artifacts are owned and published only from inside the workspace', async () => {
         const { threadId: id } = await newTurn('succeeded');
         const workspace = join(dataRoot, 'workspaces', id);
-        const privateDir = await mkdtemp(join(tmpdir(), 'otto-artifact-test-'));
+        const privateDir = await mkdtemp(join(tmpdir(), 'nod-artifact-test-'));
         directories.push(workspace, privateDir);
         await mkdir(workspace, { recursive: true });
         await writeFile(join(privateDir, 'private.txt'), 'private fixture');
@@ -1916,7 +1916,7 @@ test(
             notificationRule: 'Confirmed snapshot',
             nested: { text: 'original' },
           };
-          const id = await propose(turn, 'OTTO_notification_preferences_update', original);
+          const id = await propose(turn, 'NOD_notification_preferences_update', original);
           original.nested.text = 'changed after request';
           assert.equal((await stored(id)).args.nested.text, 'original');
           assert.equal(
@@ -1948,7 +1948,7 @@ test(
           const results = await Promise.all(Array.from({ length: 4 }, () => execute(id)));
           assert.equal(calls.length, before + 1);
           assert.deepEqual(calls.at(-1), {
-            action: 'OTTO_notification_preferences_update',
+            action: 'NOD_notification_preferences_update',
             args: {
               notificationRule: 'Confirmed snapshot',
               nested: { text: 'original' },
@@ -1971,11 +1971,11 @@ test(
           const first = await newTurn('running', 'Provenance fixture');
           const second = await newTurn('running', 'Provenance fixture');
           const [firstId, secondId] = await Promise.all([
-            propose(first, 'OTTO_notification_preferences_update', {
+            propose(first, 'NOD_notification_preferences_update', {
               notificationRule: 'First turn fact',
               sourceMessageId: second.messageId,
             }),
-            propose(second, 'OTTO_notification_preferences_update', {
+            propose(second, 'NOD_notification_preferences_update', {
               notificationRule: 'Second turn fact',
             }),
           ]);
@@ -1983,7 +1983,7 @@ test(
           await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [eventTurn]);
           const background = await propose(
             { threadId: first.threadId, turnId: eventTurn },
-            'OTTO_notification_preferences_update',
+            'NOD_notification_preferences_update',
             { notificationRule: 'No owned source' },
           );
           assert.equal((await stored(background)).source_message_id, null);
@@ -2018,7 +2018,7 @@ test(
           rejectPreflight = true;
           try {
             await assert.rejects(
-              approvals.request(turn, 'OTTO_notification_preferences_update', {
+              approvals.request(turn, 'NOD_notification_preferences_update', {
                 notificationRule: 'Synthetic preference',
               }),
               {
@@ -2033,7 +2033,7 @@ test(
           } finally {
             rejectPreflight = false;
           }
-          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+          const id = await propose(turn, 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           rejectPreflight = true;
@@ -2056,13 +2056,13 @@ test(
         'cancelled, wrong-channel and foreign confirmations cannot execute',
         async () => {
           const before = calls.length;
-          const cancelled = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+          const cancelled = await propose(await newTurn(), 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           await thread.stopThread();
           assert.equal(await confirm(cancelled, true), undefined);
           assert.notEqual((await stored(cancelled)).status, 'confirmed');
-          const foreign = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+          const foreign = await propose(await newTurn(), 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           await db.pool.query('UPDATE approvals SET owner_id=$2 WHERE id=$1', [
@@ -2072,7 +2072,7 @@ test(
           assert.equal(await confirm(foreign, true), undefined);
           const otherChannel = await propose(
             await newTurn(),
-            'OTTO_notification_preferences_update',
+            'NOD_notification_preferences_update',
             {
               notificationRule: 'Synthetic preference',
             },
@@ -2091,7 +2091,7 @@ test(
           replyAnswers[reply] = 'yes';
           const ask = async () => {
             const turn = await newTurn();
-            const id = await propose(turn, 'OTTO_notification_preferences_update', {
+            const id = await propose(turn, 'NOD_notification_preferences_update', {
               notificationRule: 'Read reply',
             });
             await finish(turn.turnId);
@@ -2160,7 +2160,7 @@ test(
       await t.test(
         'declining resumes once without executing and uncertain actions cannot replay',
         async () => {
-          const id = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+          const id = await propose(await newTurn(), 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           const before = calls.length;
@@ -2172,7 +2172,7 @@ test(
           assert.equal((await stored(id)).status, 'declined');
           assert.equal(await confirm(id, true), undefined);
           assert.equal(await execute(id), undefined);
-          const failed = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+          const failed = await propose(await newTurn(), 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           await confirm(failed, true);
@@ -2195,7 +2195,7 @@ test(
 
       await t.test('a failed decline enqueue rolls back both the decision and reply', async () => {
         const turn = await newTurn();
-        const id = await propose(turn, 'OTTO_notification_preferences_update', {
+        const id = await propose(turn, 'NOD_notification_preferences_update', {
           notificationRule: 'Synthetic preference',
         });
         const countMessages = async () =>
@@ -2221,7 +2221,7 @@ test(
       await t.test(
         'stopping after chat acceptance prevents the worker from executing',
         async () => {
-          const id = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+          const id = await propose(await newTurn(), 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           await confirm(id, true);
@@ -2238,7 +2238,7 @@ test(
         'stopping during confirmed execution records its result and a restart never retries it',
         async () => {
           const turn = await newTurn();
-          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+          const id = await propose(turn, 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           await confirm(id, true);
@@ -2277,7 +2277,7 @@ test(
           }
           const interrupted = await propose(
             await newTurn(),
-            'OTTO_notification_preferences_update',
+            'NOD_notification_preferences_update',
             {
               notificationRule: 'Synthetic preference',
             },

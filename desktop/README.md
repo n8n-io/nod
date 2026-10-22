@@ -1,6 +1,6 @@
-# Otto desktop
+# nod desktop
 
-The Electron app that packages Otto for Mac and Windows. It starts the same server, web app, workspace and browser as a source install, inside a private virtual machine.
+The Electron app that packages nod for Mac and Windows. It starts the same server, web app, workspace and browser as a source install, inside a private virtual machine.
 
 - [Install the desktop app](../docs/src/content/docs/get-started/install-desktop.mdx)
 - [Desktop app internals](../docs/src/content/docs/deploy/desktop-app.mdx): what runs locally, data locations, updates and limits
@@ -16,4 +16,4 @@ pnpm run desktop:dev       # unpackaged development run
 pnpm run desktop:build     # app, DMG and runtime pack in dist/desktop
 ```
 
-Set `OTTO_DESKTOP_USER_DATA` to a new directory for a fresh development profile.
+Set `NOD_DESKTOP_USER_DATA` to a new directory for a fresh development profile.

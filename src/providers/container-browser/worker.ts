@@ -386,7 +386,7 @@ export async function startContainerBrowserWorker(
     server.listen(path, resolve);
   });
   try {
-    await rm('/tmp/otto-browser-uploads', { recursive: true, force: true });
+    await rm('/tmp/nod-browser-uploads', { recursive: true, force: true });
     await chmod(path, 0o600);
   } catch (error) {
     await new Promise<void>((resolve) => server.close(() => resolve()));

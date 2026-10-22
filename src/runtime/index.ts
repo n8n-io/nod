@@ -22,7 +22,7 @@ import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { firstInstruction, ownerContext, steeredInstruction, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
-import { ottoTools } from './tools.ts';
+import { nodTools } from './tools.ts';
 import type { Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import { delimit } from './untrusted.ts';
@@ -413,7 +413,7 @@ export function createAgentRuntime(dependencies: {
         return { gate, settle: () => decide(gate.asked) };
       };
       const bind = (turn: Turn, take: () => Promise<unknown>) =>
-        ottoTools(turn, skills).map(({ name, description, parameters, execute }): AgentTool => ({
+        nodTools(turn, skills).map(({ name, description, parameters, execute }): AgentTool => ({
           name,
           description,
           parameters,
@@ -481,7 +481,7 @@ export function createAgentRuntime(dependencies: {
           parentRunId: execution.runId,
           browserId: childBrowser,
         };
-        const childPath = `${workspace.path}/.otto/runs/${runId}`;
+        const childPath = `${workspace.path}/.nod/runs/${runId}`;
         if ((await workspace.exec(`mkdir -p -- '${childPath}'`, { signal })).exitCode)
           throw new Error('The subagent workspace could not be opened.');
         assertActive();

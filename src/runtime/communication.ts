@@ -8,7 +8,7 @@ function plain(value: string) {
 export function actionLink(url: unknown, message: unknown) {
   if (typeof url !== 'string' || typeof message !== 'string' || !plain(message))
     throw new Error('The action invitation is unavailable.');
-  const destination = new URL(url, 'https://otto.invalid');
+  const destination = new URL(url, 'https://nod.invalid');
   if (
     !['http:', 'https:'].includes(destination.protocol) ||
     destination.username ||

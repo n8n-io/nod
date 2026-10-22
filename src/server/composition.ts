@@ -172,16 +172,16 @@ export function createDefaultAdapters(
     acknowledge(): Promise<void>;
   },
 ): ApplicationAdapters {
-  const defaultFeedbackUrl = 'https://internal.users.n8n.cloud/webhook/otto/feedback';
-  const feedbackUrl = env.OTTO_FEEDBACK_URL ?? defaultFeedbackUrl;
-  const feedbackEnabled = env.OTTO_FEEDBACK_ENABLED !== 'false';
+  const defaultFeedbackUrl = 'https://internal.users.n8n.cloud/webhook/nod/feedback';
+  const feedbackUrl = env.NOD_FEEDBACK_URL ?? defaultFeedbackUrl;
+  const feedbackEnabled = env.NOD_FEEDBACK_ENABLED !== 'false';
   if (
     feedbackEnabled &&
     feedbackUrl &&
     feedbackUrl !== defaultFeedbackUrl &&
-    !env.OTTO_FEEDBACK_RECEIPT_URL_PREFIX
+    !env.NOD_FEEDBACK_RECEIPT_URL_PREFIX
   )
-    throw new Error('Set OTTO_FEEDBACK_RECEIPT_URL_PREFIX when using a custom feedback intake.');
+    throw new Error('Set NOD_FEEDBACK_RECEIPT_URL_PREFIX when using a custom feedback intake.');
   const provider = env.LLM_PROVIDER || 'openai';
   if (!['openai', 'anthropic', 'openrouter', 'compatible'].includes(provider))
     throw new Error('LLM_PROVIDER must be openai, anthropic, openrouter or compatible.');
@@ -194,8 +194,8 @@ export function createDefaultAdapters(
   const model = env.LLM_MODEL || agentModels[provider as keyof typeof agentModels];
   const keyStore = checkedKeyStore(
     pool,
-    env.OTTO_VAULT_KEY
-      ? createEnvironmentKeyStore(env.OTTO_VAULT_KEY)
+    env.NOD_VAULT_KEY
+      ? createEnvironmentKeyStore(env.NOD_VAULT_KEY)
       : desktopMode
         ? createEnvironmentKeyStore()
         : process.platform === 'darwin'
@@ -237,8 +237,8 @@ export function createDefaultAdapters(
   });
   const traces = createModelTraces(
     createN8nTraces({
-      url: env.OTTO_TRACES_URL ?? 'https://internal.users.n8n.cloud/webhook/otto/traces',
-      token: env.OTTO_TRACES_TOKEN,
+      url: env.NOD_TRACES_URL ?? 'https://internal.users.n8n.cloud/webhook/nod/traces',
+      token: env.NOD_TRACES_TOKEN,
     }),
   );
   const modelCurator = createPiMemoryCurator({
@@ -290,12 +290,12 @@ export function createDefaultAdapters(
     : createComposioProxy({
         dataRoot,
         ownerId,
-        url: !desktopMode || env.OTTO_DESKTOP_USER_DATA ? env.OTTO_COMPOSIO_PROXY_URL : undefined,
+        url: !desktopMode || env.NOD_DESKTOP_USER_DATA ? env.NOD_COMPOSIO_PROXY_URL : undefined,
       });
   const ownIntegrations = createComposioProvider({
     apiKey: environmentKey,
     webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
-    webhookUrl: env.OTTO_COMPOSIO_WEBHOOK_URL,
+    webhookUrl: env.NOD_COMPOSIO_WEBHOOK_URL,
     authConfigs,
   });
   const integrationAccess = integrationProxy
@@ -312,11 +312,11 @@ export function createDefaultAdapters(
     fixed: environmentKey ? 'own' : undefined,
     managed: integrationAccess,
   });
-  const ottoIntegrations = integrationProxy && createComposioProvider({ proxy: integrationProxy });
-  const integrations = ottoIntegrations
+  const nodIntegrations = integrationProxy && createComposioProvider({ proxy: integrationProxy });
+  const integrations = nodIntegrations
     ? new Proxy(ownIntegrations, {
         get: (_, key) =>
-          Reflect.get(integrationKey.mode === 'own' ? ownIntegrations : ottoIntegrations, key),
+          Reflect.get(integrationKey.mode === 'own' ? ownIntegrations : nodIntegrations, key),
       })
     : ownIntegrations;
   return {
@@ -344,7 +344,7 @@ export function createDefaultAdapters(
     }),
     computer: createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
     workspace: createDockerWorkspace({
-      container: env.WORKSPACE_CONTAINER || 'otto-workspace',
+      container: env.WORKSPACE_CONTAINER || 'nod-workspace',
       workspaceRoot: join(dataRoot, 'workspaces'),
     }),
     speech: createOpenAISpeechProvider({
@@ -353,7 +353,7 @@ export function createDefaultAdapters(
       voice: env.TTS_VOICE,
     }),
     integrations,
-    ...(ottoIntegrations ? { standbyIntegrations: [ownIntegrations, ottoIntegrations] } : {}),
+    ...(nodIntegrations ? { standbyIntegrations: [ownIntegrations, nodIntegrations] } : {}),
     integrationKey,
     integrationAccess,
     keyStore,
@@ -369,9 +369,9 @@ export function createDefaultAdapters(
     feedback: createN8nFeedback({
       enabled: feedbackEnabled,
       url: feedbackUrl,
-      token: env.OTTO_FEEDBACK_TOKEN,
+      token: env.NOD_FEEDBACK_TOKEN,
       receiptUrlPrefix:
-        feedbackUrl === defaultFeedbackUrl ? undefined : env.OTTO_FEEDBACK_RECEIPT_URL_PREFIX,
+        feedbackUrl === defaultFeedbackUrl ? undefined : env.NOD_FEEDBACK_RECEIPT_URL_PREFIX,
       recipient: feedbackUrl === defaultFeedbackUrl ? 'n8n' : undefined,
     }),
     traces,
@@ -406,21 +406,21 @@ async function initializeApplication(
     provider: adapters.analytics,
     environment: analyticsEnvironment(process.env),
     dataRoot,
-    installationId: process.env.OTTO_ANALYTICS_ID,
+    installationId: process.env.NOD_ANALYTICS_ID,
     appVersion:
-      process.env.OTTO_APP_VERSION || process.env.OTTO_IMAGE_RELEASE || process.env.OTTO_RELEASE,
+      process.env.NOD_APP_VERSION || process.env.NOD_IMAGE_RELEASE || process.env.NOD_RELEASE,
   });
   let observeConnections: ((only?: 'apps' | 'models') => Promise<void>) | undefined;
   const captureAnalytics: CaptureAnalytics = (event, delivery) => {
     analytics.capture(ownerId, event, delivery);
     if (
-      event.event === 'otto_connection_changed' &&
+      event.event === 'nod_connection_changed' &&
       ['connected', 'disconnected'].includes(event.properties.status)
     )
       void observeConnections?.('apps');
     if (
-      (event.event === 'otto_model_connection_changed' && event.properties.status !== 'failed') ||
-      (event.event === 'otto_settings_updated' && event.properties.section === 'models')
+      (event.event === 'nod_model_connection_changed' && event.properties.status !== 'failed') ||
+      (event.event === 'nod_settings_updated' && event.properties.section === 'models')
     )
       void observeConnections?.('models');
   };
@@ -451,7 +451,7 @@ async function initializeApplication(
       lifetime.removeEventListener('abort', aborted!);
     }
   }
-  const privacyNotice = await loadPrivacyNoticeFile(process.env.OTTO_PRIVACY_NOTICE_FILE);
+  const privacyNotice = await loadPrivacyNoticeFile(process.env.NOD_PRIVACY_NOTICE_FILE);
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   await initializeDatabase();
   await adapters.initialize?.();
@@ -711,7 +711,7 @@ async function initializeApplication(
         const step = { action: 'click' as const, selector };
         const verdict = await trust.check(
           turn,
-          'OTTO_browser',
+          'NOD_browser',
           browserStepArgs({ step, page, typed: [], subagent: false }),
         );
         if (verdict.confirm)
@@ -831,18 +831,18 @@ async function initializeApplication(
   };
   const approvals = await createApprovals(
     async (action, args, provenance) => {
-      const result = await (action === 'OTTO_browser'
+      const result = await (action === 'NOD_browser'
         ? replayBrowserStep(args, provenance)
-        : action === 'OTTO_vault_allow'
+        : action === 'NOD_vault_allow'
           ? vaultAccess.allow(args)
-          : action === 'OTTO_limits_update'
+          : action === 'NOD_limits_update'
             ? ledger.setLimits(args)
-            : action.startsWith('OTTO_memory_')
+            : action.startsWith('NOD_memory_')
               ? withTurnLock(provenance.turnId, () =>
-                  personal.manage(action.slice('OTTO_'.length), args, provenance),
+                  personal.manage(action.slice('NOD_'.length), args, provenance),
                 )
-              : action.startsWith('OTTO_')
-                ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+              : action.startsWith('NOD_')
+                ? personal.manage(action.slice('NOD_'.length), args, provenance)
                 : (async () => {
                     const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
                     const ready = hasWorkspaceFiles(args)
@@ -872,17 +872,17 @@ async function initializeApplication(
       return result;
     },
     async (action, args, expectedRevision) => {
-      if (['OTTO_browser', 'OTTO_vault_allow'].includes(action)) return;
-      if (action === 'OTTO_limits_update') limitsInput.parse(args);
-      else if (action.startsWith('OTTO_')) {
+      if (['NOD_browser', 'NOD_vault_allow'].includes(action)) return;
+      if (action === 'NOD_limits_update') limitsInput.parse(args);
+      else if (action.startsWith('NOD_')) {
         if (
-          ['OTTO_schedule_update', 'OTTO_schedule_cancel'].includes(action) &&
+          ['NOD_schedule_update', 'NOD_schedule_cancel'].includes(action) &&
           expectedRevision === undefined
         )
           throw Object.assign(new Error('This schedule needs a fresh approval.'), {
             statusCode: 409,
           });
-        await personal.validateReview(action.slice('OTTO_'.length), args, expectedRevision);
+        await personal.validateReview(action.slice('NOD_'.length), args, expectedRevision);
       } else await integrations.prepare(ownerId, action, args);
     },
     (reply) => trust.answer(reply),
@@ -993,7 +993,7 @@ async function initializeApplication(
   ): Promise<{ reason: VaultActivityReason } | { question: string }> {
     const access = await vaultAccess.authorize(turn, target);
     if (access.ok) return { reason: access.reason };
-    const result = await approvals.request(turn, 'OTTO_vault_allow', access.args, {
+    const result = await approvals.request(turn, 'NOD_vault_allow', access.args, {
       details: access.details,
     });
     if (result && typeof result === 'object' && appConfirmation in result)
@@ -1071,7 +1071,7 @@ async function initializeApplication(
       },
       browserStep: async (turn, request, signal) => {
         const args = browserStepArgs(request);
-        const verdict = await trust.check(turn, 'OTTO_browser', args);
+        const verdict = await trust.check(turn, 'NOD_browser', args);
         if (!verdict.confirm) return 'run';
         if (request.subagent) return 'refused';
         const visible =
@@ -1098,7 +1098,7 @@ async function initializeApplication(
               },
               () => undefined,
             ));
-        const result = await approvals.request(turn, 'OTTO_browser', args, {
+        const result = await approvals.request(turn, 'NOD_browser', args, {
           signal,
           details: {
             reason: verdict.reason,
@@ -1131,8 +1131,8 @@ async function initializeApplication(
       manage: async (turn, action, args, { admit, ...provenance }) => {
         if (action === 'limits_update') {
           const input = limitsInput.parse(args);
-          const verdict = await trust.check(turn, 'OTTO_limits_update', input);
-          return approvals.request(turn, 'OTTO_limits_update', input, {
+          const verdict = await trust.check(turn, 'NOD_limits_update', input);
+          return approvals.request(turn, 'NOD_limits_update', input, {
             ...provenance,
             allowed: !verdict.confirm,
             admit,
@@ -1169,12 +1169,12 @@ async function initializeApplication(
             action === 'notification_preferences_update' && 'notificationRule' in input
               ? (await triage.getPreferences()).notificationRule
               : undefined;
-          const verdict = await trust.check(turn, `OTTO_${action}`, {
+          const verdict = await trust.check(turn, `NOD_${action}`, {
             ...input,
             ...(current ? { currentSchedule: current } : {}),
             ...(rule === undefined ? {} : { currentNotificationRule: rule }),
           });
-          return approvals.request(turn, `OTTO_${action}`, input, {
+          return approvals.request(turn, `NOD_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
             admit,
@@ -1208,8 +1208,8 @@ async function initializeApplication(
             turnId: turn.turnId,
             ownerRooted: origin?.source === 'user',
           });
-          const verdict = await trust.check(turn, `OTTO_${action}`, input);
-          return approvals.request(turn, `OTTO_${action}`, input, {
+          const verdict = await trust.check(turn, `NOD_${action}`, input);
+          return approvals.request(turn, `NOD_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
             admit,

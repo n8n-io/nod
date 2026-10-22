@@ -15,7 +15,7 @@ const routes = new Set([
 
 export function analyticsRoute(value: string) {
   try {
-    const path = new URL(value, 'https://otto.invalid').pathname.replace(/\/$/, '') || '/';
+    const path = new URL(value, 'https://nod.invalid').pathname.replace(/\/$/, '') || '/';
     if (/^\/(?:vault|credentials)\/[^/]+$/.test(path)) return '/credentials';
     if (/^\/payments\/[^/]+$/.test(path)) return '/payments';
     if (path.startsWith('/browser-connect/')) return '/apps';
@@ -29,7 +29,7 @@ export function analyticsRoute(value: string) {
 }
 
 export function sanitizedAnalyticsUrl(value: string) {
-  return `https://otto.invalid${analyticsRoute(value)}`;
+  return `https://nod.invalid${analyticsRoute(value)}`;
 }
 
 const blocked = [

@@ -22,7 +22,7 @@ export function serviceEnvironment(): NodeJS.ProcessEnv {
       'LOCALAPPDATA',
       'TEMP',
       'TMP',
-      'OTTO_WSL_DISTRIBUTION',
+      'NOD_WSL_DISTRIBUTION',
     ].flatMap((key) => (process.env[key] ? [[key, process.env[key]]] : [])),
   );
 }

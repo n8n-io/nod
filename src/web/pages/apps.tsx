@@ -277,14 +277,14 @@ export function Apps({
   const connectionSetup = usePageData<IntegrationKeyStatus>('/api/integrations/key');
   const tabsId = useId();
   const [view, setView] = useState<'all' | 'connected'>('all');
-  useEffect(() => captureAnalytics('otto_tab_viewed', { page: 'apps', tab: view }), []);
+  useEffect(() => captureAnalytics('nod_tab_viewed', { page: 'apps', tab: view }), []);
   const selectView = (next: typeof view) => {
-    if (next !== view) captureAnalytics('otto_tab_viewed', { page: 'apps', tab: next });
+    if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'apps', tab: next });
     setView(next);
   };
   useEffect(() => {
     if (loadError || (catalogError && catalogStatus !== 403))
-      captureAnalytics('otto_ui_error', { area: 'apps', action: 'load' });
+      captureAnalytics('nod_ui_error', { area: 'apps', action: 'load' });
   }, [loadError, catalogError, catalogStatus]);
   const [query, setQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -482,7 +482,7 @@ export function Apps({
       });
     }, 10 * 60_000);
     const channel =
-      typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('otto.apps');
+      typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('nod.apps');
     if (channel)
       channel.onmessage = (
         event: MessageEvent<{ service?: string; attempt?: string; connection?: string } | null>,
@@ -523,22 +523,22 @@ export function Apps({
       !connection.accessPaths?.length &&
       !integrationAccessReady(connectionSetup.data)
     ) {
-      capture('otto_app_connect_clicked', { entry, result: 'needs_access_setup' });
+      capture('nod_app_connect_clicked', { entry, result: 'needs_access_setup' });
       onManageConnection(
         document.activeElement instanceof HTMLElement ? document.activeElement : undefined,
       );
       return;
     }
-    capture('otto_app_connect_clicked', { entry, result: 'opened' });
+    capture('nod_app_connect_clicked', { entry, result: 'opened' });
     const request = new AbortController();
     const external = desktopLinksAvailable();
     const popup = external
       ? null
-      : window.open('', 'otto-connect-app', 'popup,width=520,height=720');
+      : window.open('', 'nod-connect-app', 'popup,width=520,height=720');
     try {
       if (popup) {
         popup.opener = null;
-        popup.document.title = 'Connect to Otto';
+        popup.document.title = 'Connect to nod';
         popup.document.body.textContent = 'Preparing secure sign-in…';
       }
     } catch {}
@@ -629,7 +629,7 @@ export function Apps({
       setSignIn(undefined);
       setConnectErrorService(connection.slug.replace(/_mcp$/, ''));
       setError(errorMessage(cause));
-      capture('otto_ui_error', { area: 'apps', action: 'connect' });
+      capture('nod_ui_error', { area: 'apps', action: 'connect' });
       setBusy('');
     } finally {
       if (actionRequest.current === request) actionRequest.current = null;
@@ -662,7 +662,7 @@ export function Apps({
     } catch (cause) {
       if (request.signal.aborted) return;
       setDisconnectError(errorMessage(cause));
-      capture('otto_ui_error', { area: 'apps', action: 'disconnect' });
+      capture('nod_ui_error', { area: 'apps', action: 'disconnect' });
       void refresh();
     } finally {
       if (actionRequest.current === request) actionRequest.current = null;
@@ -751,7 +751,7 @@ export function Apps({
       <header className="page-heading secondary-heading">
         <div>
           <PageTitle path="/apps" />
-          <p>Your tools, connected to Otto.</p>
+          <p>Your tools, connected to nod.</p>
         </div>
       </header>
       {configuration && <SetupNotice configuration={configuration} />}
@@ -1008,7 +1008,7 @@ export function Apps({
                   {hasFilters
                     ? 'Try a different search or clear your filters.'
                     : view === 'connected'
-                      ? 'Connect your first app to use it with Otto.'
+                      ? 'Connect your first app to use it with nod.'
                       : 'Reload the catalog to check for available apps.'}
                 </p>
                 <Button
@@ -1058,7 +1058,7 @@ export function Apps({
                     )
                   }
                 >
-                  Ask Otto in chat
+                  Ask nod in chat
                 </Button>
               </div>
             )}
@@ -1115,7 +1115,7 @@ export function Apps({
               <DialogTitle ref={manageTitle} tabIndex={-1}>
                 {managed?.service.name} accounts
               </DialogTitle>
-              <DialogDescription>Choose which accounts Otto can use.</DialogDescription>
+              <DialogDescription>Choose which accounts nod can use.</DialogDescription>
             </div>
           </div>
           {manageError && <Notice onDismiss={() => setError('')}>{manageError}</Notice>}
@@ -1196,7 +1196,7 @@ export function Apps({
           </DialogTitle>
           <DialogDescription>
             {disconnectAccount && accountLabel(disconnectAccount)}
-            <span>Otto will lose access to this account. You can connect it again later.</span>
+            <span>nod will lose access to this account. You can connect it again later.</span>
           </DialogDescription>
           {disconnectError && <Notice>{disconnectError}</Notice>}
           <div className="app-disconnect-actions">

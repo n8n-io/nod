@@ -102,7 +102,7 @@ function Workspace({
   const unread = useChatUnread(session.user!.id, state);
   useSavedDateFormat();
   useBrowserTimeZone();
-  const [collapsed, setCollapsed] = useState(() => readUiPreference('otto.sidebar') !== 'expanded');
+  const [collapsed, setCollapsed] = useState(() => readUiPreference('nod.sidebar') !== 'expanded');
   const [toolbarActions, setToolbarActions] = useState<HTMLDivElement | null>(null);
   const [pendingMessageFocus, setPendingMessageFocus] = useState<string>();
   const [notificationTarget, setNotificationTarget] = useState<{
@@ -122,7 +122,7 @@ function Workspace({
     navigate('/');
     if (notificationTarget)
       window.dispatchEvent(
-        new CustomEvent('otto:focus-message', {
+        new CustomEvent('nod:focus-message', {
           detail: { messageId: notificationTarget.messageId },
         }),
       );
@@ -135,14 +135,14 @@ function Workspace({
         navigate('/');
       }
     };
-    window.addEventListener('otto:focus-message', focusMessage);
-    return () => window.removeEventListener('otto:focus-message', focusMessage);
+    window.addEventListener('nod:focus-message', focusMessage);
+    return () => window.removeEventListener('nod:focus-message', focusMessage);
   }, [state]);
   const currentPath = path === '/you' ? '/' : path;
   const hasMessages = state ? state.messages.length > 0 : null;
   useEffect(() => {
     if (hasMessages !== null)
-      writeUiPreference('otto.chat-layout', hasMessages ? 'conversation' : 'welcome');
+      writeUiPreference('nod.chat-layout', hasMessages ? 'conversation' : 'welcome');
   }, [hasMessages]);
   const [entering, setEntering] = useState(true);
   useEffect(() => {
@@ -162,7 +162,7 @@ function Workspace({
     ]);
   }, []);
   useEffect(() => {
-    writeUiPreference('otto.sidebar', collapsed ? 'collapsed' : 'expanded');
+    writeUiPreference('nod.sidebar', collapsed ? 'collapsed' : 'expanded');
   }, [collapsed]);
   return (
     <div
@@ -270,7 +270,7 @@ function AuthenticatedApp({
   feedbackRequest: number;
   onFeedbackHandled(): void;
 }) {
-  const feedbackDiscoveryKey = `otto.feedback.discovery.${session.user!.id}` as const;
+  const feedbackDiscoveryKey = `nod.feedback.discovery.${session.user!.id}` as const;
   const firstOnboarding = useRef(!session.settings!.onboardingCompleted);
   const [feedbackDiscovery, setFeedbackDiscovery] = useState(
     () => readUiPreference(feedbackDiscoveryKey) === 'pending',
@@ -553,16 +553,16 @@ function AccountApp({
       <main className="empty-state">
         <p>
           {desktopSettingsAvailable()
-            ? 'Open Otto in the desktop app.'
-            : 'Open Otto from the link in your terminal.'}
+            ? 'Open nod in the desktop app.'
+            : 'Open nod from the link in your terminal.'}
         </p>
       </main>
     );
-  if (sessionState.loading) return <SetupProgress title="Opening Otto…" />;
+  if (sessionState.loading) return <SetupProgress title="Opening nod…" />;
   if (!session?.user || !session.settings)
     return (
       <main className="initial-loading">
-        <Notice>{sessionState.error || 'Otto could not be opened.'}</Notice>
+        <Notice>{sessionState.error || 'nod could not be opened.'}</Notice>
         <Button variant="outline" onClick={() => void sessionState.refresh()}>
           Try again
         </Button>

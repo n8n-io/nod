@@ -1,13 +1,13 @@
 ---
 title: Models
-description: Connect OpenAI, Anthropic, OpenRouter, a ChatGPT plan or a local model, choose the model Otto uses, and see where your keys are kept.
+description: Connect OpenAI, Anthropic, OpenRouter, a ChatGPT plan or a local model, choose the model nod uses, and see where your keys are kept.
 sidebar:
   order: 1
 ---
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-Otto needs a model connection to think and reply. You connect one or more services in **Models**, then choose the model Otto uses for everything.
+nod needs a model connection to think and reply. You connect one or more services in **Models**, then choose the model nod uses for everything.
 
 Your requests go to the service you connect. Paid providers bill you for use. To run a model on your own computer instead, see [Local models](/connect/local-models/).
 
@@ -16,15 +16,15 @@ Your requests go to the service you connect. Paid providers bill you for use. To
 | Service           | How you connect                       | Default model                |
 | ----------------- | ------------------------------------- | ---------------------------- |
 | OpenAI            | API key                               | GPT-6.1 Sol, high effort     |
-| ChatGPT           | Your ChatGPT plan, in local Otto only | GPT-6 Sol, high effort       |
+| ChatGPT           | Your ChatGPT plan, in local nod only  | GPT-6 Sol, high effort       |
 | Anthropic         | API key                               | Claude Opus 5.5, high effort |
 | OpenRouter        | API key, or sign in with your browser | GPT-6.1 Sol, high effort     |
-| OpenAI-compatible | Server address, in local Otto only    | You choose                   |
+| OpenAI-compatible | Server address, in local nod only     | You choose                   |
 
 You can switch to any other model the service offers.
 
 :::note[Why there's no Claude subscription]
-Anthropic's [authentication conditions](https://code.claude.com/docs/en/legal-and-compliance) don't let a Claude plan supply model access to Otto. Use an Anthropic API key or OpenRouter for Claude models.
+Anthropic's [authentication conditions](https://code.claude.com/docs/en/legal-and-compliance) don't let a Claude plan supply model access to nod. Use an Anthropic API key or OpenRouter for Claude models.
 :::
 
 ## Connect a service
@@ -48,11 +48,11 @@ Open the account menu and select **Models**. Onboarding shows the same options b
 
 1. Next to **OpenAI**, select **Connect ChatGPT**.
 2. Sign in to ChatGPT in the browser tab that opens.
-3. Return to Otto. If the browser ends on a page that doesn't load, copy its full address into **Callback URL** and select **Complete sign-in**.
+3. Return to nod. If the browser ends on a page that doesn't load, copy its full address into **Callback URL** and select **Complete sign-in**.
 
 </Steps>
 
-ChatGPT sign-in listens for the browser on port `1455` of your computer. If another program uses that port, Otto stops with an error before it opens OpenAI.
+ChatGPT sign-in listens for the browser on port `1455` of your computer. If another program uses that port, nod stops with an error before it opens OpenAI.
 
 </TabItem>
 <TabItem label="Anthropic">
@@ -74,7 +74,7 @@ ChatGPT sign-in listens for the browser on port `1455` of your computer. If anot
 
 </Steps>
 
-Otto lists the OpenRouter models that support text and tools.
+nod lists the OpenRouter models that support text and tools.
 
 </TabItem>
 <TabItem label="OpenAI-compatible">
@@ -82,7 +82,7 @@ Otto lists the OpenRouter models that support text and tools.
 <Steps>
 
 1. Next to **OpenAI-compatible**, select **Add server**.
-2. Check the **Server address**. Otto fills in Ollama's address, `http://localhost:11434/v1`. Add an **API key** only if the server needs one.
+2. Check the **Server address**. nod fills in Ollama's address, `http://localhost:11434/v1`. Add an **API key** only if the server needs one.
 3. Select **Save connection**.
 
 </Steps>
@@ -105,15 +105,15 @@ All the models from your connections appear in one searchable list. Choosing a m
 
 ## One model for everything
 
-Otto uses the same model choice in the app, Telegram and WhatsApp. A task that's already running keeps the model it started with.
+nod uses the same model choice in the app, Telegram and WhatsApp. A task that's already running keeps the model it started with.
 
-If a model request fails, Otto doesn't switch to another connection. It retries a temporary provider error, such as an overload or rate limit, up to three times.
+If a model request fails, nod doesn't switch to another connection. It retries a temporary provider error, such as an overload or rate limit, up to three times.
 
 Background work, such as memory upkeep, uses a smaller model from the same connection when it has one, such as `gpt-6-luna` or `claude-haiku-4-5`. Otherwise it uses your model. Background work and checks that use your selected model use the lightest reasoning it offers: off, minimal, low or medium in that order, or the model's first effort level if it offers none of these.
 
 ## Decision checks
 
-Two checks can use a decision model: reading whether your reply to a confirmation approves it, and checking whether an email Otto reads through your apps gives access to an account. Without a decision model, the email check uses your connection's smaller background model. Your selected model decides whether an action can run, writes and fact-checks confirmation questions, and writes messages.
+Two checks can use a decision model: reading whether your reply to a confirmation approves it, and checking whether an email nod reads through your apps gives access to an account. Without a decision model, the email check uses your connection's smaller background model. Your selected model decides whether an action can run, writes and fact-checks confirmation questions, and writes messages.
 
 | Current connection   | Decision checks                                        |
 | -------------------- | ------------------------------------------------------ |
@@ -125,9 +125,9 @@ Two checks can use a decision model: reading whether your reply to a confirmatio
 
 These calls are billed through the connection that runs them. GPT Decisions is paid API use, separate from a ChatGPT subscription. OpenRouter sends the checks to TypeSafe, even when you selected a chat model from another provider. See [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) and [Jev on OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/).
 
-In a source install, set `TYPESAFE_API_KEY` in `.env` to use Jev directly (`jev-1.13.0`) for these checks. The key selects TypeSafe regardless of your chat connection. Remove it to use the connection rules above, and restart Otto after either change. The key stays on the server and is not added to **Models**.
+In a source install, set `TYPESAFE_API_KEY` in `.env` to use Jev directly (`jev-1.13.0`) for these checks. The key selects TypeSafe regardless of your chat connection. Remove it to use the connection rules above, and restart nod after either change. The key stays on the server and is not added to **Models**.
 
-A failed decision request does not switch providers or approve anything: the confirmation stays pending, and your reply reaches Otto as an ordinary message. A failed email check hides that email's content. See [Approvals and the trust check](/trust/approvals/).
+A failed decision request does not switch providers or approve anything: the confirmation stays pending, and your reply reaches nod as an ordinary message. A failed email check hides that email's content. See [Approvals and the trust check](/trust/approvals/).
 
 :::note[Voice needs its own key]
 Spoken replies need an OpenAI API key in server settings (`OPENAI_API_KEY`). An OpenAI key in **Models** or a ChatGPT plan doesn't turn on voice.
@@ -152,15 +152,15 @@ LLM_PROVIDER=anthropic
 ANTHROPIC_API_KEY=<your-key>
 ```
 
-A model you choose in the app takes priority over `LLM_PROVIDER` and `LLM_MODEL`. Restart Otto after you edit `.env`.
+A model you choose in the app takes priority over `LLM_PROVIDER` and `LLM_MODEL`. Restart nod after you edit `.env`.
 
 ## Where your keys go
 
-The Otto server adds your key to each model request. The key never enters the workspace, Otto's browser or the model's context.
+The nod server adds your key to each model request. The key never enters the workspace, nod's browser or the model's context.
 
 ```mermaid
 flowchart LR
-  you([You]):::accent --> server[Otto server]
+  you([You]):::accent --> server[nod server]
   store[(Encrypted<br/>key store)]:::muted -- key --> server
   server -- request + key --> provider[Model provider]:::accent
   provider -- reply --> server
@@ -169,10 +169,10 @@ flowchart LR
   server -. no key .-> sandbox
 ```
 
-- Otto encrypts saved keys and sign-ins with the Vault key. The Mac keeps that key in Keychain, and the Windows app protects it with Windows DPAPI. Other source installs need `OTTO_VAULT_KEY`.
-- Otto checks credential storage before starting a connection. If storage is unavailable, check the Vault configuration, permissions and database connection, then try again.
+- nod encrypts saved keys and sign-ins with the Vault key. The Mac keeps that key in Keychain, and the Windows app protects it with Windows DPAPI. Other source installs need `NOD_VAULT_KEY`.
+- nod checks credential storage before starting a connection. If storage is unavailable, check the Vault configuration, permissions and database connection, then try again.
 - Keys from `.env` stay in server memory and aren't copied into the database.
-- Your browser doesn't store the key, and Otto removes it from provider errors.
+- Your browser doesn't store the key, and nod removes it from provider errors.
 
 ## Related resources
 

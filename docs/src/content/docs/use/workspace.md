@@ -1,15 +1,15 @@
 ---
 title: Workspace and files
-description: What Otto's own Linux computer can do, what it can't reach, and how files move between you and Otto.
+description: What nod's own Linux computer can do, what it can't reach, and how files move between you and nod.
 sidebar:
   order: 4
 ---
 
-Otto has its own Linux computer, called the workspace, where it runs commands and keeps files for your conversation.
+nod has its own Linux computer, called the workspace, where it runs commands and keeps files for your conversation.
 
-The workspace is separate from your computer. Otto can write documents, convert files, run code and keep notes there without touching your own files.
+The workspace is separate from your computer. nod can write documents, convert files, run code and keep notes there without touching your own files.
 
-## What Otto can use
+## What nod can use
 
 | For                     | The workspace has                                                                                     |
 | ----------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -27,8 +27,8 @@ The workspace is separate from your computer. Otto can write documents, convert 
 flowchart LR
   you([You]):::accent
   home[(Your home folder)]:::muted
-  server[Otto server<br/>keys stay here]
-  subgraph otto ["Otto's computer"]
+  server[nod server<br/>keys stay here]
+  subgraph nod ["nod's computer"]
     ws[Workspace]
     br[Browser]
   end
@@ -39,23 +39,23 @@ flowchart LR
   server -- drives --> br
 ```
 
-- **Your files.** The workspace doesn't see your home folder. It only gets the files you attach or that Otto fetches.
-- **Keys.** Model provider keys and Otto's access key never enter the workspace. If you connect a command-line tool, its token reaches only that tool, never code Otto writes.
-- **The browser.** Otto's browser runs in its own container. The workspace can't read its saved sign-ins.
+- **Your files.** The workspace doesn't see your home folder. It only gets the files you attach or that nod fetches.
+- **Keys.** Model provider keys and nod's access key never enter the workspace. If you connect a command-line tool, its token reaches only that tool, never code nod writes.
+- **The browser.** nod's browser runs in its own container. The workspace can't read its saved sign-ins.
 
 :::caution
-The workspace can reach the internet. Code that Otto runs there can download files and call websites.
+The workspace can reach the internet. Code that nod runs there can download files and call websites.
 :::
 
-## Give Otto files
+## Give nod files
 
-- **Attach them in chat.** Each file can be 90 MB or smaller. Otto gets a copy in the workspace and sees images directly.
+- **Attach them in chat.** Each file can be 90 MB or smaller. nod gets a copy in the workspace and sees images directly.
 - **From your apps.** Files from a connected app, such as an email attachment, are saved privately in the workspace.
-- **From the web.** Files that Otto downloads in its [browser](/use/browser/) go into the workspace.
+- **From the web.** Files that nod downloads in its [browser](/use/browser/) go into the workspace.
 
-## Get files from Otto
+## Get files from nod
 
-When Otto shares a file, it appears as an attachment in the Otto app, up to 90 MB. Select it to open it in a panel next to the chat, so you can keep talking to Otto while you read. Press the arrow keys to move through every file in the conversation, drag the panel's edge to resize it, and press **Escape** to close it. Select **Download** to save a file.
+When nod shares a file, it appears as an attachment in the nod app, up to 90 MB. Select it to open it in a panel next to the chat, so you can keep talking to nod while you read. Press the arrow keys to move through every file in the conversation, drag the panel's edge to resize it, and press **Escape** to close it. Select **Download** to save a file.
 
 | File                                    | How it opens                                                       |
 | --------------------------------------- | ------------------------------------------------------------------ |
@@ -67,11 +67,11 @@ When Otto shares a file, it appears as an attachment in the Otto app, up to 90 M
 | Code, JSON and text                     | With syntax highlighting                                           |
 | ZIP                                     | The list of files inside                                           |
 
-HTML files run in a sandbox, apart from Otto. Their scripts work, but they can't reach Otto or your accounts, load anything from the internet, send forms or open windows. If a page navigates to a website, its preview closes. Other files open without running any code.
+HTML files run in a sandbox, apart from nod. Their scripts work, but they can't reach nod or your accounts, load anything from the internet, send forms or open windows. If a page navigates to a website, its preview closes. Other files open without running any code.
 
 Previews have size limits: 4 MB for text, Markdown, HTML and spreadsheets, 25 MB for Word documents and 60 MB for presentations. Download larger files to open them.
 
-Files Otto saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents, up to 50 MB each. WhatsApp can't receive files from Otto, so open Otto to get them. See [Telegram and WhatsApp](/use/channels/).
+Files nod saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents, up to 50 MB each. WhatsApp can't receive files from nod, so open nod to get them. See [Telegram and WhatsApp](/use/channels/).
 
 ## One workspace for all tasks
 
@@ -83,13 +83,13 @@ See [Task sessions](/how-it-works/task-sessions/#shared-information-separate-his
 
 ## How long files stay
 
-Files stay in the workspace for the whole conversation. Otto can come back to them days later.
+Files stay in the workspace for the whole conversation. nod can come back to them days later.
 
-In a development run, **Clear messages** gives Otto a new, empty workspace folder. See [Start with an empty chat](/use/chat/#start-with-an-empty-chat).
+In a development run, **Clear messages** gives nod a new, empty workspace folder. See [Start with an empty chat](/use/chat/#start-with-an-empty-chat).
 
 ## Related resources
 
-- [Chat with Otto](/use/chat/)
-- [Otto's browser](/use/browser/)
+- [Chat with nod](/use/chat/)
+- [nod's browser](/use/browser/)
 - [Your data and privacy](/trust/privacy/)
 - [Sandbox and browser](/how-it-works/sandbox-and-browser/)

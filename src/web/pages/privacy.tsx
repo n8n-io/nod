@@ -11,7 +11,7 @@ export function Privacy() {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const previousTitle = document.title;
-    document.title = 'Privacy · Otto';
+    document.title = 'Privacy · nod';
     return () => {
       document.title = previousTitle;
     };
@@ -43,12 +43,12 @@ export function Privacy() {
   return (
     <main className="privacy-page">
       <header className="privacy-header">
-        <a className="privacy-brand" href="/" aria-label="Otto home">
+        <a className="privacy-brand" href="/" aria-label="nod home">
           <BrandMark />
-          <span>otto</span>
+          <span>nod</span>
         </a>
         <a className="privacy-back" href="/">
-          Back to Otto
+          Back to nod
         </a>
       </header>
       <article className="privacy-document">

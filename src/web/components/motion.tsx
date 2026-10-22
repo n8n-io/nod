@@ -10,7 +10,7 @@ export function prefersReducedMotion() {
 
 export type GlyphReaction = { kind: 'on' | 'off'; count: number };
 
-export function OttoGlyph({
+export function NodGlyph({
   size = 32,
   mode = 'idle',
   reaction,

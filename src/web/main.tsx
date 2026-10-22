@@ -53,7 +53,7 @@ class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }
   }
   componentDidCatch() {
     desktopRendererReady();
-    captureAnalytics('otto_ui_error', { area: 'application', action: 'render' });
+    captureAnalytics('nod_ui_error', { area: 'application', action: 'render' });
   }
   render() {
     if (this.state.failed)
@@ -65,7 +65,7 @@ class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }
             className="button button-primary button-default"
             onClick={() => window.location.reload()}
           >
-            Reload Otto
+            Reload nod
           </button>
         </main>
       );

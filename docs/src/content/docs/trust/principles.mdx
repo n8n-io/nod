@@ -1,6 +1,6 @@
 ---
 title: Our trust principles
-description: The seven commitments behind Otto's design, and how the server keeps each one.
+description: The seven commitments behind nod's design, and how the server keeps each one.
 sidebar:
   label: Trust principles
   order: 2
@@ -8,13 +8,13 @@ sidebar:
 
 import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-An assistant that acts for you is only worth having if you can trust it when you're not watching. These are the seven commitments Otto is built on.
+An assistant that acts for you is only worth having if you can trust it when you're not watching. These are the seven commitments nod is built on.
 
-Most assistants ask you to trust the company behind them. Otto's rules are enforced by a server, not by a model's good behaviour. They run where you choose, in code you can read, and they leave a record you can check.
+Most assistants ask you to trust the company behind them. nod's rules are enforced by a server, not by a model's good behaviour. They run where you choose, in code you can read, and they leave a record you can check.
 
 <CardGrid>
   <Card title="1. Authority comes only from you" icon="approve-check-circle">
-    Nothing Otto reads can give it permission.
+    Nothing nod reads can give it permission.
   </Card>
   <Card title="2. The model never sees your secrets" icon="padlock">
     Passwords, codes and card numbers stay out of it.
@@ -26,7 +26,7 @@ Most assistants ask you to trust the company behind them. Otto's rules are enfor
     Every use, cost and app action is on record.
   </Card>
   <Card title="5. Your computer, your model" icon="laptop">
-    Otto runs where you choose, with the provider you choose.
+    nod runs where you choose, with the provider you choose.
   </Card>
   <Card title="6. Open by default" icon="github">
     Open source code. Analytics off until you opt in.
@@ -38,7 +38,7 @@ Most assistants ask you to trust the company behind them. Otto's rules are enfor
 
 ## Layers, not a single gate
 
-No single check makes an AI assistant safe, so Otto stacks independent ones. The model's judgement is the first layer, never the last.
+No single check makes an AI assistant safe, so nod stacks independent ones. The model's judgement is the first layer, never the last.
 
 ```mermaid
 flowchart LR
@@ -58,7 +58,7 @@ Web pages, emails, files and app results are data. Only your messages, the instr
 - Reads and drafts run. Anything else needs authority from you: your request, or your yes.
 - Your request covers the steps it takes and stops there. "Buy it from that shop" covers the cookie banner, the basket and the order there. "Move my 3pm and tell Lena" covers the event and the email to Lena. Neither covers anything else.
 - When intent must be judged, a separate review sees only your messages and the action, never the content that suggested it.
-- Work Otto starts on its own can only read, draft and do what you told it to do on its own.
+- Work nod starts on its own can only read, draft and do what you told it to do on its own.
 
 [How approvals work →](/trust/approvals/)
 
@@ -77,8 +77,8 @@ The model picks the account and the fields. The server fills in the value.
 An approval isn't a general "go ahead". It binds one action with its exact arguments.
 
 - Changing a recipient, an amount or a payload needs new authority.
-- A saved claim makes sure an approved action can't run twice, even after a double tap or a crash. If Otto tries the same action again for that request, it gets the first result.
-- No action is retried automatically. If the outcome is unclear, Otto says so, and you check before anyone tries again.
+- A saved claim makes sure an approved action can't run twice, even after a double tap or a crash. If nod tries the same action again for that request, it gets the first result.
+- No action is retried automatically. If the outcome is unclear, nod says so, and you check before anyone tries again.
 
 [One use, one result →](/trust/outcomes/)
 
@@ -93,7 +93,7 @@ The full record is for every user, not an enterprise add-on.
 
 ## 5. Your computer, your model
 
-With the desktop app or a source install, Otto's server, database, workspace and browser run on your computer.
+With the desktop app or a source install, nod's server, database, workspace and browser run on your computer.
 
 - You bring your own model provider and pay it directly.
 - Commands run in a sandbox with no access to your files or keys.
@@ -104,10 +104,10 @@ With the desktop app or a source install, Otto's server, database, workspace and
 
 You shouldn't have to trust a security claim you can't check.
 
-- Otto is open source under the Apache License 2.0, including the trust check, Vault and their tests.
+- nod is open source under the Apache License 2.0, including the trust check, Vault and their tests.
 - Usage analytics stay off until you turn on **Share usage data**, and recordings never show your content.
-- Conversation traces stay off until you turn on **Share conversation traces**, and Otto removes personal details before any leave.
-- Feedback reaches the Otto team only when you send it, and you can leave out the diagnostic report.
+- Conversation traces stay off until you turn on **Share conversation traces**, and nod removes personal details before any leave.
+- Feedback reaches the nod team only when you send it, and you can leave out the diagnostic report.
 
 [Analytics and recordings →](/deploy/analytics/)
 
@@ -116,8 +116,8 @@ You shouldn't have to trust a security claim you can't check.
 Security that overstates itself is worse than none, because people rely on it.
 
 - The review is a best-effort judge and can be wrong.
-- A website receives the values you let Otto submit, and can keep them.
-- The Otto server can read saved values while it uses them.
+- A website receives the values you let nod submit, and can keep them.
+- The nod server can read saved values while it uses them.
 
 [Security model and limits →](/trust/security-model/)
 
@@ -125,9 +125,9 @@ Security that overstates itself is worse than none, because people rely on it.
 
 <CardGrid>
   <LinkCard
-    title="How Otto compares"
+    title="How nod compares"
     href="/trust/compare/"
-    description="Otto next to other assistants that act for you."
+    description="nod next to other assistants that act for you."
   />
   <LinkCard
     title="Security review guide"

@@ -359,7 +359,7 @@ test(
       const id = opened.connectionId;
       const use = () => service.request({ action: 'use', url: location, connectionId: id }, turn);
       await use();
-      assert.equal(events.filter((event) => event.event === 'otto_service_used').length, 0);
+      assert.equal(events.filter((event) => event.event === 'nod_service_used').length, 0);
       await service.request(
         { action: 'save', url: location, connectionId: id, signedIn: true },
         turn,

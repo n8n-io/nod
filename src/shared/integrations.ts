@@ -9,7 +9,7 @@ export interface IntegrationServiceInfo {
 }
 
 export type IntegrationKeyStatus = {
-  mode: 'otto' | 'own';
+  mode: 'nod' | 'own';
   switchable: boolean;
   keyWritable: boolean;
   suffix: string | null;

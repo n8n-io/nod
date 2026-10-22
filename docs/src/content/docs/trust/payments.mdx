@@ -1,13 +1,13 @@
 ---
 title: Payments
-description: Let Otto complete a checkout with a saved card, only after you approve that one payment.
+description: Let nod complete a checkout with a saved card, only after you approve that one payment.
 sidebar:
   order: 9
 ---
 
 import { Badge, Steps } from '@astrojs/starlight/components';
 
-Otto can complete a checkout with a card saved in Vault, but only after you approve that one payment. The model never sees the card number or security code.
+nod can complete a checkout with a card saved in Vault, but only after you approve that one payment. The model never sees the card number or security code.
 
 <Badge text="Desktop and source installs" variant="note" />
 
@@ -21,30 +21,30 @@ Otto can complete a checkout with a card saved in Vault, but only after you appr
 
 </Steps>
 
-Otto never saves the card's security code. You enter it for each payment. Codes saved by earlier versions are deleted the next time Otto opens your Vault.
+nod never saves the card's security code. You enter it for each payment. Codes saved by earlier versions are deleted the next time nod opens your Vault.
 
-If Otto reaches a checkout and you have no card saved, select its add-card action to open this form beside chat. Save the card, then tell Otto to continue. You can also add it in Trust.
+If nod reaches a checkout and you have no card saved, select its add-card action to open this form beside chat. Save the card, then tell nod to continue. You can also add it in Trust.
 
 ## Approve one payment
 
-When Otto has filled in the rest of the checkout, it prepares one payment request. Before you see it, the browser reads the real origin of each card field. The request is bound to:
+When nod has filled in the rest of the checkout, it prepares one payment request. Before you see it, the browser reads the real origin of each card field. The request is bound to:
 
 | Bound to                 | What it means                                                 |
 | ------------------------ | ------------------------------------------------------------- |
 | The card and its version | Editing the card cancels the request                          |
 | The shop                 | The origin of the checkout page                               |
-| The checkout page        | The exact page Otto prepared                                  |
+| The checkout page        | The exact page nod prepared                                   |
 | Card-field destinations  | The real origin of every card field, including payment frames |
-| The submit button        | The one control Otto chose                                    |
+| The submit button        | The one control nod chose                                     |
 | Amount and currency      | As shown on the page                                          |
 
-The request stays open while its task waits for you. If Otto can't write the approval question, the request closes at once. A newer request, a newer message from you in the same conversation, a changed card or **Stop** makes it unusable. A scheduled run or background task has its own session, so chatting with Otto never closes its payment request.
+The request stays open while its task waits for you. If nod can't write the approval question, the request closes at once. A newer request, a newer message from you in the same conversation, a changed card or **Stop** makes it unusable. A scheduled run or background task has its own session, so chatting with nod never closes its payment request.
 
-In Otto web or desktop, Otto shows the checkout with the card fields hidden. Select its payment action to open **Approve payment** beside chat. Check the amount, shop, card and destinations, then enter the card's security code and submit. The code never reaches the model or the chat history. Closing the panel clears an unsent code; it does not cancel a payment already submitted. Reopening shows the current result, including an expired or uncertain request.
+In nod web or desktop, nod shows the checkout with the card fields hidden. Select its payment action to open **Approve payment** beside chat. Check the amount, shop, card and destinations, then enter the card's security code and submit. The code never reaches the model or the chat history. Closing the panel clears an unsent code; it does not cancel a payment already submitted. Reopening shows the current result, including an expired or uncertain request.
 
 ### From Telegram or WhatsApp
 
-Chat apps can't approve payments or receive security codes. Otto asks you to open the same conversation in Otto on your desktop, where the **Approve payment** form waits. After you approve, Otto replies in the original chat.
+Chat apps can't approve payments or receive security codes. nod asks you to open the same conversation in nod on your desktop, where the **Approve payment** form waits. After you approve, nod replies in the original chat.
 
 ## What happens after you approve
 
@@ -53,28 +53,28 @@ sequenceDiagram
   actor You
   participant Server
   participant Shop
-  participant Otto
+  participant nod
   You->>Server: Security code
   Server->>Server: Check card version, claim one use
   Server->>Shop: Enter card and submit privately
-  Shop-->>Otto: Page after submit, card values masked
-  Otto->>Otto: Check the shop's result
-  Otto-->>You: Order confirmed, or what went wrong
+  Shop-->>nod: Page after submit, card values masked
+  nod->>nod: Check the shop's result
+  nod-->>You: Order confirmed, or what went wrong
 ```
 
-**Card submitted is not paid.** Vault records that the card was submitted, with the amount. Otto then reads the shop's page and tells you the result, because only the shop and your bank decide whether the payment went through. If the operation was interrupted, Vault shows **Result unknown**: check the order before you try again. See [One use, one result](/trust/outcomes/).
+**Card submitted is not paid.** Vault records that the card was submitted, with the amount. nod then reads the shop's page and tells you the result, because only the shop and your bank decide whether the payment went through. If the operation was interrupted, Vault shows **Result unknown**: check the order before you try again. See [One use, one result](/trust/outcomes/).
 
-## When Otto never pays
+## When nod never pays
 
 - With an expired, replaced or already-used request.
 
 :::caution[Limits]
-A saved card can't make your card issuer enforce the amount or the shop. Otto binds its own operation, but a website can still change the cart. Saving a card in Vault isn't a PCI DSS compliance claim.
+A saved card can't make your card issuer enforce the amount or the shop. nod binds its own operation, but a website can still change the cart. Saving a card in Vault isn't a PCI DSS compliance claim.
 :::
 
 ## Where this is enforced
 
-[`src/server/payments.ts`](https://github.com/n8n-io/otto/blob/main/src/server/payments.ts) (request and approval) · [`src/server/vault-use.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-use.ts) (one use) · [`src/server/trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts) (when payment is allowed)
+[`src/server/payments.ts`](https://github.com/n8n-io/nod/blob/main/src/server/payments.ts) (request and approval) · [`src/server/vault-use.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-use.ts) (one use) · [`src/server/trust.ts`](https://github.com/n8n-io/nod/blob/main/src/server/trust.ts) (when payment is allowed)
 
 ## Related resources
 

@@ -55,7 +55,7 @@ export function createFixtureMessagingSetup(): {
             provider,
             enabled: true,
             accountName: 'Synthetic Telegram bot (UI only)',
-            accountHandle: '@otto_synthetic_fixture_bot',
+            accountHandle: '@nod_synthetic_fixture_bot',
             mode: input.webhookUrl ? 'webhook' : 'polling',
             ...(input.webhookUrl && {
               webhookUrl: input.webhookUrl,

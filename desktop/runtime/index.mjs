@@ -89,17 +89,17 @@ export function execute(
       clearTimeout(timer);
       clearTimeout(killTimer);
       signal?.removeEventListener('abort', stop);
-      if (signal?.aborted) return reject(new Error('Otto setup was cancelled.'));
+      if (signal?.aborted) return reject(new Error('nod setup was cancelled.'));
       if (spawnError)
         return reject(
-          new Error(`Otto could not launch its bundled runtime (${spawnError.code || 'unknown'}).`),
+          new Error(`nod could not launch its bundled runtime (${spawnError.code || 'unknown'}).`),
         );
-      if (timedOut) return reject(new Error('Otto runtime setup took too long. Please retry.'));
+      if (timedOut) return reject(new Error('nod runtime setup took too long. Please retry.'));
       if (code !== 0) {
         const detail = output.replaceAll('\0', '').replace(/\s+/g, ' ').trim();
         return reject(
           new Error(
-            `Otto runtime command failed (${code})${
+            `nod runtime command failed (${code})${
               detail ? `: ${detail.length > 300 ? '…' : ''}${detail.slice(-300)}` : '.'
             }`,
           ),
@@ -128,7 +128,7 @@ export async function waitFor(operation, { signal, attempts = 240, interval = 25
     try {
       return await operation();
     } catch (error) {
-      if (error.code === 'OTTO_CONTAINER_STOPPED') throw error;
+      if (error.code === 'NOD_CONTAINER_STOPPED') throw error;
       failure = error;
     }
     await delay(interval, undefined, { signal });
@@ -142,7 +142,7 @@ async function prepare(options, onComputerStart) {
     return prepareWindowsRuntime(options, onComputerStart);
   }
   if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch))
-    throw new Error('This experimental Otto build requires an Intel or Apple Silicon Mac.');
+    throw new Error('This experimental nod build requires an Intel or Apple Silicon Mac.');
   const dataRoot = resolve(options.dataRoot || options.root);
   const resourcesPath = resolve(options.resourcesPath || options.resources);
   const onStatus = options.onStatus || options.onProgress || (() => {});
@@ -181,7 +181,7 @@ async function prepare(options, onComputerStart) {
     manifest.guest.file !== 'guest.img' ||
     manifest.dockerGuest.file !== 'docker-guest.tar.gz'
   )
-    throw new Error('This Otto computer bundle is incompatible.');
+    throw new Error('This nod computer bundle is incompatible.');
   for (const entry of [manifest.guest, manifest.dockerGuest, ...manifest.images]) {
     if (
       !/^[a-f0-9]{64}$/.test(entry.sha256) ||
@@ -189,10 +189,10 @@ async function prepare(options, onComputerStart) {
         entry.file,
       )
     )
-      throw new Error('The Otto computer manifest is invalid.');
+      throw new Error('The nod computer manifest is invalid.');
   }
   const identity = createHash('sha256').update(dataRoot).digest('hex').slice(0, 12);
-  const limaHome = join(homedir(), '.otto-desktop', identity);
+  const limaHome = join(homedir(), '.nod-desktop', identity);
   await mkdir(limaHome, { recursive: true, mode: 0o700 });
   await chmod(limaHome, 0o700);
   const lima = join(assets, 'lima/bin/limactl');
@@ -211,13 +211,13 @@ async function prepare(options, onComputerStart) {
     saved = JSON.parse(await readFile(configPath, 'utf8'));
   } catch (error) {
     if (error.code !== 'ENOENT')
-      throw new Error('The Otto local computer configuration needs recovery.');
-    const orphaned = await access(join(limaHome, 'otto/lima.yaml')).then(
+      throw new Error('The nod local computer configuration needs recovery.');
+    const orphaned = await access(join(limaHome, 'nod/lima.yaml')).then(
       () => true,
       () => false,
     );
     if (orphaned)
-      await execute(lima, ['delete', '--force', 'otto'], {
+      await execute(lima, ['delete', '--force', 'nod'], {
         env: hostEnvironment,
         signal,
         timeout: 120_000,
@@ -232,7 +232,7 @@ async function prepare(options, onComputerStart) {
       saved.port > 65535 ||
       !/^[a-f0-9]{64}$/.test(saved.password))
   )
-    throw new Error('The Otto local computer configuration needs recovery.');
+    throw new Error('The nod local computer configuration needs recovery.');
   saved ??= {
     version: 1,
     limaHome,
@@ -242,7 +242,7 @@ async function prepare(options, onComputerStart) {
   const temporaryState = `${configPath}.${randomBytes(6).toString('hex')}.tmp`;
   await writeFile(temporaryState, JSON.stringify(saved), { mode: 0o600, flag: 'wx' });
   await rename(temporaryState, configPath);
-  const vm = 'otto';
+  const vm = 'nod';
   const dockerSocket = join(limaHome, vm, 'sock/docker.sock');
   const dockerConfig = join(controlRoot, 'docker-config');
   await mkdir(dockerConfig, { recursive: true, mode: 0o700 });
@@ -278,18 +278,18 @@ async function prepare(options, onComputerStart) {
     try {
       config = JSON.parse(await readFile(vmConfigPath, 'utf8'));
     } catch {
-      throw new Error('The Otto computer configuration needs recovery.');
+      throw new Error('The nod computer configuration needs recovery.');
     }
     if (
       config.mounts?.length !== 1 ||
-      config.mounts[0].mountPoint !== '/opt/otto-assets' ||
+      config.mounts[0].mountPoint !== '/opt/nod-assets' ||
       config.mounts[0].writable !== false
     )
-      throw new Error('The Otto computer has unexpected folder access.');
+      throw new Error('The nod computer has unexpected folder access.');
     if (config.mounts[0].location !== assets) {
       const currentStatus = await runLima(['list', '--format', '{{.Status}}', vm]);
       if (currentStatus.trim() !== 'Stopped')
-        throw new Error('Quit and reopen Otto to update its local computer.');
+        throw new Error('Quit and reopen nod to update its local computer.');
       config.mounts[0].location = assets;
       config.images = [
         {
@@ -317,7 +317,7 @@ async function prepare(options, onComputerStart) {
     if (installed === item.id) return;
     await runtimeAssets.ready(item.file);
     if ((await fileHash(join(assets, item.file))) !== item.sha256)
-      throw new Error('An Otto computer image is damaged. Reinstall this build.');
+      throw new Error('A nod computer image is damaged. Reinstall this build.');
     await runLima(
       [
         'shell',
@@ -326,12 +326,12 @@ async function prepare(options, onComputerStart) {
         '/usr/local/bin/docker',
         'load',
         '--input',
-        `/opt/otto-assets/${item.file}`,
+        `/opt/nod-assets/${item.file}`,
       ],
       { timeout: 600_000 },
     );
     if ((await runDocker(['image', 'inspect', '--format', '{{.Id}}', item.reference])) !== item.id)
-      throw new Error('The loaded Otto image does not match its manifest.');
+      throw new Error('The loaded nod image does not match its manifest.');
   };
   return finishRuntime({
     dataRoot,
@@ -360,7 +360,7 @@ function validImage(item) {
     !/^sha256:[a-f0-9]{64}$/.test(item.id) ||
     !/^images\/(workspace|browser|postgres)\.tar\.zst$/.test(item.file)
   )
-    throw new Error('The Otto computer image is invalid.');
+    throw new Error('The nod computer image is invalid.');
   return item;
 }
 
@@ -370,7 +370,7 @@ export async function preloadRuntimeImages({ dataRoot, assets, signal }) {
   const env = {
     PATH: ['/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter),
     HOME: homedir(),
-    DOCKER_HOST: `unix://${join(homedir(), '.otto-desktop', identity, 'otto/sock/docker.sock')}`,
+    DOCKER_HOST: `unix://${join(homedir(), '.nod-desktop', identity, 'nod/sock/docker.sock')}`,
     DOCKER_CONFIG: join(root, 'desktop-runtime/docker-config'),
   };
   const runDocker = (args, extra = {}) =>
@@ -387,7 +387,7 @@ export async function preloadRuntimeImages({ dataRoot, assets, signal }) {
     ]).catch(() => '');
     if (installed === item.id) continue;
     if ((await assetHash(join(assets, item.file), signal)) !== item.sha256)
-      throw new Error('An Otto computer image is damaged. Reinstall this build.');
+      throw new Error('A nod computer image is damaged. Reinstall this build.');
     await runDocker(['load', '--input', join(assets, item.file)], { timeout: 600_000 });
     loaded.push(item.name);
   }
@@ -395,10 +395,10 @@ export async function preloadRuntimeImages({ dataRoot, assets, signal }) {
 }
 
 async function removeUnmountedRuntimes(assets) {
-  const homes = join(homedir(), '.otto-desktop');
+  const homes = join(homedir(), '.nod-desktop');
   const keep = [];
   for (const name of await readdir(homes)) {
-    const config = await readFile(join(homes, name, 'otto/lima.yaml'), 'utf8').catch((error) => {
+    const config = await readFile(join(homes, name, 'nod/lima.yaml'), 'utf8').catch((error) => {
       if (error.code !== 'ENOENT') throw error;
     });
     if (config) keep.push(...JSON.parse(config).mounts.map((mount) => mount.location));
@@ -446,7 +446,7 @@ export async function ensureNetwork(runDocker, { name, subnet, bridge }) {
     network.Options?.['com.docker.network.bridge.name'] !== bridge ||
     network.Options?.['com.docker.network.bridge.enable_icc'] !== 'false'
   )
-    throw new Error('The Otto computer network has unexpected isolation settings.');
+    throw new Error('The nod computer network has unexpected isolation settings.');
 }
 
 export async function replaceContainer(
@@ -475,8 +475,8 @@ export async function replaceContainer(
   const inspected = await runDocker(['container', 'inspect', name]).catch(() => undefined);
   if (inspected) {
     const [current] = JSON.parse(inspected);
-    if (current?.Config?.Labels?.['dev.otto.desktop.experiment'] !== 'true')
-      throw new Error('The Otto container identity changed.');
+    if (current?.Config?.Labels?.['dev.nod.desktop.experiment'] !== 'true')
+      throw new Error('The nod container identity changed.');
     for (let index = 0; index < args.length; index++) {
       if (args[index] !== '--volume') continue;
       const [volume, destination] = args[++index].split(':');
@@ -486,7 +486,7 @@ export async function replaceContainer(
             mount.Type === 'volume' && mount.Name === volume && mount.Destination === destination,
         )
       )
-        throw new Error('The Otto container storage needs recovery.');
+        throw new Error('The nod container storage needs recovery.');
     }
     if (
       reuse?.configuration === configuration &&
@@ -505,7 +505,7 @@ export async function replaceContainer(
       '--name',
       name,
       '--label',
-      'dev.otto.desktop.experiment=true',
+      'dev.nod.desktop.experiment=true',
       ...args,
       imageId,
       ...command,
@@ -545,24 +545,24 @@ export async function finishRuntime({
   };
   loadImage('postgres');
   const names = {
-    workspace: `otto-workspace-${identity}`,
-    browser: `otto-browser-${identity}`,
-    postgres: `otto-postgres-${identity}`,
+    workspace: `nod-workspace-${identity}`,
+    browser: `nod-browser-${identity}`,
+    postgres: `nod-postgres-${identity}`,
   };
   for (const [role, subnet, bridge] of [
-    ['control', '172.31.80.0/24', 'otto-control'],
-    ['workspace', '172.31.81.0/24', 'otto-workspace'],
-    ['browser', '172.31.82.0/24', 'otto-browser'],
+    ['control', '172.31.80.0/24', 'nod-control'],
+    ['workspace', '172.31.81.0/24', 'nod-workspace'],
+    ['browser', '172.31.82.0/24', 'nod-browser'],
   ]) {
-    const name = `otto-${role}-${identity}`;
+    const name = `nod-${role}-${identity}`;
     await ensureNetwork(runDocker, { name, subnet, bridge });
   }
   await runGuest(protectNetworks);
   const volumes = {
-    postgres: `otto-postgres-${identity}`,
-    browser: `otto-browser-${identity}`,
-    workspace: `otto-workspace-${identity}`,
-    tools: `otto-tools-${identity}`,
+    postgres: `nod-postgres-${identity}`,
+    browser: `nod-browser-${identity}`,
+    workspace: `nod-workspace-${identity}`,
+    tools: `nod-tools-${identity}`,
   };
   for (const volume of Object.values(volumes)) await runDocker(['volume', 'create', volume]);
   const image = (name) => manifest.images.find((item) => item.name === name).id;
@@ -575,7 +575,7 @@ export async function finishRuntime({
     image('postgres'),
     [
       '--network',
-      `otto-control-${identity}`,
+      `nod-control-${identity}`,
       '--publish',
       `127.0.0.1:${process.platform === 'win32' ? saved.port : 54329}:5432`,
       '--memory',
@@ -583,9 +583,9 @@ export async function finishRuntime({
       '--cpus',
       '1',
       '--env',
-      'POSTGRES_USER=otto',
+      'POSTGRES_USER=nod',
       '--env',
-      'POSTGRES_DB=otto',
+      'POSTGRES_DB=nod',
       '--env',
       'POSTGRES_PASSWORD',
       '--volume',
@@ -597,10 +597,10 @@ export async function finishRuntime({
       reuse: storageReady.get(resolve(dataRoot))?.postgres,
     },
   );
-  const databaseUrl = `postgresql://otto:${saved.password}@127.0.0.1:${saved.port}/otto`;
+  const databaseUrl = `postgresql://nod:${saved.password}@127.0.0.1:${saved.port}/nod`;
   try {
     await waitFor(
-      () => runDocker(['exec', names.postgres, 'pg_isready', '-U', 'otto', '-d', 'otto']),
+      () => runDocker(['exec', names.postgres, 'pg_isready', '-U', 'nod', '-d', 'nod']),
       { signal },
     );
     const { default: pg } = await import('pg');
@@ -615,9 +615,7 @@ export async function finishRuntime({
           await client.connect();
           await client.query('SELECT 1');
         } catch {
-          throw new Error(
-            'Otto could not unlock local storage. Retry without resetting your data.',
-          );
+          throw new Error('nod could not unlock local storage. Retry without resetting your data.');
         } finally {
           await client.end().catch(() => {});
         }
@@ -668,7 +666,7 @@ exec "$docker" "$@"
         : [wrapperRoot, join(assets, 'docker-host/docker'), path].join(delimiter),
     ...(process.platform === 'win32'
       ? {
-          OTTO_WSL_DISTRIBUTION: dockerEnvironment.OTTO_WSL_DISTRIBUTION,
+          NOD_WSL_DISTRIBUTION: dockerEnvironment.NOD_WSL_DISTRIBUTION,
           TEMP: dockerEnvironment.TEMP,
           TMP: dockerEnvironment.TMP,
         }
@@ -676,7 +674,7 @@ exec "$docker" "$@"
     DOCKER_HOST: dockerEnvironment.DOCKER_HOST,
     DOCKER_CONFIG: dockerEnvironment.DOCKER_CONFIG,
     DOCKER_CONTEXT: '',
-    OTTO_DATA_ROOT: dataRoot,
+    NOD_DATA_ROOT: dataRoot,
     BROWSER_CONTAINER: names.browser,
     WORKSPACE_CONTAINER: names.workspace,
     DATABASE_URL: databaseUrl,
@@ -698,7 +696,7 @@ exec "$docker" "$@"
     image('workspace'),
     [
       '--network',
-      `otto-workspace-${identity}`,
+      `nod-workspace-${identity}`,
       '--init',
       '--cap-drop',
       'ALL',
@@ -723,7 +721,7 @@ exec "$docker" "$@"
   await images.browser;
   await replaceContainer(runDocker, names.browser, image('browser'), [
     '--network',
-    `otto-browser-${identity}`,
+    `nod-browser-${identity}`,
     '--init',
     '--cap-drop',
     'ALL',
@@ -750,8 +748,8 @@ exec "$docker" "$@"
       if (
         (await runDocker(['inspect', '--format', '{{.State.Running}}', names.browser])) !== 'true'
       )
-        throw Object.assign(new Error('Otto’s local browser stopped during setup. Try again.'), {
-          code: 'OTTO_CONTAINER_STOPPED',
+        throw Object.assign(new Error('nod’s local browser stopped during setup. Try again.'), {
+          code: 'NOD_CONTAINER_STOPPED',
         });
       return runDocker([
         'exec',
@@ -814,17 +812,17 @@ export async function removeProfile(options) {
     return rm(dataRoot, { recursive: true, force: true });
   }
   await rm(dataRoot, { recursive: true, force: true });
-  const homes = join(homedir(), '.otto-desktop');
+  const homes = join(homedir(), '.nod-desktop');
   const limaHome = join(homes, createHash('sha256').update(dataRoot).digest('hex').slice(0, 12));
   const assets = await findRuntimeAssets({
     resourcesPath: resolve(options.resourcesPath || options.resources),
   });
-  const exists = await access(join(limaHome, 'otto/lima.yaml')).then(
+  const exists = await access(join(limaHome, 'nod/lima.yaml')).then(
     () => true,
     () => false,
   );
   if (assets && exists)
-    await execute(join(assets, 'lima/bin/limactl'), ['delete', '--force', 'otto'], {
+    await execute(join(assets, 'lima/bin/limactl'), ['delete', '--force', 'nod'], {
       env: {
         PATH: [join(assets, 'lima/bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter),
         HOME: homedir(),
@@ -844,9 +842,9 @@ async function stopComputer(options) {
   const dataRoot = resolve(options.dataRoot || options.root);
   const resourcesPath = resolve(options.resourcesPath || options.resources);
   const identity = createHash('sha256').update(dataRoot).digest('hex').slice(0, 12);
-  const expected = join(homedir(), '.otto-desktop', identity);
+  const expected = join(homedir(), '.nod-desktop', identity);
   try {
-    const exists = await access(join(expected, 'otto/lima.yaml')).then(
+    const exists = await access(join(expected, 'nod/lima.yaml')).then(
       () => true,
       (error) => {
         if (error.code === 'ENOENT') return false;
@@ -861,10 +859,10 @@ async function stopComputer(options) {
       throw error;
     }
     if (state.version !== 1 || state.limaHome !== expected)
-      throw new Error('The Otto computer identity changed.');
+      throw new Error('The nod computer identity changed.');
     if (!exists) return;
     const assets = await findRuntimeAssets({ resourcesPath });
-    if (!assets) throw new Error('Otto could not find its local computer runtime.');
+    if (!assets) throw new Error('nod could not find its local computer runtime.');
     const env = {
       PATH: [join(assets, 'lima/bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter),
       HOME: homedir(),
@@ -872,23 +870,23 @@ async function stopComputer(options) {
       LIMA_SSH_PORT_FORWARDER: 'true',
     };
     const lima = join(assets, 'lima/bin/limactl');
-    await execute(lima, ['stop', '--tty=false', 'otto'], { env, timeout: 90_000 }).catch(() => {});
+    await execute(lima, ['stop', '--tty=false', 'nod'], { env, timeout: 90_000 }).catch(() => {});
     await waitFor(
       async () => {
-        const status = await execute(lima, ['list', '--format', '{{.Status}}', 'otto'], {
+        const status = await execute(lima, ['list', '--format', '{{.Status}}', 'nod'], {
           env,
           timeout: 5000,
         });
-        if (status !== 'Stopped') throw new Error('The Otto computer is still running.');
+        if (status !== 'Stopped') throw new Error('The nod computer is still running.');
       },
       { attempts: 3, interval: 250 },
     );
   } catch {
     throw Object.assign(
       new Error(
-        'Otto could not confirm that its private computer stopped. Try again before quitting.',
+        'nod could not confirm that its private computer stopped. Try again before quitting.',
       ),
-      { code: 'OTTO_RUNTIME_STOP_FAILED' },
+      { code: 'NOD_RUNTIME_STOP_FAILED' },
     );
   }
 }

@@ -4,55 +4,55 @@ import { desktopSettingsAvailable } from './desktop';
 import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
 
 type AnalyticsEvents = {
-  otto_onboarding_step_viewed: {
+  nod_onboarding_step_viewed: {
     step:
       'welcome' | 'brain' | 'email' | 'about' | 'telegram' | 'notifications' | 'launch_at_login';
     direction: 'forward' | 'back';
   };
-  otto_onboarding_step_skipped: { step: 'telegram' };
-  otto_settings_viewed: {
+  nod_onboarding_step_skipped: { step: 'telegram' };
+  nod_settings_viewed: {
     tab: 'general' | 'models' | 'app_connections' | 'memory';
   };
-  otto_chat_message_sent: {
+  nod_chat_message_sent: {
     has_attachments: boolean;
     is_reply: boolean;
-    source: 'composer' | 'task_card' | 'ask_otto' | 'task_reply';
+    source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply';
   };
-  otto_chat_stop_requested: undefined;
-  otto_task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
-  otto_setup_link_clicked: { setup: 'app' | 'vault' | 'website' | 'browser' };
-  otto_browser_handoff_action: { action: 'done' | 'back' | 'reload' | 'expand' | 'collapse' };
-  otto_message_reaction_changed: {
+  nod_chat_stop_requested: undefined;
+  nod_task_card_started: { kind?: 'immediate' | 'ongoing'; position: number };
+  nod_setup_link_clicked: { setup: 'app' | 'vault' | 'website' | 'browser' };
+  nod_browser_handoff_action: { action: 'done' | 'back' | 'reload' | 'expand' | 'collapse' };
+  nod_message_reaction_changed: {
     operation: 'add' | 'remove' | 'change';
     reaction: 'thumbs_up' | 'heart' | 'joy' | 'party' | 'wow' | 'pray' | 'thumbs_down' | 'other';
     method: 'quick' | 'picker' | 'double_click' | 'menu' | 'pin';
     role: 'assistant' | 'user';
   };
-  otto_message_action: {
+  nod_message_action: {
     action: 'copy' | 'reply';
     role: 'assistant' | 'user';
     method: 'button' | 'context_menu';
   };
-  otto_app_connect_clicked: {
+  nod_app_connect_clicked: {
     entry: 'apps' | 'chat' | 'onboarding' | 'manage';
     result: 'opened' | 'needs_access_setup';
   };
-  otto_model_selected: {
+  nod_model_selected: {
     provider: 'openai' | 'anthropic' | 'openrouter' | 'compatible' | 'other';
     entry: 'settings' | 'onboarding';
     recommended: boolean;
   };
-  otto_attachment_added: {
+  nod_attachment_added: {
     method: 'picker' | 'drop' | 'paste';
     kind: 'image' | 'pdf' | 'other';
     count: '1' | '2-5' | '6+';
   };
-  otto_task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
-  otto_tab_viewed:
+  nod_task_action: { action: 'expand' | 'stop' | 'show_in_chat' | 'show_activity' | 'reply' };
+  nod_tab_viewed:
     | { page: 'tasks'; tab: 'current' | 'scheduled' | 'previous' }
     | { page: 'trust'; tab: 'activity' | 'saved' }
     | { page: 'apps'; tab: 'all' | 'connected' };
-  otto_ui_error: {
+  nod_ui_error: {
     area: 'application' | 'onboarding' | 'chat' | 'settings' | 'apps' | 'models';
     action: 'load' | 'save' | 'send' | 'connect' | 'disconnect' | 'prepare' | 'stop' | 'render';
   };
@@ -64,54 +64,54 @@ export type AnalyticsProperties<Event extends keyof AnalyticsEvents> = NonNullab
 
 const roles = ['assistant', 'user'];
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
-  otto_onboarding_step_viewed: {
+  nod_onboarding_step_viewed: {
     step: ['welcome', 'brain', 'email', 'about', 'telegram', 'notifications', 'launch_at_login'],
     direction: ['forward', 'back'],
   },
-  otto_onboarding_step_skipped: { step: ['telegram'] },
-  otto_settings_viewed: {
+  nod_onboarding_step_skipped: { step: ['telegram'] },
+  nod_settings_viewed: {
     tab: ['general', 'models', 'app_connections', 'memory'],
   },
-  otto_chat_message_sent: {
+  nod_chat_message_sent: {
     has_attachments: [true, false],
     is_reply: [true, false],
-    source: ['composer', 'task_card', 'ask_otto', 'task_reply'],
+    source: ['composer', 'task_card', 'ask_nod', 'task_reply'],
   },
-  otto_chat_stop_requested: {},
-  otto_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2] },
-  otto_setup_link_clicked: { setup: ['app', 'vault', 'website', 'browser'] },
-  otto_browser_handoff_action: { action: ['done', 'back', 'reload', 'expand', 'collapse'] },
-  otto_message_reaction_changed: {
+  nod_chat_stop_requested: {},
+  nod_task_card_started: { kind: ['immediate', 'ongoing'], position: [0, 1, 2] },
+  nod_setup_link_clicked: { setup: ['app', 'vault', 'website', 'browser'] },
+  nod_browser_handoff_action: { action: ['done', 'back', 'reload', 'expand', 'collapse'] },
+  nod_message_reaction_changed: {
     operation: ['add', 'remove', 'change'],
     reaction: ['thumbs_up', 'heart', 'joy', 'party', 'wow', 'pray', 'thumbs_down', 'other'],
     method: ['quick', 'picker', 'double_click', 'menu', 'pin'],
     role: roles,
   },
-  otto_message_action: {
+  nod_message_action: {
     action: ['copy', 'reply'],
     role: roles,
     method: ['button', 'context_menu'],
   },
-  otto_app_connect_clicked: {
+  nod_app_connect_clicked: {
     entry: ['apps', 'chat', 'onboarding', 'manage'],
     result: ['opened', 'needs_access_setup'],
   },
-  otto_model_selected: {
+  nod_model_selected: {
     provider: ['openai', 'anthropic', 'openrouter', 'compatible', 'other'],
     entry: ['settings', 'onboarding'],
     recommended: [true, false],
   },
-  otto_attachment_added: {
+  nod_attachment_added: {
     method: ['picker', 'drop', 'paste'],
     kind: ['image', 'pdf', 'other'],
     count: ['1', '2-5', '6+'],
   },
-  otto_task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
-  otto_tab_viewed: {
+  nod_task_action: { action: ['expand', 'stop', 'show_in_chat', 'show_activity', 'reply'] },
+  nod_tab_viewed: {
     page: ['tasks', 'trust', 'apps'],
     tab: ['current', 'scheduled', 'previous', 'activity', 'saved', 'all', 'connected'],
   },
-  otto_ui_error: {
+  nod_ui_error: {
     area: ['application', 'onboarding', 'chat', 'settings', 'apps', 'models'],
     action: ['load', 'save', 'send', 'connect', 'disconnect', 'prepare', 'stop', 'render'],
   },
@@ -275,7 +275,7 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
       route,
       $current_url: sanitizedAnalyticsUrl(route),
       $pathname: route,
-      $host: 'otto.invalid',
+      $host: 'nod.invalid',
       $process_person_profile: false,
       $geoip_disable: true,
     },

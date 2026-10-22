@@ -40,7 +40,7 @@ test('queued and cached link previews cannot cross an owner change', async (t) =
   let automatic = false;
   t.mock.method(globalThis, 'fetch', async (_path: string, options: RequestInit) => {
     const url = JSON.parse(String(options.body)).url as string;
-    const account = new Headers(options.headers).get('X-Otto-Account');
+    const account = new Headers(options.headers).get('X-nod-Account');
     const imageUrl = `/api/link-preview/image/${randomUUID()}`;
     return new Promise<Response>((resolve) => {
       const respond = () => resolve(Response.json({ preview: { url, imageUrl } }));
@@ -211,7 +211,7 @@ describe('account routes', () => {
       );
       await request({ onboardingCompleted: true });
       assert.equal(f.calls.started, 1);
-      analytics.capture('local-owner', { event: 'otto_conversation_reset' });
+      analytics.capture('local-owner', { event: 'nod_conversation_reset' });
       assert.equal(captured.length, 0);
       const opted = await request({ usageData: true });
       assert.equal(opted.statusCode, 200);
@@ -220,19 +220,19 @@ describe('account routes', () => {
       assert.equal(opted.json().analytics.enabled, available);
       assert.equal(f.record().usageData, true);
       await request({ theme: 'dark' });
-      analytics.forOwner('local-owner')({ event: 'otto_chat_stopped' });
+      analytics.forOwner('local-owner')({ event: 'nod_chat_stopped' });
       assert.deepEqual(
         captured.map((event) => [event.distinctId, event.event]),
         available
           ? [
-              [`local:${installationId}`, 'otto_settings_updated'],
-              [`local:${installationId}`, 'otto_chat_stopped'],
+              [`local:${installationId}`, 'nod_settings_updated'],
+              [`local:${installationId}`, 'nod_chat_stopped'],
             ]
           : [],
       );
       const declined = await request({ usageData: false });
       assert.equal(declined.json().analytics.enabled, false);
-      analytics.capture('local-owner', { event: 'otto_chat_stopped' });
+      analytics.capture('local-owner', { event: 'nod_chat_stopped' });
       assert.equal(captured.length, available ? 2 : 0);
     }
   });
@@ -352,7 +352,7 @@ describe('account routes', () => {
     for (const input of [
       { headers: { origin: 'https://foreign.example.test' }, payload: {}, status: 403 },
       { headers: { ...headers, 'sec-fetch-site': 'cross-site' }, payload: {}, status: 403 },
-      { headers: { ...headers, 'x-otto-account': 'sam' }, payload: {}, status: 401 },
+      { headers: { ...headers, 'x-nod-account': 'sam' }, payload: {}, status: 401 },
       { headers, payload: { ownerId: 'sam' }, status: 400 },
       { headers, payload: { provider: 'e2b' }, status: 400 },
       { headers, payload: { templateId: 'override' }, status: 400 },
@@ -366,7 +366,7 @@ describe('account routes', () => {
       assert.equal(response.statusCode, input.status);
     }
     for (const [extra, payload, status] of [
-      [{ 'x-otto-account': 'sam' }, { theme: 'dark' }, 401],
+      [{ 'x-nod-account': 'sam' }, { theme: 'dark' }, 401],
       [{}, { name: 'Changed' }, 400],
       [{ origin: 'https://foreign.example.test' }, { theme: 'light' }, 403],
       [{}, { ownerId: 'sam' }, 400],
@@ -393,7 +393,7 @@ describe('account routes', () => {
     const prepared = await f.app.inject({
       method: 'POST',
       url: '/api/account/prepare',
-      headers: { ...headers, 'x-otto-account': 'local-owner' },
+      headers: { ...headers, 'x-nod-account': 'local-owner' },
       payload: {},
     });
     assert.equal(prepared.statusCode, 200);
@@ -416,20 +416,20 @@ describe('analytics privacy', () => {
     const capture = analytics.forOwner('owner-fixture');
     for (const event of [
       { event: 'private-chat-text' },
-      { event: 'otto_onboarding_completed', distinctId: 'another-owner' },
+      { event: 'nod_onboarding_completed', distinctId: 'another-owner' },
       {
-        event: 'otto_settings_updated',
+        event: 'nod_settings_updated',
         properties: { section: 'account', operation: 'update', name: 'Private Person' },
       },
       {
-        event: 'otto_turn_started',
+        event: 'nod_turn_started',
         properties: { source: 'user', channel: 'telegram:private-recipient', background: false },
       },
     ])
       capture(event as never);
     assert.equal(captured.length, 0);
     capture({
-      event: 'otto_turn_started',
+      event: 'nod_turn_started',
       properties: { source: 'user', channel: 'telegram', background: false },
     });
     assert.equal(captured.length, 1);
@@ -477,10 +477,10 @@ describe('analytics privacy', () => {
       return { event, ...rest };
     });
     assert.deepEqual(
-      sent.filter(({ event }) => event === 'otto_website_visited'),
-      [{ event: 'otto_website_visited', domain: 'example.co.uk', via: 'browser', subagent: false }],
+      sent.filter(({ event }) => event === 'nod_website_visited'),
+      [{ event: 'nod_website_visited', domain: 'example.co.uk', via: 'browser', subagent: false }],
     );
-    const entries = sent.filter(({ event }) => event === 'otto_secure_entry_changed');
+    const entries = sent.filter(({ event }) => event === 'nod_secure_entry_changed');
     assert.equal(entries.length, 15);
     assert.deepEqual(
       new Set(entries.map((entry) => JSON.stringify(entry))),
@@ -497,9 +497,7 @@ describe('analytics privacy', () => {
           },
           { kind: 'payment', status: 'submitted', currency: 'EUR', amount: 1234.568 },
           { kind: 'code', status: 'requested' },
-        ].map((properties) =>
-          JSON.stringify({ event: 'otto_secure_entry_changed', ...properties }),
-        ),
+        ].map((properties) => JSON.stringify({ event: 'nod_secure_entry_changed', ...properties })),
       ),
     );
     for (const value of [
@@ -564,7 +562,7 @@ describe('analytics privacy', () => {
     assert.equal(received[0].contentType, 'application/json');
     const resource = received[0].body.resourceSpans[0];
     assert.deepEqual(resource.resource.attributes, [
-      { key: 'service.name', value: { stringValue: 'otto' } },
+      { key: 'service.name', value: { stringValue: 'nod' } },
     ]);
     const spans = resource.scopeSpans[0].spans;
     assert.equal(spans.length, 3);
@@ -584,9 +582,9 @@ describe('analytics privacy', () => {
       Object.fromEntries(span.attributes.map(({ key, value }: any) => [key, value]));
     assert.deepEqual(attributes(spans[0])['gen_ai.usage.input_tokens'], { intValue: '110' });
     assert.deepEqual(attributes(spans[0])['gen_ai.usage.output_tokens'], { intValue: '5' });
-    assert.deepEqual(attributes(spans[0])['otto.usage.cost_usd'], { doubleValue: 0.01 });
-    assert.equal(attributes(spans[1])['otto.usage.cost_usd'], undefined);
-    assert.deepEqual(attributes(spans[2])['otto.status'], { stringValue: 'cancelled' });
+    assert.deepEqual(attributes(spans[0])['nod.usage.cost_usd'], { doubleValue: 0.01 });
+    assert.equal(attributes(spans[1])['nod.usage.cost_usd'], undefined);
+    assert.deepEqual(attributes(spans[2])['nod.status'], { stringValue: 'cancelled' });
     const body = JSON.stringify(received[0].body);
     for (const value of [
       usage.id,
@@ -661,7 +659,7 @@ describe('analytics privacy', () => {
     });
     const opened = await agent.open({ turnId: randomUUID(), onEvent() {} } as never);
     await opened.prompt('Synthetic', []);
-    const used = captured.find((event) => event.event === 'otto_model_used')!;
+    const used = captured.find((event) => event.event === 'nod_model_used')!;
     assert.equal(used.properties.input_tokens, 2020);
     assert.equal(used.properties.cached_input_tokens, 2000);
     assert.ok(Number(used.properties.duration_ms) >= 1_500);
@@ -670,7 +668,7 @@ describe('analytics privacy', () => {
     await telemetry.shutdown();
     assert.equal(spans.length, 2);
     assert.equal(spans[0].traceId, spans[1].traceId);
-    assert.equal(captured.filter((event) => event.event === 'otto_model_used').length, 1);
+    assert.equal(captured.filter((event) => event.event === 'nod_model_used').length, 1);
   });
 
   test('model usage analytics never send custom endpoint or unbounded model names', async () => {
@@ -811,7 +809,7 @@ describe('keychain', () => {
 
 describe('filesystem Vault key', { skip: process.platform === 'win32' }, () => {
   test('new nested roots withhold their key until ancestor entries persist across readers and retries', async (t) => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-vault-ancestors-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-vault-ancestors-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const dataRoot = join(root, 'new', 'nested', 'profile');
     const ancestor = await lstat(root);
@@ -846,7 +844,7 @@ describe('filesystem Vault key', { skip: process.platform === 'win32' }, () => {
   });
 
   test('directory persistence failures withhold the key and retry retains the published key', async (t) => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-vault-durability-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-vault-durability-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const handle = await open(root, 'r');
     const prototype = Object.getPrototypeOf(handle);
@@ -872,7 +870,7 @@ describe('filesystem Vault key', { skip: process.platform === 'win32' }, () => {
   });
 
   test('concurrent instances publish one private key and decrypt after restart', async (t) => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-vault-key-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-vault-key-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     await chmod(root, 0o755);
     const stores = Array.from({ length: 12 }, () =>
@@ -904,7 +902,7 @@ describe('filesystem Vault key', { skip: process.platform === 'win32' }, () => {
   });
 
   test('missing keys cannot replace sealed data and explicit retry preserves the new key', async (t) => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-vault-missing-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-vault-missing-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     let sealed = true;
     const store = createFilesystemKeyStore({ dataRoot: root, canCreate: async () => !sealed });
@@ -922,7 +920,7 @@ describe('filesystem Vault key', { skip: process.platform === 'win32' }, () => {
   });
 
   test('unsafe paths and invalid key contents are refused without replacement', async (t) => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-vault-unsafe-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-vault-unsafe-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const original = join(root, 'original');
     const originalKey = await createFilesystemKeyStore({
@@ -1150,7 +1148,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       { provider: 'openai', method: 'api_key' },
       { provider: 'compatible', method: 'api_key' },
     ].map((properties) => ({
-      event: 'otto_model_connection_changed',
+      event: 'nod_model_connection_changed',
       properties: { ...properties, status: 'failed' },
     }));
     assert.deepEqual(captured, failures);
@@ -1181,7 +1179,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.deepEqual(captured, [
       ...failures,
       {
-        event: 'otto_model_connection_changed',
+        event: 'nod_model_connection_changed',
         properties: { provider: 'openai', method: 'subscription', status: 'connected' },
       },
     ]);
@@ -1230,11 +1228,11 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const blocker = await f.database.connect();
     try {
       await blocker.query('BEGIN');
-      await blocker.query('LOCK TABLE otto_locks IN ACCESS EXCLUSIVE MODE');
+      await blocker.query('LOCK TABLE nod_locks IN ACCESS EXCLUSIVE MODE');
       await assert.rejects(owner.start('openai'), (error: Error) => {
         assert.ok(error.cause instanceof pg.DatabaseError);
         assert.equal(error.cause.code, '55P03');
-        assert.ok(!error.message.includes('OTTO_VAULT_KEY'));
+        assert.ok(!error.message.includes('NOD_VAULT_KEY'));
         assert.ok(!Object.keys(error).includes('cause'));
         return true;
       });
@@ -1245,7 +1243,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       });
       assert.equal(response.statusCode, 400);
       assert.deepEqual(Object.keys(response.json()), ['error']);
-      assert.ok(!response.body.includes('OTTO_VAULT_KEY'));
+      assert.ok(!response.body.includes('NOD_VAULT_KEY'));
       assert.ok(!response.body.includes('55P03'));
     } finally {
       await blocker.query('ROLLBACK');
@@ -1274,7 +1272,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.deepEqual(
       captured,
       ['subscription', 'api_key', 'api_key', 'subscription'].map((method) => ({
-        event: 'otto_model_connection_changed',
+        event: 'nod_model_connection_changed',
         properties: { provider: 'openai', method, status: 'failed' },
       })),
     );
@@ -1410,7 +1408,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         const client = await f.database.connect();
         try {
           await client.query('BEGIN');
-          await client.query('SELECT key FROM otto_locks WHERE key=$1 FOR UPDATE NOWAIT', [
+          await client.query('SELECT key FROM nod_locks WHERE key=$1 FOR UPDATE NOWAIT', [
             'models:fixture-owner',
           ]);
           await client.query('ROLLBACK');
@@ -1520,13 +1518,13 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       }),
       [
         {
-          event: 'otto_model_connection_changed',
+          event: 'nod_model_connection_changed',
           provider: 'compatible',
           method: 'api_key',
           status: 'connected',
         },
         {
-          event: 'otto_model_connection_observed',
+          event: 'nod_model_connection_observed',
           provider: 'compatible',
           method: 'api_key',
           selected: true,

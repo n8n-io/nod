@@ -62,7 +62,7 @@ export function createMemoryLearning(options: {
   const report = (changes: ReturnType<typeof applyOps>, actor: 'agent' | 'background') => {
     for (const { operation } of changes)
       options.analytics?.({
-        event: 'otto_memory_changed',
+        event: 'nod_memory_changed',
         properties: { kind: 'note', operation, actor },
       });
   };
@@ -92,7 +92,7 @@ export function createMemoryLearning(options: {
     const { rows } = await options.pool.query(
       `${ownerText} AND m.attachments='[]'::jsonb
          AND m.created_at<=now()-interval '10 minutes' AND (m.created_at,m.id)>($2::timestamptz,$3::uuid)
-         AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.owner_id=m.owner_id AND a.source_message_id=m.id AND a.action='OTTO_memory_save')
+         AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.owner_id=m.owner_id AND a.source_message_id=m.id AND a.action='NOD_memory_save')
        ORDER BY m.created_at,m.id LIMIT ${batchSize}`,
       [options.ownerId, from, after],
     );

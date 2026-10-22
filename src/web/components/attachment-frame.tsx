@@ -4,7 +4,7 @@ const framePolicy =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:";
 
 export const escapeForwarder =
-  "<script>addEventListener('keydown',function(e){if(e.key==='Escape')parent.postMessage('otto:close','*')},true)</script>";
+  "<script>addEventListener('keydown',function(e){if(e.key==='Escape')parent.postMessage('nod:close','*')},true)</script>";
 
 export function sandboxedDocument(content: string, head = '') {
   return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${framePolicy}"><meta name="referrer" content="no-referrer"><base target="_blank">${head}${content}`;

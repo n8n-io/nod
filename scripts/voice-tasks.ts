@@ -107,7 +107,7 @@ const newEmails = {
     {
       id: 'e4',
       from: 'GitHub <noreply@github.example>',
-      subject: '[otto] CI passed on main',
+      subject: '[nod] CI passed on main',
       snippet: 'All checks have passed',
     },
     {

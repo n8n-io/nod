@@ -18,7 +18,7 @@ import { createCapture, type Observation } from './capture.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const repository = resolve(here, '../..');
-export const appSource = process.env.OTTO_EVAL_SOURCE || repository;
+export const appSource = process.env.NOD_EVAL_SOURCE || repository;
 
 export type Provider = 'openai' | 'anthropic' | 'openrouter';
 
@@ -118,9 +118,9 @@ export async function startStack(options: {
   const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
   const schema = `eval_${suffix}`;
   const bossSchema = `eval_boss_${suffix}`;
-  const container = `otto-workspace-eval-${suffix}`;
-  const browserContainer = `otto-browser-eval-${suffix}`;
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'otto-eval-')));
+  const container = `nod-workspace-eval-${suffix}`;
+  const browserContainer = `nod-browser-eval-${suffix}`;
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'nod-eval-')));
   const workspaceRoot = join(directory, '.local', 'workspaces');
   const toolsRoot = join(directory, 'workspace-tools');
   process.umask(0);
@@ -137,8 +137,8 @@ export async function startStack(options: {
   process.env.PGBOSS_SCHEMA = bossSchema;
   const port = await freePort();
   process.env.PORT = String(port);
-  process.env.OTTO_PUBLIC_URL = `http://localhost:${port}`;
-  process.env.OTTO_DATA_ROOT = join(directory, '.local');
+  process.env.NOD_PUBLIC_URL = `http://localhost:${port}`;
+  process.env.NOD_DATA_ROOT = join(directory, '.local');
   process.env.NODE_ENV = 'production';
   process.env.DEV_INSPECTOR = 'true';
   process.env[keyVariables[model.provider]] = model.apiKey;
@@ -167,8 +167,8 @@ export async function startStack(options: {
     await admin.end().catch(() => {});
   }
   try {
-    const workspaceImage = environment.OTTO_EVAL_WORKSPACE_IMAGE || 'otto-eval-workspace';
-    const browserImage = environment.OTTO_EVAL_BROWSER_IMAGE || 'otto-eval-browser';
+    const workspaceImage = environment.NOD_EVAL_WORKSPACE_IMAGE || 'nod-eval-workspace';
+    const browserImage = environment.NOD_EVAL_BROWSER_IMAGE || 'nod-eval-browser';
     for (const image of [workspaceImage, browserImage]) {
       const inspected = await runProcess('docker', [
         'image',
@@ -179,7 +179,7 @@ export async function startStack(options: {
       ]);
       if (inspected.exitCode)
         throw new Error(
-          `Docker image ${image} is missing. Run pnpm run eval:capability doctor --fix, or set OTTO_EVAL_WORKSPACE_IMAGE and OTTO_EVAL_BROWSER_IMAGE.`,
+          `Docker image ${image} is missing. Run pnpm run eval:capability doctor --fix, or set NOD_EVAL_WORKSPACE_IMAGE and NOD_EVAL_BROWSER_IMAGE.`,
         );
     }
     const started = await runProcess('docker', [

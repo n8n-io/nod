@@ -168,7 +168,7 @@ export default scenario({
     );
     const listing = await session.workspace
       .exec(
-        "find /workspace -type f -iname '*.pdf' -not -path '*/.otto/*' -print0 | while IFS= read -r -d '' f; do printf '\\036%s\\037' \"$f\"; pdfinfo \"$f\" 2>/dev/null | sed -n 's/^Pages:[[:space:]]*//p'; printf '\\037'; pdftotext -layout \"$f\" - 2>/dev/null | head -c 20000; done",
+        "find /workspace -type f -iname '*.pdf' -not -path '*/.nod/*' -print0 | while IFS= read -r -d '' f; do printf '\\036%s\\037' \"$f\"; pdfinfo \"$f\" 2>/dev/null | sed -n 's/^Pages:[[:space:]]*//p'; printf '\\037'; pdftotext -layout \"$f\" - 2>/dev/null | head -c 20000; done",
       )
       .catch(() => undefined);
     for (const entry of (listing?.output ?? '').split('\u001e').slice(1)) {

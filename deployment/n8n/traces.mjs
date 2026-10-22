@@ -1,13 +1,13 @@
 export const tracesWorkflow = {
-  name: 'Otto Traces',
+  name: 'nod Traces',
   projectId: 'ja9rNGROYKEG8wUl',
-  path: 'otto/traces',
+  path: 'nod/traces',
   langsmithUrl: 'https://eu.api.smith.langchain.com/runs',
   langsmithWorkspaceId: 'df8b0b69-354e-412c-bfbd-8f8f9e06fdb0',
   langsmithProject: 'otto',
   credentialName: 'Otto LangSmith traces',
-  webhookCredentialName: 'Otto traces webhook',
-  tokenHeader: 'x-otto-traces-token',
+  webhookCredentialName: 'nod traces webhook',
+  tokenHeader: 'x-nod-traces-token',
   perMinute: 600,
 };
 
@@ -125,7 +125,7 @@ export function tracesWorkflowNodes(credentials = {}) {
       type: 'n8n-nodes-base.webhook',
       typeVersion: 2.2,
       position: [0, 0],
-      webhookId: 'otto-traces',
+      webhookId: 'nod-traces',
       ...(credentials.webhook ? { credentials: { httpHeaderAuth: credentials.webhook } } : {}),
       parameters: {
         httpMethod: 'POST',

@@ -218,7 +218,7 @@ export async function captureFeedbackScreenshot(): Promise<File | null> {
         controller.signal.aborted
       )
         return null;
-      return new File([blob], 'otto-screenshot.jpg', { type: 'image/jpeg' });
+      return new File([blob], 'nod-screenshot.jpg', { type: 'image/jpeg' });
     };
     return await Promise.race([capture(), cancelled]);
   } catch {

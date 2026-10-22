@@ -1,13 +1,13 @@
 ---
 title: Desktop releases
-description: Publish a new version of the Otto desktop app, recover a failed build, and help private-alpha testers install and recover.
+description: Publish a new version of the nod desktop app, recover a failed build, and help private-alpha testers install and recover.
 sidebar:
   order: 5
 ---
 
 import { Steps } from '@astrojs/starlight/components';
 
-This page is for maintainers who publish the Otto desktop app, and for anyone helping private-alpha testers install it.
+This page is for maintainers who publish the nod desktop app, and for anyone helping private-alpha testers install it.
 
 The short version: run **Release desktop**, review and merge the version pull request, and CI publishes one GitHub release with all three installers.
 
@@ -23,13 +23,13 @@ flowchart TD
   win --> rel
 ```
 
-Each release is named **Otto v0.x.x** and links these installers:
+Each release is named **nod v0.x.x** and links these installers:
 
-| Platform          | Installer                      | Updates   |
-| ----------------- | ------------------------------ | --------- |
-| Mac Apple silicon | `Otto-arm64.dmg`               | Automatic |
-| Mac Intel         | `Otto-x64.dmg`                 | Automatic |
-| Windows x64       | `Otto-Setup-x64.exe` (preview) | Automatic |
+| Platform          | Installer                     | Updates   |
+| ----------------- | ----------------------------- | --------- |
+| Mac Apple silicon | `nod-arm64.dmg`               | Automatic |
+| Mac Intel         | `nod-x64.dmg`                 | Automatic |
+| Windows x64       | `nod-Setup-x64.exe` (preview) | Automatic |
 
 Mac ZIP files, runtime packs, checksums, the public certificate and update metadata stay on the same release as supporting assets.
 
@@ -37,22 +37,22 @@ Mac ZIP files, runtime packs, checksums, the public certificate and update metad
 
 CI signs Mac builds with n8n's Apple Developer ID and has Apple notarize them, on GitHub's Mac runners. Create a GitHub environment named `release` with these values. Never commit certificate keys or passwords.
 
-| Kind              | Name                             | Value                                                                                   |
-| ----------------- | -------------------------------- | --------------------------------------------------------------------------------------- |
-| Secret            | `APPLE_CERTIFICATE`              | Base64-encoded PKCS#12 with the certificate, its private key and Apple's G2 certificate |
-| Secret            | `APPLE_CERTIFICATE_PASSWORD`     | The PKCS#12 export password                                                             |
-| Secret            | `APPLE_API_KEY`                  | The App Store Connect team API key (`.p8`) that notarizes builds                        |
-| Variable          | `APPLE_API_KEY_ID`               | That key's ID                                                                           |
-| Variable          | `APPLE_API_ISSUER`               | The issuer ID shown above the team keys                                                 |
-| Variable          | `APPLE_TEAM_ID`                  | The 10-character Apple team ID                                                          |
-| Variable          | `APPLE_SIGNING_IDENTITY`         | The exact certificate name, `Developer ID Application: n8n GmbH (<team ID>)`            |
-| Variable          | `APPLE_CERTIFICATE_SHA256`       | Lowercase SHA-256 of the certificate, from `shasum -a 256 developerID_application.cer`  |
-| Variable          | `OTTO_SIGNING_MODE`              | `developer-id`                                                                          |
-| Optional variable | `OTTO_DESKTOP_UPDATE_SOURCE_URL` | Base URL of the private update service. Leave it unset to use the public GitHub API.    |
+| Kind              | Name                            | Value                                                                                   |
+| ----------------- | ------------------------------- | --------------------------------------------------------------------------------------- |
+| Secret            | `APPLE_CERTIFICATE`             | Base64-encoded PKCS#12 with the certificate, its private key and Apple's G2 certificate |
+| Secret            | `APPLE_CERTIFICATE_PASSWORD`    | The PKCS#12 export password                                                             |
+| Secret            | `APPLE_API_KEY`                 | The App Store Connect team API key (`.p8`) that notarizes builds                        |
+| Variable          | `APPLE_API_KEY_ID`              | That key's ID                                                                           |
+| Variable          | `APPLE_API_ISSUER`              | The issuer ID shown above the team keys                                                 |
+| Variable          | `APPLE_TEAM_ID`                 | The 10-character Apple team ID                                                          |
+| Variable          | `APPLE_SIGNING_IDENTITY`        | The exact certificate name, `Developer ID Application: n8n GmbH (<team ID>)`            |
+| Variable          | `APPLE_CERTIFICATE_SHA256`      | Lowercase SHA-256 of the certificate, from `shasum -a 256 developerID_application.cer`  |
+| Variable          | `NOD_SIGNING_MODE`              | `developer-id`                                                                          |
+| Optional variable | `NOD_DESKTOP_UPDATE_SOURCE_URL` | Base URL of the private update service. Leave it unset to use the public GitHub API.    |
 
 - In the repository's Actions settings, allow GitHub Actions to create pull requests.
 - The default mode, `self-signed`, signs with an internal certificate and skips notarization. It needs only the certificate rows and a private repository.
-- The Terminal installer pins the certificate's SHA-256 in `deployment/n8n/install.sh`. After the first release signed with a new certificate, update it there and republish the **Otto Install** workflow.
+- The Terminal installer pins the certificate's SHA-256 in `deployment/n8n/install.sh`. After the first release signed with a new certificate, update it there and republish the **nod Install** workflow.
 
 ### Create or renew the certificate
 
@@ -63,24 +63,24 @@ Developer ID certificates expire. Apps signed before then keep opening, but rele
 1. Create a private key and a signing request.
 
    ```sh title="Terminal"
-   mkdir -m 700 ~/otto-signing && cd ~/otto-signing
-   /usr/bin/openssl req -new -newkey rsa:2048 -nodes -keyout otto.key -out otto.csr -subj "/CN=n8n GmbH/C=DE"
+   mkdir -m 700 ~/nod-signing && cd ~/nod-signing
+   /usr/bin/openssl req -new -newkey rsa:2048 -nodes -keyout nod.key -out nod.csr -subj "/CN=n8n GmbH/C=DE"
    ```
 
-2. In the Apple Developer account, open **Certificates**, select **+**, then **Developer ID Application** and **G2 Sub-CA**. Upload `otto.csr` and download `developerID_application.cer` into the same folder.
+2. In the Apple Developer account, open **Certificates**, select **+**, then **Developer ID Application** and **G2 Sub-CA**. Upload `nod.csr` and download `developerID_application.cer` into the same folder.
 
 3. Bundle the certificate with its key and Apple's G2 certificate. Without the G2 certificate, a runner can find no valid signing identity. Use macOS's `/usr/bin/openssl`, because the keychain can reject files from Homebrew's OpenSSL.
 
    ```sh title="Terminal"
    curl -fsSLO https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
    /usr/bin/openssl x509 -inform DER -in DeveloperIDG2CA.cer -out g2.pem
-   /usr/bin/openssl x509 -inform DER -in developerID_application.cer -out otto.pem
-   /usr/bin/openssl pkcs12 -export -inkey otto.key -in otto.pem -certfile g2.pem -out otto.p12
+   /usr/bin/openssl x509 -inform DER -in developerID_application.cer -out nod.pem
+   /usr/bin/openssl pkcs12 -export -inkey nod.key -in nod.pem -certfile g2.pem -out nod.p12
    ```
 
 4. For a new notarization key, open **App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys**. Generate a key with the **Developer** role and download it. Apple offers the download only once.
 
-5. Save `otto.p12`, its password and the `.p8` key in the company password manager. Set the values above, then delete the folder.
+5. Save `nod.p12`, its password and the `.p8` key in the company password manager. Set the values above, then delete the folder.
 
 </Steps>
 
@@ -99,6 +99,8 @@ Private releases use the configured n8n download service for first-run downloads
 4. Wait for CI on the merge commit, then **Build desktop release**. The release workflow builds all three installers and signs the Mac apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks signing, runtime hashes, Windows workspace paths, installation, startup, updates and downloaded installer bytes. It publishes one release only if every build and check passes. When the n8n download service is configured, it fetches each installer, runtime pack and update through that service. This check uses the app's own update code for both Macs and Windows. If any download is unavailable, the release goes back to draft.
 
 </Steps>
+
+nod releases are tagged `nod-v*`, and the n8n download service at `webhook/nod/desktop` serves only those. Releases from before the rename are tagged `desktop-v*` and stay on the separate `otto-desktop` service, so installed Otto apps keep updating among themselves and never see a nod release. The first nod release compares against the `nod-v0.1.18` tag, which marks the same commit as `desktop-v0.1.18`.
 
 There's no daily release. Only a merged release pull request, which changes `desktop/release.json`, starts **Build desktop release**; other merges to `main` don't run it. The [capability evals](/contribute/evals/) don't gate publication.
 
@@ -120,36 +122,36 @@ Release builds run one at a time, and up to 100 runs can wait in the queue. A fa
 Drafts are never offered to the installer or the updater.
 
 - Every app checks at startup, even when its runtime fails to start, every six hours while it's open, and after waking if a check is due. **Check for Updates…** checks right away.
-- After a failed automatic check, Otto retries after 15 minutes, doubling up to six hours, and the menu shows **Update Failed. Try Again…**.
-- When the newest release is incomplete for a platform, Otto tries up to three newer releases and offers the first that validates.
+- After a failed automatic check, nod retries after 15 minutes, doubling up to six hours, and the menu shows **Update Failed. Try Again…**.
+- When the newest release is incomplete for a platform, nod tries up to three newer releases and offers the first that validates.
 - A Mac app outside Applications offers to move itself there at startup, because it can update itself only from Applications.
-- Updates download in the background. On a Mac, Otto also loads the new runtime's images into the running VM, so the restart skips that step.
+- Updates download in the background. On a Mac, nod also loads the new runtime's images into the running VM, so the restart skips that step.
 - An automatic check announces a ready update with a notification when notifications are on, and with a **Restart** or **Later** dialog otherwise. The menu offers **Restart to update** until you restart.
-- If a reply, schedule or background check is running, or Otto can't tell, it asks before restarting.
-- If the runtime hasn't changed, Otto reuses it and downloads only the app or installer.
+- If a reply, schedule or background check is running, or nod can't tell, it asks before restarting.
+- If the runtime hasn't changed, nod reuses it and downloads only the app or installer.
 - A Mac runtime changes only when what it ships changes: the browser worker and the source it imports, the scripts the images copy, dependencies, Dockerfiles, pinned downloads and the runtime build scripts. Other app changes reuse the published runtime.
-- On Windows, the restart runs the verified installer silently over the current install, then opens Otto again. The profile is kept.
+- On Windows, the restart runs the verified installer silently over the current install, then opens nod again. The profile is kept.
 
 ## Help private-alpha testers
 
-Mac testers need an Intel or Apple silicon Mac, and a supported provider API key or ChatGPT plan. They copy Otto to Applications, or run the [Terminal installer](/get-started/install-desktop/), and approve the Keychain prompt if macOS shows it. Managed Macs may need IT approval. The first start downloads the runtime, so it needs an internet connection.
+Mac testers need an Intel or Apple silicon Mac, and a supported provider API key or ChatGPT plan. They copy nod to Applications, or run the [Terminal installer](/get-started/install-desktop/), and approve the Keychain prompt if macOS shows it. Managed Macs may need IT approval. The first start downloads the runtime, so it needs an internet connection.
 
-On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/otto/install-windows | iex` in PowerShell, or download and run `Otto-Setup-x64.exe`. The first start downloads the runtime, unless `Otto-Runtime-win32-x64.tar.gz` sits next to the installer. After that, Otto updates itself.
+On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/nod/install-windows | iex` in PowerShell, or download and run `nod-Setup-x64.exe`. The first start downloads the runtime, unless `nod-Runtime-win32-x64.tar.gz` sits next to the installer. After that, nod updates itself.
 
 | Situation                       | What to know                                                                                                                                                                                       |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Not enough storage              | Otto needs the runtime's extracted size plus 512 MiB, and downloads also reserve the archive size. The error says how much to free. Free it and retry. Existing data is kept.                      |
+| Not enough storage              | nod needs the runtime's extracted size plus 512 MiB, and downloads also reserve the archive size. The error says how much to free. Free it and retry. Existing data is kept.                       |
 | Moving from a self-signed build | Builds 0.1.12 and earlier use an internal certificate, so they can't update themselves to a notarized build. Install the newest release by hand or with the Terminal installer once. Data is kept. |
-| Moving from Otto Preview        | Version 0.1.2 introduced the Otto app identity and a fresh profile. Install it by hand. There's no migration, and earlier data is left untouched.                                                  |
+| Moving from nod Preview         | Version 0.1.2 introduced the nod app identity and a fresh profile. Install it by hand. There's no migration, and earlier data is left untouched.                                                   |
 | Setup was interrupted           | Retry it.                                                                                                                                                                                          |
 | It still fails                  | Open **Send feedback** in Chat to review and send the diagnostic report. If Chat can't open, send the visible setup error.                                                                         |
-| Starting over                   | Select **Remove all data…** in the **Otto** menu. It deletes the profile and private computer, keeps the runtime, and quits.                                                                       |
+| Starting over                   | Select **Remove all data…** in the **nod** menu. It deletes the profile and private computer, keeps the runtime, and quits.                                                                        |
 
 :::danger[Don't delete the profile to recover]
 Never delete the profile, VM, database or runtime cache as a routine recovery step. A downgrade or full backup-and-restore isn't supported. Testers should never send API keys, passwords or the settings file.
 :::
 
-In development, **Copy trace** copies the same report without sending it. `OTTO_FEEDBACK_URL` changes where feedback goes, and an empty value turns sending off.
+In development, **Copy trace** copies the same report without sending it. `NOD_FEEDBACK_URL` changes where feedback goes, and an empty value turns sending off.
 
 :::caution[Hardware needs aren't measured yet]
 The storage check covers installing the runtime only. The VM reserves 3 to 6 GiB of RAM and a 24 GiB virtual disk that grows as it's used.
@@ -157,9 +159,9 @@ The storage check covers installing the runtime only. The VM reserves 3 to 6 GiB
 
 ## Test a local Mac build
 
-Use the isolated test installer to try onboarding without changing your normal Otto app, accounts, or computer. It installs **Otto Setup Test** in your user Applications folder and disables updates for that build.
+Use the isolated test installer to try onboarding without changing your normal nod app, accounts, or computer. It installs **nod Setup Test** in your user Applications folder and disables updates for that build.
 
-Build the current source first. The helper verifies and reuses the runtime already cached by `/Applications/Otto.app`, so it doesn't copy or download another runtime:
+Build the current source first. The helper verifies and reuses the runtime already cached by `/Applications/nod.app`, so it doesn't copy or download another runtime:
 
 ```sh title="Terminal"
 pnpm --dir desktop install --frozen-lockfile
@@ -178,7 +180,7 @@ node desktop/scripts/test-install.mjs open first-run
 node desktop/scripts/test-install.mjs stop
 ```
 
-Test profiles live under `~/Library/Application Support/Otto Setup Test/test-profiles`. Rebuilding the test app preserves them. The helper accepts an installed engine directory after `build` when the cached runtime comes from another local installation.
+Test profiles live under `~/Library/Application Support/nod Setup Test/test-profiles`. Rebuilding the test app preserves them. The helper accepts an installed engine directory after `build` when the cached runtime comes from another local installation.
 
 This is an ad-hoc signed local app, not a release. It reuses the cached workspace and browser images; it doesn't verify a newly built runtime image or release signing.
 
@@ -188,9 +190,9 @@ This is an ad-hoc signed local app, not a release. It reuses the cached workspac
 Mac builds are signed with n8n's Developer ID and notarized by Apple. Windows builds are unsigned and can show a publisher warning.
 :::
 
-Updates check the new build against n8n's Apple team, not one certificate, so a renewed certificate doesn't break them. macOS can still ask for Keychain approval. Otto explains that prompt before it reads saved API keys.
+Updates check the new build against n8n's Apple team, not one certificate, so a renewed certificate doesn't break them. macOS can still ask for Keychain approval. nod explains that prompt before it reads saved API keys.
 
-GitHub-hosted Mac runners can't run nested virtualization. CI checks binaries and packaging, but it can't prove Otto's private computer boots on a real Mac.
+GitHub-hosted Mac runners can't run nested virtualization. CI checks binaries and packaging, but it can't prove nod's private computer boots on a real Mac.
 
 <details>
 
@@ -207,7 +209,7 @@ Use disposable profiles and synthetic content on a physical Apple silicon Mac.
 
 ## Related resources
 
-- [Contribute to Otto](/contribute/)
+- [Contribute to nod](/contribute/)
 - [Pull requests](/contribute/pull-requests/)
 - [Checks and tests](/contribute/checks-and-tests/)
 - [Desktop app](/deploy/desktop-app/)

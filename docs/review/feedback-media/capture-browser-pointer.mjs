@@ -57,13 +57,13 @@ try {
     const { existingDaemonCommand } = await import(
       pathToFileURL(join(snapshot, 'src/providers/agent-browser/screens.ts')).href
     );
-    const dataRoot = await mkdtemp(join(tmpdir(), 'otto-pointer-review-'));
+    const dataRoot = await mkdtemp(join(tmpdir(), 'nod-pointer-review-'));
     let socket = '';
     let inspector;
     const computer = createAgentBrowserComputer({
       dataRoot,
       browserExecutable:
-        process.env.OTTO_TEST_BROWSER_EXECUTABLE ||
+        process.env.NOD_TEST_BROWSER_EXECUTABLE ||
         (process.platform === 'darwin'
           ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
           : undefined),

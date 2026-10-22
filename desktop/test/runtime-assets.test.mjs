@@ -40,7 +40,7 @@ import {
 import { verifyRuntimeRelease } from '../scripts/release-tools.mjs';
 
 async function releaseRepository(t) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-release-history-')));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-release-history-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const git = (...args) =>
     execFileSync('git', args, {
@@ -99,7 +99,7 @@ test('release gate rejects malformed metadata, uncommitted notes and source drif
 
 test('release publication requires the exact merge of an owned release PR', () => {
   const source = 'a'.repeat(40);
-  const repository = 'synthetic/otto';
+  const repository = 'synthetic/nod';
   const pull = {
     merged_at: '2026-10-09T10:00:00Z',
     merge_commit_sha: source,
@@ -111,9 +111,9 @@ test('release publication requires the exact merge of an owned release PR', () =
     { ...pull, merged_at: null },
     { ...pull, merge_commit_sha: 'b'.repeat(40) },
     { ...pull, head: { ...pull.head, ref: 'feature' } },
-    { ...pull, head: { ...pull.head, repo: { full_name: 'foreign/otto' } } },
+    { ...pull, head: { ...pull.head, repo: { full_name: 'foreign/nod' } } },
     { ...pull, base: { ...pull.base, ref: 'feature' } },
-    { ...pull, base: { ...pull.base, repo: { full_name: 'foreign/otto' } } },
+    { ...pull, base: { ...pull.base, repo: { full_name: 'foreign/nod' } } },
   ])
     assert.equal(isReleaseMerge(candidate, source, repository), false);
 });
@@ -122,12 +122,12 @@ test('automatic patches release unchanged source and bind generated notes across
   const f = await releaseRepository(t);
   await prepareRelease(f.root, '0.1.0');
   const source = f.commit();
-  f.git('tag', 'desktop-v0.1.0');
-  const releases = [{ tag_name: 'desktop-v0.1.0', draft: false }];
-  const plan = automaticRelease(f.root, releases, 'synthetic/otto');
+  f.git('tag', 'nod-v0.1.0');
+  const releases = [{ tag_name: 'nod-v0.1.0', draft: false }];
+  const plan = automaticRelease(f.root, releases, 'synthetic/nod');
   assert.equal(plan.version, '0.1.1');
   assert.equal(plan.source, source);
-  assert.equal(plan.previousTag, 'desktop-v0.1.0');
+  assert.equal(plan.previousTag, 'nod-v0.1.0');
   assert.equal(f.git('status', '--porcelain'), '');
   const path = join(f.root, 'release-plan.json');
   const bytes = JSON.stringify(plan);
@@ -136,7 +136,7 @@ test('automatic patches release unchanged source and bind generated notes across
   assert.deepEqual(await checkReleasePlan(f.root, plan.version, path, digest), plan);
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 24 * 60 * 60 * 1000 });
   assert.deepEqual(await checkReleasePlan(f.root, plan.version, path, digest), plan);
-  const nextDay = automaticRelease(f.root, releases, 'synthetic/otto');
+  const nextDay = automaticRelease(f.root, releases, 'synthetic/nod');
   assert.notEqual(nextDay.date, plan.date);
   t.mock.timers.reset();
   const tampered = JSON.stringify({ ...plan, notes: plan.notes + '\nAltered release.\n' });
@@ -162,40 +162,36 @@ test('automatic patches resume the matching draft and never reuse an occupied or
   const f = await releaseRepository(t);
   await prepareRelease(f.root, '0.1.0');
   f.commit();
-  f.git('tag', 'desktop-v0.1.0');
+  f.git('tag', 'nod-v0.1.0');
   await writeFile(join(f.root, 'desktop/main.mjs'), 'export const updated = true;\n');
   const source = f.commit();
-  const published = { tag_name: 'desktop-v0.1.0', draft: false };
+  const published = { tag_name: 'nod-v0.1.0', draft: false };
   const pending = {
-    tag_name: 'desktop-v0.1.1',
+    tag_name: 'nod-v0.1.1',
     draft: true,
     target_commitish: source,
-    body: `Source: https://github.com/synthetic/otto/commit/${source}`,
+    body: `Source: https://github.com/synthetic/nod/commit/${source}`,
   };
-  assert.equal(automaticRelease(f.root, [published, pending], 'synthetic/otto').version, '0.1.1');
+  assert.equal(automaticRelease(f.root, [published, pending], 'synthetic/nod').version, '0.1.1');
   assert.throws(() =>
-    automaticRelease(
-      f.root,
-      [published, { ...pending, body: 'Unrelated draft' }],
-      'synthetic/otto',
-    ),
+    automaticRelease(f.root, [published, { ...pending, body: 'Unrelated draft' }], 'synthetic/nod'),
   );
   const stale = { ...pending, target_commitish: '0'.repeat(40) };
-  assert.equal(automaticRelease(f.root, [published, stale], 'synthetic/otto').version, '0.1.2');
-  f.git('tag', 'desktop-v0.1.2');
-  assert.equal(automaticRelease(f.root, [published, stale], 'synthetic/otto').version, '0.1.3');
-  f.git('tag', 'desktop-v0.1.1');
+  assert.equal(automaticRelease(f.root, [published, stale], 'synthetic/nod').version, '0.1.2');
+  f.git('tag', 'nod-v0.1.2');
+  assert.equal(automaticRelease(f.root, [published, stale], 'synthetic/nod').version, '0.1.3');
+  f.git('tag', 'nod-v0.1.1');
   assert.equal(
-    automaticRelease(f.root, [published, { ...pending, draft: false }], 'synthetic/otto').version,
+    automaticRelease(f.root, [published, { ...pending, draft: false }], 'synthetic/nod').version,
     '0.1.3',
   );
   assert.throws(() =>
-    automaticRelease(f.root, [{ tag_name: 'desktop-v9.0.0', draft: false }], 'synthetic/otto'),
+    automaticRelease(f.root, [{ tag_name: 'nod-v9.0.0', draft: false }], 'synthetic/nod'),
   );
 });
 
 test('signing discovery preserves native bundles and skips symlinks under a low file limit', async (t) => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-signing-discovery-')));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-signing-discovery-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const application = join(root, 'Synthetic.app');
   const framework = join(application, 'Contents/Frameworks/Synthetic.framework');
@@ -230,7 +226,7 @@ process.stdout.write(JSON.stringify(await walk(process.argv[1])));`;
     [
       '-c',
       'ulimit -n 256\nexec "$@"',
-      'otto-signing-discovery',
+      'nod-signing-discovery',
       process.execPath,
       '--input-type=module',
       '-e',
@@ -254,8 +250,8 @@ async function releaseFixture(
     developerId = isPublic,
     publish = false,
     plan = false,
-    runtimeRepository = 'synthetic/otto',
-    diskName = 'Otto-arm64.dmg',
+    runtimeRepository = 'synthetic/nod',
+    diskName = 'nod-arm64.dmg',
     updateSourceUrl,
     automatic = false,
   } = {},
@@ -296,7 +292,7 @@ async function releaseFixture(
   let source = f.commit();
   const baseline = source;
   if (automatic) {
-    f.git('tag', 'desktop-v0.1.0');
+    f.git('tag', 'nod-v0.1.0');
     await writeFile(join(root, 'desktop/main.mjs'), 'export const next = true;\n');
     source = f.commit();
   }
@@ -313,10 +309,10 @@ async function releaseFixture(
   const archive = Buffer.from('Synthetic runtime archive');
   const certificate = Buffer.from('Synthetic public certificate');
   const signingEnv = {
-    OTTO_DESKTOP_TARGET: 'darwin-arm64',
-    OTTO_SIGNING_MODE: developerId ? 'developer-id' : 'self-signed',
-    OTTO_SIGNING_IDENTITY: 'Synthetic Otto Signing',
-    OTTO_SIGNING_CERTIFICATE_SHA256: digest(certificate),
+    NOD_DESKTOP_TARGET: 'darwin-arm64',
+    NOD_SIGNING_MODE: developerId ? 'developer-id' : 'self-signed',
+    NOD_SIGNING_IDENTITY: 'Synthetic nod Signing',
+    NOD_SIGNING_CERTIFICATE_SHA256: digest(certificate),
   };
   const fingerprint = plan
     ? JSON.parse(
@@ -331,8 +327,8 @@ async function releaseFixture(
     : digest('Synthetic runtime inputs');
   const runtimeTag = `runtime-darwin-arm64-${fingerprint}`;
   const version = automatic ? '0.1.1' : '0.1.0';
-  const appTag = `desktop-v${version}`;
-  const name = `Otto-Runtime-darwin-arm64-${digest('Synthetic runtime files').slice(0, 12)}.tar.gz`;
+  const appTag = `nod-v${version}`;
+  const name = `nod-Runtime-darwin-arm64-${digest('Synthetic runtime files').slice(0, 12)}.tar.gz`;
   const release = {
     version: 1,
     platform: 'darwin-arm64',
@@ -351,15 +347,15 @@ async function releaseFixture(
       ? { notarization: { status: 'Accepted', id: '12345678-1234-1234-1234-123456789abc' } }
       : {}),
     ...(isPublic && publish
-      ? { url: `https://github.com/synthetic/otto/releases/download/${appTag}/${name}` }
+      ? { url: `https://github.com/synthetic/nod/releases/download/${appTag}/${name}` }
       : {}),
   };
   const disk = Buffer.from('Synthetic signed disk image');
   const update = Buffer.from('Synthetic signed application ZIP');
-  const updateName = 'Otto-arm64.zip';
+  const updateName = 'nod-arm64.zip';
   const feed = {
-    url: `https://github.com/synthetic/otto/releases/download/${appTag}/${updateName}`,
-    name: `Otto ${version}`,
+    url: `https://github.com/synthetic/nod/releases/download/${appTag}/${updateName}`,
+    name: `nod ${version}`,
     pub_date: '2026-10-04T12:00:00Z',
   };
   const metadata = {
@@ -399,9 +395,9 @@ async function releaseFixture(
     runtimeRepository,
     releases: automatic
       ? {
-          'desktop-v0.1.0': {
+          'nod-v0.1.0': {
             id: 100,
-            tag_name: 'desktop-v0.1.0',
+            tag_name: 'nod-v0.1.0',
             target_commitish: baseline,
             draft: false,
             assets: [],
@@ -415,7 +411,7 @@ async function releaseFixture(
       {
         head_sha: source,
         head_branch: 'main',
-        head_repository: { full_name: 'synthetic/otto' },
+        head_repository: { full_name: 'synthetic/nod' },
         event: 'push',
         conclusion: 'success',
       },
@@ -436,11 +432,11 @@ const missing = () => { save(); process.stderr.write('Not Found (HTTP 404)'); pr
 const output = (value) => { save(); process.stdout.write(JSON.stringify(value)); process.exit(0); };
 const flag = (name) => args[args.indexOf(name) + 1];
 if (args[0] === 'api') {
-  if (args[1] === 'repos/synthetic/otto' || args[1] === 'repos/' + state.runtimeRepository) output({ private: state.private });
+  if (args[1] === 'repos/synthetic/nod' || args[1] === 'repos/' + state.runtimeRepository) output({ private: state.private });
   if (args[1] === 'repos/' + state.runtimeRepository + '/commits/main') output({ sha: 'f'.repeat(40) });
   if (args[1].includes('/actions/workflows/')) output({ workflow_runs: state.runs });
   if (args[1].endsWith('/pulls')) output(state.pulls || []);
-  if (args[1] === 'repos/synthetic/otto/releases?per_page=100') {
+  if (args[1] === 'repos/synthetic/nod/releases?per_page=100') {
     save();
     process.stdout.write(Object.values(state.releases).map(release => JSON.stringify(release)).join('\n'));
     process.exit(0);
@@ -454,7 +450,7 @@ if (args[0] === 'api') {
     const release = state.releases[args[1].split('/').at(-1)];
     if (release && !release.draft) output(release);
   }
-  const release = Object.values(state.releases).find(value => args[1] === 'repos/synthetic/otto/releases/' + value.id || args[1] === 'repos/' + state.runtimeRepository + '/releases/' + value.id);
+  const release = Object.values(state.releases).find(value => args[1] === 'repos/synthetic/nod/releases/' + value.id || args[1] === 'repos/' + state.runtimeRepository + '/releases/' + value.id);
   if (release) output(release);
   missing();
 }
@@ -463,7 +459,7 @@ const tag = args[2];
 if (args[1] === 'create') {
   if (state.releases[tag]) throw new Error('Duplicate release');
   const id = ++state.created;
-  state.releases[tag] = { id, tag_name: tag, target_commitish: args.includes('--target') ? flag('--target') : 'main', draft: args.includes('--draft'), prerelease: args.includes('--prerelease'), body: readFileSync(flag('--notes-file'), 'utf8'), html_url: 'https://github.com/synthetic/otto/releases/tag/untagged-' + id, assets: [] };
+  state.releases[tag] = { id, tag_name: tag, target_commitish: args.includes('--target') ? flag('--target') : 'main', draft: args.includes('--draft'), prerelease: args.includes('--prerelease'), body: readFileSync(flag('--notes-file'), 'utf8'), html_url: 'https://github.com/synthetic/nod/releases/tag/untagged-' + id, assets: [] };
 } else {
   const release = state.releases[tag];
   if (!release) missing();
@@ -478,7 +474,7 @@ if (args[1] === 'create') {
     if (args.includes('--draft=false')) {
       release.draft = false;
       release.published_at = '2026-10-04T12:00:00Z';
-      release.html_url = 'https://github.com/synthetic/otto/releases/tag/' + tag;
+      release.html_url = 'https://github.com/synthetic/nod/releases/tag/' + tag;
     }
     if (args.includes('--draft=true')) release.draft = true;
     if (args.includes('--prerelease=false')) release.prerelease = false;
@@ -529,9 +525,9 @@ globalThis.fetch = async (url, options = {}) => {
   const state = JSON.parse(readFileSync(file, 'utf8'));
   state.calls.push(['fetch', options.method || 'GET', String(url)]);
   writeFileSync(file, JSON.stringify(state));
-  const source = process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL;
+  const source = process.env.NOD_DESKTOP_UPDATE_SOURCE_URL;
   if (source && String(url).startsWith(source + '/')) return broker(state, new URL(url), source);
-  const match = String(url).match(/^https:\/\/github\.com\/synthetic\/otto\/releases\/download\/([^/]+)\/([^/]+)$/);
+  const match = String(url).match(/^https:\/\/github\.com\/synthetic\/nod\/releases\/download\/([^/]+)\/([^/]+)$/);
   if (!match) throw new Error('Unexpected network access');
   const [, tag, name] = match;
   const bytes = state.contents[tag + '/' + name];
@@ -553,18 +549,18 @@ globalThis.fetch = async (url, options = {}) => {
         NODE_OPTIONS: `--import=${network}`,
         GH_TOKEN: 'synthetic-fixture-token',
         RELEASE_TOKEN: 'synthetic-fixture-token',
-        OTTO_RUNTIME_REPO: runtimeRepository,
-        GITHUB_REPOSITORY: 'synthetic/otto',
+        NOD_RUNTIME_REPO: runtimeRepository,
+        GITHUB_REPOSITORY: 'synthetic/nod',
         GITHUB_SHA: source,
         GITHUB_REF: 'refs/heads/main',
         GITHUB_ACTIONS: 'true',
         APPLE_CONFIGURED: 'true',
         ...signingEnv,
-        OTTO_RUNTIME_FINGERPRINT: fingerprint,
-        OTTO_EXPECTED_RUNTIME_FINGERPRINT: fingerprint,
-        OTTO_PUBLISH_RELEASE: String(requestPublish),
-        OTTO_AUTOMATIC_RELEASE: String(automatic),
-        ...(updateSourceUrl ? { OTTO_DESKTOP_UPDATE_SOURCE_URL: updateSourceUrl } : {}),
+        NOD_RUNTIME_FINGERPRINT: fingerprint,
+        NOD_EXPECTED_RUNTIME_FINGERPRINT: fingerprint,
+        NOD_PUBLISH_RELEASE: String(requestPublish),
+        NOD_AUTOMATIC_RELEASE: String(automatic),
+        ...(updateSourceUrl ? { NOD_DESKTOP_UPDATE_SOURCE_URL: updateSourceUrl } : {}),
         ...environment,
       },
       timeout: 30_000,
@@ -612,11 +608,11 @@ test('automatic delivery requires current exact-main CI and publishes only its c
   assert.equal(JSON.parse(await readFile(join(f.root, 'desktop/package.json'))).version, '0.1.0');
   assert.equal(f.git('status', '--porcelain', '--untracked-files=no'), '');
   const environment = {
-    OTTO_RELEASE_PLAN: join(f.root, '.local/desktop-release-plan.json'),
-    OTTO_RELEASE_PLAN_SHA256: plan.metadata_sha256,
+    NOD_RELEASE_PLAN: join(f.root, '.local/desktop-release-plan.json'),
+    NOD_RELEASE_PLAN_SHA256: plan.metadata_sha256,
   };
   await assert.rejects(
-    f.invoke('draft', true, { ...environment, OTTO_RELEASE_PLAN_SHA256: '0'.repeat(64) }),
+    f.invoke('draft', true, { ...environment, NOD_RELEASE_PLAN_SHA256: '0'.repeat(64) }),
   );
   await assert.rejects(f.invoke('draft', true, { ...environment, GITHUB_ACTIONS: 'false' }));
   assert.equal((await f.readState()).releases[f.appTag], undefined);
@@ -627,7 +623,7 @@ test('automatic delivery requires current exact-main CI and publishes only its c
   assert.equal(published.releases[f.appTag].prerelease, false);
   assert.equal(published.releases[f.runtimeTag], undefined);
   assert.equal(published.created, 1);
-  assert.deepEqual(published.releases['desktop-v0.1.0'], initial.releases['desktop-v0.1.0']);
+  assert.deepEqual(published.releases['nod-v0.1.0'], initial.releases['nod-v0.1.0']);
   f.git('tag', f.appTag);
   await assert.rejects(f.invoke('plan', true, { APPLE_CONFIGURED: 'false' }));
   const repeated = JSON.parse((await f.invoke('plan')).stdout);
@@ -643,7 +639,7 @@ test('a release manifest push publishes only a merged release PR and keeps the t
   const environment = {
     GITHUB_EVENT_NAME: 'push',
     GITHUB_SHA: 'b'.repeat(40),
-    OTTO_RELEASE_SOURCE: f.source,
+    NOD_RELEASE_SOURCE: f.source,
   };
   assert.equal(
     JSON.parse((await f.invoke('plan', true, environment)).stdout).release_needed,
@@ -656,8 +652,8 @@ test('a release manifest push publishes only a merged release PR and keeps the t
       {
         merged_at: '2026-10-09T10:00:00Z',
         merge_commit_sha: f.source,
-        base: { ref: 'main', repo: { full_name: 'synthetic/otto' } },
-        head: { ref: 'release/desktop', repo: { full_name: 'synthetic/otto' } },
+        base: { ref: 'main', repo: { full_name: 'synthetic/nod' } },
+        head: { ref: 'release/desktop', repo: { full_name: 'synthetic/nod' } },
       },
     ],
   });
@@ -675,7 +671,7 @@ test('a release manifest push publishes only a merged release PR and keeps the t
   assert.equal((await f.readState()).created, state.created);
   assert.equal(
     JSON.parse(
-      (await f.invoke('plan', true, { ...environment, OTTO_RELEASE_TARGETS: 'all' })).stdout,
+      (await f.invoke('plan', true, { ...environment, NOD_RELEASE_TARGETS: 'all' })).stdout,
     ).release_needed,
     'false',
   );
@@ -737,7 +733,7 @@ test('app upload rejects mismatched update artifacts, feed and provenance', asyn
 test('app publication binds its delivery source and renamed installer to verified release assets', async (t) => {
   const f = await releaseFixture(t, {
     publish: true,
-    updateSourceUrl: 'https://releases.example.invalid/otto',
+    updateSourceUrl: 'https://releases.example.invalid/nod',
   });
   await writeFile(
     join(f.output, 'release.json'),
@@ -766,12 +762,12 @@ test('app publication binds its delivery source and renamed installer to verifie
   );
   assert(Object.values(state.releases).every((release) => !release.draft));
   for (const source of [
-    'http://releases.example.invalid/otto',
-    'https://user:password@releases.example.invalid/otto',
-    'https://releases.example.invalid/otto?token=synthetic',
-    'https://releases.example.invalid/otto#fragment',
-    'https://releases.example.invalid/otto?',
-    'https://releases.example.invalid/otto#',
+    'http://releases.example.invalid/nod',
+    'https://user:password@releases.example.invalid/nod',
+    'https://releases.example.invalid/nod?token=synthetic',
+    'https://releases.example.invalid/nod#fragment',
+    'https://releases.example.invalid/nod?',
+    'https://releases.example.invalid/nod#',
   ]) {
     const invalid = await releaseFixture(t, { updateSourceUrl: source });
     await assert.rejects(invalid.invoke('draft'));
@@ -788,8 +784,8 @@ test('pending public runtime packaging defers only reachability for the checked 
   const descriptorPath = join(f.assets, 'runtime-release.json');
   const env = {
     GITHUB_ACTIONS: 'true',
-    OTTO_DESKTOP_TARGET: 'darwin-arm64',
-    OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256: await assetHash(descriptorPath),
+    NOD_DESKTOP_TARGET: 'darwin-arm64',
+    NOD_PENDING_RUNTIME_DESCRIPTOR_SHA256: await assetHash(descriptorPath),
   };
   const request = t.mock.method(
     globalThis,
@@ -816,7 +812,7 @@ test('pending public runtime packaging defers only reachability for the checked 
   );
   await assert.rejects(
     verifyRuntimeRelease(f.release, f.release.fingerprint, configuration, {
-      env: { OTTO_DESKTOP_TARGET: 'darwin-arm64' },
+      env: { NOD_DESKTOP_TARGET: 'darwin-arm64' },
     }),
   );
 });
@@ -849,11 +845,11 @@ test('one official release waits for verified runtime and downloaded app bytes',
   await assert.rejects(f.invoke('draft'));
 });
 
-test('all three checked bundles publish together as one regular Otto release', async (t) => {
+test('all three checked bundles publish together as one regular nod release', async (t) => {
   const f = await releaseFixture(t, {
     plan: true,
     publish: true,
-    updateSourceUrl: 'https://releases.example.invalid/otto',
+    updateSourceUrl: 'https://releases.example.invalid/nod',
   });
   const target = join(f.root, 'dist/desktop');
   const arm = join(target, 'arm64');
@@ -865,8 +861,8 @@ test('all three checked bundles publish together as one regular Otto release', a
     'update.json',
     'SHA256SUMS',
     'signing.cer',
-    'Otto-arm64.dmg',
-    'Otto-arm64.zip',
+    'nod-arm64.dmg',
+    'nod-arm64.zip',
   ];
   for (const directory of [arm, intel, windows]) await mkdir(directory, { recursive: true });
   for (const name of names) await copyFile(join(f.output, name), join(arm, name));
@@ -875,10 +871,10 @@ test('all three checked bundles publish together as one regular Otto release', a
       await promisify(execFile)(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], {
         cwd: f.root,
         env: {
-          OTTO_DESKTOP_TARGET: 'darwin-x64',
-          OTTO_SIGNING_MODE: 'self-signed',
-          OTTO_SIGNING_IDENTITY: 'Synthetic Otto Signing',
-          OTTO_SIGNING_CERTIFICATE_SHA256: f.metadata.signing.certificateSha256,
+          NOD_DESKTOP_TARGET: 'darwin-x64',
+          NOD_SIGNING_MODE: 'self-signed',
+          NOD_SIGNING_IDENTITY: 'Synthetic nod Signing',
+          NOD_SIGNING_CERTIFICATE_SHA256: f.metadata.signing.certificateSha256,
         },
       })
     ).stdout,
@@ -893,8 +889,8 @@ test('all three checked bundles publish together as one regular Otto release', a
     ...f.metadata,
     platform: 'darwin-x64',
     runtime: { fingerprint, id: runtime.id, archive: runtime.archive },
-    disk: { ...f.metadata.disk, file: 'Otto-x64.dmg' },
-    update: { ...f.metadata.update, file: 'Otto-x64.zip' },
+    disk: { ...f.metadata.disk, file: 'nod-x64.dmg' },
+    update: { ...f.metadata.update, file: 'nod-x64.zip' },
   };
   await writeFile(join(intel, 'release.json'), JSON.stringify(metadata));
   await writeFile(join(intel, 'runtime-release.json'), JSON.stringify(runtime));
@@ -904,12 +900,12 @@ test('all three checked bundles publish together as one regular Otto release', a
   );
   await writeFile(
     join(intel, 'SHA256SUMS'),
-    `${metadata.disk.sha256}  Otto-x64.dmg\n${metadata.update.sha256}  Otto-x64.zip\n`,
+    `${metadata.disk.sha256}  nod-x64.dmg\n${metadata.update.sha256}  nod-x64.zip\n`,
   );
   for (const [old, next] of [
     ['signing.cer', 'signing.cer'],
-    ['Otto-arm64.dmg', 'Otto-x64.dmg'],
-    ['Otto-arm64.zip', 'Otto-x64.zip'],
+    ['nod-arm64.dmg', 'nod-x64.dmg'],
+    ['nod-arm64.zip', 'nod-x64.zip'],
   ])
     await copyFile(join(arm, old), join(intel, next));
   await mkdir(join(f.assets, 'x64'), { recursive: true });
@@ -925,8 +921,8 @@ test('all three checked bundles publish together as one regular Otto release', a
     source: f.source,
     updateSourceUrl: f.metadata.updateSourceUrl,
     signing: { mode: 'unsigned' },
-    installer: { file: 'Otto-Setup-x64.exe', bytes: installer.length, sha256: f.digest(installer) },
-    runtime: { file: 'Otto-Runtime-win32-x64.tar.gz', bytes: pack.length, sha256: f.digest(pack) },
+    installer: { file: 'nod-Setup-x64.exe', bytes: installer.length, sha256: f.digest(installer) },
+    runtime: { file: 'nod-Runtime-win32-x64.tar.gz', bytes: pack.length, sha256: f.digest(pack) },
   };
   await writeFile(join(windows, win.installer.file), installer);
   await writeFile(join(windows, win.runtime.file), pack);
@@ -947,10 +943,10 @@ test('all three checked bundles publish together as one regular Otto release', a
   await assert.rejects(f.invoke('draft-all'));
   assert.equal((await f.readState()).created, 0);
   await writeFile(join(windows, 'windows-check.json'), JSON.stringify(receipt));
-  await writeFile(join(intel, 'Otto-x64.zip'), 'Corrupt Intel ZIP');
+  await writeFile(join(intel, 'nod-x64.zip'), 'Corrupt Intel ZIP');
   await assert.rejects(f.invoke('draft-all'));
   assert(!Object.values((await f.readState()).releases).some((release) => !release.draft));
-  await copyFile(join(arm, 'Otto-arm64.zip'), join(intel, 'Otto-x64.zip'));
+  await copyFile(join(arm, 'nod-arm64.zip'), join(intel, 'nod-x64.zip'));
   for (const hidden of [runtime.archive.file, win.runtime.file]) {
     await f.writeState({ ...(await f.readState()), brokerHides: [hidden] });
     await assert.rejects(f.invoke('draft-all'));
@@ -967,9 +963,9 @@ test('all three checked bundles publish together as one regular Otto release', a
     [f.appTag, f.appTag, f.appTag],
   );
   for (const name of [
-    'Otto-arm64.dmg',
-    'Otto-x64.dmg',
-    'Otto-Setup-x64.exe',
+    'nod-arm64.dmg',
+    'nod-x64.dmg',
+    'nod-Setup-x64.exe',
     runtime.archive.file,
     f.release.archive.file,
     win.runtime.file,
@@ -978,7 +974,7 @@ test('all three checked bundles publish together as one regular Otto release', a
 });
 
 test('bundle copy includes explicit release assets under .local while excluding private descendants', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-bundle-copy-'));
+  const root = await mkdtemp(join(tmpdir(), 'nod-bundle-copy-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, '.local', 'release');
   const target = join(root, 'bundle');
@@ -1028,7 +1024,7 @@ test('engine source imports only production dependencies outside the development
 });
 
 test('packaged engine loads dynamic dependencies and binary links outside the checkout and excludes other platforms', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-packaged-dependencies-'));
+  const root = await mkdtemp(join(tmpdir(), 'nod-packaged-dependencies-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'checkout');
   const target = join(root, 'application');
@@ -1119,7 +1115,7 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
 });
 
 async function fixture(t, extra) {
-  const root = await mkdtemp(join(tmpdir(), 'otto-runtime-assets-'));
+  const root = await mkdtemp(join(tmpdir(), 'nod-runtime-assets-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'source');
   const resourcesPath = join(root, 'resources');
@@ -1179,7 +1175,7 @@ test('runtime extraction rejects traversal, symlinks and oversized content witho
   assert.deepEqual(await readdir(options.cacheRoot), []);
   for (const extra of [
     async ({ source }) => {
-      await symlink('/tmp/otto-outside-fixture', join(source, 'unexpected'));
+      await symlink('/tmp/nod-outside-fixture', join(source, 'unexpected'));
       return ['unexpected'];
     },
     async ({ source }) => {
@@ -1354,7 +1350,7 @@ test(
   'workload firewall refresh blocks private TCP traffic without interrupting public connections',
   {
     skip:
-      process.env.OTTO_TEST_RUNTIME_NETWORK !== '1' ||
+      process.env.NOD_TEST_RUNTIME_NETWORK !== '1' ||
       process.platform !== 'linux' ||
       process.getuid?.() !== 0,
   },
@@ -1362,7 +1358,7 @@ test(
     const { execFile } = await import('node:child_process');
     const { promisify } = await import('node:util');
     const { protectNetworks } = await import('../runtime/guest-config.mjs');
-    const root = await mkdtemp(join(tmpdir(), 'otto-firewall-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-firewall-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     await writeFile(join(root, 'firewall'), protectNetworks);
     await writeFile(
@@ -1372,7 +1368,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 def run(*args):
     return subprocess.run(args, check=True, text=True, capture_output=True)
-for name, interface, network in [('workload', 'otto-workspace', '172.31.81'), ('target', 'otto-fixture', '10.70.0')]:
+for name, interface, network in [('workload', 'nod-workspace', '172.31.81'), ('target', 'nod-fixture', '10.70.0')]:
     run('ip', 'netns', 'add', name)
     run('ip', '-n', name, 'link', 'set', 'lo', 'up')
     run('ip', 'link', 'add', interface, 'type', 'veth', 'peer', 'name', name)
@@ -1437,11 +1433,11 @@ try:
     for name in ['iptables', 'iptables-restore']:
         executable = run('which', name).stdout.strip()
         (wrapper/name).write_text('#!/bin/bash\n'+(
-            'cat > "$OTTO_PROBE/transaction"\ntouch "$OTTO_PROBE/paused"\nwhile [ ! -f "$OTTO_PROBE/released" ]; do sleep 0.01; done\nexec '+executable+' "$@" < "$OTTO_PROBE/transaction"\n'
+            'cat > "$NOD_PROBE/transaction"\ntouch "$NOD_PROBE/paused"\nwhile [ ! -f "$NOD_PROBE/released" ]; do sleep 0.01; done\nexec '+executable+' "$@" < "$NOD_PROBE/transaction"\n'
             if name == 'iptables-restore' else
-            executable+' "$@"\nresult=$?\nif [ "$1" = -F ] && [ "$2" = OTTO-WORKLOADS ]; then\ntouch "$OTTO_PROBE/paused"\nwhile [ ! -f "$OTTO_PROBE/released" ]; do sleep 0.01; done\nfi\nexit "$result"\n'))
+            executable+' "$@"\nresult=$?\nif [ "$1" = -F ] && [ "$2" = NOD-WORKLOADS ]; then\ntouch "$NOD_PROBE/paused"\nwhile [ ! -f "$NOD_PROBE/released" ]; do sleep 0.01; done\nfi\nexit "$result"\n'))
         (wrapper/name).chmod(0o755)
-    refresh = subprocess.Popen(['bash', str(root/'firewall')], env={**os.environ, 'PATH':str(wrapper)+':'+os.environ['PATH'], 'OTTO_PROBE':str(root)})
+    refresh = subprocess.Popen(['bash', str(root/'firewall')], env={**os.environ, 'PATH':str(wrapper)+':'+os.environ['PATH'], 'NOD_PROBE':str(root)})
     deadline = time.monotonic()+5
     while not (root/'paused').exists() and time.monotonic() < deadline:
         time.sleep(0.01)
@@ -1473,7 +1469,7 @@ finally:
         'bash',
         '-euc',
         'mount --make-rprivate /; mkdir -p /run/netns; mount -t tmpfs tmpfs /run/netns; exec python3 "$1/probe.py" "$1"',
-        'otto-firewall-fixture',
+        'nod-firewall-fixture',
         root,
       ],
       {
@@ -1539,7 +1535,7 @@ test('a failed runtime command names its cause from the end of its output, inclu
       'console.error("started\\n" + "x".repeat(400) + "\\nError response from daemon: Pool overlaps"); process.exit(3)',
     ]),
     {
-      message: /^Otto runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
+      message: /^nod runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
     },
   );
   await assert.rejects(
@@ -1549,7 +1545,7 @@ test('a failed runtime command names its cause from the end of its output, inclu
     ]),
     {
       message:
-        'Otto runtime command failed (1): Error code: Wsl/Service/CreateInstance/CreateVm/HCS_E_HYPERV_NOT_INSTALLED',
+        'nod runtime command failed (1): Error code: Wsl/Service/CreateInstance/CreateVm/HCS_E_HYPERV_NOT_INSTALLED',
     },
   );
 });
@@ -1557,9 +1553,9 @@ test('a failed runtime command names its cause from the end of its output, inclu
 test('runtime networks reject isolation drift before any workload can start', async () => {
   const { ensureNetwork } = await import('../runtime/index.mjs');
   const expected = {
-    name: 'otto-workspace-synthetic',
+    name: 'nod-workspace-synthetic',
     subnet: '172.31.81.0/24',
-    bridge: 'otto-workspace',
+    bridge: 'nod-workspace',
   };
   const network = {
     Driver: 'bridge',
@@ -1588,22 +1584,22 @@ test('runtime networks reject isolation drift before any workload can start', as
 
 test('runtime replaces owned containers even with unchanged images and retains their data volumes', async () => {
   const { replaceContainer } = await import('../runtime/index.mjs');
-  const name = 'otto-workspace-synthetic';
+  const name = 'nod-workspace-synthetic';
   const image = `sha256:${'a'.repeat(64)}`;
   const args = [
     '--network',
-    'otto-workspace-synthetic',
+    'nod-workspace-synthetic',
     '--cap-drop',
     'ALL',
     '--security-opt',
     'no-new-privileges:true',
     '--volume',
-    'otto-workspace-synthetic:/workspace',
+    'nod-workspace-synthetic:/workspace',
   ];
   const current = {
     Image: image,
-    Config: { Labels: { 'dev.otto.desktop.experiment': 'true' } },
-    Mounts: [{ Type: 'volume', Name: 'otto-workspace-synthetic', Destination: '/workspace' }],
+    Config: { Labels: { 'dev.nod.desktop.experiment': 'true' } },
+    Mounts: [{ Type: 'volume', Name: 'nod-workspace-synthetic', Destination: '/workspace' }],
     HostConfig: { Privileged: true, NetworkMode: 'host' },
     State: { Running: true },
   };
@@ -1618,7 +1614,7 @@ test('runtime replaces owned containers even with unchanged images and retains t
     args,
   );
   assert.equal(calls.at(-1)[0], 'run');
-  assert.ok(calls.at(-1).includes('otto-workspace-synthetic:/workspace'));
+  assert.ok(calls.at(-1).includes('nod-workspace-synthetic:/workspace'));
   for (const changed of [
     { ...current, Config: { Labels: {} } },
     { ...current, Mounts: [{ Type: 'volume', Name: 'other-data', Destination: '/workspace' }] },
@@ -1641,11 +1637,11 @@ test('runtime replaces owned containers even with unchanged images and retains t
 
 test('runtime retries reuse only the same owned PostgreSQL container with unchanged storage, port and security', async () => {
   const { replaceContainer } = await import('../runtime/index.mjs');
-  const name = 'otto-postgres-fixture';
+  const name = 'nod-postgres-fixture';
   const image = `sha256:${'a'.repeat(64)}`;
   const args = [
     '--network',
-    'otto-control-fixture',
+    'nod-control-fixture',
     '--publish',
     '127.0.0.1:54329:5432',
     '--volume',
@@ -1654,14 +1650,14 @@ test('runtime retries reuse only the same owned PostgreSQL container with unchan
   const original = {
     Id: 'synthetic-postgres-container',
     Image: image,
-    Config: { Labels: { 'dev.otto.desktop.experiment': 'true' }, Env: ['POSTGRES_DB=otto'] },
+    Config: { Labels: { 'dev.nod.desktop.experiment': 'true' }, Env: ['POSTGRES_DB=nod'] },
     Mounts: [{ Type: 'volume', Name: name, Destination: '/var/lib/postgresql/data', RW: true }],
     HostConfig: {
       Privileged: false,
-      NetworkMode: 'otto-control-fixture',
+      NetworkMode: 'nod-control-fixture',
       PortBindings: { '5432/tcp': [{ HostIp: '127.0.0.1', HostPort: '54329' }] },
     },
-    NetworkSettings: { Networks: { 'otto-control-fixture': { NetworkID: 'owned-control' } } },
+    NetworkSettings: { Networks: { 'nod-control-fixture': { NetworkID: 'owned-control' } } },
     State: { Running: true },
   };
   const reuse = await replaceContainer(
@@ -1698,7 +1694,7 @@ test('runtime retries reuse only the same owned PostgreSQL container with unchan
       value.Config.Env = ['POSTGRES_DB=foreign'];
     },
     (value) => {
-      value.NetworkSettings.Networks['otto-control-fixture'].NetworkID = 'foreign';
+      value.NetworkSettings.Networks['nod-control-fixture'].NetworkID = 'foreign';
     },
   ]) {
     const current = structuredClone(original);
@@ -1917,7 +1913,7 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
                   Id: `synthetic-container-${++created}`,
                   Image: args.find((value) => value.startsWith('sha256:')),
                   State: { Running: true },
-                  Config: { Labels: { 'dev.otto.desktop.experiment': 'true' } },
+                  Config: { Labels: { 'dev.nod.desktop.experiment': 'true' } },
                   Mounts: args.flatMap((value, index) => {
                     if (value !== '--volume') return [];
                     const [Name, Destination] = args[index + 1].split(':');
@@ -1945,7 +1941,7 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
       stopEngine: async () => {},
       onRuntimeStatus() {},
     });
-    const postgres = () => containers.get('otto-postgres-fixture').Id;
+    const postgres = () => containers.get('nod-postgres-fixture').Id;
     try {
       await assert.rejects(lifecycle.start(), /Synthetic workspace startup failure/);
       const original = postgres();
@@ -1967,7 +1963,7 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
         `${failure}: explicit retry must replace failed PostgreSQL`,
       );
       const launches = commands.filter(
-        (args) => args[0] === 'run' && args.includes('otto-postgres-fixture'),
+        (args) => args[0] === 'run' && args.includes('nod-postgres-fixture'),
       );
       assert.equal(launches.length, 2);
       assert.deepEqual(launches[1], launches[0]);
@@ -1980,7 +1976,7 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
 });
 
 async function windowsImageFixture(t) {
-  const root = await mkdtemp(join(tmpdir(), 'otto-windows-image-order-'));
+  const root = await mkdtemp(join(tmpdir(), 'nod-windows-image-order-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'images'));
   const images = await Promise.all(
@@ -2012,9 +2008,9 @@ state = json.load(original_open(state_path))
 manifest = json.load(original_open(os.path.join(root, 'manifest.json')))
 def mapped(path):
     path = os.fspath(path)
-    for prefix in ['/opt/otto-assets/', '/var/lib/otto/']:
+    for prefix in ['/opt/nod-assets/', '/var/lib/nod/']:
         if path.startswith(prefix): return os.path.join(root, path[len(prefix):])
-    if path == '/var/lib/otto': return root
+    if path == '/var/lib/nod': return root
     raise RuntimeError('Unexpected fixture path')
 def run(args, **kwargs):
     state['commands'].append(args[1:])
@@ -2082,7 +2078,7 @@ test('runtime hands off verified storage before browser readiness and fences fai
     'windows-damaged',
   ]) {
     await t.test(outcome, async (t) => {
-      const root = await mkdtemp(join(tmpdir(), 'otto-storage-ready-'));
+      const root = await mkdtemp(join(tmpdir(), 'nod-storage-ready-'));
       t.after(() => rm(root, { recursive: true, force: true }));
       const signal = new AbortController();
       const windows = outcome.startsWith('windows-') ? await windowsImageFixture(t) : undefined;
@@ -2141,7 +2137,7 @@ test('runtime hands off verified storage before browser readiness and fences fai
               Internal: false,
               IPAM: { Config: [{ Subnet: `172.31.${80 + index}.0/24` }] },
               Options: {
-                'com.docker.network.bridge.name': `otto-${role}`,
+                'com.docker.network.bridge.name': `nod-${role}`,
                 'com.docker.network.bridge.enable_icc': 'false',
               },
             },
@@ -2155,11 +2151,11 @@ test('runtime hands off verified storage before browser readiness and fences fai
               Id: args[2],
               Image: 'sha256:postgres',
               State: { Running: true },
-              Config: { Labels: { 'dev.otto.desktop.experiment': 'true' } },
+              Config: { Labels: { 'dev.nod.desktop.experiment': 'true' } },
               Mounts: [
                 {
                   Type: 'volume',
-                  Name: 'otto-postgres-fixture',
+                  Name: 'nod-postgres-fixture',
                   Destination: '/var/lib/postgresql/data',
                 },
               ],
@@ -2167,7 +2163,7 @@ test('runtime hands off verified storage before browser readiness and fences fai
           ]);
         }
         if (args[0] === 'inspect') return 'true';
-        if (args[0] === 'exec' && args[1] === 'otto-browser-fixture') {
+        if (args[0] === 'exec' && args[1] === 'nod-browser-fixture') {
           blocked();
           if (outcome === 'callback-failed') release();
           await Promise.race([
@@ -2221,13 +2217,13 @@ test('runtime hands off verified storage before browser readiness and fences fai
               (command) =>
                 Array.isArray(command) &&
                 command[0] === 'run' &&
-                command.includes('otto-workspace-fixture'),
+                command.includes('nod-workspace-fixture'),
             ),
             false,
           );
           assert.equal(runtime.env, runtime.environment);
           assert.equal(new URL(runtime.env.DATABASE_URL).port, '54329');
-          assert.equal(runtime.env.WORKSPACE_CONTAINER, 'otto-workspace-fixture');
+          assert.equal(runtime.env.WORKSPACE_CONTAINER, 'nod-workspace-fixture');
           if (process.platform !== 'win32')
             assert.ok((await stat(join(root, 'bin/docker'))).isFile());
           storage = runtime;
@@ -2258,7 +2254,7 @@ test('runtime hands off verified storage before browser readiness and fences fai
               (command) =>
                 Array.isArray(command) &&
                 command[0] === 'run' &&
-                command.includes('otto-browser-fixture'),
+                command.includes('nod-browser-fixture'),
             ),
             false,
           );
@@ -2289,7 +2285,7 @@ test('runtime hands off verified storage before browser readiness and fences fai
                 (command) =>
                   Array.isArray(command) &&
                   command[0] === 'run' &&
-                  command.includes('otto-workspace-fixture'),
+                  command.includes('nod-workspace-fixture'),
               ),
               false,
             );
@@ -2312,7 +2308,7 @@ test('runtime hands off verified storage before browser readiness and fences fai
                 (command) =>
                   Array.isArray(command) &&
                   command[0] === 'run' &&
-                  command.includes('otto-browser-fixture'),
+                  command.includes('nod-browser-fixture'),
               ),
               false,
             );
@@ -2359,7 +2355,7 @@ test('runtime fingerprints cover dependencies and every source the images use, a
   const { build } = await import('esbuild');
   const { browserEntries, browserSources, runtimeInputs } =
     await import('../scripts/runtime-inputs.mjs');
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-runtime-inputs-')));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-runtime-inputs-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const repository = fileURLToPath(new URL('../../', import.meta.url));
   const bundle = await build({
@@ -2541,7 +2537,7 @@ test('a different verified runtime downloads into its own cache, survives corrup
 
 test('runtime cleanup removes only old unmounted packs and leftovers inside the managed cache', async (t) => {
   const { removeUnusedRuntimes } = await import('../runtime/assets.mjs');
-  const cacheRoot = await realpath(await mkdtemp(join(tmpdir(), 'otto-runtime-cleanup-')));
+  const cacheRoot = await realpath(await mkdtemp(join(tmpdir(), 'nod-runtime-cleanup-')));
   t.after(() => rm(cacheRoot, { recursive: true, force: true }));
   const id = (letter) => letter.repeat(64);
   const names = {
@@ -2605,49 +2601,49 @@ test(
   { skip: process.platform === 'win32' },
   async (t) => {
     const { removeProfile } = await import('../runtime/index.mjs');
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-remove-profile-')));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-remove-profile-')));
     const home = process.env.HOME;
     process.env.HOME = join(root, 'home');
     t.after(async () => {
       process.env.HOME = home;
       await rm(root, { recursive: true, force: true });
     });
-    const homes = join(root, 'home', '.otto-desktop');
+    const homes = join(root, 'home', '.nod-desktop');
     const computer = (profile) =>
       join(homes, createHash('sha256').update(profile).digest('hex').slice(0, 12));
-    const profiles = [join(root, 'Otto/profiles/local'), join(root, 'Other/profiles/local')];
+    const profiles = [join(root, 'nod/profiles/local'), join(root, 'Other/profiles/local')];
     for (const profile of profiles) {
       await mkdir(join(profile, 'desktop-runtime'), { recursive: true });
       await writeFile(join(profile, 'desktop-runtime/state.json'), '{}');
-      await mkdir(join(computer(profile), 'otto'), { recursive: true });
-      await writeFile(join(computer(profile), 'otto/lima.yaml'), '{}');
+      await mkdir(join(computer(profile), 'nod'), { recursive: true });
+      await writeFile(join(computer(profile), 'nod/lima.yaml'), '{}');
     }
     await removeProfile({ dataRoot: profiles[0], resourcesPath: root });
     await assert.rejects(stat(profiles[0]), { code: 'ENOENT' });
     await assert.rejects(stat(computer(profiles[0])), { code: 'ENOENT' });
     assert.equal(await readFile(join(profiles[1], 'desktop-runtime/state.json'), 'utf8'), '{}');
-    assert.equal(await readFile(join(computer(profiles[1]), 'otto/lima.yaml'), 'utf8'), '{}');
+    assert.equal(await readFile(join(computer(profiles[1]), 'nod/lima.yaml'), 'utf8'), '{}');
     await removeProfile({ dataRoot: profiles[1], resourcesPath: root });
     await assert.rejects(stat(homes), { code: 'ENOENT' });
-    assert.deepEqual(await readdir(join(root, 'Otto/profiles')), []);
+    assert.deepEqual(await readdir(join(root, 'nod/profiles')), []);
   },
 );
 
 test('local test installs refuse normal apps and cannot reuse or follow foreign profiles', async (t) => {
   const { testProfile, validateTestApplication } = await import('../scripts/test-install.mjs');
-  const temporary = await realpath(await mkdtemp(join(tmpdir(), 'otto-test-install-')));
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), 'nod-test-install-')));
   t.after(() => rm(temporary, { recursive: true, force: true }));
-  const application = join(temporary, 'Otto.app');
+  const application = join(temporary, 'nod.app');
   const packagePath = join(application, 'Contents', 'Resources', 'app', 'package.json');
   await mkdir(dirname(packagePath), { recursive: true });
-  await writeFile(packagePath, JSON.stringify({ name: 'otto-desktop', productName: 'Otto' }));
-  await assert.rejects(validateTestApplication(application), /not an isolated Otto test/);
+  await writeFile(packagePath, JSON.stringify({ name: 'nod-desktop', productName: 'nod' }));
+  await assert.rejects(validateTestApplication(application), /not an isolated nod test/);
   await writeFile(
     packagePath,
     JSON.stringify({
-      name: 'otto-setup-test',
-      productName: 'Otto Setup Test',
-      ottoBuild: { testProfile: true },
+      name: 'nod-setup-test',
+      productName: 'nod Setup Test',
+      nodBuild: { testProfile: true },
     }),
   );
   await validateTestApplication(application);

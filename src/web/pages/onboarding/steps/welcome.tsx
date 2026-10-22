@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { OttoGlyph, Rise, type GlyphReaction } from '../../../components/motion';
+import { NodGlyph, Rise, type GlyphReaction } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import type { StepProps } from '..';
 import { errorMessage } from '../../../lib/api';
@@ -105,7 +105,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
                 replay();
               }}
             >
-              <OttoGlyph mode={typing ? 'thinking' : 'idle'} reaction={reaction} />
+              <NodGlyph mode={typing ? 'thinking' : 'idle'} reaction={reaction} />
             </button>
           </span>
         }
@@ -118,7 +118,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
               >
                 👋
               </span>
-              Hey, I’m Otto.
+              Hey, I’m nod.
             </span>
             <span className="ob-greeting-sub">
               Your personal assistant for <strong>work and life</strong>.
@@ -142,7 +142,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
                   error={error}
                   onChange={(value) => void change(value)}
                 >
-                  Help us make Otto better by sharing how you use it. Never your messages.{' '}
+                  Help us make nod better by sharing how you use it. Never your messages.{' '}
                   <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
                     What’s shared
                   </a>

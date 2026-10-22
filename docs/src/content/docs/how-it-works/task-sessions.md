@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-Otto has one conversation per owner. The main chat session coordinates work. Each independent task gets a saved session that reports to the same conversation. Short requests stay in the main chat.
+nod has one conversation per owner. The main chat session coordinates work. Each independent task gets a saved session that reports to the same conversation. Short requests stay in the main chat.
 
 ## The architecture
 
@@ -96,9 +96,9 @@ Shared information does not grant permission. For a task started from chat, the 
 
 Web chat and the Tasks page show the same compact preview. Expand it for steps, activity, the completion condition and task controls. Activity shows tool and helper events, not private model reasoning.
 
-Telegram shows the task as messages Otto writes. Its questions and result reply to its first message. `/tasks` sends a replyable status message for each open task. Reply with `/status` to inspect it or `/stop` to stop it. Native reply links for text parts and files select the same saved task in Telegram and WhatsApp.
+Telegram shows the task as messages nod writes. Its questions and result reply to its first message. `/tasks` sends a replyable status message for each open task. Reply with `/status` to inspect it or `/stop` to stop it. Native reply links for text parts and files select the same saved task in Telegram and WhatsApp.
 
-These are views of one task record and session. A pending approval remains bound to its exact question and action. An old status message cannot approve a later action. Private sign-in and payment steps remain in Otto's private forms.
+These are views of one task record and session. A pending approval remains bound to its exact question and action. An old status message cannot approve a later action. Private sign-in and payment steps remain in nod's private forms.
 
 See [Track tasks](/use/tasks/) for controls and screenshots.
 
@@ -111,8 +111,8 @@ See [Track tasks](/use/tasks/) for controls and screenshots.
 
 ## Code and related guides
 
-- [`src/server/tasks.ts`](https://github.com/n8n-io/otto/blob/main/src/server/tasks.ts): task ledger, dispatch, updates, reply targets and controls.
-- [`src/server/thread.ts`](https://github.com/n8n-io/otto/blob/main/src/server/thread.ts): turn queue, session routing, input delivery and interruption handling.
+- [`src/server/tasks.ts`](https://github.com/n8n-io/nod/blob/main/src/server/tasks.ts): task ledger, dispatch, updates, reply targets and controls.
+- [`src/server/thread.ts`](https://github.com/n8n-io/nod/blob/main/src/server/thread.ts): turn queue, session routing, input delivery and interruption handling.
 - [Threads and turns](/how-it-works/threads-and-turns/): execution and session lifecycle.
 - [Workspace and files](/use/workspace/): file access and delivery.
 - [Memory](/how-it-works/memory/): shared owner context.

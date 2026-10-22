@@ -10,7 +10,7 @@ const maximumNotesBytes = 64 * 1024;
 
 export function releaseVersion(value) {
   if (typeof value !== 'string' || value.length > 64 || !versionPattern.test(value))
-    throw new Error('OTTO_RELEASE_VERSION must be a stable semantic version, such as 0.1.0.');
+    throw new Error('NOD_RELEASE_VERSION must be a stable semantic version, such as 0.1.0.');
   return value;
 }
 
@@ -49,11 +49,11 @@ function tagExists(root, tag) {
 }
 
 function latestTag(root, source) {
-  const tags = git(root, ['tag', '--merged', source, '--list', 'desktop-v*'])
+  const tags = git(root, ['tag', '--merged', source, '--list', 'nod-v*'])
     .trim()
     .split('\n')
-    .filter((tag) => versionPattern.test(tag.slice('desktop-v'.length)));
-  return tags.sort((a, b) => compareVersions(b.slice(9), a.slice(9)))[0] ?? null;
+    .filter((tag) => versionPattern.test(tag.slice('nod-v'.length)));
+  return tags.sort((a, b) => compareVersions(b.slice(5), a.slice(5)))[0] ?? null;
 }
 
 export function isReleaseMerge(pull, source, sourceRepository) {
@@ -118,7 +118,7 @@ export function currentNotes(changelog, version) {
 
 export function releaseNotes(root, version, previousTag, source, date, allowEmpty = false) {
   const commits = releaseCommits(root, previousTag, source, allowEmpty);
-  const repository = `https://github.com/${process.env.GITHUB_REPOSITORY || 'n8n-io/otto'}`;
+  const repository = `https://github.com/${process.env.GITHUB_REPOSITORY || 'n8n-io/nod'}`;
   const groups = new Map(
     [
       'Breaking changes',
@@ -208,9 +208,9 @@ export function automaticRelease(root, releases, sourceRepository) {
   if (!Array.isArray(releases)) throw new Error('Desktop release history is unavailable.');
   const desktop = releases
     .filter((release) =>
-      /^desktop-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(release.tag_name),
+      /^nod-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(release.tag_name),
     )
-    .sort((a, b) => compareVersions(b.tag_name.slice(9), a.tag_name.slice(9)));
+    .sort((a, b) => compareVersions(b.tag_name.slice(5), a.tag_name.slice(5)));
   const previous = desktop.find((release) => release.draft === false);
   if (!previous) throw new Error('Automatic releases require a published desktop baseline.');
   const previousTag = previous.tag_name;
@@ -227,18 +227,18 @@ export function automaticRelease(root, releases, sourceRepository) {
   if (pending) {
     if (
       !pending.body?.includes(marker) ||
-      compareVersions(pending.tag_name.slice(9), previousTag.slice(9)) <= 0
+      compareVersions(pending.tag_name.slice(5), previousTag.slice(5)) <= 0
     )
       throw new Error('The pending desktop release does not match this source and version.');
-    version = pending.tag_name.slice(9);
+    version = pending.tag_name.slice(5);
   } else {
-    const [major, minor, patch] = previousTag.slice(9).split('.');
+    const [major, minor, patch] = previousTag.slice(5).split('.');
     const reserved = new Set([
       ...desktop.map((release) => release.tag_name),
-      ...git(root, ['tag', '--list', 'desktop-v*']).trim().split('\n'),
+      ...git(root, ['tag', '--list', 'nod-v*']).trim().split('\n'),
     ]);
     let next = BigInt(patch) + 1n;
-    while (reserved.has(`desktop-v${major}.${minor}.${next}`)) next++;
+    while (reserved.has(`nod-v${major}.${minor}.${next}`)) next++;
     version = releaseVersion(`${major}.${minor}.${next}`);
   }
   const date = new Date().toISOString().slice(0, 10);
@@ -270,8 +270,8 @@ export async function checkReleasePlan(root, input, path, digest) {
     !/^\d{4}-\d{2}-\d{2}$/.test(plan.date) ||
     !Number.isFinite(Date.parse(plan.date)) ||
     new Date(plan.date).toISOString().slice(0, 10) !== plan.date ||
-    !/^desktop-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(plan.previousTag) ||
-    compareVersions(plan.version, plan.previousTag.slice(9)) <= 0 ||
+    !/^nod-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(plan.previousTag) ||
+    compareVersions(plan.version, plan.previousTag.slice(5)) <= 0 ||
     !tagExists(root, plan.previousTag) ||
     git(root, ['merge-base', '--is-ancestor', plan.previousTag, source], true) === null ||
     git(root, ['status', '--porcelain', '--untracked-files=no']).trim()
@@ -280,24 +280,24 @@ export async function checkReleasePlan(root, input, path, digest) {
   if (plan.notes !== releaseNotes(root, plan.version, plan.previousTag, source, plan.date, true))
     throw new Error('The release plan notes do not match the source changes.');
   if (
-    tagExists(root, `desktop-v${plan.version}`) &&
-    git(root, ['rev-parse', `refs/tags/desktop-v${plan.version}^{commit}`]).trim() !== source
+    tagExists(root, `nod-v${plan.version}`) &&
+    git(root, ['rev-parse', `refs/tags/nod-v${plan.version}^{commit}`]).trim() !== source
   )
     throw new Error('The desktop release tag already points to another commit.');
   return plan;
 }
 
 export async function configuredRelease(root) {
-  const path = process.env.OTTO_RELEASE_PLAN || releaseFiles[1];
+  const path = process.env.NOD_RELEASE_PLAN || releaseFiles[1];
   const manifest = await readJson(root, path);
-  return checkRelease(root, process.env.OTTO_RELEASE_VERSION || manifest.version);
+  return checkRelease(root, process.env.NOD_RELEASE_VERSION || manifest.version);
 }
 
 export async function prepareRelease(root, input) {
   const source = repository(root);
   const previousTag = latestTag(root, source);
   const [major, minor, patch] = (
-    previousTag?.slice(9) || (await readJson(root, releaseFiles[0])).version
+    previousTag?.slice(5) || (await readJson(root, releaseFiles[0])).version
   ).split('.');
   const version = releaseVersion(input || `${major}.${minor}.${BigInt(patch) + 1n}`);
   if (
@@ -306,8 +306,7 @@ export async function prepareRelease(root, input) {
     throw new Error(
       'Commit or restore changes to the desktop release files before preparing a release.',
     );
-  if (tagExists(root, `desktop-v${version}`))
-    throw new Error(`Tag desktop-v${version} already exists.`);
+  if (tagExists(root, `nod-v${version}`)) throw new Error(`Tag nod-v${version} already exists.`);
   const [pkg, changelog] = await Promise.all([
     readJson(root, releaseFiles[0]),
     readFile(resolve(root, releaseFiles[2]), 'utf8'),
@@ -317,7 +316,7 @@ export async function prepareRelease(root, input) {
     compareVersions(version, current) < 0 ||
     (previousTag &&
       (compareVersions(version, current) === 0 ||
-        compareVersions(version, previousTag.slice(9)) <= 0))
+        compareVersions(version, previousTag.slice(5)) <= 0))
   )
     throw new Error(
       'The release version must increase beyond the current package and previous desktop release.',
@@ -348,14 +347,14 @@ export async function prepareRelease(root, input) {
 
 export async function checkRelease(root, input) {
   const version = releaseVersion(input);
-  if (process.env.OTTO_RELEASE_PLAN) {
+  if (process.env.NOD_RELEASE_PLAN) {
     if (process.env.GITHUB_ACTIONS !== 'true')
       throw new Error('Generated release plans are only accepted in GitHub Actions.');
     return checkReleasePlan(
       root,
       version,
-      process.env.OTTO_RELEASE_PLAN,
-      process.env.OTTO_RELEASE_PLAN_SHA256,
+      process.env.NOD_RELEASE_PLAN,
+      process.env.NOD_RELEASE_PLAN_SHA256,
     );
   }
   const head = repository(root);
@@ -386,11 +385,11 @@ export async function checkRelease(root, input) {
     throw new Error('Source changes landed after release preparation; regenerate the release PR.');
   if (manifest.previousTag !== latestTag(root, manifest.source))
     throw new Error('The manifest previous tag does not match the release source history.');
-  if (manifest.previousTag && compareVersions(version, manifest.previousTag.slice(9)) <= 0)
+  if (manifest.previousTag && compareVersions(version, manifest.previousTag.slice(5)) <= 0)
     throw new Error('The release version must exceed the previous desktop tag.');
   if (
-    tagExists(root, `desktop-v${version}`) &&
-    git(root, ['rev-parse', `refs/tags/desktop-v${version}^{commit}`]).trim() !== head
+    tagExists(root, `nod-v${version}`) &&
+    git(root, ['rev-parse', `refs/tags/nod-v${version}^{commit}`]).trim() !== head
   )
     throw new Error('The desktop release tag already points to another commit.');
   const notes = currentNotes(changelog, version);
@@ -415,23 +414,23 @@ async function main() {
   const root = process.cwd();
   let version;
   if (!args.length) {
-    const manifest = await prepareRelease(root, process.env.OTTO_RELEASE_VERSION);
+    const manifest = await prepareRelease(root, process.env.NOD_RELEASE_VERSION);
     version = manifest.version;
-    if (process.env.OTTO_RELEASE_NOTES_FILE)
+    if (process.env.NOD_RELEASE_NOTES_FILE)
       await writeFile(
-        process.env.OTTO_RELEASE_NOTES_FILE,
+        process.env.NOD_RELEASE_NOTES_FILE,
         currentNotes(await readFile(resolve(root, releaseFiles[2]), 'utf8'), version),
       );
-    process.stdout.write(`Prepared desktop-v${version} from ${manifest.source}.\n`);
+    process.stdout.write(`Prepared nod-v${version} from ${manifest.source}.\n`);
   } else {
     version = releaseVersion(
-      process.env.OTTO_RELEASE_VERSION || (await configuredRelease(root)).version,
+      process.env.NOD_RELEASE_VERSION || (await configuredRelease(root)).version,
     );
     const release = await checkRelease(root, version);
     if (args[0] === '--notes') {
       if (args[1]) await writeFile(resolve(root, args[1]), release.notes);
       else process.stdout.write(release.notes);
-    } else process.stdout.write(`Validated desktop-v${version}.\n`);
+    } else process.stdout.write(`Validated nod-v${version}.\n`);
   }
   if (process.env.GITHUB_OUTPUT)
     await appendFile(process.env.GITHUB_OUTPUT, `version=${version}\n`);

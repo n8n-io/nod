@@ -92,7 +92,7 @@ export function ModelSettings({
         <div className="model-current">
           <div className="model-current-label" data-analytics-public>
             <strong>Your model</strong>
-            <span>Otto uses it for every reply</span>
+            <span>nod uses it for every reply</span>
           </div>
           <ModelPicker manageConnections={false} surface="settings" />
         </div>
@@ -216,7 +216,7 @@ export function ModelSettings({
                   </Field>
                   {provider === 'compatible' && (
                     <p className="model-key-note">
-                      Otto also uses this model to decide when to ask you before acting. Smaller
+                      nod also uses this model to decide when to ask you before acting. Smaller
                       models decide less reliably.
                     </p>
                   )}
@@ -331,7 +331,7 @@ export function ModelSettings({
       {signIn && (
         <div className="model-sign-in">
           <p>
-            Complete sign-in in the browser, then return to Otto. If the browser ends on a page that
+            Complete sign-in in the browser, then return to nod. If the browser ends on a page that
             does not load, copy its full address and paste it below.
           </p>
           <Button type="button" variant="outline" size="sm" onClick={flow.reopen}>
@@ -431,13 +431,13 @@ export function ModelPicker({
     if (models.busy) return;
     const capture = analyticsForCurrentSession();
     if (await models.change('/api/models/selection', 'PUT', modelSelection(source, id))) {
-      capture('otto_model_selected', {
+      capture('nod_model_selected', {
         provider: source.provider in modelProviderNames ? source.provider : 'other',
         entry: surface,
         recommended,
       });
       setOpen(false);
-    } else capture('otto_ui_error', { area: 'models', action: 'save' });
+    } else capture('nod_ui_error', { area: 'models', action: 'save' });
   }
   return (
     <div className="model-picker">

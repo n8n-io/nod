@@ -13,7 +13,7 @@ const writes = new Map<string, Promise<void>>();
 
 function database() {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open('otto-feedback', 1);
+    const request = indexedDB.open('nod-feedback', 1);
     let settled = false;
     const fail = () => {
       settled = true;

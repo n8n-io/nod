@@ -9,7 +9,7 @@ import {
   type OnboardingInterview,
   type OnboardingInterviewState,
 } from '../../../../shared/onboarding';
-import { OttoGlyph, prefersReducedMotion, Rise } from '../../../components/motion';
+import { NodGlyph, prefersReducedMotion, Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
 import { api, ApiError, errorMessage } from '../../../lib/api';
@@ -23,7 +23,7 @@ const opening = ['I’d love to get to know you a little.', 'What are you workin
 const handOff = 'What’s one thing you’d love to take off your plate?';
 const still = (
   <span className="ob-avatar">
-    <OttoGlyph mode="still" />
+    <NodGlyph mode="still" />
   </span>
 );
 const scope = () => readStep<{ owner: string; version: number }>();
@@ -127,7 +127,7 @@ export function About({ arrived, onNext, onBack }: StepProps) {
     const controller = new AbortController();
     const started = Date.now();
     const talk: InterviewMessage[] = turns.flatMap((said, at) => [
-      ...said.map((text) => ({ from: 'otto' as const, text })),
+      ...said.map((text) => ({ from: 'nod' as const, text })),
       { from: 'owner' as const, text: answers[at] },
     ]);
     const next =

@@ -47,7 +47,7 @@ type Desktop = {
   onPreferences(listener: (preferences: Preferences) => void): (() => void) | undefined;
 };
 
-const desktop = (window as Window & { ottoDesktop?: Desktop }).ottoDesktop;
+const desktop = (window as Window & { nodDesktop?: Desktop }).nodDesktop;
 const parameters = new URLSearchParams(location.search);
 const firstSetup = parameters.get('firstSetup') === 'true';
 document.documentElement.dataset.theme = window.matchMedia?.('(prefers-color-scheme: dark)').matches
@@ -65,7 +65,7 @@ function applyPreferences(value: Preferences) {
 function Startup() {
   const [status, setStatus] = useState<Status>(() =>
     !desktop
-      ? { phase: 'error', error: 'Open Otto to finish setup.' }
+      ? { phase: 'error', error: 'Open nod to finish setup.' }
       : parameters.has('unlocking')
         ? { phase: 'starting', unlockingKeys: true, platform: parameters.get('unlocking')! }
         : { phase: 'preparing' },
@@ -93,7 +93,7 @@ function Startup() {
         },
         () => {
           if (active && !receivedStatus)
-            setStatus({ phase: 'error', error: 'Otto could not start. Try again.' });
+            setStatus({ phase: 'error', error: 'nod could not start. Try again.' });
         },
       ),
       Promise.all([desktop.getPreferences(), desktop.getSettings()])
@@ -131,7 +131,7 @@ function Startup() {
         ...previous,
         phase: 'error',
         unlockingKeys: false,
-        error: cause instanceof Error ? cause.message : 'Otto could not start. Try again.',
+        error: cause instanceof Error ? cause.message : 'nod could not start. Try again.',
       }));
     } finally {
       pending.current = false;
@@ -202,7 +202,7 @@ function Startup() {
   const unlocking = status.unlockingKeys && !failure;
   const error =
     !busy && failure
-      ? failure.error || failure.message || 'Otto could not start. Try again.'
+      ? failure.error || failure.message || 'nod could not start. Try again.'
       : undefined;
   const progress =
     !failure &&
@@ -214,8 +214,8 @@ function Startup() {
       : undefined;
   const description = unlocking
     ? status.platform === 'darwin'
-      ? 'Otto uses your Mac’s Keychain to protect your saved connections. Allow access if macOS asks.'
-      : 'Otto uses your system’s secure storage to protect your saved connections.'
+      ? 'nod uses your Mac’s Keychain to protect your saved connections. Allow access if macOS asks.'
+      : 'nod uses your system’s secure storage to protect your saved connections.'
     : busy
       ? firstSetup
         ? 'Preparing your workspace and browser.'
@@ -231,12 +231,12 @@ function Startup() {
       <SetupProgress
         title={
           error
-            ? 'Otto needs another try'
+            ? 'nod needs another try'
             : unlocking
               ? 'Keeping your connections secure'
               : firstSetup
-                ? 'Getting Otto ready'
-                : 'Opening Otto'
+                ? 'Getting nod ready'
+                : 'Opening nod'
         }
         description={description}
         error={error}

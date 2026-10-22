@@ -66,9 +66,9 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
         : null;
   const [view, setView] = useState<View>(addRequested ? 'saved' : 'activity');
   const [savedOpened, setSavedOpened] = useState(Boolean(addRequested));
-  useEffect(() => captureAnalytics('otto_tab_viewed', { page: 'trust', tab: view }), []);
+  useEffect(() => captureAnalytics('nod_tab_viewed', { page: 'trust', tab: view }), []);
   const selectView = (next: View) => {
-    if (next !== view) captureAnalytics('otto_tab_viewed', { page: 'trust', tab: next });
+    if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'trust', tab: next });
     setView(next);
   };
   useEffect(() => {
@@ -311,7 +311,7 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
           <header className="page-heading secondary-heading">
             <div>
               <PageTitle path="/trust" />
-              <p>What Otto did and spent, what it may do on its own, and your logins and cards.</p>
+              <p>What nod did and spent, what it may do on its own, and your logins and cards.</p>
             </div>
             {view === 'saved' && (
               <div className="secondary-heading-actions">

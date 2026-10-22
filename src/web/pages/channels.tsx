@@ -23,12 +23,12 @@ const providers = [
   {
     id: 'telegram' as const,
     name: 'Telegram',
-    description: 'Chat with Otto in Telegram.',
+    description: 'Chat with nod in Telegram.',
   },
   {
     id: 'whatsapp' as const,
     name: 'WhatsApp',
-    description: 'Chat with Otto in WhatsApp.',
+    description: 'Chat with nod in WhatsApp.',
     comingSoon: true,
   },
 ];
@@ -147,7 +147,7 @@ export function ChannelSetupStep({
     <>
       <p>
         Use these same callback settings in Meta, then subscribe the app to messages. Expose only
-        this route; keep the rest of Otto private.
+        this route; keep the rest of nod private.
       </p>
       <Field
         label="Public HTTPS callback"
@@ -267,7 +267,7 @@ function ChannelCard({
                 <DialogTitle>Finish {provider.name} setup</DialogTitle>
                 <DialogDescription>
                   {setup?.webhookStatus === 'registration_pending'
-                    ? 'Restart Otto to retry the saved setup.'
+                    ? 'Restart nod to retry the saved setup.'
                     : 'Finish the callback in Meta and subscribe to messages.'}
                 </DialogDescription>
                 {setup?.webhookUrl && (
@@ -465,7 +465,7 @@ export function Channels() {
       <header className="page-heading secondary-heading">
         <div>
           <PageTitle path="/channels" />
-          <p>Chat with Otto in the apps you use.</p>
+          <p>Chat with nod in the apps you use.</p>
         </div>
       </header>
       {(error || loadError) && !editing && <Notice>{error || loadError}</Notice>}
@@ -529,7 +529,7 @@ export function Channels() {
             Remove {removing === 'whatsapp' ? 'WhatsApp' : 'Telegram'} channel?
           </DialogTitle>
           <DialogDescription>
-            Otto will stop receiving messages here. You will need its credentials to connect again.
+            nod will stop receiving messages here. You will need its credentials to connect again.
           </DialogDescription>
           {removeError && <Notice>{removeError}</Notice>}
           <div className="channel-remove-actions">
@@ -631,7 +631,7 @@ export function Channels() {
               <DialogTitle>{whatsappSteps[step]}</DialogTitle>
               <DialogDescription>
                 {step === 0
-                  ? 'Connect in a few small steps. Otto checks your credentials before saving.'
+                  ? 'Connect in a few small steps. nod checks your credentials before saving.'
                   : 'Credentials stay in this secure form, outside the conversation.'}
               </DialogDescription>
               {error && <Notice>{error}</Notice>}

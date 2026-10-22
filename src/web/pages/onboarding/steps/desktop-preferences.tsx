@@ -65,7 +65,7 @@ export function DesktopPreferencesSetup({
 
   useEffect(() => {
     if (step)
-      captureAnalytics('otto_onboarding_step_viewed', {
+      captureAnalytics('nod_onboarding_step_viewed', {
         step: step === 'notifications' ? 'notifications' : 'launch_at_login',
         direction: 'forward',
       });
@@ -89,7 +89,7 @@ export function DesktopPreferencesSetup({
       if (!advance && !saved[step])
         throw new Error(
           step === 'notifications'
-            ? 'Allow Otto in your computer’s notification settings, then try again.'
+            ? 'Allow nod in your computer’s notification settings, then try again.'
             : 'Open at login could not be enabled. Try again.',
         );
       if (active.current) accept(saved);

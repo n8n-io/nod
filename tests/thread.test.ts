@@ -56,7 +56,7 @@ test(
     const environment = {
       DATABASE_URL: process.env.DATABASE_URL,
       PGBOSS_SCHEMA: process.env.PGBOSS_SCHEMA,
-      OTTO_DATA_ROOT: process.env.OTTO_DATA_ROOT,
+      NOD_DATA_ROOT: process.env.NOD_DATA_ROOT,
     };
     t.after(() => {
       for (const [key, value] of Object.entries(environment))
@@ -67,7 +67,7 @@ test(
     databaseUrl.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = databaseUrl.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
-    process.env.OTTO_DATA_ROOT = root;
+    process.env.NOD_DATA_ROOT = root;
     const db = await import('../src/server/db.ts');
     const { transaction } = await import('../src/server/transaction.ts');
     const thread = await import('../src/server/thread.ts');
@@ -2863,8 +2863,8 @@ test(
         }
       });
       await t.test('turn analytics exclude prompts, raw failures and private identifiers', () => {
-        assert.ok(analyticsEvents.some((event) => event.event === 'otto_turn_completed'));
-        for (const event of analyticsEvents.filter((event) => event.event.startsWith('otto_turn_')))
+        assert.ok(analyticsEvents.some((event) => event.event === 'nod_turn_completed'));
+        for (const event of analyticsEvents.filter((event) => event.event.startsWith('nod_turn_')))
           assert.deepEqual(
             [event.properties.model_provider, event.properties.model],
             ['compatible', 'custom'],
@@ -3409,7 +3409,7 @@ test(
       ] as const) {
         const asked = await post(text, { at: '2026-01-01T10:04:05Z' });
         await pool.query(
-          "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'OTTO_memory_save',$3)",
+          "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'NOD_memory_save',$3)",
           [ownerId, asked.id, status],
         );
       }
@@ -4042,12 +4042,12 @@ test(
     }));
     processor.start(turn.id)();
     await processor.drain();
-    const started = f.events.find((event) => event.event === 'otto_task_started')!;
+    const started = f.events.find((event) => event.event === 'nod_task_started')!;
     assert.equal(started.properties.use_case, 'other');
     assert.equal(started.properties.context, 'unclear');
     assert.equal(started.properties.collaboration, 'unclear');
     assert.ok(!JSON.stringify(f.events).includes('synthetic_'));
-    const health = f.events.find((event) => event.event === 'otto_task_analysis')!;
+    const health = f.events.find((event) => event.event === 'nod_task_analysis')!;
     assert.equal(health.properties.other_label_count, 3);
   },
 );
@@ -4141,7 +4141,7 @@ test(
       const before = f.events.length;
       await processor.observe(turn.id, async () => {
         f.analytics.capture(f.ownerId, {
-          event: 'otto_turn_started',
+          event: 'nod_turn_started',
           properties: { source: 'user', channel: 'web', background: false },
         });
       });
@@ -4150,12 +4150,12 @@ test(
       assert.deepEqual(
         new Set(events.map((event) => event.event)),
         new Set([
-          'otto_turn_started',
-          'otto_task_linked',
-          'otto_task_started',
-          'otto_task_updated',
-          'otto_frustration_signal',
-          'otto_task_analysis',
+          'nod_turn_started',
+          'nod_task_linked',
+          'nod_task_started',
+          'nod_task_updated',
+          'nod_frustration_signal',
+          'nod_task_analysis',
         ]),
       );
       for (const event of events)
@@ -4204,10 +4204,10 @@ test(
       const turn = await f.turn({ session: randomUUID() });
       const before = f.events.length;
       await processor.observe(turn.id, async () => {
-        f.analytics.capture(f.ownerId, { event: 'otto_turn_started', properties: selected });
+        f.analytics.capture(f.ownerId, { event: 'nod_turn_started', properties: selected });
         if (used)
           f.analytics.capture(f.ownerId, {
-            event: 'otto_model_used',
+            event: 'nod_model_used',
             properties: {
               provider: 'anthropic',
               model: 'claude-used',
@@ -4219,7 +4219,7 @@ test(
             },
           });
         f.analytics.capture(f.ownerId, {
-          event: 'otto_turn_completed',
+          event: 'nod_turn_completed',
           properties: { ...selected, outcome: 'succeeded', duration_ms: 1 },
         });
       });
@@ -4229,10 +4229,10 @@ test(
         .slice(before)
         .filter((event) =>
           [
-            'otto_turn_completed',
-            'otto_task_started',
-            'otto_task_linked',
-            'otto_task_updated',
+            'nod_turn_completed',
+            'nod_task_started',
+            'nod_task_linked',
+            'nod_task_updated',
           ].includes(event.event),
         );
       assert.equal(events.length, 4);
@@ -4247,7 +4247,7 @@ test(
 );
 
 test(
-  'a completed task counts as action_succeeded only when its turn acted in an app or website, and settings_changed for Otto settings',
+  'a completed task counts as action_succeeded only when its turn acted in an app or website, and settings_changed for nod settings',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await conversationAnalyticsFixture(t);
@@ -4274,21 +4274,21 @@ test(
     const evidence = [];
     for (const acted of [
       'GMAIL_SEND_EMAIL',
-      'OTTO_browser',
-      'OTTO_schedule_create',
+      'NOD_browser',
+      'NOD_schedule_create',
       {
-        event: 'otto_secure_entry_changed',
+        event: 'nod_secure_entry_changed',
         properties: { kind: 'payment', status: 'submitted', currency: 'EUR', amount: 12 },
       },
       'GMAIL_FETCH_EMAILS',
       'searchIssues',
-      'OTTO_vault_allow',
+      'NOD_vault_allow',
       {
-        event: 'otto_confirmation_changed',
+        event: 'nod_confirmation_changed',
         properties: { status: 'executed', action_kind: 'sign_in', source: 'user' },
       },
       {
-        event: 'otto_secure_entry_changed',
+        event: 'nod_secure_entry_changed',
         properties: { kind: 'sign_in', status: 'submitted' },
       },
       undefined,
@@ -4300,7 +4300,7 @@ test(
         else if (acted) f.analytics.capture(f.ownerId, acted);
       });
       await processor.drain();
-      const updated = f.events.slice(before).find((event) => event.event === 'otto_task_updated');
+      const updated = f.events.slice(before).find((event) => event.event === 'nod_task_updated');
       assert.equal(updated?.properties.use_case, 'subscription_management');
       evidence.push(updated?.properties.completion_evidence);
     }
@@ -4375,7 +4375,7 @@ test(
         f.events
           .slice(before)
           .filter(
-            (event) => event.event.startsWith('otto_task_') && event.event !== 'otto_task_analysis',
+            (event) => event.event.startsWith('nod_task_') && event.event !== 'nod_task_analysis',
           )
           .map((event) => event.properties?.starter),
       );
@@ -4397,7 +4397,7 @@ test(
     assert.deepEqual(
       f.events
         .slice(before)
-        .filter((event) => event.event === 'otto_task_linked')
+        .filter((event) => event.event === 'nod_task_linked')
         .map((event) => event.properties?.starter),
       [true],
     );
@@ -4557,11 +4557,11 @@ test(
     assert.equal(input?.source, 'task');
     assert.equal(input?.task_request, 'Synthetic background task request');
     assert.equal(input?.tasks?.length, 1);
-    assert.equal(f.events.filter((event) => event.event === 'otto_task_started').length, 1);
+    assert.equal(f.events.filter((event) => event.event === 'nod_task_started').length, 1);
     assert.ok(
       f.events.some(
         (event) =>
-          event.event === 'otto_task_updated' &&
+          event.event === 'nod_task_updated' &&
           event.properties.outcome === 'completed' &&
           event.properties.task_id === input?.tasks?.[0]?.id,
       ),
@@ -4569,7 +4569,7 @@ test(
     assert.ok(
       f.events.some(
         (event) =>
-          event.event === 'otto_task_analysis' &&
+          event.event === 'nod_task_analysis' &&
           event.properties.outcome === 'analyzed' &&
           event.properties.source === 'task',
       ),
@@ -4605,8 +4605,7 @@ test(
     answer = { tasks: [task(seed.messageId)], frustration: null };
     processor.start(seed.id)();
     await processor.drain();
-    const taskId = f.events.find((event) => event.event === 'otto_task_started')!.properties
-      .task_id;
+    const taskId = f.events.find((event) => event.event === 'nod_task_started')!.properties.task_id;
     const baseTime = seed.at.getTime();
     const invalid: Array<(turn: Awaited<ReturnType<typeof f.turn>>) => unknown> = [
       (turn) => ({
@@ -4647,7 +4646,7 @@ test(
       await processor.drain();
       assert.deepEqual(
         f.events.slice(before).map((event) => [event.event, event.properties.outcome]),
-        [['otto_task_analysis', 'invalid']],
+        [['nod_task_analysis', 'invalid']],
         `invalid classifier case ${index}`,
       );
       assert.equal(
@@ -4683,7 +4682,7 @@ test(
     };
     processor.start(correction.id)();
     await processor.drain();
-    const frustration = f.events.filter((event) => event.event === 'otto_frustration_signal');
+    const frustration = f.events.filter((event) => event.event === 'nod_frustration_signal');
     assert.equal(frustration.length, 1);
     assert.ok(!JSON.stringify(frustration).includes(correction.messageId));
     assert.ok(!JSON.stringify(frustration).includes(seed.messageId));
@@ -4706,7 +4705,7 @@ test(
     assert.deepEqual((classificationInput as { tasks: unknown[] }).tasks, []);
     assert.deepEqual(
       f.events.slice(before).map((event) => [event.event, event.properties.outcome]),
-      [['otto_task_analysis', 'invalid']],
+      [['nod_task_analysis', 'invalid']],
     );
     for (const privateLabel of ['cedar_acquisition', 'ada_linden']) {
       assert.ok(!JSON.stringify(f.events).includes(privateLabel));
@@ -4811,7 +4810,7 @@ test(
     processor.start(current.id)();
     await processor.drain();
     assert.equal(calls, 2);
-    assert.equal(f.events.filter((event) => event.event === 'otto_task_started').length, 1);
+    assert.equal(f.events.filter((event) => event.event === 'nod_task_started').length, 1);
     f.analytics.setUsageData(f.ownerId, false);
     await processor.close();
     assert.equal(

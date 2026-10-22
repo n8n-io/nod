@@ -672,7 +672,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     });
     refresh();
     dependencies.analytics?.({
-      event: 'otto_schedule_changed',
+      event: 'nod_schedule_changed',
       properties: {
         operation: 'create',
         ...scheduleAnalytics(row),
@@ -740,7 +740,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     });
     refresh();
     dependencies.analytics?.({
-      event: 'otto_schedule_changed',
+      event: 'nod_schedule_changed',
       properties: {
         operation: 'update',
         ...scheduleAnalytics(row),
@@ -766,7 +766,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     });
     refresh();
     dependencies.analytics?.({
-      event: 'otto_schedule_changed',
+      event: 'nod_schedule_changed',
       properties: { operation: 'delete', ...scheduleAnalytics(row), actor: 'user' },
     });
     return { ok: true };

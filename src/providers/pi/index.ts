@@ -145,7 +145,7 @@ function threadPromptCache(threadId: string) {
   };
 }
 
-const ownerContextType = 'otto-owner-context';
+const ownerContextType = 'nod-owner-context';
 
 function isOwnerContext(message: { role: string }) {
   return (
@@ -221,7 +221,7 @@ export function createPiAgent(options: {
   createSession?: typeof createAgentSession;
   traces?: ModelTraces;
 }): Agent {
-  configureWebAccess(options.configRoot ?? join(tmpdir(), 'otto-pi'));
+  configureWebAccess(options.configRoot ?? join(tmpdir(), 'nod-pi'));
   const active = new Map<
     Awaited<ReturnType<typeof createAgentSession>>['session'],
     () => Promise<void>
@@ -441,7 +441,7 @@ export function createPiAgent(options: {
       ];
       if (guidelines.some((rule) => rule.includes('codemode')))
         guidelines.push(
-          'Codemode scripts can call only workspace and web tools; call apps, browser and other Otto tools directly.',
+          'Codemode scripts can call only workspace and web tools; call apps, browser and other nod tools directly.',
         );
       const systemPrompt = guidelines.length
         ? `${input.systemPrompt}\n\nTool guidelines:\n${guidelines.map((rule) => `- ${rule}`).join('\n')}`

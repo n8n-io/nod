@@ -22,9 +22,9 @@ test(
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
-    const runtimeRoot = await mkdtemp(join(tmpdir(), 'otto-test-runtime-'));
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'nod-test-runtime-'));
     t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
-    process.env.OTTO_DATA_ROOT = runtimeRoot;
+    process.env.NOD_DATA_ROOT = runtimeRoot;
     const db = await import('../src/server/db.ts');
     const { createChatVerification } = await import('../src/server/chat-verification.ts');
     const thread = await import('../src/server/thread.ts');
@@ -346,7 +346,7 @@ test(
         },
       );
       await t.test(
-        'a security code sent by itself pays in Otto while other numbers are held back',
+        'a security code sent by itself pays in nod while other numbers are held back',
         async () => {
           await reset();
           const threadId = (await thread.activeThread(db.pool, ownerId)).id;

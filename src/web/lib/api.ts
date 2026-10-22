@@ -36,7 +36,7 @@ async function request<T>(
   const generation = accountGeneration;
   const controller = expectedAccount ? new AbortController() : null;
   if (expectedAccount) {
-    headers.set('X-Otto-Account', expectedAccount);
+    headers.set('X-nod-Account', expectedAccount);
     privateRequests.add(controller!);
   }
   const signal = controller
@@ -64,7 +64,7 @@ async function request<T>(
       generation === accountGeneration &&
       !options.signal?.aborted
     )
-      window.dispatchEvent(new Event('otto:unauthorized'));
+      window.dispatchEvent(new Event('nod:unauthorized'));
     const result = await consume(response, signal);
     if (
       controller?.signal.aborted ||

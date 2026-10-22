@@ -1,29 +1,29 @@
 ---
 title: Apps with Composio
-description: Connect Gmail, Calendar, Slack and other apps through Otto's connection or your own Composio project.
+description: Connect Gmail, Calendar, Slack and other apps through nod's connection or your own Composio project.
 sidebar:
   order: 3
 ---
 
 import { Steps } from '@astrojs/starlight/components';
 
-Connect Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many other apps from **Apps**. Otto uses [Composio](https://composio.dev) for these connections.
+Connect Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many other apps from **Apps**. nod uses [Composio](https://composio.dev) for these connections.
 
 Choose **Easy Connect** and sign in with an allowed Google account, or [use your own Composio key](#use-your-own-composio-project). Both choices work in the desktop app and source installs, during setup and in **Settings → App connections**. Easy Connect uses n8n's hosted service and doesn't need your own Composio account.
 
-Google sign-in enables Easy Connect only. It doesn't give Otto access to Gmail or another app. You connect each app separately and choose its permissions. Easy Connect accepts explicitly allowed email addresses or verified Google Workspace accounts from an allowed domain. An individual email can still be blocked. If yours isn't enabled, you can use a personal key; there is no waitlist.
+Google sign-in enables Easy Connect only. It doesn't give nod access to Gmail or another app. You connect each app separately and choose its permissions. Easy Connect accepts explicitly allowed email addresses or verified Google Workspace accounts from an allowed domain. An individual email can still be blocked. If yours isn't enabled, you can use a personal key; there is no waitlist.
 
 During onboarding, choose **Continue with Google**, or **Use my Composio key** and **Save key**. The Gmail connection appears once that setup is ready. Select **Connect Gmail** and choose an inbox; its email appears after Gmail connects. **Change** lets you use another setup method. You can also manage access later in **Settings → App connections**.
 
-Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. With Otto's connection, app requests and results pass through n8n's hosted connection service and Composio. With your own key, they go through your Composio project. Notion and Linear connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
+Composio handles each app's sign-in and runs the app actions. nod's server checks every action before it reaches Composio. With nod's connection, app requests and results pass through n8n's hosted connection service and Composio. With your own key, they go through your Composio project. Notion and Linear connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
 ```mermaid
 flowchart TD
-  otto[Otto plans<br/>an app action] --> trust{{Trust check}}:::accent
-  trust -- allowed --> server[Otto server]
+  nod[nod plans<br/>an app action] --> trust{{Trust check}}:::accent
+  trust -- allowed --> server[nod server]
   trust -. held .-> you([You approve]):::accent
   you -. yes .-> server
-  server -- Otto's connection --> connection[n8n connection service]
+  server -- nod's connection --> connection[n8n connection service]
   connection --> composio[Composio]
   server -. your own key .-> composio
   composio --> apps[Gmail · Calendar<br/>Slack · more]
@@ -36,40 +36,40 @@ flowchart TD
 <Steps>
 
 1. Set up **Easy Connect** or **My Composio key** in **Settings → App connections**, then open **Apps**, find an app and select **Connect**.
-2. Sign in on the app's consent screen and choose what Otto can access. Google's sign-in screen usually shows Composio, the service that connects the app, rather than Otto. If your own Composio project uses a custom Google auth config, it shows that config's app name instead.
-3. Return to Otto when the app is connected.
+2. Sign in on the app's consent screen and choose what nod can access. Google's sign-in screen usually shows Composio, the service that connects the app, rather than nod. If your own Composio project uses a custom Google auth config, it shows that config's app name instead.
+3. Return to nod when the app is connected.
 
 </Steps>
 
 ![The Apps page with Gmail and Google Calendar connected, and Drive, Sheets, Docs and Slack ready to connect.](../../../assets/screens/apps-light.png)
 
-You can also ask Otto in chat. It searches the same catalog, then sends you a private link to connect, which shows as a connect button in Otto.
+You can also ask nod in chat. It searches the same catalog, then sends you a private link to connect, which shows as a connect button in nod.
 
 ## Renew or remove Easy Connect access
 
-Your installation stays admitted while its email is allowed, including for background app tasks. New app consent also needs a recent Google browser session. If that session expires while connecting an app, Otto asks you to sign in with Google, then connect the app again. This keeps your current project and connected accounts.
+Your installation stays admitted while its email is allowed, including for background app tasks. New app consent also needs a recent Google browser session. If that session expires while connecting an app, nod asks you to sign in with Google, then connect the app again. This keeps your current project and connected accounts.
 
 Removing Easy Connect access blocks managed requests from this installation. It doesn't delete connected accounts or revoke the permissions you gave each provider. Disconnect apps first if you also want to remove those grants.
 
 ## Automatic app updates
 
-Otto checks Gmail for new mail while it's running. Otto's connection doesn't receive app webhooks, so apps such as Calendar and Slack don't wake Otto automatically. You can still ask Otto to work with them.
+nod checks Gmail for new mail while it's running. nod's connection doesn't receive app webhooks, so apps such as Calendar and Slack don't wake nod automatically. You can still ask nod to work with them.
 
 Source/server installs using their own Composio project can configure webhooks with `COMPOSIO_WEBHOOK_SECRET`.
 
 ## Use your own Composio project
 
-Choose **My Composio key** during setup or in **Settings → App connections**, and paste a project key from the steps below. **How to get a key**, under the key field, shows the same steps in Otto. Otto checks the key before saving it, stores it encrypted on your installation and only shows its last four characters. App consent then uses your project.
+Choose **My Composio key** during setup or in **Settings → App connections**, and paste a project key from the steps below. **How to get a key**, under the key field, shows the same steps in nod. nod checks the key before saving it, stores it encrypted on your installation and only shows its last four characters. App consent then uses your project.
 
-The desktop app uses OS-protected storage. A local web install uses the macOS Keychain or a private per-profile key file on Linux. Other server configurations need an operator-provided Vault key. If encrypted data already exists but its key is missing, restore the original key; Otto won't replace it. See [Configuration](/deploy/configuration/#vault).
+The desktop app uses OS-protected storage. A local web install uses the macOS Keychain or a private per-profile key file on Linux. Other server configurations need an operator-provided Vault key. If encrypted data already exists but its key is missing, restore the original key; nod won't replace it. See [Configuration](/deploy/configuration/#vault).
 
-Signing in with Google while you use a personal key doesn't switch projects. Otto first verifies access, then asks you to confirm the switch. A denied or cancelled sign-in leaves your key and apps unchanged.
+Signing in with Google while you use a personal key doesn't switch projects. nod first verifies access, then asks you to confirm the switch. A denied or cancelled sign-in leaves your key and apps unchanged.
 
-Connected accounts belong to the project they were connected through, and Otto never moves them between projects. When you switch between Otto's connection and your own key, Otto disconnects the apps connected through the one you're leaving, then switches. Connect them again afterwards. A sign-in you started before switching won't connect, so start it again too. If Otto can't disconnect an app, it keeps your current connection so you can try again. Apps it already disconnected stay disconnected.
+Connected accounts belong to the project they were connected through, and nod never moves them between projects. When you switch between nod's connection and your own key, nod disconnects the apps connected through the one you're leaving, then switches. Connect them again afterwards. A sign-in you started before switching won't connect, so start it again too. If nod can't disconnect an app, it keeps your current connection so you can try again. Apps it already disconnected stay disconnected.
 
-If Easy Connect access has been removed or requires sign-in, you can still switch to a valid personal key. Otto removes the old connections from this installation, but can't revoke their provider permissions through the proxy. Remove those permissions in each provider's settings if needed. A network outage doesn't allow this fallback.
+If Easy Connect access has been removed or requires sign-in, you can still switch to a valid personal key. nod removes the old connections from this installation, but can't revoke their provider permissions through the proxy. Remove those permissions in each provider's settings if needed. A network outage doesn't allow this fallback.
 
-On a source/server install you can instead set `COMPOSIO_API_KEY` in the server environment or `.env`, then restart Otto. This pins the server to that project, so the app doesn't offer the choice. The desktop app ignores `COMPOSIO_API_KEY`.
+On a source/server install you can instead set `COMPOSIO_API_KEY` in the server environment or `.env`, then restart nod. This pins the server to that project, so the app doesn't offer the choice. The desktop app ignores `COMPOSIO_API_KEY`.
 
 ![App connections in Settings with the personal Composio key form. Synthetic UI fixture.](../../../assets/screens/app-connections-key.png)
 
@@ -78,13 +78,13 @@ On a source/server install you can instead set `COMPOSIO_API_KEY` in the server 
 <Steps>
 
 1. In the [Composio Dashboard](https://dashboard.composio.dev), open **Platform → your project → Settings → API Keys**.
-2. Select **Create API Key** and create a scoped project key with the permissions in the table below. Read-only access isn't enough, because Otto creates sessions, opens sign-in links and runs app actions.
+2. Select **Create API Key** and create a scoped project key with the permissions in the table below. Read-only access isn't enough, because nod creates sessions, opens sign-in links and runs app actions.
 3. Leave **Tools**, **Triggers**, **Webhooks**, **Observability**, **MCP (Legacy)** and **Tool execution (Legacy)** at **No access**.
 4. Copy the key.
 
 </Steps>
 
-| Permission area        | Access         | Otto uses it to                                                     |
+| Permission area        | Access         | nod uses it to                                                      |
 | ---------------------- | -------------- | ------------------------------------------------------------------- |
 | Connected accounts     | Read and write | Check connections and disconnect accounts                           |
 | Session management     | Read and write | Create and delete sessions, and open sign-in links                  |
@@ -108,7 +108,7 @@ The setup check doesn't test every permission needed to connect apps. Grant **Au
 Keep using a key from the same project. Your connected accounts belong to that project, so a key from another project can't use them.
 
 :::danger[Keep the key private]
-The key grants access to the project's connected accounts outside Otto. Don't share it, and keep a server key in a trusted environment.
+The key grants access to the project's connected accounts outside nod. Don't share it, and keep a server key in a trusted environment.
 :::
 
 With your own key, the catalog lists Composio apps with managed sign-in, dynamic OAuth registration, or an eligible custom auth config in your project.
@@ -117,25 +117,25 @@ Loading the full catalog needs **Toolkits → Read** and **Auth configs → Read
 
 ## Control what each app can access
 
-The app's consent screen decides what Otto can read or change in your account.
+The app's consent screen decides what nod can read or change in your account.
 
 If you use your own Composio project, two things control access:
 
-- **The key's permissions** decide what Otto can do in Composio.
-- **The app's consent screen** decides what Otto can read or change in your account. The Composio auth config sets which scopes it asks for.
+- **The key's permissions** decide what nod can do in Composio.
+- **The app's consent screen** decides what nod can read or change in your account. The Composio auth config sets which scopes it asks for.
 
 To narrow an app's scopes, change them in its auth config, then reconnect the account. Changing the key doesn't change what you agreed to on the consent screen. See Composio's [Controlling scopes](https://docs.composio.dev/docs/authentication/controlling-scopes).
 
-To choose an auth config for your own project, set `COMPOSIO_<APP>_AUTH_CONFIG_ID` in the server environment. See [Configuration](/deploy/configuration/#apps-and-composio) for the supported settings. These settings don't change Otto's connection or the Notion and Linear MCP connections.
+To choose an auth config for your own project, set `COMPOSIO_<APP>_AUTH_CONFIG_ID` in the server environment. See [Configuration](/deploy/configuration/#apps-and-composio) for the supported settings. These settings don't change nod's connection or the Notion and Linear MCP connections.
 
 <details>
-<summary>How Otto picks an auth config</summary>
+<summary>How nod picks an auth config</summary>
 
-When you use your own Composio key, an explicit `COMPOSIO_<APP>_AUTH_CONFIG_ID` setting takes precedence for supported apps. Otherwise, Otto checks your project's enabled custom configs for the app. It checks across Composio's supported authentication methods, including OAuth and API keys.
+When you use your own Composio key, an explicit `COMPOSIO_<APP>_AUTH_CONFIG_ID` setting takes precedence for supported apps. Otherwise, nod checks your project's enabled custom configs for the app. It checks across Composio's supported authentication methods, including OAuth and API keys.
 
-Otto uses the one config that's also enabled for Tool Router. If several qualify, or enabled custom configs exist but none qualifies, connection stops with a configuration error. Select a config through a supported server setting, or update your configs in Composio and try again.
+nod uses the one config that's also enabled for Tool Router. If several qualify, or enabled custom configs exist but none qualifies, connection stops with a configuration error. Select a config through a supported server setting, or update your configs in Composio and try again.
 
-If no enabled custom config exists, Composio's default applies. Otto reads existing configs. It doesn't create OAuth apps or change your configurations.
+If no enabled custom config exists, Composio's default applies. nod reads existing configs. It doesn't create OAuth apps or change your configurations.
 
 An app with an eligible custom config also appears in **Apps**, even when Composio doesn't offer managed sign-in for it.
 
@@ -144,7 +144,7 @@ An app with an eligible custom config also appears in **Apps**, even when Compos
 <details>
 <summary>How Easy Connect picks an auth config</summary>
 
-Easy Connect uses the broker's native toolkit catalog. It does not discover your project's custom configs or expose auth-config administration to an Otto installation. The broker selects the configuration after checking browser and installation ownership. The app never sends auth-config IDs to the broker. When reconnecting, it sends the connected account ID; the broker verifies that account belongs to the installation and retains its original configuration.
+Easy Connect uses the broker's native toolkit catalog. It does not discover your project's custom configs or expose auth-config administration to a nod installation. The broker selects the configuration after checking browser and installation ownership. The app never sends auth-config IDs to the broker. When reconnecting, it sends the connected account ID; the broker verifies that account belongs to the installation and retains its original configuration.
 
 Operators can set the Worker's `AUTH_CONFIGS_JSON` to a toolkit-to-config mapping, such as `{"gmail":"ac_example"}`. Every ID must belong to the broker's Composio project, selected by its server-side `COMPOSIO_API_KEY`. A config from a personal-key project or another hosted project cannot be reused here.
 
@@ -154,15 +154,15 @@ With an empty mapping, the broker reuses or creates an enabled Composio-managed 
 
 ## When an action needs a missing permission
 
-Otto is instructed to explain the blocked action, preserve prepared work, and compare supported recovery options that meet your choices. It asks before changing the requested result, method or account unless you already chose that recovery path.
+nod is instructed to explain the blocked action, preserve prepared work, and compare supported recovery options that meet your choices. It asks before changing the requested result, method or account unless you already chose that recovery path.
 
 For OAuth connections using a Composio auth configuration, reconnecting with an unchanged configuration cannot add a permission that configuration doesn't request. If the scope is missing there, your Composio project administrator or the Easy Connect operator must update the configuration before you reconnect. Slack canvas creation requires [`canvases:write`](https://docs.slack.dev/reference/methods/canvases.create/), in the auth config's [`user_scopes`](https://docs.composio.dev/kb/guide/toolkits-slack) for the Slack toolkit.
 
 ## Every action goes through the trust check
 
-Reads and drafts run directly. Any other action runs directly only when it's part of what you asked for, or what a schedule's instruction or your [standing instruction](/trust/approvals/#standing-instructions) asks. Otherwise Otto asks you first. See [Approvals and the trust check](/trust/approvals/).
+Reads and drafts run directly. Any other action runs directly only when it's part of what you asked for, or what a schedule's instruction or your [standing instruction](/trust/approvals/#standing-instructions) asks. Otherwise nod asks you first. See [Approvals and the trust check](/trust/approvals/).
 
-Otto changes your apps only as far as you ask. Ask what needs a reply and it tells you and offers to draft one; ask it to handle an email and it prepares the draft. Background work drafts by default and does more only as your [standing instruction](/trust/approvals/#standing-instructions) says.
+nod changes your apps only as far as you ask. Ask what needs a reply and it tells you and offers to draft one; ask it to handle an email and it prepares the draft. Background work drafts by default and does more only as your [standing instruction](/trust/approvals/#standing-instructions) says.
 
 ## Related resources
 

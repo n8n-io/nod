@@ -1,26 +1,26 @@
 ---
 title: Install the desktop app
-description: Install Otto on a Mac or Windows PC, get through the first launch and keep it running and up to date.
+description: Install nod on a Mac or Windows PC, get through the first launch and keep it running and up to date.
 sidebar:
   order: 2
 ---
 
 import { Badge, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-The desktop app is the quickest way to run Otto. You don't need Node.js, Docker or developer tools.
+The desktop app is the quickest way to run nod. You don't need Node.js, Docker or developer tools.
 
 Before you start, have a model connection ready: an OpenAI, Anthropic or OpenRouter API key, a ChatGPT plan, or a [local model](/connect/local-models/) server such as Ollama. Paid providers bill you for use. A local model costs nothing per request.
 
 ```mermaid
 flowchart LR
   dl[Download<br/>the installer] --> open[Open and<br/>approve it]
-  open --> prep[Otto prepares<br/>its computer]:::accent
+  open --> prep[nod prepares<br/>its computer]:::accent
   open --> ob[Onboarding]
   prep --> chat([Start chatting]):::go
   ob --> chat
 ```
 
-## Install Otto
+## Install nod
 
 <Tabs syncKey="os">
 <TabItem label="Mac" icon="apple">
@@ -29,32 +29,32 @@ You need macOS 14 or later, on Apple silicon or Intel. The app and its runtime a
 
 <Steps>
 
-1. Open the [releases page](https://github.com/n8n-io/otto/releases) and find the newest **Otto** release. Download `Otto-arm64.dmg` for Apple silicon or `Otto-x64.dmg` for Intel.
+1. Open the [releases page](https://github.com/n8n-io/nod/releases) and find the newest **nod** release. Download `nod-arm64.dmg` for Apple silicon or `nod-x64.dmg` for Intel.
 
-2. Open the DMG, drag **Otto** to **Applications** and open it from there.
+2. Open the DMG, drag **nod** to **Applications** and open it from there.
 
 3. The first time, macOS asks whether to open an app downloaded from the internet. Select **Open**.
 
-4. Welcome opens while Otto prepares its computer. Choose whether to share usage data. Once storage is ready, connect a model and Gmail and answer the setup questions while the workspace and browser finish starting. Enable desktop notifications and **Open at login** to finish setup. Telegram is optional. You can change the desktop preferences later in Settings. If macOS asks for your keychain password, approve it so Otto can protect your saved keys.
+4. Welcome opens while nod prepares its computer. Choose whether to share usage data. Once storage is ready, connect a model and Gmail and answer the setup questions while the workspace and browser finish starting. Enable desktop notifications and **Open at login** to finish setup. Telegram is optional. You can change the desktop preferences later in Settings. If macOS asks for your keychain password, approve it so nod can protect your saved keys.
 
-5. Keep your internet connection on. When setup and the computer are ready, Otto opens your chat with the connections and answers you just saved. See [Your first conversation](/get-started/first-conversation/).
+5. Keep your internet connection on. When setup and the computer are ready, nod opens your chat with the connections and answers you just saved. See [Your first conversation](/get-started/first-conversation/).
 
 </Steps>
 
 <details>
 <summary>Install from Terminal instead</summary>
 
-You can install the latest release on Apple silicon or Intel with one command. Quit Otto first, then paste this into Terminal:
+You can install the latest release on Apple silicon or Intel with one command. Quit nod first, then paste this into Terminal:
 
 ```sh title="Terminal"
 (
   installer="$(mktemp)" || exit
   trap 'rm -f "$installer"' EXIT
-  curl -q --proto '=https' --tlsv1.2 -fsSL https://internal.users.n8n.cloud/webhook/otto/install -o "$installer" && /bin/sh "$installer"
+  curl -q --proto '=https' --tlsv1.2 -fsSL https://internal.users.n8n.cloud/webhook/nod/install -o "$installer" && /bin/sh "$installer"
 )
 ```
 
-Run it as your normal user, without `sudo`. It verifies the download, installs to `/Applications/Otto.app`, and opens Otto. Your existing data stays in place. You don't need a GitHub account.
+Run it as your normal user, without `sudo`. It verifies the download, installs to `/Applications/nod.app`, and opens nod. Your existing data stays in place. You don't need a GitHub account.
 
 </details>
 
@@ -67,87 +67,87 @@ download.
 
 <Steps>
 
-1. Open the [releases page](https://github.com/n8n-io/otto/releases) and find the newest **Otto** release. Download `Otto-Setup-x64.exe`.
+1. Open the [releases page](https://github.com/n8n-io/nod/releases) and find the newest **nod** release. Download `nod-Setup-x64.exe`.
 
-2. Run `Otto-Setup-x64.exe`. The preview isn't signed, so Windows can show a publisher warning. The installer adds Otto to the Start menu.
+2. Run `nod-Setup-x64.exe`. The preview isn't signed, so Windows can show a publisher warning. The installer adds nod to the Start menu.
 
-3. Welcome opens while Otto prepares its computer. Choose whether to share usage data. Once storage is ready, connect a model and Gmail and answer the setup questions while the workspace and browser finish starting. Enable desktop notifications and **Open at login** to finish setup. Telegram is optional. You can change the desktop preferences later in Settings.
+3. Welcome opens while nod prepares its computer. Choose whether to share usage data. Once storage is ready, connect a model and Gmail and answer the setup questions while the workspace and browser finish starting. Enable desktop notifications and **Open at login** to finish setup. Telegram is optional. You can change the desktop preferences later in Settings.
 
-4. If Otto needs WSL, follow its setup instructions and approve the administrator request. If Windows needs a restart, open Otto again afterwards; your saved connections and settings are kept.
+4. If nod needs WSL, follow its setup instructions and approve the administrator request. If Windows needs a restart, open nod again afterwards; your saved connections and settings are kept.
 
-5. Keep your internet connection on. When setup and the computer are ready, Otto opens your chat with your saved connections and answers. See [Your first conversation](/get-started/first-conversation/).
+5. Keep your internet connection on. When setup and the computer are ready, nod opens your chat with your saved connections and answers. See [Your first conversation](/get-started/first-conversation/).
 
 </Steps>
 
 <details>
 <summary>Install from PowerShell instead</summary>
 
-Quit Otto first, then paste this into PowerShell:
+Quit nod first, then paste this into PowerShell:
 
 ```powershell title="PowerShell"
-irm https://internal.users.n8n.cloud/webhook/otto/install-windows | iex
+irm https://internal.users.n8n.cloud/webhook/nod/install-windows | iex
 ```
 
-Use a normal PowerShell window, not **Run as administrator**. It verifies the installer and runtime file, installs Otto, and opens it. Your existing data stays in place. You don't need a GitHub account.
+Use a normal PowerShell window, not **Run as administrator**. It verifies the installer and runtime file, installs nod, and opens it. Your existing data stays in place. You don't need a GitHub account.
 
 </details>
 
 </TabItem>
 </Tabs>
 
-## Keep Otto running
+## Keep nod running
 
-Closing the window keeps Otto running in the menu bar on a Mac, or the tray on Windows. **Quit Otto** stops Otto and its private computer.
+Closing the window keeps nod running in the menu bar on a Mac, or the tray on Windows. **Quit nod** stops nod and its private computer.
 
-| Otto is                                 | What runs                                       |
+| nod is                                  | What runs                                       |
 | --------------------------------------- | ----------------------------------------------- |
 | Open, or closed to the menu bar or tray | Chat, channels, schedules and background checks |
-| Quit, or your computer is asleep        | Nothing, until Otto is open and awake again     |
+| Quit, or your computer is asleep        | Nothing, until nod is open and awake again      |
 
 If you rely on scheduled tasks, turn on **Open at login** in **Settings → General**.
 
-## Update Otto
+## Update nod
 
-Otto updates itself. It checks after it starts, every six hours while it's open and after your computer wakes. To check now, select **Check for Updates…** in the **Otto** menu on a Mac, or from the menu bar or tray icon.
+nod updates itself. It checks after it starts, every six hours while it's open and after your computer wakes. To check now, select **Check for Updates…** in the **nod** menu on a Mac, or from the menu bar or tray icon.
 
-When an update is ready, choose **Restart** to install it or **Later** to keep working. If Otto is in the middle of a task, it asks before restarting, and you can ask it to continue afterwards. Otto keeps your profile, keys and data. A completed installation does not repeat onboarding after an update.
+When an update is ready, choose **Restart** to install it or **Later** to keep working. If nod is in the middle of a task, it asks before restarting, and you can ask it to continue afterwards. nod keeps your profile, keys and data. A completed installation does not repeat onboarding after an update.
 
-On Windows, the restart runs the new installer in the background and opens Otto again when it's done.
+On Windows, the restart runs the new installer in the background and opens nod again when it's done.
 
 ## Where your data lives
 
-Otto's database, workspace and browser stay on your computer. Requests go to the model provider and apps you choose. Managed app requests and results pass through n8n's hosted connection service and Composio. Usage analytics leave only if you turn on **Share usage data** during setup or in **Settings → General**. Conversation traces leave only if you turn on **Share conversation traces** in **Settings → General**. See [Your data and privacy](/trust/privacy/).
+nod's database, workspace and browser stay on your computer. Requests go to the model provider and apps you choose. Managed app requests and results pass through n8n's hosted connection service and Composio. Usage analytics leave only if you turn on **Share usage data** during setup or in **Settings → General**. Conversation traces leave only if you turn on **Share conversation traces** in **Settings → General**. See [Your data and privacy](/trust/privacy/).
 
-Otto starts with a fresh profile and doesn't import data from a source install.
+nod starts with a fresh profile and doesn't import data from a source install.
 
-|                       | Mac                                                 | Windows                                      |
-| --------------------- | --------------------------------------------------- | -------------------------------------------- |
-| App data and settings | `~/Library/Application Support/Otto/profiles/local` | `%APPDATA%\Otto\profiles\local`              |
-| Private computer      | `~/.otto-desktop/<profile id>`                      | A WSL distribution named `Otto-<profile id>` |
-| Saved keys            | Encrypted with the macOS key store                  | Encrypted with Windows DPAPI                 |
+|                       | Mac                                                | Windows                                     |
+| --------------------- | -------------------------------------------------- | ------------------------------------------- |
+| App data and settings | `~/Library/Application Support/nod/profiles/local` | `%APPDATA%\nod\profiles\local`              |
+| Private computer      | `~/.nod-desktop/<profile id>`                      | A WSL distribution named `nod-<profile id>` |
+| Saved keys            | Encrypted with the macOS key store                 | Encrypted with Windows DPAPI                |
 
-## Remove Otto
+## Remove nod
 
-Moving Otto to the Trash or uninstalling it keeps your data, so a later install opens where you left off. To delete everything first:
+Moving nod to the Trash or uninstalling it keeps your data, so a later install opens where you left off. To delete everything first:
 
-1. Select **Remove all data** in **Settings → General**. If Otto can't finish setup, select **Remove all data…** in the **Otto** menu instead.
-2. Confirm. Otto deletes your profile and private computer, then quits.
-3. Move Otto to the Trash on a Mac, or uninstall it in **Settings → Apps** on Windows.
+1. Select **Remove all data** in **Settings → General**. If nod can't finish setup, select **Remove all data…** in the **nod** menu instead.
+2. Confirm. nod deletes your profile and private computer, then quits.
+3. Move nod to the Trash on a Mac, or uninstall it in **Settings → Apps** on Windows.
 
-On a Mac, Otto keeps the runtime it downloaded, so a new install doesn't download it again, and its entry in the key store. Neither holds your data. Apps you connected may still list Otto until you remove it there.
+On a Mac, nod keeps the runtime it downloaded, so a new install doesn't download it again, and its entry in the key store. Neither holds your data. Apps you connected may still list nod until you remove it there.
 
-If you deleted Otto's folders by hand, Otto removes the private computer they leave behind the next time it opens.
+If you deleted nod's folders by hand, nod removes the private computer they leave behind the next time it opens.
 
 ## Troubleshooting
 
-| Problem                               | Try this                                                                                                            |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| macOS blocks the first launch         | Install the newest release. On a managed Mac, ask your IT team to allow Otto.                                       |
-| Otto 0.1.12 or earlier doesn't update | Install the newest release once, as above. Your data is kept.                                                       |
-| Setup stops with an error             | Select **Try again**. If it fails again, send the error with **Send feedback…** from the menu bar or tray icon.     |
-| Otto asks for a runtime file          | Select **Choose runtime file** and pick the `Otto-Runtime-…` file from the same release.                            |
-| Windows can't download the runtime    | Put `Otto-Runtime-win32-x64.tar.gz` from the same release next to `Otto-Setup-x64.exe` and run the installer again. |
-| A scheduled task didn't run           | Check that Otto was open and your computer was awake at that time.                                                  |
+| Problem                              | Try this                                                                                                          |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| macOS blocks the first launch        | Install the newest release. On a managed Mac, ask your IT team to allow nod.                                      |
+| nod 0.1.12 or earlier doesn't update | Install the newest release once, as above. Your data is kept.                                                     |
+| Setup stops with an error            | Select **Try again**. If it fails again, send the error with **Send feedback…** from the menu bar or tray icon.   |
+| nod asks for a runtime file          | Select **Choose runtime file** and pick the `nod-Runtime-…` file from the same release.                           |
+| Windows can't download the runtime   | Put `nod-Runtime-win32-x64.tar.gz` from the same release next to `nod-Setup-x64.exe` and run the installer again. |
+| A scheduled task didn't run          | Check that nod was open and your computer was awake at that time.                                                 |
 
 :::caution
 Don't delete the profile or the private computer to fix a problem. You'd lose your conversations, workspace and saved keys.
@@ -155,7 +155,7 @@ Don't delete the profile or the private computer to fix a problem. You'd lose yo
 
 ## Related resources
 
-- [What is Otto](/get-started/what-is-otto/)
+- [What is nod](/get-started/what-is-nod/)
 - [Your first conversation](/get-started/first-conversation/)
 - [Install from source](/get-started/install-from-source/)
 - [The desktop app in depth](/deploy/desktop-app/)

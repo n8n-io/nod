@@ -8,7 +8,7 @@ export function useSession() {
     const unauthorized = () => void sessionStore.refresh({ conceal: true });
     const focus = () => void sessionStore.refresh();
     const channel =
-      typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('otto.auth');
+      typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('nod.auth');
     if (channel)
       channel.onmessage = ({ data }: MessageEvent<unknown>) => {
         if (
@@ -29,13 +29,13 @@ export function useSession() {
       };
     const changed = (event: Event) =>
       channel?.postMessage(event instanceof CustomEvent ? event.detail : 'changed');
-    window.addEventListener('otto:unauthorized', unauthorized);
-    window.addEventListener('otto:session-changed', changed);
+    window.addEventListener('nod:unauthorized', unauthorized);
+    window.addEventListener('nod:session-changed', changed);
     window.addEventListener('focus', focus);
     return () => {
       channel?.close();
-      window.removeEventListener('otto:unauthorized', unauthorized);
-      window.removeEventListener('otto:session-changed', changed);
+      window.removeEventListener('nod:unauthorized', unauthorized);
+      window.removeEventListener('nod:session-changed', changed);
       window.removeEventListener('focus', focus);
       sessionStore.invalidate();
     };
@@ -48,7 +48,7 @@ export function useSession() {
       if (owner && args[0].usageData === false) {
         sessionStore.revokeUsageData(owner);
         window.dispatchEvent(
-          new CustomEvent('otto:session-changed', {
+          new CustomEvent('nod:session-changed', {
             detail: { type: 'usage-data', owner, enabled: false },
           }),
         );
@@ -62,7 +62,7 @@ export function useSession() {
         accepted.settings?.usageData
       )
         window.dispatchEvent(
-          new CustomEvent('otto:session-changed', {
+          new CustomEvent('nod:session-changed', {
             detail: { type: 'usage-data', owner, enabled: true },
           }),
         );

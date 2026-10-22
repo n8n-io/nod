@@ -76,7 +76,7 @@ export async function createChatVerification(
       .getKey()
       .then((key) => {
         if (!Buffer.isBuffer(key) || key.length !== 32) throw new Error();
-        return createHmac('sha256', key).update('otto:chat-verification:fingerprint:v1').digest();
+        return createHmac('sha256', key).update('nod:chat-verification:fingerprint:v1').digest();
       })
       .catch(() => {
         fingerprintKey = undefined;
@@ -233,7 +233,7 @@ export async function createChatVerification(
           throw conflict(
             waiting.kind === 'payment'
               ? waiting.channel !== channel
-                ? 'Open the secure payment link in Otto. Otto did not use this code.'
+                ? 'Open the secure payment link in nod. nod did not use this code.'
                 : 'Send just the card’s security code.'
               : unavailableMessage,
           );

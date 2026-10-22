@@ -27,21 +27,21 @@ export interface AnalyticsDelivery {
   replaySessionId?: string;
 }
 export type CaptureAnalytics = (event: AnalyticsEvent, delivery?: AnalyticsDelivery) => void;
-export type MemoryChange = Extract<AnalyticsEvent, { event: 'otto_memory_changed' }>['properties'];
+export type MemoryChange = Extract<AnalyticsEvent, { event: 'nod_memory_changed' }>['properties'];
 
 export function analyticsEnabled(env: Record<string, string | undefined>) {
   const production = env.NODE_ENV === 'production';
   return (
-    env.OTTO_ANALYTICS_ENABLED === 'true' || (env.OTTO_ANALYTICS_ENABLED !== 'false' && production)
+    env.NOD_ANALYTICS_ENABLED === 'true' || (env.NOD_ANALYTICS_ENABLED !== 'false' && production)
   );
 }
 
 export function analyticsEnvironment(
   env: Record<string, string | undefined>,
 ): AnalyticsConfiguration['environment'] {
-  const explicit = z.enum(['development', 'production']).safeParse(env.OTTO_ANALYTICS_ENVIRONMENT);
+  const explicit = z.enum(['development', 'production']).safeParse(env.NOD_ANALYTICS_ENVIRONMENT);
   if (explicit.success) return explicit.data;
-  return env.NODE_ENV === 'production' && !/^\d+\.\d+\.\d+-/.test(env.OTTO_APP_VERSION ?? '')
+  return env.NODE_ENV === 'production' && !/^\d+\.\d+\.\d+-/.test(env.NOD_APP_VERSION ?? '')
     ? 'production'
     : 'development';
 }
@@ -114,9 +114,9 @@ const readVerbs = new Set([
 ]);
 
 function sideEffect(action: string) {
-  if (action === 'OTTO_vault_allow' || action === 'SEARCH_TOOLS') return;
-  if (action === 'OTTO_browser') return 'action';
-  if (action.startsWith('OTTO_')) return 'settings';
+  if (action === 'NOD_vault_allow' || action === 'SEARCH_TOOLS') return;
+  if (action === 'NOD_browser') return 'action';
+  if (action.startsWith('NOD_')) return 'settings';
   return action
     .split(/[^a-zA-Z0-9]+|(?<=[a-z0-9])(?=[A-Z])/)
     .some((word) => readVerbs.has(word.toLowerCase()))
@@ -129,7 +129,7 @@ const webTools = new Set(['web_search', 'fetch_content', 'get_search_content', '
 
 export function toolUsed(event: Extract<RuntimeObservation, { type: 'tool_end' }>): AnalyticsEvent {
   return {
-    event: 'otto_tool_used',
+    event: 'nod_tool_used',
     properties: {
       tool: workspaceTools.has(event.name)
         ? 'workspace'
@@ -232,18 +232,18 @@ export async function createAnalytics(options: {
     if (!parsed.success) return;
     if (
       runId &&
-      parsed.data.event === 'otto_secure_entry_changed' &&
+      parsed.data.event === 'nod_secure_entry_changed' &&
       parsed.data.properties.kind === 'payment' &&
       parsed.data.properties.status === 'submitted'
     )
       acted(runId, 'action');
     if (run) {
       const { data } = parsed;
-      if (data.event === 'otto_turn_started' && data.properties.model_provider)
+      if (data.event === 'nod_turn_started' && data.properties.model_provider)
         run.model ??= turnModel(data.properties.model_provider, data.properties.model);
-      if (data.event === 'otto_model_used' && data.properties.purpose === 'agent')
+      if (data.event === 'nod_model_used' && data.properties.purpose === 'agent')
         run.model = turnModel(data.properties.provider, data.properties.model);
-      if (data.event === 'otto_turn_completed' && run.model) {
+      if (data.event === 'nod_turn_completed' && run.model) {
         const { model_provider: _, model: __, ...properties } = data.properties;
         data.properties = { ...properties, ...run.model };
       }
@@ -341,14 +341,14 @@ export type Analytics = Awaited<ReturnType<typeof createAnalytics>>;
 
 type SettingsSection = Extract<
   AnalyticsEvent,
-  { event: 'otto_settings_updated' }
+  { event: 'nod_settings_updated' }
 >['properties']['section'];
 type SettingsOperation = Extract<
   AnalyticsEvent,
-  { event: 'otto_settings_updated' }
+  { event: 'nod_settings_updated' }
 >['properties']['operation'];
 const settings = (section: SettingsSection, operation: SettingsOperation): AnalyticsEvent => ({
-  event: 'otto_settings_updated',
+  event: 'nod_settings_updated',
   properties: { section, operation },
 });
 const channel =
@@ -362,7 +362,7 @@ const channel =
       ).data;
     if (!provider) return;
     return {
-      event: 'otto_settings_updated',
+      event: 'nod_settings_updated',
       properties: {
         section: 'channels',
         operation: typeof operation === 'function' ? operation(provider) : operation,
@@ -375,9 +375,9 @@ export const analyticsRoutes = new Map<
   string,
   AnalyticsEvent | ((request: FastifyRequest) => AnalyticsEvent | undefined)
 >([
-  ['POST /api/conversation/reset', { event: 'otto_conversation_reset' }],
-  ['POST /api/thread/stop', { event: 'otto_chat_stopped' }],
-  ['POST /api/tasks/:id/stop', { event: 'otto_task_stopped' }],
+  ['POST /api/conversation/reset', { event: 'nod_conversation_reset' }],
+  ['POST /api/thread/stop', { event: 'nod_chat_stopped' }],
+  ['POST /api/tasks/:id/stop', { event: 'nod_task_stopped' }],
   ['PATCH /api/preferences', settings('preferences', 'update')],
   [
     'PUT /api/channel-settings/:provider',
@@ -408,7 +408,7 @@ export const analyticsRoutes = new Map<
       const domain = analyticsDomain(body.url);
       return domain
         ? {
-            event: 'otto_link_opened',
+            event: 'nod_link_opened',
             properties: {
               domain,
               source: body.source,

@@ -9,15 +9,15 @@ import (
 )
 
 func main() {
-	distribution := os.Getenv("OTTO_WSL_DISTRIBUTION")
-	if !regexp.MustCompile(`^Otto-[a-f0-9]{12}$`).MatchString(distribution) {
+	distribution := os.Getenv("NOD_WSL_DISTRIBUTION")
+	if !regexp.MustCompile(`^nod-[a-f0-9]{12}$`).MatchString(distribution) {
 		os.Exit(64)
 	}
 	system := os.Getenv("SYSTEMROOT")
 	if !filepath.IsAbs(system) {
 		os.Exit(64)
 	}
-	args := append([]string{"--distribution", distribution, "--user", "root", "--exec", "/usr/local/bin/otto-docker"}, os.Args[1:]...)
+	args := append([]string{"--distribution", distribution, "--user", "root", "--exec", "/usr/local/bin/nod-docker"}, os.Args[1:]...)
 	command := exec.Command(filepath.Join(system, "System32", "wsl.exe"), args...)
 	for _, key := range []string{"SYSTEMROOT", "USERPROFILE", "LOCALAPPDATA", "TEMP", "TMP"} {
 		if value := os.Getenv(key); value != "" {
