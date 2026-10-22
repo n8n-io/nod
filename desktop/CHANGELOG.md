@@ -11,7 +11,7 @@ Releases from before the rename to nod are the `desktop-v*` [GitHub releases](ht
 ### Features
 
 - **ui:** Refine chat interactions, secure forms and settings. [#392](https://github.com/n8n-io/nod/pull/392) (bbfd826)
-- **trust:** A request covers the steps of its outcome, so Otto asks less. [#391](https://github.com/n8n-io/nod/pull/391) (e79bf5d)
+- **trust:** A request covers the steps of its outcome, so nod asks less. [#391](https://github.com/n8n-io/nod/pull/391) (e79bf5d)
 - Share onboarding while desktop services prepare. [#378](https://github.com/n8n-io/nod/pull/378) (272456d)
 - **telemetry:** Export model metadata to an owner OTLP collector. [#381](https://github.com/n8n-io/nod/pull/381) (a922f9b)
 
@@ -24,7 +24,7 @@ Releases from before the rename to nod are the `desktop-v*` [GitHub releases](ht
 - **onboarding:** Know the owner's name from their connected Gmail account again. [#388](https://github.com/n8n-io/nod/pull/388) (7de4a7d)
 - **trust:** Say what the Trust page is for, and name its tabs and Add button. [#384](https://github.com/n8n-io/nod/pull/384) (38698dc)
 - End stuck turns at once and kill browsers that stop responding. [#383](https://github.com/n8n-io/nod/pull/383) (f4fd450)
-- Tell Otto and the owner what actually failed, and take the language only from the owner's words. [#382](https://github.com/n8n-io/nod/pull/382) (21556de)
+- Tell nod and the owner what actually failed, and take the language only from the owner's words. [#382](https://github.com/n8n-io/nod/pull/382) (21556de)
 - **chat:** Keep quick work in chat, acknowledge once, update only after a quiet stretch. [#380](https://github.com/n8n-io/nod/pull/380) (1befa21)
 - Keep good first tasks, show connect buttons and live steps, refresh changed dependencies. [#377](https://github.com/n8n-io/nod/pull/377) (dc0c7e4)
 
