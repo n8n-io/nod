@@ -612,6 +612,7 @@ Follow these rules:
 - Harden with realistic complications, never stricter graders.
 - When a code check looks for words in what nod wrote, give it an `otherwise` criterion. If the words are missing, the judge decides that check instead, so other wording still passes. Compare email subjects with `sameSubject`, which ignores `Re:` and `Fwd:`.
 - Keep all data synthetic.
+- Route named fixture hosts to the test server for browser and server-side reads. Keep Nod's public network guard on every other host.
 
 To calibrate it, run `run --scenario <id> --repeat 3`. Sort every failure: an agent mistake stays, a harness or fake app fault means fixing the harness, and an authoring fault means fixing the scenario and running it again. If it passes the first time, break what it tests and confirm it fails. Then remove `calibration: 'pending'`. Before you open a pull request, run `pnpm --dir evals run check` and `pnpm --dir evals test`.
 

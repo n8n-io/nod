@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
+import { Agent as Connections, Dispatcher1Wrapper } from 'undici';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
 import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
@@ -1017,6 +1018,15 @@ test('a fixture site is reachable by server-side fetches, not only by the browse
   });
   const originalLookup = dns.promises.lookup;
   const originalFetch = globalThis.fetch;
+  let guarded = 0;
+  const dispatcher = new Dispatcher1Wrapper(
+    new Connections({
+      connect: (_options, callback) => {
+        guarded++;
+        callback(new Error('Synthetic public network guard.'), null);
+      },
+    }),
+  );
   const unroute = routeFixtureHosts([host], `http://127.0.0.1:${sites.port}`);
   try {
     assert.equal((await lookup(host, { all: true }))[0].address, '93.184.216.34');
@@ -1029,9 +1039,15 @@ test('a fixture site is reachable by server-side fetches, not only by the browse
       }),
     );
     assert.match(await posted.text(), /POST double/);
+    const guardedFetch = (url: string) => fetch(url, { dispatcher } as RequestInit);
+    assert.match(await (await guardedFetch(`https://${host}/guarded`)).text(), /Price 149/);
+    assert.equal(guarded, 0);
+    await assert.rejects(guardedFetch('https://unlisted.fixture.example.net/'));
+    assert.ok(guarded > 0);
   } finally {
     unroute();
     await sites.close();
+    await dispatcher.close();
   }
   assert.equal(dns.promises.lookup, originalLookup);
   assert.equal(globalThis.fetch, originalFetch);
