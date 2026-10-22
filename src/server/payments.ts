@@ -175,7 +175,7 @@ export async function createPayments(
     const cards = await options.cards();
     if (!cards.length)
       throw new PaymentError(
-        'Ask the owner to open nod on desktop and [add a card in Trust](/trust?add=card), then tell you to continue. Do not ask for card details in chat.',
+        'Ask the owner to open nod on desktop and [add a card in Logins and payment](/logins?add=card), then tell you to continue. Do not ask for card details in chat.',
       );
     const named = hint?.toLowerCase();
     const matches = named

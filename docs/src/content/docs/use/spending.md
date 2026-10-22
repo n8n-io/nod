@@ -11,18 +11,18 @@ nod itself doesn't charge you. Your model provider bills you for the requests no
 
 ## See your spending
 
-Open **Trust** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Linux app). **Activity** opens first.
+Open **Activity** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Linux app).
 
 - **The sentence at the top.** This month's spending, your monthly limit and when a task checks in, then what nod did this week and the [standing instruction](/trust/approvals/#standing-instructions) it follows on its own. Select a value to see more or change it.
 - **The list.** Every request that cost money or acted in a connected app, and every sign-in and card use, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what nod did and the cost.
 
 Select this month's total to see a chart and a forecast, such as "On track for $12.40". Every app action is recorded, reads included.
 
-![Trust → Activity shows model costs, a $40 monthly limit, the $5 task check-in, a standing instruction, completed tasks and a sign-in.](../../../assets/screens/trust-light.png)
+![Activity shows model costs, a $40 monthly limit, the $5 task check-in, a standing instruction, completed tasks and a sign-in.](../../../assets/screens/activity-light.png)
 
 ## Set a monthly limit
 
-1. Open **Trust**.
+1. Open **Activity**.
 2. In the sentence at the top, select **no monthly limit**, or your current limit.
 3. Enter an amount in US dollars, from $1 up, and select **Save**.
 
@@ -67,13 +67,13 @@ Usage on a ChatGPT plan counts at the model's API price here, so plan tasks chec
 
 ### Change when tasks check in
 
-1. Open **Trust**.
+1. Open **Activity**.
 2. In the sentence at the top, select the amount after **Tasks check in at**.
 3. Choose **$2**, **$5**, **$20** or **No limit**.
 
 Or tell nod, for example "Check in when a task passes $20".
 
-![The check-in choices under the sentence: $2, $5 (selected), $20 and No limit.](../../../assets/screens/trust-task-limit.png)
+![The check-in choices under the sentence: $2, $5 (selected), $20 and No limit.](../../../assets/screens/activity-task-limit.png)
 
 :::note
 nod finishes an action that has already started before it checks in. If the model keeps trying to work after the check-in, nod ends the turn with a notice such as **Paused at the $5 check-in. Reply to keep going.**

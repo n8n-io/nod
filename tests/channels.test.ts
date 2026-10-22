@@ -371,8 +371,10 @@ test('channel presentation isolates private links from the model and rejects uns
   const ordinary = 'Consulta [a fatura](https://merchant.example/payments/invoice).';
   assert.equal(await channelReply(ordinary, { threadId: 'owned-thread', present }), ordinary);
   assert.equal(presentation.length, 1);
-  await channelReply('Save it in nod: /trust?add=login', { threadId: 'owned-thread', present });
-  assert.doesNotMatch(JSON.stringify(presentation), /trust\?add/);
+  for (const page of ['/logins', '/trust']) {
+    await channelReply(`Save it in nod: ${page}?add=login`, { threadId: 'owned-thread', present });
+    assert.doesNotMatch(JSON.stringify(presentation), /(?:logins|trust)\?add/);
+  }
   for (const generated of [
     '',
     'http://localhost:4310/credentials/secret-id',
@@ -711,7 +713,7 @@ test(
       assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 2);
       await addReply(
         'channel:telegram:987:123456:10',
-        'Finish [securely](/credentials/private-token), [approve payment](/payments/private-token) or [add a card](/trust?add=card).',
+        'Finish [securely](/credentials/private-token), [approve payment](/payments/private-token) or [add a card](/logins?add=card).',
       );
       await addReply('channel:whatsapp:555000:wamid.good');
       await pool.query(
@@ -755,7 +757,7 @@ test(
         '351910000000',
       );
       assert.equal(JSON.stringify(sent).includes('private-token'), false);
-      assert.equal(JSON.stringify(sent).includes('/trust?add='), false);
+      assert.equal(JSON.stringify(sent).includes('/logins?add='), false);
       assert.equal(JSON.stringify(sent).includes('Unrelated web-only'), false);
       await channels.drain();
       assert.equal(sent.length, 4);

@@ -43,15 +43,15 @@ function hasChanges(form: HTMLFormElement, details: VaultEntryDetails) {
 export function VaultDetails({
   entry,
   autoFocus,
+  backLabel,
   onClose,
   onSaved,
   onDeleted,
-  visible = true,
   children,
 }: {
   entry: VaultEntry;
-  visible?: boolean;
   autoFocus?: boolean;
+  backLabel: string;
   onClose(): void;
   onSaved(entry: VaultListEntry): void;
   onDeleted(id: string): void;
@@ -119,10 +119,6 @@ export function VaultDetails({
 
   const hideSecretsRef = useRef(hideSecrets);
   hideSecretsRef.current = hideSecrets;
-
-  useEffect(() => {
-    if (!visible) hideRevealed();
-  }, [visible]);
 
   async function loadDetails() {
     detailsRequest.current?.abort();
@@ -470,7 +466,7 @@ export function VaultDetails({
   return (
     <VaultSurface label={name} autoFocus={autoFocus} onClose={close}>
       <div className="vault-bar" ref={bar}>
-        <VaultBackButton onClick={close} />
+        <VaultBackButton label={backLabel} onClick={close} />
         <div className="vault-bar-actions">
           {editing ? (
             <>

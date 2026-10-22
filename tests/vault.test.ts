@@ -9,7 +9,7 @@ import test from 'node:test';
 import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
 import { runProcess } from '../src/providers/process.ts';
-import { Trust } from '../src/web/pages/trust.tsx';
+import { Logins } from '../src/web/pages/logins.tsx';
 import { Credentials } from '../src/web/pages/credentials.tsx';
 import { SetupActions } from '../src/web/components/setup-link.tsx';
 import { messageSetupLinks } from '../src/web/lib/message-links.ts';
@@ -3895,32 +3895,13 @@ test('Vault does not open or prefill a login from arbitrary query data', async (
   ]) {
     pageDataCache.clear();
     const view = await vaultPage(
-      createElement(Trust),
+      createElement(Logins),
       async (path, init) => {
         assert.notEqual(init.method, 'POST');
-        if (path === '/api/vault/activity')
-          return Response.json({ week: { signIns: 0, held: 0, asked: 0 }, entries: [] });
-        if (path === '/api/trust')
-          return Response.json({
-            week: { things: 0, actions: 0, spentUsd: 0 },
-            month: {
-              start: new Date().toISOString(),
-              days: 31,
-              elapsedDays: 1,
-              spentUsd: 0,
-              forecastUsd: 0,
-              daily: [0],
-              unpriced: false,
-            },
-            limit: null,
-            taskUsd: 5,
-            entries: [],
-            next: null,
-          });
         assert.ok(['/api/vault', '/api/vault/sessions'].includes(path), path);
         return Response.json([]);
       },
-      `http://localhost:4310/trust${query}`,
+      `http://localhost:4310/logins${query}`,
     );
     try {
       assert.equal(view.document.querySelector('.vault-add-form'), null);
@@ -4137,7 +4118,7 @@ test(
     );
     assert.equal(submitted, 2);
     assert.equal(entered, 2);
-    await view.render(panel('/trust?add=card', 'card-owner'));
+    await view.render(panel('/logins?add=card', 'card-owner'));
     await click('#open-private');
     const unsentCard = view.document.querySelector<HTMLInputElement>('input[name="cardNumber"]')!;
     assert.ok(unsentCard);
@@ -4174,11 +4155,11 @@ test(
     assert.equal(window.location.search, '?conversation=synthetic');
     pageDataCache.clear();
     for (const href of [
-      '/trust?add=card&cardNumber=4242424242424242',
-      '/trust?add=card&add=card',
-      '/trust?add=card#synthetic',
-      '/trust?add=login',
-      'https://foreign.example.test/trust?add=card',
+      '/logins?add=card&cardNumber=4242424242424242',
+      '/logins?add=card&add=card',
+      '/logins?add=card#synthetic',
+      '/logins?add=login',
+      'https://foreign.example.test/logins?add=card',
     ]) {
       await view.render(panel(href, 'card-owner'));
       await click('#open-private');
@@ -4274,7 +4255,8 @@ test('analytics routes collapse private paths to known pages', async () => {
     ['/settings/memory', '/settings'],
     ['/settings/unknown-private-section', '/not-found'],
     ['/settings-typo', '/not-found'],
-    ['/trust?tab=saved#private', '/trust'],
+    ['/activity?private=synthetic#private', '/activity'],
+    ['/logins?item=synthetic-private-id', '/logins'],
     ['https://private.invalid/apps?connect=synthetic-private', '/apps'],
     ['/browser-connect/synthetic-private-token', '/apps'],
     ['/vault/synthetic-private-id', '/credentials'],
@@ -4488,7 +4470,7 @@ const { TaskCard } = await import('./src/web/pages/tasks.tsx');
 const now = new Date().toISOString();
 document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(MessageBubble, {message:{id:'synthetic-message',role:'user',text:'synthetic-private-message',turnId:null,createdAt:now,attachments:[{id:'22222222-2222-4222-8222-222222222222',name:'synthetic-private-file.pdf',mimeType:'application/pdf',size:12,url:'/api/artifacts/22222222-2222-4222-8222-222222222222'}],replyTo:{id:'synthetic-quoted',role:'assistant',text:'synthetic-private-quote'}}, onReply() {}})));
 document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(TaskCard, {task:{id:'synthetic-task',title:'synthetic-private-task',doneWhen:'synthetic-private-done',now:'synthetic-private-now',result:'',status:'working',question:null,waitingFor:[],nextCheck:null,createdAt:now,updatedAt:now,closedAt:null,steps:['synthetic-private-step'],stepIndex:0}})));
-document.body.insertAdjacentHTML('beforeend', '<div class="chat-turn-preview">synthetic-private-turn</div><div class="message-link-previews">synthetic-private-preview</div><a class="message-link-tooltip" href="https://example.org/synthetic-private-tooltip">synthetic-private-tooltip</a><div class="pending-attachments">synthetic-private-pending</div><div class="reply-context composer-reply">synthetic-private-draft-reply</div><p class="statement-summary trust-sentence">synthetic-private-rule</p><span class="vault-use-text">synthetic-private-site</span><span class="vault-item-text">synthetic-private-login</span><span class="compact-account-details">synthetic-private-account</span><aside class="artifact-drawer" style="width: 480px"><h2 title="synthetic-private-file.pdf">synthetic-private-file.pdf</h2><table><td title="synthetic-private-cell">synthetic-private-cell</td></table></aside>');
+document.body.insertAdjacentHTML('beforeend', '<div class="chat-turn-preview">synthetic-private-turn</div><div class="message-link-previews">synthetic-private-preview</div><a class="message-link-tooltip" href="https://example.org/synthetic-private-tooltip">synthetic-private-tooltip</a><div class="pending-attachments">synthetic-private-pending</div><div class="reply-context composer-reply">synthetic-private-draft-reply</div><p class="statement-summary activity-sentence">synthetic-private-rule</p><span class="vault-use-text">synthetic-private-site</span><span class="vault-item-text">synthetic-private-login</span><span class="compact-account-details">synthetic-private-account</span><aside class="artifact-drawer" style="width: 480px"><h2 title="synthetic-private-file.pdf">synthetic-private-file.pdf</h2><table><td title="synthetic-private-cell">synthetic-private-cell</td></table></aside>');
 const pairingPaths = [...document.querySelectorAll('.telegram-setup-qr path')].map(path => path.getAttribute('d'));
 assert.ok(pairingPaths.length > 0);
 const stylesheet = document.createElement('style');
@@ -4519,7 +4501,7 @@ const badgeTextIds = new Set(badges.map(node => node.childNodes[0].id));
 const badgeUpdates = events.filter(event => event.type === 3).flatMap(event => event.data.texts ?? []).filter(text => badgeTextIds.has(text.id));
 assert.equal(badgeUpdates.length, badges.length);
 assert.deepEqual(badgeUpdates.map(text => text.value), Array(badges.length).fill('**'));
-for (const name of ['message-reply-quote','message-attachments','task-preview-title','task-preview-line','task-preview-steps','chat-turn-preview','message-link-previews','message-link-tooltip','pending-attachments','reply-context','trust-sentence','vault-use-text','vault-item-text','compact-account-details','artifact-drawer']) {
+for (const name of ['message-reply-quote','message-attachments','task-preview-title','task-preview-line','task-preview-steps','chat-turn-preview','message-link-previews','message-link-tooltip','pending-attachments','reply-context','activity-sentence','vault-use-text','vault-item-text','compact-account-details','artifact-drawer']) {
   const blocked = recordedNodes.filter(node => node.attributes?.class?.split(' ').includes(name));
   assert.ok(blocked.length > 0, name);
   for (const node of blocked) assert.deepEqual(node.childNodes, [], name);

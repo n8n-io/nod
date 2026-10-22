@@ -2851,6 +2851,8 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   for (const path of [
     '/credentials/synthetic',
     '/payments/synthetic',
+    '/activity',
+    '/logins',
     '/trust',
     '/vault/synthetic',
     '/browser',

@@ -30,8 +30,8 @@
     </td>
     <td width="33%" valign="top">
       <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/screens/card-trust-dark.png" />
-        <img alt="Trust shows what nod did and spent, with tabs for activity and saved logins and cards." src="docs/src/assets/screens/card-trust-light.png" />
+        <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/screens/card-activity-dark.png" />
+        <img alt="Activity shows what nod did and spent, including every sign-in and card use." src="docs/src/assets/screens/card-activity-light.png" />
       </picture>
       <p><b>Sign in without sharing passwords.</b> Vault types them in privately and logs every use.</p>
     </td>

@@ -154,10 +154,10 @@ try {
         await evaluate('getComputedStyle(document.querySelector(".message-text")).fontSize'),
         '22px',
       );
-    if (scenes[i].view === 'trust')
+    if (scenes[i].view === 'activity')
       assert(
         await evaluate('document.body.innerText.includes("nod spent")'),
-        'Trust did not load.',
+        'Activity did not load.',
       );
     const screenshot = await send('Page.captureScreenshot', {
       format: 'png',
@@ -166,12 +166,12 @@ try {
     await writeFile(`${output}/scene-${i}.png`, Buffer.from(screenshot.data, 'base64'));
   }
   await mkdir(`${output}/screens`, { recursive: true });
-  for (const [name, width, height, kind, theme, action] of [
-    ['card-trust-light', 660, 495, 'trust-card', 'light'],
-    ['card-trust-dark', 660, 495, 'trust-card', 'dark'],
-    ['trust-light', 1000, 680, 'trust', 'light'],
-    ['trust-saved-light', 1000, 680, 'trust-saved', 'light', 'saved'],
-    ['trust-task-limit', 1000, 680, 'trust-limit', 'light', 'limit'],
+  for (const [name, width, height, kind, theme, limit] of [
+    ['card-activity-light', 660, 495, 'activity-card', 'light'],
+    ['card-activity-dark', 660, 495, 'activity-card', 'dark'],
+    ['activity-light', 1000, 680, 'activity', 'light'],
+    ['logins-light', 1000, 680, 'logins', 'light'],
+    ['activity-task-limit', 1000, 680, 'activity-limit', 'light', true],
     ['verify-code-page', 800, 450, 'code', 'light'],
   ]) {
     await send('Emulation.setDeviceMetricsOverride', {
@@ -184,10 +184,9 @@ try {
       `document.documentElement.dataset.theme=${JSON.stringify(theme)}; window.renderMedia(0,${JSON.stringify(kind)})`,
     );
     await new Promise((resolve) => setTimeout(resolve, 500));
-    if (action) {
-      const label = action === 'saved' ? 'Logins and cards' : '$5';
+    if (limit) {
       await evaluate(
-        `Array.from(document.querySelectorAll('button')).find(button => button.textContent.includes(${JSON.stringify(label)})).click()`,
+        `Array.from(document.querySelectorAll('button')).find(button => button.textContent.includes('$5')).click()`,
       );
       await new Promise((resolve) => setTimeout(resolve, 400));
     }
@@ -199,12 +198,11 @@ try {
       'A capture has an error state.',
     );
     assert(!(await evaluate('/otto/i.test(document.body.innerText)')), 'An old name remains.');
-    const clip =
-      action === 'limit'
-        ? await evaluate(
-            `(() => {const a=document.querySelector('.trust-sentence').getBoundingClientRect();const b=document.querySelector('.trust-pop').getBoundingClientRect();const x=Math.max(0,Math.min(a.x,b.x)-16),y=Math.max(0,Math.min(a.y,b.y)-16);return {x,y,width:Math.min(innerWidth-x,Math.max(a.right,b.right)-x+16),height:Math.max(a.bottom,b.bottom)-y+16,scale:1};})()`,
-          )
-        : undefined;
+    const clip = limit
+      ? await evaluate(
+          `(() => {const a=document.querySelector('.activity-sentence').getBoundingClientRect();const b=document.querySelector('.activity-pop').getBoundingClientRect();const x=Math.max(0,Math.min(a.x,b.x)-16),y=Math.max(0,Math.min(a.y,b.y)-16);return {x,y,width:Math.min(innerWidth-x,Math.max(a.right,b.right)-x+16),height:Math.max(a.bottom,b.bottom)-y+16,scale:1};})()`,
+        )
+      : undefined;
     const screenshot = await send('Page.captureScreenshot', {
       format: 'png',
       captureBeyondViewport: false,

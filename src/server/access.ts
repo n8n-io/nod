@@ -57,6 +57,8 @@ export function registerLocalAccess(
     '/',
     '/tasks',
     '/memory',
+    '/activity',
+    '/logins',
     '/trust',
     '/apps',
     '/onboarding',

@@ -23,8 +23,8 @@ function privateRequest(href: string) {
   }
   if (url.origin !== window.location.origin || url.username || url.password || url.hash)
     return null;
-  if (url.pathname === '/trust' && url.search === '?add=card')
-    return { kind: 'card' as const, id: 'new', path: '/trust?add=card' };
+  if (url.pathname === '/logins' && url.search === '?add=card')
+    return { kind: 'card' as const, id: 'new', path: '/logins?add=card' };
   if (url.search) return null;
   const credential = /^\/(?:vault|credentials)\/([A-Za-z0-9_-]{20,100})\/?$/.exec(url.pathname);
   if (credential)

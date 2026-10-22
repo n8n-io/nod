@@ -48,7 +48,7 @@ Open the **Settings** page, then **Models** to choose the model nod uses from yo
 
 ## Desktop shortcuts
 
-In the desktop app, hold Command on a Mac or Ctrl on Windows and Linux to show shortcut hints. Use that key with 1–5 for Chat, Tasks, Apps, Channels and Trust; B expands or collapses the sidebar, and comma opens Settings. Web browsers keep their own shortcuts.
+In the desktop app, hold Command on a Mac or Ctrl on Windows and Linux to show shortcut hints. Use that key with 1–6 for Chat, Tasks, Apps, Channels, Activity, and Logins and payment; B expands or collapses the sidebar, and comma opens Settings. Web browsers keep their own shortcuts.
 
 ## React to messages
 
