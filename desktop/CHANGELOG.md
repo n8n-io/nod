@@ -2,6 +2,22 @@
 
 Releases from before the rename to nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.2.0 - 2026-10-22
+
+### Other changes
+
+- Restore #394 and #395 after the nod 0.1.1 build. [commit](https://github.com/n8n-io/nod/commit/b0db4d9fc1e4f0ff78918914a3d5d0ac7b287ca9) (b0db4d9)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.1.1...b0db4d9fc1e4f0ff78918914a3d5d0ac7b287ca9)
+
+<details>
+<summary>Build details</summary>
+
+Source: `b0db4d9fc1e4f0ff78918914a3d5d0ac7b287ca9`
+Previous release: `nod-v0.1.1`
+
+</details>
+
 ## 0.1.1 - 2026-10-22
 
 ### Breaking changes
