@@ -11,12 +11,14 @@ import { Agent as Connections, Dispatcher1Wrapper, buildConnector } from 'undici
 import { Compile } from 'typebox/compile';
 import {
   createAgentSession,
+  buildSessionProjection,
   createCodemodeExtension,
   createToolSearchExtension,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  type ContextEvent,
   type ExtensionAPI,
   type ResourceLoader,
   type ToolDefinition,
@@ -33,6 +35,7 @@ import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';
 import { agentModels } from '../../shared/model-defaults.ts';
 import { createSandbox, workspaceOutputs } from './sandbox.ts';
 import { isPublicAddress, publicLookup } from '../agent-browser/network.ts';
+import { untrustedBlock, untrustedParts } from '../../shared/untrusted.ts';
 
 function isFinalAnswer(signature: string | undefined) {
   if (!signature?.startsWith('{')) return false;
@@ -214,11 +217,139 @@ function ownerContextCopies(ownerContext: string | undefined) {
   };
 }
 
+type NativeObservationKind = 'look' | 'screenshot' | 'act';
+
+function nativeObservationKind(details: unknown): NativeObservationKind | undefined {
+  if (!details || typeof details !== 'object') return;
+  const marker = (details as { nativeObservation?: unknown }).nativeObservation;
+  if (!marker || typeof marker !== 'object' || Object.keys(marker).length !== 1) return;
+  const kind = (marker as { kind?: unknown }).kind;
+  if (kind === 'look' || kind === 'screenshot' || kind === 'act') return kind;
+}
+
+function recentNativeObservations(messages: ContextEvent['messages']) {
+  const calls = new Map<string, unknown>();
+  const observations = new Map<number, ContextEvent['messages'][number]>();
+  const { open, close } = untrustedParts('computer');
+  for (const [index, message] of messages.entries()) {
+    if (message.role === 'assistant') {
+      for (const part of message.content)
+        if (part.type === 'toolCall')
+          calls.set(part.id, part.name === 'computer' ? part.arguments.action : undefined);
+      continue;
+    }
+    if (message.role !== 'toolResult') continue;
+    const action = calls.get(message.toolCallId);
+    calls.delete(message.toolCallId);
+    if (message.toolName !== 'computer' || message.isError) continue;
+    const kind = nativeObservationKind(message.details);
+    if (kind ? kind !== action : action !== 'look' && action !== 'screenshot') continue;
+    const content = message.content;
+    let text: string;
+    if (action === 'screenshot') {
+      if (
+        content.length !== 4 ||
+        content[0].type !== 'text' ||
+        content[0].text !== open ||
+        content[1].type !== 'text' ||
+        content[2].type !== 'image' ||
+        content[2].mimeType !== 'image/png' ||
+        !content[2].data ||
+        content[3].type !== 'text' ||
+        content[3].text !== close
+      )
+        continue;
+      text = content[1].text;
+    } else {
+      if (
+        content.length !== 1 ||
+        content[0].type !== 'text' ||
+        !content[0].text.startsWith(`${open}\n\n`) ||
+        !content[0].text.endsWith(`\n${close}`)
+      )
+        continue;
+      text = content[0].text.slice(open.length + 2, -close.length - 1);
+    }
+    let value: Record<string, unknown>;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const app = value.app as
+      { name?: unknown; bundleId?: unknown; pid?: unknown; active?: unknown } | undefined;
+    if (
+      !app ||
+      typeof app !== 'object' ||
+      Object.keys(app).some((key) => !['name', 'bundleId', 'pid', 'active'].includes(key)) ||
+      ('pid' in app &&
+        (typeof app.pid !== 'number' || !Number.isInteger(app.pid) || app.pid <= 0)) ||
+      ('active' in app && typeof app.active !== 'boolean') ||
+      typeof app.name !== 'string' ||
+      !app.name ||
+      typeof app.bundleId !== 'string' ||
+      !app.bundleId
+    )
+      continue;
+    if (
+      action === 'screenshot'
+        ? Object.keys(value).length !== 1
+        : typeof value.tree !== 'string' ||
+          Object.keys(value).length !== (action === 'act' ? 3 : 2) ||
+          (action === 'act' && value.done !== true)
+    )
+      continue;
+    observations.set(index, {
+      ...message,
+      content: [
+        {
+          type: 'text',
+          text: untrustedBlock(
+            'computer',
+            JSON.stringify({
+              ...(action === 'act' ? { done: true } : {}),
+              app,
+              observation: 'stale',
+              next: 'An older native observation was omitted. Look again before acting; do not repeat a completed action.',
+            }),
+          ),
+        },
+      ],
+    });
+  }
+  const cut = observations.size - 2;
+  let seen = 0;
+  return messages.map((message, index) => {
+    const replacement = observations.get(index);
+    return replacement && seen++ < cut ? replacement : message;
+  });
+}
+
+function nativeObservations(pi: ExtensionAPI) {
+  pi.on('context', ({ messages }) => ({ messages: recentNativeObservations(messages) }));
+  pi.on('session_before_compact', ({ preparation, branchEntries }) => {
+    const entries = buildSessionProjection(branchEntries).entries;
+    const retained = entries
+      .slice(entries.findIndex((entry) => entry.sourceEntry.id === preparation.firstKeptEntryId))
+      .flatMap((entry) => entry.messages);
+    const history = preparation.messagesToSummarize.length;
+    const prefix = preparation.turnPrefixMessages.length;
+    const messages = recentNativeObservations([
+      ...preparation.messagesToSummarize,
+      ...preparation.turnPrefixMessages,
+      ...retained,
+    ]);
+    preparation.messagesToSummarize = messages.slice(0, history);
+    preparation.turnPrefixMessages = messages.slice(history, history + prefix);
+  });
+}
+
 function recentImages(pi: ExtensionAPI) {
   pi.on('context', ({ messages }) => {
     const total = messages.reduce(
       (count, message) =>
-        message.role === 'toolResult'
+        message.role === 'toolResult' && message.toolName !== 'computer'
           ? count + message.content.filter((part) => part.type === 'image').length
           : count,
       0,
@@ -228,7 +359,9 @@ function recentImages(pi: ExtensionAPI) {
     let seen = 0;
     return {
       messages: messages.map((message) =>
-        message.role === 'toolResult' && message.content.some((part) => part.type === 'image')
+        message.role === 'toolResult' &&
+        message.toolName !== 'computer' &&
+        message.content.some((part) => part.type === 'image')
           ? {
               ...message,
               content: message.content.map((part) =>
@@ -385,11 +518,14 @@ export function createPiAgent(options: {
             : { exposure: 'model-only' as const }),
           executionMode: tool.parallel ? 'parallel' : 'sequential',
           execute: async (id, args) => {
+            const result = await tool.execute(args as Record<string, unknown>, {
+              nested: id.includes('/'),
+            });
+            const kind =
+              tool.name === 'computer' ? nativeObservationKind(result.details) : undefined;
             return {
-              ...(await tool.execute(args as Record<string, unknown>, {
-                nested: id.includes('/'),
-              })),
-              details: {},
+              ...result,
+              details: kind ? { nativeObservation: { kind } } : {},
             };
           },
         })),
@@ -402,6 +538,7 @@ export function createPiAgent(options: {
         extensionFactories: [
           createCodemodeExtension(),
           ...(deferred ? [createToolSearchExtension()] : []),
+          nativeObservations,
           recentImages,
           threadPromptCache(input.threadId),
           ownerContextCopies(input.ownerContext),

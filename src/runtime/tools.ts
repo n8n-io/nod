@@ -495,13 +495,20 @@ export const toolDefinitions = {
   ),
   computer: defineTool(
     'computer',
-    "Act on the owner's own Mac, outside your workspace. Use it only when the task concerns the owner's files, Mac apps or screen; otherwise use the workspace. Load the your-computer skill first. shell {command, timeoutSeconds?} runs zsh in the owner's home folder with a restricted environment; ask the owner to move files to Trash when needed. apps lists running Mac apps. open {app} opens a Mac app in the background by name or bundle ID. look {app} returns the app's accessibility tree with refs; refs expire after an action or another look. screenshot {app} captures the app's window for you to inspect. share_screenshot {app, name?} captures the app's window and attaches the PNG to your reply. act {app, step, ref?, value?, text?, key?} works in the app without the mouse: press, set (value), focus, showMenu and raise take a ref from a fresh look; type sends text to the focused field; key sends a combination such as cmd+s. Look again after every action to verify and before the next action. First use of an app runs when the owner's words cover it; commands and actions their words don't cover ask the owner.",
+    "Act on the owner's own Mac, outside your workspace. Use it only when the task concerns the owner's files, Mac apps or screen; otherwise use the workspace. Load the your-computer skill first. shell {command, timeoutSeconds?} runs zsh in the owner's home folder with a restricted environment; ask the owner to move files to Trash when needed. share_file {path} attaches the original file at an absolute Mac path directly to the conversation; use it to deliver Mac files without reading or rewriting their bytes through the model. apps lists running Mac apps. open {app} opens a Mac app in the background by name or bundle ID. look {app} returns the app's accessibility tree with refs; refs expire after an action or another look. screenshot {app} captures the app's window for you to inspect. share_screenshot {app, name?} captures the app's window and attaches the PNG to your reply. act {app, step, ref?, value?, text?, key?} works in the app without the mouse: press, set (value), focus, showMenu and raise take a ref from a fresh look; type sends text to the focused field; key sends a combination such as cmd+s. A successful act returns a fresh tree: verify the result there and use its refs for the next action. Look again only if the observation is unavailable or the app is still changing. Never repeat an action whose result is uncertain. First use of an app runs when the owner's words cover it; commands and actions their words don't cover ask the owner.",
     Type.Union([
       Type.Object(
         {
           action: Type.Literal('shell'),
           command: Type.String({ minLength: 1 }),
           timeoutSeconds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3600 })),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('share_file'),
+          path: Type.String({ minLength: 1, maxLength: 4096, pattern: '^/[^\\u0000]*$' }),
         },
         { additionalProperties: false },
       ),
@@ -960,9 +967,28 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
                   { type: 'text', text: JSON.stringify(rest) },
                   { type: 'image', data: png, mimeType: 'image/png' },
                 ],
-                details: {},
+                details: p.action === 'screenshot' ? { nativeObservation: { kind: p.action } } : {},
               };
             }
+            if (
+              (p.action === 'look' || p.action === 'act') &&
+              result &&
+              typeof result === 'object' &&
+              'app' in result &&
+              result.app &&
+              typeof result.app === 'object' &&
+              'name' in result.app &&
+              typeof result.app.name === 'string' &&
+              'bundleId' in result.app &&
+              typeof result.app.bundleId === 'string' &&
+              'tree' in result &&
+              typeof result.tree === 'string' &&
+              (p.action === 'look' || ('done' in result && result.done === true))
+            )
+              return {
+                content: [{ type: 'text', text: JSON.stringify(result) }],
+                details: { nativeObservation: { kind: p.action } },
+              };
             return result;
           }),
         ]

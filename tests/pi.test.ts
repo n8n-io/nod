@@ -12,6 +12,7 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import {
   createAgentSession,
   SessionManager,
+  SettingsManager,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
@@ -33,6 +34,7 @@ import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 import { createSandbox } from '../src/providers/pi/sandbox.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { rootObject, toolDefinitions } from '../src/runtime/tools.ts';
+import { delimit } from '../src/runtime/untrusted.ts';
 import { Type } from '@sinclair/typebox';
 import { fakeComputer, fakeWorkspace, fakeExecution } from './runtime-fixtures.ts';
 
@@ -945,6 +947,281 @@ test('real Pi saves its user message and tool call before a side effect and reco
       1,
     );
     assert.match(JSON.stringify(entries), /saved receipt/);
+  } finally {
+    await agent.dispose();
+    await f.close();
+  }
+});
+
+test('real Pi prunes stale native observations without losing outcomes or saved evidence', async (t) => {
+  const f = await fixture();
+  const sessionRoot = join(f.directory, 'sessions');
+  const directory = join(sessionRoot, f.threadId);
+  await mkdir(directory, { recursive: true });
+  const saved = SessionManager.create(directory, directory);
+  saved.appendMessage({ role: 'user', content: 'Keep the synthetic receipts.', timestamp: 1 });
+  const app = { name: 'Fixture', bundleId: 'test.fixture', pid: 123, active: false };
+  const wrap = (value: unknown, image?: string) =>
+    delimit('computer', {
+      content: [
+        { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) },
+        ...(image ? [{ type: 'image' as const, mimeType: 'image/png', data: image }] : []),
+      ],
+    }).content;
+  const records: Array<{
+    id: string;
+    content: ReturnType<typeof wrap>;
+    prune: boolean;
+  }> = [];
+  const seed = (
+    id: string,
+    action: string,
+    content: ReturnType<typeof wrap>,
+    options: { kind?: string; isError?: boolean; tool?: string; prune?: boolean } = {},
+  ) => {
+    const tool = options.tool ?? 'computer';
+    saved.appendMessage({
+      ...fauxAssistantMessage([
+        { type: 'toolCall', id, name: tool, arguments: { action, app: app.bundleId } },
+      ]),
+      stopReason: 'toolUse',
+    });
+    saved.appendMessage({
+      role: 'toolResult',
+      toolCallId: id,
+      toolName: tool,
+      content,
+      details: options.kind ? { nativeObservation: { kind: options.kind } } : {},
+      isError: options.isError ?? false,
+      timestamp: 2,
+    });
+    records.push({ id, content, prune: options.prune ?? false });
+  };
+  seed('legacy-look', 'look', wrap({ app, tree: 'old-legacy-tree-' + 'a'.repeat(50_000) }), {
+    prune: true,
+  });
+  seed('legacy-image', 'screenshot', wrap({ app }, Buffer.from('old image').toString('base64')), {
+    prune: true,
+  });
+  seed(
+    'completed-act',
+    'act',
+    wrap({ done: true, app, tree: 'old-act-tree-' + 'b'.repeat(30_000) }),
+    {
+      kind: 'act',
+      prune: true,
+    },
+  );
+  seed('marked-look', 'look', wrap({ app, tree: 'old-marked-tree-' + 'c'.repeat(30_000) }), {
+    kind: 'look',
+    prune: true,
+  });
+  seed('confirmation', 'look', wrap('Waiting for an owned confirmation.'), { kind: 'look' });
+  seed('mixed-outcome', 'look', wrap({ app, tree: 'keep mixed tree', approval: 'pending' }));
+  seed('malformed-json', 'look', wrap('{"app":'));
+  seed('malformed-app', 'look', wrap({ app: { name: 'Fixture' }, tree: 'keep malformed app' }));
+  seed(
+    'extra-app-field',
+    'look',
+    wrap({ app: { ...app, approval: 'pending' }, tree: 'keep extended app' }),
+  );
+  seed(
+    'invalid-app-field',
+    'look',
+    wrap({ app: { ...app, active: 'unknown' }, tree: 'keep invalid app' }),
+  );
+  seed('failed-look', 'look', wrap({ app, tree: 'keep failed observation' }), {
+    kind: 'look',
+    isError: true,
+  });
+  seed('other-tool', 'look', wrap({ app, tree: 'keep other tool' }), {
+    tool: 'browser',
+    kind: 'look',
+  });
+  seed('artifact', 'share_screenshot', wrap({ app, artifact: { id: 'saved-receipt' } }), {
+    kind: 'screenshot',
+  });
+  seed('unmarked-act', 'act', wrap({ done: true, app, tree: 'keep legacy action' }));
+  seed('uncertain-act', 'act', wrap({ done: false, app, tree: 'keep uncertain action' }), {
+    kind: 'act',
+  });
+  seed('unobserved-act', 'act', wrap({ done: true, observation: 'unavailable' }), { kind: 'act' });
+  seed('wrong-wrapper', 'look', [
+    { type: 'text', text: `Other data\n${JSON.stringify({ app, tree: 'keep other wrapper' })}` },
+  ]);
+  seed('mismatched-marker', 'look', wrap({ app, tree: 'keep mismatched marker' }), {
+    kind: 'screenshot',
+  });
+  const orphan = wrap({ app, tree: 'keep unmatched observation' });
+  saved.appendMessage({
+    role: 'toolResult',
+    toolCallId: 'unmatched-look',
+    toolName: 'computer',
+    content: orphan,
+    details: { nativeObservation: { kind: 'look' } },
+    isError: false,
+    timestamp: 3,
+  });
+  records.push({ id: 'unmatched-look', content: orphan, prune: false });
+  seed('latest-look', 'look', wrap({ app, tree: 'latest-tree-' + 'd'.repeat(30_000) }), {
+    kind: 'look',
+  });
+  seed(
+    'latest-image',
+    'screenshot',
+    wrap({ app }, Buffer.from('latest image').toString('base64')),
+    {
+      kind: 'screenshot',
+    },
+  );
+  for (let index = 0; index < 13; index++)
+    seed(
+      `browser-image-${index}`,
+      'screenshot',
+      wrap({ app }, Buffer.from(`browser-${index}`).toString('base64')),
+      {
+        tool: 'browser',
+        prune: index < 8,
+      },
+    );
+  saved.appendMessage(fauxAssistantMessage('The synthetic action receipts are saved.'));
+  const original = structuredClone(saved.getEntries());
+  const requests: string[] = [];
+  const summaries: string[] = [];
+  let compacting = false;
+  let actual: Awaited<ReturnType<typeof createAgentSession>>['session'];
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture',
+    sessionRoot,
+    configRoot: join(f.directory, 'config'),
+    createSession: async (options) => {
+      const result = await createAgentSession({
+        ...options,
+        settingsManager: SettingsManager.inMemory({
+          compaction: { enabled: false, reserveTokens: 1000, keepRecentTokens: 200 },
+        }),
+      });
+      actual = result.session;
+      actual.agent.streamFunction = (model, request) => {
+        (compacting ? summaries : requests).push(JSON.stringify(request.messages));
+        const call = !compacting && requests.length === 1;
+        const message: AssistantMessage = {
+          ...fauxAssistantMessage(
+            call
+              ? [
+                  {
+                    type: 'toolCall',
+                    id: 'current-act',
+                    name: 'computer',
+                    arguments: { action: 'act' },
+                  },
+                ]
+              : [{ type: 'text', text: compacting ? 'Synthetic summary.' : 'Synthetic done.' }],
+          ),
+          provider: model.provider,
+          model: model.id,
+          api: model.api,
+          stopReason: call ? 'toolUse' : 'stop',
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: 'done', reason: call ? 'toolUse' : 'stop', message });
+        return stream;
+      };
+      return result;
+    },
+  });
+  try {
+    const session = await agent.open({
+      ...fakeExecution(f.threadId, randomUUID()),
+      systemPrompt: 'Fixture',
+      ...sandbox,
+      tools: [
+        {
+          name: 'computer',
+          description: 'Fixture',
+          parameters: { type: 'object', properties: { action: { type: 'string' } } },
+          execute: async () => ({
+            content: wrap({ done: true, app, tree: 'current-act-tree-' + 'e'.repeat(2000) }),
+            details: { nativeObservation: { kind: 'act' }, unrelated: 'not-propagated' },
+          }),
+        },
+      ],
+      shouldStop: () => false,
+      onEvent() {},
+    });
+    await session.prompt('Continue the synthetic task.', []);
+    assert.equal(requests.length, 2);
+    const results = (request: string) =>
+      new Map<string, ReturnType<typeof wrap>>(
+        JSON.parse(request).flatMap(
+          (message: { role: string; toolCallId: string; content: ReturnType<typeof wrap> }) =>
+            message.role === 'toolResult' ? [[message.toolCallId, message.content]] : [],
+        ),
+      );
+    const first = results(requests[0]);
+    t.diagnostic(
+      JSON.stringify({
+        rawToolContentChars: JSON.stringify(records.map((record) => record.content)).length,
+        projectedToolContentChars: JSON.stringify([...first.values()]).length,
+        firstRequestChars: requests[0].length,
+        nextRequestChars: requests[1].length,
+      }),
+    );
+    assert.equal(
+      requests[0].includes('old-legacy-tree-'),
+      false,
+      'Stale native trees must not reach the model',
+    );
+    for (const record of records) {
+      assert.ok(first.has(record.id), record.id);
+      if (record.prune) assert.notDeepEqual(first.get(record.id), record.content, record.id);
+      else assert.deepEqual(first.get(record.id), record.content, record.id);
+    }
+    const completed = first.get('completed-act')!;
+    assert.equal(completed.length, 1);
+    assert.equal(completed[0].type, 'text');
+    const completionText = completed[0].type === 'text' ? completed[0].text : '';
+    const completion = JSON.parse(
+      completionText.split('\n\n')[1].split('\n</untrusted_tool_result>')[0],
+    );
+    assert.equal(completion.done, true);
+    assert.deepEqual(completion.app, app);
+    assert.equal('tree' in completion, false);
+    assert.ok(!requests[0].includes('old-act-tree-'));
+    assert.ok(!requests[0].includes('old-legacy-tree-'));
+    assert.ok(!requests[0].includes('old-marked-tree-'));
+    const second = results(requests[1]);
+    assert.ok(!requests[1].includes('latest-tree-'));
+    assert.deepEqual(second.get('latest-image'), first.get('latest-image'));
+    assert.match(JSON.stringify(second.get('current-act')), /current-act-tree-/);
+    assert.ok(requests[0].includes('Keep the synthetic receipts.'));
+    assert.ok(requests[1].includes('The synthetic action receipts are saved.'));
+    const beforeChars = JSON.stringify(original).length;
+    assert.ok(requests[0].length < beforeChars / 2);
+    const current = actual!.sessionManager
+      .getEntries()
+      .find(
+        (entry) =>
+          entry.type === 'message' &&
+          entry.message.role === 'toolResult' &&
+          entry.message.toolCallId === 'current-act',
+      );
+    assert.ok(current?.type === 'message' && current.message.role === 'toolResult');
+    assert.deepEqual(current.message.details, { nativeObservation: { kind: 'act' } });
+    assert.deepEqual(actual!.sessionManager.getEntries().slice(0, original.length), original);
+    compacting = true;
+    await actual!.compact();
+    assert.ok(summaries.length > 0);
+    const summarized = summaries.join('\n');
+    for (const omitted of ['old-act-tree-', 'old-legacy-tree-', 'old-marked-tree-', 'latest-tree-'])
+      assert.ok(!summarized.includes(omitted), omitted);
+    assert.ok(summarized.includes('keep uncertain action'));
+    assert.ok(summarized.includes('Waiting for an owned confirmation.'));
+    assert.deepEqual(actual!.sessionManager.getEntries().slice(0, original.length), original);
+    await session.dispose();
+    const persisted = await readPiSessionEntries({ threadId: f.threadId, sessionRoot });
+    assert.deepEqual(persisted.slice(0, original.length), original);
   } finally {
     await agent.dispose();
     await f.close();

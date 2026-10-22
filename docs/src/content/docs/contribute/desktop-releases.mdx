@@ -168,6 +168,16 @@ node desktop/scripts/test-install.mjs build
 node desktop/scripts/test-install.mjs fresh first-run
 ```
 
+Without an existing installation, build and cache this branch's runtime first. This needs a running Docker builder, Apple's Command Line Tools, and space for the downloaded components and images:
+
+```sh title="Terminal"
+pnpm run desktop:prepare
+node desktop/scripts/runtime-pack.mjs --seed-cache
+pnpm run build
+node desktop/scripts/test-install.mjs build "$PWD/.local/desktop-runtime-release"
+node desktop/scripts/test-install.mjs fresh
+```
+
 `fresh` gracefully closes the previous test instance and creates a new profile with its own computer and empty account storage. It refuses an existing profile name. Omit the name to generate one. It never removes an earlier profile.
 
 To reopen the last test profile, or an earlier named one:
@@ -178,13 +188,13 @@ node desktop/scripts/test-install.mjs open first-run
 node desktop/scripts/test-install.mjs stop
 ```
 
-Test profiles live under `~/Library/Application Support/nod Setup Test/test-profiles`. Rebuilding the test app preserves them. Reopening the same test app from Applications resumes the last selected profile, even without the installer’s launch environment. The helper accepts an installed engine directory after `build` when the cached runtime comes from another local installation.
+Test profiles live under `~/Library/Application Support/nod Setup Test/test-profiles`. Rebuilding the test app preserves them. Reopening the same test app from Applications resumes the last selected profile, even without the installer’s launch environment. The helper accepts an installed engine directory or a generated runtime descriptor directory after `build`. Its matching runtime must already be in the verified cache.
 
 By default, the test app is ad-hoc signed. Rebuilding can invalidate Keychain, Accessibility, and Screen Recording approvals even when System Settings still shows the permissions as enabled. Finish rebuilding before granting permissions. If restarting doesn't restore access, remove and re-add the test app in the affected macOS permission lists.
 
 To use an existing permanent signing identity, set `NOD_SIGNING_IDENTITY`, `NOD_SIGNING_KEYCHAIN`, and `NOD_SIGNING_CERTIFICATE_SHA256` before building. `NOD_SIGNING_MODE` defaults to `self-signed`. For `developer-id`, also set the matching `NOD_APPLE_TEAM_ID` and `NOD_NOTARY_PROFILE`. The installer validates the identity and signed build before replacing the installed test app. It doesn't create certificates or grant macOS permissions.
 
-The test installer reuses cached workspace and browser images. It doesn't verify a newly built runtime image or notarize the app.
+The test installer reuses the selected descriptor's verified workspace and browser images. To test image changes, build and seed that runtime first using the commands above. The test app isn't notarized. A fresh profile resets nod's settings, not macOS's app-wide permission grants.
 
 ## Signing limits
 

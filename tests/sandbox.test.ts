@@ -5,9 +5,11 @@ import { EventEmitter, once } from 'node:events';
 import { existsSync } from 'node:fs';
 import {
   chmod,
+  link,
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   realpath,
   rm,
@@ -493,67 +495,145 @@ int main(int argc, char **argv) {
     }
   });
 
-  test('native Mac look preserves controls after labeled layout containers', async () => {
+  test('native Mac look keeps all controls compact without caching action validation', async (t) => {
     const root = await mkdtemp(join(tmpdir(), 'nod-ax-tree-'));
     try {
       const source = await readFile(
         new URL('../desktop/computer-use/main.swift', import.meta.url),
         'utf8',
       );
+      const constants = [...new Set(source.match(/kAX[A-Za-z]+Attribute/g))]
+        .map((name) => `let ${name} = "${name}"`)
+        .join('\n');
+      const states = source.slice(source.indexOf('struct Failure'), source.indexOf('func app('));
       const look = source.slice(source.indexOf('func look('), source.indexOf('func observed('));
+      const actions = source.slice(
+        source.indexOf('func observed('),
+        source.indexOf('let keyCodes:'),
+      );
       const fixture = join(root, 'tree.swift');
       const executable = join(root, 'tree');
       await writeFile(
         fixture,
         `import Foundation
 typealias CFString = String
+typealias CFArray = NSArray
 let kCFBooleanTrue = true
-let kAXChildrenAttribute = "children"
-let kAXWindowsAttribute = "windows"
-let kAXMenuBarAttribute = "menu"
-let kAXRoleAttribute = "role"
-struct Failure: Error { let message: String }
-final class AXUIElement {
+${constants}
+enum AXError: Int32 { case success = 0 }
+final class AXUIElement: NSObject {
   let role: String
-  let label: String
-  let children: [AXUIElement]
+  var label: String
+  var value = String(repeating: "synthetic value ", count: 20) + "value-tail"
+  var subrole: String?
+  var owner: Int32 = 1
+  var children: [AXUIElement]
+  weak var window: AXUIElement?
   init(_ role: String, _ label: String, _ children: [AXUIElement] = []) {
     self.role = role; self.label = label; self.children = children
   }
 }
-struct Application { let processIdentifier: Int = 1 }
-let root = AXUIElement("AXApplication", "fixture", [AXUIElement("AXWindow", "fixture",
-  (1...1200).map { AXUIElement("AXGroup", "labeled container \\($0)", [AXUIElement("AXButton", "button \\($0)")]) }
-)])
-var refs: [String: AXUIElement] = [:]
-var targets: [String: AXUIElement] = [:]
-var observedApp: Application?
-var observedFocus: AXUIElement?
+final class NSRunningApplication {
+  let processIdentifier: Int32 = 1
+  let isTerminated = false
+}
+var reads = 0
+var actionReads = 0
+var windowTitleReads: [ObjectIdentifier: Int] = [:]
+var sent = 0
+let suffix = String(repeating: "synthetic document context ", count: 30) + "approval-target-tail"
+let first = AXUIElement("AXWindow", "first window", (1...1200).map {
+  AXUIElement("AXGroup", "container \\($0)", [AXUIElement("AXButton", "button \\($0) " + suffix)])
+})
+let target = first.children[0].children[0]
+let secure = AXUIElement("AXTextField", "private field")
+secure.subrole = "AXSecureTextField"
+secure.value = "synthetic-secret-value"
+let second = AXUIElement("AXWindow", "second window", [AXUIElement("AXButton", "other window control"), secure])
+let menu = AXUIElement("AXMenuBar", "menu", [AXUIElement("AXMenuItem", "menu control")])
+let foreign = AXUIElement("AXButton", "foreign control")
+foreign.owner = 2
+first.children.append(foreign)
+let root = AXUIElement("AXApplication", "fixture", [first, second])
+func bind(_ element: AXUIElement, _ window: AXUIElement) {
+  element.window = window
+  for child in element.children { bind(child, window) }
+}
+bind(first, first)
+bind(second, second)
+func AXUIElementCopyAttributeValue(_ element: AXUIElement, _ name: String, _ result: inout AnyObject?) -> AXError {
+  reads += 1
+  switch name {
+  case kAXRoleAttribute: result = element.role as NSString
+  case kAXTitleAttribute:
+    if element.role == "AXWindow" { windowTitleReads[ObjectIdentifier(element), default: 0] += 1 }
+    result = element.label as NSString
+  case kAXSubroleAttribute: result = element.subrole as NSString?
+  case kAXEnabledAttribute: result = true as NSNumber
+  case kAXValueAttribute: result = element.value as NSString
+  case kAXWindowAttribute: result = element.window
+  case kAXFocusedWindowAttribute: result = first
+  case kAXFocusedUIElementAttribute: result = target
+  case kAXMenuBarAttribute: result = element === root ? menu : nil
+  case kAXChildrenAttribute, kAXWindowsAttribute: result = element.children as NSArray
+  default: result = nil
+  }
+  return .success
+}
+func AXUIElementCopyActionNames(_ element: AXUIElement, _ result: inout CFArray?) {
+  actionReads += 1
+  result = ["AXPress"] as NSArray
+}
+func AXUIElementGetPid(_ element: AXUIElement, _ pid: inout Int32) -> AXError { pid = element.owner; return .success }
+func CFGetTypeID(_ value: AnyObject) -> Int { value is AXUIElement ? 1 : 2 }
+func AXUIElementGetTypeID() -> Int { 1 }
+func CFEqual(_ before: AXUIElement, _ after: AXUIElement) -> Bool { before === after }
 func AXIsProcessTrusted() -> Bool { true }
-func AXUIElementCreateApplication(_ pid: Int) -> AXUIElement { root }
-func AXUIElementSetAttributeValue(_ element: AXUIElement, _ attribute: String, _ value: Bool) {}
-func app(_ query: String) throws -> Application { Application() }
-func describe(_ app: Application) -> [String: Any] { [:] }
-func focused(_ element: AXUIElement) throws -> AXUIElement { element }
-func state(_ element: AXUIElement, _ root: AXUIElement) throws -> AXUIElement { element }
-func text(_ element: AXUIElement, _ attribute: String) -> String? { attribute == kAXRoleAttribute ? element.role : nil }
-func attr(_ element: AXUIElement, _ attribute: String) -> Any? {
-  [kAXChildrenAttribute, kAXWindowsAttribute].contains(attribute) ? element.children : nil
-}
-func axElement(_ element: AXUIElement, _ attribute: String) -> AXUIElement? { nil }
-func description(_ element: AXUIElement) -> String {
-  element.role.replacingOccurrences(of: "AX", with: "") + " \\"" + element.label + "\\""
-}
+func AXUIElementCreateApplication(_ pid: Int32) -> AXUIElement { root }
+@discardableResult func AXUIElementSetAttributeValue(_ element: AXUIElement, _ attribute: String, _ value: Any) -> AXError { .success }
+func AXUIElementPerformAction(_ element: AXUIElement, _ action: String) -> AXError { sent += 1; return .success }
+func post(_ pid: Int32, _ request: [String: Any]) throws { sent += 1 }
+func app(_ query: String) throws -> NSRunningApplication { NSRunningApplication() }
+func describe(_ app: NSRunningApplication) -> [String: Any] { [:] }
+${states}
 ${look}
-let result = try look("fixture")
-guard result["truncated"] as? Bool == false,
-  refs.count == 1201,
-  refs.values.filter({ $0.role == "AXButton" }).count == 1200,
-  (result["tree"] as! String).contains("button 1200") else {
-  print("Lost controls: \\(refs.count) refs, \\(refs.values.filter { $0.role == "AXButton" }.count) buttons")
-  exit(1)
+${actions}
+func expect(_ success: Bool, _ message: String) {
+  if !success { print(message); exit(1) }
 }
-print("labeled containers preserve controls")
+func refused(_ run: () throws -> Void) {
+  do { try run(); expect(false, "A changed or private target was accepted") } catch is Failure {} catch { expect(false, "Unexpected validation error") }
+}
+func targetRef() -> String { refs.first { $0.value.element === target }!.key }
+let result = try look("fixture")
+let tree = result["tree"] as! String
+let metrics: [String: Any] = ["attributeReads": reads, "actionReads": actionReads, "outputBytes": tree.utf8.count, "outputCharacters": tree.count, "refs": refs.count, "firstWindowTitleReads": windowTitleReads[ObjectIdentifier(first)]!, "secondWindowTitleReads": windowTitleReads[ObjectIdentifier(second)]!]
+FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: metrics))
+FileHandle.standardOutput.write(Data([10]))
+expect(result["truncated"] as? Bool == false && refs.count == 1206, "Lost controls")
+expect(tree.contains("button 1200") && tree.contains("other window control") && tree.contains("menu control"), "Lost a window or menu")
+expect(!tree.contains("foreign control") && !tree.contains(secure.value), "Exposed foreign or private controls")
+expect(actionReads == refs.count, "Descriptions were fetched for omitted containers")
+expect(windowTitleReads.values.allSatisfy { $0 < 10 }, "Repeated window fingerprints across controls")
+expect(tree.contains("…") && !tree.contains("approval-target-tail") && !tree.contains("value-tail"), "Unbounded tree previews")
+expect(tree.contains(String(target.value.prefix(200))), "Readable app values were shortened")
+let inspected = try inspect(["app": "fixture", "ref": targetRef()])
+expect((inspected["label"] as! String).contains("approval-target-tail"), "Approval label was shortened")
+let original = target.label
+target.label += " changed after preview"
+refused { _ = try inspect(["app": "fixture", "ref": targetRef()]) }
+target.label = original
+first.label += " changed window"
+refused { _ = try inspect(["app": "fixture", "ref": targetRef()]) }
+refused { _ = try act(["app": "fixture", "action": "press", "targetToken": inspected["token"]!]) }
+expect(sent == 0, "A stale action was sent")
+let next = try look("fixture")
+expect((next["tree"] as! String).contains("changed window"), "Window cache survived look")
+let current = try inspect(["app": "fixture", "ref": targetRef()])
+let secureRef = refs.first { $0.value.element === secure }!.key
+refused { _ = try inspect(["app": "fixture", "ref": secureRef]) }
+_ = try act(["app": "fixture", "action": "press", "targetToken": current["token"]!])
+expect(sent == 1 && refs.isEmpty && targets.isEmpty, "Action refs did not expire")
 `,
       );
       const built = await runProcess('/usr/bin/swiftc', ['-O', '-o', executable, fixture], {
@@ -562,7 +642,9 @@ print("labeled containers preserve controls")
       assert.equal(built.exitCode, 0, built.stderr);
       const result = await runProcess(executable, [], { timeoutMs: 10_000 });
       assert.equal(result.exitCode, 0, result.stdout + result.stderr);
-      assert.equal(result.stdout.trim(), 'labeled containers preserve controls');
+      const metrics = JSON.parse(result.stdout.trim());
+      assert.equal(metrics.refs, 1206);
+      t.diagnostic(JSON.stringify(metrics));
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -915,6 +997,132 @@ int main(int argc, char **argv) {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test(
+    'owner file sharing transfers bounded binary bytes without bypassing host protections',
+    { timeout: 15_000 },
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'nod-file-share-'));
+      const privateRoot = join(root, 'private');
+      const install = join(root, 'Synthetic.app/Contents/Resources/engine');
+      const sibling = join(root, 'Synthetic.app/Contents/Resources/app/main.mjs');
+      const computer = createMacComputer({ dataRoot: privateRoot, denyRead: [install] });
+      const binary = Buffer.from(Array.from({ length: 600_000 }, (_, index) => index % 256));
+      const file = join(root, "binary ' $() ;\n.bin");
+      const signal = new AbortController().signal;
+      const previousPerlOptions = process.env.PERL5OPT;
+      process.env.PERL5OPT = '-MNonexistentSyntheticReadModule';
+      try {
+        await mkdir(privateRoot);
+        await mkdir(install, { recursive: true });
+        await mkdir(join(sibling, '..'), { recursive: true });
+        await writeFile(file, binary);
+        await writeFile(join(root, 'empty'), '');
+        await writeFile(join(privateRoot, 'private.txt'), 'synthetic private content');
+        await writeFile(sibling, 'synthetic installed code');
+        await symlink(file, join(root, 'link'));
+        await symlink(privateRoot, join(root, 'alias'));
+        await link(join(privateRoot, 'private.txt'), join(root, 'hardlink'));
+        assert.equal(spawnSync('/usr/bin/mkfifo', [join(root, 'fifo')]).status, 0);
+        assert.deepEqual(await computer.readFile!(file, binary.length, signal), binary);
+        for (const rejected of [
+          root,
+          join(root, 'empty'),
+          join(root, 'missing'),
+          join(root, 'fifo'),
+          join(root, 'link'),
+          join(root, 'hardlink'),
+          '/dev/null',
+          join(privateRoot, 'private.txt'),
+          join(root, 'alias/private.txt'),
+          sibling,
+          'relative.txt',
+          `${file}\0`,
+        ]) {
+          await assert.rejects(computer.readFile!(rejected, binary.length, signal));
+        }
+        await assert.rejects(computer.readFile!(file, binary.length - 1, signal));
+        await assert.rejects(computer.readFile!(file, 0, signal));
+        await assert.rejects(computer.readFile!(file, 91 * 1024 * 1024, signal));
+        await assert.rejects(computer.readFile!(file, binary.length, AbortSignal.abort()));
+        await assert.rejects(computer.readFile!(file, binary.length, AbortSignal.timeout(1)));
+        const reading = computer.readFile!(file, binary.length, signal);
+        computer.dispose();
+        await assert.rejects(reading);
+        assert.deepEqual(await computer.readFile!(file, binary.length, signal), binary);
+      } finally {
+        if (previousPerlOptions === undefined) delete process.env.PERL5OPT;
+        else process.env.PERL5OPT = previousPerlOptions;
+        computer.dispose();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test(
+    'owner file sharing rejects detected writes while reading the same descriptor',
+    { timeout: 15_000 },
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'nod-changing-share-'));
+      const file = join(root, 'changing.bin');
+      const size = 16 * 1024 * 1024;
+      const computer = createMacComputer({ dataRoot: join(root, 'private') });
+      await writeFile(file, Buffer.alloc(size, 7));
+      const writer = await open(file, 'r+');
+      let stopped = false;
+      let writes = 0;
+      const mutating = (async () => {
+        while (!stopped) {
+          await writer.write(Buffer.from([writes++ % 256]), 0, 1, 0);
+          await delay(1);
+        }
+      })();
+      try {
+        await assert.rejects(
+          computer.readFile!(file, size, new AbortController().signal),
+          /changed/,
+        );
+        assert.ok(writes > 1);
+      } finally {
+        stopped = true;
+        await mutating;
+        await writer.close();
+        computer.dispose();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test(
+    'owner file sharing bounds concurrent reads and releases capacity after cancellation',
+    { timeout: 15_000 },
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'nod-bounded-share-'));
+      const file = join(root, 'binary.bin');
+      const binary = Buffer.alloc(16 * 1024 * 1024, 19);
+      const computer = createMacComputer({ dataRoot: join(root, 'private') });
+      await writeFile(file, binary);
+      const firstController = new AbortController();
+      const secondController = new AbortController();
+      const signal = new AbortController().signal;
+      const first = computer.readFile!(file, binary.length, firstController.signal);
+      const second = computer.readFile!(file, binary.length, secondController.signal);
+      const settled = Promise.allSettled([first, second]);
+      try {
+        await assert.rejects(computer.readFile!(file, binary.length, signal), /busy/);
+        firstController.abort();
+        await assert.rejects(first, /cancelled/);
+        assert.deepEqual(await computer.readFile!(file, binary.length, signal), binary);
+        assert.deepEqual(await second, binary);
+      } finally {
+        firstController.abort();
+        secondController.abort();
+        await settled;
+        computer.dispose();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 }
 
 // Supervised workspace commands: cancellation, bounds, uncertain fencing and file containment.

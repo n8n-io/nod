@@ -5467,6 +5467,87 @@ process.exit(0);
   assert.equal(result.exitCode, 0, result.stderr);
 });
 
+test('computer permissions keep revocation and explicit skip available after failed or pending checks', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+import {createElement,act} from 'react';
+import {createRoot} from 'react-dom/client';
+import {YourComputer} from './src/web/components/your-computer.tsx';
+import {ComputerSetup} from './src/web/pages/onboarding/steps/computer.tsx';
+const dom=new JSDOM('<main id="root"></main>',{url:'http://localhost/onboarding',pretendToBeVisual:true});
+Object.assign(globalThis,{window:dom.window,document:dom.window.document,HTMLElement:dom.window.HTMLElement,Node:dom.window.Node,IS_REACT_ACT_ENVIRONMENT:true});
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+const settle=()=>act(async()=>{await new Promise(resolve=>setImmediate(resolve))});
+const master=()=>document.querySelector('.computer-switch [role="switch"]');
+const grants=()=>[...document.querySelectorAll('.computer-permissions [role="switch"]')];
+let value={available:true,appControlAvailable:true,enabled:true,permissions:{accessibility:false,screen:false},apps:[{bundleId:'dev.fixture.editor',name:'Fixture Editor'}],permissionError:'Synthetic permission check failed'};
+let failed=false;
+let writes=0;
+globalThis.fetch=async(_path,options={})=>{
+ if(options.method==='PATCH'){writes++;value={...value,enabled:JSON.parse(options.body).enabled};}
+ else if(failed)throw new Error('Synthetic transport failure');
+ return Response.json(value);
+};
+let root=createRoot(document.getElementById('root'));
+await act(async()=>root.render(createElement(YourComputer)));
+await settle();
+assert.equal(master().getAttribute('aria-checked'),'true');
+assert.equal(master().disabled,false);
+assert.ok(grants().every(control=>control.disabled&&control.getAttribute('aria-checked')==='false'));
+assert.equal(document.querySelector('.computer-apps button').disabled,false);
+await act(async()=>master().click());
+await settle();
+assert.equal(writes,1);
+assert.equal(master().getAttribute('aria-checked'),'false');
+value={...value,enabled:true,permissionError:undefined,permissions:{accessibility:true,screen:true}};
+await act(async()=>window.dispatchEvent(new window.Event('focus')));
+await settle();
+assert.ok(grants().every(control=>control.getAttribute('aria-checked')==='true'));
+assert.equal(document.querySelector('.notice'),null);
+failed=true;
+await act(async()=>window.dispatchEvent(new window.Event('focus')));
+await settle();
+assert.equal(master().getAttribute('aria-checked'),'true');
+assert.equal(master().disabled,false);
+assert.ok(grants().every(control=>control.disabled&&control.getAttribute('aria-checked')==='false'));
+assert.equal(document.querySelector('.computer-apps button').disabled,false);
+await act(async()=>master().click());
+await settle();
+assert.equal(writes,2);
+assert.equal(master().getAttribute('aria-checked'),'false');
+await act(async()=>root.unmount());
+let finishRequest;
+const pending=new Promise(resolve=>{finishRequest=resolve});
+let completed=0;
+value={...value,enabled:false,permissionError:undefined,permissions:{accessibility:false,screen:false}};
+globalThis.fetch=async(path,options={})=>{
+ assert.notEqual(options.method,'PATCH','skipping a permission handoff must not enable access');
+ return path==='/api/computer/permissions'?pending:Response.json(value);
+};
+root=createRoot(document.getElementById('root'));
+await act(async()=>root.render(createElement(ComputerSetup,{steps:['computer'],onReady(){completed++}})));
+await settle();
+await act(async()=>grants()[0].click());
+await settle();
+assert.equal(grants()[0].getAttribute('aria-checked'),'false');
+const skip=[...document.querySelectorAll('.ob-footer button')].find(button=>!button.classList.contains('ob-next'));
+assert.equal(skip.disabled,false);
+assert.equal(document.querySelector('.ob-next').disabled,true);
+await act(async()=>skip.click());
+assert.equal(completed,1);
+await act(async()=>root.unmount());
+await act(async()=>finishRequest(Response.json({...value,permissions:{accessibility:true,screen:true}})));
+await settle();
+assert.equal(completed,1);
+dom.window.close();
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
 test(
   'sign-in method choices claim once and carry only active owned browser steps into the private flow',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },

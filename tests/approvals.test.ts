@@ -657,17 +657,27 @@ test(
             for (const failure of ['async', 'sync'] as const) {
               permissionFailure = failure;
               const failed = await request('GET', '/api/computer');
-              assert.equal(failed.statusCode, 409);
-              assert.equal(typeof failed.json().error, 'string');
+              assert.equal(failed.statusCode, 200);
+              assert.equal(typeof failed.json().permissionError, 'string');
               assert.equal(failed.body.includes('synthetic-private-helper-detail'), false);
-              assert.equal('permissions' in failed.json(), false);
+              assert.deepEqual(failed.json().permissions, { accessibility: false, screen: false });
+              assert.equal(failed.json().enabled, true);
+              assert.deepEqual(failed.json().apps, [
+                { bundleId: 'fixture.OwnerApp', name: 'Owner fixture' },
+              ]);
             }
+            const failedCheckOff = await request('PATCH', '/api/computer', { enabled: false });
+            assert.equal(failedCheckOff.statusCode, 200);
+            assert.equal(failedCheckOff.json().enabled, false);
+            assert.equal(typeof failedCheckOff.json().permissionError, 'string');
+            await request('PATCH', '/api/computer', { enabled: true });
             permissionFailure = undefined;
             const recovered = await request(
               'GET',
               '/api/computer?ownerId=foreign-permission-owner',
             );
             assert.equal(recovered.statusCode, 200);
+            assert.equal(recovered.json().permissionError, undefined);
             assert.deepEqual(recovered.json().permissions, { accessibility: true, screen: true });
             assert.equal(recovered.json().enabled, true);
             assert.deepEqual(recovered.json().apps, [
@@ -1840,6 +1850,405 @@ test(
           assert.equal(captures, 0);
           assert.equal(publications, 0);
           assert.equal((await proposal(turn.turnId)).action, 'NOD_computer');
+        },
+      );
+
+      await t.test(
+        'completed native actions return fresh observations without replaying mutations',
+        async (t) => {
+          for (const outcome of [
+            'fresh',
+            'unavailable',
+            'revoke before look',
+            'revoke during look',
+            'Stop during look',
+          ])
+            await t.test(outcome, async (t) => {
+              const turn = await begin(`Press the synthetic button: ${outcome}.`);
+              t.after(() => finish(turn.turnId, 'cancelled'));
+              const nativeApp = {
+                name: 'Synthetic Calculator',
+                bundleId: `fixture.action.${randomUUID()}`,
+              };
+              const controller = new AbortController();
+              let actions = 0;
+              let observations = 0;
+              const checked: Record<string, unknown>[] = [];
+              const nativeRoutes = Fastify();
+              t.after(() => nativeRoutes.close());
+              const revoke = () =>
+                nativeRoutes.inject({
+                  method: 'DELETE',
+                  url: `/api/computer/apps/${nativeApp.bundleId}`,
+                });
+              const policy = createComputerPolicy({
+                pool: db.pool,
+                ownerId,
+                computer: {
+                  shell: async () => assert.fail('This fixture does not run commands.'),
+                  resolve: async () => nativeApp,
+                  inspect: async (_app, ref) => {
+                    assert.equal(ref, 'e1');
+                    return { label: 'Button "Equals"', token: 'synthetic-exact-target' };
+                  },
+                  act: async (step, signal) => {
+                    signal.throwIfAborted();
+                    assert.deepEqual(step, {
+                      app: nativeApp.bundleId,
+                      action: 'press',
+                      targetToken: 'synthetic-exact-target',
+                      ref: 'e1',
+                    });
+                    actions++;
+                    if (outcome === 'revoke before look') await revoke();
+                  },
+                  look: async (bundleId, signal) => {
+                    signal.throwIfAborted();
+                    assert.equal(bundleId, nativeApp.bundleId);
+                    assert.equal(actions, 1);
+                    observations++;
+                    assert.equal(
+                      (
+                        await db.pool.query(
+                          'SELECT 1 FROM computer_apps WHERE owner_id=$1 AND bundle_id=$2',
+                          [ownerId, nativeApp.bundleId],
+                        )
+                      ).rowCount,
+                      1,
+                    );
+                    if (outcome === 'unavailable')
+                      throw new Error('Synthetic private observation failure.');
+                    if (outcome === 'revoke during look') await revoke();
+                    if (outcome === 'Stop during look')
+                      controller.abort(new Error('Synthetic Stop.'));
+                    return { app: nativeApp, tree: '- Result 4131 [ref=e2]' };
+                  },
+                  dispose() {},
+                },
+                check: async (_turn, _action, args) => {
+                  checked.push(args);
+                  return { confirm: true, reason: 'unrequested' };
+                },
+                request: (turn, action, args, options) =>
+                  approvals.request(turn, action, args, options),
+                lock: (id, write) => thread.withTurnLock(id, write),
+                signalFor: () => controller.signal,
+              });
+              policy.registerRoutes(nativeRoutes);
+              await nativeRoutes.inject({
+                method: 'PATCH',
+                url: '/api/computer',
+                payload: { enabled: true },
+              });
+              await policy.run(
+                turn,
+                { action: 'act', app: nativeApp.name, step: 'press', ref: 'e1' },
+                { rooted: true },
+                controller.signal,
+              );
+              assert.equal(actions, 0);
+              assert.equal(observations, 0);
+              const pending = await proposal(turn.turnId);
+              assert.equal(checked.length, 1);
+              assert.deepEqual(checked[0], pending.args);
+              const accepted = await confirm(pending.id, true);
+              assert.ok(accepted && 'turnId' in accepted);
+              t.after(() => finish(accepted.turnId, 'cancelled'));
+              executionResult = () => {
+                const call = calls.at(-1)!;
+                return policy.execute(call.action, call.args, call.context);
+              };
+              try {
+                if (outcome === 'Stop during look')
+                  await assert.rejects(execute(pending.id, controller.signal), /Synthetic Stop/);
+                else await execute(pending.id, controller.signal);
+                assert.equal(actions, 1);
+                const record = await stored(pending.id);
+                if (outcome === 'fresh') {
+                  assert.equal(record.status, 'completed');
+                  assert.deepEqual(record.result, {
+                    done: true,
+                    app: nativeApp,
+                    tree: '- Result 4131 [ref=e2]',
+                  });
+                } else if (outcome === 'unavailable') {
+                  assert.equal(record.status, 'completed');
+                  assert.equal(record.result.done, true);
+                  assert.equal(record.result.observation, 'unavailable');
+                  assert.match(record.result.next, /Look again/);
+                  assert.match(record.result.next, /do not repeat/i);
+                  assert.doesNotMatch(JSON.stringify(record.result), /Synthetic private/);
+                } else {
+                  assert.equal(record.status, 'uncertain');
+                  assert.equal(record.result, null);
+                }
+                assert.equal(observations, outcome === 'revoke before look' ? 0 : 1);
+                assert.equal(await execute(pending.id), undefined);
+                assert.equal(actions, 1);
+                assert.equal(observations, outcome === 'revoke before look' ? 0 : 1);
+              } finally {
+                executionResult = undefined;
+              }
+            });
+        },
+      );
+
+      await t.test(
+        'native files publish unchanged without returning their bytes to the model',
+        async (t) => {
+          const turn = await begin('Share the synthetic Desktop file.');
+          t.after(() => finish(turn.turnId, 'cancelled'));
+          const bytes = randomBytes(320 * 1024);
+          const path = '/Users/fixture/Desktop/report.bin';
+          const controller = new AbortController();
+          let reads = 0;
+          let holdPublication: (() => Promise<void>) | undefined;
+          let holdRead: (() => Promise<void>) | undefined;
+          const policy = createComputerPolicy({
+            pool: db.pool,
+            ownerId,
+            computer: {
+              shell: async () => assert.fail('File delivery must not serialize through the shell.'),
+              readFile: async (actual, maxBytes, signal) => {
+                assert.equal(actual, path);
+                assert.ok(maxBytes >= bytes.length);
+                reads++;
+                await holdRead?.();
+                signal.throwIfAborted();
+                return bytes;
+              },
+              dispose() {},
+            },
+            check: async () => ({ confirm: true, reason: 'unrequested' }),
+            request: (turn, action, args, options) =>
+              approvals.request(turn, action, args, options),
+            lock: (id, write) => thread.withTurnLock(id, write),
+            signalFor: () => controller.signal,
+            publishFile: async (turn, data, name, signal) => {
+              await holdPublication?.();
+              return thread.publishComputerFile(turn, data, name, artifacts.localArtifacts, signal);
+            },
+          });
+          const nativeRoutes = Fastify();
+          policy.registerRoutes(nativeRoutes);
+          t.after(() => nativeRoutes.close());
+          await nativeRoutes.inject({
+            method: 'PATCH',
+            url: '/api/computer',
+            payload: { enabled: true },
+          });
+          const input = { action: 'share_file', path };
+          await policy.run(turn, input, {}, controller.signal);
+          assert.equal(reads, 0);
+          const pending = await proposal(turn.turnId);
+          assert.deepEqual(pending.args, input);
+          const accepted = await confirm(pending.id, true);
+          assert.ok(accepted && 'turnId' in accepted);
+          t.after(() => finish(accepted.turnId, 'cancelled'));
+          executionResult = () => {
+            const call = calls.at(-1)!;
+            return policy.execute(call.action, call.args, call.context);
+          };
+          try {
+            await execute(pending.id, controller.signal);
+            assert.equal(reads, 1);
+            assert.equal(await execute(pending.id, controller.signal), undefined);
+            assert.equal(reads, 1);
+            const delivered = (
+              await db.pool.query('SELECT attachments FROM messages WHERE turn_id=$1', [
+                accepted.turnId,
+              ])
+            ).rows.flatMap((row) => row.attachments);
+            assert.equal(delivered.length, 1);
+            assert.equal(delivered[0].name, 'report.bin');
+            assert.deepEqual(await artifacts.localArtifacts.readArtifact(delivered[0].id), bytes);
+            assert.ok(JSON.stringify(delivered[0]).length < 1024);
+            assert.equal(delivered[0].source, 'computer_file');
+            const count = async () =>
+              Number((await db.pool.query('SELECT count(*) FROM artifacts')).rows[0].count);
+            let before = await count();
+            await assert.rejects(
+              thread.publishComputerFile(
+                { ...turn, threadId: randomUUID() },
+                bytes,
+                'wrong.bin',
+                artifacts.localArtifacts,
+                controller.signal,
+              ),
+            );
+            assert.equal(await count(), before);
+            const revision = (
+              await db.pool.query('SELECT revision FROM computer_settings WHERE owner_id=$1', [
+                ownerId,
+              ])
+            ).rows[0].revision;
+            const share = (signal = controller.signal) =>
+              policy.execute('NOD_computer', input, {
+                ...turn,
+                expectedRevision: revision,
+                signal,
+              });
+            let finishPublication!: () => void;
+            const publicationGate = new Promise<void>((resolve) => {
+              finishPublication = resolve;
+            });
+            let publishing = 0;
+            let bothReady!: () => void;
+            const bothPublishing = new Promise<void>((resolve) => {
+              bothReady = resolve;
+            });
+            holdPublication = () => {
+              if (++publishing === 2) bothReady();
+              return publicationGate;
+            };
+            const admitted = Promise.all([share(), share()]);
+            await bothPublishing;
+            const admittedReads = reads;
+            await assert.rejects(
+              share(),
+              (error: Error & { notRun?: boolean }) => error.notRun === true,
+            );
+            assert.equal(reads, admittedReads);
+            finishPublication();
+            await admitted;
+            holdPublication = undefined;
+
+            const stoppedController = new AbortController();
+            let releaseStopped!: () => void;
+            const stoppedGate = new Promise<void>((resolve) => {
+              releaseStopped = resolve;
+            });
+            publishing = 0;
+            const stoppedPublishing = new Promise<void>((resolve) => {
+              bothReady = resolve;
+            });
+            holdPublication = () => {
+              if (++publishing === 2) bothReady();
+              return stoppedGate;
+            };
+            const interrupted = share(stoppedController.signal);
+            const interruptedResult = assert.rejects(interrupted, /Synthetic Stop/);
+            const continuing = share();
+            await stoppedPublishing;
+            const stoppedReads = reads;
+            stoppedController.abort(new Error('Synthetic Stop.'));
+            await assert.rejects(
+              share(),
+              (error: Error & { notRun?: boolean }) => error.notRun === true,
+            );
+            assert.equal(reads, stoppedReads);
+            releaseStopped();
+            await Promise.all([interruptedResult, continuing]);
+            holdPublication = undefined;
+            await share();
+            assert.equal(reads, stoppedReads + 1);
+
+            before = await count();
+            let release!: () => void;
+            let started!: () => void;
+            const starting = new Promise<void>((resolve) => {
+              started = resolve;
+            });
+            holdRead = () => {
+              started();
+              return new Promise<void>((resolve) => {
+                release = resolve;
+              });
+            };
+            const sharing = share();
+            const stopped = assert.rejects(sharing, /turned off/);
+            await starting;
+            await nativeRoutes.inject({
+              method: 'PATCH',
+              url: '/api/computer',
+              payload: { enabled: false },
+            });
+            release();
+            await stopped;
+            assert.equal(await count(), before);
+          } finally {
+            executionResult = undefined;
+          }
+        },
+      );
+
+      await t.test(
+        'a committed native file share with a lost result stays uncertain and is never replayed',
+        async (t) => {
+          const turn = await begin('Share the synthetic file whose delivery result may be lost.');
+          t.after(() => finish(turn.turnId, 'cancelled'));
+          const path = '/Users/fixture/Desktop/result-lost.bin';
+          const bytes = Buffer.from([0, 19, 255, 34, 128]);
+          const controller = new AbortController();
+          let reads = 0;
+          let publications = 0;
+          const policy = createComputerPolicy({
+            pool: db.pool,
+            ownerId,
+            computer: {
+              shell: async () => assert.fail('This fixture does not run commands.'),
+              readFile: async (actual, _limit, signal) => {
+                signal.throwIfAborted();
+                assert.equal(actual, path);
+                reads++;
+                return bytes;
+              },
+              dispose() {},
+            },
+            check: async () => ({ confirm: true, reason: 'unrequested' }),
+            request: (turn, action, args, options) =>
+              approvals.request(turn, action, args, options),
+            lock: (id, write) => thread.withTurnLock(id, write),
+            signalFor: () => controller.signal,
+            publishFile: async (turn, data, name, signal) => {
+              await thread.publishComputerFile(turn, data, name, artifacts.localArtifacts, signal);
+              publications++;
+              throw new Error('Synthetic result lost after commit.');
+            },
+          });
+          await db.pool.query('UPDATE computer_settings SET enabled=true WHERE owner_id=$1', [
+            ownerId,
+          ]);
+          const input = { action: 'share_file', path };
+          await policy.run(turn, input, {}, controller.signal);
+          const pending = await proposal(turn.turnId);
+          assert.deepEqual(pending.args, input);
+          const accepted = await confirm(pending.id, true);
+          assert.ok(accepted && 'turnId' in accepted);
+          t.after(() => finish(accepted.turnId, 'cancelled'));
+          executionResult = () => {
+            const call = calls.at(-1)!;
+            return policy.execute(call.action, call.args, call.context);
+          };
+          try {
+            await execute(pending.id, controller.signal);
+            const record = await stored(pending.id);
+            assert.equal(record.status, 'uncertain');
+            assert.equal(record.result, null);
+            const delivered = (
+              await db.pool.query('SELECT attachments FROM messages WHERE turn_id=$1', [
+                accepted.turnId,
+              ])
+            ).rows.flatMap((row) => row.attachments);
+            assert.equal(delivered.length, 1);
+            assert.equal(delivered[0].source, 'computer_file');
+            assert.deepEqual(await artifacts.localArtifacts.readArtifact(delivered[0].id), bytes);
+            assert.equal(await execute(pending.id, controller.signal), undefined);
+            await assert.rejects(
+              policy.run(
+                { threadId: turn.threadId, turnId: accepted.turnId },
+                input,
+                {},
+                controller.signal,
+              ),
+              /uncertain/,
+            );
+            assert.equal(reads, 1);
+            assert.equal(publications, 1);
+            assert.deepEqual(await artifacts.localArtifacts.readArtifact(delivered[0].id), bytes);
+          } finally {
+            executionResult = undefined;
+          }
         },
       );
 

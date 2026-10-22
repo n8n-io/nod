@@ -18,6 +18,7 @@ export interface OwnerComputer {
     command: string,
     options: { signal: AbortSignal; timeoutMs?: number },
   ): Promise<{ exitCode: number; output: string }>;
+  readFile?(path: string, maxBytes: number, signal: AbortSignal): Promise<Buffer>;
   apps?(signal: AbortSignal): Promise<MacApp[]>;
   resolve?(app: string, signal: AbortSignal): Promise<MacApp | null>;
   identify?(app: string, signal: AbortSignal): Promise<MacApp | null>;

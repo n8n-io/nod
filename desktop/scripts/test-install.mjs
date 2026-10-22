@@ -100,9 +100,14 @@ async function build(source = '/Applications/nod.app/Contents/Resources/engine')
   if (signing) await verifyIdentity(signing);
   const release = await runtimeRelease(resolve(source));
   if (!release || release.platform !== `darwin-${process.arch}`)
-    throw new Error('Choose an installed engine with a matching runtime-release.json.');
+    throw new Error(
+      'Choose an engine or descriptor directory with a matching runtime-release.json.',
+    );
   const assets = await findRuntimeAssets({ resourcesPath: resolve(source), release });
-  if (!assets) throw new Error('The verified runtime is not cached. Open the installed nod first.');
+  if (!assets)
+    throw new Error(
+      'The verified runtime is not cached. Open the installed nod, or run runtime-pack.mjs --seed-cache after desktop:prepare.',
+    );
   const installed = await lstat(application).catch((error) => {
     if (error.code !== 'ENOENT') throw error;
     return null;
@@ -271,6 +276,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   else if (command === 'stop') await stop();
   else
     console.log(
-      'Usage: node desktop/scripts/test-install.mjs build [installed-engine] | fresh [name] | open [name] | stop',
+      'Usage: node desktop/scripts/test-install.mjs build [engine-or-descriptor-directory] | fresh [name] | open [name] | stop',
     );
 }

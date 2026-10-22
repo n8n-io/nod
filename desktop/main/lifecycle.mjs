@@ -5,6 +5,7 @@ export function createDesktopLifecycle({
   startEngine,
   stopEngine,
   onRuntimeStatus,
+  onPhase,
 }) {
   let runtime;
   let storage;
@@ -16,6 +17,16 @@ export function createDesktopLifecycle({
   let failure;
   let cleanupRequired = false;
   const controllers = new Set();
+
+  async function measure(phase, run) {
+    const started = Date.now();
+    onPhase?.({ phase, state: 'started' });
+    try {
+      return await run();
+    } finally {
+      onPhase?.({ phase, state: 'settled', elapsedMs: Date.now() - started });
+    }
+  }
 
   function checkOpen(signal) {
     if (closed || signal?.aborted) throw new Error('nod is closing.');
@@ -55,25 +66,35 @@ export function createDesktopLifecycle({
       .then(async () => {
         checkOpen(controller.signal);
         report({ message: 'Preparing your local computer.' });
-        const prepared = await prepareRuntime({
-          signal: controller.signal,
-          onStorageReady: async (preparedStorage) => {
-            checkOpen(controller.signal);
-            await validateStart();
-            checkOpen(controller.signal);
-            await startEngine({
-              runtime: preparedStorage,
-              signal: controller.signal,
-              pending: true,
-            });
-            storage = preparedStorage;
-          },
-          onStatus: (value) =>
-            report({
-              message: typeof value === 'string' ? value : value.message,
-              progress: typeof value === 'object' ? value.progress : undefined,
-            }),
-        });
+        const started = Date.now();
+        const prepared = await measure('runtime-prepare', () =>
+          prepareRuntime({
+            signal: controller.signal,
+            onStorageReady: async (preparedStorage) => {
+              checkOpen(controller.signal);
+              onPhase?.({
+                phase: 'storage-ready',
+                state: 'reached',
+                elapsedMs: Date.now() - started,
+              });
+              await validateStart();
+              checkOpen(controller.signal);
+              await measure('engine-start', () =>
+                startEngine({
+                  runtime: preparedStorage,
+                  signal: controller.signal,
+                  pending: true,
+                }),
+              );
+              storage = preparedStorage;
+            },
+            onStatus: (value) =>
+              report({
+                message: typeof value === 'string' ? value : value.message,
+                progress: typeof value === 'object' ? value.progress : undefined,
+              }),
+          }),
+        );
         runtime = prepared;
         checkOpen(controller.signal);
         report({ phase: 'ready', message: 'Your local computer is ready.' });
@@ -104,7 +125,9 @@ export function createDesktopLifecycle({
         checkOpen(controller.signal);
         await validateStart();
         checkOpen(controller.signal);
-        return startEngine({ runtime: prepared, signal: controller.signal });
+        return measure('engine-start', () =>
+          startEngine({ runtime: prepared, signal: controller.signal }),
+        );
       })
       .finally(() => {
         starting = undefined;
@@ -144,12 +167,16 @@ export function createDesktopLifecycle({
     closed = true;
     for (const controller of controllers) controller.abort();
     closing = (async () => {
-      await Promise.allSettled([warming, starting, installing].filter(Boolean));
+      await measure('startup-drain', () =>
+        Promise.allSettled([warming, starting, installing].filter(Boolean)),
+      );
       try {
-        await stopEngine();
+        await measure('engine-stop', stopEngine);
       } finally {
-        if (runtime || storage) await (runtime || storage).close?.();
-        else if (cleanupRequired) await stopRuntime?.();
+        await measure('computer-stop', async () => {
+          if (runtime || storage) await (runtime || storage).close?.();
+          else if (cleanupRequired) await stopRuntime?.();
+        });
         runtime = undefined;
         storage = undefined;
         cleanupRequired = false;

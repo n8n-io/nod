@@ -39,6 +39,8 @@ const mimeTypes: Record<string, string> = {
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 };
+export const artifactMimeType = (name: string) =>
+  mimeTypes[extname(name).toLowerCase()] || 'application/octet-stream';
 export function artifactView(row: Record<string, any>): Artifact {
   return {
     id: row.id,
@@ -170,7 +172,7 @@ export function createArtifactService(options: {
       name && !name.toLowerCase().endsWith(suffix.toLowerCase())
         ? `${name}${suffix}`
         : name || file,
-      mimeTypes[extname(actual).toLowerCase()] || 'application/octet-stream',
+      artifactMimeType(actual),
       threadId,
       database,
     );

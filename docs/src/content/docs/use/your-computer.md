@@ -14,21 +14,22 @@ It's off by default and works on macOS only. nod still does most work in its own
 | Action       | What it does                                                                          |
 | ------------ | ------------------------------------------------------------------------------------- |
 | Run commands | Runs a shell command on your Mac, for example to find, read, move or rename files     |
+| Share a file | Attaches an original Mac file to your conversation without rewriting its contents     |
 | See apps     | Lists the Mac apps that are running                                                   |
 | Open an app  | Opens a Mac app in the background                                                     |
 | Look         | Reads a Mac app's window as a list of its buttons, fields, menus and text             |
 | Screenshot   | Takes a picture of one app window, even when another window covers it                 |
 | Act          | Presses a button, sets a value, opens a menu or types text and keys into that one app |
 
-nod sends actions to the selected app without moving your mouse. Some actions, such as raising a window, can bring it forward.
+nod sends actions to the selected app without moving your mouse. Each action returns a fresh view so nod can check the result before continuing. Some actions, such as raising a window, can bring it forward.
 
-When you ask for a screenshot, nod can attach the app window image to your conversation. Sharing always goes through the trust check, even for an allowed app. Screenshots it takes only to inspect an app stay in the model's context.
+When you ask for a screenshot, nod can attach the app window image to your conversation. Sharing always goes through the trust check, even for an allowed app. For app inspection, nod keeps only its two most recent views in the model's context. Older views remain in the saved conversation, but aren't sent again on every step.
 
 ## Turn it on
 
 In onboarding, use the switch beside **Accessibility** or **Screen Recording** to open its macOS permission settings. Each switch turns on after macOS confirms the permission. After granting both, return to nod and select **Continue** to turn on **Let nod use your computer**. You can select **Not now** to skip the step.
 
-If permissions can't be checked, select **Try again** or **Not now**. nod keeps the feature off until you turn it on.
+Each granted permission shows **Allowed**. A failed check shows **Not checked**, so it is distinct from a denied permission. Select **Try again** to check again, or **Not now** to skip onboarding. You can still turn computer access off in Settings when a permission check fails.
 
 A source install without the computer helper offers files and commands only. Select **Continue** to enable those; no Accessibility or Screen Recording grants are needed.
 
@@ -38,7 +39,7 @@ Later, open **Settings**. Under **Your computer** you can turn it on or off, see
 
 Mac app control runs through nod Computer Use, a helper bundled with the desktop app. Allow the app named in the macOS permission prompt under **System Settings → Privacy & Security**. Return to nod after changing a permission so it can check again.
 
-If macOS asks you to quit, reopen nod from Applications. Your setup progress is saved.
+If macOS asks you to quit, nod shows **Closing nod** while it stops its private computer. Wait for it to close, then reopen the same app from Applications if macOS hasn't reopened it. Your setup progress is saved.
 
 Commands run with a restricted environment inside a macOS sandbox profile. The profile blocks:
 
@@ -50,7 +51,7 @@ Commands run with a restricted environment inside a macOS sandbox profile. The p
 
 ## What asks you first
 
-Every command, every app nod opens and every action in an app goes through the same [trust check](/trust/approvals/) as app actions. It runs when your words ask for it. Otherwise nod asks you.
+Every file share, every command, every app nod opens and every action in an app goes through the same [trust check](/trust/approvals/) as app actions. It runs when your words ask for it. Otherwise nod asks you.
 
 When your request names the Mac app, nod uses it and remembers it. Otherwise it asks once, for example "May I use Notes on your computer?". That yes covers the step and the app, and is remembered. Allowed apps are listed in **Settings**, where you can remove one. Listing running apps, looking at an allowed app and taking its screenshot don't ask.
 
@@ -64,7 +65,7 @@ Native app control blocks these known apps by bundle ID or name, even if you ask
 
 Unlisted terminal and scripting apps may not be blocked.
 
-What nod reads or sees on your Mac goes to your selected model. nod marks these results as untrusted data.
+What nod reads or sees on your Mac goes to your selected model. nod marks these results as untrusted data. Sharing a file transfers its original bytes directly; the model receives attachment metadata instead of the file contents. File sharing uses the same sandbox restrictions as commands and accepts regular files up to 90 MB. Symbolic links, files with multiple hard links, and empty files are refused.
 
 ## Stop nod
 

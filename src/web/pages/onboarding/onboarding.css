@@ -416,10 +416,9 @@
 
 .ob-computer-access {
   display: grid;
-  gap: 16px;
-  padding: 8px 16px;
+  gap: 12px;
+  padding-block: 8px;
 }
-.ob-computer-detail,
 .ob-computer-disclosure {
   color: var(--muted-foreground);
   font-size: var(--text-control);
@@ -429,25 +428,14 @@
   margin: 0;
 }
 .ob-computer .computer-permissions > li {
-  min-height: 76px;
+  min-height: 64px;
 }
 .ob-computer .computer-permissions strong {
   font-size: var(--text-body);
-}
-.ob-computer-guide {
-  display: grid;
-  gap: 8px;
-}
-.ob-computer-disclosure {
-  border-top: 1px solid var(--border);
-  padding-top: 16px;
 }
 @media (max-width: 480px) {
   .ob-computer .ob-footer-end {
     flex-wrap: wrap;
     justify-content: flex-end;
-  }
-  .ob-computer-access {
-    padding-inline: 8px;
   }
 }

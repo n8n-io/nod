@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { MacApp, MacAppAction, OwnerComputer } from '../ports/owner-computer.ts';
 import type { ComputerStatus } from '../shared/computer.ts';
 import type { TurnRef } from './thread.ts';
+import { fileBytes } from '../shared/files.ts';
 
 type Verdict = { confirm: false } | { confirm: true; reason: string };
 type Request = (
@@ -56,6 +57,16 @@ export const computerInput = z.discriminatedUnion('action', [
       action: z.literal('shell'),
       command: z.string().min(1).max(20_000),
       timeoutSeconds: z.number().int().min(1).max(3600).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('share_file'),
+      path: z
+        .string()
+        .min(1)
+        .max(4096)
+        .regex(/^\/[^\0]*$/),
     })
     .strict(),
   z.object({ action: z.literal('apps') }).strict(),
@@ -117,12 +128,19 @@ export function createComputerPolicy(options: {
     name: string | undefined,
     signal: AbortSignal,
   ): Promise<unknown>;
+  publishFile?(
+    turn: TurnRef,
+    bytes: Uint8Array,
+    path: string,
+    signal: AbortSignal,
+  ): Promise<unknown>;
   using?(apps: string[]): void;
 }) {
   const { pool, ownerId, request } = options;
   const computer = options.computer ?? { shell: unavailable, dispose() {} };
   const active = new Map<string, ReturnType<typeof setTimeout>>();
   const turns = new Set<string>();
+  let fileTransfers = 0;
   let access = new AbortController();
   const apps = new Map<string, AbortController>();
 
@@ -195,15 +213,13 @@ export function createComputerPolicy(options: {
   async function status(): Promise<ComputerStatus> {
     const appControlAvailable = computer.appControlAvailable === true;
     let permissions = { accessibility: false, screen: false };
+    let permissionError: string | undefined;
     if (appControlAvailable) {
       try {
         if (!computer.permissions) throw new Error();
         permissions = await computer.permissions();
       } catch {
-        throw Object.assign(
-          new Error('nod could not check Mac permissions. Try again, or quit and reopen nod.'),
-          { statusCode: 409 },
-        );
+        permissionError = 'Could not check Mac permissions.';
       }
     }
     return {
@@ -211,6 +227,7 @@ export function createComputerPolicy(options: {
       appControlAvailable,
       enabled: (await settings()).enabled,
       permissions,
+      ...(permissionError ? { permissionError } : {}),
       apps: await allowedApps(),
     };
   }
@@ -297,7 +314,7 @@ export function createComputerPolicy(options: {
       );
     const input = computerInput.parse(raw);
     track(turn.turnId);
-    if (input.action === 'shell') {
+    if (input.action === 'shell' || input.action === 'share_file') {
       const verdict = await options.check(turn, 'NOD_computer', input);
       return request(turn, 'NOD_computer', input, {
         ...provenance,
@@ -306,6 +323,7 @@ export function createComputerPolicy(options: {
         allowed: !verdict.confirm,
         run: () =>
           execute('NOD_computer', input, {
+            threadId: turn.threadId,
             turnId: turn.turnId,
             signal,
             expectedRevision: revision,
@@ -404,7 +422,8 @@ export function createComputerPolicy(options: {
     if (!currentSignal || !provenance?.turnId)
       throw Object.assign(new Error('This turn is no longer running.'), { notRun: true });
     const app = { name: String(args.app), bundleId: String(args.bundleId) };
-    const signal = operation(currentSignal, args.action === 'shell' ? undefined : app.bundleId);
+    const fileAction = args.action === 'shell' || args.action === 'share_file';
+    const signal = operation(currentSignal, fileAction ? undefined : app.bundleId);
     const revision = provenance.expectedRevision ?? 0;
     await options.lock(provenance.turnId, async () => {
       signal.throwIfAborted();
@@ -417,7 +436,7 @@ export function createComputerPolicy(options: {
         throw Object.assign(new Error('Computer access changed. Ask the owner again.'), {
           notRun: true,
         });
-      if (args.action !== 'shell') {
+      if (!fileAction) {
         refuse(app);
         if (action === 'NOD_computer' && !(await permitted(app)))
           throw Object.assign(new Error(`Access to ${app.name} was removed before this ran.`), {
@@ -428,6 +447,34 @@ export function createComputerPolicy(options: {
     });
     signal.throwIfAborted();
     track(provenance.turnId);
+    if (args.action === 'share_file') {
+      if (fileTransfers >= 2)
+        throw Object.assign(
+          new Error('Two file transfers are already running. Wait for them to finish.'),
+          { notRun: true },
+        );
+      if (!computer.readFile || !options.publishFile || !provenance.threadId)
+        throw Object.assign(new Error('File sharing from your computer is unavailable.'), {
+          notRun: true,
+        });
+      const input = computerInput.parse(args);
+      if (input.action !== 'share_file') throw new Error('A file path is required.');
+      fileTransfers++;
+      try {
+        const bytes = await computer.readFile(input.path, fileBytes, signal);
+        signal.throwIfAborted();
+        const result = await options.publishFile(
+          { threadId: provenance.threadId, turnId: provenance.turnId },
+          bytes,
+          input.path,
+          signal,
+        );
+        signal.throwIfAborted();
+        return result;
+      } finally {
+        fileTransfers--;
+      }
+    }
     if (args.action === 'shell') {
       const { command, timeoutSeconds } = computerInput.parse(args) as {
         command: string;
@@ -494,7 +541,19 @@ export function createComputerPolicy(options: {
     await computer.act!(step, signal);
     signal.throwIfAborted();
     await rememberAllowed();
-    return { done: true, next: 'Look again to verify the result.' };
+    try {
+      signal.throwIfAborted();
+      const observation = await computer.look!(app.bundleId, signal);
+      signal.throwIfAborted();
+      return { done: true, app: observation.app, tree: observation.tree };
+    } catch {
+      signal.throwIfAborted();
+      return {
+        done: true,
+        observation: 'unavailable',
+        next: 'The action completed, but its result could not be observed. Look again before acting; do not repeat the action.',
+      };
+    }
   }
 
   function registerRoutes(app: FastifyInstance) {

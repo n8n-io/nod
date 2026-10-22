@@ -9,7 +9,7 @@ import { transaction } from './transaction.ts';
 import { turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId } from './config.ts';
 import { delta, refresh } from './events.ts';
-import { localArtifacts, type ArtifactService } from './artifacts.ts';
+import { artifactMimeType, localArtifacts, type ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
 import type { Artifact, MessageReaction } from '../shared/contracts.ts';
 import type {
@@ -318,9 +318,40 @@ export async function publishScreenshot(
   artifacts: ArtifactService = localArtifacts,
   signal?: AbortSignal,
 ) {
-  signal?.throwIfAborted();
   const fileName =
     name && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/.test(name) ? name : 'screenshot.png';
+  return publishAttachment(turn, bytes, fileName, 'image/png', source, artifacts, signal);
+}
+
+export function publishComputerFile(
+  turn: TurnRef,
+  bytes: Uint8Array,
+  path: string,
+  artifacts: ArtifactService = localArtifacts,
+  signal?: AbortSignal,
+) {
+  const name = basename(path);
+  return publishAttachment(
+    turn,
+    bytes,
+    name,
+    artifactMimeType(name),
+    'computer_file',
+    artifacts,
+    signal,
+  );
+}
+
+async function publishAttachment(
+  turn: TurnRef,
+  bytes: Uint8Array,
+  name: string,
+  mimeType: string,
+  source: Artifact['source'],
+  artifacts: ArtifactService,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
   const artifact = await withTurnLock(turn.turnId, async (client) => {
     signal?.throwIfAborted();
     const current = await client.query('SELECT thread_id FROM turns WHERE id=$1 AND owner_id=$2', [
@@ -329,13 +360,7 @@ export async function publishScreenshot(
     ]);
     if (current.rows[0]?.thread_id !== turn.threadId) throw turnStopped();
     const artifact = {
-      ...(await artifacts.storeArtifact(
-        Buffer.from(bytes),
-        fileName,
-        'image/png',
-        turn.threadId,
-        client,
-      )),
+      ...(await artifacts.storeArtifact(Buffer.from(bytes), name, mimeType, turn.threadId, client)),
       source,
     };
     signal?.throwIfAborted();

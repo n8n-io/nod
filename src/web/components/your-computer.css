@@ -43,7 +43,7 @@
   min-height: var(--control-height-sm);
   font-size: var(--text-control);
 }
-.computer-permissions > li > span:first-child {
+.computer-permission-label {
   display: grid;
   gap: 4px;
 }
@@ -66,6 +66,9 @@
   gap: 0;
 }
 .computer-permissions > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: 8px;
   padding: 12px 0;
 }
 .computer-permissions > li + li {
@@ -77,4 +80,16 @@
   flex-shrink: 0;
   align-items: center;
   gap: 8px;
+}
+.computer-permission-control .computer-permission-allowed {
+  color: var(--success);
+}
+.computer-permission-control .switch[aria-checked='true']:disabled {
+  opacity: 1;
+}
+.computer-permission-hint {
+  grid-column: 1 / -1;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  line-height: 1.4;
 }

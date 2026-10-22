@@ -67,12 +67,13 @@ func owned(_ element: AXUIElement, _ root: AXUIElement) throws {
   }
 }
 
-func state(_ element: AXUIElement, _ root: AXUIElement) throws -> ElementState {
+func state(_ element: AXUIElement, _ root: AXUIElement,
+  windowFingerprint: (AXUIElement) throws -> String = fingerprint) throws -> ElementState {
   try owned(element, root)
   let window = axElement(element, kAXWindowAttribute) ?? axElement(root, kAXFocusedWindowAttribute)
   if let window { try owned(window, root) }
   return ElementState(element: element, fingerprint: try fingerprint(element), window: window,
-    windowFingerprint: try window.map { try fingerprint($0) })
+    windowFingerprint: try window.map { try windowFingerprint($0) })
 }
 
 func matches(_ saved: ElementState, _ current: ElementState) -> Bool {
@@ -83,7 +84,7 @@ func matches(_ saved: ElementState, _ current: ElementState) -> Bool {
     && sameWindow && saved.windowFingerprint == current.windowFingerprint
 }
 
-func description(_ element: AXUIElement) -> String {
+func description(_ element: AXUIElement, preview: Bool = false) -> String {
   let role = (text(element, kAXRoleAttribute) ?? "unknown").replacingOccurrences(of: "AX", with: "")
   let label = [kAXTitleAttribute, kAXDescriptionAttribute, "AXLabel", kAXHelpAttribute]
     .lazy.compactMap { text(element, $0) }.first
@@ -92,7 +93,10 @@ func description(_ element: AXUIElement) -> String {
   AXUIElementCopyActionNames(element, &actions)
   let actionable = ((actions as? [String]) ?? []).filter { $0 != "AXShowDefaultUI" && !$0.contains("\n") }
   var line = role
-  if let label { line += " \"\(label.prefix(1000))\"" }
+  if let label {
+    let shown = label.prefix(preview ? 160 : 1000)
+    line += " \"\(shown)\(preview && shown.endIndex != label.endIndex ? "…" : "")\""
+  }
   if let value { line += " value=\"\(value.prefix(200))\"" }
   if !actionable.isEmpty {
     line += " actions=\(actionable.map { $0.replacingOccurrences(of: "AX", with: "") }.joined(separator: ","))"
@@ -128,7 +132,14 @@ func look(_ query: String) throws -> [String: Any] {
   refs = [:]
   targets = [:]
   observedApp = running
-  observedFocus = try? state(focused(root), root)
+  var windowFingerprints: [(AXUIElement, String)] = []
+  func fingerprintWindow(_ window: AXUIElement) throws -> String {
+    if let saved = windowFingerprints.first(where: { CFEqual($0.0, window) }) { return saved.1 }
+    let value = try fingerprint(window)
+    windowFingerprints.append((window, value))
+    return value
+  }
+  observedFocus = try? state(focused(root), root, windowFingerprint: fingerprintWindow)
   var lines: [String] = []
   var count = 0
   var visited = 0
@@ -136,11 +147,11 @@ func look(_ query: String) throws -> [String: Any] {
   func walk(_ element: AXUIElement, _ depth: Int) {
     guard count < 2000, visited < 4000, depth < 40 else { truncated = true; return }
     visited += 1
-    guard let saved = try? state(element, root) else { return }
-    let line = description(element)
+    guard let saved = try? state(element, root, windowFingerprint: fingerprintWindow) else { return }
     let role = (text(element, kAXRoleAttribute) ?? "unknown").replacingOccurrences(of: "AX", with: "")
     let children = (attr(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
     if !["Group", "unknown", "SplitGroup", "ScrollArea", "Layout"].contains(role) {
+      let line = description(element, preview: true)
       count += 1
       let ref = "e\(count)"
       refs[ref] = saved

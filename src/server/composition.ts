@@ -123,6 +123,7 @@ import {
   createUserMessageService,
   enqueueTurn,
   initializeThreads,
+  publishComputerFile,
   publishScreenshot,
   reactToAssistantMessage,
   resumeAfterConnection,
@@ -1013,6 +1014,14 @@ async function initializeApplication(
     request: (turn, action, args, options) => approvals.request(turn, action, args, options),
     lock: (turnId, write) => withTurnLock(turnId, write),
     signalFor: turnSignal,
+    publishFile: async (turn, bytes, path, signal) =>
+      publishComputerFile(
+        { ...turn, taskMessageId: (await tasks.context(turn))?.messageId },
+        bytes,
+        path,
+        artifacts,
+        signal,
+      ),
     publishScreenshot: async (turn, bytes, name, signal) =>
       publishScreenshot(
         { ...turn, taskMessageId: (await tasks.context(turn))?.messageId },

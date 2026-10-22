@@ -219,6 +219,16 @@ const lifecycle = createDesktopLifecycle({
       });
     else update({ runtime });
   },
+  onPhase: ({ phase, state, elapsedMs }) => {
+    void writeDiagnostic(
+      `Lifecycle ${phase} ${state}${elapsedMs === undefined ? '' : ` in ${elapsedMs} ms`}.`,
+    ).catch(() => {});
+    if (quitting && state === 'started')
+      update({
+        phase: 'closing',
+        message: phase === 'computer-stop' ? 'Stopping your workspace…' : 'Stopping your tasks…',
+      });
+  },
 });
 
 const readinessNotice = createReadinessNotice({
@@ -269,6 +279,7 @@ function bounded(value) {
 }
 
 function update(value) {
+  if (quitting && value.phase && value.phase !== 'closing') return;
   status = {
     ...status,
     ...value,
@@ -534,8 +545,8 @@ function waitForRenderer(window, present, failed) {
   });
 }
 
-function showSettings(section = 'general', loading = false) {
-  if (quitting) return;
+function showSettings(section = 'general', loading = false, closing = false) {
+  if (quitting && !closing) return;
   if (!loading && onboardingCompleted && engine && status.phase === 'ready') {
     showEngine();
     const window = engineWindow;
@@ -552,6 +563,7 @@ function showSettings(section = 'general', loading = false) {
     if (!pendingRenderers.has(window)) {
       window.show();
       window.focus();
+      if (closing) destroyEngineWindows();
     }
     return setupWindowLoaded.then(() => {
       if (window.isDestroyed()) return;
@@ -582,8 +594,9 @@ function showSettings(section = 'general', loading = false) {
     presented = resolve;
   });
   const failed = () => {
-    if (quitting || window.isDestroyed() || !pendingRenderers.has(window)) return;
+    if (window.isDestroyed() || !pendingRenderers.has(window)) return;
     window.destroy();
+    if (quitting) return;
     update({ windowError: 'nod could not open setup. Try again.' });
     void dialog.showMessageBox({
       type: 'error',
@@ -595,7 +608,10 @@ function showSettings(section = 'general', loading = false) {
   waitForRenderer(
     window,
     () => {
-      if (!quitting && !window.isDestroyed()) window.show();
+      if (!window.isDestroyed()) {
+        window.show();
+        if (quitting) destroyEngineWindows();
+      }
       presented();
     },
     failed,
@@ -611,6 +627,7 @@ function showSettings(section = 'general', loading = false) {
       .loadFile(setupPath, {
         query: {
           firstSetup: String(!onboardingCompleted),
+          ...(closing ? { closing: 'true' } : {}),
           ...(status.unlockingKeys ? { unlocking: process.platform } : {}),
         },
       })
@@ -618,6 +635,11 @@ function showSettings(section = 'general', loading = false) {
     ready,
   ]);
   return setupWindowLoaded;
+}
+
+function destroyEngineWindows() {
+  for (const window of engineWindows) if (!window.isDestroyed()) window.destroy();
+  engineWindows.clear();
 }
 
 function showEngine({ focus = true } = {}) {
@@ -1241,6 +1263,18 @@ function installUpdate() {
 
 async function quit(complete, failure = 'nod could not finish shutting down.') {
   quitting = true;
+  const started = Date.now();
+  update({
+    phase: 'closing',
+    message: 'Stopping your tasks…',
+    unlockingKeys: false,
+    windowError: undefined,
+    progress: undefined,
+  });
+  try {
+    void showSettings('general', true, true)?.catch(() => {});
+  } catch {}
+  void writeDiagnostic('Desktop shutdown started.').catch(() => {});
   stopUpdateChecks?.();
   const stoppingUpdates = updates?.dispose();
   updateReadinessNotice();
@@ -1248,7 +1282,12 @@ async function quit(complete, failure = 'nod could not finish shutting down.') {
   for (const notification of displayedNotifications) notification.close();
   await stoppingUpdates;
   await chatReadCursors.flush().catch(() => {});
-  await finishQuit(complete, failure);
+  await finishQuit(async () => {
+    await writeDiagnostic(`Desktop shutdown settled in ${Date.now() - started} ms.`).catch(
+      () => {},
+    );
+    await complete();
+  }, failure);
 }
 
 async function removeAllData() {
@@ -1413,8 +1452,11 @@ async function startEngine({ runtime, signal, pending = false }) {
     authToken = '';
     engineRuntimeReady = false;
     update({ engineReady: false });
-    for (const window of engineWindows) if (!window.isDestroyed()) window.destroy();
-    engineWindows.clear();
+    if (
+      !quitting ||
+      (setupWindow && !setupWindow.isDestroyed() && !pendingRenderers.has(setupWindow))
+    )
+      destroyEngineWindows();
     if (!quitting && !closingEngine) {
       update({
         phase: 'error',

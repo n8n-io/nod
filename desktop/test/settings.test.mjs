@@ -467,7 +467,7 @@ async function runningDesktop(
       sync: async () => {},
       get: async () => ({ preferences: webPreferences }),
     }),
-    createChatReadCursorStore: () => ({}),
+    createChatReadCursorStore: () => ({ flush: async () => {} }),
     saveArtifactDownload,
     createReadinessNotice,
     isQuietTime,
@@ -644,6 +644,7 @@ async function runningDesktop(
       launch: async () => { ${source.slice(source.lastIndexOf('      try {\n        const saved = await settings.get();'), source.indexOf('    })', source.lastIndexOf('      try {\n        const saved = await settings.get();')))} },
       settle: () => preparing ?? Promise.resolve(),
       close: async () => { quitting = true; await lifecycle.close(); },
+      quit,
       profileRoot,
       profileOwner,
       showEngine,
@@ -909,6 +910,61 @@ test('native startup recovery keeps current status and serializes retry, prerequ
       await settle(() => calls.filter(([name]) => name === 'prepare').length === 2);
       assert.deepEqual(calls.at(-1), ['prepare', undefined]);
       await settle(() => !page.window.document.querySelector('[role="alert"]'));
+    });
+  }
+});
+
+test('native shutdown renders without settings or engine readiness and replaces pending welcome safely', async (t) => {
+  const output = await mkdtemp(join(tmpdir(), 'nod-native-shutdown-'));
+  t.after(() => rm(output, { recursive: true, force: true }));
+  await buildDesktopUI(output);
+  for (const scenario of ['new window', 'pending startup', 'welcome']) {
+    await t.test(scenario, async (t) => {
+      const page = new JSDOM(await readFile(join(output, 'index.html'), 'utf8'), {
+        url: `file:///synthetic/setup.html?firstSetup=true${scenario === 'new window' ? '&closing=true' : ''}`,
+        runScripts: 'outside-only',
+      });
+      t.after(() => page.window.close());
+      let publish;
+      let acknowledgments = 0;
+      let reads = 0;
+      const metadata = deferred();
+      page.window.nodDesktop = {
+        onStatus(listener) {
+          publish = listener;
+        },
+        onPreferences() {},
+        getPreferences: async () => ({ theme: 'light' }),
+        getSettings: () => {
+          reads++;
+          return scenario === 'welcome'
+            ? Promise.resolve({ welcome: { usageData: false, continued: false } })
+            : metadata.promise;
+        },
+        status: () =>
+          scenario === 'new window' ? metadata.promise : Promise.resolve({ phase: 'preparing' }),
+        ready: async () => {
+          acknowledgments++;
+        },
+        prepare: () => assert.fail('Shutdown must not start the runtime.'),
+        saveSettings: () => assert.fail('Shutdown must not alter saved consent.'),
+      };
+      page.window.eval(await readFile(join(output, 'setup.js'), 'utf8'));
+      const settle = async (predicate) => {
+        for (let attempt = 0; attempt < 100 && !predicate(); attempt++)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        assert.ok(predicate());
+      };
+      await settle(() => publish);
+      if (scenario === 'welcome') await settle(() => page.window.document.querySelector('button'));
+      if (scenario === 'new window') assert.equal(reads, 0);
+      publish({ phase: 'closing', runtime: { phase: 'error', error: 'Synthetic stale failure' } });
+      await settle(() => acknowledgments > 0 && !page.window.document.querySelector('button'));
+      assert.equal(page.window.document.querySelector('[role="alert"]'), null);
+      assert.equal(page.window.document.querySelector('[role="switch"]'), null);
+      metadata.resolve({});
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(page.window.document.querySelector('button'), null);
     });
   }
 });
@@ -2041,10 +2097,82 @@ test('native upgrades preserve the existing settings and vault through successfu
   }
 });
 
+test('native quit keeps a visible surface while the engine and computer stop without waiting for its renderer', async (t) => {
+  for (const renderer of ['ready', 'delayed', 'closed']) {
+    await t.test(renderer, async (t) => {
+      const loaded = deferred();
+      const stopping = deferred();
+      const stopped = deferred();
+      let closing = false;
+      let completed = 0;
+      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+        initialState: 'upgrade',
+        allowStart: true,
+        nativePageLoaded: () => (closing && renderer !== 'ready' ? loaded.promise : undefined),
+        prepareRuntime: async ({ onStorageReady }) => {
+          const runtime = {
+            env: {},
+            close: async () => {
+              stopping.resolve();
+              await stopped.promise;
+            },
+          };
+          await onStorageReady(runtime);
+          return runtime;
+        },
+      });
+      let quit;
+      try {
+        await f.launch();
+        await f.settle();
+        const engineWindow = f.windows.find((window) => window.url);
+        assert.equal(engineWindow.isVisible(), true);
+        const saved = await readFile(f.storage.path, 'utf8');
+        const child = f.children[0];
+        child.kill = () => {
+          child.killed = true;
+        };
+        closing = true;
+        quit = f.quit(() => completed++);
+        for (let i = 0; !child.killed && i < 100; i++)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        assert.equal(child.killed, true);
+        assert.equal(completed, 0);
+        const shutdownWindow = f.windows.find((window) => window.path && !window.isDestroyed());
+        assert.ok(shutdownWindow);
+        if (renderer === 'closed') shutdownWindow.destroy();
+        child.emit('exit', 0);
+        await stopping.promise;
+        assert.equal(completed, 0);
+        assert.ok(f.windows.some((window) => window.isVisible()));
+        if (renderer === 'delayed') {
+          assert.equal(engineWindow.isDestroyed(), false);
+          loaded.resolve();
+          for (let i = 0; !shutdownWindow.isVisible() && i < 100; i++)
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          assert.equal(shutdownWindow.isVisible(), true);
+          assert.equal(engineWindow.isDestroyed(), true);
+        }
+        stopped.resolve();
+        await quit;
+        assert.equal(completed, 1);
+        assert.equal(await readFile(f.storage.path, 'utf8'), saved);
+      } finally {
+        loaded.resolve();
+        stopped.resolve();
+        if (f.children[0]?.killed) f.children[0].emit('exit', 0);
+        await quit;
+        await f.close();
+      }
+    });
+  }
+});
+
 test('native quit aborts storage startup without creating a late engine', async (t) => {
   const runtime = deferred();
   let signal;
   let closed = 0;
+  let completed = 0;
   const f = await runningDesktop(t, async () => assert.fail('Quit must fence the full engine.'), {
     initialState: 'fresh',
     allowStart: true,
@@ -2056,9 +2184,13 @@ test('native quit aborts storage startup without creating a late engine', async 
   await f.launch();
   for (let i = 0; !signal && i < 100; i++) await new Promise((r) => setTimeout(r, 10));
   assert.ok(signal);
-  const closing = f.close();
+  const setupWindow = f.windows[0];
+  const closing = f.quit(() => completed++);
   await new Promise(setImmediate);
   assert.equal(signal.aborted, true);
+  assert.equal(setupWindow.isVisible(), true);
+  assert.equal(f.windows.length, 1);
+  assert.equal(completed, 0);
   runtime.resolve({
     env: {},
     close: async () => {
@@ -2067,6 +2199,8 @@ test('native quit aborts storage startup without creating a late engine', async 
   });
   await closing;
   assert.equal(closed, 1);
+  assert.equal(completed, 1);
+  assert.equal(f.status().phase, 'closing');
   assert.deepEqual(
     f.children.map((child) => child.kind),
     [],

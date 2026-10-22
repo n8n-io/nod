@@ -5,8 +5,8 @@ import { api, errorMessage, post } from '../lib/api';
 import { Button, Notice, Switch } from './ui';
 
 export const computerPermissions = [
-  ['accessibility', 'Accessibility', 'Click and type in your apps'],
-  ['screen', 'Screen Recording', 'Take screenshots of app windows'],
+  ['accessibility', 'Accessibility', 'Click and type'],
+  ['screen', 'Screen Recording', 'See app windows'],
 ] as const;
 
 export function useComputer() {
@@ -14,13 +14,15 @@ export function useComputer() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [requesting, setRequesting] = useState<ComputerPermission | null>(null);
+  const [requested, setRequested] = useState<ComputerPermission | null>(null);
   const [checking, setChecking] = useState(false);
   const active = useRef(false);
   const writing = useRef(false);
   const reading = useRef<AbortController | null>(null);
   const missing =
     status?.appControlAvailable === true &&
-    !(status.permissions.accessibility && status.permissions.screen);
+    (Boolean(status.permissionError) ||
+      !(status.permissions.accessibility && status.permissions.screen));
 
   const refresh = useCallback(async (quiet = false) => {
     if (writing.current || reading.current) return;
@@ -34,12 +36,21 @@ export function useComputer() {
       const value = await api<ComputerStatus>('/api/computer', { signal: request.signal });
       if (active.current && reading.current === request) {
         setStatus(value);
-        setError('');
+        setError(value.permissionError ?? '');
       }
     } catch (cause) {
       if (active.current && reading.current === request && !request.signal.aborted) {
-        setStatus(null);
-        setError(errorMessage(cause));
+        const message = errorMessage(cause);
+        setStatus((current) =>
+          current
+            ? {
+                ...current,
+                permissions: { accessibility: false, screen: false },
+                permissionError: message,
+              }
+            : null,
+        );
+        setError(message);
       }
     } finally {
       if (reading.current === request) {
@@ -84,12 +95,14 @@ export function useComputer() {
     reading.current = null;
     setBusy(true);
     setRequesting(permission);
+    if (permission) setRequested(permission);
     setChecking(false);
     setError('');
     try {
       const value = await change();
       if (!active.current) return null;
       setStatus(value);
+      setError(value.permissionError ?? '');
       return value;
     } catch (cause) {
       if (active.current) setError(errorMessage(cause));
@@ -108,6 +121,7 @@ export function useComputer() {
     error,
     busy,
     requesting,
+    requested,
     checking,
     refresh,
     setEnabled: (enabled: boolean) =>
@@ -132,11 +146,15 @@ export function ComputerPermissions({
   status,
   busy,
   requesting,
+  requested,
+  checking,
   onAllow,
 }: {
   status: ComputerStatus;
   busy: boolean;
   requesting: ComputerPermission | null;
+  requested: ComputerPermission | null;
+  checking: boolean;
   onAllow(permission: ComputerPermission): void;
 }) {
   const id = useId();
@@ -145,25 +163,39 @@ export function ComputerPermissions({
     <ul className="computer-permissions">
       {computerPermissions.map(([key, name, unlocks]) => (
         <li key={key}>
-          <span>
+          <div className="computer-permission-label">
             <strong>
               <label htmlFor={`${id}-${key}`}>{name}</label>
             </strong>
             <small id={`${id}-${key}-reason`}>{unlocks}</small>
-          </span>
+          </div>
           <span className="computer-permission-control">
-            {requesting === key && <small role="status">Opening…</small>}
+            {status.permissionError ? (
+              <small id={`${id}-${key}-state`}>Not checked</small>
+            ) : status.permissions[key] ? (
+              <small className="computer-permission-allowed">Allowed</small>
+            ) : requesting === key ? (
+              <small role="status">Opening…</small>
+            ) : requested === key && checking ? (
+              <small role="status">Checking…</small>
+            ) : null}
             <Switch
               id={`${id}-${key}`}
-              checked={status.permissions[key]}
-              disabled={busy || status.permissions[key]}
+              checked={!status.permissionError && status.permissions[key]}
+              disabled={busy || Boolean(status.permissionError) || status.permissions[key]}
               aria-busy={requesting === key}
-              aria-describedby={`${id}-${key}-reason`}
+              aria-describedby={`${id}-${key}-reason${status.permissionError ? ` ${id}-${key}-state` : ''}`}
               onCheckedChange={(checked) => {
                 if (checked) onAllow(key);
               }}
             />
           </span>
+          {requested === key && !status.permissions[key] && !status.permissionError && (
+            <p className="computer-permission-hint" aria-live="polite">
+              Allow this app in System Settings.
+              {key === 'screen' && ' If macOS asks you to quit, reopen nod.'}
+            </p>
+          )}
         </li>
       ))}
     </ul>
@@ -171,14 +203,25 @@ export function ComputerPermissions({
 }
 
 export function YourComputer() {
-  const { status, error, busy, requesting, allow, remove, setEnabled, refresh } = useComputer();
+  const {
+    status,
+    error,
+    busy,
+    requesting,
+    requested,
+    checking,
+    allow,
+    remove,
+    setEnabled,
+    refresh,
+  } = useComputer();
   const id = useId();
 
   return (
     <section className="your-computer account-region" aria-labelledby={id} data-analytics-public>
-      <h4 id={id} data-analytics-public>
+      <h2 id={id} data-analytics-public>
         Your computer
-      </h4>
+      </h2>
       {!status && !error && (
         <p className="computer-note" role="status">
           Checking computer permissions…
@@ -203,14 +246,15 @@ export function YourComputer() {
               />
             </div>
             <p id={`${id}-note`} className="computer-note">
-              nod asks before it acts unless your request covers it. What nod reads or sees on
-              screen is sent to your selected model.
+              What nod reads or sees goes to your model.
             </p>
             {status.appControlAvailable ? (
               <ComputerPermissions
                 status={status}
                 busy={busy}
                 requesting={requesting}
+                requested={requested}
+                checking={checking}
                 onAllow={(key) => void allow(key)}
               />
             ) : (
@@ -219,10 +263,8 @@ export function YourComputer() {
                 installation.
               </p>
             )}
-            {(status.appControlAvailable || status.apps.length > 0) && (
-              <h5>Mac apps nod may use</h5>
-            )}
-            {status.apps.length ? (
+            {status.apps.length > 0 && <h5>Allowed apps</h5>}
+            {status.apps.length > 0 && (
               <ul className="computer-apps">
                 {status.apps.map((app) => {
                   const ambiguous =
@@ -248,11 +290,7 @@ export function YourComputer() {
                   );
                 })}
               </ul>
-            ) : status.appControlAvailable ? (
-              <p className="computer-note">
-                None yet. nod asks before using an app your request doesn't cover.
-              </p>
-            ) : null}
+            )}
           </>
         )
       )}

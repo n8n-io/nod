@@ -621,6 +621,7 @@ export function AccountSettings({
                   />
                 )}
                 <PreferencesForm onDirtyChange={setPreferencesDirty} />
+                {open && <YourComputer />}
                 <section className="account-region" aria-labelledby={`${id}-privacy`}>
                   <h2 id={`${id}-privacy`} data-analytics-public>
                     Privacy
@@ -694,7 +695,6 @@ export function AccountSettings({
                     </Button>
                   )}
                 </section>
-                {open && <YourComputer />}
               </>
             )}
             {tab === 'Memory' && (

@@ -66,10 +66,13 @@ function Startup() {
   const [status, setStatus] = useState<Status>(() =>
     !desktop
       ? { phase: 'error', error: 'Open nod to finish setup.' }
-      : parameters.has('unlocking')
-        ? { phase: 'starting', unlockingKeys: true, platform: parameters.get('unlocking')! }
-        : { phase: 'preparing' },
+      : parameters.has('closing')
+        ? { phase: 'closing' }
+        : parameters.has('unlocking')
+          ? { phase: 'starting', unlockingKeys: true, platform: parameters.get('unlocking')! }
+          : { phase: 'preparing' },
   );
+  const closing = status.phase === 'closing';
   const [busy, setBusy] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [settingsError, setSettingsError] = useState('');
@@ -86,6 +89,23 @@ function Startup() {
       if (active) setStatus(value);
     });
     const stopPreferences = desktop.onPreferences(applyPreferences);
+    if (parameters.has('closing')) {
+      void desktop
+        .status()
+        .then((value) => {
+          if (active && !receivedStatus) setStatus(value);
+        })
+        .catch(() => {});
+      void desktop
+        .getPreferences()
+        .then(applyPreferences)
+        .catch(() => {});
+      return () => {
+        active = false;
+        stopStatus?.();
+        stopPreferences?.();
+      };
+    }
     void Promise.all([
       desktop.status().then(
         (value) => {
@@ -116,8 +136,8 @@ function Startup() {
   }, []);
 
   useEffect(() => {
-    if (initialized) void desktop?.ready?.();
-  }, [initialized]);
+    if (initialized || closing) void desktop?.ready?.();
+  }, [initialized, closing]);
 
   async function run(action: () => Promise<Status | undefined>) {
     if (pending.current) return;
@@ -159,6 +179,14 @@ function Startup() {
       setBusy(false);
     }
   }
+
+  if (closing)
+    return (
+      <>
+        <div className="titlebar" aria-hidden="true" />
+        <SetupProgress title="Closing nod" description={status.message || 'Stopping your tasks…'} />
+      </>
+    );
 
   if (firstSetup && welcome && !welcome.continued)
     return (

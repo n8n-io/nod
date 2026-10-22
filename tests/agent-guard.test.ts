@@ -163,7 +163,10 @@ test('computer screenshots retain share intent and keep observations as images',
         if (mode === 'cancel') await assert.rejects(pending);
         else {
           const result = await pending;
-          if (mode === 'observe') assert.ok(result.content.some((part) => part.type === 'image'));
+          if (mode === 'observe') {
+            assert.ok(result.content.some((part) => part.type === 'image'));
+            assert.deepEqual(result.details, { nativeObservation: { kind: 'screenshot' } });
+          } else assert.deepEqual(result.details, {});
           if (mode === 'share') {
             assert.ok(!result.content.some((part) => part.type === 'image'));
             assert.match(JSON.stringify(result), /calculation\.png/);
@@ -196,6 +199,70 @@ test('computer screenshots retain share intent and keep observations as images',
     else await running;
     assert.deepEqual(calls, [input]);
   }
+});
+
+test('only completed native observations carry context-pruning metadata', async () => {
+  const app = { name: 'Fixture App', bundleId: 'test.fixture.app' };
+  for (const action of ['look', 'act'] as const) {
+    for (const outcome of ['observed', 'unavailable', 'confirmation'] as const) {
+      const value =
+        outcome === 'observed'
+          ? { ...(action === 'act' ? { done: true } : {}), app, tree: 'e1 button Synthetic' }
+          : outcome === 'unavailable'
+            ? { done: true, observation: 'unavailable' }
+            : { [appConfirmation]: 'Allow this synthetic action?' };
+      await fixture(
+        async (tools) => {
+          const result = await call(tools, 'computer', {
+            action,
+            app: app.bundleId,
+            ...(action === 'act' ? { step: 'press', ref: 'e1' } : {}),
+          });
+          assert.deepEqual(
+            result.details,
+            outcome === 'observed' ? { nativeObservation: { kind: action } } : {},
+          );
+          if (outcome === 'observed') {
+            assert.match(JSON.stringify(result.content), /untrusted_tool_result/);
+            assert.match(JSON.stringify(result.content), /e1 button Synthetic/);
+          }
+        },
+        { computer: async () => value },
+      );
+    }
+  }
+});
+
+test('computer file delivery validates host paths and returns only artifact metadata', async () => {
+  const calls: Record<string, unknown>[] = [];
+  const artifact = {
+    id: randomUUID(),
+    name: 'report.bin',
+    size: 320 * 1024,
+    mimeType: 'application/octet-stream',
+    url: '/api/artifacts/fixture-file',
+    source: 'computer_file',
+  };
+  await fixture(
+    async (tools) => {
+      for (const path of ['', 'relative.bin', '~/Desktop/report.bin', '/tmp/file\0.bin'])
+        await assert.rejects(call(tools, 'computer', { action: 'share_file', path }));
+      assert.deepEqual(calls, []);
+      const result = await call(tools, 'computer', {
+        action: 'share_file',
+        path: '/Users/fixture/Desktop/report.bin',
+      });
+      assert.ok(JSON.stringify(result).includes(artifact.id));
+      assert.ok(JSON.stringify(result).length < 1024);
+    },
+    {
+      computer: async (input) => {
+        calls.push(input);
+        return artifact;
+      },
+    },
+  );
+  assert.deepEqual(calls, [{ action: 'share_file', path: '/Users/fixture/Desktop/report.bin' }]);
 });
 
 test('computer screenshot names are validated before dispatch', async () => {

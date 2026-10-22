@@ -9,12 +9,46 @@ import {
   statSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { ComputerPermissionKind, MacApp, OwnerComputer } from '../../ports/owner-computer.ts';
+import { fileBytes } from '../../shared/files.ts';
 
 const outputBytes = 256 * 1024;
 const defaultTimeoutMs = 10 * 60_000;
+const fileReadProgram = `BEGIN { @INC = grep { index($_, "/System/Library/Perl/") == 0 } @INC; }
+use strict;
+use warnings;
+use Fcntl qw(O_RDONLY O_NOFOLLOW O_NONBLOCK S_ISREG);
+use Time::HiRes ();
+my ($path, $limit) = @ARGV;
+sysopen(my $file, $path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK) or die "open";
+my @before = Time::HiRes::stat($file);
+@before && S_ISREG($before[2]) && $before[3] == 1 && $before[7] > 0 && $before[7] <= $limit or die "file";
+binmode($file) or die "input";
+binmode(STDOUT) or die "output";
+my $total = 0;
+while (1) {
+  my $room = $limit - $total + 1;
+  my $read = sysread($file, my $bytes, $room < 65536 ? $room : 65536);
+  defined($read) or die "read";
+  last unless $read;
+  $total += $read;
+  $total <= $limit or die "limit";
+  print STDOUT $bytes or die "write";
+}
+$total == $before[7] or die "size";
+my @after = Time::HiRes::stat($file);
+my @current = Time::HiRes::lstat($path);
+for my $snapshot (\\@after, \\@current) {
+  @$snapshot && S_ISREG($snapshot->[2]) or die "changed";
+  for my $field (0, 1, 2, 3, 7, 9, 10) {
+    $before[$field] == $snapshot->[$field] or die "changed";
+  }
+}
+close($file) or die "close";
+close(STDOUT) or die "output";
+`;
 
 export function sandboxProfile(denyRead: string[] = []) {
   const parents = new Set<string>();
@@ -110,6 +144,7 @@ export function createMacComputer(options: {
   }
   const profile = sandboxProfile([...protectedPaths]);
   const data = resolveComputerPath(options.dataRoot);
+  const fileReads = new Set<() => void>();
   let helper: ChildProcessWithoutNullStreams | undefined;
   let nextId = 0;
   const pending = new Map<
@@ -272,6 +307,84 @@ export function createMacComputer(options: {
         });
       });
     },
+    async readFile(path, maxBytes, signal) {
+      signal.throwIfAborted();
+      const unavailable = () =>
+        new Error('The file is unavailable, changed, protected, or exceeds the sharing limit.');
+      if (
+        !isAbsolute(path) ||
+        path.length > 4096 ||
+        path.includes('\0') ||
+        !Number.isSafeInteger(maxBytes) ||
+        maxBytes < 1 ||
+        maxBytes > fileBytes
+      )
+        throw unavailable();
+      if (fileReads.size >= 2) throw new Error('File sharing is busy.');
+      return new Promise<Buffer>((resolve, reject) => {
+        const child = spawn(
+          '/usr/bin/sandbox-exec',
+          [
+            '-p',
+            profile,
+            '-D',
+            `DATA=${data}`,
+            '-D',
+            `HOME=${home}`,
+            '/usr/bin/perl',
+            '-T',
+            '-e',
+            fileReadProgram,
+            '--',
+            path,
+            String(maxBytes),
+          ],
+          {
+            cwd: home,
+            detached: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env: { HOME: home, LANG: 'en_US.UTF-8' },
+          },
+        );
+        const chunks: Buffer[] = [];
+        let size = 0;
+        let failure: Error | undefined;
+        const kill = () => {
+          if (!child.pid) return;
+          try {
+            process.kill(-child.pid, 'SIGKILL');
+          } catch {
+            child.kill('SIGKILL');
+          }
+        };
+        const stop = (error: Error) => {
+          failure ??= error;
+          kill();
+        };
+        const abort = () => stop(new Error('Task cancelled.'));
+        const timer = setTimeout(() => stop(new Error('The file read timed out.')), 30_000);
+        fileReads.add(abort);
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) abort();
+        child.stdout.on('data', (chunk: Buffer) => {
+          if (failure) return;
+          size += chunk.length;
+          if (size > maxBytes) return stop(unavailable());
+          chunks.push(chunk);
+        });
+        child.stderr.resume();
+        child.once('exit', kill);
+        child.once('error', () => stop(unavailable()));
+        child.once('close', (code) => {
+          clearTimeout(timer);
+          fileReads.delete(abort);
+          signal.removeEventListener('abort', abort);
+          if (signal.aborted) failure ??= new Error('Task cancelled.');
+          if (failure || code !== 0) return reject(failure ?? unavailable());
+          resolve(Buffer.concat(chunks, size));
+        });
+      });
+    },
     apps: (signal) => call<MacApp[]>({ op: 'apps' }, signal),
     resolve: (app, signal) =>
       call<MacApp>({ op: 'resolve', app }, signal).catch((error: Error) => {
@@ -310,6 +423,7 @@ export function createMacComputer(options: {
     requestPermission: (kind) =>
       call<Record<ComputerPermissionKind, boolean>>({ op: 'request', permission: kind }),
     dispose() {
+      for (const stop of fileReads) stop();
       if (helper) stop(helper, new Error('nod Computer Use stopped.'));
     },
   };
