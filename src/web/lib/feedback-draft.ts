@@ -4,7 +4,6 @@ import { parseFeedbackAttachment, type FeedbackAttachment } from './feedback-att
 export type FeedbackDraft = {
   category: FeedbackSubmission['category'];
   feedback: string;
-  includeReport: boolean;
   attachments: FeedbackAttachment[];
   pendingId: string | null;
 };
@@ -122,7 +121,6 @@ function decode(value: unknown, ownerId: string): FeedbackDraft | null {
     !['bug', 'feature', 'other'].includes(String(draft.category)) ||
     typeof draft.feedback !== 'string' ||
     draft.feedback.length > feedbackLimits.text ||
-    typeof draft.includeReport !== 'boolean' ||
     (draft.pendingId !== null &&
       (typeof draft.pendingId !== 'string' ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -154,7 +152,6 @@ function decode(value: unknown, ownerId: string): FeedbackDraft | null {
   return {
     category: draft.category as FeedbackDraft['category'],
     feedback: draft.feedback,
-    includeReport: draft.includeReport,
     pendingId: draft.pendingId as string | null,
     attachments,
   };

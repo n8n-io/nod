@@ -75,7 +75,6 @@ function sameDraft(first: FeedbackDraft, second: FeedbackDraft | null) {
     !!second &&
     first.category === second.category &&
     first.feedback === second.feedback &&
-    first.includeReport === second.includeReport &&
     first.attachments === second.attachments &&
     first.pendingId === second.pendingId
   );
@@ -83,11 +82,7 @@ function sameDraft(first: FeedbackDraft, second: FeedbackDraft | null) {
 
 function hasDraft(draft: FeedbackDraft) {
   return (
-    !!draft.feedback ||
-    !!draft.attachments.length ||
-    draft.category !== 'bug' ||
-    draft.includeReport ||
-    !!draft.pendingId
+    !!draft.feedback || !!draft.attachments.length || draft.category !== 'bug' || !!draft.pendingId
   );
 }
 
@@ -154,11 +149,10 @@ function FeedbackDraftDialog({
     () => ({
       category: kind,
       feedback,
-      includeReport,
       attachments,
       pendingId,
     }),
-    [kind, feedback, includeReport, attachments, pendingId],
+    [kind, feedback, attachments, pendingId],
   );
   const currentDraft = useRef(draft);
   currentDraft.current = draft;
@@ -174,7 +168,6 @@ function FeedbackDraftDialog({
       const value = saved ?? {
         category: 'bug' as const,
         feedback: '',
-        includeReport: false,
         attachments: [],
         pendingId: null,
       };
@@ -182,7 +175,7 @@ function FeedbackDraftDialog({
       persisted.current = value;
       setKind(value.category);
       setFeedback(value.feedback);
-      setIncludeReport(value.includeReport);
+      setIncludeReport(false);
       setAttachments(value.attachments);
       setPendingId(pending);
       setReceipt(pending ? { submissionId: pending, status: 'unknown' } : null);
@@ -384,7 +377,6 @@ function FeedbackDraftDialog({
     const empty: FeedbackDraft = {
       category: 'bug',
       feedback: '',
-      includeReport: false,
       attachments: [],
       pendingId: null,
     };

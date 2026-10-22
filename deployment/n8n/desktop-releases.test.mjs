@@ -412,9 +412,10 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
     [101, manifest],
     [104, runtime],
   ]);
-  const request = async (address) => {
+  const request = async (address, options) => {
     const url = new URL(address);
     requests.push(url.href);
+    assert.deepEqual(Object.keys(options?.headers ?? {}), ['accept']);
     if (url.origin === 'https://release-assets.githubusercontent.com') {
       const content = metadata.get(Number(url.pathname.slice(1)));
       assert.ok(content, 'Only synthetic metadata assets may be read.');

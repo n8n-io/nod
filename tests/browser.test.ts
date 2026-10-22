@@ -3527,11 +3527,11 @@ test('feedback draft storage isolates owners', async () => {
       const rendered = new File(['synthetic-rendered-covered-pixels'], 'capture.png', { type: 'image/png', lastModified: 2000 });
       const marks = [{ tool: 'redact', from: { x: 10, y: 20 }, to: { x: 70, y: 90 } }];
       const first = {
-        category: 'feature', feedback: 'Synthetic idea draft', includeReport: false, pendingId: null,
+        category: 'feature', feedback: 'Synthetic idea draft', pendingId: null,
         attachments: [{ id: 'capture', file: rendered, image: { original, marks } }],
       };
       const second = {
-        category: 'other', feedback: 'Different synthetic owner', includeReport: true, pendingId: crypto.randomUUID(),
+        category: 'other', feedback: 'Different synthetic owner', pendingId: crypto.randomUUID(),
         attachments: [{ id: 'log', file: new File(['synthetic log'], 'details.log', { type: 'text/plain' }) }],
       };
       await Promise.all([saveFeedbackDraft('owner-one', first), saveFeedbackDraft('owner-two', second)]);
