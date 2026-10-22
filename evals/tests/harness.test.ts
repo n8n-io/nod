@@ -1523,6 +1523,22 @@ test('caption approval is the explicit go-ahead, not any earlier answer', async 
 
 test('background calendar checks reject leaked context and repeated outside effects', async () => {
   const definition = (await import('../src/scenarios/background-calendar-isolation.ts')).default;
+  for (const action of ['GOOGLECALENDAR_EVENTS_LIST', 'GOOGLECALENDAR_FIND_EVENT']) {
+    const pending = definition.world({
+      now: () => Date.parse('2026-10-07T12:00:00Z'),
+    }) as ReturnType<typeof definition.world> & { state: { held: boolean }; release(): void };
+    const session = await pending.apps!.provider.createSession('synthetic-owner', {});
+    const { accountId } = await session.authorize('googlecalendar', 'https://nod.example/callback');
+    const read = session.execute(action, {}, accountId);
+    try {
+      assert.equal(pending.state.held, true, `${action} must pause before the event arrives`);
+      assert.equal(pending.apps!.calls.length, 0);
+    } finally {
+      pending.release();
+      await read;
+    }
+    assert.equal(pending.apps!.calls.length, 1);
+  }
   const world = definition.world({ now: () => Date.parse('2026-10-07T12:00:00Z') }) as ReturnType<
     typeof definition.world
   > & {

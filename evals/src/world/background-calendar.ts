@@ -67,8 +67,10 @@ export function backgroundCalendar(input: {
           ...session,
           async execute(action, args, accountId) {
             const match =
-              input.gate === 'read' ? 'GOOGLECALENDAR_EVENTS_LIST' : 'GOOGLECALENDAR_PATCH_EVENT';
-            if (action === match && !state.held) {
+              input.gate === 'read'
+                ? ['GOOGLECALENDAR_EVENTS_LIST', 'GOOGLECALENDAR_FIND_EVENT']
+                : ['GOOGLECALENDAR_PATCH_EVENT'];
+            if (match.includes(action) && !state.held) {
               state.held = true;
               entered();
               await released;
