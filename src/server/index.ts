@@ -2,26 +2,17 @@ import { pool } from './db.ts';
 import { dataRoot, desktopMode, ownerId, port, webRoot } from './config.ts';
 import { accessKey } from './access.ts';
 import { createApplication, createDefaultAdapters } from './composition.ts';
-import { receiveLegacyIntegration } from './integration-key.ts';
 
 let stopping = false;
 let closeApplication: (() => Promise<void>) | undefined;
 const parent = (
   process as NodeJS.Process & {
-    parentPort?: Parameters<typeof receiveLegacyIntegration>[0]['parent'];
+    parentPort?: {
+      on(event: 'message', listener: (event: { data: unknown }) => void): void;
+      removeListener(event: 'message', listener: (event: { data: unknown }) => void): void;
+    };
   }
 ).parentPort;
-const legacyIntegration =
-  desktopMode && process.env.NOD_DESKTOP_LEGACY_INTEGRATION === 'true'
-    ? await receiveLegacyIntegration({
-        ownerId,
-        parent:
-          parent ??
-          (() => {
-            throw new Error('Desktop upgrade requires nod.');
-          })(),
-      })
-    : undefined;
 const runtimeReady =
   desktopMode && process.env.NOD_DESKTOP_RUNTIME_PENDING === 'true'
     ? new Promise<void>((resolve) => {
@@ -34,7 +25,7 @@ const runtimeReady =
         parent.on('message', ready);
       })
     : undefined;
-const { app } = await createApplication(createDefaultAdapters(process.env, legacyIntegration), {
+const { app } = await createApplication(createDefaultAdapters(process.env), {
   runtimeReady,
 });
 closeApplication = () => app.close();

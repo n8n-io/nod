@@ -1,19 +1,17 @@
 import { ModelSettings } from './models';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
-  Brain,
   ChartColumn,
+  Ellipsis,
   Clock3,
-  KeyRound,
   Globe,
   MessageSquareText,
   MapPin,
-  Plug,
   Monitor,
   Moon,
   Settings,
-  SlidersHorizontal,
   Sun,
+  X,
 } from 'lucide-react';
 import type { AccountPreferences, AccountTheme } from '../../shared/account';
 import type { HourCycle } from '../../shared/contracts';
@@ -35,8 +33,8 @@ import { savePreferences } from '../lib/preferences';
 import { localeRegion } from '../../shared/date-locale';
 import { desktopSettingsAvailable, removeDesktopData } from '../lib/desktop';
 import { DesktopOptions, useDesktopSettings } from './desktop-settings';
-import { ConnectionSettings } from './connection-choice';
 import { Memory } from '../pages/memory';
+import { ConnectionMenu } from './connection-menu';
 
 const editablePreferences = ['quietHoursEnabled', 'quietStart', 'quietEnd'] as const;
 const regionLabels = {
@@ -121,9 +119,9 @@ function LanguageAndRegion({
   }
   return (
     <section className="account-region" aria-labelledby={heading}>
-      <h4 id={heading} data-analytics-public>
+      <h2 id={heading} data-analytics-public>
         Date and time
-      </h4>
+      </h2>
       <div className="account-preference-row account-picker-row">
         <span id={regionLabel} data-analytics-public>
           <MapPin size={16} aria-hidden="true" />
@@ -266,7 +264,7 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
   return (
     <>
       <LanguageAndRegion saved={saved} onBusyChange={setRegionBusy} />
-      <form onSubmit={(event) => void save(event)}>
+      <form className="account-region account-quiet-hours" onSubmit={(event) => void save(event)}>
         <div className="account-preference-row">
           <div className="account-preference-label">
             <Moon size={16} aria-hidden="true" />
@@ -346,16 +344,15 @@ export function AccountSettings({
 }) {
   const desktop = desktopSettingsAvailable();
   const native = useDesktopSettings(desktop && open);
-  const tabs: AccountTab[] = ['General', 'Models', 'App connections', 'Memory'];
+  const tabs: AccountTab[] = ['General', 'Models', 'Memory'];
   const selectedTab = tabs.includes(initialTab) ? initialTab : 'General';
   const [tab, setTab] = useState<AccountTab>(selectedTab);
   const [modelDirty, setModelDirty] = useState(false);
   const [preferencesDirty, setPreferencesDirty] = useState(false);
-  const [connectionDirty, setConnectionDirty] = useState(false);
+  const [memoryDirty, setMemoryDirty] = useState(false);
   const pending = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
-  pending.current =
-    modelDirty || preferencesDirty || connectionDirty || native.busy || account.saving;
+  pending.current = modelDirty || preferencesDirty || memoryDirty || native.busy || account.saving;
   const [error, setError] = useState('');
   const close = () => {
     if (pending.current) setError('Save or cancel your changes first.');
@@ -413,71 +410,134 @@ export function AccountSettings({
     window.addEventListener('beforeunload', beforeUnload);
     return () => window.removeEventListener('beforeunload', beforeUnload);
   }, []);
+  useEffect(() => {
+    if (!open) return;
+    const escape = (event: KeyboardEvent) => {
+      if (
+        event.key !== 'Escape' ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.repeat ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey
+      )
+        return;
+      const overlays = document.querySelectorAll<HTMLElement>(
+        '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="combobox"][aria-expanded="true"], dialog[open]',
+      );
+      if (
+        [...overlays].some((overlay) => {
+          const style = getComputedStyle(overlay);
+          return (
+            !overlay.closest('[hidden], [inert]') &&
+            overlay.dataset.state !== 'closed' &&
+            style.display !== 'none' &&
+            style.visibility !== 'hidden'
+          );
+        })
+      )
+        return;
+      event.preventDefault();
+      close();
+    };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [open, onOpenChange]);
   const theme = desktop ? native.settings?.theme : account.theme;
   const themeSaving = desktop ? native.busy || !native.settings : account.saving;
   return (
     <section
-      className="account-settings settings-page"
+      className="account-settings settings-page content-page secondary-page"
       hidden={!open}
       aria-labelledby={`${id}-heading`}
     >
-      <div className="page-title-row">
-        <h1
-          className="page-title"
-          id={`${id}-heading`}
-          ref={heading}
-          tabIndex={-1}
+      <header className="page-heading secondary-heading">
+        <div className="page-title-row">
+          <h1
+            className="page-title"
+            id={`${id}-heading`}
+            ref={heading}
+            tabIndex={-1}
+            data-analytics-public
+          >
+            <Settings size={24} aria-hidden="true" />
+            Settings
+          </h1>
+        </div>
+        <div className="secondary-heading-actions">
+          {onReplayOnboarding && (
+            <ConnectionMenu
+              label="Settings options"
+              trigger={<Ellipsis size={20} />}
+              compact
+              disabled={pending.current}
+            >
+              {(closeMenu) => (
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => {
+                    closeMenu();
+                    onReplayOnboarding();
+                  }}
+                >
+                  Replay onboarding
+                </button>
+              )}
+            </ConnectionMenu>
+          )}
+          <Button
+            className="account-settings-close"
+            variant="ghost"
+            aria-label="Close settings"
+            title="Close settings (Esc)"
+            onClick={close}
+          >
+            <X size={18} aria-hidden="true" />
+            <kbd aria-hidden="true">Esc</kbd>
+          </Button>
+        </div>
+      </header>
+      <div className="account-settings-layout">
+        <nav
+          className="account-settings-tabs"
+          role="tablist"
+          aria-label="Settings"
           data-analytics-public
         >
-          <Settings size={24} aria-hidden="true" />
-          Settings
-        </h1>
-      </div>
-      <div className="account-settings-layout">
-        <nav role="tablist" aria-label="Settings" aria-orientation="vertical" data-analytics-public>
-          {tabs.map((value, index) => {
-            const Icon =
-              value === 'Models'
-                ? KeyRound
-                : value === 'App connections'
-                  ? Plug
-                  : value === 'Memory'
-                    ? Brain
-                    : SlidersHorizontal;
-            return (
-              <button
-                key={value}
-                id={`${id}-${value}`}
-                type="button"
-                role="tab"
-                aria-selected={value === tab}
-                aria-label={value}
-                title={value}
-                aria-controls={`${id}-content`}
-                tabIndex={value === tab ? 0 : -1}
-                onClick={() => changeTab(value)}
-                onKeyDown={(event) => {
-                  const next =
-                    event.key === 'ArrowDown' || event.key === 'ArrowRight'
-                      ? (index + 1) % tabs.length
-                      : event.key === 'ArrowUp' || event.key === 'ArrowLeft'
-                        ? (index - 1 + tabs.length) % tabs.length
-                        : event.key === 'Home'
-                          ? 0
-                          : event.key === 'End'
-                            ? tabs.length - 1
-                            : null;
-                  if (next === null) return;
-                  event.preventDefault();
-                  if (changeTab(tabs[next]))
-                    document.getElementById(`${id}-${tabs[next]}`)?.focus();
-                }}
-              >
-                <Icon size={24} aria-hidden="true" />
-                <span>{value}</span>
-              </button>
-            );
-          })}
+          {tabs.map((value, index) => (
+            <button
+              key={value}
+              id={`${id}-${value}`}
+              type="button"
+              role="tab"
+              aria-selected={value === tab}
+              aria-label={value}
+              title={value}
+              aria-controls={`${id}-content`}
+              tabIndex={value === tab ? 0 : -1}
+              onClick={() => changeTab(value)}
+              onKeyDown={(event) => {
+                const next =
+                  event.key === 'ArrowRight'
+                    ? (index + 1) % tabs.length
+                    : event.key === 'ArrowLeft'
+                      ? (index - 1 + tabs.length) % tabs.length
+                      : event.key === 'Home'
+                        ? 0
+                        : event.key === 'End'
+                          ? tabs.length - 1
+                          : null;
+                if (next === null) return;
+                event.preventDefault();
+                if (changeTab(tabs[next])) document.getElementById(`${id}-${tabs[next]}`)?.focus();
+              }}
+            >
+              {value}
+            </button>
+          ))}
         </nav>
         <div
           className="account-settings-pane"
@@ -485,9 +545,6 @@ export function AccountSettings({
           role="tabpanel"
           aria-labelledby={`${id}-${tab}`}
         >
-          <header className="account-settings-header" data-analytics-public>
-            <h3>{tab}</h3>
-          </header>
           <div key={tab} className="account-settings-body" tabIndex={0}>
             {tab === 'General' && (
               <>
@@ -501,52 +558,60 @@ export function AccountSettings({
                     )}
                   </Notice>
                 )}
-                <div
-                  className="account-theme-previews"
-                  role="group"
-                  aria-label="Theme"
-                  data-analytics-public
+                <section
+                  className="account-region account-appearance"
+                  aria-labelledby={`${id}-appearance`}
                 >
-                  {(['light', 'dark', 'system'] as AccountTheme[]).map((value) => {
-                    const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor;
-                    const label = value[0].toUpperCase() + value.slice(1);
-                    return (
-                      <button
-                        key={value}
-                        type="button"
-                        aria-label={`${label} theme`}
-                        aria-pressed={theme === value}
-                        disabled={themeSaving}
-                        onClick={() => {
-                          setError('');
-                          void (
-                            desktop ? native.save({ theme: value }) : account.onTheme(value)
-                          ).catch((cause) => {
-                            if (!desktop && active.current) setError(errorMessage(cause));
-                          });
-                        }}
-                      >
-                        <span className={`account-theme-sample ${value}`} aria-hidden="true">
-                          <i>
-                            <em />
-                            <em />
-                            <em />
-                          </i>
-                          <span>
-                            <b />
-                            <b />
-                            <b />
-                            <em />
+                  <h2 id={`${id}-appearance`} data-analytics-public>
+                    Appearance
+                  </h2>
+                  <div
+                    className="account-theme-previews"
+                    role="group"
+                    aria-label="Theme"
+                    data-analytics-public
+                  >
+                    {(['light', 'dark', 'system'] as AccountTheme[]).map((value) => {
+                      const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor;
+                      const label = value[0].toUpperCase() + value.slice(1);
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          aria-label={`${label} theme`}
+                          aria-pressed={theme === value}
+                          disabled={themeSaving}
+                          onClick={() => {
+                            setError('');
+                            void (
+                              desktop ? native.save({ theme: value }) : account.onTheme(value)
+                            ).catch((cause) => {
+                              if (!desktop && active.current) setError(errorMessage(cause));
+                            });
+                          }}
+                        >
+                          <span className={`account-theme-sample ${value}`} aria-hidden="true">
+                            <i>
+                              <em />
+                              <em />
+                              <em />
+                            </i>
+                            <span>
+                              <b />
+                              <b />
+                              <b />
+                              <em />
+                            </span>
                           </span>
-                        </span>
-                        <span className="account-theme-label">
-                          <Icon size={16} aria-hidden="true" />
-                          {label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                          <span className="account-theme-label">
+                            <Icon size={16} aria-hidden="true" />
+                            {label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
                 {desktop && native.settings && (
                   <DesktopOptions
                     settings={native.settings}
@@ -556,9 +621,9 @@ export function AccountSettings({
                 )}
                 <PreferencesForm onDirtyChange={setPreferencesDirty} />
                 <section className="account-region" aria-labelledby={`${id}-privacy`}>
-                  <h4 id={`${id}-privacy`} data-analytics-public>
+                  <h2 id={`${id}-privacy`} data-analytics-public>
                     Privacy
-                  </h4>
+                  </h2>
                   <div className="account-preference-row">
                     <span data-analytics-public>
                       <ChartColumn size={16} aria-hidden="true" />
@@ -632,21 +697,16 @@ export function AccountSettings({
             )}
             {tab === 'Memory' && (
               <Memory
+                onDirtyChange={setMemoryDirty}
                 onDone={() => {
                   close();
                 }}
               />
             )}
-            {tab === 'App connections' && <ConnectionSettings onDirtyChange={setConnectionDirty} />}
             {tab === 'Models' && (
               <>
-                <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />
+                <ModelSettings onDirtyChange={setModelDirty} />
               </>
-            )}
-            {onReplayOnboarding && tab === 'General' && (
-              <Button variant="outline" disabled={pending.current} onClick={onReplayOnboarding}>
-                Replay onboarding
-              </Button>
             )}
             {error && <Notice>{error}</Notice>}
           </div>
