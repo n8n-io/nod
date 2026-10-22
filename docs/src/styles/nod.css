@@ -178,6 +178,20 @@ input {
   color: var(--fg);
   transform: translateY(-1px);
 }
+.download[aria-busy='true'],
+.platforms a[aria-busy='true'] {
+  cursor: progress;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .download[aria-busy='true'] .badge nod-glyph {
+    animation: busy 1.4s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+}
+@keyframes busy {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .download .badge {
   display: flex;
   align-items: center;

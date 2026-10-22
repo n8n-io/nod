@@ -39,25 +39,58 @@ async function latest(platform) {
   return null;
 }
 
-async function download(link) {
-  location.href = (await latest(link.dataset.platform)) ?? link.href;
+const ready = new Map();
+const pending = new Map();
+
+function prepare(platform) {
+  if (!pending.has(platform))
+    pending.set(
+      platform,
+      latest(platform).then((url) => {
+        if (url) ready.set(platform, url);
+        else pending.delete(platform);
+        return url;
+      }),
+    );
+  return pending.get(platform);
 }
 
-export async function startDownload() {
+async function wait(link, label) {
+  if (link.getAttribute('aria-busy') === 'true') return;
+  const text = label.textContent;
+  link.setAttribute('aria-busy', 'true');
+  label.textContent = 'Preparing download…';
+  location.href = (await prepare(link.dataset.platform)) ?? link.href;
+  setTimeout(() => {
+    link.removeAttribute('aria-busy');
+    label.textContent = text;
+  }, 4000);
+}
+
+export function startDownload() {
   const button = document.getElementById('download');
   const label = document.getElementById('download-label');
   const others = [...document.querySelectorAll('#platforms [data-platform]')];
-  const platform = await detectPlatform(navigator);
-  if (platform) {
+  for (const link of [button, ...others]) {
+    const warm = () => prepare(link.dataset.platform);
+    link.addEventListener('pointerenter', warm);
+    link.addEventListener('focus', warm);
+    link.addEventListener('click', (event) => {
+      const url = ready.get(link.dataset.platform);
+      if (url) {
+        link.href = url;
+        return;
+      }
+      event.preventDefault();
+      wait(link, link === button ? label : link);
+    });
+  }
+  detectPlatform(navigator).then((platform) => {
+    if (!platform) return;
     const same = others.find((link) => link.dataset.platform === platform);
     button.dataset.platform = platform;
     button.href = same.href;
     label.textContent = labels[platform];
     for (const link of others) link.hidden = link === same;
-  }
-  for (const link of [button, ...others])
-    link.addEventListener('click', (event) => {
-      event.preventDefault();
-      download(link);
-    });
+  });
 }
