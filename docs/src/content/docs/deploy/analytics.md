@@ -87,7 +87,7 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 
 | Event                          | When                                               | Properties                                                                                                                                                                                          |
 | ------------------------------ | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `$pageview`                    | A page becomes visible                             | `route`: `/`, `/onboarding`, `/apps`, `/channels`, `/tasks`, `/activity`, `/logins`, `/settings`, `/browser`, `/credentials`, `/payments` or `/not-found`                                           |
+| `$pageview`                    | A page becomes visible                             | `route`: `/`, `/onboarding`, `/apps`, `/channels`, `/tasks`, `/usage`, `/vault`, `/settings`, `/browser`, `/credentials`, `/payments` or `/not-found`                                               |
 | `$snapshot`                    | Masked full or incremental recording               | PostHog replay metadata and masked snapshot data                                                                                                                                                    |
 | `nod_onboarding_step_viewed`   | An onboarding step appears                         | `step`: `welcome`, `brain`, `email`, `about`, `telegram`, `notifications`, `launch_at_login`; `direction`: `forward`, `back`                                                                        |
 | `nod_onboarding_step_skipped`  | You skip an onboarding step                        | `step`: `telegram`                                                                                                                                                                                  |
@@ -234,7 +234,7 @@ These are pseudonymous, opt-in measurements. Installation IDs and service domain
 Recordings show navigation, layout, controls, scrolling and clicks, with private content removed.
 
 - **Masked:** all input values and all text, except product labels marked as public.
-- **Blocked:** chat messages and drafts, reply quotes, link previews, attachments and file previews, task titles, steps and results, the Activity summary and the text of each Activity row, connected account and channel names, model connection labels and errors, credential and model-key forms, Vault values, the remote browser view, images, media, iframes and canvases.
+- **Blocked:** chat messages and drafts, reply quotes, link previews, attachments and file previews, task titles, steps and results, the Usage summary and the text of each Usage row, connected account and channel names, model connection labels and errors, credential and model-key forms, Vault values, the remote browser view, images, media, iframes and canvases.
 - **Replaced:** every URL becomes a fixed `https://nod.invalid` route, without query strings, fragments or external destinations.
 - **Never collected:** console output, request headers and bodies, network payloads, autocapture, automatic exceptions, feature-flag events and person profiles.
 

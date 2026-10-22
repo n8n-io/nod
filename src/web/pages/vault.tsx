@@ -42,20 +42,14 @@ function subtitle(item: VaultItem) {
 
 function requested() {
   const search =
-    window.location.pathname === '/logins' && !window.location.hash ? window.location.search : '';
+    window.location.pathname === '/vault' && !window.location.hash ? window.location.search : '';
   return {
     add: search === '?add=login' ? 'login' : search === '?add=card' ? 'card' : null,
     item: /^\?item=([\w-]+)$/.exec(search)?.[1],
   } as const;
 }
 
-export function Logins({
-  hidden = false,
-  onAsk,
-}: {
-  hidden?: boolean;
-  onAsk?(text: string): void;
-}) {
+export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text: string): void }) {
   const {
     data: entries,
     error: loadError,
@@ -72,7 +66,7 @@ export function Logins({
   const [importing, setImporting] = useState(false);
   const [adding, setAdding] = useState<'login' | 'card' | null>(request.add);
   const [selectedId, setSelectedId] = useState<string | null | undefined>(request.item);
-  const [fromActivity, setFromActivity] = useState(request.item);
+  const [fromUsage, setFromUsage] = useState(request.item);
   const [savingNew, setSavingNew] = useState(false);
   const [chosen, setChosen] = useState(Boolean(request.add || request.item));
   const returnTo = useRef<string | null>(null);
@@ -95,19 +89,19 @@ export function Logins({
     items.find((item) => item.id === selectedId) ??
     (selectedId === undefined && split && !adding ? visible[0] : undefined);
   const pageMode = Boolean(adding || selected) && !split;
-  const backToActivity = Boolean(fromActivity) && selected?.id === fromActivity;
+  const backToUsage = Boolean(fromUsage) && selected?.id === fromUsage;
 
   useEffect(() => {
     if (hidden || !window.location.search) return;
     const { add, item } = requested();
-    window.history.replaceState(null, '', '/logins');
+    window.history.replaceState(null, '', '/vault');
     if (add) {
       setAdding(add);
       setChosen(true);
     } else if (item) {
       setAdding(null);
       setSelectedId(item);
-      setFromActivity(item);
+      setFromUsage(item);
       setChosen(true);
     }
   }, [hidden]);
@@ -137,10 +131,10 @@ export function Logins({
 
   function closeDetail() {
     if (split) return;
-    if (backToActivity) {
+    if (backToUsage) {
       setChosen(false);
       setSelectedId(null);
-      setFromActivity(undefined);
+      setFromUsage(undefined);
       window.history.back();
       return;
     }
@@ -238,7 +232,7 @@ export function Logins({
       key={selected.id}
       session={selected}
       autoFocus={chosen && selectedId === selected.id}
-      backLabel={backToActivity ? 'Activity' : 'Logins and payment'}
+      backLabel={backToUsage ? 'Usage' : 'Vault'}
       onClose={closeDetail}
       onRemoved={removed}
       onAsk={onAsk}
@@ -249,7 +243,7 @@ export function Logins({
       entry={selected}
       visible={!hidden}
       autoFocus={chosen && selectedId === selected.id}
-      backLabel={backToActivity ? 'Activity' : 'Logins and payment'}
+      backLabel={backToUsage ? 'Usage' : 'Vault'}
       onClose={closeDetail}
       onSaved={(entry) => {
         save(entry);
@@ -286,7 +280,7 @@ export function Logins({
     >
       {!pageMode && (
         <header className="page-heading secondary-heading">
-          <PageTitle path="/logins" />
+          <PageTitle path="/vault" />
           <div className="secondary-heading-actions">
             <Popover.Root open={menu} onOpenChange={setMenu}>
               <Popover.Trigger asChild>

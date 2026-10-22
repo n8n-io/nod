@@ -5,8 +5,8 @@ export const sidebarItems = [
   { path: '/tasks', label: 'Tasks', key: '2', icon: ListChecks },
   { path: '/apps', label: 'Apps', key: '3', icon: PlugZap },
   { path: '/channels', label: 'Channels', key: '4', icon: Radio },
-  { path: '/activity', label: 'Activity', key: '5', icon: History },
-  { path: '/logins', label: 'Logins and payment', key: '6', icon: KeyRound },
+  { path: '/usage', label: 'Usage', key: '5', icon: History },
+  { path: '/vault', label: 'Vault', key: '6', icon: KeyRound },
 ] as const;
 
 export function navigate(path: string) {
