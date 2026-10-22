@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, Check, LoaderCircle, MessageSquarePlus, Trash2, User } from 'lucide-react';
+import { ArrowDown, Check, LoaderCircle, Trash2, User } from 'lucide-react';
 import type {
   AppState,
   Artifact,
@@ -20,6 +20,7 @@ import { conversationFiles } from '../components/attachment-card';
 import { ArtifactWorkspace } from '../components/artifact-drawer';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
+import { FeedbackLauncher } from '../components/feedback-discovery';
 import {
   Button,
   Dialog,
@@ -173,6 +174,7 @@ export function Chat({
   requestedMessage,
   onRequestHandled,
   onFeedback,
+  onDismissFeedbackDiscovery,
   onModels,
 }: {
   ownerId: string;
@@ -187,6 +189,7 @@ export function Chat({
   requestedMessage?: { id: string; text: string };
   onRequestHandled?(id: string): void;
   onFeedback?(): void;
+  onDismissFeedbackDiscovery?(): void;
   onModels?(trigger: HTMLElement): void;
 }) {
   const dateFormat = useDateFormat();
@@ -826,17 +829,10 @@ export function Chat({
         </Button>
       )}
       {onFeedback && (
-        <Button
-          id="feedback-launcher"
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="chat-report-button"
-          onClick={onFeedback}
-        >
-          <MessageSquarePlus size={16} aria-hidden="true" />
-          Send feedback
-        </Button>
+        <FeedbackLauncher
+          onFeedback={onFeedback}
+          onDismissDiscovery={visible ? onDismissFeedbackDiscovery : undefined}
+        />
       )}
     </>
   );

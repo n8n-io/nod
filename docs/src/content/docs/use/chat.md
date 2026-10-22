@@ -70,6 +70,8 @@ Otto answers each request in the app you sent it from. A message from Telegram g
 
 Select **Send feedback** at the top of the chat, choose **Bug or issue**, **Idea** or **Other**, and describe what happened. Feedback goes to the Otto team at n8n.
 
+After setup, a short invitation points to **Send feedback**. Dismiss it with its close button or Escape; it stays dismissed on that device.
+
 By default it includes a diagnostic report of your recent chat, actions and their results. Select **Review** to see the report, or clear **Include diagnostic report** before you send.
 
 ## Start with an empty chat

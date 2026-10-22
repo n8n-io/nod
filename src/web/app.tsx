@@ -82,11 +82,13 @@ function Workspace({
   session,
   account,
   onFeedback,
+  onDismissFeedbackDiscovery,
 }: {
   path: string;
   session: SessionResponse;
   account: AccountControls;
   onFeedback(): void;
+  onDismissFeedbackDiscovery?(): void;
 }) {
   const { state, streams, error, connected, refresh, resetConversation } = useAppState(
     session.user!.id,
@@ -197,6 +199,7 @@ function Workspace({
                   visible={currentPath === '/'}
                   onReadLatest={unread.markRead}
                   onFeedback={onFeedback}
+                  onDismissFeedbackDiscovery={onDismissFeedbackDiscovery}
                   onModels={(trigger) => account.onSettings('Models', trigger)}
                   requestedMessage={chatRequests[0]}
                   onRequestHandled={(id) =>
@@ -259,12 +262,22 @@ function AuthenticatedApp({
   feedbackRequest: number;
   onFeedbackHandled(): void;
 }) {
+  const feedbackDiscoveryKey = `otto.feedback.discovery.${session.user!.id}` as const;
+  const firstOnboarding = useRef(!session.settings!.onboardingCompleted);
+  const [feedbackDiscovery, setFeedbackDiscovery] = useState(
+    () => readUiPreference(feedbackDiscoveryKey) === 'pending',
+  );
+  const dismissFeedbackDiscovery = () => {
+    writeUiPreference(feedbackDiscoveryKey, 'dismissed');
+    setFeedbackDiscovery(false);
+  };
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackScreenshot, setFeedbackScreenshot] = useState<File | null>(null);
   const feedbackCapture = useRef<Promise<File | null> | null>(null);
   const feedbackTrigger = useRef<HTMLElement | null>(null);
   const openFeedback = async () => {
     if (feedbackOpen || feedbackCapture.current) return;
+    dismissFeedbackDiscovery();
     feedbackTrigger.current =
       document.activeElement !== document.body ? (document.activeElement as HTMLElement) : null;
     const capture = captureFeedbackScreenshot().catch(() => null);
@@ -396,6 +409,11 @@ function AuthenticatedApp({
               await onAccountUpdate({ onboardingCompleted: true });
             if (desktopSettingsAvailable())
               await saveDesktopSettings({ onboardingCompleted: true });
+            if (firstOnboarding.current && readUiPreference(feedbackDiscoveryKey) !== 'dismissed') {
+              writeUiPreference(feedbackDiscoveryKey, 'pending');
+              setFeedbackDiscovery(true);
+            }
+            firstOnboarding.current = false;
             setFinishingOnboarding(false);
             if (replayingOnboarding(path)) navigate('/');
           }}
@@ -406,6 +424,11 @@ function AuthenticatedApp({
           session={session}
           account={account}
           onFeedback={openFeedback}
+          onDismissFeedbackDiscovery={
+            feedbackDiscovery && !feedbackOpen && !settingsOpen
+              ? dismissFeedbackDiscovery
+              : undefined
+          }
         />
       )}
       <FeedbackDialog
