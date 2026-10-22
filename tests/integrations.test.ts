@@ -342,6 +342,10 @@ test('managed integration requests bind SDK calls to a private persisted install
     const url = new URL(value.url);
     const bytes = Buffer.from(await value.arrayBuffer());
     const key = value.headers.get('x-otto-public-key')!;
+    const bodyHash = createHash('sha256').update(bytes).digest('hex');
+    const signedHash =
+      url.pathname === '/v2/files/upload' ? value.headers.get('x-otto-content-sha256') : bodyHash;
+    assert.equal(signedHash, bodyHash);
     const canonical = [
       'otto-composio-v1',
       value.method,
@@ -349,7 +353,7 @@ test('managed integration requests bind SDK calls to a private persisted install
       `${url.pathname}${url.search}`,
       value.headers.get('x-otto-timestamp'),
       value.headers.get('x-otto-request-id'),
-      createHash('sha256').update(bytes).digest('hex'),
+      signedHash,
     ].join('\n');
     assert.ok(
       verify(

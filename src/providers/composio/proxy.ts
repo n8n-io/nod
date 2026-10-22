@@ -73,6 +73,7 @@ export function createComposioProxy(options: {
     const timestamp = String(Math.floor(Date.now() / 1000));
     const requestId = randomUUID();
     const current = requiredIdentity();
+    const bodyHash = createHash('sha256').update(body).digest('hex');
     const canonical = [
       'otto-composio-v1',
       value.method,
@@ -80,7 +81,7 @@ export function createComposioProxy(options: {
       `${url.pathname}${url.search}`,
       timestamp,
       requestId,
-      createHash('sha256').update(body).digest('hex'),
+      bodyHash,
     ].join('\n');
     const headers = new Headers({
       Accept: 'application/json',
@@ -89,6 +90,7 @@ export function createComposioProxy(options: {
       'x-otto-request-id': requestId,
       'x-otto-signature': sign(null, Buffer.from(canonical), current.key).toString('base64url'),
     });
+    if (url.pathname === '/v2/files/upload') headers.set('x-otto-content-sha256', bodyHash);
     if (value.headers.has('content-type'))
       headers.set('content-type', value.headers.get('content-type')!);
     return (options.request ?? fetch)(url, {

@@ -1906,34 +1906,46 @@ test('workspace failure leaves the pending backend intact and an explicit retry 
   }
 });
 
-test('native upgrades keep the profile vault while discarding retired app setup fields', async (t) => {
-  const storage = await fixture(t);
-  await storage.store.save({ onboardingCompleted: true, theme: 'dark' });
-  const environment = await storage.store.environment();
-  const saved = JSON.parse(await readFile(storage.path, 'utf8'));
-  saved.secrets.composioApiKey = 'retired-ciphertext-must-not-be-unlocked';
-  saved.keyMetadata = { composioApiKey: { suffix: 'test', source: 'manual' } };
-  await writeFile(storage.path, JSON.stringify(saved));
-  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
-    initialState: 'upgrade',
-    allowStart: true,
-    storedProfile: storage,
-  });
-  try {
-    await f.launch();
-    await f.settle();
-    assert.equal(f.status().phase, 'ready');
-    assert.equal(f.children[0].environment.OTTO_VAULT_KEY, environment.OTTO_VAULT_KEY);
-    assert.deepEqual(JSON.parse(JSON.stringify(f.children[0].sent)), [
-      { type: 'otto-runtime-ready' },
-    ]);
-    assert.equal((await f.storage.store.get()).onboardingCompleted, true);
-    assert.equal((await f.storage.store.get()).theme, 'dark');
-    const current = JSON.parse(await readFile(storage.path, 'utf8'));
-    assert.deepEqual(current.secrets, { vaultKey: saved.secrets.vaultKey });
-    assert.equal(Object.hasOwn(current, 'keyMetadata'), false);
-  } finally {
-    await f.close();
+test('native upgrades preserve the existing settings and vault through successful or failed startup', async (t) => {
+  for (const failed of [false, true]) {
+    await t.test(failed ? 'failed runtime' : 'ready runtime', async (t) => {
+      const storage = await fixture(t);
+      await storage.store.save({ onboardingCompleted: true, theme: 'dark' });
+      const environment = await storage.store.environment();
+      const saved = JSON.parse(await readFile(storage.path, 'utf8'));
+      saved.secrets.composioApiKey = 'retired-ciphertext-must-not-be-unlocked';
+      saved.keyMetadata = {
+        composioApiKey: { suffix: 'test', source: 'manual', updatedAt: '2026-01-01T00:00:00.000Z' },
+      };
+      const previous = JSON.stringify(saved, null, 2);
+      await writeFile(storage.path, previous);
+      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+        initialState: 'upgrade',
+        allowStart: true,
+        storedProfile: storage,
+        prepareRuntime: async ({ onStorageReady }) => {
+          const runtime = { env: {} };
+          await onStorageReady(runtime);
+          if (failed) throw new Error('Synthetic browser startup failure');
+          return runtime;
+        },
+      });
+      try {
+        await f.launch();
+        await f.settle();
+        assert.equal(f.status().phase, failed ? 'error' : 'ready');
+        assert.equal(f.children[0].environment.OTTO_VAULT_KEY, environment.OTTO_VAULT_KEY);
+        assert.deepEqual(
+          JSON.parse(JSON.stringify(f.children[0].sent)),
+          failed ? [] : [{ type: 'otto-runtime-ready' }],
+        );
+        assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+        assert.equal((await f.storage.store.get()).theme, 'dark');
+        assert.equal(await readFile(storage.path, 'utf8'), previous);
+      } finally {
+        await f.close();
+      }
+    });
   }
 });
 
@@ -2448,15 +2460,18 @@ ConvertTo-Json -InputObject @($results) -Compress`,
   },
 );
 
-test('retired app settings are discarded without decrypting them or replacing the existing vault', async (t) => {
+test('startup reads preserve older settings for rollback until an owner preference changes', async (t) => {
   const f = await fixture(t);
   await f.store.save({ theme: 'dark', notifications: true, onboardingCompleted: true });
   const expected = await f.store.environment();
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
   saved.secrets.composioApiKey = 'unreadable-retired-ciphertext';
   saved.secrets.integrationConfiguration = 'unreadable-retired-config';
-  saved.keyMetadata = { composioApiKey: { suffix: 'test', source: 'manual' } };
-  await writeFile(f.path, JSON.stringify(saved));
+  saved.keyMetadata = {
+    composioApiKey: { suffix: 'test', source: 'manual', updatedAt: '2026-01-01T00:00:00.000Z' },
+  };
+  const previous = JSON.stringify(saved, null, 2);
+  await writeFile(f.path, previous);
   const store = createSettingsStore(f.path, {
     ...f.encryption,
     decryptString: () => assert.fail('Reading preferences must not decrypt retired app keys.'),
@@ -2466,11 +2481,21 @@ test('retired app settings are discarded without decrypting them or replacing th
   assert.equal(settings.theme, 'dark');
   assert.equal(settings.notifications, true);
   assert.equal(settings.onboardingCompleted, true);
+  assert.equal(await readFile(f.path, 'utf8'), previous);
+  const blocked = createSettingsStore(f.path, {
+    ...f.encryption,
+    isEncryptionAvailable: () => false,
+    isAsyncEncryptionAvailable: async () => false,
+  });
+  await assert.rejects(blocked.environment(), /unlock/i);
+  assert.equal(await readFile(f.path, 'utf8'), previous);
+  assert.deepEqual(await f.reopen().environment(), expected);
+  assert.equal(await readFile(f.path, 'utf8'), previous);
+  await store.save({ theme: 'light' });
   const current = JSON.parse(await readFile(f.path, 'utf8'));
+  assert.equal(current.theme, 'light');
   assert.deepEqual(current.secrets, { vaultKey: saved.secrets.vaultKey });
   assert.equal(Object.hasOwn(current, 'keyMetadata'), false);
-  assert.deepEqual(await f.reopen().environment(), expected);
-  await store.save({ theme: 'light' });
   assert.deepEqual(await f.reopen().environment(), expected);
 });
 

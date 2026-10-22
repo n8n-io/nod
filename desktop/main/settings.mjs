@@ -64,7 +64,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
   async function read() {
     if (current) return current;
     let value;
-    let normalized = false;
     try {
       const saved = JSON.parse(await readFile(path, 'utf8'));
       const record = (input) => input && typeof input === 'object' && !Array.isArray(input);
@@ -77,9 +76,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         'welcome',
         'secrets',
       ];
-      normalized =
-        Object.keys(saved).some((field) => !fields.includes(field)) ||
-        Object.keys(saved.secrets).some((field) => field !== 'vaultKey');
       value = Object.fromEntries(Object.entries(saved).filter(([field]) => fields.includes(field)));
       value.secrets = Object.hasOwn(saved.secrets, 'vaultKey')
         ? { vaultKey: saved.secrets.vaultKey }
@@ -104,10 +100,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         throw new Error();
     } catch (error) {
       if (error.code !== 'ENOENT') throw new Error('Otto could not open its saved settings.');
-    }
-    if (normalized) {
-      await write(value);
-      return current;
     }
     current = value ?? {
       version: 1,
