@@ -1274,6 +1274,27 @@ test('native runtime checks VM storage even when runtime assets are cached', asy
       downloading: true,
       rejected: true,
     },
+    {
+      name: 'new VM with non-image files and half the image already written',
+      existing: false,
+      free: 27,
+      downloading: true,
+      imageBytesWritten: 1024 ** 3,
+    },
+    {
+      name: 'new VM with all files written while archive verification finishes',
+      existing: false,
+      free: 26,
+      downloading: true,
+      imageBytesWritten: 2 * 1024 ** 3,
+    },
+    {
+      name: 'new VM downloading to another volume',
+      existing: false,
+      free: 26,
+      downloading: true,
+      separateCache: true,
+    },
     { name: 'existing VM without headroom', existing: true, free: 1, rejected: true },
     { name: 'existing complete VM', existing: true, free: 3 },
     { name: 'missing image', existing: true, free: 13, missing: true, rejected: true },
@@ -1326,12 +1347,24 @@ test('native runtime checks VM storage even when runtime assets are cached', asy
         randomBytes: () => Buffer.from('synthetic'),
         openRuntimeAssets: async () => ({
           root: assets,
-          paths: scenario.downloading ? ['manifest.json'] : [],
+          paths: scenario.downloading ? ['guest.img', image.file] : [],
           ready: async () => {},
           done: scenario.downloading ? new Promise(() => {}) : Promise.resolve(),
         }),
-        runtimeRelease: async () => ({ files: [{ bytes: 2 * 1024 ** 3 }] }),
-        stat: async () => ({ dev: 1 }),
+        runtimeRelease: async () => ({
+          files: [
+            { path: 'guest.img', bytes: 8 * 1024 ** 3 },
+            { path: image.file, bytes: 2 * 1024 ** 3 },
+          ],
+        }),
+        stat: async (path) => {
+          if (path === assets) return { dev: scenario.separateCache ? 2 : 1 };
+          if (path === limaHome) return { dev: 1 };
+          if (path === join(assets, 'guest.img')) return { size: 8n * 1024n ** 3n };
+          if (path === join(assets, image.file) && scenario.imageBytesWritten !== undefined)
+            return { size: BigInt(scenario.imageBytesWritten) };
+          throw Object.assign(new Error('Synthetic file is not written yet'), { code: 'ENOENT' });
+        },
         hostCpus: () => [0, 1],
         totalmem: () => 8 * 1024 ** 3,
         guestConfiguration: () => ({ disk: '24GiB' }),

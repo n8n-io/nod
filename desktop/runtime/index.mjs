@@ -235,7 +235,6 @@ async function prepare(options, onComputerStart) {
   );
   const assets = runtimeAssets.root;
   const release = runtimeAssets.paths.length ? await runtimeRelease(resourcesPath) : undefined;
-  const downloadBytes = BigInt(release?.files.reduce((total, file) => total + file.bytes, 0) ?? 0);
   await Promise.all(
     runtimeAssets.paths.filter((path) => !path.startsWith('images/')).map(runtimeAssets.ready),
   );
@@ -262,9 +261,21 @@ async function prepare(options, onComputerStart) {
   await chmod(limaHome, 0o700);
   const checkDisk = async (grow) => {
     let extraBytes = 0n;
-    if (downloading && downloadBytes) {
+    if (downloading && release) {
       const [cache, computer] = await Promise.all([stat(assets), stat(limaHome)]);
-      if (cache.dev === computer.dev) extraBytes = downloadBytes;
+      if (cache.dev === computer.dev) {
+        const remaining = await Promise.all(
+          release.files.map(async (file) => {
+            const written = await stat(join(assets, file.path), { bigint: true }).catch((error) => {
+              if (error.code === 'ENOENT') return { size: 0n };
+              throw error;
+            });
+            const bytes = BigInt(file.bytes) - written.size;
+            return bytes > 0n ? bytes : 0n;
+          }),
+        );
+        extraBytes = remaining.reduce((total, bytes) => total + bytes, 0n);
+      }
     }
     await requireComputerDiskSpace(limaHome, {
       grow,
