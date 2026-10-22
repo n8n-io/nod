@@ -226,11 +226,24 @@ test(
           );
           await computer.close('attachment');
           await computer.act('popup', { action: 'open', url: `${fixture.origin}/session` });
-          await computer.act('popup', { action: 'click', selector: '#popup' });
+          const beforePopup = fixture.authenticatedDownloads();
+          try {
+            await computer.act('popup', { action: 'click', selector: '#popup' });
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              !(error.cause instanceof BrowserActionError) ||
+              error.cause.code !== 'browser_observation_failed'
+            )
+              throw error;
+            assert.ok((await computer.screenshot('popup'))?.length);
+            assert.equal(computer.screenStatus!('popup').state, 'live');
+          }
           assert.deepEqual(
             (await computer.download!('popup', { name: 'popup.pdf' })).bytes,
             browserDownloadPdf,
           );
+          assert.equal(fixture.authenticatedDownloads(), beforePopup + 1);
           await assert.rejects(computer.download!('unrelated-task', {}));
           await assert.rejects(computer.download!('popup', { url: 'file:///etc/passwd' }));
           assert.equal(fixture.unauthenticatedDownloads(), 1);
