@@ -2402,6 +2402,20 @@ test('ChatGPT sign-in validates callbacks, exchanges PKCE once, verifies the acc
     );
     return true;
   });
+  tokenStatus = 429;
+  tokenError = 'slow_down';
+  const throttled = await start();
+  throttled.complete(
+    new URL(
+      `http://127.0.0.1:1455/auth/callback?state=${throttled.state}&code=throttled-code&client_id=fixture-client`,
+    ),
+  );
+  await assert.rejects(throttled.result, (error: Error) => {
+    assert.ok(error instanceof ModelAuthError);
+    assert.doesNotMatch(error.message, /Plus or Pro/);
+    assert.match(error.message, /Try again/);
+    return true;
+  });
 
   holdExchange = true;
   const started = new Promise<void>((resolve) => {

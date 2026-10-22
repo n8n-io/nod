@@ -498,7 +498,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           throw new ModelAuthError(
             signal.aborted
               ? 'ChatGPT sign-in was canceled.'
-              : error instanceof TokenRejected && error.statusCode < 500
+              : error instanceof TokenRejected && error.code === 'invalid_grant'
                 ? 'OpenAI didn’t approve this connection. Use a ChatGPT Plus or Pro plan, or add an API key.'
                 : 'ChatGPT sign-in didn’t finish. Try again.',
             false,
