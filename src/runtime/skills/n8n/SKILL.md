@@ -13,7 +13,7 @@ Work through the connected n8n MCP server. Its tools are named mcp__n8n__<tool>;
 - Test with sample data before you report. A pinned step does not run, so check what it would have sent from the data it received, and say a path works only when an execution exercised it.
 - A built workflow or Agent is a draft. Publish only when the user asks; after changing a published workflow, publish again or say the change is not live yet.
 
-Show the result as a canvas: in codemode, write the workflow from get_workflow_details, with the url n8n returned, to `n8n/<short-name>.n8n.json` and attach it with share_file.
+Show the result as a canvas. When the turn's channel is telegram, read [references/telegram.md](references/telegram.md) instead, because Telegram shows a picture, not the canvas. Otherwise, in codemode, write the workflow from get_workflow_details, with the url n8n returned, to `n8n/<short-name>.n8n.json` and attach it with share_file.
 
 ```js
 const { workflow } = JSON.parse(await tools.mcp__n8n__get_workflow_details({ workflowId }));
