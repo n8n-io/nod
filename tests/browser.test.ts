@@ -4546,6 +4546,7 @@ test(
       );
       for (const path of ['/framed', '/foreign']) {
         await act({ action: 'open', url: origin + path });
+        await act({ action: 'wait', text: 'Frame ready' });
         const inspect = () =>
           client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: '#primary' }]);
         if (path === '/foreign') {
@@ -4640,6 +4641,7 @@ test(
       }
       for (const path of ['/scaled-half', '/scaled-double']) {
         await act({ action: 'open', url: origin + path });
+        await act({ action: 'wait', text: 'Frame ready' });
         const connection = await existingDaemonCommand(socketPath, { action: 'cdp_url' });
         const tabs = await existingDaemonCommand(socketPath, { action: 'tab_list' });
         const tab = (tabs.tabs as { active: boolean; targetId: string }[]).find(
