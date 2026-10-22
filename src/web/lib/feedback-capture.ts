@@ -51,7 +51,7 @@ async function captureFonts(signal: AbortSignal) {
 
 function canCapture() {
   return (
-    !/^\/(?:settings|activity|logins|trust|vault|credentials|browser|browser-connect|onboarding)(?:\/|$)/.test(
+    !/^\/(?:settings|usage|vault|activity|logins|trust|credentials|browser|browser-connect|onboarding)(?:\/|$)/.test(
       window.location.pathname,
     ) &&
     !document.querySelector(privateContent) &&

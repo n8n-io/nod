@@ -243,13 +243,13 @@ body {
 .tour-window .statement-summary {
   font-size: 28px;
 }
-body[data-kind='activity'] .content-page.secondary-page,
-body[data-kind='logins'] .content-page.secondary-page,
-body[data-kind='activity-limit'] .content-page.secondary-page {
+body[data-kind='usage'] .content-page.secondary-page,
+body[data-kind='vault'] .content-page.secondary-page,
+body[data-kind='usage-limit'] .content-page.secondary-page {
   padding: 32px 36px;
 }
 
-body[data-kind='activity-card'] .content-page.secondary-page {
+body[data-kind='usage-card'] .content-page.secondary-page {
   padding: 12px 8px;
 }
 

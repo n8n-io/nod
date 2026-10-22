@@ -1,15 +1,15 @@
 import { createRoot } from 'react-dom/client';
 import { BrandMark } from '../../src/web/components/brand';
 import { MessageBubble } from '../../src/web/components/message';
-import { Activity } from '../../src/web/pages/activity';
-import { Logins } from '../../src/web/pages/logins';
+import { Usage } from '../../src/web/pages/usage';
+import { Vault } from '../../src/web/pages/vault';
 import { Credentials, Payment } from '../../src/web/pages/credentials';
 import { pageDataCache } from '../../src/web/lib/page-data-cache';
 import '../../src/web/styles.css';
 import '../../src/web/theme.css';
 import '../../src/web/pages/chat.css';
 import '../../src/web/pages/secondary-pages.css';
-import '../../src/web/pages/activity.css';
+import '../../src/web/pages/usage.css';
 import '../../src/web/components/private-entry.css';
 import '../../src/web/components/message-actions.css';
 import '../../src/web/components/vault-details.css';
@@ -52,7 +52,7 @@ export const scenes = [
       'Set spending limits.',
       'Choose the work nod does on its own.',
     ],
-    view: 'activity',
+    view: 'usage',
   },
   {
     title: 'You stay in charge.',
@@ -226,13 +226,11 @@ function Window({ scene }: { scene: (typeof scenes)[number] }) {
     <div className="tour-window">
       <header>
         <Brand />
-        <span>
-          {scene.view === 'activity' ? 'Activity' : scene.view ? 'Private entry' : 'Chat'}
-        </span>
+        <span>{scene.view === 'usage' ? 'Usage' : scene.view ? 'Private entry' : 'Chat'}</span>
       </header>
       <div className="tour-window-body">
-        {scene.view === 'activity' ? (
-          <Activity />
+        {scene.view === 'usage' ? (
+          <Usage />
         ) : scene.view === 'code' ? (
           <Credentials id="demo" embedded />
         ) : scene.view === 'payment' ? (
@@ -251,7 +249,7 @@ function Window({ scene }: { scene: (typeof scenes)[number] }) {
 }
 function render(index: number, kind = 'video') {
   serial++;
-  const card = kind === 'activity-card';
+  const card = kind === 'usage-card';
   trust.month.spentUsd = card ? 7.52 : 18.42;
   trust.limit.monthlyUsd = card ? 25 : 40;
   trust.week.things = card ? 45 : 63;
@@ -265,10 +263,10 @@ function render(index: number, kind = 'video') {
   root.render(
     kind === 'code' ? (
       <Credentials key={serial} id="demo" />
-    ) : kind === 'logins' ? (
-      <Logins key={serial} />
-    ) : kind.startsWith('activity') ? (
-      <Activity key={serial} />
+    ) : kind === 'vault' ? (
+      <Vault key={serial} />
+    ) : kind.startsWith('usage') ? (
+      <Usage key={serial} />
     ) : (
       <div className="tour-stage">
         <header className="tour-header">

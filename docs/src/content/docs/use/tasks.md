@@ -46,7 +46,7 @@ An owner update has a revision. **Owner update queued** means the task has not r
 
 Open a task preview and select **Stop** to stop that task and its helpers. Other tasks continue. The main Stop control stops active work and closes all open tasks. Reset also closes the old thread's open tasks.
 
-A task checks in when its spending since your last message to it passes the amount you set in **Activity**, $5 by default, and asks whether to keep going. See [Task check-ins](/use/spending/#task-check-ins).
+A task checks in when its spending since your last message to it passes the amount you set in **Usage**, $5 by default, and asks whether to keep going. See [Task check-ins](/use/spending/#task-check-ins).
 
 ## Inspect task activity
 

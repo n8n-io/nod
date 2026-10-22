@@ -100,8 +100,8 @@ Don't show a construction grid. Keep the existing reduced-motion behaviour. The 
 | Composer                  | Clear boundary, visible focus, one primary send action                 |
 | Tasks and schedules       | Shared title, tabs, row spacing and action height                      |
 | Apps and channels         | Neutral cards, visible connection state, consistent controls           |
-| Logins and payment        | Clear selection, fields and error states; secure forms preserved       |
-| Activity                  | One summary line, one cost card, a quiet statement list                |
+| Vault                     | Clear selection, fields and error states; secure forms preserved       |
+| Usage                     | One summary line, one cost card, a quiet statement list                |
 | Sign-in                   | Plain capability text, pink sign-in action, one inset story panel      |
 | Onboarding                | Clear connection steps, no decorative grid behind fields               |
 | Credentials and approvals | Clear action hierarchy; origin and expiry preserved                    |

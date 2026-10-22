@@ -1,8 +1,8 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Chat } from './pages/chat';
-import { Activity } from './pages/activity';
-import { Logins } from './pages/logins';
+import { Usage } from './pages/usage';
+import { Vault } from './pages/vault';
 import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
 import { Credentials, Payment } from './pages/credentials';
@@ -220,10 +220,10 @@ function Workspace({
                 <ChatSkeleton />
               )}
             </div>
-            {(currentPath === '/activity' || currentPath === '/logins') && (
+            {(currentPath === '/usage' || currentPath === '/vault') && (
               <>
-                <Activity hidden={currentPath !== '/activity'} />
-                <Logins hidden={currentPath !== '/logins'} onAsk={askInChat} />
+                <Usage hidden={currentPath !== '/usage'} />
+                <Vault hidden={currentPath !== '/vault'} onAsk={askInChat} />
               </>
             )}
             {currentPath === '/apps' && (
@@ -350,11 +350,11 @@ function AuthenticatedApp({
     const openSettingsLink = (event: MouseEvent) => {
       const link =
         event.target instanceof Element &&
-        event.target.closest<HTMLAnchorElement>('a[href="/memory"], a[href="/activity"]');
+        event.target.closest<HTMLAnchorElement>('a[href="/memory"], a[href="/usage"]');
       if (!link || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
         return;
       event.preventDefault();
-      if (link.getAttribute('href') === '/activity') navigate('/activity');
+      if (link.getAttribute('href') === '/usage') navigate('/usage');
       else openSettings('Memory', link);
     };
     document.addEventListener('click', openSettingsLink);

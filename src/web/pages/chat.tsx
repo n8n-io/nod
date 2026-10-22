@@ -1062,7 +1062,7 @@ export function Chat({
           {spendingPaused && (
             <Notice kind="info">
               Chat is paused because you reached your spending limit.{' '}
-              <a href="/activity">Raise the limit in Activity</a> to resume.
+              <a href="/usage">Raise the limit in Usage</a> to resume.
             </Notice>
           )}
           <div hidden={!state.configuration.llmReady && !working && !sending}>

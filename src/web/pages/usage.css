@@ -1,8 +1,8 @@
-.activity {
+.usage {
   display: grid;
   gap: 32px;
 }
-.activity-value {
+.usage-value {
   padding: 0;
   border: 0;
   border-bottom: 2px dotted var(--brand-pink);
@@ -13,16 +13,16 @@
   letter-spacing: inherit;
   cursor: pointer;
 }
-.activity-value:hover,
-.activity-value[data-state='open'] {
+.usage-value:hover,
+.usage-value[data-state='open'] {
   border-bottom-style: solid;
 }
-.activity-value:focus-visible {
+.usage-value:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
   border-radius: 4px;
 }
-.activity-pop {
+.usage-pop {
   z-index: 60;
   display: grid;
   gap: 12px;
@@ -34,108 +34,108 @@
   background: var(--surface-overlay);
   box-shadow: var(--shadow-menu);
 }
-.activity-pop small {
+.usage-pop small {
   color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.5;
 }
-.activity-month {
+.usage-month {
   display: grid;
   gap: 12px;
   width: min(388px, calc(100vw - 64px));
 }
-.activity-month > span {
+.usage-month > span {
   font-size: var(--text-control);
 }
-.activity-month > .is-over {
+.usage-month > .is-over {
   color: var(--link);
 }
-.activity-limit-form {
+.usage-limit-form {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   max-width: 320px;
 }
-.activity-limit-form > small {
+.usage-limit-form > small {
   flex-basis: 100%;
   margin-top: 4px;
 }
-.activity-limit-input {
+.usage-limit-input {
   display: flex;
   align-items: center;
   gap: 4px;
   margin-right: 4px;
   color: var(--muted-foreground);
 }
-.activity-limit-input .input {
+.usage-limit-input .input {
   width: 96px;
   min-height: var(--control-height-sm);
   appearance: textfield;
 }
-.activity-limit-input .input::-webkit-inner-spin-button,
-.activity-limit-input .input::-webkit-outer-spin-button {
+.usage-limit-input .input::-webkit-inner-spin-button,
+.usage-limit-input .input::-webkit-outer-spin-button {
   appearance: none;
   margin: 0;
 }
-.activity-rule-form {
+.usage-rule-form {
   display: grid;
   gap: 8px;
   width: min(420px, calc(100vw - 64px));
 }
-.activity-rule-form textarea {
+.usage-rule-form textarea {
   width: 100%;
   min-height: 96px;
   resize: vertical;
 }
-.activity-rule-actions {
+.usage-rule-actions {
   display: flex;
   gap: 4px;
 }
-.activity-task-limit {
+.usage-task-limit {
   display: grid;
   justify-items: start;
   gap: 8px;
 }
-.activity-task-limit .vault-seg > button[aria-pressed='true'] {
+.usage-task-limit .vault-seg > button[aria-pressed='true'] {
   background: var(--surface);
   color: var(--foreground);
   box-shadow:
     0 1px 2px rgb(0 0 0 / 0.08),
     inset 0 0 0 1px var(--border);
 }
-.activity-row-cost {
+.usage-row-cost {
   font-size: var(--text-control);
   font-variant-numeric: tabular-nums;
 }
 .vault-use-text span.is-error {
   color: var(--error);
 }
-.activity-chart {
+.usage-chart {
   display: block;
   width: 100%;
   height: 96px;
   overflow: visible;
 }
-.activity-chart-area {
+.usage-chart-area {
   fill: var(--surface-subtle);
 }
-.activity-chart-spent,
-.activity-chart-forecast,
-.activity-chart-limit {
+.usage-chart-spent,
+.usage-chart-forecast,
+.usage-chart-limit {
   fill: none;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
-.activity-chart-spent {
+.usage-chart-spent {
   stroke: var(--foreground);
   stroke-linejoin: round;
 }
-.activity-chart-forecast {
+.usage-chart-forecast {
   stroke: var(--muted-foreground);
   stroke-dasharray: 4 6;
 }
-.activity-chart-limit {
+.usage-chart-limit {
   stroke: var(--brand-pink);
   stroke-dasharray: 6 6;
 }

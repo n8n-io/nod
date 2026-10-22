@@ -454,8 +454,8 @@ function trustedAppURL(value) {
         '/settings',
         '/settings/models',
         '/settings/memory',
-        '/activity',
-        '/logins',
+        '/usage',
+        '/vault',
         '/trust',
         '/browser',
         '/privacy',
@@ -780,7 +780,7 @@ async function captureFeedbackScreenshot(event) {
   const url = event.senderFrame.url;
   if (
     !window?.isVisible() ||
-    /^\/(?:activity|logins|trust|vault|credentials|payments|browser|browser-connect|onboarding|settings)(?:\/|$)/.test(
+    /^\/(?:usage|activity|logins|trust|vault|credentials|payments|browser|browser-connect|onboarding|settings)(?:\/|$)/.test(
       new URL(url).pathname,
     )
   )

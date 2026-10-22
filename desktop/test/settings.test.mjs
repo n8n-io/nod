@@ -1260,13 +1260,7 @@ test('settings navigation keeps owner authentication confined to the owned app m
     const token = (await headers()).requestHeaders['x-nod-desktop-token'];
     assert.ok(token);
     assert.notEqual(token, 'forged');
-    for (const path of [
-      '/settings',
-      '/settings/models',
-      '/settings/memory',
-      '/activity',
-      '/logins',
-    ]) {
+    for (const path of ['/settings', '/settings/models', '/settings/memory', '/usage', '/vault']) {
       window.webContents.mainFrame.url = `${origin}${path}`;
       assert.equal((await headers()).requestHeaders['x-nod-desktop-token'], token, path);
       await f.handlers.get('nod:settings:get')({
@@ -1282,8 +1276,10 @@ test('settings navigation keeps owner authentication confined to the owned app m
     }
     for (const url of [
       `${origin}/settings/unknown`,
-      `${origin}/activity/unknown`,
-      `${origin}/logins/unknown`,
+      `${origin}/usage/unknown`,
+      `${origin}/vault/unknown/extra`,
+      `${origin}/activity`,
+      `${origin}/logins`,
       'https://external.example.test/settings',
     ]) {
       window.webContents.mainFrame.url = url;
@@ -3232,8 +3228,8 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   for (const path of [
     '/credentials/synthetic',
     '/payments/synthetic',
-    '/activity',
-    '/logins',
+    '/usage',
+    '/vault',
     '/trust',
     '/vault/synthetic',
     '/browser',

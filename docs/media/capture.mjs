@@ -154,10 +154,10 @@ try {
         await evaluate('getComputedStyle(document.querySelector(".message-text")).fontSize'),
         '22px',
       );
-    if (scenes[i].view === 'activity')
+    if (scenes[i].view === 'usage')
       assert(
         await evaluate('document.body.innerText.includes("nod spent")'),
-        'Activity did not load.',
+        'Usage did not load.',
       );
     const screenshot = await send('Page.captureScreenshot', {
       format: 'png',
@@ -167,11 +167,11 @@ try {
   }
   await mkdir(`${output}/screens`, { recursive: true });
   for (const [name, width, height, kind, theme, limit] of [
-    ['card-activity-light', 660, 495, 'activity-card', 'light'],
-    ['card-activity-dark', 660, 495, 'activity-card', 'dark'],
-    ['activity-light', 1000, 680, 'activity', 'light'],
-    ['logins-light', 1000, 680, 'logins', 'light'],
-    ['activity-task-limit', 1000, 680, 'activity-limit', 'light', true],
+    ['card-usage-light', 660, 495, 'usage-card', 'light'],
+    ['card-usage-dark', 660, 495, 'usage-card', 'dark'],
+    ['usage-light', 1000, 680, 'usage', 'light'],
+    ['vault-light', 1000, 680, 'vault', 'light'],
+    ['usage-task-limit', 1000, 680, 'usage-limit', 'light', true],
     ['verify-code-page', 800, 450, 'code', 'light'],
   ]) {
     await send('Emulation.setDeviceMetricsOverride', {
@@ -200,7 +200,7 @@ try {
     assert(!(await evaluate('/otto/i.test(document.body.innerText)')), 'An old name remains.');
     const clip = limit
       ? await evaluate(
-          `(() => {const a=document.querySelector('.activity-sentence').getBoundingClientRect();const b=document.querySelector('.activity-pop').getBoundingClientRect();const x=Math.max(0,Math.min(a.x,b.x)-16),y=Math.max(0,Math.min(a.y,b.y)-16);return {x,y,width:Math.min(innerWidth-x,Math.max(a.right,b.right)-x+16),height:Math.max(a.bottom,b.bottom)-y+16,scale:1};})()`,
+          `(() => {const a=document.querySelector('.usage-sentence').getBoundingClientRect();const b=document.querySelector('.usage-pop').getBoundingClientRect();const x=Math.max(0,Math.min(a.x,b.x)-16),y=Math.max(0,Math.min(a.y,b.y)-16);return {x,y,width:Math.min(innerWidth-x,Math.max(a.right,b.right)-x+16),height:Math.max(a.bottom,b.bottom)-y+16,scale:1};})()`,
         )
       : undefined;
     const screenshot = await send('Page.captureScreenshot', {

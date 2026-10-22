@@ -23,7 +23,7 @@ import {
 import { PageTitle } from '../components/page-title';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { VaultUse } from '../components/vault-activity';
-import { vaultItems } from './logins';
+import { vaultItems } from './vault';
 
 const day = 86_400_000;
 const taskChoices = [2, 5, 20, null] as const;
@@ -74,9 +74,9 @@ function Value({
   const [open, setOpen] = useState(false);
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger className="activity-value">{text}</Popover.Trigger>
+      <Popover.Trigger className="usage-value">{text}</Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content className="activity-pop" align="start" sideOffset={8} aria-label={label}>
+        <Popover.Content className="usage-pop" align="start" sideOffset={8} aria-label={label}>
           {children(() => setOpen(false))}
         </Popover.Content>
       </Popover.Portal>
@@ -97,21 +97,21 @@ function Chart({ month, limit }: { month: TrustView['month']; limit: number | un
   const now = `${x(month.elapsedDays)},${y(month.spentUsd)}`;
   return (
     <svg
-      className="activity-chart"
+      className="usage-chart"
       viewBox="0 0 600 120"
       preserveAspectRatio="none"
       aria-hidden="true"
     >
       {limit !== undefined && (
-        <line className="activity-chart-limit" x1="0" x2="600" y1={y(limit)} y2={y(limit)} />
+        <line className="usage-chart-limit" x1="0" x2="600" y1={y(limit)} y2={y(limit)} />
       )}
       <polygon
-        className="activity-chart-area"
+        className="usage-chart-area"
         points={`${points.join(' ')} ${x(month.elapsedDays)},116`}
       />
-      <polyline className="activity-chart-spent" points={points.join(' ')} />
+      <polyline className="usage-chart-spent" points={points.join(' ')} />
       <polyline
-        className="activity-chart-forecast"
+        className="usage-chart-forecast"
         points={`${now} ${x(month.days)},${y(month.forecastUsd)}`}
       />
     </svg>
@@ -131,7 +131,7 @@ function Month({ view }: { view: TrustView }) {
         )
       : undefined;
   return (
-    <div className="activity-month">
+    <div className="usage-month">
       {month.spentUsd > 0 && (
         <span className={crossing ? 'is-over' : undefined}>
           On track for {money(month.forecastUsd)}
@@ -174,8 +174,8 @@ function MonthlyLimit({
     else setError('Enter a limit of at least $1.');
   }
   return (
-    <form className="activity-limit-form" onSubmit={submit}>
-      <label className="activity-limit-input">
+    <form className="usage-limit-form" onSubmit={submit}>
+      <label className="usage-limit-input">
         <span aria-hidden="true">$</span>
         <Input
           type="number"
@@ -223,7 +223,7 @@ function TaskLimit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
     }
   }
   return (
-    <div className="activity-task-limit">
+    <div className="usage-task-limit">
       <div className="vault-seg" role="group" aria-label="Check in when a task passes">
         {taskChoices.map((value) => (
           <button
@@ -263,7 +263,7 @@ function StandingInstruction({ rule, onSaved }: { rule: string; onSaved(): void 
     void save(draft.trim());
   }
   return (
-    <form className="activity-rule-form" onSubmit={submit}>
+    <form className="usage-rule-form" onSubmit={submit}>
       <textarea
         className="input"
         rows={4}
@@ -274,7 +274,7 @@ function StandingInstruction({ rule, onSaved }: { rule: string; onSaved(): void 
         placeholder="Whenever Ana sends an invoice, forward it to accounting@acme.com."
         onChange={(event) => setDraft(event.target.value)}
       />
-      <div className="activity-rule-actions">
+      <div className="usage-rule-actions">
         <Button size="sm" type="submit" disabled={busy || draft.trim() === rule}>
           Save
         </Button>
@@ -354,7 +354,7 @@ function Sentence({
   ].filter(Boolean);
   return (
     <>
-      <p className="statement-summary activity-sentence">
+      <p className="statement-summary usage-sentence">
         nod spent{' '}
         <Value text={money(month.spentUsd)} label={`Spending in ${name}`}>
           {() => <Month view={view} />}
@@ -441,7 +441,7 @@ function TrustRow({ entry }: { entry: TrustEntry }) {
           {entry.error ? ` · ${entry.error}` : did ? ` · ${did}` : ''}
         </span>
       </span>
-      {entry.costUsd !== null && <span className="activity-row-cost">{money(entry.costUsd)}</span>}
+      {entry.costUsd !== null && <span className="usage-row-cost">{money(entry.costUsd)}</span>}
     </div>
   );
 }
@@ -557,7 +557,7 @@ function Statement({
   );
 }
 
-export function Activity({ hidden = false }: { hidden?: boolean }) {
+export function Usage({ hidden = false }: { hidden?: boolean }) {
   const trust = usePageData<TrustView>('/api/trust');
   const vault = usePageData<VaultActivity>('/api/vault/activity');
   const preferences = usePageData<AccountPreferences>('/api/preferences');
@@ -571,14 +571,14 @@ export function Activity({ hidden = false }: { hidden?: boolean }) {
         items.find((value) => value.kind === 'session' && value.origin === entry.origin));
     return item
       ? () => {
-          window.history.replaceState({ activity: entry.id }, '');
-          navigate(`/logins?item=${encodeURIComponent(item.id)}`);
+          window.history.replaceState({ usage: entry.id }, '');
+          navigate(`/vault?item=${encodeURIComponent(item.id)}`);
         }
       : undefined;
   }
   const ready = Boolean(trust.data && vault.data && preferences.data && entries.data);
   useEffect(() => {
-    const id = (window.history.state as { activity?: string } | null)?.activity;
+    const id = (window.history.state as { usage?: string } | null)?.usage;
     if (hidden || !ready || !id) return;
     window.history.replaceState(null, '');
     [...document.querySelectorAll<HTMLElement>('[data-vault-activity]')]
@@ -590,11 +590,11 @@ export function Activity({ hidden = false }: { hidden?: boolean }) {
   return (
     <div className="content-page secondary-page" hidden={hidden}>
       <header className="page-heading secondary-heading">
-        <PageTitle path="/activity" />
+        <PageTitle path="/usage" />
       </header>
       {itemsError && <Notice>{itemsError}</Notice>}
       {trust.data && vault.data && preferences.data ? (
-        <div className="activity">
+        <div className="usage">
           <Sentence
             view={trust.data}
             vault={vault.data}
@@ -606,7 +606,7 @@ export function Activity({ hidden = false }: { hidden?: boolean }) {
       ) : error ? (
         <Notice>{error}</Notice>
       ) : (
-        <Loading label="Opening activity…" />
+        <Loading label="Opening usage…" />
       )}
     </div>
   );

@@ -3451,7 +3451,7 @@ test('automatic feedback captures exclude private routes, remote handoffs and un
             assert.deepEqual([...document.querySelectorAll('input, textarea')].map(field => field.value), fields);
           }
           document.body.innerHTML = '<section class="account-settings"><strong>Synthetic connected account</strong></section>';
-          for (const path of ['/settings', '/settings/', '/settings/models', '/settings/memory']) {
+          for (const path of ['/settings', '/settings/', '/settings/models', '/settings/memory', '/usage', '/usage/', '/usage?range=7d', '/vault', '/vault/', '/vault?add=login', '/vault?add=card', '/activity', '/logins', '/trust']) {
             window.history.replaceState(null, '', path);
             const before = document.body.innerHTML;
             const captures = images + native;
@@ -3459,7 +3459,7 @@ test('automatic feedback captures exclude private routes, remote handoffs and un
             assert.equal(document.body.innerHTML, before);
           }
           document.body.innerHTML = safe;
-          for (const path of ['/', '/settings-preview']) {
+          for (const path of ['/', '/settings-preview', '/usage-preview', '/vault-preview']) {
             window.history.replaceState(null, '', path);
             const before = document.body.innerHTML;
             const file = await captureFeedbackScreenshot();
