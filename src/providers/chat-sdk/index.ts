@@ -575,38 +575,46 @@ export function createChatSdkTransport(
           ids.push(voiceId);
           continue;
         }
-        await file
-          .read()
-          .then((bytes) =>
-            post({
-              markdown: caption,
-              attachments: [
-                {
-                  type:
-                    ['image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType) &&
-                    file.size <= 10 * 1024 * 1024
-                      ? 'image'
-                      : file.mimeType === 'video/mp4'
-                        ? 'video'
-                        : 'file',
-                  data: Buffer.from(bytes),
-                  name: file.name,
-                  mimeType: file.mimeType,
-                  size: file.size,
-                },
-              ],
-            }),
-          )
-          .then(
-            (sent) => {
+        let bytes: Uint8Array;
+        try {
+          bytes = await file.read();
+        } catch {
+          if (caption)
+            for (const part of chunks(input.text)) {
+              const sent = await post({ markdown: part });
               id ||= sent.id;
               ids.push(sent.id);
+            }
+          unsent.push(file);
+          continue;
+        }
+        await post({
+          markdown: caption,
+          attachments: [
+            {
+              type:
+                ['image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType) &&
+                file.size <= 10 * 1024 * 1024
+                  ? 'image'
+                  : file.mimeType === 'video/mp4'
+                    ? 'video'
+                    : 'file',
+              data: Buffer.from(bytes),
+              name: file.name,
+              mimeType: file.mimeType,
+              size: file.size,
             },
-            () => {
-              if (caption) throw new Error('Media delivery was not confirmed.');
-              unsent.push(file);
-            },
-          );
+          ],
+        }).then(
+          (sent) => {
+            id ||= sent.id;
+            ids.push(sent.id);
+          },
+          () => {
+            if (caption) throw new Error('Media delivery was not confirmed.');
+            unsent.push(file);
+          },
+        );
       }
       if (unsent.length) {
         const notice = await input

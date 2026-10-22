@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
+import { createServer } from 'node:http';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import Fastify from 'fastify';
@@ -20,11 +21,14 @@ import { createChannelMedia } from '../src/server/channel-media.ts';
 import { createSpeech } from '../src/server/speech.ts';
 import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
 import { createArtifactService } from '../src/server/artifacts.ts';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Artifact } from '../src/shared/contracts.ts';
 import type { InboundMessage } from '../src/ports/messaging.ts';
+import { getHttpStream } from '@whiskeysockets/baileys';
+import { spendingLimitReached } from '../src/server/ledger.ts';
+import { ChannelMediaFailure } from '../src/server/channel-media.ts';
 
 const attachment = (name: string, mimeType: string, text: string) => ({
   name,
@@ -46,6 +50,40 @@ const fixtureEnv = {
   WHATSAPP_ALLOWED_NUMBER: '351910000000',
   WHATSAPP_POLICY_CONFIRMED: 'true',
 };
+
+test('the pinned WhatsApp download refuses redirects and stops before response headers on abort', async (t) => {
+  let redirected = 0;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const server = createServer((request, response) => {
+    if (request.url === '/redirect') {
+      response.writeHead(302, { Location: '/other' });
+      response.end();
+    } else if (request.url === '/held') {
+      entered();
+    } else {
+      redirected++;
+      response.end('synthetic data');
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const origin = `http://127.0.0.1:${address.port}`;
+  await assert.rejects(getHttpStream(origin + '/redirect', { redirect: 'error' }));
+  assert.equal(redirected, 0);
+  const controller = new AbortController();
+  const pending = getHttpStream(origin + '/held', { signal: controller.signal });
+  await waiting;
+  controller.abort();
+  await assert.rejects(pending, /abort/i);
+});
 
 test('Signal session changes never write key material to the process console', (t) => {
   const require = createRequire(import.meta.url);
@@ -95,6 +133,7 @@ test(
           let logouts = 0;
           let failSend = false;
           let failClear = false;
+          let failLogout = false;
           const own = mode === 'self-chat' ? '12345678' : '99999999';
           const owner = '12345678';
           const accountId = `linked:${own}`;
@@ -105,15 +144,17 @@ test(
             sockets.push({ events, config });
             return {
               ev: events,
-              user: { id: `${own}:1@s.whatsapp.net`, name: 'Fixture' },
+              user: { id: `${own}:1@s.whatsapp.net`, lid: '55555555@lid', name: 'Fixture' },
               signalRepository: {
                 lidMapping: {
-                  getPNForLID: async (lid: string) => (lid === '55555555@lid' ? jid : null),
+                  getPNForLID: async (lid: string) =>
+                    ['55555555@lid', '66666666@lid'].includes(lid) ? jid : null,
                 },
               },
               end: () => {},
               logout: async () => {
                 logouts++;
+                if (failLogout) throw new Error('Synthetic sign-out response was lost.');
               },
               sendPresenceUpdate: async () => {},
               sendMessage: async (
@@ -165,7 +206,7 @@ test(
             sockets[0].events.emit('connection.update', { qr: 'synthetic-qr' });
             assert.equal((await transport.pairing!()).qr, 'synthetic-qr');
             assert.equal(await transport.cancelPairing!('another-setup'), false);
-            const me = { id: `${own}:1@s.whatsapp.net`, name: 'Fixture' };
+            const me = { id: `${own}:1@s.whatsapp.net`, lid: '55555555@lid', name: 'Fixture' };
             sockets[0].events.emit('creds.update', { me, registered: true });
             sockets[0].events.emit('connection.update', { connection: 'open' });
             assert.equal((await transport.pairing!()).qr, undefined);
@@ -209,6 +250,20 @@ test(
                     },
                   },
                 },
+                envelope('lid', '55555555@lid'),
+                ...(mode === 'self-chat'
+                  ? [
+                      {
+                        ...envelope('other-lid', '66666666@lid'),
+                        key: {
+                          id: 'other-lid',
+                          remoteJid: '66666666@lid',
+                          remoteJidAlt: jid,
+                          fromMe: true,
+                        },
+                      },
+                    ]
+                  : []),
               ],
             });
             sockets[0].events.emit('messages.upsert', {
@@ -227,7 +282,7 @@ test(
             );
             assert.deepEqual(
               collected.map((message) => message.messageId),
-              ['owner', 'image', 'quoted'],
+              ['owner', 'image', 'quoted', 'lid'],
             );
             assert.equal(collected[2].replyToMessageId, 'task-prompt');
             assert.deepEqual(reacted, ['task-prompt']);
@@ -253,6 +308,18 @@ test(
             });
             await assert.rejects(collected.at(-1)!.attachments![0].read(), /address/);
             assert.equal(downloads, 1);
+            if (mode === 'self-chat') {
+              await assert.rejects(
+                transport.post({
+                  channelId: 'whatsapp',
+                  accountId,
+                  threadId: '66666666@lid',
+                  text: 'Private result',
+                }),
+                /target is unavailable/,
+              );
+              assert.equal(sent.length, 0);
+            }
             const result = await transport.post({
               channelId: 'whatsapp',
               accountId,
@@ -341,6 +408,7 @@ test(
             assert.equal(sent.length, attempts);
             assert.equal((await transport.pairing!()).state, 'connected');
             failClear = true;
+            failLogout = true;
             await assert.rejects(transport.unlink!(), /key deletion failure/);
             assert.equal((await transport.pairing!()).state, 'failed');
             assert.equal(transport.channels[0].available, false);
@@ -439,6 +507,25 @@ test('Telegram media keeps native replies and checks the sender before any downl
     photo: [{ file_id: 'fixture-image', file_size: 21 * 1024 * 1024 }],
   });
   await assert.rejects(oversized.messages![0].attachments![0].read(), /too large/);
+  const media = createChannelMedia({
+    artifacts: {
+      storeArtifact: async () => {
+        throw new Error('No oversized file can be stored.');
+      },
+    },
+    speech: {
+      transcribe: async () => {
+        throw new Error('No oversized file can be transcribed.');
+      },
+    },
+  });
+  await assert.rejects(
+    media.prepare(oversized.messages![0].attachments!, new AbortController().signal),
+    (error: unknown) =>
+      error instanceof ChannelMediaFailure &&
+      error.reason === 'too_large' &&
+      error.fileLimitMb === 20,
+  );
   assert.equal(requests.length, 0);
   const voice = await receive({
     ...message,
@@ -501,8 +588,8 @@ test('speech uses a bounded transcription request and generates Ogg voice output
 });
 
 test(
-  'channel media persists owned files before acknowledgement, rejects other senders, and does not replay after restart',
-  { skip: !process.env.TEST_DATABASE_URL },
+  'channel media joins concurrent duplicates, persists owned files, rejects other senders, and does not replay after restart',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const schema = `test_channel_receive_media_${randomUUID().replaceAll('-', '')}`;
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -528,6 +615,20 @@ test(
     let message: InboundMessage;
     const submissions: { text: string; attachments: Artifact[] }[] = [];
     const privateCodes: string[] = [];
+    const presentations: { kind: string; reason?: string }[] = [];
+    let voiceFailure: Error | undefined;
+    let transcript = '483729';
+    const speech = createSpeech({
+      id: 'fixture',
+      configured: true,
+      synthesize: async () => {
+        throw new Error('Not used by the fixture.');
+      },
+      transcribe: async () => {
+        if (voiceFailure) throw voiceFailure;
+        return transcript;
+      },
+    });
     const transport = (): MessagingTransport => ({
       channels: [
         {
@@ -538,7 +639,11 @@ test(
           missing: [],
         },
       ],
-      receive: async () => ({ status: 200, body: 'ok', messages: [message] }),
+      receive: async (input) => ({
+        status: 200,
+        body: 'ok',
+        messages: [{ ...message, ...JSON.parse(Buffer.from(input.body).toString()) }],
+      }),
       post: async () => ({ id: 'fixture-reply' }),
       close: async () => {},
     });
@@ -549,9 +654,12 @@ test(
         transport: transport(),
         intervalMs: 600_000,
         subscribe: () => () => {},
-        media: createChannelMedia({ artifacts, speech: { transcribe: async () => '483729' } }),
+        media: createChannelMedia({ artifacts, speech }),
         activeThread: async () => ({ id: threadId }),
-        present: async () => 'Fixture media notice',
+        present: async (_thread, presentation) => {
+          presentations.push(presentation);
+          return 'Fixture media notice';
+        },
         answer: async () => {
           throw new Error('A file must not approve an action.');
         },
@@ -589,7 +697,7 @@ test(
       attachments: [file],
       sentAt: new Date(),
     };
-    await send();
+    await Promise.all(Array.from({ length: 32 }, send));
     assert.equal(reads, 0);
     message = {
       ...message,
@@ -597,7 +705,8 @@ test(
       messageId: 'owned-image',
       text: 'Inspect this image',
     };
-    assert.equal((await send()).statusCode, 200);
+    const concurrent = await Promise.all(Array.from({ length: 64 }, send));
+    assert.ok(concurrent.every((response) => response.statusCode === 200));
     await fixture.channels.drain();
     assert.equal(reads, 1);
     assert.equal(submissions.length, 1);
@@ -609,7 +718,7 @@ test(
     );
     await fixture.app.close();
     fixture = await open();
-    await send();
+    await Promise.all(Array.from({ length: 32 }, send));
     await fixture.channels.drain();
     assert.equal(reads, 1);
     assert.equal(submissions.length, 1);
@@ -638,6 +747,79 @@ test(
       JSON.stringify((await pool.query('SELECT text FROM channel_inbox')).rows).includes('483729'),
       false,
     );
+    const sendId = (messageId: string) =>
+      fixture.app.inject({
+        method: 'POST',
+        url: '/api/webhooks/telegram',
+        payload: { messageId },
+      });
+    voiceFailure = new Error(spendingLimitReached);
+    await sendId('limited-voice');
+    await fixture.channels.drain();
+    assert.ok(
+      presentations.some(
+        (item) => item.kind === 'media_failure' && item.reason === 'spending_limit',
+      ),
+    );
+    voiceFailure = undefined;
+    transcript = 'x'.repeat(100_001);
+    await sendId('long-transcript');
+    await fixture.channels.drain();
+    assert.ok(
+      presentations.some(
+        (item) => item.kind === 'media_failure' && item.reason === 'text_too_long',
+      ),
+    );
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let active = 0;
+    let peak = 0;
+    message = {
+      ...message,
+      text: 'Inspect this image',
+      attachments: [
+        {
+          ...file,
+          read: async () => {
+            reads++;
+            active++;
+            peak = Math.max(peak, active);
+            if (active === 4) entered();
+            await held;
+            active--;
+            return Buffer.from('fixture image');
+          },
+        },
+      ],
+    };
+    const load = Array.from({ length: 4 }, (_, index) => sendId(`load-${index}`));
+    try {
+      await started;
+      assert.equal((await sendId('overflow')).statusCode, 503);
+      assert.equal(peak, 4);
+    } finally {
+      release();
+    }
+    assert.ok((await Promise.all(load)).every((response) => response.statusCode === 200));
+    await fixture.channels.drain();
+    assert.equal(submissions.length, 5);
+    assert.equal((await sendId('overflow')).statusCode, 200);
+    await fixture.channels.drain();
+    assert.equal(submissions.length, 6);
+    await pool.query(
+      "ALTER TABLE channel_inbox ADD CONSTRAINT reject_media_receipt CHECK(source_id NOT LIKE '%rollback-file')",
+    );
+    assert.equal((await sendId('rollback-file')).statusCode, 503);
+    const stored = (
+      await pool.query('SELECT count(*)::int AS count FROM artifacts WHERE owner_id=$1', [owner])
+    ).rows[0].count;
+    assert.equal((await readdir(join(root, 'artifacts'))).length, stored);
   },
 );
 
@@ -926,6 +1108,55 @@ test(
       await fixture.channels.drain();
       assert.equal(vaultInjections, 1);
       assert.deepEqual(submitted, ['2026']);
+      const oldQuestion = randomUUID();
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','assistant','Synthetic code question',$2,$3)",
+        [oldQuestion, threadId, codeTurnId],
+      );
+      await pool.query(
+        "INSERT INTO channel_outbox(message_id,source_id,state,provider_message_id,provider_message_ids) VALUES($1,'channel:telegram:fixture-account:private-code','sent','native-old-question',ARRAY['native-old-question'])",
+        [oldQuestion],
+      );
+      const nextCodeTurn = await fixtureTurn(
+        pool,
+        threadId,
+        'local-development',
+        accepted[0].channel,
+        null,
+        'running',
+      );
+      await pool.query('UPDATE turns SET background=true,started_at=now() WHERE id=$1', [
+        nextCodeTurn,
+      ]);
+      await vault.request({ threadId, turnId: nextCodeTurn }, 'local-development', {
+        origin: 'https://1.1.1.1',
+        label: 'Other synthetic sign-in',
+        kind: 'otp',
+        passwordSelector: '#code',
+      });
+      await pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
+        [nextCodeTurn],
+      );
+      for (const target of ['native-old-question', 'unknown-native-question']) {
+        await send(`reply-${target}`, '481927', 'telegram', { replyToMessageId: target });
+        await fixture.channels.drain();
+        assert.equal(vaultInjections, 1);
+      }
+      const nextQuestion = randomUUID();
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','assistant','Other synthetic code question',$2,$3)",
+        [nextQuestion, threadId, nextCodeTurn],
+      );
+      await pool.query(
+        "INSERT INTO channel_outbox(message_id,source_id,state,provider_message_id,provider_message_ids) VALUES($1,'channel:telegram:fixture-account:private-code','sent','native-current-question',ARRAY['native-current-question'])",
+        [nextQuestion],
+      );
+      await send('reply-current-code', '481927', 'telegram', {
+        replyToMessageId: 'native-current-question',
+      });
+      await fixture.channels.drain();
+      assert.equal(vaultInjections, 2);
       assert.doesNotMatch(
         JSON.stringify(
           (await pool.query('SELECT text FROM channel_inbox UNION ALL SELECT text FROM messages'))

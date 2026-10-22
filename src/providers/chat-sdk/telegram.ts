@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ChannelPairingRequest, MessagingAttachment } from '../../ports/messaging.ts';
+import { MessagingAttachmentError } from '../../ports/messaging.ts';
 
 const telegramFile = z.object({
   file_id: z.string().min(1).max(512),
@@ -71,7 +72,7 @@ export function telegramAttachments(
           ...(signal ? [signal] : []),
         ]);
         if ((file.file_size ?? 0) > 20 * 1024 * 1024)
-          throw new Error('The Telegram file is too large.');
+          throw new MessagingAttachmentError(20 * 1024 * 1024);
         const info = await request(`https://api.telegram.org/bot${token}/getFile`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -93,20 +94,20 @@ export function telegramAttachments(
         if (
           segments.some(
             (segment) => !/^[A-Za-z0-9_.-]+$/.test(segment) || segment === '.' || segment === '..',
-          ) ||
-          (parsed.result.file_size ?? 0) > 20 * 1024 * 1024
+          )
         )
           throw new Error('The Telegram file is unavailable.');
+        if ((parsed.result.file_size ?? 0) > 20 * 1024 * 1024)
+          throw new MessagingAttachmentError(20 * 1024 * 1024);
         const response = await request(
           `https://api.telegram.org/file/bot${token}/${segments.map(encodeURIComponent).join('/')}`,
           { signal: operation, redirect: 'error' },
         );
-        if (
-          !response.ok ||
-          !response.body ||
-          Number(response.headers.get('content-length') ?? 0) > 20 * 1024 * 1024
-        )
-          throw new Error('The Telegram file is unavailable.');
+        if (!response.ok || !response.body) throw new Error('The Telegram file is unavailable.');
+        if (Number(response.headers.get('content-length') ?? 0) > 20 * 1024 * 1024) {
+          await response.body.cancel().catch(() => {});
+          throw new MessagingAttachmentError(20 * 1024 * 1024);
+        }
         const reader = response.body.getReader();
         const chunks: Uint8Array[] = [];
         let size = 0;
@@ -116,7 +117,7 @@ export function telegramAttachments(
             const next = await reader.read();
             if (next.done) break;
             size += next.value.length;
-            if (size > 20 * 1024 * 1024) throw new Error('The Telegram file is too large.');
+            if (size > 20 * 1024 * 1024) throw new MessagingAttachmentError(20 * 1024 * 1024);
             chunks.push(next.value);
           }
         } finally {

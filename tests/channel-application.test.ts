@@ -67,7 +67,7 @@ test('analytics drops revoked owner queues while preserving another owner and re
 test(
   'linked channel keys bind owner and slot, survive restart, and refuse stale writes and deletion',
   { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
+  async (t) => {
     const schema = `test_channel_keys_${randomUUID().replaceAll('-', '')}`;
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
@@ -115,7 +115,32 @@ test(
       assert.equal(await fresh.get('creds'), undefined);
       assert.equal(await other.get('creds'), 'synthetic-other-credentials');
       await assert.rejects(fresh.set({ creds: 'x'.repeat(1024 * 1024 + 1) }));
+      await assert.rejects(fresh.set({ creds: '€'.repeat(400_000) }));
+      const connection = t.mock.method(pool, 'connect', () => {
+        throw new Error('The rejected batch reached storage.');
+      });
+      try {
+        await assert.rejects(
+          fresh.set(
+            Object.fromEntries(
+              Array.from({ length: 25 }, (_, index) => [`batch:${index}`, 'x'.repeat(1024 * 1024)]),
+            ),
+          ),
+          /full/,
+        );
+      } finally {
+        connection.mock.restore();
+      }
       assert.equal(await fresh.get('creds'), undefined);
+      assert.equal(
+        (
+          await pool.query(
+            'SELECT count(*)::int AS count FROM channel_session_keys WHERE owner_id=$1',
+            ['fixture-owner'],
+          )
+        ).rows[0].count,
+        0,
+      );
       await fresh.close();
       await other.close();
     } finally {

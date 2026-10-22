@@ -31,7 +31,7 @@ export type ChannelPresentation =
       files?: string[];
     }
   | { kind: 'verification_refused' }
-  | { kind: 'media_failure'; reason: ChannelMediaFailure['reason'] }
+  | { kind: 'media_failure'; reason: ChannelMediaFailure['reason']; fileLimitMb?: number }
   | { kind: 'verification_failure'; verification: 'otp' }
   | { kind: 'paired'; channel: string }
   | {
@@ -51,6 +51,7 @@ interface ChannelOptions {
     input: {
       clientMessageId: string;
       channel: string;
+      replyToMessageId?: string;
       receiptOnly?: boolean;
       persistOrdinary: (client: PoolClient) => Promise<void>;
       persistVerification?: (client: PoolClient, response: SubmitMessageResponse) => Promise<void>;
@@ -110,6 +111,7 @@ interface ChannelIdentity {
 }
 interface InboxRow extends ChannelIdentity {
   source_id: string;
+  thread_id: string;
   provider_reply_id: string | null;
   text: string;
   message_id: string | null;
@@ -509,6 +511,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     const source = `${channelId}:${message.accountId}:${message.messageId}`;
     const existing = pendingMedia.get(source);
     if (existing) return existing;
+    if (pendingMedia.size >= 4)
+      throw Object.assign(new Error('Channel media is busy. Try again.'), { statusCode: 503 });
     const pending = acceptMessage(message, channelId);
     pendingMedia.set(source, pending);
     try {
@@ -516,6 +520,34 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     } finally {
       if (pendingMedia.get(source) === pending) pendingMedia.delete(source);
     }
+  }
+
+  async function nativeReply(
+    identity: { provider: string; account_id: string; sender_id: string },
+    threadId: string,
+    providerId: string,
+  ): Promise<string | undefined> {
+    return (
+      await pool.query(
+        `SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
+         JOIN messages m ON m.id=o.message_id AND m.owner_id=i.owner_id
+         WHERE i.owner_id=$1 AND i.provider=$2 AND i.account_id=$3 AND i.sender_id=$4
+           AND i.thread_id=$5 AND $6=ANY(o.provider_message_ids) AND o.state='sent'
+         UNION ALL
+         SELECT message_id FROM channel_inbox WHERE owner_id=$1 AND provider=$2 AND account_id=$3
+           AND sender_id=$4 AND thread_id=$5 AND source_id=$7 AND state='submitted'
+         LIMIT 1`,
+        [
+          ownerId,
+          identity.provider,
+          identity.account_id,
+          identity.sender_id,
+          threadId,
+          providerId,
+          `channel:${identity.provider}:${identity.account_id}:${providerId}`,
+        ],
+      )
+    ).rows[0]?.message_id;
   }
 
   async function acceptMessage(message: InboundMessage, channelId: string) {
@@ -527,6 +559,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     const identity = { provider: channelId, account_id: accountId, sender_id: senderId };
     if (closed || replacing || !permitted(identity) || sentAt.getTime() > Date.now() + 300000)
       return;
+    let media: Awaited<ReturnType<ChannelMedia['prepare']>> | undefined;
     try {
       const sourceId = `channel:${channelId}:${accountId}:${messageId}`;
       const recorded = (
@@ -538,7 +571,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const hasMedia = Boolean(parsed.data.attachments?.length);
       if (recorded && hasMedia) return;
       if (closed || replacing || receiveSignal.aborted || !permitted(identity)) return;
-      let media: Awaited<ReturnType<ChannelMedia['prepare']>> | undefined;
       if (hasMedia) {
         try {
           if (!options.media) throw new ChannelMediaFailure('unavailable');
@@ -547,7 +579,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             AbortSignal.any([receiveSignal, AbortSignal.timeout(120_000)]),
           );
           text = [text, media.text].filter(Boolean).join('\n\n');
-          if (text.length > 100_000) throw new ChannelMediaFailure('too_large');
+          if (text.length > 100_000) throw new ChannelMediaFailure('text_too_long');
           if (!text) text = 'Review the attached files and briefly describe what they contain.';
         } catch (error) {
           if (closed || replacing || receiveSignal.aborted || !permitted(identity)) return;
@@ -561,6 +593,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
                   presentation: {
                     kind: 'media_failure',
                     reason: error instanceof ChannelMediaFailure ? error.reason : 'unavailable',
+                    ...(error instanceof ChannelMediaFailure && error.fileLimitMb
+                      ? { fileLimitMb: error.fileLimitMb }
+                      : {}),
                   },
                 }),
               ),
@@ -645,9 +680,17 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       }
       if (verificationReply && options.acceptVerification) {
         try {
+          const target = replyToMessageId
+            ? await nativeReply(identity, threadId, replyToMessageId)
+            : undefined;
+          if (replyToMessageId && !target)
+            throw Object.assign(new Error('The verification reply is unavailable.'), {
+              statusCode: 409,
+            });
           verification = await options.acceptVerification(text, {
             clientMessageId: acceptedMessageId,
             channel: conversationChannel(identity),
+            ...(target ? { replyToMessageId: target } : {}),
             ...(recorded ? { receiptOnly: true } : {}),
             persistOrdinary: async (client) => {
               if (recorded) return;
@@ -741,6 +784,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
         statusCode: 503,
       });
+    } finally {
+      await media?.dispose().catch((error) => logFailure('channel_media_cleanup_failed', error));
     }
   }
 
@@ -798,39 +843,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     if (!pending) return false;
     const channel = conversationChannel(pending);
     if (closed || replacing) return false;
-    let replyToMessageId = pending.provider_reply_id
-      ? ((
-          await pool.query(
-            `SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
-       WHERE i.owner_id=$1 AND i.provider=$2 AND i.account_id=$3 AND i.sender_id=$4 AND i.thread_id=(SELECT thread_id FROM channel_inbox WHERE source_id=$5)
-         AND $6=ANY(o.provider_message_ids) AND o.state='sent' LIMIT 1`,
-            [
-              ownerId,
-              pending.provider,
-              pending.account_id,
-              pending.sender_id,
-              pending.source_id,
-              pending.provider_reply_id,
-            ],
-          )
-        ).rows[0]?.message_id as string | undefined)
+    const replyToMessageId = pending.provider_reply_id
+      ? await nativeReply(pending, pending.thread_id, pending.provider_reply_id)
       : undefined;
-    if (!replyToMessageId && pending.provider_reply_id)
-      replyToMessageId = (
-        await pool.query(
-          `SELECT message_id FROM channel_inbox WHERE owner_id=$1 AND provider=$2 AND account_id=$3 AND sender_id=$4
-          AND thread_id=(SELECT thread_id FROM channel_inbox WHERE source_id=$5 AND owner_id=$1)
-          AND source_id=$6 AND state='submitted'`,
-          [
-            ownerId,
-            pending.provider,
-            pending.account_id,
-            pending.sender_id,
-            pending.source_id,
-            `channel:${pending.provider}:${pending.account_id}:${pending.provider_reply_id}`,
-          ],
-        )
-      ).rows[0]?.message_id;
     const command =
       !pending.attachments?.length && options.taskCommand
         ? (taskCommand.exec(pending.text.trim())?.[1]?.toLowerCase() as

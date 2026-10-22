@@ -1,10 +1,21 @@
 import type { PoolClient } from 'pg';
 import type { MessagingAttachment } from '../ports/messaging.ts';
+import { MessagingAttachmentError } from '../ports/messaging.ts';
 import type { ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
+import { TranscriptionLengthError } from './speech.ts';
+import { spendingLimitReached } from './ledger.ts';
 
 export class ChannelMediaFailure extends Error {
-  constructor(readonly reason: 'too_large' | 'unavailable' | 'transcription_unavailable') {
+  constructor(
+    readonly reason:
+      | 'too_large'
+      | 'text_too_long'
+      | 'spending_limit'
+      | 'unavailable'
+      | 'transcription_unavailable',
+    readonly fileLimitMb?: number,
+  ) {
     super(reason);
   }
 }
@@ -19,6 +30,7 @@ export function createChannelMedia(options: {
         throw new ChannelMediaFailure('too_large');
       const files: { bytes: Buffer; name: string; mimeType: string }[] = [];
       const transcripts: string[] = [];
+      const cleanup: Array<() => Promise<void>> = [];
       let total = 0;
       for (const attachment of attachments) {
         signal.throwIfAborted();
@@ -26,8 +38,10 @@ export function createChannelMedia(options: {
         let bytes: Buffer;
         try {
           bytes = Buffer.from(await attachment.read(signal));
-        } catch {
+        } catch (error) {
           signal.throwIfAborted();
+          if (error instanceof MessagingAttachmentError)
+            throw new ChannelMediaFailure('too_large', error.maxBytes / 1024 / 1024);
           throw new ChannelMediaFailure('unavailable');
         }
         signal.throwIfAborted();
@@ -43,8 +57,12 @@ export function createChannelMedia(options: {
             throw new ChannelMediaFailure('too_large');
           try {
             transcripts.push(await options.speech.transcribe({ ...attachment, bytes }, signal));
-          } catch {
+          } catch (error) {
             signal.throwIfAborted();
+            if (error instanceof TranscriptionLengthError)
+              throw new ChannelMediaFailure('text_too_long');
+            if (error instanceof Error && error.message === spendingLimitReached)
+              throw new ChannelMediaFailure('spending_limit');
             throw new ChannelMediaFailure('transcription_unavailable');
           }
         }
@@ -63,10 +81,14 @@ export function createChannelMedia(options: {
                 file.mimeType,
                 threadId,
                 client,
+                (remove) => cleanup.push(remove),
               ),
             );
           }
           return saved;
+        },
+        async dispose() {
+          await Promise.all(cleanup.map((remove) => remove()));
         },
       };
     },

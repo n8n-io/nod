@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import type { GeneratedAudio, SpeechProvider } from '../ports/speech.ts';
+import { spendingLimitReached } from './ledger.ts';
+
+export class TranscriptionLengthError extends Error {}
 
 export function createSpeech(provider: SpeechProvider) {
   function available(signal?: AbortSignal) {
@@ -25,12 +28,17 @@ export function createSpeech(provider: SpeechProvider) {
           .string()
           .trim()
           .min(1)
-          .max(100_000)
           .parse(await provider.transcribe(audio, signal));
+        if (text.length > 100_000) throw new TranscriptionLengthError();
         signal?.throwIfAborted();
         return text;
-      } catch {
+      } catch (error) {
         signal?.throwIfAborted();
+        if (
+          error instanceof TranscriptionLengthError ||
+          (error instanceof Error && error.message === spendingLimitReached)
+        )
+          throw error;
         throw new Error('Voice transcription failed.');
       }
     },
@@ -49,8 +57,9 @@ export function createSpeech(provider: SpeechProvider) {
           throw new Error('Invalid audio response.');
         }
         return result;
-      } catch {
+      } catch (error) {
         signal?.throwIfAborted();
+        if (error instanceof Error && error.message === spendingLimitReached) throw error;
         throw new Error('Speech generation failed.');
       }
     },

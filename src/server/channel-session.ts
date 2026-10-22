@@ -85,13 +85,14 @@ export function createChannelSessionStore(options: {
           check();
           const entries = Object.entries(entriesSchema.parse(input));
           if (entries.length > 10_000) throw new Error('Channel session storage is full.');
-          const sealed = entries.map(
-            ([slot, value]) =>
-              [
-                slot,
-                value === null ? null : sealVaultValue(encryption, binding(slot), value),
-              ] as const,
-          );
+          let batchBytes = 0;
+          for (const [, value] of entries) {
+            if (value === null) continue;
+            const bytes = Buffer.byteLength(value);
+            batchBytes += 4 * Math.ceil((bytes + 28) / 3);
+            if (bytes > 1024 * 1024 || batchBytes > 32 * 1024 * 1024)
+              throw new Error('Channel session storage is full.');
+          }
           await exclusive(() =>
             transaction(async (client) => {
               check();
@@ -100,6 +101,13 @@ export function createChannelSessionStore(options: {
                 [owner, revision],
               );
               if (!active.rowCount) throw new Error('This channel session has changed.');
+              const sealed = entries.map(
+                ([slot, value]) =>
+                  [
+                    slot,
+                    value === null ? null : sealVaultValue(encryption, binding(slot), value),
+                  ] as const,
+              );
               for (const [slot, ciphertext] of sealed) {
                 if (ciphertext === null)
                   await client.query(

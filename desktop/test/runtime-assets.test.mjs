@@ -2411,6 +2411,7 @@ test('runtime fingerprints cover dependencies and every source the images use, a
     'src/shared/public-address.ts',
     'src/providers/docker/save-video.py',
     'patches/libsignal@6.0.0.patch',
+    'patches/@whiskeysockets__baileys@7.0.0-rc14.patch',
   ]) {
     const file = join(root, path);
     const source = await readFile(file, 'utf8');

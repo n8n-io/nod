@@ -86,7 +86,7 @@ export function WhatsAppSetup({
   }
 
   const state = link?.state ?? setup?.connectionState ?? 'connecting';
-  const linkedNumber = link?.accountHandle?.replace(/^\+/, '');
+  const linkedNumber = (link?.accountHandle ?? setup?.accountHandle)?.replace(/^\+/, '');
   const chatUrl =
     linkedNumber && /^\d{7,15}$/.test(linkedNumber) ? `https://wa.me/${linkedNumber}` : undefined;
   return (

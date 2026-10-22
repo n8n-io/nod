@@ -236,6 +236,7 @@ export async function sealedDataExists(pool: Pick<Pool, 'query'>) {
           'vault_cards',
           'vault_app_grants',
           'channel_settings',
+          'channel_session_keys',
           'credential_account_selections',
         ],
       ],
@@ -290,6 +291,7 @@ async function verifyKey(pool: Pool, key: Buffer) {
               'vault_cards',
               'vault_app_grants',
               'channel_settings',
+              'channel_session_keys',
               'credential_account_selections',
             ],
           ],
@@ -310,7 +312,9 @@ async function verifyKey(pool: Pool, key: Buffer) {
                 ? ['nod-app-grant-v1', entry.owner_id!, entry.id!]
                 : name === 'channel_settings'
                   ? ['nod-channel-settings-v1', entry.owner_id!, entry.provider!]
-                  : ['nod-vault-v1', entry.owner_id!, entry.origin!, entry.id!];
+                  : name === 'channel_session_keys'
+                    ? ['nod', 'channel-session', entry.owner_id!, 'whatsapp', entry.slot!]
+                    : ['nod-vault-v1', entry.owner_id!, entry.origin!, entry.id!];
           try {
             openVaultValue(key, associated, entry.ciphertext!);
             verified = true;

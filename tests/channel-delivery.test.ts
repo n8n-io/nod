@@ -6,6 +6,7 @@ import test, { type TestContext } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
+import type { ChannelSetupConfiguration } from '../src/ports/channel-settings.ts';
 import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
@@ -306,11 +307,27 @@ test(
     let fails = false;
     let applied: Record<string, string> = {};
     let applyCount = 0;
+    let unlinks = 0;
     const options = {
       keyStore: { id: 'fixture', configured: true, getKey: async () => key },
       verifier: {
-        verify: async () => {
+        verify: async (provider: 'telegram' | 'whatsapp'): Promise<ChannelSetupConfiguration> => {
           if (fails) throw new Error('secret-provider-error');
+          if (provider === 'whatsapp')
+            return {
+              environment: {
+                WHATSAPP_ENABLED: 'true',
+                WHATSAPP_MODE: 'bot',
+                WHATSAPP_POLICY_CONFIRMED: 'true',
+                WHATSAPP_ALLOWED_NUMBER: '12025550100',
+              },
+              summary: {
+                provider: 'whatsapp' as const,
+                enabled: true,
+                mode: 'linked' as const,
+                linkMode: 'bot' as const,
+              },
+            };
           return {
             environment: {
               TELEGRAM_ENABLED: 'true',
@@ -326,6 +343,9 @@ test(
       apply: async (environment: Record<string, string>) => {
         applied = environment;
         applyCount++;
+      },
+      unlink: async () => {
+        unlinks++;
       },
     };
     try {
@@ -376,6 +396,31 @@ test(
         null,
       );
       assert.deepEqual(await settings.environment(), { TELEGRAM_ENABLED: 'false' });
+      fails = false;
+      assert.equal(
+        (await app.inject({ method: 'PUT', url: '/api/channel-settings/whatsapp', payload: {} }))
+          .statusCode,
+        200,
+      );
+      await pool.query(
+        "CREATE FUNCTION reject_unlink_save() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'Synthetic settings failure'; END$$",
+      );
+      await pool.query(
+        'CREATE TRIGGER reject_unlink_save BEFORE UPDATE ON channel_settings FOR EACH ROW EXECUTE FUNCTION reject_unlink_save()',
+      );
+      assert.equal(
+        (await app.inject({ method: 'DELETE', url: '/api/channel-settings/whatsapp' })).statusCode,
+        503,
+      );
+      assert.equal(unlinks, 0);
+      assert.equal((await settings.environment()).WHATSAPP_ENABLED, 'true');
+      await pool.query('DROP TRIGGER reject_unlink_save ON channel_settings');
+      assert.equal(
+        (await app.inject({ method: 'DELETE', url: '/api/channel-settings/whatsapp' })).statusCode,
+        200,
+      );
+      assert.equal(unlinks, 1);
+      assert.equal((await settings.environment()).WHATSAPP_ENABLED, 'false');
     } finally {
       await app.close();
       await pool.end();
@@ -1282,6 +1327,7 @@ test(
       },
     );
     let holdResolve = false;
+    let failRead = false;
     let markResolveStarted = () => {};
     let releaseResolve = () => {};
     const resolveStarted = new Promise<void>((resolve) => {
@@ -1306,7 +1352,15 @@ test(
           markResolveStarted();
           await resolveReleased;
         }
-        return readThreadArtifacts(threadId, ids);
+        const files = await readThreadArtifacts(threadId, ids);
+        return failRead
+          ? files.map((file) => ({
+              ...file,
+              read: async () => {
+                throw new Error('Synthetic file read failure.');
+              },
+            }))
+          : files;
       },
       subscribe: () => () => {},
       intervalMs: 600_000,
@@ -1434,6 +1488,14 @@ test(
       const captionAttempts = sent.length;
       await channels.drain();
       assert.equal(sent.length, captionAttempts);
+      failRead = true;
+      const readFailure = await addReply(turnId, [image], 'A caption with an unavailable file.');
+      const beforeReadFailure = texts.length;
+      await channels.drain();
+      assert.equal(sent.length, captionAttempts);
+      assert.ok(texts.length >= beforeReadFailure + 2);
+      assert.equal((await state(readFailure)).state, 'sent');
+      failRead = false;
       const partial = await addReply(turnId, [image, document]);
       await channels.drain();
       assert.equal((await state(partial)).state, 'sent');

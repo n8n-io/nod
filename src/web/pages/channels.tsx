@@ -337,7 +337,10 @@ export function Channels() {
     save,
     telegramAction: telegramRequest,
     remove,
-  } = useChannelSettings({ watchTelegram: editing === 'telegram', watchWhatsApp: true });
+  } = useChannelSettings({
+    watchTelegram: editing === 'telegram',
+    watchWhatsApp: editing === 'whatsapp',
+  });
   const [step, setStep] = useState(0);
   const [fields, setFields] = useState<Record<string, string>>({});
   const whatsappCloud = fields.connection === 'cloud';

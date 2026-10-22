@@ -209,6 +209,16 @@ export async function createChatVerification(
       );
       if (!requests.rowCount) {
         if (input.verificationRequestId) throw conflict(unavailableMessage);
+        if (
+          turnId &&
+          (
+            await client.query(
+              `SELECT 1 FROM ${codeRequests} WHERE owner_id=$1 AND thread_id=$2 AND turn_id=$3 LIMIT 1`,
+              [options.ownerId, thread.id, turnId],
+            )
+          ).rowCount
+        )
+          throw conflict(unavailableMessage);
         const waiting = (
           await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
             `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id

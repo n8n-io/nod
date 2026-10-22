@@ -351,12 +351,10 @@ export async function createChannelSettings(
         Object.entries(oldEnvironment).filter(([key]) => !fields[provider].has(key)),
       );
       Object.assign(nextEnvironment, configured);
-      if (
+      const unlink =
         provider === 'whatsapp' &&
         (oldEnvironment.WHATSAPP_MODE === 'bot' || oldEnvironment.WHATSAPP_MODE === 'self-chat') &&
-        (input === undefined || configured.WHATSAPP_MODE !== oldEnvironment.WHATSAPP_MODE)
-      )
-        await options.unlink?.();
+        (input === undefined || configured.WHATSAPP_MODE !== oldEnvironment.WHATSAPP_MODE);
       if (summary.webhookStatus === 'registration_pending') {
         if (!options.verifier.register || provider !== 'telegram' || summary.mode !== 'webhook')
           throw new Error('Channel registration is unavailable.');
@@ -369,8 +367,12 @@ export async function createChannelSettings(
         return { ok: true, channel: summary, ...(pairingUrl ? { pairingUrl } : {}) };
       }
       try {
-        await store.save({ provider, enabled: input !== undefined, ciphertext, summary }, () =>
-          options.apply(nextEnvironment),
+        await store.save(
+          { provider, enabled: input !== undefined, ciphertext, summary },
+          async () => {
+            if (unlink) await options.unlink?.();
+            await options.apply(nextEnvironment);
+          },
         );
       } catch (error) {
         try {

@@ -74,7 +74,7 @@ Mobile web uses the same compact previews. Open a preview to read the steps, rep
 
 ![Compact task previews in mobile web chat.](../../../assets/screens/task-sessions-mobile.png)
 
-## Telegram without a task page
+## Telegram and WhatsApp without a task page
 
 Telegram and WhatsApp show each task as messages nod writes in your language. The first one says what it is starting. Questions, approval requests and the result reply to that message, so they stay linked to the task.
 

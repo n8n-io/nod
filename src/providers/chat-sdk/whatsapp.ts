@@ -186,8 +186,15 @@ export function createWhatsAppLinkedTransport(options: {
       return;
     let phone = numberOf(jid);
     if (!phone && jid.endsWith('@lid')) {
-      phone = numberOf(message.key.remoteJidAlt);
-      if (!phone) phone = numberOf(await current.signalRepository.lidMapping.getPNForLID(jid));
+      phone =
+        options.mode === 'self-chat'
+          ? jidNormalizedUser(jid) ===
+            jidNormalizedUser(auth.creds.me?.lid ?? current.user?.lid ?? '')
+            ? ownNumber()
+            : undefined
+          : numberOf(message.key.remoteJidAlt);
+      if (!phone && options.mode !== 'self-chat')
+        phone = numberOf(await current.signalRepository.lidMapping.getPNForLID(jid));
     }
     if (!phone || !channel.allowedSenderIds.includes(phone)) return;
     if (options.mode === 'self-chat') {
@@ -516,7 +523,10 @@ export function createWhatsAppLinkedTransport(options: {
     if (
       input.channelId !== 'whatsapp' ||
       input.accountId !== channel.accountId ||
-      !/^\d+@(s\.whatsapp\.net|lid)$/.test(input.threadId)
+      !/^\d+@(s\.whatsapp\.net|lid)$/.test(input.threadId) ||
+      (options.mode === 'self-chat' &&
+        input.threadId !== `${ownNumber()}@s.whatsapp.net` &&
+        input.threadId !== jidNormalizedUser(auth?.creds.me?.lid ?? socket?.user?.lid ?? ''))
     )
       throw new Error('The WhatsApp target is unavailable.');
   };
@@ -621,7 +631,7 @@ export function createWhatsAppLinkedTransport(options: {
               );
               timer.unref();
             }),
-          ]);
+          ]).catch(() => {});
         }
       } finally {
         socket?.end(undefined);

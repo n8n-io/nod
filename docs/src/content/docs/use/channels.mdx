@@ -92,6 +92,8 @@ Send an image, document, video or audio file with your message. Captions stay wi
 
 nod accepts up to ten files per message, with a combined limit of 50 MB. Telegram's hosted file API limits each incoming file to 20 MB. A voice message has a 25 MB limit. nod checks the sender before it downloads a file. Files belong to your shared conversation workspace.
 
+nod prepares at most four file messages at a time. If the channel is busy, send the message again after the current files finish. A caption and its transcript must fit within 100,000 characters. A failed save removes files that have no saved record.
+
 Voice messages are sent to OpenAI for transcription. They need `OPENAI_API_KEY` in the server environment. `STT_MODEL` selects the transcription model; its default is `gpt-transcribe`. Without speech setup, nod asks you to send text. Text and file messages still work.
 
 Use text to approve an action. A file or voice attachment does not approve it.
@@ -128,6 +130,8 @@ sequenceDiagram
 
 If a website sends you a one-time sign-in code, you can reply with it in the chat where nod asked. nod uses it for that sign-in and keeps it out of its chat history. Card security codes work only in the nod app. See [Vault](/trust/vault/) and [Payments](/trust/payments/).
 
+A direct reply must name the current sign-in question. A reply to a closed or unknown question cannot send a code to another sign-in request.
+
 Taking over [nod's browser](/use/browser/) also needs the nod app, because chat apps can't show the page.
 
 ## Reactions
@@ -152,7 +156,7 @@ These commands prepare a report without starting a task. Your selected model wri
 
 Telegram and the WhatsApp QR connection receive the PDF and export as documents. With the WhatsApp Cloud API, open nod to get them.
 
-Both channels have task controls. `/tasks` lists open tasks, with one message per task. Reply to a task message with `/status` to see its goal, steps and state, or `/stop` to stop only that task. `/stop` without a reply stops all active work and closes open tasks. Progress, questions and results stay linked to the same task. See [Track tasks](/use/tasks/#telegram-without-a-task-page).
+Both channels have task controls. `/tasks` lists open tasks, with one message per task. Reply to a task message with `/status` to see its goal, steps and state, or `/stop` to stop only that task. `/stop` without a reply stops all active work and closes open tasks. Progress, questions and results stay linked to the same task. See [Track tasks](/use/tasks/#telegram-and-whatsapp-without-a-task-page).
 
 ## Related resources
 
