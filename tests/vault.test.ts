@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { createCipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { openVaultValue, sealVaultValue } from '../src/server/vault-crypto.ts';
 import { securityCodeIn } from '../src/shared/verification-code.ts';
 import test from 'node:test';
@@ -19,7 +22,7 @@ import pg from 'pg';
 import type { CredentialKind } from '../src/ports/computer.ts';
 import type { IntegrationProvider, VerificationEmail } from '../src/ports/integrations.ts';
 import { readVerificationEmails } from '../src/providers/composio/verification-email.ts';
-import { registerLocalAccess } from '../src/server/access.ts';
+import { accessKey, credentialRequestKey, registerLocalAccess } from '../src/server/access.ts';
 import { verificationCode, verificationSenderDomain } from '../src/server/email-code.ts';
 import { createIntegrations } from '../src/server/integrations.ts';
 import type { TurnRef } from '../src/server/thread.ts';
@@ -386,7 +389,10 @@ test(
 test(
   'OTP failures are uncertain, cannot replay, and never persist the code',
   { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
+  async (t) => {
+    const keyRoot = await mkdtemp(join(tmpdir(), 'otto-request-key-'));
+    t.after(() => rm(keyRoot, { recursive: true, force: true }));
+    const originalAccess = await accessKey(keyRoot);
     const schema = `test_vault_${randomUUID().replaceAll('-', '')}`;
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
@@ -401,7 +407,7 @@ test(
     let calls = 0;
     const resumed: string[] = [];
     const options = {
-      requestKey: randomBytes(32),
+      requestKey: Buffer.from(await credentialRequestKey(keyRoot), 'base64url'),
       keyStore: {
         id: 'unavailable',
         configured: false,
@@ -465,12 +471,17 @@ test(
         passwordSelector: '#next-code',
       });
       await wait(nextTurn);
-      const restarted = await createVault(pool, options);
+      await rm(join(keyRoot, 'access-key'));
+      assert.notEqual(await accessKey(keyRoot), originalAccess);
+      const restarted = await createVault(pool, {
+        ...options,
+        requestKey: Buffer.from(await credentialRequestKey(keyRoot), 'base64url'),
+      });
       const reopened = Fastify();
       restarted.registerRoutes(reopened);
       try {
         const continuation = (await reopened.inject({ url: `${url}/flow` })).json();
-        assert.equal(continuation.nextId, next.url.split('/').at(-1));
+        assert.equal(continuation.nextId === next.url.split('/').at(-1), true);
         const nextUrl = `/api/credential-requests/${continuation.nextId}`;
         assert.equal((await reopened.inject({ url: nextUrl })).json().status, 'pending');
         assert.equal(

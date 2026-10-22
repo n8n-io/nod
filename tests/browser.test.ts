@@ -4724,15 +4724,23 @@ test(
         response.end('<h1>Selected</h1>');
         return;
       }
-      if (['/framed', '/foreign', '/duplicate'].includes(request.url!)) {
+      if (
+        ['/framed', '/foreign', '/duplicate', '/scaled-half', '/scaled-double'].includes(
+          request.url!,
+        )
+      ) {
+        const scaled = request.url!.startsWith('/scaled-');
         const source =
-          request.url === '/foreign'
-            ? `http://localhost:${(server.address() as { port: number }).port}/inner`
+          request.url === '/foreign' || scaled
+            ? `http://localhost:${(server.address() as { port: number }).port}/${scaled ? 'scaled-inner' : 'inner'}`
             : '/inner';
+        const transform = scaled
+          ? `transform:scale(${request.url === '/scaled-half' ? 0.5 : 2});transform-origin:top left;`
+          : '';
         response.end(
           `
           ${request.url === '/duplicate' ? '<button id="primary">Continue with Example</button>' : ''}
-          <iframe title="Sign in" src="${source}" style="width:700px;height:400px;margin:70px 100px;border:12px solid"></iframe><button id="reload-frame" onclick="document.querySelector('iframe').contentWindow.location.reload()">Reload frame</button>`,
+          <iframe title="Sign in" src="${source}" style="width:700px;height:400px;margin:70px 100px;border:12px solid;${transform}"></iframe><button id="reload-frame" onclick="document.querySelector('iframe').contentWindow.location.reload()">Reload frame</button>`,
         );
         return;
       }
@@ -4748,7 +4756,9 @@ test(
           ? '<input id="primary" type="image" onclick="if(!event.isTrusted)event.preventDefault()" alt="Continue with Example" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22240%22 height=%2240%22%3E%3Crect width=%22240%22 height=%2240%22 fill=%22gray%22/%3E%3C/svg%3E">'
           : '<button id="primary" onclick="if(!event.isTrusted)event.preventDefault()"><span>Continue with Example</span></button>';
       response.end(
-        `<base href="/"><form action="selected" method="post">${primary}<button id="alternate" formaction="/alternate">Use another account</button></form><a id="link" href="linked">Continue with Link</a><button id="change" onclick="${change}">Change control</button>`,
+        `
+        ${request.url === '/scaled-inner' ? '<script>addEventListener("pointermove",()=>{const xhr=new XMLHttpRequest();xhr.open("POST","/moved",false);xhr.send()},{once:true})</script>' : ''}
+        <base href="/"><form action="selected" method="post">${primary}<button id="alternate" formaction="/alternate">Use another account</button></form><a id="link" href="linked">Continue with Link</a><button id="change" onclick="${change}">Change control</button>`,
       );
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -4939,6 +4949,22 @@ test(
           while (received.length < 4 + index && Date.now() < deadline) await delay(10);
           assert.deepEqual(received, Array(4 + index).fill('/selected'));
           await assert.rejects(inspector.selectSignInControl(current));
+        } finally {
+          inspector.close();
+        }
+      }
+      for (const path of ['/scaled-half', '/scaled-double']) {
+        await act({ action: 'open', url: origin + path });
+        const connection = await existingDaemonCommand(socketPath, { action: 'cdp_url' });
+        const tabs = await existingDaemonCommand(socketPath, { action: 'tab_list' });
+        const tab = (tabs.tabs as { active: boolean; targetId: string }[]).find(
+          (value) => value.active,
+        )!;
+        const inspector = await openDevtools(String(connection.cdpUrl), tab.targetId);
+        try {
+          const bound = await inspector.signInControl({ selector: '#primary' });
+          await assert.rejects(inspector.selectSignInControl(bound));
+          assert.deepEqual(received, Array(5).fill('/selected'));
         } finally {
           inspector.close();
         }

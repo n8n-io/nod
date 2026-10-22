@@ -18,7 +18,12 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
-import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
+import {
+  accessCookie,
+  accessKey,
+  credentialRequestKey,
+  registerLocalAccess,
+} from '../src/server/access.ts';
 import { appConfirmation } from '../src/ports/agent.ts';
 import type { ApprovalDescription, ApprovalExecutionContext } from '../src/server/approvals.ts';
 test('localhost access requires the owner key and rejects foreign Host, Origin and cross-site requests', async () => {
@@ -31,9 +36,44 @@ test('localhost access requires the owner key and rejects foreign Host, Origin a
     await chmod(join(root, 'access-key'), 0o644);
     assert.equal(await accessKey(root), key);
     assert.equal((await stat(join(root, 'access-key'))).mode & 0o777, 0o600);
+    const requestKeys = await Promise.all(
+      Array.from({ length: 4 }, () => credentialRequestKey(root)),
+    );
+    assert.equal(new Set(requestKeys).size, 1);
+    assert.equal(requestKeys[0] === key, false);
+    assert.equal((await stat(join(root, 'credential-request-key'))).mode & 0o777, 0o600);
     registerLocalAccess(app, 4310, { key });
     app.post('/api/fixture', async () => ({ ok: true }));
     app.get('/api/privacy', async () => ({ content: null }));
+    const settingsPages = ['/settings', '/settings/models', '/settings/apps', '/settings/memory'];
+    for (const path of settingsPages) app.get(path, async () => 'Otto');
+    app.get('/api/settings', async () => ({ private: true }));
+    const navigation = {
+      host: 'localhost:4310',
+      'sec-fetch-site': 'cross-site',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-dest': 'document',
+    };
+    for (const path of settingsPages) {
+      assert.equal((await app.inject({ url: path, headers: navigation })).statusCode, 200);
+      assert.equal(
+        (await app.inject({ url: path, headers: { ...navigation, 'sec-fetch-mode': 'cors' } }))
+          .statusCode,
+        403,
+      );
+    }
+    for (const path of ['/settings/unknown', '/settings-typo'])
+      assert.equal((await app.inject({ url: path, headers: navigation })).statusCode, 403);
+    assert.equal((await app.inject({ url: '/api/settings', headers: navigation })).statusCode, 401);
+    assert.equal(
+      (
+        await app.inject({
+          url: '/api/settings',
+          headers: { ...navigation, cookie: `otto-access-4310=${key}` },
+        })
+      ).statusCode,
+      403,
+    );
     const cookie = `otto-access-4310=${key}`;
     for (const headers of [
       { host: 'attacker.example:4310', cookie },
@@ -55,6 +95,7 @@ test('localhost access requires the owner key and rejects foreign Host, Origin a
         cookie: `otto-access-4310=${randomBytes(32).toString('base64url')}`,
       },
       { host: 'localhost:4310', cookie: `otto-access-4311=${key}` },
+      { host: 'localhost:4310', cookie: `otto-access-4310=${requestKeys[0]}` },
       { host: 'localhost:4310', 'x-otto-desktop-token': key },
     ])
       assert.equal(

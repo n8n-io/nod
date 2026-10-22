@@ -5,8 +5,8 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 const token = /^[A-Za-z0-9_-]{43}$/;
 
-export async function accessKey(dataRoot: string) {
-  const path = join(dataRoot, 'access-key');
+async function localKey(dataRoot: string, name: 'access-key' | 'credential-request-key') {
+  const path = join(dataRoot, name);
   if (!token.test(await readFile(path, 'utf8').catch(() => ''))) {
     await mkdir(dataRoot, { recursive: true, mode: 0o700 });
     const draft = `${path}.${randomUUID()}`;
@@ -23,6 +23,10 @@ export async function accessKey(dataRoot: string) {
   if (info.mode & 0o077) await chmod(path, 0o600);
   return key;
 }
+
+export const accessKey = (dataRoot: string) => localKey(dataRoot, 'access-key');
+export const credentialRequestKey = (dataRoot: string) =>
+  localKey(dataRoot, 'credential-request-key');
 
 export const accessCookie = (port: number) => `otto-access-${port}`;
 
@@ -59,6 +63,10 @@ export function registerLocalAccess(
     '/connected.html',
     '/channels',
     '/you',
+    '/settings',
+    '/settings/models',
+    '/settings/apps',
+    '/settings/memory',
     '/browser',
     '/privacy',
     '/privacy/',
