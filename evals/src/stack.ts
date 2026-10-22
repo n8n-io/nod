@@ -151,7 +151,10 @@ export async function startStack(options: {
     | undefined;
   let databasePool: pg.Pool | undefined;
   async function stop() {
-    await application?.app.close().catch(() => {});
+    await Promise.race([
+      application?.app.close().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 15_000)),
+    ]);
     if (browserStarted) {
       const logs = await runProcess('docker', ['logs', '--tail', '200', browserContainer]).catch(
         () => undefined,
