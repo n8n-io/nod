@@ -552,11 +552,25 @@ export function turnSignal(turnId: string) {
   return running.get(turnId)?.signal;
 }
 
-export async function stopThread() {
-  const cancelled = await transaction(
-    async (client) => cancelTurns(client, (await lockThread(client)).id),
-    pool,
-  );
+export async function stopThread(turnIds?: string[]) {
+  const cancelled = await transaction(async (client) => {
+    const thread = await lockThread(client);
+    if (turnIds === undefined) return cancelTurns(client, thread.id);
+    const current = await client.query<{ session_id: string }>(
+      `SELECT session_id FROM turns
+       WHERE id=ANY($1::uuid[]) AND thread_id=$2 AND owner_id=$3 AND status='running'
+         AND session_id IS NOT NULL
+       ORDER BY id FOR NO KEY UPDATE`,
+      [turnIds, thread.id, ownerId],
+    );
+    const result = { ids: [] as string[], browsers: [] as string[] };
+    for (const sessionId of new Set(current.rows.map((row) => row.session_id))) {
+      const stopped = await cancelTurns(client, thread.id, sessionId);
+      result.ids.push(...stopped.ids);
+      result.browsers.push(...stopped.browsers);
+    }
+    return result;
+  }, pool);
   abortTurns(cancelled.ids);
   refresh();
   return { browsers: cancelled.browsers };

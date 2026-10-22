@@ -1051,7 +1051,7 @@ async function initializeApplication(
   await computerPolicy.initialize();
   parentPort?.on('message', (event) => {
     if ((event.data as { type?: string } | null)?.type === 'nod-computer-stop')
-      void stopThread().catch(() => {});
+      void stopThread(computerPolicy.activeTurns()).catch(() => {});
   });
   vaultAccess = await createVaultAccess(pool, {
     ownerId,

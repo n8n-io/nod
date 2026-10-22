@@ -70,7 +70,7 @@ What nod reads or sees on your Mac goes to your selected model. nod marks these 
 
 nod uses one Mac app step at a time, across all tasks. While it does, the menu bar shows **Using** and the apps' names, with **Stop**.
 
-**Stop** ends the task at once. An action already sent to an app can't be taken back. nod marks it uncertain and never runs it again.
+The menu-bar **Stop** ends tasks using your computer and leaves unrelated tasks running. An action already sent to an app can't be taken back. nod marks it uncertain and never runs it again.
 
 Turning off **Let nod use your computer** stops computer work in progress. Removing an allowed app stops work in that app and prevents pending confirmations from using its old access. An action already sent may still have completed.
 

@@ -1505,6 +1505,177 @@ test(
         assert.equal(await turnStatus(after.turnId), 'succeeded');
       });
 
+      await t.test('computer Stop leaves unrelated sessions running', async () => {
+        const { createComputerPolicy } = await import('../src/server/computer.ts');
+        const app = { name: 'Synthetic Notes', bundleId: 'fixture.notes' };
+        let nativeSignal: AbortSignal | undefined;
+        const policy = createComputerPolicy({
+          pool: db.pool,
+          ownerId,
+          computer: {
+            shell: async () => ({ exitCode: 0, output: '' }),
+            resolve: async () => app,
+            look: async () => ({ app, tree: 'Synthetic note' }),
+            act: async (_action, signal) => {
+              nativeSignal = signal;
+              await new Promise<void>((_resolve, reject) =>
+                signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
+              );
+            },
+            dispose() {},
+          },
+          check: async () => ({ confirm: false }),
+          request: async (_turn, _action, _args, options) =>
+            (options.run as () => Promise<unknown>)(),
+          lock: (id, write) => thread.withTurnLock(id, write),
+          signalFor: thread.turnSignal,
+        });
+        await policy.initialize();
+        await db.pool.query('INSERT INTO computer_settings(owner_id,enabled) VALUES($1,true)', [
+          ownerId,
+        ]);
+        await db.pool.query('INSERT INTO computer_apps(owner_id,bundle_id,name) VALUES($1,$2,$3)', [
+          ownerId,
+          app.bundleId,
+          app.name,
+        ]);
+        for (const mode of ['look', 'resume'] as const) {
+          const targetPrompt = `computer stop ${mode} target`;
+          const unrelatedPrompt = `computer stop ${mode} unrelated`;
+          block(targetPrompt);
+          block(unrelatedPrompt);
+          const targetSession = randomUUID();
+          const unrelatedSession = randomUUID();
+          const parent =
+            mode === 'resume'
+              ? await thread.enqueueTurn('ask-question', {
+                  source: 'task',
+                  sessionId: targetSession,
+                })
+              : undefined;
+          if (parent) await waitFor(settled(parent));
+          const target = await thread.enqueueTurn(targetPrompt, {
+            source: parent ? 'resume' : 'task',
+            sessionId: targetSession,
+            parentTurnId: parent,
+          });
+          const unrelated = await thread.enqueueTurn(unrelatedPrompt, {
+            source: 'task',
+            sessionId: unrelatedSession,
+          });
+          try {
+            await waitFor(() => Boolean(ran(target) && ran(unrelated)));
+            const queuedTarget = await thread.enqueueTurn('computer queued target', {
+              source: 'task',
+              sessionId: targetSession,
+            });
+            const queuedUnrelated = await thread.enqueueTurn('computer queued unrelated', {
+              source: 'task',
+              sessionId: unrelatedSession,
+            });
+            let interrupted: Promise<void> | undefined;
+            if (mode === 'look') {
+              await policy.run(
+                { threadId: ran(target)!.threadId, turnId: target },
+                { action: 'look', app: app.name },
+                {},
+                ran(target)!.signal,
+              );
+            } else {
+              interrupted = assert.rejects(
+                policy.execute(
+                  'NOD_computer',
+                  {
+                    action: 'act',
+                    app: app.name,
+                    bundleId: app.bundleId,
+                    step: 'press',
+                    ref: 'e1',
+                    targetToken: 'synthetic-target',
+                  },
+                  { turnId: target },
+                ),
+              );
+              await waitFor(() => Boolean(nativeSignal));
+            }
+            assert.deepEqual(policy.activeTurns(), [target]);
+            const stopped = await thread.stopThread(policy.activeTurns());
+            await interrupted;
+            assert.deepEqual(stopped.browsers, [targetSession]);
+            assert.equal(await turnStatus(target), 'cancelled');
+            assert.equal(await turnStatus(queuedTarget), 'cancelled');
+            assert.equal(await turnStatus(unrelated), 'running');
+            assert.equal(await turnStatus(queuedUnrelated), 'queued');
+            assert.equal(ran(target)!.signal.aborted, true);
+            assert.equal(ran(unrelated)!.signal.aborted, false);
+            if (mode === 'resume') assert.equal(nativeSignal!.aborted, true);
+            assert.deepEqual(policy.activeTurns(), []);
+            await assert.rejects(ran(target)!.reply('late computer reply'));
+            await thread.stopThread([target, randomUUID()]);
+            await thread.stopThread([]);
+            assert.equal(await turnStatus(unrelated), 'running');
+            release(unrelatedPrompt);
+            await waitFor(settled(queuedUnrelated));
+            assert.equal(await turnStatus(unrelated), 'succeeded');
+            assert.equal(await turnStatus(queuedUnrelated), 'succeeded');
+          } finally {
+            release(targetPrompt);
+            release(unrelatedPrompt);
+            await thread.stopThread();
+            await waitFor(settledThread);
+          }
+        }
+      });
+
+      await t.test(
+        'scoped Stop rejects stale, foreign-owner and old-conversation turns',
+        async () => {
+          const sessionId = randomUUID();
+          const stale = await thread.enqueueTurn('computer completed task', {
+            source: 'task',
+            sessionId,
+          });
+          await waitFor(settled(stale));
+          block('computer newer task');
+          const current = await thread.enqueueTurn('computer newer task', {
+            source: 'task',
+            sessionId,
+          });
+          const foreign = randomUUID();
+          const old = randomUUID();
+          const oldThread = randomUUID();
+          const threadId = (await thread.activeThread()).id;
+          await db.pool.query('INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())', [
+            oldThread,
+            ownerId,
+          ]);
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status)
+           VALUES($1,'another-owner',$3,$4,'task','Synthetic foreign task','running'),
+             ($2,$5,$6,$4,'task','Synthetic old task','running')`,
+            [foreign, old, threadId, sessionId, ownerId, oldThread],
+          );
+          try {
+            await waitFor(() => Boolean(ran(current)));
+            assert.deepEqual(await thread.stopThread([stale, foreign, old, randomUUID()]), {
+              browsers: [],
+            });
+            for (const id of [current, foreign, old]) assert.equal(await turnStatus(id), 'running');
+            assert.equal(ran(current)!.signal.aborted, false);
+            release('computer newer task');
+            await waitFor(settled(current));
+            assert.equal(await turnStatus(current), 'succeeded');
+          } finally {
+            release('computer newer task');
+            await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=ANY($1::uuid[])", [
+              [foreign, old],
+            ]);
+            await thread.stopThread();
+            await waitFor(settledThread);
+          }
+        },
+      );
+
       await t.test('stopped turns cannot write replies, events, or invoke tools', async () => {
         const { turnId: id } = await thread.submitUserMessage('cancel-fence-fixture');
         await waitFor(() => Boolean(fenced));

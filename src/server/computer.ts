@@ -106,8 +106,22 @@ export function createComputerPolicy(options: {
   const { pool, ownerId, request } = options;
   const computer = options.computer ?? { shell: unavailable, dispose() {} };
   const active = new Map<string, ReturnType<typeof setTimeout>>();
+  const turns = new Set<string>();
   let access = new AbortController();
   const apps = new Map<string, AbortController>();
+
+  function activeTurns() {
+    for (const id of turns) {
+      const signal = options.signalFor(id);
+      if (!signal || signal.aborted) turns.delete(id);
+    }
+    return [...turns];
+  }
+
+  function track(turnId: string) {
+    activeTurns();
+    turns.add(turnId);
+  }
 
   function operation(signal: AbortSignal, app?: string) {
     if (!app) return AbortSignal.any([signal, access.signal]);
@@ -266,6 +280,7 @@ export function createComputerPolicy(options: {
         'Your computer is off. The owner can turn it on in Settings, under Your computer.',
       );
     const input = computerInput.parse(raw);
+    track(turn.turnId);
     if (input.action === 'shell') {
       const verdict = await options.check(turn, 'NOD_computer', input);
       return request(turn, 'NOD_computer', input, {
@@ -386,6 +401,7 @@ export function createComputerPolicy(options: {
       signal.throwIfAborted();
     });
     signal.throwIfAborted();
+    track(provenance.turnId);
     if (args.action === 'shell') {
       const { command, timeoutSeconds } = computerInput.parse(args) as {
         command: string;
@@ -499,6 +515,7 @@ export function createComputerPolicy(options: {
     initialize,
     run,
     execute,
+    activeTurns,
     registerRoutes,
   };
 }
