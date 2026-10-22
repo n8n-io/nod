@@ -7646,10 +7646,12 @@ test(
       await assert.rejects(service.transcribe(audio));
       speechReady = true;
       await speechLedger.withTurn(chat, () => service.transcribe(audio));
-      await service.transcribe(audio);
-      await assert.rejects(service.transcribe(audio), /spending limit was reached/);
       speechReady = false;
       await assert.rejects(service.transcribe(audio));
+      assert.equal(transcriptionRequests, 1);
+      speechReady = true;
+      await service.transcribe(audio);
+      await assert.rejects(service.transcribe(audio), /spending limit was reached/);
       assert.equal(transcriptionRequests, 2);
       const billedSpeech = await pool.query(
         "SELECT count(*)::int AS n,sum(cost_usd)::float8 AS spent FROM model_usage WHERE owner_id='speech-owner'",
