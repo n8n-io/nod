@@ -13,13 +13,13 @@ Your requests go to the service you connect. Paid providers bill you for use. To
 
 ## Supported connections
 
-| Service           | How you connect                       | Default model                |
-| ----------------- | ------------------------------------- | ---------------------------- |
-| OpenAI            | API key                               | GPT-6.1 Sol, high effort     |
-| ChatGPT           | Your ChatGPT plan, in local nod only  | GPT-6 Sol, high effort       |
-| Anthropic         | API key                               | Claude Opus 5.5, high effort |
-| OpenRouter        | API key, or sign in with your browser | GPT-6.1 Sol, high effort     |
-| OpenAI-compatible | Server address, in local nod only     | You choose                   |
+| Service           | How you connect                        | Default model                |
+| ----------------- | -------------------------------------- | ---------------------------- |
+| OpenAI            | API key                                | GPT-6.1 Sol, high effort     |
+| ChatGPT           | ChatGPT Plus or Pro, in local nod only | GPT-6 Sol, high effort       |
+| Anthropic         | API key                                | Claude Opus 5.5, high effort |
+| OpenRouter        | API key, or sign in with your browser  | GPT-6.1 Sol, high effort     |
+| OpenAI-compatible | Server address, in local nod only      | You choose                   |
 
 You can switch to any other model the service offers.
 
@@ -52,7 +52,7 @@ Open the account menu and select **Models**. Onboarding shows the same options b
 
 </Steps>
 
-nod uses OpenAI's [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) for open-source and locally hosted apps. Requests go to the OpenAI API and use your plan's included usage. ChatGPT lists nod under [Settings → Usage](https://chatgpt.com/settings/usage), where you can see and limit its usage or disconnect it. OpenAI decides which plans and workspaces can use it. In a workspace your organization manages, an admin has to allow third-party apps first, or OpenAI says your organization hasn't enabled access for this app. If yours can't, connect an OpenAI API key instead.
+nod uses OpenAI's [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) for open-source and locally hosted apps. Requests go to the OpenAI API and use your plan's included usage. ChatGPT lists nod under [Settings → Usage](https://chatgpt.com/settings/usage), where you can see and limit its usage or disconnect it. It needs ChatGPT Plus or Pro. On other plans, OpenAI's consent page says a required permission isn't available, and the sign-in fails. In a workspace your organization manages, an admin has to allow third-party apps first, or OpenAI says your organization hasn't enabled access for this app. Otherwise, connect an OpenAI API key instead.
 
 ChatGPT sign-in listens for the browser on port `1455` of your computer. If another program uses that port, nod stops with an error before it opens OpenAI.
 
