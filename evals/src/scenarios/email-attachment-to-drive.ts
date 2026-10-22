@@ -29,7 +29,7 @@ const month = (at: number) => localDate(at, zone).slice(0, 7);
 
 function months(now: number) {
   const today = day(now);
-  const start = localTime(now, today - 1, 6, zone, 10);
+  const start = Math.min(now, localTime(now, today - 1, 6, zone, 10));
   const previous = localTime(now, today, 12, zone);
   const previousLength = day(previous);
   const lastStart = localTime(now, today - 1 + previousLength, 6, zone, 10);
@@ -75,7 +75,7 @@ const brochure = pdf([
 
 function mailbox(now: number, wanted: Statement[], last: Statement): Mail[] {
   const { start } = months(now);
-  const within = (minutes: number) => Math.min(now - 600_000, start + minutes * 60_000);
+  const within = (minutes: number) => Math.min(now, start + minutes * 60_000);
   const attach = (item: Statement) => ({
     filename: item.name,
     mimeType: 'application/pdf',
@@ -98,7 +98,7 @@ function mailbox(now: number, wanted: Statement[], last: Statement): Mail[] {
       to: owner.email,
       subject: `Your savings account statement for ${monthLabel(wanted[1].period)} is ready`,
       body: `Dear Alex Rivera,\n\nYour statement for the savings account ending 9902 for ${monthLabel(wanted[1].period)} is attached as a PDF.\n\nBanco Atlântico`,
-      at: start + 4 * 60_000,
+      at: within(4),
       attachments: [attach(wanted[1])],
     },
     {
@@ -272,7 +272,6 @@ export default scenario({
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,
-  window: { from: 7, to: 21 },
   user: {
     approve: (action) => ['GOOGLEDRIVE_UPLOAD_FILE', 'GOOGLEDRIVE_MOVE_FILE'].includes(action),
     persona:

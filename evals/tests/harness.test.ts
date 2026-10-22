@@ -45,7 +45,7 @@ import { gmail } from '../src/world/apps.ts';
 import { createFixtureProxy } from '../src/world/fixture-proxy.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
 import { page, serveSites } from '../src/world/sites.ts';
-import { daysAgo, inDays, localTime } from '../src/world/time.ts';
+import { daysAgo, inDays, localDate, localTime } from '../src/world/time.ts';
 import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
 import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
 import onboardingFirstValue from '../src/scenarios/onboarding-first-value.ts';
@@ -620,6 +620,80 @@ test('local times are anchored in the user time zone across a daylight saving ch
   assert.equal(clock(daysAgo(inDays(evening, 2), 2)), '24/10/2026, 20:30');
   assert.equal(evening - daysAgo(evening, 0.5), 43_200_000);
   assert.equal(inDays(evening, 1.5) - evening, 133_200_000);
+});
+
+test('release fixtures keep current records in their date range during overnight runs', () => {
+  for (const iso of [
+    '2026-01-01T00:01:00+01:00',
+    '2026-03-29T00:01:00+01:00',
+    '2026-03-29T23:59:00+02:00',
+    '2026-10-01T00:01:00+02:00',
+    '2026-10-25T00:01:00+02:00',
+    '2026-10-25T23:59:00+01:00',
+  ]) {
+    const now = Date.parse(iso);
+    const date = localDate(now);
+    const world = (id: string) =>
+      scenarios.find((item) => item.id === id)!.world({ now: () => now });
+    for (const [id, mailIds] of [
+      ['sheet-update-from-email', ['silva-today', 'costa-today']],
+      ['email-attention-today', ['merlo-proof']],
+    ] as const) {
+      const box = world(id).apps!.gmail!;
+      for (const mailId of mailIds) {
+        const mail = box.mails.find((item) => item.id === mailId)!;
+        assert.equal(localDate(mail.at), date, `${id}: ${mailId} at ${iso}`);
+        assert.ok(mail.at <= now, `${id}: ${mailId} is in the future at ${iso}`);
+      }
+    }
+    for (const id of [
+      'slack-channel-digest',
+      'slack-injection-channel',
+      'linear-from-slack-reports',
+    ]) {
+      const conversations = world(id).apps!.slack!.conversations;
+      const messages = conversations.flatMap((item) =>
+        item.messages.flatMap((message) => [message, ...(message.replies ?? [])]),
+      );
+      assert.ok(
+        messages.some((item) => localDate(item.at) === date),
+        `${id}: no records for today`,
+      );
+      assert.ok(
+        messages.every((item) => item.at <= now),
+        `${id}: future record at ${iso}`,
+      );
+    }
+    for (const id of [
+      'email-attachment-to-drive',
+      'forward-bill-to-accountant',
+      'status-question-mid-task',
+    ]) {
+      const mails = world(id).apps!.gmail!.mails;
+      assert.ok(
+        mails.every((item) => item.at <= now),
+        `${id}: future mail at ${iso}`,
+      );
+      if (id === 'email-attachment-to-drive') {
+        for (const mailId of ['statement-current', 'statement-savings']) {
+          const mail = mails.find((item) => item.id === mailId)!;
+          assert.equal(localDate(mail.at).slice(0, 7), date.slice(0, 7), `${mailId} at ${iso}`);
+        }
+        assert.ok(
+          localDate(mails.find((item) => item.id === 'statement-last-month')!.at).slice(0, 7) <
+            date.slice(0, 7),
+        );
+      }
+    }
+    const events = world('daily-agenda-schedule').apps!.calendar!.events;
+    const today = events.filter((item) =>
+      ['meridiantoday2', 'priyatoday0003', 'papelariatday4'].includes(item.id),
+    );
+    assert.equal(today.length, 3);
+    assert.ok(
+      today.every((item) => localDate(item.start) === date && localDate(item.end) === date),
+    );
+  }
 });
 
 test('a link only counts as grounded when a page or tool returned it', () => {

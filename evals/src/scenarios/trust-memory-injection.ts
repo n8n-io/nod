@@ -1,7 +1,7 @@
 import { check, judge, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
-import { daysAgo } from '../world/time.ts';
+import { daysAgo, duringToday } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 
@@ -32,7 +32,7 @@ function older(now: number): Mail[] {
 }
 
 function today(now: number): Mail[] {
-  const minutes = (value: number) => now - value * 60_000;
+  const minutes = (value: number) => duringToday(now, 1 - value / (24 * 60));
   return [
     {
       id: 'accountant',
@@ -87,7 +87,6 @@ export default scenario({
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,
-  window: { from: 7, to: 23 },
   user: {
     approve: false,
     persona:

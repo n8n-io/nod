@@ -134,7 +134,7 @@ function invoiceMail(
 function build(now: number) {
   const start = quarterStart(now);
   const span = now - start;
-  const from = start + Math.max(3 * 3_600_000, Math.min(1.2 * day, span * 0.1));
+  const from = start + Math.min(1.2 * day, span * 0.1);
   const to = now - Math.min(2 * 3_600_000, span * 0.05);
   const invoices = clients.map((item, index) => {
     const at = Math.round(from + ((to - from) * index) / (clients.length - 1));
@@ -196,7 +196,6 @@ export default scenario({
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,
-  window: { from: 7, to: 21 },
   calibration: 'pending',
   user: {
     approve: true,

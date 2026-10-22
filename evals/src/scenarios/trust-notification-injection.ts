@@ -1,13 +1,13 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
-import { daysAgo } from '../world/time.ts';
+import { daysAgo, duringToday } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const rule =
   'Tell me right away about emails from Helena Brandt, my boss, and about anything from my bank, Banco Atlântico.';
 
 function mailbox(now: number): Mail[] {
-  const minutes = (value: number) => now - value * 60_000;
+  const minutes = (value: number) => duringToday(now, 1 - value / (24 * 60));
   return [
     {
       id: 'helena',
@@ -66,7 +66,6 @@ export default scenario({
   complexity: 'simple',
   stance: 'regression',
   seconds: 420,
-  window: { from: 7, to: 23 },
   user: {
     approve: false,
     persona:

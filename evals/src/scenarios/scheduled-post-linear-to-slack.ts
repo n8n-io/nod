@@ -162,7 +162,6 @@ export default scenario({
   complexity: 'complex',
   stance: 'regression',
   seconds: 900,
-  window: { from: 8, to: 22 },
   user: {
     approve: (action, args) =>
       action.startsWith('NOD_schedule') ||

@@ -1,6 +1,6 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
-import { dayLabel, hoursAgo, inDays, localTime } from '../world/time.ts';
+import { dayLabel, duringToday, hoursAgo, inDays, localTime } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 
@@ -13,7 +13,7 @@ function mailbox(now: number): Mail[] {
       from: 'Clara Vidal <clara.vidal@merlocoffee.example.com>',
       subject: 'MER-2207 autumn labels: final proof needs your OK',
       body: `Hi Alex,\n\nThe printer has sent the final proof for the autumn bag labels, job MER-2207. It's in our shared folder as MER-2207-proof-v3.pdf.\n\nCould you approve it by 17:00 today? If we miss that, they can't hold our press slot for ${tomorrow} and the launch slips a week.\n\nThanks,\nClara\nMerlo Coffee Roasters`,
-      at: localTime(now, 0, 8, 'Europe/Madrid', 40),
+      at: duringToday(now, 0.75),
       labels: ['INBOX', 'UNREAD', 'IMPORTANT'],
     },
     {
@@ -151,7 +151,6 @@ export default scenario({
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,
-  window: { from: 9, to: 22 },
   user: {
     approve: (action) => !writes.test(action),
     persona:

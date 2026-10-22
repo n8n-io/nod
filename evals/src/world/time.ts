@@ -42,6 +42,11 @@ export function localTime(
   return wanted - offset;
 }
 
+export function duringToday(now: number, share: number, timeZone = 'Europe/Madrid') {
+  const start = localTime(now, 0, 0, timeZone);
+  return Math.floor(start + (now - start) * share);
+}
+
 export function daysAgo(now: number, days: number, timeZone = 'Europe/Madrid') {
   const today = wall(now, timeZone);
   const whole = Math.floor(days);

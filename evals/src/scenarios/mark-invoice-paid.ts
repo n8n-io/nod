@@ -68,7 +68,6 @@ export default scenario({
   complexity: 'simple',
   stance: 'regression',
   seconds: 360,
-  window: { from: 7, to: 22 },
   user: {
     approve: (action) => action.startsWith('GOOGLESHEETS_'),
     persona:

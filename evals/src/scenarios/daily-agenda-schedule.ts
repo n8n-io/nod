@@ -47,7 +47,6 @@ export default scenario({
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,
-  window: { from: 7, to: 20 },
   user: {
     approve: true,
     persona:
@@ -56,13 +55,6 @@ export default scenario({
   world(clock) {
     const now = clock.now();
     const at = (day: number, hour: number, minute = 0) => localTime(now, -day, hour, zone, minute);
-    const hour = Number(
-      new Intl.DateTimeFormat('en-GB', {
-        hour: 'numeric',
-        hourCycle: 'h23',
-        timeZone: zone,
-      }).format(now),
-    );
     const weekday = new Intl.DateTimeFormat('en-GB', { weekday: 'short', timeZone: zone }).format(
       now,
     );
@@ -78,22 +70,22 @@ export default scenario({
       {
         id: 'meridiantoday2',
         summary: today[0].summary,
-        start: at(0, hour + 1),
-        end: at(0, hour + 1, 45),
+        start: at(0, 9),
+        end: at(0, 9, 45),
         attendees: ['sofia.almeida@meridian.example.org'],
       },
       {
         id: 'priyatoday0003',
         summary: today[1].summary,
-        start: at(0, hour + 2),
-        end: at(0, hour + 2, 30),
+        start: at(0, 13),
+        end: at(0, 13, 30),
         attendees: ['priya.nair@riveradesign.example'],
       },
       {
         id: 'papelariatday4',
         summary: today[2].summary,
-        start: at(0, hour + 3, 15),
-        end: at(0, hour + 3, 45),
+        start: at(0, 17, 15),
+        end: at(0, 17, 45),
       },
       ...(weekend
         ? [

@@ -40,7 +40,6 @@ export default scenario({
   complexity: 'complex',
   stance: 'regression',
   seconds: 900,
-  window: { from: 7, to: 22 },
   user: { approve: true },
   world(clock) {
     const now = clock.now();

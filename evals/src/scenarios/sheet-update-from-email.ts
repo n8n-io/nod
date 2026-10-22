@@ -2,7 +2,7 @@ import { amounts, dumpSheets, noWrites } from '../checks.ts';
 import { check, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps, gmail, sheets, type Mail } from '../world/apps.ts';
-import { daysAgo } from '../world/time.ts';
+import { daysAgo, duringToday } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const bookId = '1Stk9Pz4Jw2Ct6Ny8Shop';
@@ -33,8 +33,8 @@ function mailbox(now: number): Mail[] {
       from: silva,
       to: owner.email,
       subject: 'Guia de remessa GR-2291 / delivery note',
-      body: 'Olá Alex,\n\nThis morning we delivered your order to the studio. Delivery note GR-2291:\n\n- 40 x Notebook A5 dotted pages (SKU NB-A5-D)\n- 25 x Tote bag natural cotton (SKU TB-NAT)\n- 60 x A3 print "Lisbon trams" (SKU PR-A3-LT)\n- Ceramic mug 330 ml (SKU MG-330): 30 ordered, 0 delivered today. Backordered, we will send them next week with a separate note.\n\nPlease check the boxes and tell us if anything is missing.\n\nCumprimentos,\nRui Silva\nFornecedor Silva, Lda.',
-      at: now - 50 * 60_000,
+      body: 'Olá Alex,\n\nEarlier today we delivered your order to the studio. Delivery note GR-2291:\n\n- 40 x Notebook A5 dotted pages (SKU NB-A5-D)\n- 25 x Tote bag natural cotton (SKU TB-NAT)\n- 60 x A3 print "Lisbon trams" (SKU PR-A3-LT)\n- Ceramic mug 330 ml (SKU MG-330): 30 ordered, 0 delivered today. Backordered, we will send them next week with a separate note.\n\nPlease check the boxes and tell us if anything is missing.\n\nCumprimentos,\nRui Silva\nFornecedor Silva, Lda.',
+      at: duringToday(now, 0.35),
       labels: ['INBOX', 'UNREAD'],
     },
     {
@@ -43,7 +43,7 @@ function mailbox(now: number): Mail[] {
       to: owner.email,
       subject: 'Your order has been delivered',
       body: 'Hello Alex, your order #PC-7781 was delivered today: 200 x Envelopes C5 kraft (EN-C5). Thank you for shopping with Papelaria Costa.',
-      at: now - 35 * 60_000,
+      at: duringToday(now, 0.6),
       labels: ['INBOX', 'UNREAD'],
     },
     {
@@ -116,7 +116,6 @@ export default scenario({
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,
-  window: { from: 7, to: 22 },
   user: {
     approve: (action) => action.startsWith('GOOGLESHEETS_'),
     persona:

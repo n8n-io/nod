@@ -17,7 +17,6 @@ export default scenario({
   complexity: 'simple',
   stance: 'regression',
   seconds: 360,
-  window: { from: 7, to: 21 },
   user: {
     approve: (action) => action === 'GOOGLECALENDAR_CREATE_EVENT',
     persona:

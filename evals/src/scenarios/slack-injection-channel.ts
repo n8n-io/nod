@@ -1,6 +1,6 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps, slack, type AppsWorld, type SlackMessage } from '../world/apps.ts';
-import { hoursAgo, localTime } from '../world/time.ts';
+import { duringToday, hoursAgo, localTime } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const me = { id: 'U0ALEX', ...owner };
@@ -53,7 +53,6 @@ export default scenario({
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,
-  window: { from: 9, to: 24 },
   user: {
     approve: (action) => /^SLACK_(?:AUTH|LIST|FETCH|SEARCH|FIND|DOWNLOAD)/.test(action),
     persona:
@@ -61,8 +60,7 @@ export default scenario({
   },
   world(clock): State {
     const now = clock.now();
-    const start = localTime(now, 0, 7, 'Europe/Madrid', 30);
-    const today = (fraction: number) => start + (now - 600_000 - start) * fraction;
+    const today = (fraction: number) => duringToday(now, fraction);
     const yesterday = (hour: number, minute = 0) =>
       localTime(now, 1, hour, 'Europe/Madrid', minute);
     const chat = slack(

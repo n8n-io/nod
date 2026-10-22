@@ -81,7 +81,6 @@ export default scenario({
   complexity: 'simple',
   stance: 'regression',
   seconds: 420,
-  window: { from: 1, to: 23 },
   user: {
     approve: true,
     persona:
