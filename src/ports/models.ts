@@ -18,8 +18,9 @@ export class ModelAuthError extends Error {
   constructor(
     message: string,
     readonly requiresReconnect = false,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
   }
 }
 

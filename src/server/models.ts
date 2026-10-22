@@ -21,6 +21,7 @@ import { signInPage } from '../shared/sign-in-page.ts';
 import { agentModels, memoryModels } from '../shared/model-defaults.ts';
 import { createDatabaseModelStore, type ModelRecord, type ModelState } from './model-store.ts';
 import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
+import { logFailure } from './failure-log.ts';
 
 const providerSchema = z.enum(['openai', 'anthropic', 'openrouter']);
 const selectionSchema = z
@@ -171,6 +172,7 @@ export function createModelService(options: {
         row.credential = next;
         return { value: next };
       } catch (error) {
+        logFailure('model_refresh_failed', error instanceof Error ? (error.cause ?? error) : error);
         if (!(error instanceof ModelAuthError) || !error.requiresReconnect)
           throw new ConnectionError(
             error instanceof ModelAuthError
@@ -381,6 +383,7 @@ export function createModelService(options: {
       attempt.status = 'connected';
       connectionChanged(attempt.provider, method, 'connected');
     } catch (error) {
+      logFailure('model_sign_in_failed', error instanceof Error ? (error.cause ?? error) : error);
       if (!attempt.controller.signal.aborted) connectionChanged(attempt.provider, method, 'failed');
       attempt.status = 'failed';
       attempt.error =

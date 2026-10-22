@@ -2138,6 +2138,7 @@ test('ChatGPT sign-in validates callbacks, exchanges PKCE once, verifies the acc
   const issuer = await chatgptIssuer();
   const grants: URLSearchParams[] = [];
   let tokenStatus = 200;
+  let tokenError = 'fixture-secret fixture-owner fixture-refresh';
   let scope = 'openid profile email offline_access resource.invoke chatgpt.tokens.use.direct';
   let identity: { nonce?: string; audience?: string; subject?: string } = {};
   let holdExchange = false;
@@ -2170,10 +2171,7 @@ test('ChatGPT sign-in validates callbacks, exchanges PKCE once, verifies the acc
           scope,
           token_type: 'Bearer',
         })
-      : Response.json(
-          { error: 'fixture-secret fixture-owner fixture-refresh' },
-          { status: tokenStatus },
-        );
+      : Response.json({ error: tokenError }, { status: tokenStatus });
   });
   const backend = createPiModelBackend();
   const controller = new AbortController();
@@ -2384,6 +2382,20 @@ test('ChatGPT sign-in validates callbacks, exchanges PKCE once, verifies the acc
     return true;
   });
   assert.ok(servers.every((server) => !server.listening));
+  tokenStatus = 400;
+  tokenError = 'invalid_grant';
+  const refused = await start();
+  refused.complete(
+    new URL(
+      `http://127.0.0.1:1455/auth/callback?state=${refused.state}&code=refused-code&client_id=fixture-client`,
+    ),
+  );
+  await assert.rejects(refused.result, (error: Error) => {
+    assert.ok(error instanceof ModelAuthError);
+    assert.match(error.message, /invalid_grant/);
+    assert.equal((error.cause as { statusCode?: number }).statusCode, 400);
+    return true;
+  });
 
   holdExchange = true;
   const started = new Promise<void>((resolve) => {

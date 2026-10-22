@@ -47,7 +47,10 @@ const tokenSchema = z.object({
 });
 
 class TokenRejected extends Error {
-  constructor(readonly status: number) {
+  constructor(
+    readonly statusCode: number,
+    readonly code?: string,
+  ) {
     super('The ChatGPT token request was rejected.');
   }
 }
@@ -203,8 +206,10 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       signal,
     });
     if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
-      throw new TokenRejected(response.status);
+      const code = z
+        .object({ error: z.string().regex(/^[a-z_]{1,64}$/) })
+        .safeParse(await response.json().catch(() => undefined)).data?.error;
+      throw new TokenRejected(response.status, code);
     }
     const token = tokenSchema.parse(await response.json());
     if (!token.scope.split(/\s+/).includes(planScope))
@@ -493,7 +498,11 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           throw new ModelAuthError(
             signal.aborted
               ? 'ChatGPT sign-in was canceled.'
-              : 'ChatGPT sign-in failed. Start a new connection and check your account access.',
+              : error instanceof TokenRejected && error.code
+                ? `OpenAI refused the ChatGPT sign-in (${error.code}). Start a new connection and check your account access.`
+                : 'ChatGPT sign-in failed. Start a new connection and check your account access.',
+            false,
+            { cause: error },
           );
         }
       })();
@@ -703,12 +712,14 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         };
       } catch (error) {
         if (error instanceof ModelAuthError) throw error;
-        const terminal = error instanceof TokenRejected && [400, 401, 403].includes(error.status);
+        const terminal =
+          error instanceof TokenRejected && [400, 401, 403].includes(error.statusCode);
         throw new ModelAuthError(
           terminal
             ? 'Reconnect your ChatGPT account in Models.'
             : 'ChatGPT is temporarily unavailable. Try again.',
           terminal,
+          { cause: error },
         );
       }
     },
