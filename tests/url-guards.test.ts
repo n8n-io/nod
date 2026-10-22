@@ -304,7 +304,20 @@ test('connection navigation permits secure providers and same-origin app consent
     'https://accounts.example.com/consent',
   );
   assert.equal(connectionUrl('/e2e/connect/example', origin), origin + '/e2e/connect/example');
+  const bridge = `http://127.0.0.1:54321/${'a'.repeat(43)}`;
+  assert.equal(connectionUrl(bridge, origin), bridge);
+  for (const suffix of ['?', '#', '?#', '?unexpected=yes', '#unexpected'])
+    assert.throws(() => connectionUrl(bridge + suffix, origin));
   for (const value of [
+    `http://localhost:54321/${'a'.repeat(43)}`,
+    `http://[::1]:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.2:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.1.example.test:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.1/${'a'.repeat(43)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(42)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(44)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(42)}%2f`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}/extra`,
     'http://elsewhere.example/consent',
     'http://localhost:4310/consent',
     'javascript:alert(1)',
@@ -366,10 +379,8 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.equal(ordinary?.getAttribute('referrerPolicy'), 'no-referrer');
   assert.equal(JSDOM.fragment(result).querySelector('button[data-setup="app"]'), null);
   for (const href of [
-    'https://connect.composio.dev/link/synthetic',
-    'https://CONNECT.COMPOSIO.DEV:443/link/synthetic',
-    'https://composio.n8n.cloud/v1/connect/pair?ticket=synthetic',
-    'https://custom-proxy.example.test/v1/connect/pair?ticket=synthetic',
+    `http://127.0.0.1:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.1:61530/${'B'.repeat(43)}`,
   ]) {
     const document = JSDOM.fragment(render(`[Connect Calendar](${href})`));
     assert.ok(document.querySelector('button[data-setup="app"]'));
@@ -397,8 +408,13 @@ test('setup links omit tokens and fragments and approval paths never become link
     'https://connect.composio.dev.example.test/link/synthetic',
     'https://connect.composio.dev:8443/link/synthetic',
     'http://connect.composio.dev/link/synthetic',
-    'https://outside.example/v1/connect/pairing?ticket=synthetic',
-    'https://outside.example/other/v1/connect/pair?ticket=synthetic',
+    `https://127.0.0.1:54321/${'a'.repeat(43)}`,
+    `http://localhost:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}?`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}#`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}?#`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}?unexpected=yes`,
+    `http://127.0.0.1:54321/${'a'.repeat(42)}`,
   ]) {
     for (const text of ['Connect Calendar', "Connect your calendar, then I'll continue."]) {
       const document = JSDOM.fragment(render(`[${text}](${href})`));

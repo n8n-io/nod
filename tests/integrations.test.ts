@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   createHash,
+  generateKeyPairSync,
   createHmac,
+  createDecipheriv,
+  createPrivateKey,
   createPublicKey,
   randomBytes,
   randomUUID,
@@ -21,6 +24,7 @@ import {
   rm,
   stat,
   symlink,
+  writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { get as httpGet } from 'node:http';
@@ -35,10 +39,6 @@ import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client'
 import { Composio } from '@composio/core';
 import Fastify from 'fastify';
 import { EventEmitter } from 'node:events';
-import {
-  createIntegrationKeyService,
-  receiveLegacyIntegration,
-} from '../src/server/integration-key.ts';
 import pg from 'pg';
 import type { Agent, AgentEvent, AgentToolResult, RuntimeContext } from '../src/ports/agent.ts';
 import { type DiscoveredOAuthState } from '../src/ports/discovered.ts';
@@ -52,15 +52,20 @@ import {
 } from '../src/ports/integrations.ts';
 import { createComposioProvider } from '../src/providers/composio/integrations.ts';
 import { createComposioProxy } from '../src/providers/composio/proxy.ts';
+import { createIntegrationIdentityCheckpoint } from '../src/server/integration-identity.ts';
 import {
-  createIntegrationAccess,
-  renderIntegrationAccessBridge,
-} from '../src/server/integration-access.ts';
+  createIntegrationBrowser,
+  renderIntegrationBrowser,
+} from '../src/server/integration-browser.ts';
 import { createDiscoveredTransport, safeRemoteFetch } from '../src/providers/discovered/remote.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
-import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
+import {
+  createIntegrations,
+  eventOverview,
+  initializeIntegrationSchema,
+} from '../src/server/integrations.ts';
 import { noMailCheck } from '../src/server/integration-result.ts';
 import { cachedIcons } from '../src/server/link-previews.ts';
 import { createErrorRedactor } from '../src/server/redaction.ts';
@@ -73,6 +78,37 @@ import { integrationServiceIds } from '../src/shared/integrations.ts';
 import { connectedGmail } from '../src/shared/onboarding.ts';
 import { fileBytes } from '../src/shared/files.ts';
 import { fakeComputer, fakeExecution, fakeWorkspace } from './runtime-fixtures.ts';
+
+const fixtureIdentityCheckpoint = {
+  read: async () => undefined,
+  commit: async () => {},
+};
+const installationKey = randomBytes(32);
+const installationKeyStore = {
+  id: 'fixture',
+  configured: true,
+  getKey: async () => Buffer.from(installationKey),
+};
+
+function eagerConnectionBrowser(): import('../src/ports/integrations.ts').IntegrationConnectionBrowser {
+  const urls = new Set<string>();
+  const key = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).publicKey.export({
+    format: 'jwk',
+  });
+  return {
+    async open(_id, _origin, start) {
+      const url = await start(key, 'http://127.0.0.1:54321', {
+        returnPath: '/' + randomBytes(32).toString('base64url'),
+      });
+      urls.add(url);
+      return url;
+    },
+    owns: (url) => urls.has(url),
+    remote: (url) => (urls.has(url) ? url : undefined),
+    finish() {},
+    async close() {},
+  };
+}
 
 function fakeProvider(session: IntegrationSession): IntegrationProvider {
   return {
@@ -132,16 +168,30 @@ test('installation identity persistence failures withhold signatures and preserv
       const options = {
         dataRoot,
         ownerId: 'synthetic-owner',
+        keyStore: installationKeyStore,
+        checkpoint: fixtureIdentityCheckpoint,
         url: 'https://proxy.example.test',
         request: (async (_input, init) => {
-          calls.push(new Headers(init?.headers).get('x-otto-public-key')!);
-          return Response.json({ state: 'enabled' });
+          calls.push(new Headers(init?.headers).get('x-nod-public-key')!);
+          return Response.json({
+            state: 'enabled',
+            userId:
+              'nod_' +
+              createHash('sha256')
+                .update(
+                  Buffer.from(new Headers(init?.headers).get('x-nod-public-key')!, 'base64url'),
+                )
+                .digest('hex'),
+          });
         }) as typeof fetch,
       };
       const proxy = createComposioProxy(options);
       await assert.rejects(proxy.initialize(), { code: 'EIO' });
       assert.throws(() => proxy.userId);
-      await assert.rejects(proxy.accessStatus(), { code: 'EIO' });
+      await assert.rejects(
+        proxy.client.getClient().get('/api/v3.1/toolkits?type=native'),
+        (error: unknown) => (error as { cause?: { code?: string } }).cause?.code === 'EIO',
+      );
       assert.equal(calls.length, 0);
       if (target === 'file') {
         assert.deepEqual(await readdir(directory), []);
@@ -152,24 +202,334 @@ test('installation identity persistence failures withhold signatures and preserv
         assert.equal(restarted.userId, proxy.userId);
         return;
       }
-      const [entry] = await readdir(directory);
-      assert.match(entry, /^[a-f0-9]{64}\.pem$/);
-      const saved = await readFile(join(directory, entry), 'utf8');
+      const entries = await readdir(directory);
+      const entry = entries.find((name) => name.endsWith('.encrypted'))!;
+      assert.match(entry, /^[a-f0-9]{64}\.encrypted$/);
+      const saved = await readFile(join(directory, entry));
       const restarted = createComposioProxy(options);
       await assert.rejects(restarted.initialize(), { code: 'EIO' });
       assert.throws(() => restarted.userId);
-      assert.equal(await readFile(join(directory, entry), 'utf8'), saved);
+      assert.deepEqual(await readFile(join(directory, entry)), saved);
       fail = false;
       await Promise.all([proxy.initialize(), restarted.initialize()]);
       assert.equal(restarted.userId, proxy.userId);
-      await proxy.accessStatus();
-      await restarted.accessStatus();
-      const publicKey = createPublicKey(saved).export({ format: 'jwk' }).x;
-      assert.deepEqual(calls, [publicKey, publicKey]);
-      assert.deepEqual(await readdir(directory), [entry]);
+      await proxy.client.getClient().get('/api/v3.1/toolkits?type=native');
+      await restarted.client.getClient().get('/api/v3.1/toolkits?type=native');
+      const publicKey = await readFile(
+        join(
+          directory,
+          entries.find((name) => name.endsWith('.public'))!,
+        ),
+        'utf8',
+      );
+      assert.deepEqual(calls, [publicKey, publicKey, publicKey, publicKey]);
+      assert.deepEqual(await readdir(directory), entries);
     });
   }
 });
+
+test('encrypted installation identities stay bound to their owner and fail without replacing established keys', async (t) => {
+  for (const variant of [
+    'unavailable vault',
+    'wrong vault key',
+    'corrupt ciphertext',
+    'missing ciphertext',
+    'changed marker',
+    'different owner',
+  ]) {
+    await t.test(variant, async () => {
+      const dataRoot = await mkdtemp(join(tmpdir(), 'nod-encrypted-identity-'));
+      t.after(() => rm(dataRoot, { recursive: true, force: true }));
+      const options = {
+        dataRoot,
+        ownerId: 'encrypted-fixture',
+        keyStore: installationKeyStore,
+        checkpoint: fixtureIdentityCheckpoint,
+        request: (async () =>
+          assert.fail('Identity initialization must not make a request.')) as typeof fetch,
+      };
+      const proxy = createComposioProxy(options);
+      await proxy.initialize();
+      const directory = join(dataRoot, 'integration-identity');
+      const name = createHash('sha256').update(options.ownerId).digest('hex');
+      const path = join(directory, `${name}.encrypted`);
+      const marker = join(directory, `${name}.public`);
+      const encrypted = await readFile(path);
+      const decipher = createDecipheriv('aes-256-gcm', installationKey, encrypted.subarray(0, 12));
+      decipher.setAAD(
+        Buffer.from(JSON.stringify(['nod-integration-identity-v1', options.ownerId])),
+      );
+      decipher.setAuthTag(encrypted.subarray(12, 28));
+      const plaintext = Buffer.concat([decipher.update(encrypted.subarray(28)), decipher.final()]);
+      assert.equal(encrypted.includes(plaintext), false);
+      const key = createPrivateKey({ key: plaintext, type: 'pkcs8', format: 'der' });
+      const publicKey = createPublicKey(key).export({ format: 'jwk' }).x;
+      assert.equal(await readFile(marker, 'utf8'), publicKey);
+      assert.equal(
+        proxy.userId,
+        `nod_${createHash('sha256').update(Buffer.from(publicKey!, 'base64url')).digest('hex')}`,
+      );
+      if (variant === 'unavailable vault') {
+        options.keyStore = {
+          ...installationKeyStore,
+          getKey: async () => {
+            throw new Error('Synthetic locked vault');
+          },
+        };
+      } else if (variant === 'wrong vault key') {
+        options.keyStore = { ...installationKeyStore, getKey: async () => randomBytes(32) };
+      } else if (variant === 'corrupt ciphertext') {
+        const damaged = Buffer.from(encrypted);
+        damaged[damaged.length - 1] ^= 1;
+        await writeFile(path, damaged);
+      } else if (variant === 'missing ciphertext') {
+        await rm(path);
+      } else if (variant === 'changed marker') {
+        await writeFile(marker, 'A'.repeat(43));
+      } else {
+        options.ownerId = 'another-encrypted-owner';
+        const target = createHash('sha256').update(options.ownerId).digest('hex');
+        await copyFile(path, join(directory, `${target}.encrypted`));
+        await copyFile(marker, join(directory, `${target}.public`));
+      }
+      const before = await readdir(directory);
+      const contents = await Promise.all(before.map((name) => readFile(join(directory, name))));
+      const restarted = createComposioProxy(options);
+      await assert.rejects(restarted.initialize());
+      assert.throws(() => restarted.userId);
+      assert.deepEqual(await readdir(directory), before);
+      assert.deepEqual(
+        await Promise.all(before.map((name) => readFile(join(directory, name)))),
+        contents,
+      );
+      if (variant === 'unavailable vault') {
+        options.keyStore = installationKeyStore;
+        await restarted.initialize();
+        assert.equal(restarted.userId, proxy.userId);
+      }
+    });
+  }
+});
+
+test('a locked vault never creates a replacement installation identity', async (t) => {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'nod-locked-identity-'));
+  t.after(() => rm(dataRoot, { recursive: true, force: true }));
+  const proxy = createComposioProxy({
+    dataRoot,
+    ownerId: 'locked-fixture',
+    checkpoint: fixtureIdentityCheckpoint,
+    keyStore: {
+      ...installationKeyStore,
+      getKey: async () => {
+        throw new Error('Synthetic locked vault');
+      },
+    },
+  });
+  await assert.rejects(proxy.initialize(), /locked vault/);
+  assert.deepEqual(await readdir(dataRoot), []);
+});
+
+test(
+  'installation identity checkpoints prevent replacement after file loss and recover interrupted first initialization',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `identity_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const root = await mkdtemp(join(tmpdir(), 'nod-identity-checkpoint-'));
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+      await rm(root, { recursive: true, force: true });
+    });
+    function options(ownerId: string) {
+      return {
+        dataRoot: join(root, ownerId),
+        ownerId,
+        keyStore: installationKeyStore,
+        checkpoint: createIntegrationIdentityCheckpoint(pool, ownerId),
+        request: (async () =>
+          assert.fail('Identity setup must not make a request.')) as typeof fetch,
+      };
+    }
+    await t.test('concurrent first starts publish one owner-bound key', async () => {
+      const proxies = [
+        createComposioProxy(options('concurrent-owner')),
+        createComposioProxy(options('concurrent-owner')),
+        createComposioProxy(options('another-owner')),
+      ];
+      await Promise.all(proxies.map((proxy) => proxy.initialize()));
+      assert.equal(proxies[0].userId, proxies[1].userId);
+      assert.notEqual(proxies[0].userId, proxies[2].userId);
+      const checkpoint = createIntegrationIdentityCheckpoint(pool, 'concurrent-owner');
+      const key = await checkpoint.read();
+      assert.ok(key);
+      const otherKey = await createIntegrationIdentityCheckpoint(pool, 'another-owner').read();
+      assert.ok(otherKey);
+      await assert.rejects(checkpoint.commit(otherKey), /identity changed/);
+      assert.equal(await checkpoint.read(), key);
+      const restarted = createComposioProxy(options('concurrent-owner'));
+      await restarted.initialize();
+      assert.equal(restarted.userId, proxies[0].userId);
+    });
+    for (const lost of ['files', 'directory', 'profile']) {
+      await t.test(`established identity fails closed after losing its ${lost}`, async () => {
+        const saved = options(`lost-${lost}`);
+        const proxy = createComposioProxy(saved);
+        await proxy.initialize();
+        const publicKey = await saved.checkpoint.read();
+        const directory = join(saved.dataRoot, 'integration-identity');
+        if (lost === 'files') {
+          for (const entry of await readdir(directory)) await rm(join(directory, entry));
+        } else {
+          await rm(lost === 'directory' ? directory : saved.dataRoot, { recursive: true });
+        }
+        const restarted = createComposioProxy({
+          ...saved,
+          checkpoint: createIntegrationIdentityCheckpoint(pool, saved.ownerId),
+          keyStore: {
+            ...installationKeyStore,
+            getKey: async () =>
+              assert.fail('A missing established identity must not generate a key.'),
+          },
+        });
+        await assert.rejects(restarted.initialize(), /identity is missing/);
+        assert.throws(() => restarted.userId);
+        assert.equal(await saved.checkpoint.read(), publicKey);
+        if (lost === 'files') assert.deepEqual(await readdir(directory), []);
+        else await assert.rejects(stat(directory), { code: 'ENOENT' });
+      });
+    }
+    await t.test('valid replacement files cannot overwrite the committed identity', async () => {
+      const saved = options('replaced-owner');
+      const proxy = createComposioProxy(saved);
+      await proxy.initialize();
+      const expected = await saved.checkpoint.read();
+      const replacementRoot = join(root, 'replacement');
+      const replacement = createComposioProxy({
+        ...saved,
+        dataRoot: replacementRoot,
+        checkpoint: fixtureIdentityCheckpoint,
+      });
+      await replacement.initialize();
+      assert.notEqual(replacement.userId, proxy.userId);
+      const directory = join(saved.dataRoot, 'integration-identity');
+      for (const entry of await readdir(directory))
+        await copyFile(
+          join(replacementRoot, 'integration-identity', entry),
+          join(directory, entry),
+        );
+      const restarted = createComposioProxy(saved);
+      await assert.rejects(restarted.initialize(), /identity changed/);
+      assert.throws(() => restarted.userId);
+      assert.equal(await saved.checkpoint.read(), expected);
+    });
+    await t.test(
+      'first initialization resumes after the public marker failed to persist',
+      async (t) => {
+        const saved = options('interrupted-marker');
+        const probe = await open(join(root, 'sync-probe'), 'wx', 0o600);
+        const prototype = Object.getPrototypeOf(probe);
+        const sync = prototype.sync;
+        await probe.close();
+        t.mock.method(prototype, 'sync', async function (this: typeof probe) {
+          const metadata = await this.stat();
+          if (metadata.isFile() && metadata.size === 43)
+            throw new Error('Synthetic public marker failure');
+          return sync.call(this);
+        });
+        const first = createComposioProxy(saved);
+        await assert.rejects(first.initialize(), /public marker failure/);
+        assert.throws(() => first.userId);
+        assert.equal(await saved.checkpoint.read(), undefined);
+        const directory = join(saved.dataRoot, 'integration-identity');
+        const entries = await readdir(directory);
+        assert.equal(entries.length, 1);
+        assert.match(entries[0], /\.encrypted$/);
+        const encrypted = await readFile(join(directory, entries[0]));
+        t.mock.restoreAll();
+        const restarted = createComposioProxy(options(saved.ownerId));
+        await restarted.initialize();
+        assert.deepEqual(await readFile(join(directory, entries[0])), encrypted);
+        const publicKey = await saved.checkpoint.read();
+        assert.ok(publicKey);
+        assert.equal(
+          restarted.userId,
+          `nod_${createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex')}`,
+        );
+      },
+    );
+    for (const phase of ['before commit', 'after commit']) {
+      await t.test(
+        `first initialization recovers an error ${phase} without changing its key`,
+        async () => {
+          const saved = options(phase.replaceAll(' ', '-'));
+          const failing = createComposioProxy({
+            ...saved,
+            checkpoint: {
+              read: () => saved.checkpoint.read(),
+              async commit(key) {
+                if (phase === 'after commit') await saved.checkpoint.commit(key);
+                throw new Error('Synthetic checkpoint failure');
+              },
+            },
+          });
+          await assert.rejects(failing.initialize(), /checkpoint failure/);
+          assert.throws(() => failing.userId);
+          const directory = join(saved.dataRoot, 'integration-identity');
+          const entries = await readdir(directory);
+          assert.equal(entries.length, 2);
+          const before = await Promise.all(
+            entries.map((entry) => readFile(join(directory, entry))),
+          );
+          const publicKey =
+            before[entries.findIndex((entry) => entry.endsWith('.public'))].toString();
+          assert.equal(
+            await saved.checkpoint.read(),
+            phase === 'after commit' ? publicKey : undefined,
+          );
+          const restarted = createComposioProxy(options(saved.ownerId));
+          await restarted.initialize();
+          assert.equal(await saved.checkpoint.read(), publicKey);
+          assert.deepEqual(
+            await Promise.all(entries.map((entry) => readFile(join(directory, entry)))),
+            before,
+          );
+          assert.equal(
+            restarted.userId,
+            `nod_${createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex')}`,
+          );
+        },
+      );
+    }
+    await t.test(
+      'owned app records fence a missing checkpoint without fencing other owners or providers',
+      async () => {
+        await initializeIntegrationSchema(pool);
+        await pool.query(
+          "INSERT INTO app_connections(owner_id,slug,provider_id,account_id,pending_account_id) VALUES ('lost-checkpoint','gmail','composio','synthetic-account',NULL), ('pending-checkpoint','gmail','composio',NULL,'synthetic-pending'), ('abandoned-setup','gmail','composio',NULL,NULL), ('other-provider','fixture','fixture','synthetic-other',NULL)",
+        );
+        for (const owner of ['lost-checkpoint', 'pending-checkpoint']) {
+          const saved = options(owner);
+          const proxy = createComposioProxy(saved);
+          await assert.rejects(proxy.initialize(), /identity is missing/);
+          assert.throws(() => proxy.userId);
+          await assert.rejects(stat(saved.dataRoot), { code: 'ENOENT' });
+        }
+        for (const owner of ['new-owner', 'other-provider', 'abandoned-setup']) {
+          const fresh = createComposioProxy(options(owner));
+          await fresh.initialize();
+          assert.match(fresh.userId, /^nod_[a-f0-9]{64}$/);
+        }
+      },
+    );
+  },
+);
 
 test('managed integration requests bind SDK calls to a private persisted installation and never retry execution', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => {
@@ -179,7 +539,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   t.after(() => rm(root, { recursive: true, force: true }));
   const calls: Array<{ path: string; body: Record<string, unknown>; key: string }> = [];
   let failExecution = false;
-  let uploadResponse = 'otto-file.synthetic-owned-capability';
+  let uploadResponse = 'nod-file.synthetic-owned-capability';
   let uploadName = 'synthetic.bin';
   let failUpload = false;
   let pairingStatus: unknown = { pairingConfirmed: false };
@@ -195,22 +555,26 @@ test('managed integration requests bind SDK calls to a private persisted install
     const value = new Request(input, init);
     const url = new URL(value.url);
     const bytes = Buffer.from(await value.arrayBuffer());
-    const key = value.headers.get('x-otto-public-key')!;
+    const key = value.headers.get('x-nod-public-key')!;
+    const bodyHash = createHash('sha256').update(bytes).digest('hex');
+    const signedHash =
+      url.pathname === '/v2/files/upload' ? value.headers.get('x-nod-content-sha256') : bodyHash;
+    assert.equal(signedHash, bodyHash);
     const canonical = [
-      'otto-composio-v1',
+      'nod-composio-v1',
       value.method,
       url.origin,
       `${url.pathname}${url.search}`,
-      value.headers.get('x-otto-timestamp'),
-      value.headers.get('x-otto-request-id'),
-      createHash('sha256').update(bytes).digest('hex'),
+      value.headers.get('x-nod-timestamp'),
+      value.headers.get('x-nod-request-id'),
+      signedHash,
     ].join('\n');
     assert.ok(
       verify(
         null,
         Buffer.from(canonical),
         createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: key }, format: 'jwk' }),
-        Buffer.from(value.headers.get('x-otto-signature')!, 'base64url'),
+        Buffer.from(value.headers.get('x-nod-signature')!, 'base64url'),
       ),
     );
     assert.equal(value.headers.has('x-api-key'), false);
@@ -222,7 +586,12 @@ test('managed integration requests bind SDK calls to a private persisted install
     assert.equal('auth_configs' in body, false);
     assert.equal('authConfigs' in body, false);
     calls.push({ path: url.pathname, body, key });
-    if (url.pathname === '/api/v3.1/connected_accounts/ca_fixture_existing') {
+    if (url.pathname === '/v2/access/enroll')
+      return Response.json({
+        state: 'enabled',
+        userId: 'nod_' + createHash('sha256').update(Buffer.from(key, 'base64url')).digest('hex'),
+      });
+    if (url.pathname === '/v2/api/v3.1/connected_accounts/ca_fixture_existing') {
       assert.equal(value.method, 'GET');
       return Response.json({
         id: 'ca_fixture_existing',
@@ -231,7 +600,7 @@ test('managed integration requests bind SDK calls to a private persisted install
         auth_config: { id: 'broker-original-gmail', is_disabled: false },
       });
     }
-    if (url.pathname === '/api/v3.1/toolkits') {
+    if (url.pathname === '/v2/api/v3.1/toolkits') {
       assert.equal(url.searchParams.get('type'), 'native');
       return Response.json({
         items: [
@@ -248,9 +617,9 @@ test('managed integration requests bind SDK calls to a private persisted install
       });
     }
     assert.equal(url.pathname.endsWith('/auth_configs'), false);
-    if (url.pathname === '/api/v3.1/tools/execute/proxy')
+    if (url.pathname === '/v2/api/v3.1/tools/execute/proxy')
       return Response.json({ status: 200, data: { messages: [] }, headers: {} });
-    if (url.pathname === '/api/v3.1/tool_router/session') {
+    if (url.pathname === '/v2/api/v3.1/tool_router/session') {
       assert.deepEqual(
         Object.keys(body).filter(
           (field) =>
@@ -298,7 +667,7 @@ test('managed integration requests bind SDK calls to a private persisted install
         result_type: 'completed',
       });
     }
-    if (url.pathname === '/v1/files/upload') {
+    if (url.pathname === '/v2/files/upload') {
       assert.deepEqual(body, {
         sessionId: 'trs_fixture_proxy',
         action: 'GMAIL_SEND_EMAIL',
@@ -314,7 +683,7 @@ test('managed integration requests bind SDK calls to a private persisted install
         s3key: uploadResponse,
       });
     }
-    if (url.pathname === '/v1/connect/start') {
+    if (url.pathname === '/v2/connect/start') {
       assert.equal(body.toolkit, expectedToolkit);
       assert.equal('authConfigId' in body, false);
       assert.equal(body.reconnectAccountId, expectedReconnectAccountId);
@@ -322,20 +691,20 @@ test('managed integration requests bind SDK calls to a private persisted install
       assert.equal('callbackUrl' in body, false);
       assert.match(String(body.challenge), /^[A-Za-z0-9_-]{43}$/);
       return Response.json({
-        redirectUrl: 'https://proxy.example.test/v1/connect/pair?ticket=synthetic',
+        redirectUrl: 'https://proxy.example.test/v2/connect/pair?ticket=synthetic',
         transactionId: body.transactionId,
       });
     }
-    if (url.pathname === '/v1/connect/status') {
+    if (url.pathname === '/v2/connect/status') {
       assert.equal(value.method, 'POST');
       assert.deepEqual(body, { ticket: 'synthetic' });
       return Response.json(pairingStatus);
     }
-    if (url.pathname === '/v1/connect/complete') {
+    if (url.pathname === '/v2/connect/complete') {
       assert.equal(body.completionToken, 'synthetic-completion');
       assert.equal(
         body.challenge,
-        calls.find((call) => call.path === '/v1/connect/start')!.body.challenge,
+        calls.find((call) => call.path === '/v2/connect/start')!.body.challenge,
       );
       return Response.json({
         connectedAccountId: 'ca_fixture_proxy',
@@ -348,8 +717,11 @@ test('managed integration requests bind SDK calls to a private persisted install
   const options = {
     dataRoot: root,
     ownerId: 'fixture-owner',
+    keyStore: installationKeyStore,
+    checkpoint: fixtureIdentityCheckpoint,
     url: 'https://proxy.example.test',
     request,
+    browser: eagerConnectionBrowser(),
   };
   const proxy = createComposioProxy(options);
   const concurrent = createComposioProxy(options);
@@ -360,16 +732,18 @@ test('managed integration requests bind SDK calls to a private persisted install
   assert.equal(proxy.configurationId, restarted.configurationId);
   expectedUser = proxy.userId;
   const directory = join(root, 'integration-identity');
-  const entries = await readdir(directory);
+  const entries = (await readdir(directory)).filter((name) => name.endsWith('.encrypted'));
   assert.equal(entries.length, 1);
   if (process.platform !== 'win32')
     assert.equal((await stat(join(directory, entries[0]))).mode & 0o077, 0);
-  const other = createComposioProxy({ ...options, ownerId: 'another-owner' });
+  const other = createComposioProxy({
+    ...options,
+    ownerId: 'another-owner',
+  });
   await other.initialize();
   assert.notEqual(proxy.userId, other.userId);
   const provider = createComposioProvider({
     proxy,
-    authConfigs: { gmail: 'client-config-must-not-leave' },
   });
   const state = randomBytes(32).toString('base64url');
   assert.equal(typeof provider.authorize, 'function');
@@ -382,7 +756,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   assert.equal(directAttempt.accountId, `pending_${state}`);
   assert.deepEqual(
     calls.slice(beforeAuthorization).map((call) => call.path),
-    ['/v1/connect/start'],
+    ['/v2/access/enroll', '/v2/connect/start'],
   );
   const afterAuthorization = calls.length;
   await assert.rejects(
@@ -403,23 +777,18 @@ test('managed integration requests bind SDK calls to a private persisted install
   });
   assert.deepEqual(
     calls.slice(afterAuthorization).map((call) => call.path),
-    ['/v1/connect/status', '/v1/connect/status'],
+    ['/v2/connect/status', '/v2/connect/status'],
   );
-  pairingStatus = { pairingConfirmed: false, signInRequired: true };
-  assert.deepEqual(await provider.connectionStatus!('fixture-owner', directAttempt.url), {
-    pairingConfirmed: false,
-    signInRequired: true,
-  });
   const beforeInvalidPairing = calls.length;
   await assert.rejects(provider.connectionStatus!('another-owner', directAttempt.url), /owner/);
   for (const url of [
-    'https://other.example.test/v1/connect/pair?ticket=synthetic',
-    'https://proxy.example.test/v1/connect/complete?ticket=synthetic',
-    'https://user@proxy.example.test/v1/connect/pair?ticket=synthetic',
+    'https://other.example.test/v2/connect/pair?ticket=synthetic',
+    'https://proxy.example.test/v2/connect/complete?ticket=synthetic',
+    'https://user@proxy.example.test/v2/connect/pair?ticket=synthetic',
     `${directAttempt.url}#fragment`,
     `${directAttempt.url}&ticket=another`,
     `${directAttempt.url}&unrelated=1`,
-    'https://proxy.example.test/v1/connect/pair?ticket=',
+    'https://proxy.example.test/v2/connect/pair?ticket=',
   ])
     await assert.rejects(provider.connectionStatus!('fixture-owner', url), /link is invalid/);
   assert.equal(calls.length, beforeInvalidPairing);
@@ -442,7 +811,6 @@ test('managed integration requests bind SDK calls to a private persisted install
     /Pairing cancelled/,
   );
   assert.equal(calls.length, abortedPairing);
-  assert.equal(createComposioProvider({ apiKey: 'synthetic' }).connectionStatus, undefined);
   expectedToolkit = 'custom_native';
   const beforeCustomAuthorization = calls.length;
   await provider.authorize!(
@@ -452,7 +820,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   );
   assert.deepEqual(
     calls.slice(beforeCustomAuthorization).map((call) => call.path),
-    ['/v1/connect/start'],
+    ['/v2/connect/start'],
   );
   expectedToolkit = 'gmail';
   const beforeCatalog = calls.length;
@@ -464,7 +832,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   );
   assert.deepEqual(
     calls.slice(beforeCatalog).map((call) => call.path),
-    ['/api/v3.1/toolkits'],
+    ['/v2/api/v3.1/toolkits'],
   );
   expectedReconnectAccountId = 'ca_fixture_existing';
   const beforeReconnect = calls.length;
@@ -476,7 +844,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   );
   assert.deepEqual(
     calls.slice(beforeReconnect).map((call) => call.path),
-    ['/api/v3.1/connected_accounts/ca_fixture_existing', '/v1/connect/start'],
+    ['/v2/api/v3.1/connected_accounts/ca_fixture_existing', '/v2/connect/start'],
   );
   assert.equal(reconnectAttempt.accountId, `pending_${state}`);
   assert.equal(reconnectAttempt.authConfigId, 'broker-original-gmail');
@@ -563,7 +931,7 @@ test('managed integration requests bind SDK calls to a private persisted install
     proxy.client
       .getClient()
       .withOptions({ baseURL: 'https://untrusted.example.test' })
-      .get('/api/v3.1/toolkits'),
+      .get('/v2/api/v3.1/toolkits'),
   );
   assert.equal(calls.length, completedCalls);
   const file = {
@@ -622,7 +990,7 @@ test('managed integration requests bind SDK calls to a private persisted install
     await provider.inboxSnippets!('ca_fixture_proxy', new AbortController().signal),
     [],
   );
-  assert.equal(calls.at(-1)!.path, '/api/v3.1/tools/execute/proxy');
+  assert.equal(calls.at(-1)!.path, '/v2/api/v3.1/tools/execute/proxy');
   assert.equal(calls.at(-1)!.key, calls[0].key);
   await proxy.client
     .getClient()
@@ -632,14 +1000,17 @@ test('managed integration requests bind SDK calls to a private persisted install
         'x-api-key': 'synthetic-disallowed',
       },
     })
-    .get('/api/v3.1/toolkits?type=native');
+    .get('/v2/api/v3.1/toolkits?type=native');
   await chmod(root, 0o755);
   const existingRoot = createComposioProxy(options);
   await existingRoot.initialize();
   assert.equal(existingRoot.userId, proxy.userId);
   const rootAlias = join(root, 'trusted-data-root');
   await symlink(root, rootAlias);
-  const linkedRoot = createComposioProxy({ ...options, dataRoot: rootAlias });
+  const linkedRoot = createComposioProxy({
+    ...options,
+    dataRoot: rootAlias,
+  });
   await linkedRoot.initialize();
   assert.equal(linkedRoot.userId, proxy.userId);
   for (const variant of [
@@ -689,7 +1060,10 @@ test('managed integration requests bind SDK calls to a private persisted install
           }
           if (variant === 'writable data root') await chmod(dataRoot, 0o777);
         }
-        const invalid = createComposioProxy({ ...options, dataRoot });
+        const invalid = createComposioProxy({
+          ...options,
+          dataRoot,
+        });
         await assert.rejects(invalid.initialize());
         assert.throws(() => invalid.userId);
       },
@@ -700,7 +1074,10 @@ test('managed integration requests bind SDK calls to a private persisted install
     async () => {
       const dataRoot = join(root, 'recoverable-initialization');
       await copyFile(join(directory, entries[0]), dataRoot);
-      const recovering = createComposioProxy({ ...options, dataRoot });
+      const recovering = createComposioProxy({
+        ...options,
+        dataRoot,
+      });
       const before = calls.length;
       const failed = await Promise.allSettled([recovering.initialize(), recovering.initialize()]);
       assert.ok(failed.every((result) => result.status === 'rejected'));
@@ -708,838 +1085,371 @@ test('managed integration requests bind SDK calls to a private persisted install
       assert.equal(calls.length, before);
       await rm(dataRoot);
       await Promise.all([recovering.initialize(), recovering.initialize()]);
-      const restored = createComposioProxy({ ...options, dataRoot });
+      const restored = createComposioProxy({
+        ...options,
+        dataRoot,
+      });
       await restored.initialize();
       assert.equal(recovering.userId, restored.userId);
       await recovering.client.getClient().get('/api/v3.1/toolkits?type=native');
-      assert.equal(calls.length, before + 1);
+      assert.equal(calls.length, before + 2);
     },
   );
 });
 
-test('managed proxy access binds browser enrollment to the installation and a private native bridge', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'nod-managed-access-'));
+test('shared enrollment lets one caller abort without sending its action or cancelling another caller', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-enrollment-abort-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const brokerOrigin = 'https://composio.example.test';
-  let admission: 'sign_in_required' | 'enabled' | 'revoked' = 'sign_in_required';
-  const enrollments = new Map<
-    string,
-    {
-      challenge: string;
-      origin: string;
-      native?: { returnPath: string };
-      status: 'pending' | 'authorized' | 'completed' | 'cancelled' | 'denied';
-    }
-  >();
-  const calls: string[] = [];
-  const identities = new Set<string>();
-  let holdPoll: (() => Promise<void>) | undefined;
-  let holdComplete: (() => Promise<void>) | undefined;
-  let denyCompletion = false;
-  let enrollmentLifetime = 60_000;
+  let releaseEnrollment = () => {};
+  const enrollment = new Promise<void>((resolve) => {
+    releaseEnrollment = resolve;
+  });
+  let reportStarted = () => {};
+  const started = new Promise<void>((resolve) => {
+    reportStarted = resolve;
+  });
+  const accounts: string[] = [];
+  let enrollments = 0;
+  let enrollmentSignal: AbortSignal | undefined;
   const proxy = createComposioProxy({
     dataRoot: root,
-    ownerId: 'synthetic-managed-access',
-    url: brokerOrigin,
-    request: async (resource, options) => {
-      const request = new Request(resource, options);
-      const url = new URL(request.url);
-      const bytes = Buffer.from(await request.arrayBuffer());
-      const body = JSON.parse(bytes.toString());
-      assert.equal(url.origin, brokerOrigin);
-      assert.equal(request.headers.has('x-api-key'), false);
-      assert.equal(request.headers.has('authorization'), false);
-      const publicKey = request.headers.get('x-otto-public-key')!;
-      identities.add(publicKey);
-      assert.ok(
-        verify(
-          null,
-          Buffer.from(
-            [
-              'otto-composio-v1',
-              request.method,
-              url.origin,
-              url.pathname,
-              request.headers.get('x-otto-timestamp'),
-              request.headers.get('x-otto-request-id'),
-              createHash('sha256').update(bytes).digest('hex'),
-            ].join('\n'),
-          ),
-          createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: publicKey }, format: 'jwk' }),
-          Buffer.from(request.headers.get('x-otto-signature')!, 'base64url'),
-        ),
-      );
-      calls.push(url.pathname);
-      if (url.pathname === '/v1/access/status')
-        return Response.json({
-          state: admission,
-          ...(admission === 'enabled' ? { email: 'approved@example.test' } : {}),
-        });
-      if (url.pathname === '/v1/access/start') {
-        const id = randomBytes(32).toString('base64url');
-        assert.equal(body.browserKey.d, undefined);
-        createPublicKey({ key: body.browserKey, format: 'jwk' });
-        const hosts = { localhost: 'localhost', ipv4: '127.0.0.1', ipv6: '[::1]' };
-        assert.equal(typeof body.uiOrigin, 'object');
-        const destination = body.uiOrigin;
-        let initiatingOrigin: string;
-        if (destination.type === 'loopback') {
-          assert.deepEqual(Object.keys(destination).sort(), ['host', 'port', 'type']);
-          assert.ok(Object.hasOwn(hosts, destination.host));
-          assert.equal(Number.isInteger(destination.port), true);
-          assert.ok(destination.port >= 1 && destination.port <= 65535);
-          assert.equal(/http:\/\//.test(bytes.toString()), false);
-          initiatingOrigin = new URL(
-            `http://${hosts[destination.host as keyof typeof hosts]}:${destination.port}`,
-          ).origin;
-        } else {
-          assert.deepEqual(Object.keys(destination).sort(), ['type', 'url']);
-          assert.equal(destination.type, 'https');
-          initiatingOrigin = destination.url;
-        }
-        enrollments.set(id, {
-          challenge: body.challenge,
-          origin: initiatingOrigin,
-          ...(body.native ? { native: body.native } : {}),
-          status: 'pending',
-        });
-        return Response.json({
-          id,
-          url: `${brokerOrigin}/api/auth/enroll?id=${id}${body.native ? '&handoff=synthetic-sealed-ticket' : ''}`,
-          expiresAt: Date.now() + enrollmentLifetime,
-        });
+    ownerId: 'enrollment-owner',
+    keyStore: installationKeyStore,
+    checkpoint: fixtureIdentityCheckpoint,
+    url: 'https://proxy.example.test',
+    request: async (input, init) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).pathname === '/v2/access/enroll') {
+        enrollments++;
+        enrollmentSignal = request.signal;
+        reportStarted();
+        await enrollment;
+        return Response.json({ state: 'enabled', userId: proxy.userId });
       }
-      if (url.pathname === '/v1/access/revoke') {
-        admission = 'revoked';
-        return Response.json({ state: admission });
-      }
-      const enrolled = enrollments.get(body.id);
-      assert.ok(enrolled);
-      if (url.pathname === '/v1/access/poll') {
-        const status = enrolled.status;
-        await holdPoll?.();
-        return Response.json({ status });
-      }
-      if (url.pathname === '/v1/access/cancel') {
-        enrolled.status = 'cancelled';
-        return Response.json({ cancelled: true });
-      }
-      assert.equal(url.pathname, '/v1/access/complete');
-      assert.equal(enrolled.status, 'authorized');
-      assert.equal(body.challenge, enrolled.challenge);
-      const denied = denyCompletion;
-      enrolled.status = denied ? 'denied' : 'completed';
-      if (!denied) admission = 'enabled';
-      await holdComplete?.();
-      return Response.json(
-        denied ? { state: 'denied' } : { state: admission, email: 'approved@example.test' },
-      );
+      assert.equal(new URL(request.url).pathname, '/v2/files/upload');
+      const body = await request.json();
+      accounts.push(body.accountId);
+      return Response.json({
+        name: body.name,
+        mimetype: body.mimeType,
+        s3key: 'nod-file.synthetic-owned-capability',
+      });
     },
   });
-  await proxy.initialize();
-  const browser = await webcrypto.subtle.generateKey(
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    false,
-    ['sign', 'verify'],
+  const file = {
+    name: 'synthetic.txt',
+    mimeType: 'text/plain',
+    bytes: Buffer.from('Synthetic attachment'),
+  };
+  const controller = new AbortController();
+  const reason = new Error('The caller stopped its action.');
+  const stopped = proxy.upload(
+    'session',
+    'GMAIL_SEND_EMAIL',
+    file,
+    'ca_stopped',
+    controller.signal,
   );
-  const browserKey = await webcrypto.subtle.exportKey('jwk', browser.publicKey);
-  const access = createIntegrationAccess({
-    proxy,
-    origin: 'https://nod.example.test',
-    desktop: true,
-  });
-  const app = Fastify();
-  const ownerKey = randomBytes(32).toString('base64url');
-  registerLocalAccess(app, 4310, { key: ownerKey, desktop: true });
-  access.register(app);
-  t.after(() => app.close());
-  const ownerHeaders = { host: '127.0.0.1:4310', 'x-nod-desktop-token': ownerKey };
-  const route = (
-    method: 'GET' | 'POST' | 'DELETE',
-    path: string,
-    payload?: Record<string, unknown>,
-  ) =>
-    app.inject({
-      method,
-      url: `/api/integrations/access${path}`,
-      headers: ownerHeaders,
-      ...(payload === undefined ? {} : { payload }),
-    });
-
-  await t.test(
-    'owner routes require local authority and completion requires the exact approved enrollment',
-    async () => {
-      assert.equal(
-        (
-          await app.inject({
-            method: 'POST',
-            url: '/api/integrations/access/start',
-            headers: { host: '127.0.0.1:4310' },
-            payload: { browserKey },
-          })
-        ).statusCode,
-        401,
-      );
-      assert.equal(calls.length, 0);
-      assert.equal(
-        (
-          await route('POST', '/start', {
-            browserKey: { ...browserKey, d: randomBytes(32).toString('base64url') },
-          })
-        ).statusCode,
-        400,
-      );
-      assert.deepEqual(await access.status(), { state: 'sign_in_required', email: null });
-      const response = await route('POST', '/start', { browserKey });
-      assert.equal(response.statusCode, 200);
-      const started = response.json();
-      assert.equal(new URL(started.url).searchParams.get('id'), started.id);
-      assert.equal(enrollments.get(started.id)!.origin, 'https://nod.example.test');
-      assert.equal(JSON.stringify(started).includes(ownerKey), false);
-      assert.equal(JSON.stringify(started).includes(enrollments.get(started.id)!.challenge), false);
-      assert.equal((await route('POST', '/complete', { id: started.id })).statusCode, 400);
-      assert.equal(calls.filter((path) => path === '/v1/access/complete').length, 0);
-      enrollments.get(started.id)!.status = 'authorized';
-      assert.deepEqual((await route('GET', `/status?id=${started.id}`)).json(), {
-        status: 'authorized',
-      });
-      assert.deepEqual((await route('POST', '/complete', { id: started.id })).json(), {
-        state: 'enabled',
-        email: 'approved@example.test',
-      });
-      await route('POST', '/complete', { id: started.id });
-      assert.equal(calls.filter((path) => path === '/v1/access/complete').length, 1);
-      assert.deepEqual((await route('DELETE', '')).json(), { state: 'revoked', email: null });
-      assert.deepEqual(await access.status(), { state: 'revoked', email: null });
-    },
+  const rejected = stopped.then(
+    () => false,
+    (error: unknown) => error === reason,
   );
-
-  await t.test(
-    'Google access transports constrained loopback origins and refuses malformed origins before signing',
-    async () => {
-      for (const origin of [
-        'http://localhost:58431',
-        'http://127.0.0.1',
-        'http://[::1]:65535',
-        'https://nod.example.test:8443',
-      ]) {
-        const started = await proxy.startAccess(
-          browserKey,
-          origin,
-          randomBytes(32).toString('base64url'),
-        );
-        assert.equal(enrollments.get(started.id)!.origin, origin);
-      }
-      const before = calls.length;
-      for (const origin of [
-        'http://localhost:0',
-        'http://localhost:65536',
-        'http://127.1',
-        'http://localhost:58431/path',
-        'http://localhost:58431/',
-        'http://localhost:58431?query=1',
-        'http://localhost:58431#fragment',
-        'http://user:password@localhost:58431',
-        'http://remote.example.test',
-        'https://localhost',
-        'https://localhost.',
-        'https://app.localhost',
-        'https://127.0.0.1',
-        'https://[::1]',
-        'https://server',
-        'https://nod.example.test/path',
-        'https://user@nod.example.test',
-      ])
-        await assert.rejects(
-          proxy.startAccess(browserKey, origin, randomBytes(32).toString('base64url')),
-          origin,
-        );
-      assert.equal(calls.length, before);
-    },
-  );
-
-  await t.test(
-    'broker clock tolerance keeps web and native sign-in within the local lifetime',
-    async (t) => {
-      for (const native of [false, true])
-        await t.test(native ? 'native' : 'web', async (t) => {
-          let now = Date.now();
-          const clock = t.mock.method(Date, 'now', () => now);
-          t.mock.timers.enable({ apis: ['setTimeout'] });
-          const advance = (milliseconds: number) => {
-            now += milliseconds;
-            t.mock.timers.tick(milliseconds);
-          };
-          async function start() {
-            const response = await route(
-              'POST',
-              '/start',
-              native ? { native: true } : { browserKey },
-            );
-            const started = response.json();
-            if (!native) return { code: response.statusCode, id: started.id, result: started };
-            assert.equal(response.statusCode, 200);
-            const url = new URL(started.url);
-            const html = await (await fetch(started.url)).text();
-            const bridgeKey = JSON.parse(html.match(/const bridgeKey=("[^"]+");/)![1]);
-            advance(30_000);
-            const enrolled = await fetch(`${url.origin}/start`, {
-              method: 'POST',
-              headers: {
-                'content-type': 'application/json',
-                origin: url.origin,
-                'x-nod-bridge': bridgeKey,
-              },
-              body: JSON.stringify({ browserKey }),
-            });
-            return { code: enrolled.status, id: started.id, result: await enrolled.json() };
-          }
-          try {
-            for (const lifetime of [20 * 60_000, 60_000]) {
-              enrollmentLifetime = lifetime;
-              const began = now;
-              const started = await start();
-              assert.equal(started.code, 200);
-              const brokerAttempt = started.result as { id: string; expiresAt: number };
-              assert.equal(brokerAttempt.expiresAt, now + lifetime);
-              const deadline = Math.min(began + 10 * 60_000, brokerAttempt.expiresAt);
-              advance(deadline - now - 1);
-              assert.deepEqual((await route('GET', `/status?id=${started.id}`)).json(), {
-                status: 'pending',
-              });
-              enrollments.get(brokerAttempt.id)!.status = 'authorized';
-              const completions = calls.filter((path) => path === '/v1/access/complete').length;
-              advance(1);
-              assert.deepEqual((await route('GET', `/status?id=${started.id}`)).json(), {
-                status: 'cancelled',
-              });
-              assert.equal((await route('POST', '/complete', { id: started.id })).statusCode, 400);
-              assert.equal(
-                calls.filter((path) => path === '/v1/access/complete').length,
-                completions,
-              );
-              assert.equal(enrollments.get(brokerAttempt.id)!.status, 'cancelled');
-            }
-            for (const lifetime of [-1, 0, Number.NaN, 0.5]) {
-              enrollmentLifetime = lifetime;
-              const started = await start();
-              assert.equal(started.code, 400);
-              if (native) await route('POST', '/cancel', { id: started.id });
-            }
-          } finally {
-            enrollmentLifetime = 60_000;
-            clock.mock.restore();
-          }
-        });
-    },
-  );
-
-  await t.test(
-    'a denied completion remains a terminal admission result without enabling access or retrying',
-    async () => {
-      const started = await access.start({ browserKey });
-      enrollments.get(started.id)!.status = 'authorized';
-      const before = calls.filter((path) => path === '/v1/access/complete').length;
-      denyCompletion = true;
-      try {
-        const response = await route('POST', '/complete', { id: started.id });
-        assert.equal(response.statusCode, 200);
-        assert.deepEqual(response.json(), { state: 'denied', email: null });
-        assert.deepEqual(access.observedStatus(), { state: 'denied', email: null });
-        assert.deepEqual(await access.progress(started.id), { status: 'denied' });
-        assert.equal((await route('POST', '/complete', { id: started.id })).statusCode, 400);
-        assert.equal(calls.filter((path) => path === '/v1/access/complete').length, before + 1);
-        assert.equal(admission, 'revoked');
-      } finally {
-        denyCompletion = false;
-      }
-    },
-  );
-
-  await t.test(
-    'superseded, cancelled and denied attempts cannot enable the installation',
-    async () => {
-      const first = (await route('POST', '/start', { browserKey })).json();
-      const second = (await route('POST', '/start', { browserKey })).json();
-      assert.equal(enrollments.get(first.id)!.status, 'cancelled');
-      enrollments.get(first.id)!.status = 'authorized';
-      assert.equal((await route('POST', '/complete', { id: first.id })).statusCode, 400);
-      assert.deepEqual((await route('GET', `/status?id=${first.id}`)).json(), {
-        status: 'cancelled',
-      });
-      enrollments.get(second.id)!.status = 'denied';
-      assert.deepEqual((await route('GET', `/status?id=${second.id}`)).json(), {
-        status: 'denied',
-      });
-      assert.equal((await route('POST', '/complete', { id: second.id })).statusCode, 400);
-      const third = (await route('POST', '/start', { browserKey })).json();
-      await route('POST', '/cancel', { id: third.id });
-      assert.equal((await route('POST', '/complete', { id: third.id })).statusCode, 400);
-      assert.equal(admission, 'revoked');
-    },
-  );
-
-  await t.test('expiry and a late authorized poll cannot restore a cancelled attempt', async () => {
-    const started = await access.start({ browserKey });
-    enrollments.get(started.id)!.status = 'authorized';
-    let release!: () => void;
-    let entered!: () => void;
-    const waiting = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    holdPoll = () => {
-      entered();
-      return new Promise<void>((resolve) => {
-        release = resolve;
-      });
-    };
-    const pending = access.progress(started.id);
-    const rejection = assert.rejects(pending);
-    await waiting;
-    await access.cancel(started.id);
-    release();
-    await rejection;
-    holdPoll = undefined;
-    assert.deepEqual(await access.progress(started.id), { status: 'cancelled' });
-    await assert.rejects(access.complete(started.id));
-    const native = await access.start({ native: true });
-    const clock = t.mock.method(Date, 'now', () => native.expiresAt + 1);
-    try {
-      assert.deepEqual(await access.progress(native.id), { status: 'cancelled' });
-      await assert.rejects(access.complete(native.id));
-      await assert.rejects(fetch(native.url));
-    } finally {
-      clock.mock.restore();
-    }
-    assert.equal(admission, 'revoked');
-  });
-
-  await t.test(
-    'native bootstrap is single-use and its fresh-port API requires the private scoped header',
-    async (t) => {
-      const started = (await route('POST', '/start', { native: true })).json();
-      const url = new URL(started.url);
-      assert.equal(url.hostname, '127.0.0.1');
-      assert.equal(url.protocol, 'http:');
-      assert.equal(url.search, '');
-      assert.match(url.pathname, /^\/[A-Za-z0-9_-]{43}$/);
-      assert.equal(started.url.includes(ownerKey), false);
-      const foreignHost = await new Promise<number | undefined>((resolve, reject) => {
-        httpGet(started.url, { headers: { host: 'attacker.example.test' } }, (response) => {
-          response.resume();
-          response.on('end', () => resolve(response.statusCode));
-        }).on('error', reject);
-      });
-      assert.equal(foreignHost, 403);
-      const page = await fetch(started.url);
-      assert.equal(page.status, 200);
-      assert.equal(page.headers.get('referrer-policy'), 'no-referrer');
-      assert.match(page.headers.get('content-security-policy')!, /frame-ancestors 'none'/);
-      assert.equal(page.headers.has('set-cookie'), false);
-      const html = await page.text();
-      const bridgeKey = JSON.parse(html.match(/const bridgeKey=("[^"]+");/)![1]);
-      assert.equal((await fetch(started.url)).status, 403);
-      assert.equal((await fetch(`${url.origin}/status`)).status, 403);
-      assert.equal(
-        (
-          await fetch(`${url.origin}/start`, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              origin: 'https://attacker.example.test',
-              'x-nod-bridge': bridgeKey,
-            },
-            body: JSON.stringify({ browserKey }),
-          })
-        ).status,
-        403,
-      );
-      const enrolled = await fetch(`${url.origin}/start`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          origin: url.origin,
-          'x-nod-bridge': bridgeKey,
-        },
-        body: JSON.stringify({ browserKey }),
-      });
-      assert.equal(enrolled.status, 200);
-      const brokerAttempt = (await enrolled.json()) as { id: string };
-      assert.notEqual(brokerAttempt.id, started.id);
-      assert.equal(enrollments.get(brokerAttempt.id)!.origin, url.origin);
-      const returnPath = enrollments.get(brokerAttempt.id)!.native!.returnPath;
-      assert.match(returnPath, /^\/[A-Za-z0-9_-]{43}$/);
-      assert.equal(
-        (await fetch(`${url.origin}/${randomBytes(32).toString('base64url')}`)).status,
-        403,
-      );
-      const continuation = await fetch(`${url.origin}${returnPath}`, {
-        headers: { origin: brokerOrigin, 'sec-fetch-site': 'cross-site' },
-      });
-      assert.equal(continuation.status, 200);
-      assert.match(await continuation.text(), new RegExp(brokerAttempt.id));
-      assert.equal((await fetch(`${url.origin}${returnPath}`)).status, 403);
-
-      assert.equal(
-        (
-          await fetch(`${url.origin}/start`, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              origin: url.origin,
-              'x-nod-bridge': bridgeKey,
-            },
-            body: JSON.stringify({ browserKey }),
-          })
-        ).status,
-        404,
-      );
-      assert.deepEqual(
-        await (
-          await fetch(`${url.origin}/status`, { headers: { 'x-nod-bridge': bridgeKey } })
-        ).json(),
-        { status: 'pending' },
-      );
-      enrollments.get(brokerAttempt.id)!.status = 'authorized';
-      t.mock.timers.enable({ apis: ['setTimeout'] });
-      assert.deepEqual((await route('POST', '/complete', { id: started.id })).json(), {
-        state: 'enabled',
-        email: 'approved@example.test',
-      });
-      assert.deepEqual(
-        await (
-          await fetch(`${url.origin}/status`, { headers: { 'x-nod-bridge': bridgeKey } })
-        ).json(),
-        { status: 'completed' },
-      );
-      assert.equal((await fetch(started.url)).status, 403);
-      assert.equal((await fetch(`${url.origin}/status`)).status, 403);
-      assert.equal(
-        (
-          await fetch(`${url.origin}/status`, {
-            headers: { 'x-nod-bridge': bridgeKey, origin: 'https://attacker.example.test' },
-          })
-        ).status,
-        403,
-      );
-      assert.equal(
-        (
-          await fetch(`${url.origin}/start`, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              origin: url.origin,
-              'x-nod-bridge': bridgeKey,
-            },
-            body: JSON.stringify({ browserKey }),
-          })
-        ).status,
-        403,
-      );
-      t.mock.timers.tick(5001);
-      await assert.rejects(
-        fetch(`${url.origin}/status`, { headers: { 'x-nod-bridge': bridgeKey } }),
-      );
-    },
-  );
-
-  await t.test(
-    'a native page status check while nod completes sign-in cannot fail the completion',
-    async () => {
-      for (const denied of [false, true]) {
-        const started = await access.start({ native: true });
-        const origin = new URL(started.url).origin;
-        const html = await (await fetch(started.url)).text();
-        const bridgeKey = JSON.parse(html.match(/const bridgeKey=("[^"]+");/)![1]);
-        const bridgeStatus = async () =>
-          (await fetch(`${origin}/status`, { headers: { 'x-nod-bridge': bridgeKey } })).json();
-        const enrolled = (await (
-          await fetch(`${origin}/start`, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              origin,
-              'x-nod-bridge': bridgeKey,
-            },
-            body: JSON.stringify({ browserKey }),
-          })
-        ).json()) as { id: string };
-        enrollments.get(enrolled.id)!.status = 'authorized';
-        let entered!: () => void;
-        const waiting = new Promise<void>((resolve) => {
-          entered = resolve;
-        });
-        let release!: () => void;
-        holdComplete = () => {
-          holdComplete = undefined;
-          entered();
-          return new Promise<void>((resolve) => {
-            release = resolve;
-          });
-        };
-        denyCompletion = denied;
-        try {
-          const completion = access.complete(started.id);
-          await waiting;
-          const during = await bridgeStatus();
-          release();
-          assert.equal((await completion).state, denied ? 'denied' : 'enabled');
-          assert.deepEqual(during, { status: 'authorized' });
-        } finally {
-          denyCompletion = false;
-          holdComplete = undefined;
-        }
-        assert.deepEqual(await bridgeStatus(), { status: denied ? 'denied' : 'completed' });
-        await access.cancel(started.id);
-        await assert.rejects(bridgeStatus());
-      }
-    },
-  );
-
-  await t.test(
-    'native Google sign-in advances automatically in one tab and consumes its browser key before proof',
-    async () => {
-      const { JSDOM } = await import('jsdom');
-      const slot = 'nod-native-access';
-      for (const scenario of [
-        'success',
-        'wrong-tab',
-        'wrong-id',
-        'wrong-origin',
-        'expired',
-        'write-failed',
-        'delete-failed',
-        'old-broker',
-      ]) {
-        const factory = new IDBFactory();
-        const storage = new Map<string, string>();
-        const id = randomBytes(32).toString('base64url');
-        const origin = 'http://127.0.0.1:54321';
-        const expiresAt = Date.now() + 60_000;
-        let publicKey!: JsonWebKey;
-        let failDelete = false;
-        let navigations = 0;
-        const indexedDB = {
-          open(name: string, version: number) {
-            const request = factory.open(name, version);
-            request.addEventListener('success', () => {
-              const database = request.result;
-              const original = database.transaction.bind(database);
-              database.transaction = ((...args: Parameters<typeof original>) => {
-                const transaction = original(...args);
-                if (scenario === 'write-failed' || failDelete)
-                  queueMicrotask(() => transaction.abort());
-                return transaction;
-              }) as typeof database.transaction;
-            });
-            return request;
-          },
-        };
-        const readStored = async () => {
-          const database = await new Promise<IDBDatabase>((resolve, reject) => {
-            const request = factory.open(slot, 1);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-          });
-          try {
-            return await new Promise<unknown>((resolve, reject) => {
-              const request = database.transaction('keys').objectStore('keys').get('current');
-              request.onsuccess = () => resolve(request.result);
-              request.onerror = () => reject(request.error);
-            });
-          } finally {
-            database.close();
-          }
-        };
-        const run = async (html: string, hash = '') => {
-          const dom = new JSDOM(html);
-          let destination = '';
-          let cleared = false;
-          const location = {
-            origin,
-            pathname: '/private-callback',
-            hash,
-            replace(value: string) {
-              assert.equal(cleared, true);
-              navigations++;
-              destination = value;
-            },
-          };
-          runInNewContext(dom.window.document.querySelector('script')!.textContent!, {
-            location,
-            history: {
-              replaceState() {
-                cleared = true;
-              },
-            },
-            document: dom.window.document,
-            indexedDB,
-            sessionStorage: {
-              getItem: (name: string) => storage.get(name) ?? null,
-              setItem: (name: string, value: string) => storage.set(name, value),
-              removeItem: (name: string) => storage.delete(name),
-            },
-            crypto: webcrypto,
-            TextEncoder,
-            Uint8Array,
-            URL,
-            btoa,
-            Date,
-            fetch: async (path: string, options: RequestInit) => {
-              assert.equal(path, '/start');
-              assert.equal(
-                new Headers(options.headers).get('x-nod-bridge'),
-                'synthetic-bridge-key',
-              );
-              publicKey = JSON.parse(String(options.body)).browserKey;
-              assert.equal(publicKey.d, undefined);
-              const pending = (await readStored()) as { key: CryptoKey };
-              assert.equal(pending.key.extractable, false);
-              return Response.json({
-                id,
-                expiresAt,
-                url: `${brokerOrigin}/api/auth/enroll?id=${id}${scenario === 'old-broker' ? '' : '&handoff=synthetic-sealed-ticket'}`,
-              });
-            },
-          });
-          try {
-            for (
-              let n = 0;
-              n < 200 && !destination && !dom.window.document.body.classList.contains('failed');
-              n++
-            )
-              await delay(5);
-            return { destination, failed: dom.window.document.body.classList.contains('failed') };
-          } finally {
-            dom.window.close();
-          }
-        };
-        const opened = await run(
-          renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', 'synthetic-bridge-key', {
-            expiresAt,
-          }),
-        );
-        if (scenario === 'write-failed' || scenario === 'old-broker') {
-          assert.equal(opened.destination, '');
-          assert.equal(opened.failed, true);
-          assert.equal(navigations, 0);
-          continue;
-        }
-        assert.equal(
-          opened.destination,
-          `${brokerOrigin}/api/auth/enroll?id=${id}&handoff=synthetic-sealed-ticket`,
-        );
-        const saved = (await readStored()) as { id: string; key: CryptoKey };
-        assert.equal(saved.id, id);
-        assert.equal(saved.key.type, 'private');
-        assert.equal(saved.key.extractable, false);
-        if (scenario === 'wrong-tab') storage.clear();
-        failDelete = scenario === 'delete-failed';
-        const challenge = [
-          'otto-proxy-access-v1',
-          id,
-          scenario === 'wrong-origin' ? 'https://attacker.example.test' : origin,
-          randomBytes(32).toString('hex'),
-          randomBytes(32).toString('base64url'),
-        ].join('\n');
-        const fragment =
-          '#' +
-          encodeURIComponent(
-            JSON.stringify({
-              id: scenario === 'wrong-id' ? randomBytes(32).toString('base64url') : id,
-              challenge,
-              proof: 'synthetic-sealed-proof',
-            }),
-          );
-        const returned = await run(
-          renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', '', {
-            id,
-            expiresAt: scenario === 'expired' ? Date.now() - 1 : expiresAt,
-          }),
-          fragment,
-        );
-        if (scenario !== 'success') {
-          assert.equal(returned.destination, '', scenario);
-          assert.equal(returned.failed, true, scenario);
-          assert.equal(navigations, 1);
-        } else {
-          const target = new URL(returned.destination);
-          assert.equal(target.origin, brokerOrigin);
-          assert.equal(target.pathname, '/api/auth/native-proof');
-          assert.equal(target.search, '');
-          const result = JSON.parse(decodeURIComponent(target.hash.slice(1)));
-          assert.equal(result.proof, 'synthetic-sealed-proof');
-          assert.ok(
-            verify(
-              'sha256',
-              Buffer.from(challenge),
-              {
-                key: createPublicKey({ key: publicKey, format: 'jwk' }),
-                dsaEncoding: 'ieee-p1363',
-              },
-              Buffer.from(result.signature, 'base64url'),
-            ),
-          );
-          assert.equal(await readStored(), undefined);
-          assert.equal(storage.size, 0);
-          const repeated = await run(
-            renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', '', { id, expiresAt }),
-            fragment,
-          );
-          assert.equal(repeated.destination, '');
-          assert.equal(navigations, 2);
-        }
-      }
-    },
-  );
-  assert.equal(identities.size, 1);
+  await started;
+  const survivor = proxy.upload('session', 'GMAIL_SEND_EMAIL', file, 'ca_survivor');
+  try {
+    await delay(0);
+    controller.abort(reason);
+    assert.equal(await Promise.race([rejected, delay(1000, false, { ref: false })]), true);
+    assert.equal(enrollmentSignal?.aborted, false);
+    assert.equal(enrollments, 1);
+    assert.deepEqual(accounts, []);
+    releaseEnrollment();
+    assert.equal((await survivor).s3key, 'nod-file.synthetic-owned-capability');
+    assert.deepEqual(accounts, ['ca_survivor']);
+    assert.equal(enrollments, 1);
+  } finally {
+    releaseEnrollment();
+    await Promise.allSettled([stopped, survivor]);
+  }
 });
 
-for (const [scenario, name, restart] of [
-  ['fresh-desktop', 'fresh desktop uses managed routing', false],
-  ['keyless-server', 'keyless server uses managed routing', false],
-  ['later-managed-desktop-restart', 'later managed desktop restart preserves its account', true],
-  ['direct-server-key-rotation', 'server key rotation retains same-project accounts', true],
-  ['different-server-project', 'another server project cannot adopt saved accounts', true],
-  ['switchable-server', 'an owner key switch revokes apps connected the other way', true],
-  [
-    'revoked-managed-server',
-    'a revoked managed installation can explicitly switch to its own key',
-    false,
-  ],
-  [
-    'signed-out-managed-server',
-    'a signed-out managed installation can explicitly switch to its own key',
-    false,
-  ],
-  [
-    'switchable-desktop',
-    'desktop BYOK survives restart and refuses a revoked managed destination',
-    true,
-  ],
-] as const) {
+test('connection bridge binds a single browser bootstrap to one installation attempt and closes on completion', async (t) => {
+  const browser = createIntegrationBrowser();
+  t.after(() => browser.close());
+  const id = randomBytes(32).toString('base64url');
+  const brokerOrigin = 'https://proxy.example.test';
+  const key = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).publicKey.export({
+    format: 'jwk',
+  });
+  let calls = 0;
+  let returnPath = '';
+  const url = await browser.open(id, brokerOrigin, async (browserKey, origin, native) => {
+    calls++;
+    assert.deepEqual(browserKey, key);
+    assert.equal(origin, new URL(url).origin);
+    returnPath = native.returnPath;
+    assert.match(returnPath, /^\/[A-Za-z0-9_-]{43}$/);
+    return `${brokerOrigin}/v2/connect/pair?ticket=fixture`;
+  });
+  const origin = new URL(url).origin;
+  assert.equal(browser.owns(url), true);
+  assert.equal(browser.remote(url), undefined);
+  assert.equal(
+    (await fetch(url, { headers: { origin: 'https://untrusted.example.test' } })).status,
+    403,
+  );
+  assert.equal((await fetch(`${origin}/${randomBytes(32).toString('base64url')}`)).status, 403);
+  const bootstrap = await fetch(url);
+  assert.equal(bootstrap.status, 200);
+  assert.equal(bootstrap.headers.get('cache-control'), 'no-store');
+  assert.match(bootstrap.headers.get('content-security-policy')!, /frame-ancestors 'none'/);
+  const html = await bootstrap.text();
+  const bridgeKey = JSON.parse(html.match(/const bridgeKey=("[^"]+");/)![1]);
+  assert.equal((await fetch(url)).status, 403);
+  const post = (headers: Record<string, string>) =>
+    fetch(`${origin}/start`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify({ browserKey: key }),
+    });
+  for (const headers of [
+    {},
+    { origin },
+    { origin: 'https://attacker.example.test', 'x-nod-bridge': bridgeKey },
+    { origin, 'x-nod-bridge': bridgeKey, 'sec-fetch-site': 'cross-site' },
+  ] as Array<Record<string, string>>)
+    assert.equal((await post(headers)).status, 403);
+  assert.equal(calls, 0);
+  const started = await post({ origin, 'x-nod-bridge': bridgeKey });
+  assert.equal(started.status, 200);
+  assert.equal((await started.json()).id, id);
+  assert.equal(calls, 1);
+  assert.equal(browser.remote(url), `${brokerOrigin}/v2/connect/pair?ticket=fixture`);
+  assert.equal((await post({ origin, 'x-nod-bridge': bridgeKey })).status, 403);
+  assert.equal(
+    (await fetch(origin + returnPath, { headers: { origin: 'https://attacker.example.test' } }))
+      .status,
+    403,
+  );
+  const continuation = await fetch(origin + returnPath, { headers: { origin: brokerOrigin } });
+  assert.equal(continuation.status, 200);
+  assert.ok((await continuation.text()).includes(id));
+  assert.equal((await fetch(origin + returnPath)).status, 403);
+  browser.finish(id);
+  assert.equal(browser.owns(url), false);
+  assert.equal(browser.remote(url), undefined);
+  await assert.rejects(fetch(url));
+  await browser.close();
+  await assert.rejects(
+    browser.open(randomBytes(32).toString('base64url'), brokerOrigin, async () => ''),
+  );
+});
+
+test('app consent advances in one tab and consumes its non-exportable browser key before proof', async () => {
+  const brokerOrigin = 'https://proxy.example.test';
+  const { JSDOM } = await import('jsdom');
+  const slot = 'nod-native-connect';
+  for (const scenario of [
+    'success',
+    'wrong-tab',
+    'wrong-id',
+    'wrong-origin',
+    'expired',
+    'write-failed',
+    'delete-failed',
+    'invalid-target',
+  ]) {
+    const factory = new IDBFactory();
+    const storage = new Map<string, string>();
+    const id = randomBytes(32).toString('base64url');
+    const origin = 'http://127.0.0.1:54321';
+    const expiresAt = Date.now() + 60_000;
+    let publicKey!: JsonWebKey;
+    let failDelete = false;
+    let navigations = 0;
+    const indexedDB = {
+      open(name: string, version: number) {
+        const request = factory.open(name, version);
+        request.addEventListener('success', () => {
+          const database = request.result;
+          const original = database.transaction.bind(database);
+          database.transaction = ((...args: Parameters<typeof original>) => {
+            const transaction = original(...args);
+            if (scenario === 'write-failed' || failDelete)
+              queueMicrotask(() => transaction.abort());
+            return transaction;
+          }) as typeof database.transaction;
+        });
+        return request;
+      },
+    };
+    const readStored = async () => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = factory.open(slot, 1);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      try {
+        return await new Promise<unknown>((resolve, reject) => {
+          const request = database.transaction('keys').objectStore('keys').get('current');
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      } finally {
+        database.close();
+      }
+    };
+    const run = async (html: string, hash = '') => {
+      const dom = new JSDOM(html);
+      let destination = '';
+      let cleared = false;
+      const location = {
+        origin,
+        pathname: '/private-callback',
+        hash,
+        replace(value: string) {
+          assert.equal(cleared, true);
+          navigations++;
+          destination = value;
+        },
+      };
+      runInNewContext(dom.window.document.querySelector('script')!.textContent!, {
+        location,
+        history: {
+          replaceState() {
+            cleared = true;
+          },
+        },
+        document: dom.window.document,
+        indexedDB,
+        sessionStorage: {
+          getItem: (name: string) => storage.get(name) ?? null,
+          setItem: (name: string, value: string) => storage.set(name, value),
+          removeItem: (name: string) => storage.delete(name),
+        },
+        crypto: webcrypto,
+        TextEncoder,
+        Uint8Array,
+        URL,
+        btoa,
+        Date,
+        fetch: async (path: string, options: RequestInit) => {
+          assert.equal(path, '/start');
+          assert.equal(new Headers(options.headers).get('x-nod-bridge'), 'synthetic-bridge-key');
+          publicKey = JSON.parse(String(options.body)).browserKey;
+          assert.equal(publicKey.d, undefined);
+          const pending = (await readStored()) as { key: CryptoKey };
+          assert.equal(pending.key.extractable, false);
+          return Response.json({
+            id,
+            expiresAt,
+            url: `${brokerOrigin}/v2/connect/${scenario === 'invalid-target' ? 'complete' : 'pair'}?ticket=synthetic-sealed-ticket`,
+          });
+        },
+      });
+      try {
+        for (
+          let n = 0;
+          n < 200 && !destination && !dom.window.document.body.classList.contains('failed');
+          n++
+        )
+          await delay(5);
+        return { destination, failed: dom.window.document.body.classList.contains('failed') };
+      } finally {
+        dom.window.close();
+      }
+    };
+    const opened = await run(
+      renderIntegrationBrowser(brokerOrigin, 'synthetic-nonce', 'synthetic-bridge-key', {
+        expiresAt,
+      }),
+    );
+    if (scenario === 'write-failed' || scenario === 'invalid-target') {
+      assert.equal(opened.destination, '');
+      assert.equal(opened.failed, true);
+      assert.equal(navigations, 0);
+      continue;
+    }
+    assert.equal(
+      opened.destination,
+      `${brokerOrigin}/v2/connect/pair?ticket=synthetic-sealed-ticket`,
+    );
+    const saved = (await readStored()) as { id: string; key: CryptoKey };
+    assert.equal(saved.id, id);
+    assert.equal(saved.key.type, 'private');
+    assert.equal(saved.key.extractable, false);
+    if (scenario === 'wrong-tab') storage.clear();
+    failDelete = scenario === 'delete-failed';
+    const challenge = [
+      'nod-proxy-connect-v2',
+      id,
+      scenario === 'wrong-origin' ? 'https://attacker.example.test' : origin,
+      randomBytes(32).toString('hex'),
+      randomBytes(32).toString('base64url'),
+    ].join('\n');
+    const fragment =
+      '#' +
+      encodeURIComponent(
+        JSON.stringify({
+          id: scenario === 'wrong-id' ? randomBytes(32).toString('base64url') : id,
+          challenge,
+          proof: 'synthetic-sealed-proof',
+        }),
+      );
+    const returned = await run(
+      renderIntegrationBrowser(brokerOrigin, 'synthetic-nonce', '', {
+        id,
+        expiresAt: scenario === 'expired' ? Date.now() - 1 : expiresAt,
+      }),
+      fragment,
+    );
+    if (scenario !== 'success') {
+      assert.equal(returned.destination, '', scenario);
+      assert.equal(returned.failed, true, scenario);
+      assert.equal(navigations, 1);
+    } else {
+      const target = new URL(returned.destination);
+      assert.equal(target.origin, brokerOrigin);
+      assert.equal(target.pathname, '/v2/connect/native-proof');
+      assert.equal(target.search, '');
+      const result = JSON.parse(decodeURIComponent(target.hash.slice(1)));
+      assert.equal(result.proof, 'synthetic-sealed-proof');
+      assert.ok(
+        verify(
+          'sha256',
+          Buffer.from(challenge),
+          {
+            key: createPublicKey({ key: publicKey, format: 'jwk' }),
+            dsaEncoding: 'ieee-p1363',
+          },
+          Buffer.from(result.signature, 'base64url'),
+        ),
+      );
+      assert.equal(await readStored(), undefined);
+      assert.equal(storage.size, 0);
+      const repeated = await run(
+        renderIntegrationBrowser(brokerOrigin, 'synthetic-nonce', '', { id, expiresAt }),
+        fragment,
+      );
+      assert.equal(repeated.destination, '');
+      assert.equal(navigations, 2);
+    }
+  }
+});
+
+for (const desktop of [false, true]) {
   test(
-    `default Composio adapters: ${name}`,
+    `default proxy routing preserves encrypted identity and account access after ${desktop ? 'desktop' : 'server'} restart`,
     { skip: !process.env.TEST_DATABASE_URL },
     async (t) => {
-      const root = await mkdtemp(join(tmpdir(), 'nod-composio-defaults-'));
+      const root = await mkdtemp(join(tmpdir(), 'nod-default-proxy-'));
       t.after(() => rm(root, { recursive: true, force: true }));
       const db = await hostedDatabase();
       t.after(() => db.close());
       const schema = (await db.pool.query('SELECT current_schema() AS name')).rows[0].name;
       const databaseUrl = new URL(process.env.TEST_DATABASE_URL!);
       databaseUrl.searchParams.set('options', `-c search_path=${schema}`);
-      const desktop = scenario.includes('desktop');
-      const switching = scenario === 'switchable-server' || scenario === 'switchable-desktop';
-      const keyless =
-        scenario === 'keyless-server' || switching || scenario.endsWith('-managed-server');
-      const connectionId = randomUUID();
-      for (const phase of restart ? ['initial', 'restart'] : ['initial']) {
-        const managed =
-          (desktop && !switching) ||
-          (keyless && (phase === 'initial' || scenario === 'keyless-server'));
-        const rejected =
-          phase === 'restart' && (scenario === 'different-server-project' || switching);
+      for (const phase of ['initial', 'restart']) {
         const result = spawnSync(
           process.execPath,
           [
@@ -1547,7 +1457,7 @@ for (const [scenario, name, restart] of [
             fileURLToPath(new URL('./fixtures/composio-defaults.mts', import.meta.url)),
           ],
           {
-            input: JSON.stringify({ scenario, phase, connectionId }),
+            input: JSON.stringify({ phase }),
             encoding: 'utf8',
             timeout: 45_000,
             maxBuffer: 1024 * 1024,
@@ -1564,7 +1474,6 @@ for (const [scenario, name, restart] of [
               NOD_VAULT_KEY: Buffer.alloc(32, 11).toString('base64'),
               NOD_ANALYTICS_ENABLED: 'false',
               DATABASE_URL: databaseUrl.href,
-              COMPOSIO_BASE_URL: 'https://backend.composio.dev',
               PORT: '4310',
               NOD_PUBLIC_URL: desktop ? 'http://127.0.0.1:4310' : 'http://localhost:4310',
               ...(desktop
@@ -1574,37 +1483,15 @@ for (const [scenario, name, restart] of [
                     NOD_DESKTOP_AUTH_TOKEN: Buffer.alloc(32, 12).toString('base64url'),
                   }
                 : {}),
-              ...(!keyless
-                ? {
-                    COMPOSIO_API_KEY:
-                      phase === 'restart' && !desktop
-                        ? scenario === 'different-server-project'
-                          ? 'synthetic-project-b-foreign'
-                          : 'synthetic-project-a-rotated'
-                        : 'synthetic-project-a-first',
-                    NOD_COMPOSIO_PROXY_URL: 'https://unused-proxy.example.test',
-                  }
-                : {}),
             },
           },
         );
         assert.ifError(result.error);
         assert.equal(result.status, 0, result.stdout + result.stderr);
-        assert.doesNotMatch(result.stdout + result.stderr, /synthetic-(?:project|invalid)/);
-        const report = JSON.parse(result.stdout.trim().split('\n').at(-1)!);
-        assert.equal(
-          report.origin,
-          managed ? 'https://composio.n8n.cloud' : 'https://backend.composio.dev',
-        );
-        assert.equal(report.connected, !rejected);
-        assert.ok(
-          report.calls.every(
-            (call: { method: string; path: string }) =>
-              !call.path.includes('/connect/') &&
-              !call.path.includes('/link') &&
-              !(call.method === 'DELETE' && call.path.includes('/connected_accounts/')),
-          ),
-        );
+        const receipt = JSON.parse(result.stdout.trim().split('\n').at(-1)!);
+        assert.equal(receipt.connected, true);
+        assert.equal(receipt.executions, 1);
+        assert.equal(receipt.foreignDenied, 2);
       }
     },
   );
@@ -1613,13 +1500,15 @@ for (const [scenario, name, restart] of [
 test('managed authorization bounds streamed response bytes before parsing and cancels oversized bodies', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'nod-integration-limit-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  for (const variant of ['streamed', 'declared', 'misreported', 'utf8-overflow', 'utf8-split']) {
+  for (const variant of ['streamed', 'declared', 'misreported', 'utf8-overflow']) {
     await t.test(variant, async () => {
       let pulled = 0;
       let cancelled = false;
       let calls = 0;
       let total = 0;
       const proxy = createComposioProxy({
+        keyStore: installationKeyStore,
+        checkpoint: fixtureIdentityCheckpoint,
         dataRoot: root,
         ownerId: 'response-limit-owner',
         url: 'https://proxy.example.test',
@@ -1665,21 +1554,11 @@ test('managed authorization bounds streamed response bytes before parsing and ca
         },
       });
       await proxy.initialize();
-      const result = proxy.authorize(
-        'gmail',
-        `http://localhost:4310/api/apps/callback?state=${randomBytes(32).toString('base64url')}`,
-      );
-      if (variant === 'utf8-split') {
-        const authorized = await result;
-        assert.equal(authorized.url, 'https://proxy.example.test/v1/connect/pair?ticket=synthetic');
-        assert.equal('pairingCode' in authorized, false);
-        assert.equal(pulled, total);
-      } else {
-        await assert.rejects(result, /response is invalid/);
-        assert.equal(cancelled, true);
-        assert.ok(pulled < total);
-        if (variant === 'declared') assert.equal(pulled, 0);
-      }
+      const result = proxy.client.getClient().get('/api/v3.1/toolkits?type=native');
+      await assert.rejects(result);
+      assert.equal(cancelled, true);
+      assert.ok(pulled < total);
+      if (variant === 'declared') assert.equal(pulled, 0);
       assert.equal(calls, 1);
     });
   }
@@ -1701,7 +1580,6 @@ test(
     let completions = 0;
     let refreshes = 0;
     let pairingConfirmed = false;
-    let signInRequired = false;
     let pairingUnavailable = false;
     const provider = fakeProvider({
       id: 'fixture-deferred-session',
@@ -1730,7 +1608,7 @@ test(
       assert.equal(owner, 'fixture-owner');
       assert.equal(url, 'https://proxy.example.test/v1/connect/browser?ticket=fixture');
       if (pairingUnavailable) throw new Error('Synthetic pairing status unavailable.');
-      return { pairingConfirmed, ...(signInRequired ? { signInRequired: true } : {}) };
+      return { pairingConfirmed };
     });
     provider.connectionStatus = pairingChecks;
     provider.supportsSubscriptions = [];
@@ -1787,15 +1665,6 @@ test(
     assert.equal(pairingChecks.mock.callCount(), 0);
     assert.equal((await status(begin.json().url)).json().apps[0].pairingConfirmed, undefined);
     assert.equal(pairingChecks.mock.callCount(), 1);
-    signInRequired = true;
-    const renewal = await status(begin.json().url);
-    assert.equal(renewal.json().apps[0].signInRequired, true);
-    assert.equal(renewal.json().apps[0].pairingCode, undefined);
-    assert.equal(renewal.body.includes(secret), false);
-    assert.equal((await status()).json().apps[0].signInRequired, undefined);
-    assert.equal(completions, 0);
-    assert.equal(refreshes, 0);
-    signInRequired = false;
     pairingConfirmed = true;
     const paired = await status(begin.json().url);
     assert.equal(paired.json().apps[0].pairingConfirmed, true);
@@ -1810,7 +1679,6 @@ test(
     const unavailable = await status(begin.json().url);
     assert.equal(unavailable.statusCode, 200);
     assert.equal(unavailable.json().apps[0].pairingConfirmed, undefined);
-    assert.equal(unavailable.json().apps[0].signInRequired, undefined);
     pairingUnavailable = false;
     const pairingReads = pairingChecks.mock.callCount();
     await status('https://proxy.example.test/v1/connect/browser?ticket=foreign');
@@ -1859,822 +1727,6 @@ test(
     assert.match(String(replay.headers.location), /connection=expired/);
     assert.equal(completions, 1);
     assert.equal(refreshes, 1);
-  },
-);
-
-test(
-  'integration configuration upgrades preserve owned accounts and fence unverified recovery data',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    t.mock.timers.enable({ apis: ['setInterval'] });
-    const { createWorkAdmission } = await import('../src/server/work-admission.ts');
-    for (const variant of [
-      'missing-fingerprint',
-      'same-project-key-rotation',
-      'wrong-owner',
-      'wrong-service',
-      'unavailable',
-      'inactive',
-      'missing-provider',
-      'unconfigured-provider',
-    ]) {
-      await t.test(variant, async (t) => {
-        const database = await hostedDatabase();
-        const apps: ReturnType<typeof Fastify>[] = [];
-        t.after(async () => {
-          for (const app of apps) await app.close();
-          await database.close();
-        });
-        const owner = 'upgrade-owner';
-        const account = 'retained-account';
-        const connectionId = randomUUID();
-        const state = randomBytes(32).toString('base64url');
-        const verified = ['missing-fingerprint', 'same-project-key-rotation'].includes(variant);
-        const calls: string[] = [];
-        const remote = new Map([
-          [
-            account,
-            {
-              owner: variant === 'wrong-owner' ? 'another-owner' : owner,
-              service: variant === 'wrong-service' ? 'slack' : 'gmail',
-              active: variant !== 'inactive',
-              message: 'owned synthetic message',
-            },
-          ],
-        ]);
-        const session: IntegrationSession = {
-          id: 'upgraded-session',
-          authorize: async () => {
-            calls.push('authorize');
-            throw new Error('Existing connections must not authorize again.');
-          },
-          search: async () => ({ tools: {}, suggestions: [] }),
-          execute: async (_action, _args, accountId) => {
-            calls.push('execute');
-            const value = remote.get(accountId!);
-            assert.equal(value?.owner, owner);
-            return { message: value!.message };
-          },
-        };
-        const provider: IntegrationProvider = {
-          ...fakeProvider(session),
-          configurationId: 'current-project-key',
-          configured: variant !== 'unconfigured-provider',
-          createSession: async (ownerId, accounts) => {
-            calls.push('create-session');
-            assert.equal(ownerId, owner);
-            assert.deepEqual(accounts, { gmail: [account] });
-            return session;
-          },
-          inspectAccount: async (accountId, ownerId, options) => {
-            calls.push('inspect');
-            assert.equal(options?.verifyOwner, true);
-            if (variant === 'unavailable') throw new Error('Synthetic provider outage.');
-            const value = remote.get(accountId);
-            if (!value || value.owner !== ownerId) throw new Error('Account owner mismatch.');
-            return { ...value, accountEmail: 'owner@example.test' };
-          },
-          deleteAccount: async () => {
-            calls.push('delete-account');
-          },
-          deleteSession: async () => {
-            calls.push('delete-session');
-          },
-          subscribe: async () => {
-            calls.push('subscribe');
-            return { id: 'new-trigger' };
-          },
-          unsubscribe: async () => {
-            calls.push('unsubscribe');
-          },
-          parseCallback: (value) => {
-            calls.push('callback');
-            return fakeProvider(session).parseCallback(value);
-          },
-          inboxSnippets: async () => {
-            calls.push('inbox');
-            return [];
-          },
-          verificationEmails: async () => {
-            calls.push('verification-email');
-            return [];
-          },
-          sentEmails: async () => {
-            calls.push('sent-email');
-            return [];
-          },
-          pollInbox: async (accountId, cursor) => {
-            calls.push('poll');
-            assert.equal(accountId, account);
-            assert.equal(cursor, 'retained-cursor');
-            return { cursor: 'next-cursor', hasMore: false, messages: [] };
-          },
-        };
-        const setup = await createIntegrations(database.pool, {
-          ownerId: owner,
-          provider: { ...provider, configurationId: undefined },
-          baseUrl: 'http://localhost:4310',
-          wake: async () => {},
-        });
-        const first = Fastify();
-        apps.push(first);
-        setup.registerRoutes(first);
-        await database.pool.query('ALTER TABLE app_connections ADD COLUMN pairing_code text');
-        await database.pool.query(
-          `INSERT INTO app_connections (id,owner_id,provider_id,slug,account_id,configuration_id,
-           account_active,account_checked_at,account_name,account_email,watch_requested,inbox_cursor,
-           trigger_id,triggers_enabled,pending_account_id,callback_hash,callback_expires,callback_verifier,
-           pending_account_email,pending_auth_config_id,setup_link_hash,pairing_code,callback_claim_id)
-           VALUES ($1,$2,$3,'gmail',$4,$5,true,now(),'Saved account','owner@example.test',true,'retained-cursor',
-           'retained-trigger',true,'retained-pending',$6,now()+$7::interval,'retained-verifier',
-           'owner@example.test','retained-auth-config',$8,'123-456',$9)`,
-          [
-            connectionId,
-            owner,
-            variant === 'missing-provider' ? 'removed-provider' : provider.id,
-            account,
-            variant === 'missing-fingerprint' ? null : 'previous-project-key',
-            createHash('sha256').update(state).digest('hex'),
-            variant === 'unavailable' ? '-1 minute' : '10 minutes',
-            'a'.repeat(64),
-            variant === 'wrong-service' ? 'retained-claim' : null,
-          ],
-        );
-        await database.pool.query(
-          `INSERT INTO integration_events (id,owner_id,provider_id,summary,slug,account_id,trigger_id)
-           VALUES ('retained-event',$1,$2,'retained synthetic update','gmail',$3,'retained-trigger')`,
-          [owner, variant === 'missing-provider' ? 'removed-provider' : provider.id, account],
-        );
-        await database.pool.query(
-          'CREATE TABLE integration_sessions (owner_id text PRIMARY KEY,session_id text,provider_id text,configuration_version integer,configuration_id text)',
-        );
-        await database.pool.query(
-          `INSERT INTO integration_sessions(owner_id,session_id,provider_id,configuration_id)
-           VALUES($1,'retained-session',$2,'previous-project-key')`,
-          [owner, provider.id],
-        );
-        const before = (await database.pool.query('SELECT * FROM app_connections')).rows[0];
-        delete before.pairing_code;
-        await first.close();
-        const admission = createWorkAdmission();
-        const integrations = await createIntegrations(database.pool, {
-          admission,
-          ownerId: owner,
-          provider,
-          baseUrl: 'http://localhost:4310',
-          wake: async (_summary, _id, current) => {
-            const client = await database.pool.connect();
-            try {
-              assert.equal(await current!(client), true);
-            } finally {
-              client.release();
-            }
-            calls.push('wake');
-          },
-          learnWritingStyle: async (fetch) => {
-            await fetch(new AbortController().signal);
-          },
-        });
-        const app = Fastify();
-        apps.push(app);
-        integrations.registerRoutes(app);
-        admission.pause();
-        await admission.drain(Date.now() + 2000);
-        admission.resume();
-        assert.deepEqual((await database.pool.query('SELECT * FROM app_connections')).rows[0], {
-          ...before,
-          configuration_id: verified ? provider.configurationId : before.configuration_id,
-        });
-        assert.deepEqual(
-          calls,
-          ['missing-provider', 'unconfigured-provider'].includes(variant) ? [] : ['inspect'],
-        );
-        const listed = (await integrations.list(owner, { refresh: false })).find(
-          (row) => row.connectionId === connectionId,
-        )!;
-        assert.equal(listed.status === 'connected', verified);
-        if (verified) {
-          assert.deepEqual(
-            await integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId }),
-            { message: 'owned synthetic message' },
-          );
-          await integrations.pollInboxes();
-          await integrations.drain();
-          assert.deepEqual(calls, [
-            'inspect',
-            'create-session',
-            'execute',
-            'delete-session',
-            'poll',
-            'wake',
-          ]);
-          assert.equal(
-            (await database.pool.query('SELECT inbox_cursor FROM app_connections')).rows[0]
-              .inbox_cursor,
-            'next-cursor',
-          );
-          assert.equal(
-            (await database.pool.query('SELECT state FROM integration_events')).rows[0].state,
-            'delivered',
-          );
-          return;
-        }
-        await assert.rejects(integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId }));
-        await assert.rejects(
-          integrations.execute(owner, 'SEARCH_TOOLS', { query: 'Read Gmail', connectionId }),
-        );
-        assert.deepEqual(await integrations.inboxSnippets(new AbortController().signal), []);
-        assert.equal(
-          await integrations.emailCode(
-            owner,
-            {
-              recipient: 'owner@example.test',
-              origin: 'https://example.test',
-              after: Date.now() - 30_000,
-              before: Date.now(),
-            },
-            new AbortController().signal,
-          ),
-          undefined,
-        );
-        await integrations.pollInboxes();
-        await integrations.drain();
-        await app.inject({
-          method: 'POST',
-          url: '/api/webhooks/fixture',
-          headers: { 'x-fixture-valid': 'yes' },
-          payload: {
-            id: 'unverified-update',
-            ownerId: owner,
-            service: 'gmail',
-            accountId: account,
-            subscriptionId: 'retained-trigger',
-            trigger: 'fixture-inbox-update',
-            data: {},
-          },
-        });
-        const forged = await app.inject({
-          url: `/api/apps/callback?state=${randomBytes(32).toString('base64url')}&account_ref=${account}&outcome=ok`,
-        });
-        assert.equal(new URL(forged.headers.location!).searchParams.get('connection'), 'expired');
-        assert.deepEqual(
-          (await database.pool.query('SELECT * FROM app_connections')).rows[0],
-          before,
-        );
-        const rejected = await app.inject({
-          url: `/api/apps/callback?state=${state}&account_ref=${account}&outcome=ok`,
-        });
-        assert.equal(new URL(rejected.headers.location!).searchParams.get('connection'), 'failed');
-        assert.deepEqual((await database.pool.query('SELECT * FROM app_connections')).rows[0], {
-          ...before,
-          pending_account_id: null,
-          pending_account_email: null,
-          pending_auth_config_id: null,
-          callback_hash: null,
-          callback_claim_id: null,
-          callback_verifier: null,
-          callback_expires: null,
-          setup_link_hash: null,
-        });
-        const replay = await app.inject({
-          url: `/api/apps/callback?state=${state}&account_ref=${account}&outcome=ok`,
-        });
-        assert.equal(new URL(replay.headers.location!).searchParams.get('connection'), 'expired');
-        assert.deepEqual(
-          (await database.pool.query('SELECT id,state FROM integration_events')).rows,
-          [{ id: 'retained-event', state: 'queued' }],
-        );
-        await database.pool.query('UPDATE app_connections SET trigger_id=NULL WHERE id=$1', [
-          connectionId,
-        ]);
-        await integrations.syncWatches();
-        assert.deepEqual(
-          calls,
-          ['missing-provider', 'unconfigured-provider'].includes(variant) ? [] : ['inspect'],
-        );
-      });
-    }
-    for (const variant of [
-      'deferred-adoption',
-      'disconnected-during-verification',
-      'configuration-replaced-during-verification',
-      'provider-reconfigured-during-verification',
-      'service-replaced-during-verification',
-      'closed-during-verification',
-    ]) {
-      await t.test(variant, async (t) => {
-        const database = await hostedDatabase({ max: 1, connectionTimeoutMillis: 1500 });
-        const apps: ReturnType<typeof Fastify>[] = [];
-        let releaseInspection = () => {};
-        const heldInspection = new Promise<void>((resolve) => {
-          releaseInspection = resolve;
-        });
-        let beganInspection = () => {};
-        const inspectionStarted = new Promise<void>((resolve) => {
-          beganInspection = resolve;
-        });
-        let starting: Promise<Awaited<ReturnType<typeof createIntegrations>>> | undefined;
-        t.after(async () => {
-          releaseInspection();
-          await starting?.catch(() => {});
-          for (const app of apps) await app.close();
-          await database.close();
-        });
-        const owner = 'deferred-upgrade-owner';
-        const connectionId = randomUUID();
-        const inspected: string[] = [];
-        const sessionAccounts: Array<Record<string, string[]>> = [];
-        const deletedSessions: string[] = [];
-        let refreshes = 0;
-        const provider: IntegrationProvider = {
-          ...fakeProvider({
-            id: 'unused',
-            authorize: async () => assert.fail('Existing accounts must not authorize again.'),
-            search: async () => ({ tools: {}, suggestions: [] }),
-            execute: async () => assert.fail('A saved session must not be restored.'),
-          }),
-          configurationId: 'current-project',
-          createSession: async (ownerId, accounts) => {
-            assert.equal(ownerId, owner);
-            const snapshot = JSON.parse(JSON.stringify(accounts)) as Record<string, string[]>;
-            sessionAccounts.push(snapshot);
-            return {
-              id: `created-session-${sessionAccounts.length}`,
-              authorize: async () => assert.fail('Existing accounts must not authorize again.'),
-              search: async () => ({ tools: {}, suggestions: [] }),
-              execute: async (_action, _args, accountId) => {
-                assert.ok(snapshot.gmail?.includes(accountId!));
-                return { accountId };
-              },
-            };
-          },
-          deleteSession: async (id) => {
-            deletedSessions.push(id);
-          },
-          deleteAccount: async () => assert.fail('Old project grants must not be changed.'),
-          inspectAccount: async (accountId, ownerId, options) => {
-            assert.equal(ownerId, owner);
-            assert.equal(options?.verifyOwner, true);
-            inspected.push(accountId);
-            beganInspection();
-            await heldInspection;
-            return { active: true, service: 'gmail' };
-          },
-        };
-        const setup = await createIntegrations(database.pool, {
-          ownerId: owner,
-          provider: { ...provider, configurationId: undefined },
-          baseUrl: 'http://localhost:4310',
-          wake: async () => assert.fail('Startup must not dispatch work.'),
-        });
-        const first = Fastify();
-        apps.push(first);
-        setup.registerRoutes(first);
-        await database.pool.query(
-          `INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id,
-           account_checked_at,account_email,inbox_cursor,watch_requested)
-           VALUES($1,$2,'fixture','gmail','retained-account','old-project','2100-01-01',
-           'owner@example.test','retained-cursor',false)`,
-          [connectionId, owner],
-        );
-        if (variant === 'closed-during-verification')
-          await database.pool.query(
-            `INSERT INTO app_connections(owner_id,provider_id,slug,account_id,configuration_id)
-             SELECT $1,'fixture','gmail','pending-account-'||n,'old-project' FROM generate_series(1,5) AS n`,
-            [owner],
-          );
-        await database.pool.query(
-          'CREATE TABLE integration_sessions (owner_id text PRIMARY KEY,session_id text,provider_id text,configuration_version integer,configuration_id text)',
-        );
-        await database.pool.query(
-          `INSERT INTO integration_sessions(owner_id,provider_id,session_id,configuration_id,configuration_version)
-           VALUES($1,'fixture','old-project-session','old-project',3)`,
-          [owner],
-        );
-        await first.close();
-        const admission = createWorkAdmission();
-        const app = Fastify();
-        apps.push(app);
-        let integrations: Awaited<ReturnType<typeof createIntegrations>> | undefined;
-        starting = createIntegrations(database.pool, {
-          admission,
-          ownerId: owner,
-          provider,
-          baseUrl: 'http://localhost:4310',
-          wake: async () => assert.fail('Startup must not dispatch work.'),
-          refresh: () => {
-            refreshes++;
-          },
-        }).then((value) => {
-          value.registerRoutes(app);
-          integrations = value;
-          return value;
-        });
-        await inspectionStarted;
-        assert.ok(integrations, 'Local startup must finish while remote verification is pending.');
-        const listed = await integrations.list(owner, { refresh: false });
-        assert.equal(
-          listed.find((row) => row.connectionId === connectionId)?.status,
-          'disconnected',
-        );
-        await assert.rejects(integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId }));
-        await integrations.execute(owner, 'SEARCH_TOOLS', { query: 'Find mail tools' });
-        assert.deepEqual(sessionAccounts, [{}]);
-        if (variant === 'disconnected-during-verification') {
-          const removed = await app.inject({
-            method: 'POST',
-            url: `/api/apps/gmail/accounts/${connectionId}/disconnect`,
-          });
-          assert.equal(removed.statusCode, 200);
-        }
-        if (variant === 'configuration-replaced-during-verification')
-          await database.pool.query('UPDATE app_connections SET configuration_id=$1 WHERE id=$2', [
-            'replacement-project',
-            connectionId,
-          ]);
-        if (variant === 'service-replaced-during-verification')
-          await database.pool.query("UPDATE app_connections SET slug='slack' WHERE id=$1", [
-            connectionId,
-          ]);
-        if (variant === 'provider-reconfigured-during-verification')
-          provider.configurationId = 'replacement-project';
-        if (variant.startsWith('closed-during-')) {
-          if (variant === 'closed-during-verification') assert.equal(inspected.length, 4);
-          await Promise.race([
-            app.close(),
-            delay(1000).then(() => assert.fail('Shutdown must not await remote verification.')),
-          ]);
-          assert.equal(admission.pending, 0);
-        }
-        releaseInspection();
-        admission.pause();
-        await admission.drain(Date.now() + 2000);
-        admission.resume();
-        await delay(0);
-        const rows = (await database.pool.query('SELECT * FROM app_connections')).rows;
-        if (variant === 'deferred-adoption') {
-          assert.equal(rows[0].configuration_id, 'current-project');
-          assert.equal(rows[0].inbox_cursor, 'retained-cursor');
-          assert.equal(rows[0].watch_requested, false);
-          assert.equal(refreshes, 1);
-          assert.deepEqual(deletedSessions, ['created-session-1']);
-          await integrations.execute(owner, 'SEARCH_TOOLS', { query: 'Find mail tools' });
-          assert.deepEqual(sessionAccounts, [{}, { gmail: ['retained-account'] }]);
-          assert.deepEqual(
-            await integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId }),
-            { accountId: 'retained-account' },
-          );
-          assert.deepEqual(sessionAccounts.at(-1), { gmail: ['retained-account'] });
-        } else {
-          assert.equal(refreshes, 0);
-          if (variant === 'disconnected-during-verification') assert.deepEqual(rows, []);
-          else
-            assert.ok(
-              rows.every(
-                (row) =>
-                  row.configuration_id ===
-                  (variant === 'configuration-replaced-during-verification'
-                    ? 'replacement-project'
-                    : 'old-project'),
-              ),
-            );
-          assert.equal(deletedSessions.includes('old-project-session'), false);
-          if (variant === 'closed-during-verification') assert.equal(inspected.length, 4);
-        }
-      });
-    }
-  },
-);
-
-test(
-  'configuration adoption preserves in-flight reconnects and ignores unrelated pending attempts',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    t.mock.timers.enable({ apis: ['setInterval'] });
-    t.mock.method(globalThis, 'fetch', async () => {
-      throw new Error('Unexpected external request in the configuration adoption fixture.');
-    });
-    const { createWorkAdmission } = await import('../src/server/work-admission.ts');
-    for (const variant of [
-      'pending',
-      'claimed',
-      'restart',
-      'transaction-overlap',
-      'callback-first',
-      'expired',
-      'cancelled',
-      'foreign-owner-pending',
-      'other-target-pending',
-    ]) {
-      await t.test(variant, async (t) => {
-        const applicationName = `adoption-${randomUUID()}`;
-        const database = await hostedDatabase({ application_name: applicationName });
-        const { pool } = database;
-        const apps: ReturnType<typeof Fastify>[] = [];
-        const gates: ReturnType<typeof deferred>[] = [];
-        const parsingStarted = deferred();
-        const parsingRelease = deferred();
-        let inspection = { started: deferred(), release: deferred() };
-        gates.push(inspection.release);
-        const lockKey = randomBytes(4).readUInt32BE() & 0x7fffffff;
-        let lock: pg.PoolClient | undefined;
-        let pendingRequest: Promise<unknown> | undefined;
-        async function unlock() {
-          if (!lock) return;
-          await lock.query('SELECT pg_advisory_unlock($1)', [lockKey]);
-          lock.release();
-          lock = undefined;
-        }
-        t.after(async () => {
-          for (const gate of gates) gate.resolve();
-          parsingRelease.resolve();
-          await unlock();
-          await pendingRequest?.catch(() => {});
-          for (const app of apps) await app.close();
-          await database.close();
-        });
-        async function until(check: () => Promise<boolean>) {
-          const deadline = Date.now() + 2000;
-          while (!(await check())) {
-            assert.ok(Date.now() < deadline, `Timed out waiting for ${variant}.`);
-            await delay(5);
-          }
-        }
-        async function reached(promise: Promise<void>) {
-          await Promise.race([
-            promise,
-            delay(2000, undefined, { ref: false }).then(() =>
-              assert.fail(`Timed out waiting for ${variant}.`),
-            ),
-          ]);
-        }
-        const owner = 'adoption-owner';
-        const connectionId = randomUUID();
-        const email = 'owner@example.test';
-        let callback = '';
-        let authorizations = 0;
-        let completions = 0;
-        let refreshes = 0;
-        const deleted: string[] = [];
-        const remote = new Map([
-          ['original-account', { owner, email, active: true }],
-          ['replacement-account', { owner, email, active: false }],
-        ]);
-        const session: IntegrationSession = {
-          id: 'owned-session',
-          authorize: async (_service, url) => {
-            authorizations++;
-            callback = url;
-            return { accountId: 'replacement-account', url: 'https://consent.example.test/link' };
-          },
-          search: async () => ({ tools: {}, suggestions: [] }),
-          execute: async (_action, _args, accountId) => {
-            assert.equal(remote.get(accountId!)?.active, true);
-            return { accountId };
-          },
-        };
-        const provider: IntegrationProvider = {
-          ...fakeProvider(session),
-          configurationId: 'current-project',
-          webhooksConfigured: false,
-          supportsSubscriptions: [],
-          inspectAccount: async (id, user, options) => {
-            assert.equal(user, owner);
-            assert.equal(options?.verifyOwner, true);
-            if (id === 'original-account') {
-              const gate = inspection;
-              gate.started.resolve();
-              await gate.release.promise;
-            }
-            const account = remote.get(id);
-            assert.equal(account?.owner, user);
-            return { active: account!.active, service: 'gmail', accountEmail: account!.email };
-          },
-          deleteAccount: async (id, user) => {
-            assert.equal(user, owner);
-            assert.notEqual(id, 'original-account');
-            deleted.push(id);
-            remote.delete(id);
-          },
-          parseCallback: async (raw) => {
-            const query = raw as Record<string, string>;
-            completions++;
-            if (variant === 'claimed') {
-              parsingStarted.resolve();
-              await parsingRelease.promise;
-            }
-            if (query.outcome === 'ok') remote.get(query.account_ref)!.active = true;
-            return {
-              state: query.state,
-              accountId: query.account_ref,
-              success: query.outcome === 'ok',
-            };
-          },
-        };
-        const setup = await createIntegrations(pool, {
-          ownerId: owner,
-          provider: { ...provider, configurationId: undefined },
-          baseUrl: 'http://localhost:4310',
-          wake: async () => assert.fail('Configuration recovery must not dispatch work.'),
-        });
-        const setupApp = Fastify();
-        setup.registerRoutes(setupApp);
-        await setupApp.close();
-        await pool.query(
-          `INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id,
-           account_active,account_checked_at,account_email,account_name,watch_requested,inbox_cursor)
-           VALUES($1,$2,'fixture','gmail','original-account','previous-project',true,now(),$3,'Saved account',false,'retained-cursor')`,
-          [connectionId, owner, email],
-        );
-        async function start() {
-          const admission = createWorkAdmission();
-          const integrations = await createIntegrations(pool, {
-            admission,
-            ownerId: owner,
-            provider,
-            baseUrl: 'http://localhost:4310',
-            wake: async () => assert.fail('Configuration recovery must not dispatch work.'),
-            refresh: () => {
-              refreshes++;
-            },
-          });
-          const app = Fastify();
-          apps.push(app);
-          integrations.registerRoutes(app);
-          return { app, integrations, admission };
-        }
-        let { app, integrations, admission } = await start();
-        await until(async () => admission.pending === 1);
-        await reached(inspection.started.promise);
-        const original = (
-          await pool.query('SELECT * FROM app_connections WHERE id=$1', [connectionId])
-        ).rows[0];
-        async function begin() {
-          return app.inject({
-            method: 'POST',
-            url: '/api/apps/gmail/connect',
-            payload: { connectionId },
-          });
-        }
-        async function complete(outcome = 'ok') {
-          const url = new URL(callback);
-          url.searchParams.set('account_ref', 'replacement-account');
-          url.searchParams.set('outcome', outcome);
-          return app.inject({ url: `${url.pathname}${url.search}` });
-        }
-        if (variant === 'transaction-overlap') {
-          lock = await pool.connect();
-          await lock.query('SELECT pg_advisory_lock($1)', [lockKey]);
-          await pool.query(
-            `CREATE FUNCTION hold_replacement() RETURNS trigger LANGUAGE plpgsql AS $$
-             BEGIN PERFORM pg_advisory_xact_lock(${lockKey}); RETURN NEW; END $$;
-             CREATE TRIGGER hold_replacement BEFORE INSERT ON app_connections
-             FOR EACH ROW WHEN (NEW.replaces_connection_id IS NOT NULL) EXECUTE FUNCTION hold_replacement()`,
-          );
-          const beginning = begin();
-          pendingRequest = beginning;
-          await until(
-            async () =>
-              (
-                await pool.query(
-                  "SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND NOT granted",
-                  [lockKey],
-                )
-              ).rowCount! > 0,
-          );
-          inspection.release.resolve();
-          await until(
-            async () =>
-              admission.pending === 0 ||
-              (
-                await pool.query(
-                  "SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query LIKE 'UPDATE app_connections SET configuration_id=%'",
-                  [applicationName],
-                )
-              ).rowCount! > 0,
-          );
-          await unlock();
-          const begun = await beginning;
-          assert.equal(begun.statusCode, 200, begun.body);
-        } else {
-          const begun = await begin();
-          assert.equal(begun.statusCode, 200, begun.body);
-        }
-        assert.equal(authorizations, 1);
-        const pending = (
-          await pool.query('SELECT * FROM app_connections WHERE replaces_connection_id=$1', [
-            connectionId,
-          ])
-        ).rows[0];
-        assert.ok(pending);
-        if (variant === 'restart') {
-          await app.close();
-          inspection.release.resolve();
-          inspection = { started: deferred(), release: deferred() };
-          gates.push(inspection.release);
-          ({ app, integrations, admission } = await start());
-          await reached(inspection.started.promise);
-        }
-        let completing: ReturnType<typeof complete> | undefined;
-        if (variant === 'claimed') {
-          completing = complete();
-          pendingRequest = completing;
-          await reached(parsingStarted.promise);
-          assert.ok(
-            (
-              await pool.query('SELECT callback_claim_id FROM app_connections WHERE id=$1', [
-                pending.id,
-              ])
-            ).rows[0].callback_claim_id,
-          );
-        }
-        if (variant === 'callback-first') {
-          const completed = await complete();
-          assert.match(String(completed.headers.location), /connection=connected/);
-          assert.equal(refreshes, 1);
-        }
-        if (variant === 'expired')
-          await pool.query(
-            "UPDATE app_connections SET callback_expires=now()-interval '1 second' WHERE id=$1",
-            [pending.id],
-          );
-        if (variant === 'cancelled')
-          assert.match(String((await complete('cancel')).headers.location), /connection=cancelled/);
-        if (variant === 'foreign-owner-pending')
-          await pool.query("UPDATE app_connections SET owner_id='another-owner' WHERE id=$1", [
-            pending.id,
-          ]);
-        if (variant === 'other-target-pending') {
-          const otherId = randomUUID();
-          await pool.query(
-            `INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id)
-             VALUES($1,$2,'fixture','gmail','unrelated-account','current-project')`,
-            [otherId, owner],
-          );
-          await pool.query('UPDATE app_connections SET replaces_connection_id=$2 WHERE id=$1', [
-            pending.id,
-            otherId,
-          ]);
-        }
-        const retainedPending = (
-          await pool.query('SELECT * FROM app_connections WHERE id=$1', [pending.id])
-        ).rows[0];
-        inspection.release.resolve();
-        admission.pause();
-        await admission.drain(Date.now() + 2000);
-        admission.resume();
-        const beforeCallback = (
-          await pool.query('SELECT * FROM app_connections WHERE id=$1', [connectionId])
-        ).rows[0];
-        const succeeds = [
-          'pending',
-          'claimed',
-          'restart',
-          'transaction-overlap',
-          'callback-first',
-        ].includes(variant);
-        if (succeeds) {
-          if (variant !== 'callback-first') {
-            parsingRelease.resolve();
-            const completed = await (completing ?? complete());
-            assert.match(String(completed.headers.location), /connection=connected/);
-          }
-          const saved = (
-            await pool.query('SELECT * FROM app_connections WHERE id=$1', [connectionId])
-          ).rows[0];
-          assert.equal(saved.account_id, 'replacement-account');
-          assert.equal(saved.configuration_id, 'current-project');
-          assert.equal(saved.account_email, original.account_email);
-          assert.equal(saved.watch_requested, original.watch_requested);
-          assert.equal(saved.account_active, true);
-          assert.equal(
-            (await pool.query('SELECT 1 FROM app_connections WHERE id=$1', [pending.id])).rowCount,
-            0,
-          );
-          assert.deepEqual(
-            await integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId }),
-            { accountId: 'replacement-account' },
-          );
-          assert.equal(completions, 1);
-          assert.equal(refreshes, 1);
-          assert.doesNotMatch(String((await complete()).headers.location), /connection=connected/);
-          assert.equal(completions, 1);
-        } else {
-          assert.deepEqual(beforeCallback, { ...original, configuration_id: 'current-project' });
-          assert.deepEqual(
-            (await pool.query('SELECT * FROM app_connections WHERE id=$1', [pending.id])).rows[0],
-            retainedPending,
-          );
-          assert.equal(refreshes, 1);
-          assert.equal(completions, variant === 'cancelled' ? 1 : 0);
-          if (variant === 'expired')
-            assert.match(String((await complete()).headers.location), /connection=expired/);
-        }
-        assert.equal(remote.has('original-account'), true);
-        assert.equal(deleted.includes('original-account'), false);
-        assert.equal(authorizations, 1);
-      });
-    }
   },
 );
 
@@ -4029,47 +3081,6 @@ async function appsFixture(
 }
 
 test(
-  'an app connection switch waits for a completing sign-in, refuses new ones and revokes it',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const f = await appsFixture(t);
-    const started = await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
-    assert.equal(started.statusCode, 200, started.body);
-    const callback = new URL(f.callbacks.at(-1)!);
-    const id = [...f.accounts.keys()].at(-1)!;
-    callback.searchParams.set('account', id);
-    const inspect = f.provider.inspectAccount;
-    const inspecting = deferred();
-    const release = deferred();
-    f.provider.inspectAccount = async (...args) => {
-      inspecting.resolve();
-      await release.promise;
-      return inspect(...args);
-    };
-    const completing = f.app.inject({ url: `${callback.pathname}${callback.search}` });
-    await inspecting.promise;
-    let swapped = false;
-    const switching = f.service.changeProvider(true, async () => {
-      swapped = true;
-    });
-    const refused = await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
-    assert.equal(refused.statusCode, 409);
-    assert.equal(swapped, false);
-    assert.equal(f.removed.includes(id), false);
-    f.provider.inspectAccount = inspect;
-    release.resolve();
-    assert.equal(
-      (await completing).headers.location,
-      'http://localhost:4310/apps?connection=connected',
-    );
-    await switching;
-    assert.equal(swapped, true);
-    assert.ok(f.removed.includes(id));
-    assert.deepEqual((await f.pool.query('SELECT account_id FROM app_connections')).rows, []);
-  },
-);
-
-test(
   'managed app discovery keeps consent and underscore tool routing bound to owned accounts',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
@@ -4140,13 +3151,13 @@ test(
     const failed = await f.app.inject({ url: '/api/apps/catalog' });
     assert.equal(failed.statusCode, 502);
     assert.doesNotMatch(failed.body, /private-provider-detail/);
-    failure = Object.assign(new IntegrationConnectionError('permission', 'auth_config'), {
+    failure = Object.assign(new IntegrationConnectionError('permission', 'link'), {
       cause: new Error('synthetic-private-auth-response'),
     });
     const missingAuthAccess = await f.app.inject({ url: '/api/apps/catalog' });
     assert.equal(missingAuthAccess.statusCode, 503);
     assert.deepEqual(Object.keys(missingAuthAccess.json()), ['error']);
-    assert.match(missingAuthAccess.json().error, /Auth configs read access/);
+    assert.match(missingAuthAccess.json().error, /connection service/);
     assert.doesNotMatch(missingAuthAccess.body, /synthetic-private-auth-response/);
     failure = new IntegrationCatalogAccessDenied();
     const denied = await f.app.inject({ url: '/api/apps/catalog' });
@@ -5035,6 +4046,109 @@ test(
 );
 
 test(
+  'a new installation reconnects apps without using prior accounts or erasing local progress',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    f.provider.configurationId = 'previous-installation';
+    const previous = await f.connect('gmail');
+    const removable = await f.connect('slack');
+    await f.pool.query(
+      `INSERT INTO integration_events(id,owner_id,summary,state,slug,account_id,provider_id)
+       VALUES('retained-history','local-development','Synthetic completed app activity','delivered','gmail',$1,'fixture')`,
+      [previous.accountId],
+    );
+    const progress = (await f.pool.query('SELECT * FROM app_setup_completions ORDER BY link_hash'))
+      .rows;
+    const history = (await f.pool.query('SELECT * FROM integration_events')).rows;
+    const saved = (
+      await f.pool.query('SELECT * FROM app_connections WHERE id=$1', [previous.connectionId])
+    ).rows[0];
+    await f.app.close();
+    f.removed.length = 0;
+    f.provider.configurationId = 'new-installation';
+    const inspected: string[] = [];
+    f.provider.inspectAccount = async (accountId) => {
+      assert.notEqual(accountId, previous.accountId);
+      assert.notEqual(accountId, removable.accountId);
+      inspected.push(accountId);
+      return { active: f.accounts.has(accountId), service: f.accounts.get(accountId)! };
+    };
+    f.provider.deleteAccount = async (accountId) => {
+      assert.notEqual(accountId, previous.accountId);
+      assert.notEqual(accountId, removable.accountId);
+      f.removed.push(accountId);
+    };
+    f.provider.unsubscribe = async (triggerId) => {
+      assert.fail(
+        'A new installation must not revoke the previous installation subscription: ' + triggerId,
+      );
+    };
+    const service = await createIntegrations(f.pool, {
+      ownerId: 'local-development',
+      provider: f.provider,
+      baseUrl: 'http://localhost:4310',
+      wake: async () => assert.fail('Completed history must not execute again.'),
+    });
+    const app = Fastify();
+    service.registerRoutes(app);
+    t.after(() => app.close());
+    const stale = (await service.list()).find(
+      (connection) => connection.connectionId === previous.connectionId,
+    );
+    assert.equal(stale?.status, 'disconnected');
+    assert.equal(stale?.reconnectRequired, true);
+    await assert.rejects(
+      service.execute('local-development', 'GMAIL_FETCH_EMAILS', {
+        connectionId: previous.connectionId,
+      }),
+      /unavailable|connected account|Connect/i,
+    );
+    assert.deepEqual(inspected, []);
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/apps/slack/accounts/${removable.connectionId}/disconnect`,
+        })
+      ).statusCode,
+      200,
+    );
+    assert.deepEqual(f.removed, []);
+    const begin = await app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
+    assert.equal(begin.statusCode, 200, begin.body);
+    const accountId = [...f.accounts.keys()].at(-1)!;
+    assert.notEqual(accountId, previous.accountId);
+    const callback = new URL(f.callbacks.at(-1)!);
+    callback.searchParams.set('account', accountId);
+    const complete = await app.inject({ url: `${callback.pathname}${callback.search}` });
+    assert.equal(complete.headers.location, 'http://localhost:4310/apps?connection=connected');
+    const current = (await service.list()).find(
+      (connection) => connection.accountId === accountId,
+    )!;
+    await service.execute('local-development', 'GMAIL_FETCH_EMAILS', {
+      connectionId: current.connectionId,
+    });
+    assert.equal(f.executed.at(-1)?.accountId, accountId);
+    assert.deepEqual(
+      (await f.pool.query('SELECT * FROM app_connections WHERE id=$1', [previous.connectionId]))
+        .rows[0],
+      saved,
+    );
+    assert.deepEqual((await f.pool.query('SELECT * FROM integration_events')).rows, history);
+    assert.deepEqual(
+      (
+        await f.pool.query(
+          'SELECT * FROM app_setup_completions WHERE link_hash=ANY($1::text[]) ORDER BY link_hash',
+          [progress.map((entry) => entry.link_hash)],
+        )
+      ).rows,
+      progress,
+    );
+  },
+);
+
+test(
   'background app inventory stays local, owned and current without authenticating saved logins',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
@@ -5877,12 +4991,35 @@ test(
   },
 );
 
+function composioProxyFixture(
+  client: Composio,
+  ownerId = 'fixture-owner',
+  overrides: Partial<ReturnType<typeof createComposioProxy>> = {},
+): ReturnType<typeof createComposioProxy> {
+  return {
+    client,
+    ownerId,
+    userId: ownerId,
+    configurationId: 'synthetic-proxy-configuration',
+    origin: 'https://proxy.fixture.invalid',
+    initialize: async () => {},
+    ownsConnectionUrl: (url) => new URL(url).origin === 'https://proxy.fixture.invalid',
+    connectionStatus: async () => ({ pairingConfirmed: false }),
+    authorize: async () => assert.fail('Unexpected fixture consent.'),
+    parseCallback: async () => assert.fail('Unexpected fixture callback.'),
+    upload: async () => assert.fail('Unexpected fixture upload.'),
+    isPendingAccount: () => false,
+    ...overrides,
+  };
+}
+
 async function managedReconnectFixture(t: TestContext, watchRequested = true) {
   const database = await hostedDatabase();
   const pool = database.pool;
   const app = Fastify();
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
+    baseURL: 'https://proxy.fixture.invalid',
     allowTracking: false,
     disableVersionCheck: true,
     fileUploadDirs: false,
@@ -5941,7 +5078,7 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
   });
   const snapshot = (id: string) => ({
     session_id: id,
-    mcp: { type: 'http', url: `https://backend.composio.dev/tool_router/mcp/${id}` },
+    mcp: { type: 'http', url: `https://proxy.fixture.invalid/tool_router/mcp/${id}` },
     config: { user_id: ownerId, ...configurations.get(id) },
     config_version: 1,
   });
@@ -5952,21 +5089,20 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     await control.pause('create', id);
     return snapshot(id);
   });
-  t.mock.method(transport, 'link', async (id: string, input: Record<string, unknown>) => {
-    assert.deepEqual(configurations.get(id)?.auth_configs, { gmail: authConfigId });
-    assert.deepEqual(configurations.get(id)?.toolkits, { enable: ['gmail'] });
-    const selected = configurations.get(id)?.connected_accounts as Record<string, string[]>;
-    assert.equal(selected?.gmail, undefined);
+  const authorize = async (service: string, callbackUrl: string, reconnectAccountId?: string) => {
+    assert.equal(service, 'gmail');
+    assert.equal(reconnectAccountId, 'old-account');
     const accountId = `replacement-${links.length + 1}`;
     accounts.set(accountId, remoteAccount(accountId, 'INITIATED'));
     emails.set(accountId, 'work@example.test');
-    links.push({ id, accountId, callback: new URL(String(input.callback_url)) });
+    links.push({ id: `consent-${links.length + 1}`, accountId, callback: new URL(callbackUrl) });
     await control.pause('link', accountId);
     return {
-      connected_account_id: accountId,
-      redirect_url: `https://connect.composio.dev/link/${accountId}`,
+      accountId,
+      url: `https://proxy.fixture.invalid/connect/${accountId}`,
+      verificationSecret: 'v'.repeat(43),
     };
-  });
+  };
   t.mock.method(raw, 'delete', async (path: string) => {
     assert.match(path, /^\/api\/v3\.1\/tool_router\/session\//);
     const id = decodeURIComponent(path.split('/').at(-1)!);
@@ -6012,10 +5148,19 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     unsubscribed.push(id);
   });
   const provider = createComposioProvider({
-    client,
-    authConfigs: { gmail: 'different-current-default' },
-    webhookSecret: 'fixture-signing-secret',
-    webhookUrl: 'https://fixture.example.test/api/webhooks/composio',
+    proxy: composioProxyFixture(client, ownerId, {
+      authorize,
+      parseCallback: async (input, pending) => {
+        assert.ok(pending);
+        const query = input as Record<string, string>;
+        return {
+          state: query.state,
+          accountId: query.connected_account_id ?? '',
+          pendingAccountId: pending.accountId,
+          success: query.status === 'success',
+        };
+      },
+    }),
   });
   const integrations = await createIntegrations(pool, {
     ownerId,
@@ -6035,10 +5180,10 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
   const inserted = await pool.query<{ id: string }>(
     `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_active,account_checked_at,
      account_email,account_name,watch_requested,watch_attempted,watch_revision,trigger_id,triggers_enabled,
-     inbox_cursor,inbox_claim_id,inbox_failed,inbox_reconnect_required)
+     inbox_cursor,inbox_claim_id,inbox_failed,inbox_reconnect_required,configuration_id)
      VALUES($1,'gmail','old-account','composio',false,now(),'work@example.test','Work', $2,true,7,
-     'old-trigger',true,'old-cursor','old-claim',true,true) RETURNING id`,
-    [ownerId, watchRequested],
+     NULL,false,'old-cursor','old-claim',true,true,$3) RETURNING id`,
+    [ownerId, watchRequested, provider.configurationId],
   );
   const connectionId = inserted.rows[0].id;
   await pool.query(
@@ -6159,9 +5304,9 @@ test(
             ?.reconnectRequired,
           false,
         );
-        assert.deepEqual(f.unsubscribed, ['old-trigger']);
-        assert.deepEqual(f.subscribed, watch ? [link.accountId] : []);
-        assert.equal(after.trigger_id, watch ? `trigger-${link.accountId}` : null);
+        assert.deepEqual(f.unsubscribed, []);
+        assert.deepEqual(f.subscribed, []);
+        assert.equal(after.trigger_id, null);
         assert.deepEqual(
           (await f.pool.query('SELECT state,poll_connection_id FROM integration_events')).rows,
           [{ state: 'discarded', poll_connection_id: f.connectionId }],
@@ -6409,7 +5554,10 @@ test(
       undefined,
       f.connectionId,
     );
-    assert.match(JSON.stringify(response), /https:\/\/connect\.composio\.dev\/link\/replacement-1/);
+    assert.match(
+      JSON.stringify(response),
+      /https:\/\/proxy\.fixture\.invalid\/connect\/replacement-1/,
+    );
     assert.doesNotMatch(JSON.stringify(response), /original-gmail-auth|old-account|work@example/);
     assert.equal((await f.row()).id, f.connectionId);
     assert.equal((await f.row()).turn_id, turn.turnId);
@@ -6424,25 +5572,19 @@ test(
 );
 
 test(
-  'adding another Gmail account uses isolated consent without changing the pinned execution account',
+  'adding another Gmail account uses proxy consent without changing the pinned execution account',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
-    const schema = `test_consent_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
+    const database = await hostedDatabase();
+    const pool = database.pool;
     const app = Fastify();
     t.after(async () => {
       await app.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
+      await database.close();
     });
     const client = new Composio({
       apiKey: 'fixture-key-never-live',
+      baseURL: 'https://proxy.fixture.invalid',
       allowTracking: false,
       disableVersionCheck: true,
       fileUploadDirs: false,
@@ -6451,191 +5593,45 @@ test(
       items: [],
       next_cursor: null,
     }));
-    const transport = client.getClient().toolRouter.session;
-    const created: Array<{ id: string; config: Record<string, unknown> }> = [];
-    const deleted: string[] = [];
-    const links: Array<{ id: string; input: Record<string, unknown> }> = [];
-    const patches: Array<{ id: string; input: Record<string, unknown> }> = [];
-    const authReads: Array<Record<string, unknown>> = [];
-    let authFailure:
-      | 'permission'
-      | 'ambiguous'
-      | 'unavailable'
-      | 'missing-router'
-      | 'malformed'
-      | 'cursor'
-      | 'page-limit'
-      | 'transport'
-      | undefined;
-    const customAuth = {
-      id: 'custom-gmail-auth',
-      toolkit: { slug: 'gmail' },
-      status: 'ENABLED',
-      auth_scheme: 'OAUTH2',
-      is_composio_managed: false,
-      is_enabled_for_tool_router: true,
-      credentials: { client_secret: 'synthetic-private-auth-detail' },
-    };
-    t.mock.method(
-      client.getClient().authConfigs,
-      'list',
-      async (
-        input: Record<string, unknown>,
-        options: { signal: AbortSignal; maxRetries: number },
-      ) => {
-        authReads.push(input);
-        assert.deepEqual(input, {
-          toolkit_slug: 'gmail',
-          is_composio_managed: false,
-          show_disabled: false,
-          limit: 200,
-          ...(input.cursor ? { cursor: input.cursor } : {}),
-        });
-        assert.equal(options.signal.aborted, false);
-        if (authFailure === 'permission')
-          throw Object.assign(new Error('synthetic-private-auth-detail'), { status: 403 });
-        if (authFailure === 'transport') throw new Error('synthetic-private-auth-detail');
-        if (authFailure === 'malformed')
-          return { items: [{ ...customAuth, id: { token: 'synthetic-private-auth-detail' } }] };
-        if (authFailure === 'ambiguous')
-          return {
-            items: [
-              customAuth,
-              { ...customAuth, id: 'another-custom-gmail-auth', auth_scheme: 'API_KEY' },
-            ],
-          };
-        if (authFailure === 'unavailable')
-          return { items: [{ ...customAuth, is_enabled_for_tool_router: false }] };
-        if (authFailure === 'missing-router') {
-          const { is_enabled_for_tool_router: _, ...unavailable } = customAuth;
-          return { items: [unavailable] };
-        }
-        if (authFailure === 'cursor') return { items: [customAuth], next_cursor: 'repeated' };
-        if (authFailure === 'page-limit')
-          return { items: [customAuth], next_cursor: `page-${authReads.length}` };
-        if (input.cursor) {
-          assert.equal(input.cursor, 'custom-auth-page');
-          return { items: [customAuth, customAuth], next_cursor: null };
-        }
-        return {
-          items: [
-            { ...customAuth, id: 'managed-auth', is_composio_managed: true },
-            { ...customAuth, id: 'disabled-auth', status: 'DISABLED' },
-            { ...customAuth, id: 'another-toolkit-auth', toolkit: { slug: 'googledrive' } },
-            { ...customAuth, id: 'no-auth', auth_scheme: 'NO_AUTH' },
-            { ...customAuth, id: 'not-session-enabled-auth', is_enabled_for_tool_router: false },
-          ],
-          next_cursor: 'custom-auth-page',
-        };
+    t.mock.method(client.getClient().authConfigs, 'list', async () =>
+      assert.fail('Project authentication belongs to the proxy.'),
+    );
+    t.mock.method(client.connectedAccounts, 'delete', async () =>
+      assert.fail('Consent must not remove an existing account.'),
+    );
+    const execution = t.mock.fn(
+      async (_action: string, _args: unknown, selected: { account: string }) => {
+        assert.equal(selected.account, 'existing-account');
+        return { data: { labels: [] }, error: null, resultType: 'completed' };
       },
     );
-    const configurations = new Map<string, Record<string, unknown>>();
-    function session(id: string) {
-      return {
-        session_id: id,
-        mcp: { type: 'http', url: `https://backend.composio.dev/tool_router/mcp/${id}` },
-        config: { user_id: 'local-development', ...configurations.get(id) },
-        config_version: 1,
-      };
-    }
-    t.mock.method(transport, 'create', async (config: Record<string, unknown>) => {
-      const id = `consent-session-${created.length + 1}`;
-      configurations.set(id, {
-        ...config,
-        auth_configs: {
-          notion: 'backend-notion-auth',
-          ...(config.auth_configs as Record<string, string>),
-        },
-      });
-      created.push({ id, config });
-      return session(id);
-    });
-    t.mock.method(
-      transport,
-      'patch',
-      async (
-        id: string,
-        input: Record<string, unknown>,
-        options: { signal: AbortSignal; maxRetries: number },
-      ) => {
-        if ('expected_config_version' in input)
-          throw Object.assign(new Error('Unknown field: expected_config_version'), { status: 400 });
-        assert.equal(options.signal.aborted, false);
-        assert.equal(options.maxRetries, 0);
-        patches.push({ id, input });
-        configurations.set(id, {
-          ...configurations.get(id),
-          auth_configs: input.auth_configs,
-        });
-        return { ...session(id), config_version: 2 };
+    const created = t.mock.method(
+      client.sessions,
+      'create',
+      async (owner: string, config: { connectedAccounts: unknown }) => {
+        assert.equal(owner, 'local-development');
+        assert.deepEqual(config.connectedAccounts, { gmail: ['existing-account'] });
+        return { sessionId: 'execution-session', execute: execution };
       },
     );
-    let consentOrigin = 'https://connect.composio.dev';
-    let failure: 'provider' | 'url' | undefined;
-    let cleanupFailure = false;
-    t.mock.method(transport, 'link', async (id: string, input: Record<string, unknown>) => {
-      links.push({ id, input });
-      const accounts = configurations.get(id)?.connected_accounts as Record<string, string[]>;
-      if (accounts?.gmail?.length)
-        throw Object.assign(
-          new Error(
-            "Connected account already defined for toolkit 'gmail'. Cannot create a new link when connected_accounts is set.",
-          ),
-          { status: 400, error: { code: 4309 } },
-        );
-      assert.deepEqual(configurations.get(id)?.auth_configs, {
-        notion: 'backend-notion-auth',
-        slack: 'explicit-slack-auth',
-        gmail: 'custom-gmail-auth',
-      });
-      if (failure === 'provider') throw new Error('synthetic-private-provider-detail');
-      return {
-        connected_account_id: `new-account-${created.length}`,
-        redirect_url:
-          failure === 'url'
-            ? 'https://untrusted.example/connect'
-            : `${consentOrigin}/link/synthetic-consent`,
-      };
-    });
-    t.mock.method(
-      client.getClient(),
-      'delete',
-      async (path: string, options: { signal?: AbortSignal }) => {
-        assert.match(path, /^\/api\/v3\.1\/tool_router\/session\//);
-        assert.ok(options.signal instanceof AbortSignal);
-        assert.equal(options.signal.aborted, false);
-        const id = decodeURIComponent(path.split('/').at(-1)!);
-        deleted.push(id);
-        if (cleanupFailure) throw new Error('synthetic-private-cleanup-detail');
-        return { session_id: id, deleted: true };
-      },
-    );
-    t.mock.method(client.connectedAccounts, 'delete', async () => {
-      assert.fail('Consent must not remove an existing account.');
-    });
-    t.mock.method(client.tools, 'getRawComposioToolBySlug', async (slug: string) => {
-      assert.equal(slug, 'GMAIL_LIST_LABELS');
-      return { slug, name: slug, tags: ['readOnlyHint'] };
-    });
-    const execution = t.mock.method(
-      transport,
-      'execute',
-      async (id: string, input: Record<string, unknown>) => {
-        assert.deepEqual(configurations.get(id)?.connected_accounts, {
-          gmail: ['existing-account'],
-        });
-        assert.equal(input.account, 'existing-account');
-        return {
-          data: { labels: [] },
-          error: null,
-          log_id: 'synthetic-log',
-          result_type: 'completed',
-        };
-      },
-    );
+    t.mock.method(client.sessions, 'delete', async () => {});
+    const links: Array<{ accountId: string; callback: URL }> = [];
+    let failed = false;
     const provider = createComposioProvider({
-      client,
-      authConfigs: { slack: 'explicit-slack-auth' },
+      proxy: composioProxyFixture(client, 'local-development', {
+        authorize: async (service, callbackUrl, reconnectAccountId) => {
+          assert.equal(service, 'gmail');
+          assert.equal(reconnectAccountId, undefined);
+          if (failed) throw new Error('synthetic-private-provider-detail');
+          const accountId = `new-account-${links.length + 1}`;
+          links.push({ accountId, callback: new URL(callbackUrl) });
+          return {
+            accountId,
+            url: `https://proxy.fixture.invalid/connect/${accountId}`,
+            verificationSecret: 'v'.repeat(43),
+          };
+        },
+      }),
     });
     const integrations = await createIntegrations(pool, {
       ownerId: 'local-development',
@@ -6645,46 +5641,21 @@ test(
     });
     integrations.registerRoutes(app);
     const account = await pool.query<{ id: string }>(
-      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_active,account_checked_at)
-       VALUES('local-development','gmail','existing-account','composio',true,now()) RETURNING id`,
-    );
-    await pool.query(
-      `INSERT INTO app_connections(owner_id,slug,pending_account_id,callback_hash,callback_expires,provider_id)
-       VALUES('local-development','gmail','abandoned-account','abandoned-hash',now()-interval '1 minute','composio'),
-       ('another-owner','gmail','foreign-abandoned','foreign-hash',now()-interval '1 minute','composio')`,
+      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_active,account_checked_at,configuration_id)
+       VALUES('local-development','gmail','existing-account','composio',true,now(),$1) RETURNING id`,
+      [provider.configurationId],
     );
     const connect = () => app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
     const response = await connect();
-    assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), {
-      url: 'https://connect.composio.dev/link/synthetic-consent',
-    });
-    assert.equal(created.length, 1);
-    assert.deepEqual(created[0].config.connected_accounts, {});
-    assert.deepEqual(created[0].config.auth_configs, { slack: 'explicit-slack-auth' });
-    assert.equal(authReads.length, 2);
-    assert.deepEqual(patches, [
-      {
-        id: 'consent-session-1',
-        input: {
-          auth_configs: {
-            notion: 'backend-notion-auth',
-            slack: 'explicit-slack-auth',
-            gmail: 'custom-gmail-auth',
-          },
-        },
-      },
-    ]);
-    assert.deepEqual(created[0].config.multi_account, {
-      enable: true,
-      max_accounts_per_toolkit: 10,
-      require_explicit_selection: true,
-    });
-    assert.deepEqual(deleted, ['consent-session-1']);
-    assert.equal(links[0].id, 'consent-session-1');
-    const callback = new URL(String(links[0].input.callback_url));
-    assert.equal(callback.pathname, '/api/apps/callback');
-    assert.match(callback.searchParams.get('state')!, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().url, 'https://proxy.fixture.invalid/connect/new-account-1');
+    assert.equal(
+      created.mock.callCount(),
+      0,
+      'Consent never opens an execution session with the saved account.',
+    );
+    assert.equal(links[0].callback.pathname, '/api/apps/callback');
+    assert.match(links[0].callback.searchParams.get('state')!, /^[A-Za-z0-9_-]{43}$/);
     assert.deepEqual(
       (
         await pool.query(
@@ -6694,79 +5665,17 @@ test(
       ).rows,
       [{ account_id: 'existing-account', revoked: false, pending_account_id: null }],
     );
-    assert.deepEqual(
-      (
-        await pool.query(
-          'SELECT pending_account_id FROM app_connections WHERE account_id IS NULL ORDER BY pending_account_id',
-        )
-      ).rows,
-      [{ pending_account_id: 'foreign-abandoned' }, { pending_account_id: 'new-account-1' }],
-    );
-    await pool.query("DELETE FROM app_connections WHERE owner_id='another-owner'");
     await integrations.execute('local-development', 'GMAIL_LIST_LABELS', {
       connectionId: account.rows[0].id,
       user_id: 'me',
     });
     assert.equal(execution.mock.callCount(), 1);
-    assert.equal(authReads.length, 2);
-    assert.equal(patches.length, 1);
-    for (const kind of [
-      'permission',
-      'ambiguous',
-      'unavailable',
-      'missing-router',
-      'malformed',
-      'cursor',
-      'page-limit',
-      'transport',
-    ] as const) {
-      authFailure = kind;
-      const before: number = authReads.length;
-      const rejected = await connect();
-      const expected = {
-        permission: /Auth configs read/,
-        ambiguous: /multiple custom sign-in configurations/,
-        unavailable: /custom sign-in configuration is unavailable/,
-        'missing-router': /custom sign-in configuration is unavailable/,
-      }[kind as 'permission' | 'ambiguous' | 'unavailable' | 'missing-router'];
-      assert.equal(rejected.statusCode, expected ? 503 : 502);
-      assert.deepEqual(Object.keys(rejected.json()), ['error']);
-      if (expected) assert.match(rejected.json().error, expected);
-      else
-        assert.equal(
-          rejected.json().error,
-          'The connection provider could not complete this request.',
-        );
-      assert.equal(rejected.body.includes('synthetic-private-auth-detail'), false);
-      assert.equal(links.length, 1);
-      assert.equal(patches.length, 1);
-      assert.equal((await pool.query('SELECT id FROM app_connections')).rowCount, 2);
-      assert.equal(deleted.at(-1), created.at(-1)!.id);
-      if (kind === 'cursor') assert.equal(authReads.length - before, 2);
-      if (kind === 'page-limit') assert.equal(authReads.length - before, 5);
-    }
-    authFailure = undefined;
-    for (const kind of ['provider', 'url'] as const) {
-      failure = kind;
-      const rejected = await connect();
-      assert.equal(rejected.statusCode, 502);
-      assert.deepEqual(rejected.json(), {
-        error: 'The connection provider could not complete this request.',
-      });
-      assert.equal((await pool.query('SELECT id FROM app_connections')).rowCount, 2);
-    }
-    assert.deepEqual(
-      deleted,
-      created.map(({ id }) => id),
-    );
-    failure = undefined;
-    cleanupFailure = true;
-    consentOrigin = 'https://app.composio.dev';
-    const accepted = await connect();
-    assert.equal(accepted.statusCode, 200);
-    assert.equal(accepted.json().url, 'https://app.composio.dev/link/synthetic-consent');
-    assert.equal((await pool.query('SELECT id FROM app_connections')).rowCount, 3);
-    assert.equal(deleted.at(-1), created.at(-1)!.id);
+    failed = true;
+    const rejected = await connect();
+    assert.equal(rejected.statusCode, 502);
+    assert.doesNotMatch(rejected.body, /synthetic-private/);
+    assert.equal(links.length, 1);
+    assert.equal((await pool.query('SELECT id FROM app_connections')).rowCount, 2);
   },
 );
 
@@ -7547,123 +6456,11 @@ test(
   },
 );
 
-test('Composio uploads file bytes before the app consumes its storage reference', async (t) => {
-  const storage = Fastify();
-  const files = new Map<string, { bytes: Buffer; mimeType: string }>();
-  const digests = new Map<string, string>();
-  let status = 200;
-  storage.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) =>
-    done(null, body),
-  );
-  storage.put<{ Params: { key: string } }>('/files/:key', async (request, reply) => {
-    const bytes = request.body as Buffer;
-    assert.equal(createHash('md5').update(bytes).digest('hex'), digests.get(request.params.key));
-    files.set(request.params.key, { bytes, mimeType: String(request.headers['content-type']) });
-    return reply.code(status).send();
-  });
-  const origin = await storage.listen({ host: '127.0.0.1', port: 0 });
-  t.after(() => storage.close());
-  const client = new Composio({
-    apiKey: 'fixture-key-never-live',
-    allowTracking: false,
-    disableVersionCheck: true,
-    fileUploadDirs: false,
-  });
-  t.mock.method(client.getClient().toolkits, 'list', async () => ({
-    items: [],
-    next_cursor: null,
-  }));
-  let presignFailure = false;
-  const presign = t.mock.method(
-    client.getClient().files,
-    'createPresignedURL',
-    async (
-      input: {
-        md5: string;
-        filename: string;
-        mimetype: string;
-        tool_slug: string;
-        toolkit_slug: string;
-      },
-      options: { signal: AbortSignal; maxRetries: number },
-    ) => {
-      assert.equal(options.maxRetries, 0);
-      options.signal.throwIfAborted();
-      assert.equal(input.tool_slug, 'GMAIL_SEND_EMAIL');
-      assert.equal(input.toolkit_slug, 'gmail');
-      if (presignFailure) throw new Error('Fixture file service failed.');
-      const key = randomUUID();
-      digests.set(key, input.md5);
-      return { key, new_presigned_url: `${origin}/files/${key}` };
-    },
-  );
-  t.mock.method(client.sessions, 'create', async () => ({
-    sessionId: 'fixture-session',
-    execute: async (_action: string, args: { attachment: { s3key: string } }) => {
-      const file = files.get(args.attachment.s3key);
-      assert.ok(file, 'The app must receive an uploaded file.');
-      return {
-        data: { bytes: file.bytes, mimeType: file.mimeType },
-        error: null,
-        resultType: 'completed',
-      };
-    },
-  }));
-  const session = await createComposioProvider({ client, fileUploadRequest: fetch }).createSession(
-    'fixture-owner',
-    {},
-  );
-  const bytes = Buffer.from([0, 1, 127, 128, 254, 255]);
-  const attachment = await session.upload!('GMAIL_SEND_EMAIL', {
-    name: 'fixture.bin',
-    mimeType: 'application/octet-stream',
-    bytes,
-  });
-  assert.equal(attachment.name, 'fixture.bin');
-  assert.equal(attachment.mimetype, 'application/octet-stream');
-  assert.deepEqual(await session.execute('GMAIL_SEND_EMAIL', { attachment }, 'fixture-account'), {
-    data: { bytes, mimeType: 'application/octet-stream' },
-    error: null,
-    resultType: 'completed',
-  });
-  status = 503;
-  await assert.rejects(
-    session.upload!('GMAIL_SEND_EMAIL', {
-      name: 'fixture.bin',
-      mimeType: 'application/octet-stream',
-      bytes,
-    }),
-    /HTTP 503/,
-  );
-  presignFailure = true;
-  const uploaded = files.size;
-  await assert.rejects(
-    session.upload!('GMAIL_SEND_EMAIL', {
-      name: 'fixture.bin',
-      mimeType: 'application/octet-stream',
-      bytes,
-    }),
-    /Fixture file service failed/,
-  );
-  assert.equal(files.size, uploaded);
-  const controller = new AbortController();
-  controller.abort(new Error('Fixture upload cancelled.'));
-  const requests = presign.mock.callCount();
-  await assert.rejects(
-    session.upload!(
-      'GMAIL_SEND_EMAIL',
-      { name: 'fixture.bin', mimeType: 'application/octet-stream', bytes },
-      controller.signal,
-    ),
-    /Fixture upload cancelled/,
-  );
-  assert.equal(presign.mock.callCount(), requests);
-});
-
-test('Composio paginates configured apps, managed apps and native DCR MCPs with exact slugs for consent and tools', async (t) => {
+test('Composio paginates managed apps and native DCR MCPs with exact slugs for consent and tools', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => assert.fail('Unexpected external request.'));
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
+    baseURL: 'https://proxy.fixture.invalid',
     allowTracking: false,
     disableVersionCheck: true,
     fileUploadDirs: false,
@@ -7705,7 +6502,7 @@ test('Composio paginates configured apps, managed apps and native DCR MCPs with 
     client.getClient().toolkits,
     'list',
     async (input: { cursor?: string; type: string }, options: { signal: AbortSignal }) => {
-      assert.equal(input.type, 'all');
+      assert.equal(input.type, 'native');
       assert.equal(options.signal.aborted, false);
       await gate.promise;
       if (catalogMode === 'empty') return { items: [], next_cursor: null };
@@ -7780,87 +6577,19 @@ test('Composio paginates configured apps, managed apps and native DCR MCPs with 
       };
     },
   );
-  const config = (id: string, slug: string, scheme: string) => ({
-    id,
-    toolkit: { slug },
-    status: 'ENABLED',
-    auth_scheme: scheme,
-    is_composio_managed: false,
-    is_enabled_for_tool_router: true,
+  t.mock.method(client.getClient().authConfigs, 'list', async () => {
+    assert.fail('The app must not provision project authentication.');
   });
-  const customOAuth = config('custom-oauth-config', 'custom_oauth', 'OAUTH2');
-  const privateApi = config('private-api-config', 'private_api', 'API_KEY');
-  let configFailure: 'permission' | 'malformed' | undefined;
-  const authReads: Array<{ toolkit_slug?: string; cursor?: string }> = [];
-  t.mock.method(
-    client.getClient().authConfigs,
-    'list',
-    async (input: {
-      toolkit_slug?: string;
-      cursor?: string;
-      is_composio_managed: boolean;
-      show_disabled: boolean;
-      limit: number;
-    }) => {
-      authReads.push(input);
-      assert.equal(input.is_composio_managed, false);
-      assert.equal(input.show_disabled, false);
-      assert.equal(input.limit, 200);
-      if (configFailure === 'permission')
-        throw Object.assign(new Error('synthetic-private-auth-detail'), { status: 403 });
-      if (configFailure === 'malformed')
-        return {
-          items: [{ ...privateApi, id: { token: 'synthetic-private-auth-detail' } }],
-          next_cursor: null,
-        };
-      if (input.toolkit_slug)
-        return {
-          items: [customOAuth, privateApi].filter(
-            (entry) => entry.toolkit.slug === input.toolkit_slug,
-          ),
-          next_cursor: null,
-        };
-      if (input.cursor) {
-        assert.equal(input.cursor, 'auth-next');
-        return { items: [privateApi, privateApi], next_cursor: null };
-      }
-      return {
-        items: [
-          customOAuth,
-          config('unsupported-toolkit-config', '_1password', 'API_KEY'),
-          {
-            ...config('disabled-router', 'router_disabled', 'BASIC'),
-            is_enabled_for_tool_router: false,
-          },
-          {
-            ...config('missing-router', 'router_missing', 'BEARER_TOKEN'),
-            is_enabled_for_tool_router: undefined,
-          },
-          config('no-auth-config', 'no_auth', 'NO_AUTH'),
-          { ...config('managed-config', 'unconfigured_app', 'API_KEY'), is_composio_managed: true },
-          { ...config('disabled-config', 'unconfigured_app', 'API_KEY'), status: 'DISABLED' },
-        ],
-        next_cursor: 'auth-next',
-      };
-    },
-  );
-  const sessionConfig = { auth_configs: { custom_app: 'fixture-auth' } as Record<string, string> };
   const authorize = t.mock.fn(async (slug: string) => {
-    if (slug === 'private_api')
-      assert.equal(sessionConfig.auth_configs.private_api, 'private-api-config');
-    else if (slug === 'custom_oauth')
-      assert.equal(sessionConfig.auth_configs.custom_oauth, 'custom-oauth-config');
-    else assert.equal(slug, 'granola_mcp');
-    return { id: 'fixture-account', redirectUrl: 'https://connect.composio.dev/link/fixture' };
+    assert.equal(slug, 'granola_mcp');
+    return {
+      accountId: 'fixture-account',
+      url: 'https://proxy.fixture.invalid/connect/fixture',
+      verificationSecret: 'fixture-verification',
+    };
   });
   const create = t.mock.method(client.sessions, 'create', async () => ({
     sessionId: 'fixture-session',
-    config: sessionConfig,
-    configVersion: 1,
-    update: async (input: { authConfigs: Record<string, string> }) => {
-      sessionConfig.auth_configs = input.authConfigs;
-    },
-    authorize,
     search: async () => ({
       success: true,
       error: null,
@@ -7874,7 +6603,9 @@ test('Composio paginates configured apps, managed apps and native DCR MCPs with 
       results: [],
     }),
   }));
-  const provider = createComposioProvider({ client, authConfigs: { custom_app: 'fixture-auth' } });
+  const provider = createComposioProvider({
+    proxy: composioProxyFixture(client, 'fixture-owner', { authorize }),
+  });
   const first = provider.listServices!();
   const concurrent = provider.listServices!();
   gate.resolve();
@@ -7883,13 +6614,12 @@ test('Composio paginates configured apps, managed apps and native DCR MCPs with 
   assert.equal(listing.mock.callCount(), 2);
   assert.equal(services.filter((entry) => entry.slug === 'granola_mcp').length, 1);
   assert.ok(services.some((entry) => entry.slug === 'managed_notes'));
-  assert.ok(services.some((entry) => entry.slug === 'custom_app'));
-  assert.ok(services.some((entry) => entry.slug === 'custom_oauth'));
-  assert.ok(services.some((entry) => entry.slug === 'private_api'));
-  assert.equal(authReads.length, 2);
   assert.equal(
     services.some((entry) =>
       [
+        'custom_app',
+        'custom_oauth',
+        'private_api',
         'unconfigured_app',
         'router_disabled',
         'router_missing',
@@ -7934,57 +6664,36 @@ test('Composio paginates configured apps, managed apps and native DCR MCPs with 
   const session = await provider.createSession('fixture-owner', accounts);
   const [owner, configuration] = create.mock.calls[0]!.arguments as unknown as [
     string,
-    { toolkits: string[]; connectedAccounts: typeof accounts; authConfigs: Record<string, string> },
+    { toolkits: string[]; connectedAccounts: typeof accounts },
   ];
   assert.equal(owner, 'fixture-owner');
   assert.deepEqual(configuration.connectedAccounts, accounts);
   assert.ok(configuration.toolkits.includes('granola_mcp'));
   assert.ok(configuration.toolkits.includes('retired_mcp'));
-  assert.ok(configuration.toolkits.includes('private_api'));
-  assert.ok(configuration.toolkits.includes('custom_oauth'));
-  assert.equal(configuration.authConfigs.custom_app, 'fixture-auth');
   await session.authorize('granola_mcp', 'http://localhost:4310/api/apps/callback');
-  await session.authorize('private_api', 'http://localhost:4310/api/apps/callback');
-  await session.authorize('custom_oauth', 'http://localhost:4310/api/apps/callback');
+  await assert.rejects(session.authorize('private_api', 'http://localhost:4310/api/apps/callback'));
+  await assert.rejects(
+    session.authorize('custom_oauth', 'http://localhost:4310/api/apps/callback'),
+  );
   await assert.rejects(
     session.authorize('unconfigured_app', 'http://localhost:4310/api/apps/callback'),
   );
   await assert.rejects(session.authorize('no_auth', 'http://localhost:4310/api/apps/callback'));
-  assert.equal(authorize.mock.callCount(), 3);
-  assert.deepEqual(
-    authReads.slice(2).map((read) => read.toolkit_slug),
-    ['granola_mcp', 'private_api', 'custom_oauth'],
-  );
+  assert.equal(authorize.mock.callCount(), 1);
   assert.deepEqual(Object.keys((await session.search('Find notes')).tools as object), [
     'GRANOLA_MCP_SEARCH_NOTES',
   ]);
   assert.equal(listing.mock.callCount(), 2);
-  configFailure = 'permission';
-  await assert.rejects(createComposioProvider({ client }).listServices!(), (error: unknown) => {
-    assert.ok(error instanceof IntegrationConnectionError);
-    assert.equal(error.phase, 'auth_config');
-    assert.equal(error.reason, 'permission');
-    assert.doesNotMatch(String(error), /synthetic-private/);
-    return true;
-  });
-  configFailure = 'malformed';
-  await assert.rejects(createComposioProvider({ client }).listServices!(), (error: unknown) => {
-    assert.ok(error instanceof Error);
-    assert.doesNotMatch(String(error), /synthetic-private/);
-    return true;
-  });
-  const before = authReads.length;
   for (const mode of ['empty', 'managed'] as const) {
     catalogMode = mode;
-    await createComposioProvider({ client, authConfigs: { custom_app: 'fixture-auth' } })
-      .listServices!();
-    assert.equal(authReads.length, before);
+    await createComposioProvider({ proxy: composioProxyFixture(client) }).listServices!();
   }
 });
 
 test('Composio catalog failures preserve owned accounts', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
+    baseURL: 'https://proxy.fixture.invalid',
     allowTracking: false,
     disableVersionCheck: true,
     fileUploadDirs: false,
@@ -8001,7 +6710,7 @@ test('Composio catalog failures preserve owned accounts', async (t) => {
     sessionId: 'new-session',
     execute,
   }));
-  const provider = createComposioProvider({ client });
+  const provider = createComposioProvider({ proxy: composioProxyFixture(client) });
   await assert.rejects(provider.listServices!(), (error: Error) => {
     assert.ok(error instanceof IntegrationCatalogAccessDenied);
     assert.doesNotMatch(error.message, /private-provider-response/);
@@ -8018,6 +6727,7 @@ test('Composio catalog failures preserve owned accounts', async (t) => {
 test('Composio failure envelopes reject with the provider error', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
+    baseURL: 'https://proxy.fixture.invalid',
     allowTracking: false,
     disableVersionCheck: true,
     fileUploadDirs: false,
@@ -8031,7 +6741,9 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
     sessionId: 'fixture-session',
     execute: async () => result,
   }));
-  const session = await createComposioProvider({ client }).createSession('local-development', {
+  const session = await createComposioProvider({
+    proxy: composioProxyFixture(client, 'local-development'),
+  }).createSession('local-development', {
     slackbot: 'fixture-slackbot-account',
   });
   for (const failure of [
@@ -8121,157 +6833,6 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
   await session.execute('GMAIL_SEND_EMAIL', {}, 'fixture-account');
 });
 
-test('Composio key changes bind configuration identity to the active SDK and fence prior consent sessions', async (t) => {
-  const baseUrl = process.env.COMPOSIO_BASE_URL;
-  process.env.COMPOSIO_BASE_URL = 'https://composio-rotation.example.test';
-  t.after(() => {
-    if (baseUrl === undefined) delete process.env.COMPOSIO_BASE_URL;
-    else process.env.COMPOSIO_BASE_URL = baseUrl;
-  });
-  const keys = ['synthetic-rotation-key-a', 'synthetic-rotation-key-b'];
-  const calls: Array<{ path: string; key: string }> = [];
-  let created = 0;
-  const configurations: Record<string, string>[] = [];
-  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
-    const request = new Request(input, init);
-    const url = new URL(request.url);
-    if (url.href === 'https://registry.npmjs.org/@composio/core/latest')
-      return Response.json({ version: '0.21.0' });
-    assert.equal(url.origin, 'https://composio-rotation.example.test');
-    const key = request.headers.get('x-api-key')!;
-    assert.ok(keys.includes(key));
-    calls.push({ path: url.pathname, key });
-    if (request.method === 'GET' && url.pathname === '/api/v3.1/toolkits') {
-      assert.equal(url.searchParams.get('type'), 'all');
-      return Response.json({
-        items: [
-          {
-            slug: 'custom_native',
-            name: 'Custom Native',
-            type: 'native',
-            meta: {},
-            auth_schemes: ['OAUTH2'],
-            composio_managed_auth_schemes: [],
-          },
-        ],
-        next_cursor: null,
-      });
-    }
-    if (request.method === 'GET' && url.pathname.endsWith('/auth_configs')) {
-      assert.ok([null, 'slack'].includes(url.searchParams.get('toolkit_slug')));
-      assert.equal(url.searchParams.get('is_composio_managed'), 'false');
-      assert.equal(url.searchParams.get('show_disabled'), 'false');
-      return Response.json({ items: [], next_cursor: null });
-    }
-    if (request.method === 'POST' && url.pathname === '/api/v3.1/tool_router/session') {
-      const body = await request.json();
-      assert.equal(body.user_id, 'fixture-owner');
-      configurations.push(body.auth_configs ?? {});
-      const id = `trs_rotation_${++created}`;
-      return Response.json({
-        session_id: id,
-        mcp: { type: 'http', url: `https://composio-rotation.example.test/mcp/${id}` },
-        config: {
-          user_id: 'fixture-owner',
-          toolkits: { enabled: ['slack'] },
-          connected_accounts: {},
-        },
-        config_version: 1,
-      });
-    }
-    if (
-      request.method === 'POST' &&
-      /^\/api\/v3\.1\/tool_router\/session\/trs_rotation_\d+\/link$/.test(url.pathname)
-    )
-      return Response.json({
-        connected_account_id: 'ca_rotation_fixture',
-        redirect_url: 'https://connect.composio.dev/link/synthetic-rotation',
-      });
-    assert.fail(`Unexpected synthetic request: ${request.method} ${url.pathname}`);
-  });
-  const provider = createComposioProvider({ apiKey: keys[0] });
-  const initialConfiguration = provider.configurationId;
-  assert.ok(initialConfiguration);
-  assert.equal(provider.configured, true);
-  const first = await provider.createSession('fixture-owner', {});
-  assert.equal(calls.at(-1)!.key, keys[0]);
-  provider.setApiKey!(keys[1]);
-  const current = await provider.createSession('fixture-owner', {});
-  assert.equal(calls.at(-1)!.key, keys[1]);
-  assert.notEqual(provider.configurationId, initialConfiguration);
-  assert.equal(
-    provider.configurationId,
-    createComposioProvider({ apiKey: keys[1] }).configurationId,
-  );
-  const callback = 'http://localhost:4310/api/apps/callback';
-  const beforeStale = calls.length;
-  await assert.rejects(first.authorize('slack', callback), /connection provider changed/);
-  assert.equal(calls.length, beforeStale);
-  assert.equal((await current.authorize('slack', callback)).accountId, 'ca_rotation_fixture');
-  assert.equal(calls.at(-1)!.key, keys[1]);
-  assert.equal(calls.at(-2)!.path.endsWith('/auth_configs'), true);
-  assert.equal(calls.at(-2)!.key, keys[1]);
-  provider.setApiKey!();
-  assert.equal(provider.configured, false);
-  assert.equal(provider.configurationId, undefined);
-  const beforeClear = calls.length;
-  await assert.rejects(provider.createSession('fixture-owner', {}), /not configured/);
-  await assert.rejects(current.authorize('slack', callback), /connection provider changed/);
-  assert.equal(calls.length, beforeClear);
-  provider.setApiKey!(keys[0]);
-  assert.equal(provider.configured, true);
-  assert.equal(provider.configurationId, initialConfiguration);
-  await provider.createSession('fixture-owner', {});
-  assert.equal(calls.at(-1)!.key, keys[0]);
-  assert.deepEqual(
-    calls.filter((call) => call.path.endsWith('/auth_configs')).map((call) => call.key),
-    [keys[0], keys[1], keys[1], keys[0]],
-  );
-  const configured = createComposioProvider({
-    apiKey: keys[0],
-    authConfigs: { gmail: 'environment-gmail', slack: 'environment-slack' },
-  });
-  configured.setApiKey!(keys[0], { gmail: 'legacy-gmail', custom_native: 'legacy-native' });
-  await configured.createSession('fixture-owner', {});
-  assert.deepEqual(configurations.at(-1), {
-    gmail: 'legacy-gmail',
-    slack: 'environment-slack',
-    custom_native: 'legacy-native',
-  });
-  configured.setApiKey!(keys[1], {});
-  await configured.createSession('fixture-owner', {});
-  assert.deepEqual(configurations.at(-1), {
-    gmail: 'environment-gmail',
-    slack: 'environment-slack',
-  });
-  for (const slug of ['x'.repeat(81), 'invalid-toolkit']) {
-    const identity = configured.configurationId;
-    assert.throws(() => configured.setApiKey!(keys[0], { [slug]: 'invalid-configuration' }));
-    assert.equal(configured.configurationId, identity);
-  }
-  await configured.createSession('fixture-owner', {});
-  assert.deepEqual(configurations.at(-1), {
-    gmail: 'environment-gmail',
-    slack: 'environment-slack',
-  });
-  const root = await mkdtemp(join(tmpdir(), 'nod-integration-key-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const proxy = createComposioProxy({
-    ownerId: 'fixture-owner',
-    dataRoot: root,
-    url: 'https://proxy.example.test',
-    request: async () => assert.fail('Managed key changes must not make a request.'),
-  });
-  await proxy.initialize();
-  const managed = createComposioProvider({ proxy });
-  const managedConfiguration = managed.configurationId;
-  for (const key of [keys[0], undefined]) {
-    assert.throws(() => managed.setApiKey!(key), /managed by nod/);
-    assert.equal(managed.configured, true);
-    assert.equal(managed.configurationId, managedConfiguration);
-  }
-});
-
 test('Composio connection requests classify HTTP failures without repeating consent or exposing provider details', async (t) => {
   const { createServer } = await import('node:http');
   const { IntegrationConnectionError } = await import('../src/ports/integrations.ts');
@@ -8279,13 +6840,7 @@ test('Composio connection requests classify HTTP failures without repeating cons
   let rejected = 0;
   const server = createServer(async (request, response) => {
     const path = new URL(request.url!, 'http://localhost').pathname;
-    const phase = path.endsWith('/auth_configs')
-      ? 'auth_config'
-      : path.endsWith('/link')
-        ? 'link'
-        : path.endsWith('/tool_router/session')
-          ? 'session'
-          : undefined;
+    const phase = path.endsWith('/tool_router/session') ? 'session' : undefined;
     response.setHeader('content-type', 'application/json');
     if (failure && failure.phase === phase && phase) {
       rejected++;
@@ -8293,7 +6848,7 @@ test('Composio connection requests classify HTTP failures without repeating cons
       response.end(JSON.stringify({ error: { message: 'synthetic-private-provider-body' } }));
       return;
     }
-    if (path.endsWith('/toolkits') || phase === 'auth_config') {
+    if (path.endsWith('/toolkits')) {
       response.end(JSON.stringify({ items: [], next_cursor: null }));
       return;
     }
@@ -8306,15 +6861,6 @@ test('Composio connection requests classify HTTP failures without repeating cons
           mcp: { type: 'http', url: `http://${request.headers.host}/tool_router/mcp/fixture` },
           config: JSON.parse(body),
           config_version: 1,
-        }),
-      );
-      return;
-    }
-    if (phase === 'link') {
-      response.end(
-        JSON.stringify({
-          connected_account_id: 'fixture-account',
-          redirect_url: 'https://connect.composio.dev/link/fixture',
         }),
       );
       return;
@@ -8335,12 +6881,20 @@ test('Composio connection requests classify HTTP failures without repeating cons
     disableVersionCheck: true,
     fileUploadDirs: false,
   });
-  const provider = createComposioProvider({ client });
+  const provider = createComposioProvider({
+    proxy: composioProxyFixture(client, 'fixture-owner', {
+      authorize: async () => ({
+        accountId: 'fixture-account',
+        url: 'https://proxy.fixture.invalid/connect/fixture',
+        verificationSecret: 'v'.repeat(43),
+      }),
+    }),
+  });
   const connect = async () => {
     const session = await provider.createSession('fixture-owner', {});
     return session.authorize('gmail', 'http://localhost:4310/api/apps/callback');
   };
-  for (const phase of ['session', 'auth_config', 'link'] as const) {
+  for (const phase of ['session'] as const) {
     for (const [status, reason] of [
       [401, 'authorization'],
       [403, 'permission'],
@@ -8356,12 +6910,11 @@ test('Composio connection requests classify HTTP failures without repeating cons
         assert.ok(error instanceof IntegrationConnectionError);
         assert.equal(error.reason, reason);
         assert.equal(error.phase, phase);
-        if (reason === 'invalid_request') assert.match(error.message, new RegExp(`HTTP ${status}`));
         assert.doesNotMatch(String(error), /synthetic-private|fixture-key/);
         assert.equal(error.cause, undefined);
         return true;
       });
-      if (phase !== 'auth_config') assert.equal(rejected, before + 1);
+      assert.equal(rejected, before + 1);
     }
   }
   failure = undefined;
@@ -8385,243 +6938,10 @@ test('Composio connection requests classify HTTP failures without repeating cons
   }
 });
 
-test('Composio toolkit consent preserves explicit auth, project defaults and provider boundaries', async (t) => {
-  t.mock.method(globalThis, 'fetch', async () => assert.fail('Unexpected external request.'));
+test('Composio proxy sessions omit SDK metadata and refuse unsupported webhooks', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
-    allowTracking: false,
-    disableVersionCheck: true,
-    fileUploadDirs: false,
-  });
-  t.mock.method(client.getClient().toolkits, 'list', async () => ({
-    items: [],
-    next_cursor: null,
-  }));
-  const transport = client.getClient().toolRouter.session;
-  const configurations = new Map<string, Record<string, unknown>>();
-  function snapshot(id: string) {
-    return {
-      session_id: id,
-      mcp: { type: 'http', url: `https://backend.composio.dev/tool_router/mcp/${id}` },
-      config: { user_id: 'fixture-owner', ...configurations.get(id) },
-      config_version: 1,
-    };
-  }
-  t.mock.method(transport, 'create', async (config: Record<string, unknown>) => {
-    const id = `fixture-session-${configurations.size}`;
-    configurations.set(id, {
-      ...config,
-      auth_configs: { notion: 'retained-notion', ...(config.auth_configs as object) },
-    });
-    await pause('create');
-    return snapshot(id);
-  });
-  const deleted: string[] = [];
-  t.mock.method(client.getClient(), 'delete', async (path: string) => {
-    const id = decodeURIComponent(path.split('/').at(-1)!);
-    assert.ok(configurations.has(id));
-    deleted.push(id);
-    return { session_id: id, deleted: true };
-  });
-  const configs = [
-    { id: 'custom-gmail', toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2' },
-    { id: 'custom-slack', toolkit: { slug: 'slack' }, auth_scheme: 'OAUTH2' },
-    { id: 'custom-calendar', toolkit: { slug: 'googlecalendar' }, auth_scheme: 'API_KEY' },
-    { id: 'custom-drive', toolkit: { slug: 'googledrive' }, auth_scheme: 'BASIC' },
-    { id: 'custom-sheets', toolkit: { slug: 'googlesheets' }, auth_scheme: 'BEARER_TOKEN' },
-    { id: 'custom-docs', toolkit: { slug: 'googledocs' }, auth_scheme: 'OAUTH1' },
-  ].map((config) => ({
-    ...config,
-    status: 'ENABLED',
-    is_composio_managed: false,
-    is_enabled_for_tool_router: true,
-  }));
-  let mode:
-    | 'selected'
-    | 'empty'
-    | 'no-auth'
-    | 'ambiguous'
-    | 'unavailable'
-    | 'missing-router'
-    | 'permission' = 'selected';
-  let expectedConfig: string | undefined = 'custom-gmail';
-  let paused: 'create' | 'list' | 'patch' | 'link' | undefined;
-  let started = deferred();
-  let released = deferred();
-  async function pause(phase: typeof paused) {
-    if (phase !== paused) return;
-    started.resolve();
-    await released.promise;
-  }
-  const list = t.mock.method(
-    client.getClient().authConfigs,
-    'list',
-    async (input: { toolkit_slug?: string }) => {
-      assert.ok(input.toolkit_slug, 'An empty catalog must not load project-wide auth configs.');
-      await pause('list');
-      if (mode === 'permission')
-        throw Object.assign(new Error('synthetic-private-auth-detail'), { status: 403 });
-      const selected = configs.find((config) => config.toolkit.slug === input.toolkit_slug);
-      assert.ok(selected);
-      let items: Array<Record<string, unknown>> = [selected];
-      if (mode === 'empty') items = [];
-      if (mode === 'no-auth') items = [{ ...selected, auth_scheme: 'NO_AUTH' }];
-      if (mode === 'ambiguous')
-        items.push({ ...selected, id: 'other-custom-config', auth_scheme: 'API_KEY' });
-      if (mode === 'unavailable') items = [{ ...selected, is_enabled_for_tool_router: false }];
-      if (mode === 'missing-router') {
-        const { is_enabled_for_tool_router: _, ...unavailable } = selected;
-        items = [unavailable];
-      }
-      return { items, next_cursor: null };
-    },
-  );
-  const patch = t.mock.method(
-    transport,
-    'patch',
-    async (id: string, input: Record<string, unknown>) => {
-      if ('expected_config_version' in input)
-        throw Object.assign(new Error('Unknown field: expected_config_version'), { status: 400 });
-      await pause('patch');
-      configurations.set(id, { ...configurations.get(id), auth_configs: input.auth_configs });
-      return { ...snapshot(id), config_version: 2 };
-    },
-  );
-  let redirectUrl = 'https://connect.composio.dev/link/fixture';
-  const link = t.mock.method(
-    transport,
-    'link',
-    async (id: string, input: { toolkit: string }, options: { signal: AbortSignal }) => {
-      const selected = configurations.get(id)?.auth_configs as Record<string, string>;
-      assert.equal(selected[input.toolkit], expectedConfig);
-      assert.equal(selected.notion, 'retained-notion');
-      assert.equal(options.signal.aborted, false);
-      await pause('link');
-      return {
-        connected_account_id: 'fixture-account',
-        redirect_url: redirectUrl,
-      };
-    },
-  );
-  const callback = 'http://localhost:4310/api/apps/callback';
-  const provider = createComposioProvider({ client });
-  for (const config of configs) {
-    const before = list.mock.callCount();
-    const session = await provider.createSession('fixture-owner', {});
-    assert.equal(list.mock.callCount(), before);
-    expectedConfig = config.id;
-    await session.authorize(config.toolkit.slug, callback);
-    assert.equal(list.mock.callCount(), before + 1);
-    assert.deepEqual(configurations.get(session.id)?.auth_configs, {
-      notion: 'retained-notion',
-      [config.toolkit.slug]: config.id,
-    });
-  }
-  const explicit = createComposioProvider({
-    client,
-    authConfigs: { gmail: 'explicit-gmail', slack: 'explicit-slack' },
-  });
-  const session = await explicit.createSession('fixture-owner', {});
-  const beforeExplicit = { list: list.mock.callCount(), patch: patch.mock.callCount() };
-  mode = 'permission';
-  expectedConfig = 'explicit-gmail';
-  await session.authorize('gmail', callback);
-  expectedConfig = 'explicit-slack';
-  await session.authorize('slack', callback);
-  assert.equal(list.mock.callCount(), beforeExplicit.list);
-  assert.equal(patch.mock.callCount(), beforeExplicit.patch);
-  assert.deepEqual(configurations.get(session.id)?.auth_configs, {
-    notion: 'retained-notion',
-    gmail: 'explicit-gmail',
-    slack: 'explicit-slack',
-  });
-  for (const failure of ['ambiguous', 'unavailable', 'missing-router', 'permission'] as const) {
-    mode = failure;
-    const blocked = await provider.createSession('fixture-owner', {});
-    const before = { patch: patch.mock.callCount(), link: link.mock.callCount() };
-    await assert.rejects(blocked.authorize('slack', callback), (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.doesNotMatch(String(error), /synthetic-private/);
-      return true;
-    });
-    assert.equal(patch.mock.callCount(), before.patch);
-    assert.equal(link.mock.callCount(), before.link);
-  }
-  expectedConfig = undefined;
-  let fallback: IntegrationSession;
-  for (const absence of ['empty', 'no-auth'] as const) {
-    mode = absence;
-    const before = { list: list.mock.callCount(), patch: patch.mock.callCount() };
-    fallback = await provider.createSession('fixture-owner', {});
-    await fallback!.authorize('gmail', callback);
-    assert.equal(list.mock.callCount(), before.list + 1);
-    assert.equal(patch.mock.callCount(), before.patch);
-    assert.deepEqual(configurations.get(fallback.id)?.auth_configs, { notion: 'retained-notion' });
-  }
-  for (const origin of ['https://connect.composio.dev', 'https://app.composio.dev']) {
-    redirectUrl = `${origin}/link/fixture`;
-    assert.deepEqual(await fallback!.authorize('gmail', callback), {
-      accountId: 'fixture-account',
-      url: redirectUrl,
-    });
-  }
-  for (const url of [
-    'https://untrusted.example/link/fixture',
-    'https://connect.composio.dev.untrusted.example/link/fixture',
-    'http://connect.composio.dev/link/fixture',
-    'https://connect.composio.dev:444/link/fixture',
-    'https://user:secret@connect.composio.dev/link/fixture',
-    'https://user:secret@app.composio.dev/link/fixture',
-    'javascript:alert(1)',
-    'not-a-url',
-    '',
-  ]) {
-    redirectUrl = url;
-    await assert.rejects(fallback!.authorize('gmail', callback), /sign-in address is invalid/);
-  }
-  redirectUrl = 'https://connect.composio.dev/link/fixture';
-  mode = 'selected';
-  expectedConfig = 'custom-slack';
-  for (const phase of ['list', 'patch', 'link'] as const) {
-    paused = phase;
-    started = deferred();
-    released = deferred();
-    const changed = createComposioProvider({ client });
-    const session = await changed.createSession('fixture-owner', {});
-    const before = {
-      list: list.mock.callCount(),
-      patch: patch.mock.callCount(),
-      link: link.mock.callCount(),
-    };
-    const pending = session.authorize('slack', callback);
-    await started.promise;
-    changed.setApiKey!();
-    released.resolve();
-    await assert.rejects(pending, /connection provider changed/);
-    assert.equal(list.mock.callCount(), before.list + 1);
-    assert.equal(patch.mock.callCount(), before.patch + (phase === 'list' ? 0 : 1));
-    assert.equal(link.mock.callCount(), before.link + (phase === 'link' ? 1 : 0));
-    await assert.rejects(session.authorize('slack', callback), /connection provider changed/);
-    assert.equal(list.mock.callCount(), before.list + 1);
-  }
-  const before = list.mock.callCount();
-  paused = 'create';
-  started = deferred();
-  released = deferred();
-  const changed = createComposioProvider({ client });
-  const pending = changed.createSession('fixture-owner', {});
-  await started.promise;
-  changed.setApiKey!();
-  released.resolve();
-  await assert.rejects(pending, /connection provider changed/);
-  assert.equal(list.mock.callCount(), before);
-  assert.deepEqual(deleted, [[...configurations.keys()].at(-1)]);
-  assert.equal(deleted.includes(session.id), false);
-});
-
-test('Composio adapter normalizes sessions without exposing SDK metadata and authenticates raw webhooks', async (t) => {
-  const client = new Composio({
-    apiKey: 'fixture-key-never-live',
+    baseURL: 'https://proxy.fixture.invalid',
     allowTracking: false,
     disableVersionCheck: true,
     fileUploadDirs: false,
@@ -8647,53 +6967,15 @@ test('Composio adapter normalizes sessions without exposing SDK metadata and aut
       session: { token: 'do-not-expose' },
     }),
   }));
-  const provider = createComposioProvider({ client, webhookSecret: 'fixture-signing-secret' });
-  const session = await provider.createSession('local-development', {});
+  const provider = createComposioProvider({ proxy: composioProxyFixture(client) });
+  const session = await provider.createSession('fixture-owner', {});
   assert.equal(JSON.stringify(await session.search('Find email')).includes('do-not-expose'), false);
-  const body = JSON.stringify({
-    id: 'event-fixture',
-    type: 'composio.trigger.message',
-    timestamp: new Date().toISOString(),
-    metadata: {
-      log_id: 'log-fixture',
-      trigger_slug: 'GMAIL_NEW_GMAIL_MESSAGE',
-      trigger_id: 'ti-fixture',
-      connected_account_id: 'ca-fixture',
-      auth_config_id: 'ac-fixture',
-      user_id: 'local-development',
-    },
-    data: { subject: 'Fixture event' },
-  });
-  function signed(timestamp = String(Math.floor(Date.now() / 1000))) {
-    const id = 'delivery-fixture';
-    const signature = createHmac('sha256', 'fixture-signing-secret')
-      .update(`${id}.${timestamp}.${body}`)
-      .digest('base64');
-    return {
-      'webhook-id': id,
-      'webhook-timestamp': timestamp,
-      'webhook-signature': `v1,${signature}`,
-    };
-  }
-  const verified = await provider.verifyWebhook(body, signed());
-  assert.equal(verified.ownerId, 'local-development');
-  assert.equal(verified.accountId, 'ca-fixture');
-  assert.equal(verified.subscriptionId, 'ti-fixture');
+  assert.equal(provider.webhooksConfigured, false);
+  await assert.rejects(provider.verifyWebhook('{}', {}), /not configured/);
   await assert.rejects(
-    provider.verifyWebhook(body, { ...signed(), 'webhook-signature': 'v1,invalid' }),
+    provider.subscribe('fixture-owner', 'gmail', 'fixture-account'),
+    /unavailable/,
   );
-  await assert.rejects(
-    createComposioProvider({
-      client,
-      webhookSecret: 'different-fixture-signing-secret',
-    }).verifyWebhook(body, signed()),
-  );
-  await assert.rejects(
-    provider.verifyWebhook(body, signed(String(Math.floor(Date.now() / 1000) - 600))),
-  );
-  const unconfigured = createComposioProvider({ client });
-  assert.equal(unconfigured.webhooksConfigured, false);
-  await assert.rejects(unconfigured.verifyWebhook(body, signed()));
 });
 
 async function hostedDatabase(options: pg.PoolConfig = {}) {
@@ -8714,336 +6996,6 @@ async function hostedDatabase(options: pg.PoolConfig = {}) {
     },
   };
 }
-
-test(
-  'legacy native Composio migration preserves ownership, durable configuration and stronger choices',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const db = await hostedDatabase();
-    t.after(() => db.close());
-    const keyStore = {
-      id: 'legacy-fixture',
-      configured: true,
-      getKey: async () => Buffer.alloc(32, 31),
-    };
-    const legacy = {
-      apiKey: 'synthetic-legacy-composio-project',
-      authConfigs: { gmail: 'synthetic-legacy-gmail-config' },
-    };
-    for (const importedFirst of [false, true]) {
-      await t.test(
-        `managed choice survives revocation after ${importedFirst ? 'import' : 'deferral'}`,
-        async () => {
-          const ownerId = randomUUID();
-          let managedState: 'sign_in_required' | 'enabled' | 'revoked' = importedFirst
-            ? 'sign_in_required'
-            : 'enabled';
-          const provider = {
-            ...fakeProvider({
-              id: 'unused',
-              authorize: async () => assert.fail('No remote authorization'),
-              search: async () => assert.fail('No remote calls'),
-              execute: async () => assert.fail('No remote tools'),
-            }),
-            setApiKey() {},
-            verifyApiKey: async (key: string) => key === 'synthetic-new-personal-project',
-          };
-          const create = () =>
-            createIntegrationKeyService({
-              ownerId,
-              database: db.pool,
-              keyStore,
-              provider,
-              managed: { status: async () => ({ state: managedState, email: null }) },
-            });
-          const service = create();
-          await service.initialize();
-          assert.equal(await service.importLegacy(legacy), importedFirst);
-          if (importedFirst) {
-            managedState = 'enabled';
-            const app = Fastify();
-            service.register(app, { changeProvider: async (_revoke, swap) => swap() });
-            try {
-              assert.equal(
-                (await app.inject({ method: 'DELETE', url: '/api/integrations/key' })).statusCode,
-                200,
-              );
-            } finally {
-              await app.close();
-            }
-          }
-          managedState = 'revoked';
-          const restarted = create();
-          await restarted.initialize();
-          assert.equal(await restarted.importLegacy(legacy), false);
-          assert.equal(restarted.mode, 'nod');
-          managedState = 'sign_in_required';
-          assert.equal(await restarted.importLegacy(legacy), false);
-          assert.equal(
-            (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
-              .rowCount,
-            0,
-          );
-          const app = Fastify();
-          restarted.register(app, { changeProvider: async (_revoke, swap) => swap() });
-          try {
-            const saved = await app.inject({
-              method: 'PUT',
-              url: '/api/integrations/key',
-              payload: { key: 'synthetic-new-personal-project' },
-            });
-            assert.equal(saved.statusCode, 200);
-            assert.equal(saved.json().mode, 'own');
-          } finally {
-            await app.close();
-          }
-          const personal = create();
-          await personal.initialize();
-          assert.equal(personal.mode, 'own');
-          assert.equal(await personal.importLegacy(legacy), false);
-          assert.equal(
-            (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
-              .rowCount,
-            1,
-          );
-        },
-      );
-    }
-    for (const scenario of [
-      'import',
-      'new-key',
-      'unreadable-key',
-      'managed-binding',
-      'other-owner',
-      'rollback',
-      'managed-enabled',
-      'managed-unavailable',
-      'managed-failed',
-      'managed-denied',
-    ]) {
-      await t.test(scenario, async () => {
-        const ownerId = randomUUID();
-        let activeKey: string | undefined;
-        let activeConfigs: unknown;
-        const provider = {
-          ...fakeProvider({
-            id: 'unused',
-            authorize: async () => assert.fail('No remote authorization'),
-            search: async () => assert.fail('No remote calls'),
-            execute: async () => assert.fail('No remote tools'),
-          }),
-          id: 'composio',
-          setApiKey(key?: string, configs?: unknown) {
-            activeKey = key;
-            activeConfigs = configs;
-          },
-          verifyApiKey: async () => assert.fail('Migration must not verify a live key'),
-        };
-        let accessChecks = 0;
-        const create = () =>
-          createIntegrationKeyService({
-            ownerId,
-            database: db.pool,
-            keyStore,
-            provider,
-            managed: {
-              async status() {
-                accessChecks++;
-                if (scenario === 'managed-failed') throw new Error('Synthetic admission outage');
-                return {
-                  state:
-                    scenario === 'managed-enabled'
-                      ? 'enabled'
-                      : scenario === 'managed-unavailable'
-                        ? 'unavailable'
-                        : scenario === 'managed-denied'
-                          ? 'denied'
-                          : 'sign_in_required',
-                  email: null,
-                };
-              },
-            },
-          });
-        const service = create();
-        await service.initialize();
-        const vault = await createAppGrantVault(db.pool, { ownerId, keyStore });
-        const id = randomUUID();
-        if (scenario === 'new-key' || scenario === 'unreadable-key') {
-          await vault.put(id, 'synthetic-newer-project-key');
-          await db.pool.query('INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,$2)', [
-            ownerId,
-            id,
-          ]);
-          if (scenario === 'unreadable-key')
-            await db.pool.query("UPDATE vault_app_grants SET ciphertext='unreadable' WHERE id=$1", [
-              id,
-            ]);
-          await service.initialize();
-        }
-        if (scenario === 'managed-binding' || scenario === 'other-owner') {
-          const { initializeIntegrationSchema } = await import('../src/server/integrations.ts');
-          await initializeIntegrationSchema(db.pool);
-          await db.pool.query(
-            "INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id) VALUES($1,$2,'composio','gmail',$3,$4)",
-            [
-              id,
-              scenario === 'other-owner' ? randomUUID() : ownerId,
-              'synthetic-existing-account',
-              'f'.repeat(64),
-            ],
-          );
-        }
-        if (scenario === 'rollback') {
-          await db.pool.query(
-            `CREATE FUNCTION reject_legacy_import() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.owner_id='${ownerId}' THEN RAISE EXCEPTION 'synthetic storage failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_legacy_import BEFORE INSERT ON integration_keys FOR EACH ROW EXECUTE FUNCTION reject_legacy_import()`,
-          );
-          await assert.rejects(service.importLegacy(legacy), /synthetic storage failure/);
-          assert.equal(
-            (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
-              .rowCount,
-            0,
-          );
-          await db.pool.query(
-            'DROP TRIGGER reject_legacy_import ON integration_keys; DROP FUNCTION reject_legacy_import()',
-          );
-        }
-        const expected = ['import', 'other-owner', 'rollback'].includes(scenario);
-        const before = await db.pool.query(
-          'SELECT * FROM vault_app_grants WHERE owner_id=$1 ORDER BY id',
-          [ownerId],
-        );
-        assert.equal(await service.importLegacy(legacy), expected);
-        if (!expected) {
-          assert.deepEqual(
-            (
-              await db.pool.query('SELECT * FROM vault_app_grants WHERE owner_id=$1 ORDER BY id', [
-                ownerId,
-              ])
-            ).rows,
-            before.rows,
-          );
-          assert.notEqual(activeKey, legacy.apiKey);
-          assert.equal(
-            accessChecks,
-            scenario.startsWith('managed-') && scenario !== 'managed-binding' ? 1 : 0,
-          );
-          if (scenario === 'managed-binding') {
-            await db.pool.query('DELETE FROM app_connections WHERE owner_id=$1', [ownerId]);
-            const restarted = create();
-            await restarted.initialize();
-            assert.equal(await restarted.importLegacy(legacy), false);
-            assert.equal(restarted.mode, 'nod');
-          }
-          return;
-        }
-        assert.equal(activeKey, legacy.apiKey);
-        assert.deepEqual(activeConfigs, legacy.authConfigs);
-        assert.equal(service.mode, 'own');
-        const stored = (
-          await db.pool.query('SELECT ciphertext FROM vault_app_grants WHERE owner_id=$1', [
-            ownerId,
-          ])
-        ).rows;
-        assert.equal(stored.length, 2);
-        assert.ok(
-          stored.every(
-            (row) =>
-              !row.ciphertext.includes(legacy.apiKey) &&
-              !row.ciphertext.includes(legacy.authConfigs.gmail),
-          ),
-        );
-        activeKey = undefined;
-        const restarted = create();
-        await restarted.initialize();
-        assert.equal(activeKey, legacy.apiKey);
-        assert.deepEqual(activeConfigs, legacy.authConfigs);
-        assert.equal(await restarted.importLegacy(legacy), true);
-        assert.equal(
-          (await db.pool.query('SELECT 1 FROM vault_app_grants WHERE owner_id=$1', [ownerId]))
-            .rowCount,
-          2,
-        );
-        assert.equal(
-          await restarted.importLegacy({ ...legacy, apiKey: 'synthetic-different-old-project' }),
-          false,
-        );
-        assert.equal(
-          await restarted.importLegacy({ ...legacy, authConfigs: { gmail: 'different' } }),
-          false,
-        );
-      });
-    }
-  },
-);
-
-test('legacy native handoff binds cleanup replies and defers unavailable cleanup after import', async () => {
-  const parent = Object.assign(new EventEmitter(), { postMessage: (_message: unknown) => {} });
-  const ownerId = randomUUID();
-  const messages: Array<Record<string, unknown>> = [];
-  parent.postMessage = (message) => {
-    messages.push(message as Record<string, unknown>);
-  };
-  const receiving = receiveLegacyIntegration({ ownerId, parent, timeout: 1000 });
-  const nonce = messages[0].nonce;
-  const payload = {
-    type: 'nod-legacy-integration',
-    ownerId,
-    nonce,
-    receipt: 'a'.repeat(64),
-    apiKey: 'synthetic-private-legacy-key',
-    authConfigs: { gmail: 'synthetic-private-config' },
-  };
-  let received = false;
-  void receiving.then(() => {
-    received = true;
-  });
-  for (const invalid of [
-    { ...payload, ownerId: randomUUID() },
-    { ...payload, nonce: randomUUID() },
-    { ...payload, apiKey: undefined },
-  ])
-    parent.emit('message', { data: invalid });
-  await delay(0);
-  assert.equal(received, false);
-  parent.emit('message', { data: payload });
-  const migration = await receiving;
-  assert.deepEqual(migration.input, { apiKey: payload.apiKey, authConfigs: payload.authConfigs });
-  let cleaned = false;
-  const acknowledgement = migration.acknowledge().then(() => {
-    cleaned = true;
-  });
-  const final = {
-    type: 'nod-legacy-integration-cleaned',
-    ownerId,
-    nonce,
-    receipt: payload.receipt,
-  };
-  parent.emit('message', { data: { ...final, receipt: 'b'.repeat(64) } });
-  parent.emit('message', { data: { ...final, ownerId: randomUUID() } });
-  await delay(0);
-  assert.equal(cleaned, false);
-  parent.emit('message', { data: final });
-  await acknowledgement;
-  assert.equal(parent.listenerCount('message'), 0);
-  let deferred = false;
-  const deferral = migration.acknowledge().then(() => {
-    deferred = true;
-  });
-  const failure = { ...final, type: 'nod-legacy-integration-cleanup-deferred' };
-  parent.emit('message', { data: { ...failure, nonce: randomUUID() } });
-  parent.emit('message', { data: { ...failure, ownerId: randomUUID() } });
-  parent.emit('message', { data: { ...failure, receipt: 'b'.repeat(64) } });
-  await delay(0);
-  assert.equal(deferred, false);
-  parent.emit('message', { data: failure });
-  await deferral;
-  assert.equal(parent.listenerCount('message'), 0);
-  await migration.acknowledge();
-  assert.equal(parent.listenerCount('message'), 0);
-  assert.ok(messages.every((value) => !JSON.stringify(value).includes(payload.apiKey)));
-  await assert.rejects(receiveLegacyIntegration({ ownerId, parent, timeout: 5 }), /restore/);
-  assert.equal(parent.listenerCount('message'), 0);
-});
 
 test(
   'hosted app consent returns to its owned screen and tenant event workers cannot consume each other',
@@ -9572,6 +7524,8 @@ test('managed uploads retain the selected account across separate operation sess
   t.after(() => rm(root, { recursive: true, force: true }));
   const uploads: Array<Record<string, unknown>> = [];
   const proxy = createComposioProxy({
+    keyStore: installationKeyStore,
+    checkpoint: fixtureIdentityCheckpoint,
     dataRoot: root,
     ownerId: 'owner',
     url: 'https://proxy.example.test',
@@ -9579,13 +7533,15 @@ test('managed uploads retain the selected account across separate operation sess
       const request = new Request(input, init);
       const url = new URL(request.url);
       assert.equal(url.origin, 'https://proxy.example.test');
-      assert.ok(request.headers.has('x-otto-signature'));
+      assert.ok(request.headers.has('x-nod-signature'));
       assert.equal(request.headers.has('x-api-key'), false);
-      if (url.pathname === '/api/v3.1/toolkits')
+      if (url.pathname === '/v2/access/enroll')
+        return Response.json({ state: 'enabled', userId: proxy.userId });
+      if (url.pathname === '/v2/api/v3.1/toolkits')
         return Response.json({ items: [], next_cursor: null });
       if (
-        url.pathname === '/api/v3.1/tool_router/session' ||
-        url.pathname === '/api/v3.1/tool_router/session/trs_private_metered'
+        url.pathname === '/v2/api/v3.1/tool_router/session' ||
+        url.pathname === '/v2/api/v3.1/tool_router/session/trs_private_metered'
       )
         return Response.json({
           session_id: 'trs_private_metered',
@@ -9597,7 +7553,7 @@ test('managed uploads retain the selected account across separate operation sess
           },
           config_version: 1,
         });
-      assert.equal(url.pathname, '/v1/files/upload');
+      assert.equal(url.pathname, '/v2/files/upload');
       const body = (await request.json()) as Record<string, unknown>;
       uploads.push(body);
       assert.equal(body.sessionId, 'trs_private_metered');
@@ -9606,7 +7562,7 @@ test('managed uploads retain the selected account across separate operation sess
       return Response.json({
         name: body.name,
         mimetype: body.mimeType,
-        s3key: 'otto-file.private-owned-capability',
+        s3key: 'nod-file.private-owned-capability',
       });
     },
   });
@@ -9626,7 +7582,7 @@ test('managed uploads retain the selected account across separate operation sess
       {
         name: file.name,
         mimetype: file.mimeType,
-        s3key: 'otto-file.private-owned-capability',
+        s3key: 'nod-file.private-owned-capability',
       },
     );
   assert.deepEqual(
@@ -9645,6 +7601,7 @@ function inboxPollFixture<M extends 'pollInbox' | 'inboxSnippets' | 'inboxThread
 ) {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
+    baseURL: 'https://proxy.fixture.invalid',
     allowTracking: false,
     disableVersionCheck: true,
     fileUploadDirs: false,
@@ -9667,7 +7624,7 @@ function inboxPollFixture<M extends 'pollInbox' | 'inboxSnippets' | 'inboxThread
       return respond(input, options.signal);
     },
   );
-  return createComposioProvider({ client })[method]!;
+  return createComposioProvider({ proxy: composioProxyFixture(client) })[method]!;
 }
 
 test('Composio inbox polling retains page continuations and limits metadata without losing messages', async (t) => {
@@ -9853,6 +7810,7 @@ test('Composio inbox failure diagnostics keep private provider detail out of log
 test('connected provider cancellation reaches session creation, search, schemas, and execution', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
+    baseURL: 'https://proxy.fixture.invalid',
     allowTracking: false,
     disableVersionCheck: true,
     fileUploadDirs: false,
@@ -9916,7 +7874,7 @@ test('connected provider cancellation reaches session creation, search, schemas,
     async (_id: string, _input: unknown, options: { signal?: AbortSignal }) =>
       block(options.signal),
   );
-  const provider = createComposioProvider({ client });
+  const provider = createComposioProvider({ proxy: composioProxyFixture(client) });
   const session = await provider.createSession('fixture-owner', { gmail: ['fixture-account'] });
   for (const [name, run] of [
     ['create', (signal: AbortSignal) => provider.createSession('fixture-owner', {}, signal)],
@@ -10030,7 +7988,7 @@ test(
     const authorize = f.session.authorize;
     const privateValue = 'synthetic-private-provider-key';
     let failure: Error | undefined;
-    let phase: 'session' | 'auth_config' | 'link' = 'session';
+    let phase: 'session' | 'link' = 'session';
     let sessions = 0;
     let authorizations = 0;
     f.provider.createSession = async () => {

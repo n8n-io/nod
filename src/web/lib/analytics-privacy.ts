@@ -20,8 +20,7 @@ export function analyticsRoute(value: string) {
     if (/^\/payments\/[^/]+$/.test(path)) return '/payments';
     if (path.startsWith('/browser-connect/')) return '/apps';
     if (path === '/you') return '/';
-    if (['/settings/models', '/settings/apps', '/settings/memory'].includes(path))
-      return '/settings';
+    if (['/settings/models', '/settings/memory'].includes(path)) return '/settings';
     return routes.has(path) ? path : '/not-found';
   } catch {
     return '/not-found';

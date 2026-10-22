@@ -9,7 +9,7 @@ Besides [Composio apps](/connect/apps/), nod connects to Notion and Linear throu
 
 ## Notion and Linear
 
-Notion and Linear connect through their own hosted MCP servers, the same way as any [other MCP server](#connect-another-service). You sign in with OAuth, and you don't need a Composio key. Open **Apps** and select **Connect**.
+Notion and Linear connect through their own hosted MCP servers, the same way as any [other MCP server](#connect-another-service). Open **Apps**, select **Connect** and sign in.
 
 If you ask nod in chat, it sends a link to a private setup page in nod, and you start the sign-in there. The service's sign-in link never appears in the chat, so the model and chat apps never see it.
 

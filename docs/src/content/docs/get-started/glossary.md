@@ -33,7 +33,7 @@ This page explains the words you'll meet in these docs. Select a term to read th
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Model connection](/connect/models/) | How nod reaches a model: an OpenAI, Anthropic or OpenRouter API key, a ChatGPT or OpenRouter account, or a local model server. A paid provider bills you for use. |
 | [Connected app](/connect/apps/)      | An account nod can use for you, such as Gmail, Calendar or Slack.                                                                                                 |
-| [Composio](/connect/apps/)           | The service nod uses to connect many apps for you. Managed connections use an allowed Google account; you can also use a personal key.                            |
+| [Composio](/connect/apps/)           | The service nod uses to connect many apps for you. You sign in to each app and choose what it can access.                                                         |
 | [MCP](/connect/mcp-api-cli/)         | Model Context Protocol, a standard way for an app to offer tools to an assistant. Notion and Linear connect through their own MCP servers.                        |
 | [Channel](/use/channels/)            | Another place to chat with nod besides the app: Telegram or WhatsApp.                                                                                             |
 

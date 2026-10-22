@@ -7,7 +7,6 @@ import { z } from 'zod';
 import { getDomain } from 'tldts';
 import type { AppSetupStatus, Connection, VaultLoginEntry } from '../shared/contracts.ts';
 import {
-  IntegrationAuthConfigurationError,
   IntegrationCatalogAccessDenied,
   IntegrationConnectionError,
   IntegrationInboxCursorExpired,
@@ -138,7 +137,6 @@ type IntegrationOptions = {
     current?: (client: PoolClient) => Promise<boolean>,
   ): Promise<unknown>;
   provider: IntegrationProvider;
-  standbyProviders?: IntegrationProvider[];
   resumeConnection?(turnId: string, service: Slug): Promise<boolean>;
   learnWritingStyle?(
     read: (signal: AbortSignal) => Promise<SentEmail[]>,
@@ -277,7 +275,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     captureConnection(options.analytics, connectionAnalytics(app), status, failureReason);
   }
   function connectionFailure(error: unknown) {
-    if (error instanceof IntegrationAuthConfigurationError) return 'invalid_configuration';
     return serviceFailureReason(error);
   }
   const providerId = z
@@ -307,72 +304,18 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     );
   }
   function rowProvider(row: Pick<ConnectionRow, 'provider_id' | 'configuration_id'>) {
-    return [provider, ...(options.standbyProviders ?? [])].find(
-      (item) =>
-        item.id === row.provider_id &&
-        item.configured &&
-        (!item.configurationId || item.configurationId === row.configuration_id),
-    );
+    return configurationMatches(row) ? provider : undefined;
   }
-  const savedSessions = (
-    await pool.query<{ name: string | null }>("SELECT to_regclass('integration_sessions') AS name")
-  ).rows[0].name
-    ? (
-        await pool.query<{ session_id: string; configuration_id: string | null }>(
-          `SELECT session_id,to_jsonb(integration_sessions)->>'configuration_id' AS configuration_id
-           FROM integration_sessions WHERE owner_id=$1 AND provider_id=$2`,
-          [configuredOwner, providerId],
-        )
-      ).rows
-    : [];
   await initializeIntegrationSchema(pool);
-  await pool.query('DROP TABLE IF EXISTS integration_sessions');
-  const stale = await pool.query<
-    Pick<ConnectionRow, 'provider_id' | 'account_id' | 'pending_account_id' | 'trigger_id'>
-  >(
-    `DELETE FROM app_connections WHERE owner_id=$1 AND (provider_id='direct' OR slug=ANY($2::text[]))
-     RETURNING provider_id,account_id,pending_account_id,trigger_id`,
-    [configuredOwner, [...officialMcp.keys()]],
-  );
   let draining = false;
   let closed = false;
   let refreshing: Promise<void> | undefined;
   let polling: Promise<void> | undefined;
   const stop = new AbortController();
-  let switching: Promise<void> | undefined;
-  const working = new Set<Promise<unknown>>();
-  function steady<T>(operation: () => Promise<T>) {
-    if (switching)
-      return Promise.reject(
-        new IntegrationError('Your app connection is changing. Try again.', 409),
-      );
-    const result = operation();
-    working.add(result);
-    const settled = () => working.delete(result);
-    result.then(settled, settled);
-    return result;
-  }
   function background(operation: () => Promise<void>) {
     if (closed) return undefined;
     return options.admission ? options.admission.run(operation) : Promise.resolve().then(operation);
   }
-  const bounded = (operation: () => Promise<unknown>) =>
-    Promise.race([
-      Promise.resolve().then(operation),
-      new Promise((resolve) => setTimeout(resolve, 10_000).unref()),
-    ]).catch(() => {});
-  void background(async () => {
-    if (!provider.configured) return;
-    for (const row of savedSessions)
-      if (!provider.configurationId || row.configuration_id === provider.configurationId)
-        await bounded(() => provider.deleteSession(row.session_id));
-    for (const row of stale.rows.filter((item) => item.provider_id === providerId)) {
-      if (row.trigger_id) await bounded(() => provider.unsubscribe(row.trigger_id!));
-      for (const account of new Set([row.account_id, row.pending_account_id]))
-        if (account) await bounded(() => provider.deleteAccount(account));
-    }
-  })?.catch(() => {});
-
   function requiredProvider() {
     if (!provider.configured)
       throw new IntegrationError('Configure a connection provider before linking services.', 503);
@@ -410,85 +353,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     } finally {
       timeout.abort();
     }
-  }
-
-  async function verifyConfigurations() {
-    if (closed) return;
-    const configurationId = provider.configurationId;
-    if (!provider.configured || !configurationId) return;
-    const { rows: pending } = await pool.query<ConnectionRow>(
-      `SELECT * FROM app_connections WHERE owner_id=$1 AND provider_id=$2
-         AND configuration_id IS DISTINCT FROM $3 AND account_id IS NOT NULL AND NOT revoked`,
-      [configuredOwner, provider.id, configurationId],
-    );
-    await Promise.all(
-      Array.from({ length: Math.min(4, pending.length) }, async () => {
-        while (pending.length && !closed) {
-          const row = pending.shift()!;
-          try {
-            const remote = await boundedRequest(
-              () =>
-                provider.inspectAccount(row.account_id!, configuredOwner, { verifyOwner: true }),
-              stop.signal,
-            );
-            if (
-              closed ||
-              !provider.configured ||
-              provider.configurationId !== configurationId ||
-              !remote.active ||
-              remote.service !== row.slug
-            )
-              continue;
-            const client = await pool.connect();
-            let saved = false;
-            try {
-              await client.query('BEGIN');
-              await client.query(
-                'SELECT id FROM app_connections WHERE id=$1 AND owner_id=$2 FOR UPDATE NOWAIT',
-                [row.id, configuredOwner],
-              );
-              if (!closed && provider.configured && provider.configurationId === configurationId) {
-                const updated = await client.query(
-                  `UPDATE app_connections SET configuration_id=$1 WHERE id=$2 AND owner_id=$3
-                     AND provider_id=$4 AND account_id=$5 AND configuration_id IS NOT DISTINCT FROM $6
-                     AND slug=$7 AND NOT revoked
-                     AND NOT EXISTS (
-                       SELECT 1 FROM app_connections pending
-                       WHERE pending.owner_id=$3 AND pending.replaces_connection_id=$2
-                         AND pending.account_id IS NULL AND pending.callback_expires>now()
-                         AND NOT pending.revoked
-                     )`,
-                  [
-                    configurationId,
-                    row.id,
-                    configuredOwner,
-                    provider.id,
-                    row.account_id,
-                    row.configuration_id,
-                    row.slug,
-                  ],
-                );
-                saved = Boolean(updated.rowCount);
-              }
-              await steady(async () => {
-                if (provider.configurationId !== configurationId)
-                  throw new IntegrationError('This connection provider changed.', 409);
-                await client.query('COMMIT');
-              });
-            } catch (error) {
-              await client.query('ROLLBACK');
-              throw error;
-            } finally {
-              client.release();
-            }
-            if (!saved) continue;
-            if (!closed) options.refresh?.();
-          } catch (error) {
-            logFailure('connection_adoption_failed', error);
-          }
-        }
-      }),
-    );
   }
 
   async function withAccountSession<T>(
@@ -944,7 +808,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         ? await provider.authorize(configuredOwner, slug, callbackUrl.href)
         : await session!.authorize(slug, callbackUrl.href);
       const redirect = new URL(attempt.url);
-      if (redirect.protocol !== 'https:' || redirect.username || redirect.password)
+      if (
+        (redirect.protocol !== 'https:' && !provider.ownsConnectionUrl?.(redirect.href)) ||
+        redirect.username ||
+        redirect.password
+      )
         throw new IntegrationError(
           'The connection provider did not return a valid sign-in link.',
           502,
@@ -1001,7 +869,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             'Your app connection changed while this was starting. Try again.',
             409,
           );
-        await steady(() => client.query('COMMIT'));
+        await client.query('COMMIT');
       } catch (error) {
         await client.query('ROLLBACK');
         throw error;
@@ -1117,27 +985,29 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       );
       attemptedId = z.string().min(1).max(200).parse(attempt.accountId);
       const redirect = new URL(attempt.url);
-      if (redirect.protocol !== 'https:' || redirect.username || redirect.password)
+      if (
+        (redirect.protocol !== 'https:' && !provider.ownsConnectionUrl?.(redirect.href)) ||
+        redirect.username ||
+        redirect.password
+      )
         throw new IntegrationError(
           'The connection provider did not return a valid sign-in link.',
           502,
         );
-      const saved = await steady(() =>
-        pool.query(
-          `UPDATE app_connections SET pending_account_id=$6,pending_auth_config_id=$7,setup_link_hash=$8,callback_verifier=$9
+      const saved = await pool.query(
+        `UPDATE app_connections SET pending_account_id=$6,pending_auth_config_id=$7,setup_link_hash=$8,callback_verifier=$9
            WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND callback_hash=$5 AND NOT revoked`,
-          [
-            row.id,
-            configuredOwner,
-            row.provider_id,
-            row.account_id,
-            hash,
-            attemptedId,
-            z.string().min(1).max(200).parse(attempt.authConfigId),
-            createHash('sha256').update(redirect.href).digest('hex'),
-            attempt.verificationSecret ?? null,
-          ],
-        ),
+        [
+          row.id,
+          configuredOwner,
+          row.provider_id,
+          row.account_id,
+          hash,
+          attemptedId,
+          z.string().min(1).max(200).parse(attempt.authConfigId),
+          createHash('sha256').update(redirect.href).digest('hex'),
+          attempt.verificationSecret ?? null,
+        ],
       );
       if (!saved.rowCount)
         throw new IntegrationError(
@@ -1340,12 +1210,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       );
     }, pool);
     if (!row.revoked) track(row.slug, 'disconnected');
-    const sdk = [providerForRow(row), ...(options.standbyProviders ?? [])].find(
-      (item) =>
-        item.id === row.provider_id &&
-        item.configured &&
-        (!item.configurationId || item.configurationId === row.configuration_id),
-    );
+    const sdk = rowProvider(row);
     if (sdk) {
       if (row.trigger_id) await sdk.unsubscribe(row.trigger_id);
       if (row.account_id) await revokeAccount(sdk, row.account_id);
@@ -1374,68 +1239,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         ))
       )
         throw error;
-    }
-  }
-
-  async function disconnectProvider(skipRemoteRevocation?: () => Promise<boolean>) {
-    if (!provider.configured) return;
-    const rows = (await connectionRows(configuredOwner)).filter(
-      (row) => row.provider_id === providerId && configurationMatches(row),
-    );
-    if (rows.length && (await skipRemoteRevocation?.())) {
-      const deleted = await transaction(async (client) => {
-        return client.query<Pick<ConnectionRow, 'slug' | 'revoked'>>(
-          `WITH removed AS (
-             DELETE FROM app_connections WHERE owner_id=$1 AND provider_id=$2
-             AND configuration_id IS NOT DISTINCT FROM $3
-             RETURNING id,slug,revoked,account_id,pending_account_id,trigger_id
-           ), discarded AS (
-           UPDATE integration_events SET state='discarded' WHERE owner_id=$1 AND provider_id=$2
-           AND state IN ('queued','processing') AND EXISTS (
-             SELECT 1 FROM removed WHERE removed.id=poll_connection_id
-             OR removed.account_id=integration_events.account_id
-             OR removed.pending_account_id=integration_events.account_id
-             OR removed.trigger_id=integration_events.trigger_id
-           ) RETURNING id
-           ) SELECT slug,revoked FROM removed`,
-          [configuredOwner, providerId, provider.configurationId ?? null],
-        );
-      }, pool);
-      for (const row of deleted.rows) if (!row.revoked) track(row.slug, 'disconnected');
-      options.refresh?.();
-      return;
-    }
-    let removed = false;
-    try {
-      for (const row of rows) {
-        const kept = () => {
-          throw new IntegrationError(
-            `nod couldn’t disconnect ${serviceInfo(row.slug).name}, so it kept your current connection. Try again.`,
-          );
-        };
-        if (row.pending_account_id && row.pending_account_id !== row.account_id)
-          await revokeAccount(provider, row.pending_account_id).catch(kept);
-        if (!row.account_id) continue;
-        await revokeAccount(provider, row.account_id).catch(kept);
-        if (row.trigger_id) await provider.unsubscribe(row.trigger_id).catch(() => {});
-        const deleted = await pool.query<Pick<ConnectionRow, 'slug' | 'revoked'>>(
-          `WITH removed AS (
-             DELETE FROM app_connections WHERE id=$1 AND owner_id=$2 AND account_id=$3
-             RETURNING id,slug,revoked
-           ), discarded AS (
-           UPDATE integration_events SET state='discarded' WHERE owner_id=$2
-           AND state IN ('queued','processing') AND poll_connection_id IN (SELECT id FROM removed)
-           RETURNING id
-           ) SELECT slug,revoked FROM removed`,
-          [row.id, configuredOwner, row.account_id],
-        );
-        for (const item of deleted.rows) if (!item.revoked) track(item.slug, 'disconnected');
-        removed ||= deleted.rows.length > 0;
-      }
-    } finally {
-      if (removed) {
-        options.refresh?.();
-      }
     }
   }
 
@@ -2056,38 +1859,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       draining = false;
     }
   }
-  let verifying: Promise<unknown> | undefined = background(verifyConfigurations)?.catch(() => {});
-  async function providerChanged() {
-    serviceCatalog = undefined;
-    try {
-      await pool.query(
-        `UPDATE app_connections SET callback_expires=now() WHERE owner_id=$1 AND provider_id=$2
-         AND callback_expires>now() AND configuration_id IS DISTINCT FROM $3`,
-        [configuredOwner, providerId, provider.configurationId ?? null],
-      );
-    } finally {
-      verifying = Promise.all([verifying, background(verifyConfigurations)?.catch(() => {})]);
-      options.refresh?.();
-    }
-  }
-  async function changeProvider(
-    revoke: boolean,
-    swap: () => Promise<void>,
-    skipRemoteRevocation?: () => Promise<boolean>,
-  ) {
-    const change = (async () => {
-      await Promise.allSettled(working);
-      if (revoke) await disconnectProvider(skipRemoteRevocation);
-      await swap();
-    })();
-    switching = change.catch(() => {});
-    try {
-      await change;
-    } finally {
-      switching = undefined;
-    }
-    await providerChanged().catch(() => {});
-  }
   const timer = setInterval(() => {
     void background(drain)?.catch(() => {});
     void background(syncWatches)?.catch(() => {});
@@ -2100,7 +1871,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       closed = true;
       clearInterval(timer);
       stop.abort();
-      await Promise.all([verifying, refreshing, polling]);
+      await Promise.all([refreshing, polling]);
     });
     app.register(async (scope) => {
       scope.setErrorHandler((error, _request, reply) => {
@@ -2110,18 +1881,15 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           error instanceof DiscoveredConnectionError ||
           error instanceof BrowserConnectionError
             ? error.statusCode
-            : error instanceof IntegrationAuthConfigurationError
-              ? 503
-              : error instanceof z.ZodError
-                ? 400
-                : 502;
+            : error instanceof z.ZodError
+              ? 400
+              : 502;
         if (status === 502 && !(error instanceof IntegrationError))
           logFailure('connection_failed', error);
         reply.code(status).send({
           error:
             error instanceof IntegrationError ||
             error instanceof IntegrationConnectionError ||
-            error instanceof IntegrationAuthConfigurationError ||
             error instanceof DiscoveredConnectionError ||
             error instanceof BrowserConnectionError
               ? error.message
@@ -2194,9 +1962,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               ...(info.logoUrl ? { logoUrl: info.logoUrl } : {}),
               ...(connectionStatus?.pairingConfirmed && row.hash === pairingHash
                 ? { pairingConfirmed: true }
-                : {}),
-              ...(connectionStatus?.signInRequired && row.hash === pairingHash
-                ? { signInRequired: true }
                 : {}),
             };
           });
@@ -2365,10 +2130,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             ).href,
           );
       };
-      scope.get('/api/apps/callback', async (request, reply) => {
-        while (switching) await switching;
-        return steady(() => callback(request, reply));
-      });
+      scope.get('/api/apps/callback', callback);
       scope.post<{ Params: { slug: string; connectionId: string } }>(
         '/api/apps/:slug/accounts/:connectionId/disconnect',
         async (request) => {
@@ -2589,7 +2351,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     drain,
     syncWatches,
     pollInboxes,
-    changeProvider,
     ready: provider.configured,
   };
 }
