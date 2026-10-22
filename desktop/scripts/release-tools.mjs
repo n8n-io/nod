@@ -51,14 +51,14 @@ export function run(command, args, { output = 'combined', timeout = 120_000, ...
 }
 
 export function signingConfiguration(env = process.env) {
-  const mode = env.OTTO_SIGNING_MODE || 'self-signed';
-  const identity = env.OTTO_SIGNING_IDENTITY?.trim();
-  const team = env.OTTO_APPLE_TEAM_ID;
-  const keychain = env.OTTO_SIGNING_KEYCHAIN;
-  const profile = env.OTTO_NOTARY_PROFILE;
-  const expectedCertificate = env.OTTO_SIGNING_CERTIFICATE_SHA256?.toLowerCase();
+  const mode = env.NOD_SIGNING_MODE || 'self-signed';
+  const identity = env.NOD_SIGNING_IDENTITY?.trim();
+  const team = env.NOD_APPLE_TEAM_ID;
+  const keychain = env.NOD_SIGNING_KEYCHAIN;
+  const profile = env.NOD_NOTARY_PROFILE;
+  const expectedCertificate = env.NOD_SIGNING_CERTIFICATE_SHA256?.toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(expectedCertificate || ''))
-    throw new Error('Signed releases require OTTO_SIGNING_CERTIFICATE_SHA256.');
+    throw new Error('Signed releases require NOD_SIGNING_CERTIFICATE_SHA256.');
   if (
     !['self-signed', 'developer-id'].includes(mode) ||
     !identity ||
@@ -77,7 +77,7 @@ export function signingConfiguration(env = process.env) {
       !profile)
   )
     throw new Error(
-      'Developer ID releases require matching OTTO_APPLE_TEAM_ID and OTTO_NOTARY_PROFILE.',
+      'Developer ID releases require matching NOD_APPLE_TEAM_ID and NOD_NOTARY_PROFILE.',
     );
   if (mode === 'self-signed' && identity.startsWith('Developer ID Application:'))
     throw new Error('Use developer-id mode for an Apple Developer ID identity.');
@@ -238,7 +238,7 @@ export async function verifySignature(path, configuration, { executable = false 
     throw new Error(
       'Release native code requires hardened runtime and Developer ID code requires a secure timestamp.',
     );
-  const temporary = await mkdtemp(join(tmpdir(), 'otto-signature-'));
+  const temporary = await mkdtemp(join(tmpdir(), 'nod-signature-'));
   try {
     const prefix = join(temporary, 'certificate');
     await run('/usr/bin/codesign', ['-d', `--extract-certificates=${prefix}`, path]);
@@ -278,7 +278,7 @@ export async function signApplication(application, electronVersion, configuratio
   const files = await nativeFiles(application);
   await verifyCompatibility(files);
   const { sign } = await import('@electron/osx-sign');
-  const temporary = await mkdtemp(join(tmpdir(), 'otto-entitlements-'));
+  const temporary = await mkdtemp(join(tmpdir(), 'nod-entitlements-'));
   const entitlements = new Map();
   try {
     if (configuration.mode === 'self-signed') {
@@ -362,13 +362,13 @@ await import('@earendil-works/pi-coding-agent');
 await import('pi-web-access/dist/index.js');
 const native = await import(pathToFileURL(resolve('node_modules/@earendil-works/pi-tui/dist/native-platform.js')).href);
 assert(native.getNativePlatformHelper());
-console.log('Otto engine imports verified.');`;
+console.log('nod engine imports verified.');`;
   const result = await run(
-    join(application, 'Contents/MacOS/Otto'),
+    join(application, 'Contents/MacOS/nod'),
     ['--input-type=module', '-e', script],
     { cwd: engine, env: { ...environment, ELECTRON_RUN_AS_NODE: '1' } },
   );
-  if (result !== 'Otto engine imports verified.')
+  if (result !== 'nod engine imports verified.')
     throw new Error('The signed Electron engine import check failed.');
 }
 
@@ -475,12 +475,12 @@ export async function verifyRuntimeRelease(
   const platform = runtimePlatform(env);
   if (
     release.platform !== platform ||
-    !new RegExp(`^Otto-Runtime-${platform}-[a-f0-9]{12}\\.tar\\.gz$`).test(
+    !new RegExp(`^nod-Runtime-${platform}-[a-f0-9]{12}\\.tar\\.gz$`).test(
       release.archive?.file || '',
     )
   )
     throw new Error('The runtime archive name is invalid.');
-  const pendingDescriptor = env.OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256;
+  const pendingDescriptor = env.NOD_PENDING_RUNTIME_DESCRIPTOR_SHA256;
   if (
     pendingDescriptor &&
     (env.GITHUB_ACTIONS !== 'true' ||

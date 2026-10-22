@@ -47,7 +47,7 @@ import {
   visibleConversationTurns,
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
-import { OttoGlyph, Rise } from '../components/motion';
+import { NodGlyph, Rise } from '../components/motion';
 
 function verificationFailure(
   status: SubmitMessageResponse['verificationStatus'],
@@ -92,7 +92,7 @@ function TaskCards({
   return (
     <article
       className="message message-assistant"
-      aria-label="Otto"
+      aria-label="nod"
       data-message-id={id}
       tabIndex={-1}
     >
@@ -435,8 +435,8 @@ export function Chat({
       const detail = (event as CustomEvent<{ messageId?: unknown }>).detail;
       if (typeof detail?.messageId === 'string') setFocusTarget({ id: detail.messageId, pages: 0 });
     };
-    window.addEventListener('otto:focus-message', focusMessage);
-    return () => window.removeEventListener('otto:focus-message', focusMessage);
+    window.addEventListener('nod:focus-message', focusMessage);
+    return () => window.removeEventListener('nod:focus-message', focusMessage);
   }, []);
   useEffect(() => {
     if (!focusTarget || loadingHistory) return;
@@ -470,7 +470,7 @@ export function Chat({
     value: string,
     attachments: Artifact[],
     reply: Message | null = replyTo,
-    source: 'composer' | 'task_card' | 'ask_otto' | 'task_reply' = reply &&
+    source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply' = reply &&
     reply.id === taskReply.current
       ? 'task_reply'
       : 'composer',
@@ -556,7 +556,7 @@ export function Chat({
         credentials: 'same-origin',
         headers: {
           'Content-Type': 'application/json',
-          ...(replaySession ? { 'x-otto-replay-session': replaySession } : {}),
+          ...(replaySession ? { 'x-nod-replay-session': replaySession } : {}),
         },
         body: JSON.stringify({
           threadId: sentThread,
@@ -582,7 +582,7 @@ export function Chat({
         throw new Error('The message could not be confirmed. Try sending it again.');
       const turnId = result.turnId;
       if (!privateVerification)
-        captureAnalytics('otto_chat_message_sent', {
+        captureAnalytics('nod_chat_message_sent', {
           has_attachments: attachments.length > 0,
           is_reply: Boolean(replyId),
           source,
@@ -629,7 +629,7 @@ export function Chat({
             : verificationFailure(verificationStatus, verificationRequests.length > 1)
           : errorMessage(cause),
       );
-      captureAnalytics('otto_ui_error', { area: 'chat', action: 'send' });
+      captureAnalytics('nod_ui_error', { area: 'chat', action: 'send' });
       return { sent: false, restoreText: !privateVerification || !explicitVerification };
     } finally {
       outstandingSends.current--;
@@ -660,7 +660,7 @@ export function Chat({
       text: requestedMessage.text,
     };
     requestedSends.current.push(request);
-    void send(requestedMessage.text, [], null, 'ask_otto').then((result) => {
+    void send(requestedMessage.text, [], null, 'ask_nod').then((result) => {
       if (threadRef.current !== requestedThread) return;
       request.result = result;
       if (requestedSends.current.some((item) => !item.result)) return;
@@ -806,11 +806,11 @@ export function Chat({
     setError('');
     try {
       await post('/api/thread/stop');
-      captureAnalytics('otto_chat_stop_requested');
+      captureAnalytics('nod_chat_stop_requested');
       await refresh();
     } catch (cause) {
       if (threadRef.current === stoppedThread) setError(errorMessage(cause));
-      captureAnalytics('otto_ui_error', { area: 'chat', action: 'stop' });
+      captureAnalytics('nod_ui_error', { area: 'chat', action: 'stop' });
     } finally {
       if (threadRef.current === stoppedThread) setStopping(false);
     }
@@ -943,7 +943,7 @@ export function Chat({
                         !state.configuration.llmReady || resetting || welcoming || spendingPaused
                       }
                       onStart={(task, position) => {
-                        captureAnalytics('otto_task_card_started', {
+                        captureAnalytics('nod_task_card_started', {
                           ...(task.kind
                             ? { kind: task.kind === 'ongoing' ? 'ongoing' : 'immediate' }
                             : {}),
@@ -997,7 +997,7 @@ export function Chat({
               {planning ? (
                 <div className="thinking task-planning" role="status">
                   <div className="assistant-mark" aria-hidden="true">
-                    <OttoGlyph size={24} mode="thinking" />
+                    <NodGlyph size={24} mode="thinking" />
                   </div>
                   <span className="task-bubble">
                     Pulling together a few ideas from what you told me…
@@ -1010,7 +1010,7 @@ export function Chat({
                     className="thinking"
                     role="status"
                     aria-label={
-                      resetting ? 'Starting setup' : sending ? 'Sending message' : 'Otto is typing'
+                      resetting ? 'Starting setup' : sending ? 'Sending message' : 'nod is typing'
                     }
                   >
                     <div className="assistant-mark">

@@ -34,9 +34,9 @@ try {
     const settings = parseEnv(await readFile('.env', 'utf8'));
     const environment = {
       ...localDatabaseEnvironment(database),
-      OTTO_DATA_ROOT: resolve(process.env.OTTO_DATA_ROOT || settings.OTTO_DATA_ROOT || '.local'),
+      NOD_DATA_ROOT: resolve(process.env.NOD_DATA_ROOT || settings.NOD_DATA_ROOT || '.local'),
     };
-    await prepareLocalDirectories(environment.OTTO_DATA_ROOT);
+    await prepareLocalDirectories(environment.NOD_DATA_ROOT);
     await run('docker', ['compose', 'up', '-d', '--wait', 'postgres'], environment);
     await rotateLocalDatabase(database, { environment });
     await verifyLocalDatabase(database);
@@ -47,7 +47,7 @@ try {
     );
     return environment;
   });
-  console.log('\nOtto is starting. Open the link it prints when it is ready.\n');
+  console.log('\nnod is starting. Open the link it prints when it is ready.\n');
   const child = spawn(
     'pnpm',
     ['exec', 'tsx', ...(production ? [] : ['watch']), 'src/server/index.ts'],

@@ -85,7 +85,7 @@ Leave out tautological tests, mocks that return what they were told, and tests o
 The workspace image includes [RTK](https://github.com/rtk-ai/rtk), which shortens command output for the model. This check measures its savings and confirms that exports and file searches stay unfiltered. It runs 15 synthetic cases in disposable containers with networking off. It doesn't call a model or a connected account.
 
 ```sh title="Terminal"
-docker build -f Dockerfile.workspace -t otto-eval-workspace:latest .
+docker build -f Dockerfile.workspace -t nod-eval-workspace:latest .
 pnpm exec tsx scripts/eval-rtk.ts --smoke
 ```
 
@@ -117,15 +117,15 @@ flowchart TD
 | `evals/`                                         | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                     |
 | `deployment/n8n/`                                | The n8n delivery contract tests                                                                                                              |
 
-A manual CI run uses every check. The exception is a run on `release/desktop`, which compares that branch with `main`. The rules are in [`.github/scripts/ci-scope.mjs`](https://github.com/n8n-io/otto/blob/main/.github/scripts/ci-scope.mjs).
+A manual CI run uses every check. The exception is a run on `release/desktop`, which compares that branch with `main`. The rules are in [`.github/scripts/ci-scope.mjs`](https://github.com/n8n-io/nod/blob/main/.github/scripts/ci-scope.mjs).
 
-Otto keeps no Git notes. Every CI run deletes any `refs/notes/*` ref on GitHub, such as the AI authorship notes that [git-ai](https://usegitai.com) pushes after each `git push`. GitHub can't block notes refs, and git-ai skips Git hooks, so don't run tools that push notes in this repository.
+nod keeps no Git notes. Every CI run deletes any `refs/notes/*` ref on GitHub, such as the AI authorship notes that [git-ai](https://usegitai.com) pushes after each `git push`. GitHub can't block notes refs, and git-ai skips Git hooks, so don't run tools that push notes in this repository.
 
 CI does not package desktop apps on pull requests or normal merges to `main`. Only **Build desktop release** packages the apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks Windows workspace paths, installation, startup and updates. A failed check blocks publication. See [Desktop releases](/contribute/desktop-releases/).
 
 ## Related resources
 
-- [Contribute to Otto](/contribute/)
+- [Contribute to nod](/contribute/)
 - [Capability evals](/contribute/evals/)
 - [Pull requests](/contribute/pull-requests/)
 - [Desktop releases](/contribute/desktop-releases/)

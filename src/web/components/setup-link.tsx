@@ -181,7 +181,7 @@ function SetupAction({
         data-setup={setup}
         className="setup-app-card"
         onClick={(event) => {
-          captureAnalytics('otto_setup_link_clicked', { setup });
+          captureAnalytics('nod_setup_link_clicked', { setup });
           onConnect(href, event.currentTarget);
         }}
       >
@@ -206,7 +206,7 @@ function SetupAction({
       }
       referrerPolicy="no-referrer"
       onClick={(event) => {
-        captureAnalytics('otto_setup_link_clicked', { setup });
+        captureAnalytics('nod_setup_link_clicked', { setup });
         if (
           setup === 'vault' &&
           !event.button &&
@@ -270,7 +270,7 @@ export function SetupActions({
   async function connect(href: string) {
     const navigate = appLink.test(href);
     if (!navigate && request.current) return;
-    captureAnalytics('otto_app_connect_clicked', { entry: 'chat', result: 'opened' });
+    captureAnalytics('nod_app_connect_clicked', { entry: 'chat', result: 'opened' });
     if (navigate) {
       setDiscoveryHref(href);
       return;
@@ -294,7 +294,7 @@ export function SetupActions({
     try {
       if (popup) {
         popup.opener = null;
-        popup.document.title = 'Connect to Otto';
+        popup.document.title = 'Connect to nod';
         popup.document.body.textContent = 'Preparing secure sign-in…';
       }
     } catch {}
@@ -329,7 +329,7 @@ export function SetupActions({
         }
         const app = result.apps.get(href);
         if (!app) {
-          fail('This sign-in link is no longer available. Ask Otto to connect again.');
+          fail('This sign-in link is no longer available. Ask nod to connect again.');
           return;
         }
         setSignIn((value) =>
@@ -348,7 +348,7 @@ export function SetupActions({
         if (!current()) return;
       }
       if (Date.now() >= deadline) {
-        fail('The sign-in link expired. Ask Otto to connect again.');
+        fail('The sign-in link expired. Ask nod to connect again.');
         return;
       }
       timer.current = window.setTimeout(() => void check(), 5000);
@@ -400,7 +400,7 @@ export function SetupActions({
     } catch {
       popup?.close();
       if (!current()) return;
-      fail('This sign-in link could not be opened. Ask Otto to connect again.');
+      fail('This sign-in link could not be opened. Ask nod to connect again.');
     }
   }
   const pending = actions.filter(

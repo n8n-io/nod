@@ -6,16 +6,16 @@
   padding: 16px;
   border-radius: 24px;
 }
-.ask-otto {
+.ask-nod {
   display: grid;
   gap: 8px;
 }
-.ask-otto-field {
+.ask-nod-field {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.ask-otto-chips {
+.ask-nod-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;

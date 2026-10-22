@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script src="/theme-init.js"></script>
-    <title>Return to Otto</title>
+    <title>Return to nod</title>
     <style>
       @font-face {
         font-family: 'Geist';
@@ -79,10 +79,10 @@
           <circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4" />
           <circle cx="25" cy="6" r="4" fill="#ff91ac" />
         </svg>
-        <span>otto</span>
+        <span>nod</span>
       </div>
-      <h1 id="title">Return to Otto</h1>
-      <p id="message">You can close this window and return to Otto.</p>
+      <h1 id="title">Return to nod</h1>
+      <p id="message">You can close this window and return to nod.</p>
     </main>
     <script>
       (() => {
@@ -109,15 +109,15 @@
               : 'Sign-in didn’t finish';
         document.getElementById('title').textContent = title;
         document.getElementById('message').textContent = succeeded
-          ? 'You can close this window and return to Otto.'
-          : 'Return to Otto and try connecting again.';
-        document.title = `${title} · Otto`;
+          ? 'You can close this window and return to nod.'
+          : 'Return to nod and try connecting again.';
+        document.title = `${title} · nod`;
         try {
           history.replaceState(null, '', location.pathname);
         } catch {}
         try {
           if (attempt && /^[A-Za-z0-9_-]{43}$/.test(attempt)) {
-            const channel = new BroadcastChannel('otto.apps');
+            const channel = new BroadcastChannel('nod.apps');
             channel.postMessage({ connection, service, attempt });
             channel.close();
           }

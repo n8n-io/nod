@@ -25,17 +25,17 @@ assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Use a disposable GitHub runner
 assert.equal(process.env.RUNNER_OS, 'Windows', 'Use a disposable Windows runner.');
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const runner = await realpath(process.env.RUNNER_TEMP);
-const root = await mkdtemp(join(runner, 'otto-update-'));
+const root = await mkdtemp(join(runner, 'nod-update-'));
 const profile = join(root, 'profile');
-const installation = join(root, 'installed Otto');
+const installation = join(root, 'installed nod');
 const events = join(root, 'events.jsonl');
 const stop = join(root, 'stop');
 const output = join(repository, '.local/windows-update-acceptance');
-const executable = join(installation, 'Otto.exe');
+const executable = join(installation, 'nod.exe');
 const powershell = join(process.env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe');
-const nsis = process.env.OTTO_NSIS || join(process.env['ProgramFiles(x86)'], 'NSIS/makensis.exe');
+const nsis = process.env.NOD_NSIS || join(process.env['ProgramFiles(x86)'], 'NSIS/makensis.exe');
 const configuration = JSON.parse(await readFile(join(repository, 'desktop/package.json')));
-const environment = { ...process.env, OTTO_UPDATE_FIXTURE_ROOT: root };
+const environment = { ...process.env, NOD_UPDATE_FIXTURE_ROOT: root };
 delete environment.ELECTRON_RUN_AS_NODE;
 const receipt = { source: await run('git', ['rev-parse', 'HEAD'], { cwd: repository }) };
 let child;
@@ -71,10 +71,7 @@ async function start() {
   });
   return waitFor((entries) => {
     const ready = entries.find((entry) => entry.event === 'ready' && entry.pid === child.pid);
-    assert.ok(
-      ready || child.exitCode === null,
-      `Otto exited before readiness (${child.exitCode}).`,
-    );
+    assert.ok(ready || child.exitCode === null, `nod exited before readiness (${child.exitCode}).`);
     return ready;
   });
 }
@@ -105,7 +102,7 @@ try {
     '-NoProfile',
     '-NonInteractive',
     '-Command',
-    "if (Test-Path 'HKCU:\\Software\\Otto') { exit 1 }",
+    "if (Test-Path 'HKCU:\\Software\\nod') { exit 1 }",
   ]);
   await mkdir(output, { recursive: true });
   await protectWindowsProfile(profile, repository);
@@ -134,7 +131,7 @@ import { appendFile, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createSettingsStore } from './settings.mjs';
 import { sealVaultValue, openVaultValue } from './vault-crypto.mjs';
-const root = process.env.OTTO_UPDATE_FIXTURE_ROOT;
+const root = process.env.NOD_UPDATE_FIXTURE_ROOT;
 const profile = join(root, 'profile');
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const record = (event, fields = {}) => appendFile(join(root, 'events.jsonl'), JSON.stringify({ event, pid: process.pid, version: app.getVersion(), ...fields }) + '\\n');
@@ -144,7 +141,7 @@ app.whenReady().then(async () => {
   const fresh = await stat(settingsPath).then(() => false, (error) => { if (error.code === 'ENOENT') return true; throw error; });
   if (fresh) await writeFile(settingsPath, JSON.stringify({ version: 1, theme: 'system', onboardingCompleted: true, notifications: false, launchAtLogin: true, secrets: {}, keyMetadata: {} }), { mode: 0o600 });
   const store = createSettingsStore(settingsPath, safeStorage);
-  const key = Buffer.from((await store.environment()).OTTO_VAULT_KEY, 'base64');
+  const key = Buffer.from((await store.environment()).NOD_VAULT_KEY, 'base64');
   const binding = ['synthetic-owner', 'synthetic-model'];
   const secret = 'synthetic-saved-provider-credential';
   if (fresh) await writeFile(join(profile, 'vault'), sealVaultValue(key, binding, secret));
@@ -178,8 +175,8 @@ app.whenReady().then(async () => {
     await writeFile(
       join(source, 'package.json'),
       JSON.stringify({
-        name: 'otto-update-fixture',
-        productName: 'Otto',
+        name: 'nod-update-fixture',
+        productName: 'nod',
         version,
         main: 'main.mjs',
         type: 'module',
@@ -188,17 +185,17 @@ app.whenReady().then(async () => {
     const [application] = await packager({
       dir: source,
       out: join(root, `package-${version}`),
-      name: 'Otto',
+      name: 'nod',
       platform: 'win32',
       arch: 'x64',
       electronVersion: configuration.devDependencies.electron,
       appVersion: version,
-      win32metadata: { CompanyName: 'n8n GmbH', ProductName: 'Otto', FileDescription: 'Otto' },
+      win32metadata: { CompanyName: 'n8n GmbH', ProductName: 'nod', FileDescription: 'nod' },
       overwrite: true,
     });
     const stage = join(root, `stage-${version}`);
     await mkdir(stage);
-    installers[version] = join(stage, 'Otto-Setup-x64.exe');
+    installers[version] = join(stage, 'nod-Setup-x64.exe');
     await run(
       nsis,
       [
@@ -226,12 +223,12 @@ app.whenReady().then(async () => {
   const rejectedSource = join(rejected, 'failed.nsi');
   await writeFile(
     rejectedSource,
-    `Unicode true\nName "Otto rejected update fixture"\nOutFile "${join(rejected, 'Otto-Setup-x64.exe')}"\nRequestExecutionLevel user\nSilentInstall silent\nSection\nSetErrorLevel 5\nSectionEnd\n`,
+    `Unicode true\nName "nod rejected update fixture"\nOutFile "${join(rejected, 'nod-Setup-x64.exe')}"\nRequestExecutionLevel user\nSilentInstall silent\nSection\nSetErrorLevel 5\nSectionEnd\n`,
   );
   await run(nsis, [rejectedSource]);
   receipt.stage = 'rejecting failed update';
   const rejectedUpdate = await replace(rejected);
-  assert.equal(rejectedUpdate.ok, false, 'A rejected installer must fail without opening Otto.');
+  assert.equal(rejectedUpdate.ok, false, 'A rejected installer must fail without opening nod.');
   await delay(500);
   assert.equal((await recorded()).filter((entry) => entry.event === 'ready').length, 1);
   receipt.stage = 'restarting 1.0.0';

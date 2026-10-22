@@ -52,19 +52,19 @@ const setupPath = app.isPackaged
 const setupURL = pathToFileURL(setupPath).href;
 const testInstall =
   app.isPackaged &&
-  JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')).ottoBuild?.testProfile ===
+  JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8')).nodBuild?.testProfile ===
     true;
-app.setName(testInstall ? 'Otto Setup Test' : 'Otto');
+app.setName(testInstall ? 'nod Setup Test' : 'nod');
 const developmentDataRoot =
-  !app.isPackaged || testInstall ? process.env.OTTO_DESKTOP_USER_DATA : undefined;
+  !app.isPackaged || testInstall ? process.env.NOD_DESKTOP_USER_DATA : undefined;
 if (developmentDataRoot && !isAbsolute(developmentDataRoot))
   throw new Error('The development profile path must be absolute.');
 app.setPath(
   'userData',
-  developmentDataRoot || join(app.getPath('appData'), testInstall ? 'Otto Setup Test' : 'Otto'),
+  developmentDataRoot || join(app.getPath('appData'), testInstall ? 'nod Setup Test' : 'nod'),
 );
 const profileRoot = join(app.getPath('userData'), 'profiles', 'local');
-const windowsUpdates = join(process.env.LOCALAPPDATA || app.getPath('temp'), 'Otto', 'updates');
+const windowsUpdates = join(process.env.LOCALAPPDATA || app.getPath('temp'), 'nod', 'updates');
 const settings = createSettingsStore(join(profileRoot, 'settings.json'), safeStorage);
 const analyticsConfiguration = createDesktopAnalytics(join(profileRoot, 'analytics-id'), {
   packaged: app.isPackaged,
@@ -107,7 +107,7 @@ let status = {
   platform: process.platform,
   unlockingKeys: false,
   phase: 'idle',
-  message: 'Set up Otto on your computer.',
+  message: 'Set up nod on your computer.',
   runtime: {
     phase: 'idle',
     message: 'Your computer will prepare in the background.',
@@ -178,7 +178,7 @@ const readinessNotice = createReadinessNotice({
     if (!eligible() || quitting || !preferences.notifications || foregroundWindow()) return false;
     if (!Notification.isSupported() || isQuietTime(saved.preferences)) return true;
     const notification = new Notification({
-      title: 'Otto is ready',
+      title: 'nod is ready',
       body: onboardingCompleted
         ? 'Your workspace and browser are ready.'
         : 'Your computer is ready. Come back to finish setup.',
@@ -230,8 +230,8 @@ function update(value) {
   else if (Object.hasOwn(value, 'error') || (value.phase && value.phase !== 'error'))
     delete status.error;
   for (const window of [setupWindow, engineWindow])
-    if (window && !window.isDestroyed()) window.webContents.send('otto:status', status);
-  if (tray) tray.setToolTip(`Otto — ${status.phase === 'ready' ? 'Running' : status.message}`);
+    if (window && !window.isDestroyed()) window.webContents.send('nod:status', status);
+  if (tray) tray.setToolTip(`nod — ${status.phase === 'ready' ? 'Running' : status.message}`);
   updateReadinessNotice();
 }
 
@@ -251,7 +251,7 @@ function publishPreferences() {
   for (const window of [setupWindow, ...engineWindows]) {
     if (!window || window.isDestroyed()) continue;
     window.setBackgroundColor(value.resolvedTheme === 'dark' ? '#191919' : '#fafafa');
-    window.webContents.send('otto:preferences', value);
+    window.webContents.send('nod:preferences', value);
   }
 }
 
@@ -296,7 +296,7 @@ async function notifyAssistantMessage(message, threadId) {
   )
     return;
   const notification = new Notification({
-    title: 'Otto',
+    title: 'nod',
     body: assistantNotificationPreview(message, knownSecrets),
   });
   displayedNotifications.add(notification);
@@ -308,7 +308,7 @@ async function notifyAssistantMessage(message, threadId) {
     const focus = () => {
       if (quitting || window.isDestroyed() || status.phase !== 'ready') return;
       window.webContents.send(
-        'otto:focus-message',
+        'nod:focus-message',
         engine === sourceEngine ? { threadId, messageId: message.id } : null,
       );
     };
@@ -371,7 +371,7 @@ function saveEngineDownload(event, item, sender, frame) {
     onError: async (recoveryPath) => {
       const { response } = await dialog.showMessageBox({
         type: 'warning',
-        message: 'Otto could not save the file to Downloads.',
+        message: 'nod could not save the file to Downloads.',
         detail: recoveryPath
           ? 'The downloaded file is available in a temporary folder.'
           : 'Try downloading the file again.',
@@ -444,7 +444,7 @@ function protectWindow(window, origin) {
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: true,
-            partition: 'persist:otto-app',
+            partition: 'persist:nod-app',
           },
         },
       };
@@ -489,7 +489,7 @@ function showSettings(section = 'general', loading = false) {
     const window = engineWindow;
     if (!window || window.isDestroyed()) return;
     const open = () => {
-      if (!window.isDestroyed()) window.webContents.send('otto:settings:focus', section);
+      if (!window.isDestroyed()) window.webContents.send('nod:settings:focus', section);
     };
     if (window.webContents.isLoadingMainFrame()) window.webContents.once('did-finish-load', open);
     else open();
@@ -503,7 +503,7 @@ function showSettings(section = 'general', loading = false) {
     }
     return setupWindowLoaded.then(() => {
       if (window.isDestroyed()) return;
-      window.webContents.send('otto:status', status);
+      window.webContents.send('nod:status', status);
     });
   }
   setupWindow = new BrowserWindow({
@@ -512,7 +512,7 @@ function showSettings(section = 'general', loading = false) {
     height: 860,
     minWidth: 700,
     minHeight: 600,
-    title: 'Otto',
+    title: 'nod',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 17 } } : {}),
@@ -521,7 +521,7 @@ function showSettings(section = 'general', loading = false) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      partition: 'otto-settings',
+      partition: 'nod-settings',
     },
   });
   const window = setupWindow;
@@ -532,11 +532,11 @@ function showSettings(section = 'general', loading = false) {
   const failed = () => {
     if (quitting || window.isDestroyed() || !pendingRenderers.has(window)) return;
     window.destroy();
-    update({ windowError: 'Otto could not open setup. Try again.' });
+    update({ windowError: 'nod could not open setup. Try again.' });
     void dialog.showMessageBox({
       type: 'error',
-      message: 'Otto could not open setup.',
-      detail: 'Close and reopen Otto to try again. Your progress is saved.',
+      message: 'nod could not open setup.',
+      detail: 'Close and reopen nod to try again. Your progress is saved.',
       buttons: ['OK'],
     });
   };
@@ -608,7 +608,7 @@ function showEngine({ focus = true } = {}) {
       : { width: 1200, height: 860 }),
     minWidth: 700,
     minHeight: 600,
-    title: 'Otto',
+    title: 'nod',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 17 } } : {}),
@@ -617,7 +617,7 @@ function showEngine({ focus = true } = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      partition: 'persist:otto-app',
+      partition: 'persist:nod-app',
     },
   });
   engineWindows.add(engineWindow);
@@ -628,7 +628,7 @@ function showEngine({ focus = true } = {}) {
     welcomeNavigation ||= initialWelcome;
     replayingProductOnboarding ||= initialReplay;
     window.destroy();
-    update({ windowError: 'Otto could not open. Try again.' });
+    update({ windowError: 'nod could not open. Try again.' });
     if (!setupWindow && (!previousSetup || engineFocusRequested))
       void showSettings('general', true);
   };
@@ -690,7 +690,7 @@ function deliverFeedbackRequest(window) {
   )
     return;
   pendingFeedback = false;
-  window.webContents.send('otto:feedback:open');
+  window.webContents.send('nod:feedback:open');
 }
 
 async function feedbackContext() {
@@ -704,12 +704,12 @@ async function feedbackContext() {
         (error, value) => resolve(error ? '' : value.trim()),
       );
     });
-  const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
+  const { nodBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
   return {
     computerName: (computerName || hostname()).trim().slice(0, 200) || null,
     appVersion: app.getVersion(),
-    appRelease: typeof ottoBuild?.source === 'string' ? ottoBuild.source : null,
-    appModified: typeof ottoBuild?.modified === 'boolean' ? ottoBuild.modified : null,
+    appRelease: typeof nodBuild?.source === 'string' ? nodBuild.source : null,
+    appModified: typeof nodBuild?.modified === 'boolean' ? nodBuild.modified : null,
     development: !app.isPackaged,
     source: 'desktop',
     platform: `${process.platform}-${process.arch}`,
@@ -780,13 +780,13 @@ function baseEnvironment() {
       'LOCALAPPDATA',
       'TEMP',
       'TMP',
-      ...(developmentDataRoot ? ['OTTO_DESKTOP_USER_DATA', 'OTTO_COMPOSIO_PROXY_URL'] : []),
-      'OTTO_FEEDBACK_ENABLED',
-      'OTTO_FEEDBACK_URL',
-      'OTTO_FEEDBACK_TOKEN',
-      'OTTO_FEEDBACK_RECEIPT_URL_PREFIX',
-      'OTTO_TRACES_URL',
-      'OTTO_TRACES_TOKEN',
+      ...(developmentDataRoot ? ['NOD_DESKTOP_USER_DATA', 'NOD_COMPOSIO_PROXY_URL'] : []),
+      'NOD_FEEDBACK_ENABLED',
+      'NOD_FEEDBACK_URL',
+      'NOD_FEEDBACK_TOKEN',
+      'NOD_FEEDBACK_RECEIPT_URL_PREFIX',
+      'NOD_TRACES_URL',
+      'NOD_TRACES_TOKEN',
       'OTEL_EXPORTER_OTLP_ENDPOINT',
     ]
       .filter((key) => typeof process.env[key] === 'string')
@@ -850,10 +850,10 @@ function analyticsEnvironment(metadata) {
 }
 
 async function engineRequest(path, options = {}) {
-  if (!engineBound) throw new Error('Otto is not ready.');
+  if (!engineBound) throw new Error('nod is not ready.');
   return fetch(`${engineOrigin}${path}`, {
     ...options,
-    headers: { ...options.headers, 'x-otto-desktop-token': authToken },
+    headers: { ...options.headers, 'x-nod-desktop-token': authToken },
     signal: options.signal ?? AbortSignal.timeout(5000),
   });
 }
@@ -876,7 +876,7 @@ async function stopEngine() {
       }
       finalTimeout = setTimeout(
         () =>
-          reject(new Error('The previous Otto process has not stopped. Quit and reopen the app.')),
+          reject(new Error('The previous nod process has not stopped. Quit and reopen the app.')),
         5000,
       );
     }, 20_000);
@@ -904,10 +904,10 @@ async function transferWelcome() {
         headers: { 'Content-Type': 'application/json', Origin: engineOrigin },
         body: JSON.stringify({ usageData: saved.welcome.usageData }),
       });
-      if (!response.ok) throw new Error('Otto could not save your choice. Try again.');
+      if (!response.ok) throw new Error('nod could not save your choice. Try again.');
       const result = await response.json();
       if (result.settings?.usageData !== saved.welcome.usageData)
-        throw new Error('Otto could not confirm your choice. Try again.');
+        throw new Error('nod could not confirm your choice. Try again.');
       await settings.acknowledgeWelcome(saved.welcome);
     }
     welcomeNavigation = true;
@@ -915,7 +915,7 @@ async function transferWelcome() {
     welcomeTransferError = undefined;
     update({
       phase: engineRuntimeReady ? 'ready' : 'preparing',
-      message: engineRuntimeReady ? 'Otto is running on your computer.' : status.runtime.message,
+      message: engineRuntimeReady ? 'nod is running on your computer.' : status.runtime.message,
       error: undefined,
     });
     if (pendingFeedback || foregroundWindow()) showEngine();
@@ -934,7 +934,7 @@ async function transferWelcome() {
 
 async function finishEnginePreparation(pending = false) {
   await appPreferences.sync();
-  if (quitting || !engine) throw new Error('Otto is closing.');
+  if (quitting || !engine) throw new Error('nod is closing.');
   if (!onboardingCompleted) {
     const response = await engineRequest('/api/session');
     if (response.ok && (await response.json()).settings?.onboardingCompleted === true) {
@@ -951,12 +951,12 @@ async function finishEnginePreparation(pending = false) {
     }
   }
   if (!pending && !engineRuntimeReady) {
-    engine.postMessage({ type: 'otto-runtime-ready' });
+    engine.postMessage({ type: 'nod-runtime-ready' });
     engineRuntimeReady = true;
   }
   update({
     phase: pending ? 'preparing' : 'ready',
-    message: pending ? status.runtime.message : 'Otto is running on your computer.',
+    message: pending ? status.runtime.message : 'nod is running on your computer.',
     progress: pending ? status.runtime.progress : undefined,
     engineReady: true,
   });
@@ -994,7 +994,7 @@ function refreshUpdateMenu() {
   if (tray)
     tray.setContextMenu(
       Menu.buildFromTemplate([
-        { label: 'Open Otto', click: showEngine },
+        { label: 'Open nod', click: showEngine },
         { label: 'Settings…', click: () => showSettings() },
         { label: 'Send feedback…', click: showFeedback },
         {
@@ -1003,7 +1003,7 @@ function refreshUpdateMenu() {
           click: () => void checkForUpdates(),
         },
         { type: 'separator' },
-        { label: 'Quit Otto', click: () => app.quit() },
+        { label: 'Quit nod', click: () => app.quit() },
       ]),
     );
 }
@@ -1028,7 +1028,7 @@ async function checkForUpdates(manual = true) {
         if (quitting) return;
         if (!candidate) {
           if (manual)
-            await dialog.showMessageBox({ message: 'Otto is up to date.', buttons: ['OK'] });
+            await dialog.showMessageBox({ message: 'nod is up to date.', buttons: ['OK'] });
           return;
         }
         if (!manual) {
@@ -1036,7 +1036,7 @@ async function checkForUpdates(manual = true) {
           return;
         }
         const { response } = await dialog.showMessageBox({
-          message: `Otto ${candidate.version} is ready.`,
+          message: `nod ${candidate.version} is ready.`,
           buttons: ['Restart', 'Later'],
           defaultId: 1,
           cancelId: 1,
@@ -1054,8 +1054,8 @@ async function checkForUpdates(manual = true) {
         const ready = Boolean(updates.ready);
         const { response } = await dialog.showMessageBox({
           type: 'info',
-          message: ready ? 'Couldn’t restart Otto' : 'Couldn’t check for updates',
-          detail: 'You can keep using Otto and try again later.',
+          message: ready ? 'Couldn’t restart nod' : 'Couldn’t check for updates',
+          detail: 'You can keep using nod and try again later.',
           buttons: [ready ? 'Retry restart' : 'Try again', 'Not now'],
           defaultId: 1,
           cancelId: 1,
@@ -1075,8 +1075,8 @@ async function notifyUpdate(candidate) {
   if (!preferences.notifications || !Notification.isSupported()) return false;
   if (isQuietTime((await appPreferences.get()).preferences)) return true;
   const notification = new Notification({
-    title: `Otto ${candidate.version} is ready`,
-    body: 'Restart Otto to use the new version.',
+    title: `nod ${candidate.version} is ready`,
+    body: 'Restart nod to use the new version.',
   });
   displayedNotifications.add(notification);
   notification.on('click', () => {
@@ -1125,9 +1125,9 @@ async function confirmRestart() {
     : [];
   const { response } = await dialog.showMessageBox({
     type: 'warning',
-    message: work.length ? 'Otto is still working.' : 'Otto could not check its current work.',
+    message: work.length ? 'nod is still working.' : 'nod could not check its current work.',
     detail: work.length
-      ? `Restarting now stops ${new Intl.ListFormat('en').format(work)}. You can ask Otto to continue afterwards.`
+      ? `Restarting now stops ${new Intl.ListFormat('en').format(work)}. You can ask nod to continue afterwards.`
       : 'Restarting now may stop a task in progress.',
     buttons: ['Restart now', 'Later'],
     defaultId: 1,
@@ -1180,7 +1180,7 @@ function installUpdate() {
   });
 }
 
-async function quit(complete, failure = 'Otto could not finish shutting down.') {
+async function quit(complete, failure = 'nod could not finish shutting down.') {
   quitting = true;
   stopUpdateChecks?.();
   const stoppingUpdates = updates?.dispose();
@@ -1196,9 +1196,9 @@ async function removeAllData() {
   if (quitting) return;
   const { response } = await dialog.showMessageBox({
     type: 'warning',
-    message: 'Remove all Otto data?',
+    message: 'Remove all nod data?',
     detail:
-      'Your conversations, files, memory, logins, cards and settings are deleted from this computer. Otto then quits.',
+      'Your conversations, files, memory, logins, cards and settings are deleted from this computer. nod then quits.',
     buttons: ['Remove all data', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
@@ -1210,12 +1210,12 @@ async function removeAllData() {
       pathToFileURL(join(engineRoot, 'desktop', 'runtime', 'index.mjs')).href
     );
     app.setLoginItemSettings({ openAtLogin: false });
-    const browser = session.fromPartition('persist:otto-app');
+    const browser = session.fromPartition('persist:nod-app');
     await browser.clearStorageData();
     await browser.clearCache();
     await removeProfile({ dataRoot: profileRoot, resourcesPath: engineRoot });
     app.exit();
-  }, 'Otto could not remove all its data.');
+  }, 'nod could not remove all its data.');
 }
 
 async function finishQuit(complete, failure) {
@@ -1245,41 +1245,39 @@ async function finishQuit(complete, failure) {
 
 async function validateStart() {
   await settings.get();
-  if (quitting) throw new Error('Otto is closing.');
+  if (quitting) throw new Error('nod is closing.');
 }
 
 async function startEngine({ runtime, signal, pending = false }) {
   if (engine && enginePreferencesReady) return finishEnginePreparation(pending);
   if (engine) {
     if (!(await confirmRestart()))
-      throw Object.assign(new Error('Restart Otto when it finishes its current work.'), {
-        code: 'OTTO_RESTART_DEFERRED',
+      throw Object.assign(new Error('Restart nod when it finishes its current work.'), {
+        code: 'NOD_RESTART_DEFERRED',
       });
     await stopEngine();
   }
-  if (quitting) throw new Error('Otto is closing.');
+  if (quitting) throw new Error('nod is closing.');
   const port = await availablePort();
-  if (quitting || signal.aborted) throw new Error('Otto is closing.');
+  if (quitting || signal.aborted) throw new Error('nod is closing.');
   engineBound = false;
   authToken = randomBytes(32).toString('base64url');
   knownSecrets.add(authToken);
   engineOrigin = `http://127.0.0.1:${port}`;
   update({ phase: 'starting', message: 'Unlocking your saved API keys…', unlockingKeys: true });
   await new Promise((accept) => setTimeout(accept, 50));
-  if (quitting || signal.aborted) throw new Error('Otto is closing.');
+  if (quitting || signal.aborted) throw new Error('nod is closing.');
   const providerEnvironment = await settings.environment();
   let legacyIntegration = await settings.legacyIntegration().catch(() => undefined);
   if (legacyIntegration) knownSecrets.add(legacyIntegration.apiKey);
   const legacyOwner = await profileOwner();
   let legacyNonce;
-  if (providerEnvironment.OTTO_VAULT_KEY) knownSecrets.add(providerEnvironment.OTTO_VAULT_KEY);
+  if (providerEnvironment.NOD_VAULT_KEY) knownSecrets.add(providerEnvironment.NOD_VAULT_KEY);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
-  if (process.env.OTTO_FEEDBACK_TOKEN) knownSecrets.add(process.env.OTTO_FEEDBACK_TOKEN);
-  const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
+  if (process.env.NOD_FEEDBACK_TOKEN) knownSecrets.add(process.env.NOD_FEEDBACK_TOKEN);
+  const { nodBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
   const tracesToken =
-    typeof ottoBuild?.tracesToken === 'string'
-      ? ottoBuild.tracesToken
-      : process.env.OTTO_TRACES_TOKEN;
+    typeof nodBuild?.tracesToken === 'string' ? nodBuild.tracesToken : process.env.NOD_TRACES_TOKEN;
   if (tracesToken) knownSecrets.add(tracesToken);
   const analytics = await analyticsConfiguration().catch(() => ({ enabled: false }));
   const environment = {
@@ -1288,25 +1286,25 @@ async function startEngine({ runtime, signal, pending = false }) {
     ...providerEnvironment,
     NODE_ENV: 'production',
     PORT: String(port),
-    OTTO_DESKTOP: 'true',
-    OTTO_APP_VERSION: app.getVersion(),
-    OTTO_DESKTOP_OWNER_ID: legacyOwner,
-    OTTO_DESKTOP_AUTH_TOKEN: authToken,
-    OTTO_DESKTOP_RUNTIME_PENDING: 'true',
-    ...(legacyIntegration ? { OTTO_DESKTOP_LEGACY_INTEGRATION: 'true' } : {}),
-    OTTO_ANALYTICS_ENABLED: String(!testInstall && analytics.enabled),
-    OTTO_ANALYTICS_ENVIRONMENT: analyticsEnvironment(ottoBuild),
-    OTTO_PUBLIC_URL: engineOrigin,
-    OTTO_DATA_ROOT: profileRoot,
-    OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),
-    ...(process.env.OTTO_FEEDBACK_URL === '' ? { OTTO_FEEDBACK_ENABLED: 'false' } : {}),
-    ...(tracesToken ? { OTTO_TRACES_TOKEN: tracesToken } : {}),
+    NOD_DESKTOP: 'true',
+    NOD_APP_VERSION: app.getVersion(),
+    NOD_DESKTOP_OWNER_ID: legacyOwner,
+    NOD_DESKTOP_AUTH_TOKEN: authToken,
+    NOD_DESKTOP_RUNTIME_PENDING: 'true',
+    ...(legacyIntegration ? { NOD_DESKTOP_LEGACY_INTEGRATION: 'true' } : {}),
+    NOD_ANALYTICS_ENABLED: String(!testInstall && analytics.enabled),
+    NOD_ANALYTICS_ENVIRONMENT: analyticsEnvironment(nodBuild),
+    NOD_PUBLIC_URL: engineOrigin,
+    NOD_DATA_ROOT: profileRoot,
+    NOD_WEB_ROOT: join(engineRoot, 'dist', 'web'),
+    ...(process.env.NOD_FEEDBACK_URL === '' ? { NOD_FEEDBACK_ENABLED: 'false' } : {}),
+    ...(tracesToken ? { NOD_TRACES_TOKEN: tracesToken } : {}),
     PI_CODING_AGENT_DIR: join(profileRoot, 'pi'),
   };
-  if (quitting || signal.aborted) throw new Error('Otto is closing.');
+  if (quitting || signal.aborted) throw new Error('nod is closing.');
   update({
     phase: 'starting',
-    message: 'Starting Otto.',
+    message: 'Starting nod.',
     needsRuntimeArchive: false,
     unlockingKeys: false,
   });
@@ -1314,27 +1312,27 @@ async function startEngine({ runtime, signal, pending = false }) {
     cwd: engineRoot,
     env: environment,
     stdio: 'pipe',
-    serviceName: 'Otto engine',
+    serviceName: 'nod engine',
   });
   engine = child;
   child.on('message', (message) => {
     if (engine === child && legacyIntegration && message?.ownerId === legacyOwner) {
       if (
-        message.type === 'otto-legacy-integration-request' &&
+        message.type === 'nod-legacy-integration-request' &&
         !legacyNonce &&
         typeof message.nonce === 'string' &&
         /^[a-f0-9-]{36}$/.test(message.nonce)
       ) {
         legacyNonce = message.nonce;
         child.postMessage({
-          type: 'otto-legacy-integration',
+          type: 'nod-legacy-integration',
           ownerId: legacyOwner,
           nonce: legacyNonce,
           ...legacyIntegration,
         });
       }
       if (
-        message.type === 'otto-legacy-integration-ack' &&
+        message.type === 'nod-legacy-integration-ack' &&
         legacyNonce &&
         message.nonce === legacyNonce &&
         message.receipt === legacyIntegration.receipt
@@ -1346,7 +1344,7 @@ async function startEngine({ runtime, signal, pending = false }) {
             legacyIntegration = undefined;
             if (engine === child)
               child.postMessage({
-                type: 'otto-legacy-integration-cleaned',
+                type: 'nod-legacy-integration-cleaned',
                 ownerId: legacyOwner,
                 nonce: legacyNonce,
                 receipt,
@@ -1356,7 +1354,7 @@ async function startEngine({ runtime, signal, pending = false }) {
             if (engine === child) {
               try {
                 child.postMessage({
-                  type: 'otto-legacy-integration-cleanup-deferred',
+                  type: 'nod-legacy-integration-cleanup-deferred',
                   ownerId: legacyOwner,
                   nonce: legacyNonce,
                   receipt,
@@ -1366,7 +1364,7 @@ async function startEngine({ runtime, signal, pending = false }) {
           });
       }
     }
-    if (engine === child && message?.type === 'otto-ready' && message.port === port) {
+    if (engine === child && message?.type === 'nod-ready' && message.port === port) {
       engineBound = true;
     }
   });
@@ -1401,8 +1399,8 @@ async function startEngine({ runtime, signal, pending = false }) {
     if (!quitting && !closingEngine) {
       update({
         phase: 'error',
-        message: 'Otto stopped unexpectedly.',
-        error: 'Open settings and choose Start Otto to recover.',
+        message: 'nod stopped unexpectedly.',
+        error: 'Open settings and choose Start nod to recover.',
       });
       showSettings();
     }
@@ -1421,7 +1419,7 @@ async function startEngine({ runtime, signal, pending = false }) {
   }
   if (!ready) {
     await stopEngine();
-    throw new Error('Otto could not start. Check your settings and try again.');
+    throw new Error('nod could not start. Check your settings and try again.');
   }
   enginePreferencesReady = true;
   return finishEnginePreparation(pending);
@@ -1441,7 +1439,7 @@ async function prepare(options = {}) {
     .catch((error) => {
       void writeDiagnostic(error.message).catch(() => {});
       const deferred =
-        error.code === 'OTTO_RESTART_DEFERRED' &&
+        error.code === 'NOD_RESTART_DEFERRED' &&
         engine &&
         enginePreferencesReady &&
         !closingEngine &&
@@ -1451,7 +1449,7 @@ async function prepare(options = {}) {
         message: bounded(error.message),
         error: bounded(error.message),
         needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
-        needsWsl: error.code === 'OTTO_WSL_REQUIRED',
+        needsWsl: error.code === 'NOD_WSL_REQUIRED',
       });
       return status;
     })
@@ -1468,16 +1466,15 @@ function replayOnboarding() {
 }
 
 async function importRuntime() {
-  if (lifecycle.busy || quitting)
-    throw new Error('Wait for Otto to finish its current setup step.');
+  if (lifecycle.busy || quitting) throw new Error('Wait for nod to finish its current setup step.');
   const chosen = await dialog.showOpenDialog(setupWindow, {
-    title: 'Choose the Otto Runtime pack',
+    title: 'Choose the nod Runtime pack',
     buttonLabel: 'Install runtime',
     properties: ['openFile'],
-    filters: [{ name: 'Otto Runtime pack', extensions: ['gz', 'tgz'] }],
+    filters: [{ name: 'nod Runtime pack', extensions: ['gz', 'tgz'] }],
   });
   if (chosen.canceled || !chosen.filePaths[0] || quitting) return status;
-  if (lifecycle.busy) throw new Error('Wait for Otto to finish its current setup step.');
+  if (lifecycle.busy) throw new Error('Wait for nod to finish its current setup step.');
   try {
     await lifecycle.install(async ({ signal, onStatus }) => {
       const { installRuntimeArchive } = await import(
@@ -1527,8 +1524,8 @@ else {
         !app.isInApplicationsFolder()
       ) {
         const { response } = await dialog.showMessageBox({
-          message: 'Move Otto to your Applications folder?',
-          detail: 'Otto can update itself only from Applications.',
+          message: 'Move nod to your Applications folder?',
+          detail: 'nod can update itself only from Applications.',
           buttons: ['Move to Applications', 'Not Now'],
           defaultId: 0,
           cancelId: 1,
@@ -1543,11 +1540,11 @@ else {
         }
       }
       if (app.isPackaged && !testInstall && ['darwin', 'win32'].includes(process.platform)) {
-        const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
+        const { nodBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
         const windows = process.platform === 'win32';
         if (windows) await rm(windowsUpdates, { recursive: true, force: true }).catch(() => {});
         updateSource = createUpdateSource({
-          sourceUrl: ottoBuild?.updateSourceUrl,
+          sourceUrl: nodBuild?.updateSourceUrl,
           weeklyId: createWeeklyId(join(profileRoot, 'update-week.json')),
         });
         updates = createDesktopUpdater({
@@ -1588,12 +1585,12 @@ else {
         });
       }
       nativeTheme.on('updated', publishPreferences);
-      const appSession = session.fromPartition('persist:otto-app');
+      const appSession = session.fromPartition('persist:nod-app');
       appSession.on('will-download', saveEngineDownload);
       appSession.webRequest.onBeforeSendHeaders((details, callback) => {
         const headers = { ...details.requestHeaders };
         for (const key of Object.keys(headers))
-          if (key.toLowerCase() === 'x-otto-desktop-token') delete headers[key];
+          if (key.toLowerCase() === 'x-nod-desktop-token') delete headers[key];
         const window = [...engineWindows].find(
           (candidate) =>
             !candidate.isDestroyed() && details.webContentsId === candidate.webContents.id,
@@ -1610,7 +1607,7 @@ else {
           window &&
           ((details.resourceType === 'mainFrame' && trustedAppURL(details.url)) || trustedFrame)
         )
-          headers['x-otto-desktop-token'] = authToken;
+          headers['x-nod-desktop-token'] = authToken;
         callback({ requestHeaders: headers });
       });
       const image = nativeImage.createFromPath(join(desktopRoot, 'main', 'trayTemplate.png'));
@@ -1620,7 +1617,7 @@ else {
       Menu.setApplicationMenu(
         Menu.buildFromTemplate([
           {
-            label: 'Otto',
+            label: 'nod',
             submenu: [
               { role: 'about' },
               { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => showSettings() },
@@ -1650,7 +1647,7 @@ else {
         ]),
       );
       refreshUpdateMenu();
-      ipcMain.handle('otto:renderer-ready', (event) => {
+      ipcMain.handle('nod:renderer-ready', (event) => {
         const window = isSetup(event)
           ? setupWindow
           : isEngine(event)
@@ -1661,33 +1658,33 @@ else {
         pendingRenderers.delete(window);
         present?.();
       });
-      ipcMain.handle('otto:status', (event) => {
+      ipcMain.handle('nod:status', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         return status;
       });
-      ipcMain.handle('otto:settings:get', (event) => {
+      ipcMain.handle('nod:settings:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         return readDesktopSettings();
       });
-      ipcMain.handle('otto:feedback:context', (event) => {
+      ipcMain.handle('nod:feedback:context', (event) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         return feedbackContext();
       });
-      ipcMain.handle('otto:feedback:capture', (event) => {
+      ipcMain.handle('nod:feedback:capture', (event) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         return captureFeedbackScreenshot(event).catch(() => null);
       });
-      ipcMain.handle('otto:preferences:get', (event) => {
+      ipcMain.handle('nod:preferences:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         return publicPreferences();
       });
-      ipcMain.handle('otto:preferences:theme', async (event, theme) => {
+      ipcMain.handle('nod:preferences:theme', async (event, theme) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
-        if (quitting) throw new Error('Otto is closing.');
+        if (quitting) throw new Error('nod is closing.');
         applyPreferences(await settings.save({ theme }));
         return publicPreferences();
       });
-      ipcMain.handle('otto:settings:save', async (event, value) => {
+      ipcMain.handle('nod:settings:save', async (event, value) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         const allowed = ['theme', 'notifications', 'launchAtLogin'];
         if (isEngine(event)) allowed.push('onboardingCompleted');
@@ -1700,7 +1697,7 @@ else {
           Object.keys(value).some((field) => !allowed.includes(field))
         )
           throw new Error('These settings are not supported.');
-        if (quitting) throw new Error('Otto is closing.');
+        if (quitting) throw new Error('nod is closing.');
         if (value.onboardingCompleted !== undefined) {
           const response = await engineRequest('/api/session');
           if (
@@ -1724,7 +1721,7 @@ else {
                   login.executableWillLaunchAtLogin === false))
             )
               throw new Error(
-                'Open at login could not be updated. Check Otto in your computer’s login items, then try again.',
+                'Open at login could not be updated. Check nod in your computer’s login items, then try again.',
               );
           }
           saved = await settings.save(value);
@@ -1743,7 +1740,7 @@ else {
           update({ message: 'Ready.' });
         return readDesktopSettings();
       });
-      ipcMain.handle('otto:prepare', async (event, options) => {
+      ipcMain.handle('nod:prepare', async (event, options) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         if (options?.retry === true && !enginePreferencesReady) welcomeTransferError = undefined;
         await transferWelcome();
@@ -1751,11 +1748,11 @@ else {
         if (engineRuntimeReady) return status;
         return prepare(options);
       });
-      ipcMain.handle('otto:runtime:import', (event) => {
+      ipcMain.handle('nod:runtime:import', (event) => {
         allowSetup(event);
         return importRuntime();
       });
-      ipcMain.handle('otto:runtime:install-wsl', async (event) => {
+      ipcMain.handle('nod:runtime:install-wsl', async (event) => {
         allowSetup(event);
         if (process.platform !== 'win32' || lifecycle.busy || quitting || !status.runtime.needsWsl)
           throw new Error('This setup action is unavailable.');
@@ -1763,7 +1760,7 @@ else {
           type: 'question',
           message: 'Install Windows Subsystem for Linux?',
           detail:
-            'Windows will ask for administrator approval. Restart your PC after installation, then open Otto again.',
+            'Windows will ask for administrator approval. Restart your PC after installation, then open nod again.',
           buttons: ['Install WSL', 'Cancel'],
           defaultId: 0,
           cancelId: 1,
@@ -1776,30 +1773,30 @@ else {
         await lifecycle.install(installWsl, { warmup: false });
         update({
           phase: 'error',
-          message: 'Restart your PC, then open Otto again.',
-          error: 'Restart your PC, then open Otto again.',
+          message: 'Restart your PC, then open nod again.',
+          error: 'Restart your PC, then open nod again.',
           needsWsl: false,
         });
         return status;
       });
-      ipcMain.handle('otto:chat-read:get', (event, ownerId, threadId) => {
+      ipcMain.handle('nod:chat-read:get', (event, ownerId, threadId) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         return chatReadCursors.get(ownerId, threadId);
       });
-      ipcMain.handle('otto:chat-read:set', (event, ownerId, threadId, cursor) => {
+      ipcMain.handle('nod:chat-read:set', (event, ownerId, threadId, cursor) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
-        if (quitting) throw new Error('Otto is closing.');
+        if (quitting) throw new Error('nod is closing.');
         return chatReadCursors.set(ownerId, threadId, cursor);
       });
-      ipcMain.handle('otto:external', (event, url) => {
+      ipcMain.handle('nod:external', (event, url) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         return openExternal(url);
       });
-      ipcMain.handle('otto:data:remove', (event) => {
+      ipcMain.handle('nod:data:remove', (event) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         return removeAllData();
       });
-      ipcMain.handle('otto:settings:open', (event, section = 'general') => {
+      ipcMain.handle('nod:settings:open', (event, section = 'general') => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         if (!['general', 'models', 'preferences'].includes(section))
           throw new Error('Choose a settings section.');

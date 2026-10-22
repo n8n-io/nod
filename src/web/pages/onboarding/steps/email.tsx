@@ -8,7 +8,7 @@ import {
   connectionRoutes,
   useConnectionChoice,
 } from '../../../components/connection-choice';
-import { OttoGlyph, Rise } from '../../../components/motion';
+import { NodGlyph, Rise } from '../../../components/motion';
 import { AppAccessRecovery } from '../../../components/app-connection-dialog';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
@@ -79,7 +79,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   useEffect(() => {
     active.current = true;
     const channel =
-      typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('otto.apps');
+      typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('nod.apps');
     if (channel)
       channel.onmessage = (
         event: MessageEvent<{ connection?: string; service?: string; attempt?: string } | null>,
@@ -276,13 +276,13 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   async function connect() {
     if (request.current || !canConnect) return;
     const capture = analyticsForCurrentSession();
-    capture('otto_app_connect_clicked', { entry: 'onboarding', result: 'opened' });
+    capture('nod_app_connect_clicked', { entry: 'onboarding', result: 'opened' });
     const external = desktopLinksAvailable();
     const popup = external
       ? null
       : window.open(
           '/connection-loading.html?service=gmail',
-          'otto-connect-gmail',
+          'nod-connect-gmail',
           'popup,width=520,height=720',
         );
     try {
@@ -318,7 +318,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
       clearAttempt();
       if (!controller.signal.aborted) {
         setError(errorMessage(cause));
-        capture('otto_ui_error', { area: 'onboarding', action: 'connect' });
+        capture('nod_ui_error', { area: 'onboarding', action: 'connect' });
       }
     } finally {
       if (request.current === controller) {
@@ -446,8 +446,8 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     status = (
       <div className="ob-email-notes">
         <p>
-          {keyStatus?.mode === 'otto'
-            ? 'Google will ask you to sign in to Composio, the service Otto uses to connect apps.'
+          {keyStatus?.mode === 'nod'
+            ? 'Google will ask you to sign in to Composio, the service nod uses to connect apps.'
             : 'Google will ask you to sign in and allow access to your inbox.'}
         </p>
         {keyStatus && !keyStatus.switchable && (
@@ -548,19 +548,19 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
           >
             {!connected && (
               <p ref={choice.view.savedKey} tabIndex={-1}>
-                {keyStatus.mode === 'otto' ? (
-                  <OttoGlyph size={16} mode="still" />
+                {keyStatus.mode === 'nod' ? (
+                  <NodGlyph size={16} mode="still" />
                 ) : (
                   <KeyRound size={16} aria-hidden="true" />
                 )}
                 <span>
-                  {keyStatus.mode === 'otto' ? 'Using Easy Connect' : 'Using your Composio key'}
+                  {keyStatus.mode === 'nod' ? 'Using Easy Connect' : 'Using your Composio key'}
                 </span>
               </p>
             )}
             <button
               ref={(node) => {
-                choice.view.tiles.current.otto = node;
+                choice.view.tiles.current.nod = node;
               }}
               type="button"
               className="connection-link"

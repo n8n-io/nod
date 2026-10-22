@@ -55,7 +55,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     kind: MemoryChange['kind'] = 'note',
   ) =>
     dependencies.analytics?.({
-      event: 'otto_memory_changed',
+      event: 'nod_memory_changed',
       properties: { kind, operation, actor },
     });
 

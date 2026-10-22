@@ -40,7 +40,7 @@ import { runProcess, serviceEnvironment } from '../src/providers/process.ts';
 import { prepareLocalDirectories } from '../scripts/local-database.ts';
 
 test('local startup protects data through its private root and preserves workspace mount traversal', async () => {
-  const parent = await mkdtemp(join(tmpdir(), 'otto-local-directories-'));
+  const parent = await mkdtemp(join(tmpdir(), 'nod-local-directories-'));
   const root = join(parent, 'data');
   const workspace = join(root, 'workspaces');
   const unrelated = join(parent, 'unrelated');
@@ -177,7 +177,7 @@ async function execute(session: WorkspaceSession, command: string) {
 }
 
 async function local(programPrefix = '') {
-  const directory = await mkdtemp('/tmp/otto-command-');
+  const directory = await mkdtemp('/tmp/nod-command-');
   const launch: WorkspaceCommandLauncher = (_command, args, options) =>
     spawn('python3', ['-u', '-c', programPrefix + args.at(-1)!], {
       ...options,
@@ -188,7 +188,7 @@ async function local(programPrefix = '') {
     directory,
     run: (args: string[], options: Partial<Parameters<typeof runWorkspaceCommand>[0]> = {}) =>
       runWorkspaceCommand({
-        container: 'otto-workspace-fixture',
+        container: 'nod-workspace-fixture',
         threadId: 'fixture',
         args,
         spawn: launch,
@@ -314,7 +314,7 @@ test(
 );
 
 test('connected CLIs run only their sealed install with a clean environment', async () => {
-  const root = await mkdtemp('/tmp/otto-connected-');
+  const root = await mkdtemp('/tmp/nod-connected-');
   const home = join(root, 'home');
   const node = join(root, 'node');
   const stolen = join(root, 'stolen');
@@ -334,7 +334,7 @@ test('connected CLIs run only their sealed install with a clean environment', as
       `open(${JSON.stringify(stolen)},'w').write('python')`,
     );
     const cli = { id: randomUUID(), command: 'fixturecli', source: { npm: 'fixturecli' } };
-    const prefix = join(home, `otto-cli-${cli.id}`);
+    const prefix = join(home, `nod-cli-${cli.id}`);
     await mkdir(join(prefix, 'bin'), { recursive: true });
     await writeFile(join(prefix, 'bin', 'fixturecli'), '#!/bin/sh\nenv\necho "argv $*"\n', {
       mode: 0o755,
@@ -343,14 +343,14 @@ test('connected CLIs run only their sealed install with a clean environment', as
     const launches: string[][] = [];
     const run = (args: string[], selected?: typeof cli) =>
       runWorkspaceCommand({
-        container: 'otto-workspace-fixture',
+        container: 'nod-workspace-fixture',
         threadId: 'fixture',
         args,
         environment: { FIXTURE_TOKEN: 'synthetic-connected-token' },
         cli: selected,
         spawn: (_command, dockerArgs, options) => {
           launches.push(dockerArgs);
-          const argv = dockerArgs.slice(dockerArgs.indexOf('otto-workspace-fixture') + 1);
+          const argv = dockerArgs.slice(dockerArgs.indexOf('nod-workspace-fixture') + 1);
           return spawn(argv[0]!, argv.slice(1), {
             ...options,
             cwd: home,
@@ -398,7 +398,7 @@ test('connected CLIs run only their sealed install with a clean environment', as
     ]);
     assert.deepEqual(launches[0]!.slice(7, 9), ['/usr/bin/python3', '-I']);
     await assert.rejects(run(['fixturecli']), WorkspaceCommandError);
-    const other = join(home, `otto-cli-${randomUUID()}`);
+    const other = join(home, `nod-cli-${randomUUID()}`);
     await mkdir(other);
     const sharing = await run(['status'], cli);
     assert.equal(sharing.exitCode, 126);
@@ -423,7 +423,7 @@ test('connected CLIs run only their sealed install with a clean environment', as
 });
 
 test('a missing sealed install comes from its declared source and a failed install runs nothing', async () => {
-  const home = await mkdtemp('/tmp/otto-connected-');
+  const home = await mkdtemp('/tmp/nod-connected-');
   try {
     const launch: WorkspaceCommandLauncher = (_command, args, options) =>
       spawn('python3', args.slice(args.indexOf('-I')), { ...options, cwd: home, stdio: 'pipe' });
@@ -433,7 +433,7 @@ test('a missing sealed install comes from its declared source and a failed insta
       source: { url: 'https://127.0.0.1:9/fixturecli' },
     };
     const result = await runWorkspaceCommand({
-      container: 'otto-workspace-fixture',
+      container: 'nod-workspace-fixture',
       threadId: 'fixture',
       args: ['status'],
       environment: { FIXTURE_TOKEN: 'synthetic-connected-token' },
@@ -442,14 +442,14 @@ test('a missing sealed install comes from its declared source and a failed insta
     });
     assert.notEqual(result.exitCode, 0);
     assert.match(result.stderr.toString(), /Could not install fixturecli/);
-    assert.equal(existsSync(join(home, `otto-cli-${cli.id}`, '.installed')), false);
+    assert.equal(existsSync(join(home, `nod-cli-${cli.id}`, '.installed')), false);
   } finally {
     await rm(home, { recursive: true, force: true });
   }
 });
 
 test('sealed downloads install only the declared bytes and find the program in archives', async () => {
-  const root = await mkdtemp('/tmp/otto-cli-install-');
+  const root = await mkdtemp('/tmp/nod-cli-install-');
   try {
     const release = join(root, 'release');
     await mkdir(join(release, 'tool-1.0', 'bin'), { recursive: true });
@@ -566,7 +566,7 @@ test('an uncertain workspace operation cancels and drains commands already in fl
     return processes.at(-1)!;
   };
   const workspace = createDockerWorkspace({
-    container: 'otto-workspace-fixture',
+    container: 'nod-workspace-fixture',
     workspaceRoot: '/synthetic',
     spawn: launch,
   });
@@ -595,7 +595,7 @@ test('an uncertain workspace operation cancels and drains commands already in fl
         throw new Error('Existing command was not cancelled.');
       }),
     ]);
-    await assert.rejects(execute(session, 'later'), /Restart Otto/);
+    await assert.rejects(execute(session, 'later'), /Restart nod/);
     assert.equal(processes.length, 2);
     assert.equal(failureSettled, false);
     acknowledge();
@@ -609,7 +609,7 @@ test('an uncertain workspace operation cancels and drains commands already in fl
 
 test('workspace uploads transfer binary chunks atomically and reject symlink directories', async () => {
   const f = await local();
-  const outside = await mkdtemp('/tmp/otto-upload-outside-');
+  const outside = await mkdtemp('/tmp/nod-upload-outside-');
   let launches = 0;
   const workspace = createCommandWorkspace({
     workspaceRoot: f.directory,

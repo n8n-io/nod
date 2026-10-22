@@ -47,9 +47,9 @@ jobs:
     outputs:
       verdict: ${{ steps.run.outputs.verdict }}
     env:
-      TEST_DATABASE_URL: postgresql://otto:otto-evals@127.0.0.1:5432/otto_evals
-      OTTO_EVAL_WORKSPACE_IMAGE: otto-eval-workspace
-      OTTO_EVAL_BROWSER_IMAGE: otto-eval-browser
+      TEST_DATABASE_URL: postgresql://nod:nod-evals@127.0.0.1:5432/nod_evals
+      NOD_EVAL_WORKSPACE_IMAGE: nod-eval-workspace
+      NOD_EVAL_BROWSER_IMAGE: nod-eval-browser
     steps:
       - name: Require the model keys
         env:
@@ -63,7 +63,7 @@ jobs:
       - name: Start a disposable PostgreSQL with room for parallel attempts
         run: >-
           docker run --detach --name evals-postgres
-          --env POSTGRES_USER=otto --env POSTGRES_PASSWORD=otto-evals --env POSTGRES_DB=otto_evals
+          --env POSTGRES_USER=nod --env POSTGRES_PASSWORD=nod-evals --env POSTGRES_DB=nod_evals
           --publish 127.0.0.1:5432:5432 postgres:17-alpine -c max_connections=300
       - name: Check out the code under test
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -82,13 +82,13 @@ jobs:
       - name: Set up the Docker layer cache
         uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184
         with:
-          cache-key: n8n-io/otto/evals
+          cache-key: n8n-io/nod/evals
       - name: Build the workspace and browser images
         run: |
-          docker buildx build --load --file Dockerfile.workspace --tag "$OTTO_EVAL_WORKSPACE_IMAGE" .
-          docker buildx build --load --file Dockerfile.browser --target eval --tag "$OTTO_EVAL_BROWSER_IMAGE" .
+          docker buildx build --load --file Dockerfile.workspace --tag "$NOD_EVAL_WORKSPACE_IMAGE" .
+          docker buildx build --load --file Dockerfile.browser --target eval --tag "$NOD_EVAL_BROWSER_IMAGE" .
       - name: Wait for PostgreSQL
-        run: timeout 60 sh -c 'until docker exec evals-postgres pg_isready -h 127.0.0.1 -U otto -d otto_evals; do sleep 1; done'
+        run: timeout 60 sh -c 'until docker exec evals-postgres pg_isready -h 127.0.0.1 -U nod -d nod_evals; do sleep 1; done'
       - name: Run the evals
         id: run
         env:
@@ -113,7 +113,7 @@ jobs:
           base=""
           if [ -n "$BASELINE" ]; then
             if [ "$BASELINE" = latest-release ]; then
-              BASELINE="$(git describe --tags --abbrev=0 --match 'desktop-v*' HEAD^ 2>/dev/null || true)"
+              BASELINE="$(git describe --tags --abbrev=0 --match 'nod-v*' HEAD^ 2>/dev/null || true)"
               if [ -z "$BASELINE" ]; then
                 echo "::notice::There is no earlier desktop release, so this commit is scored alone."
               fi

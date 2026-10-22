@@ -69,19 +69,19 @@ jobs:
       postgres:
         image: ${{ needs.scope.outputs.core == 'true' && 'postgres:17-alpine' || '' }}
         env:
-          POSTGRES_USER: otto
-          POSTGRES_PASSWORD: otto-ci
-          POSTGRES_DB: otto_ci
+          POSTGRES_USER: nod
+          POSTGRES_PASSWORD: nod-ci
+          POSTGRES_DB: nod_ci
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -h 127.0.0.1 -U otto -d otto_ci"
+          --health-cmd "pg_isready -h 127.0.0.1 -U nod -d nod_ci"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
     env:
       CI: 'true'
-      TEST_DATABASE_URL: postgresql://otto:otto-ci@127.0.0.1:5432/otto_ci
+      TEST_DATABASE_URL: postgresql://nod:nod-ci@127.0.0.1:5432/nod_ci
     steps:
       - name: Require a valid change scope
         env:
@@ -125,7 +125,7 @@ jobs:
       - name: Check desktop network isolation during restart
         if: needs.scope.outputs.network == 'true'
         run: >-
-          sudo env OTTO_TEST_RUNTIME_NETWORK=1 "$(command -v node)"
+          sudo env NOD_TEST_RUNTIME_NETWORK=1 "$(command -v node)"
           --test --test-name-pattern='workload firewall refresh'
           desktop/test/runtime-assets.test.mjs
       - name: Check types, boundaries and formatting
@@ -146,26 +146,26 @@ jobs:
         if: needs.scope.outputs.images == 'true'
         uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184
         with:
-          cache-key: n8n-io/otto/ci
+          cache-key: n8n-io/nod/ci
       - name: Build the computer and integration images
         if: needs.scope.outputs.images == 'true'
         run: |
-          docker buildx build --load --platform linux/amd64 --file Dockerfile.browser --tag otto-ci-browser .
-          docker buildx build --load --platform linux/amd64 --file Dockerfile.workspace --tag otto-ci-workspace .
-          docker buildx build --load --platform linux/amd64 --file scripts/Dockerfile.integration --tag otto-ci-integration .
+          docker buildx build --load --platform linux/amd64 --file Dockerfile.browser --tag nod-ci-browser .
+          docker buildx build --load --platform linux/amd64 --file Dockerfile.workspace --tag nod-ci-workspace .
+          docker buildx build --load --platform linux/amd64 --file scripts/Dockerfile.integration --tag nod-ci-integration .
       - name: Verify the shared local and desktop browser image
         if: needs.scope.outputs.images == 'true'
-        run: node --import tsx desktop/scripts/check-browser-image.mjs otto-ci-browser
+        run: node --import tsx desktop/scripts/check-browser-image.mjs nod-ci-browser
       - name: Verify automatic RTK savings and unfiltered exports
         if: needs.scope.outputs.images == 'true'
-        run: node --import tsx scripts/eval-rtk.ts --smoke --image otto-ci-workspace
+        run: node --import tsx scripts/eval-rtk.ts --smoke --image nod-ci-workspace
       - name: Run all integration tests with PostgreSQL and Chromium
         if: needs.scope.outputs.core == 'true'
         run: >-
           docker run --rm --network host --shm-size=1g
           --env TEST_DATABASE_URL
-          --env OTTO_TEST_NATIVE_DOWNLOAD=true
-          --env OTTO_TEST_BROWSER_EXECUTABLE=/usr/bin/chromium
+          --env NOD_TEST_NATIVE_DOWNLOAD=true
+          --env NOD_TEST_BROWSER_EXECUTABLE=/usr/bin/chromium
           --volume "$PWD/src:/app/src:ro"
           --volume "$PWD/tests:/app/tests:ro"
           --volume "$PWD/scripts:/app/scripts:ro"
@@ -175,7 +175,7 @@ jobs:
           --volume "$PWD/tsconfig.json:/app/tsconfig.json:ro"
           --volume "$PWD/dist/web:/app/dist/web:ro"
           --tmpfs /app/.local:uid=1000,gid=1000
-          --init --entrypoint node otto-ci-integration
+          --init --entrypoint node nod-ci-integration
           scripts/test-integration.mjs --run
 
   windows-setup:

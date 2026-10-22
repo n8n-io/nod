@@ -12,22 +12,22 @@ const parent = (
   }
 ).parentPort;
 const legacyIntegration =
-  desktopMode && process.env.OTTO_DESKTOP_LEGACY_INTEGRATION === 'true'
+  desktopMode && process.env.NOD_DESKTOP_LEGACY_INTEGRATION === 'true'
     ? await receiveLegacyIntegration({
         ownerId,
         parent:
           parent ??
           (() => {
-            throw new Error('Desktop upgrade requires Otto.');
+            throw new Error('Desktop upgrade requires nod.');
           })(),
       })
     : undefined;
 const runtimeReady =
-  desktopMode && process.env.OTTO_DESKTOP_RUNTIME_PENDING === 'true'
+  desktopMode && process.env.NOD_DESKTOP_RUNTIME_PENDING === 'true'
     ? new Promise<void>((resolve) => {
-        if (!parent) throw new Error('Desktop startup requires Otto.');
+        if (!parent) throw new Error('Desktop startup requires nod.');
         const ready = (event: { data: unknown }) => {
-          if ((event.data as { type?: string })?.type !== 'otto-runtime-ready') return;
+          if ((event.data as { type?: string })?.type !== 'nod-runtime-ready') return;
           parent.removeListener('message', ready);
           resolve();
         };
@@ -114,10 +114,10 @@ if (desktopMode)
   (
     process as NodeJS.Process & { parentPort?: { postMessage(message: unknown): void } }
   ).parentPort?.postMessage({
-    type: 'otto-ready',
+    type: 'nod-ready',
     port: listeningPort,
   });
 else
   console.log(
-    `Otto is ready at http://localhost:${listeningPort}/#access=${await accessKey(dataRoot)}`,
+    `nod is ready at http://localhost:${listeningPort}/#access=${await accessKey(dataRoot)}`,
   );

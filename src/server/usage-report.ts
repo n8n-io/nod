@@ -19,7 +19,7 @@ function summary(view: TrustView) {
   const actions = week.actions
     ? ` It used your apps ${week.actions === 1 ? 'once' : `${week.actions} times`}.`
     : '';
-  return `In the last 7 days, Otto did ${week.things} ${week.things === 1 ? 'thing' : 'things'}.${actions} It spent ${dollars(week.spentUsd)}.`;
+  return `In the last 7 days, nod did ${week.things} ${week.things === 1 ? 'thing' : 'things'}.${actions} It spent ${dollars(week.spentUsd)}.`;
 }
 
 function month({ view, timeZone, locale }: UsageReport) {
@@ -37,7 +37,7 @@ function month({ view, timeZone, locale }: UsageReport) {
 }
 
 export function usageFileName(exported: Date) {
-  return `otto-usage-${exported.toISOString().slice(0, 10)}.pdf`;
+  return `nod-usage-${exported.toISOString().slice(0, 10)}.pdf`;
 }
 
 const winAnsi = new Map(
@@ -85,7 +85,7 @@ export function usagePdf(report: UsageReport, exported: Date) {
       ]);
     y -= gap;
   };
-  line('Otto usage', 20, true, 30);
+  line('nod usage', 20, true, 30);
   line(
     `Exported ${exported.toLocaleString(locale, { day: 'numeric', month: 'long', year: 'numeric', ...clockOptions(locale, report.hourCycle), timeZone })}`,
     9,

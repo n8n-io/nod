@@ -11,8 +11,8 @@ import { createContainerBrowserComputer } from '../../src/providers/container-br
 const execute = promisify(execFile);
 const run = async (args) =>
   (await execute('docker', args, { timeout: 30_000, maxBuffer: 32 * 1024 })).stdout.trim();
-const name = `otto-browser-build-${randomUUID()}`;
-const dataRoot = await mkdtemp(join(tmpdir(), 'otto-browser-build-'));
+const name = `nod-browser-build-${randomUUID()}`;
+const dataRoot = await mkdtemp(join(tmpdir(), 'nod-browser-build-'));
 const computer = createContainerBrowserComputer({ dataRoot, container: name });
 try {
   await run([
@@ -21,7 +21,7 @@ try {
     '--name',
     name,
     '--label',
-    'dev.otto.desktop.disposable=true',
+    'dev.nod.desktop.disposable=true',
     '--init',
     '--cap-drop',
     'ALL',
@@ -42,7 +42,7 @@ try {
     '/home/node:uid=1000,gid=1000,mode=700,size=256m',
     '--tmpfs',
     '/data:uid=1000,gid=1000,mode=700,size=256m',
-    process.argv[2] || 'otto-desktop-browser:experiment',
+    process.argv[2] || 'nod-desktop-browser:experiment',
   ]);
   let ready = false;
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -67,7 +67,7 @@ try {
     name,
     'node',
     '-e',
-    'const fs=require("node:fs");for(const p of ["/Users","/opt/otto-assets","/var/run/docker.sock"])if(fs.existsSync(p))process.exit(1);if(Object.keys(process.env).some(k=>!["PATH","HOSTNAME","HOME","NODE_VERSION","YARN_VERSION"].includes(k)))process.exit(1)',
+    'const fs=require("node:fs");for(const p of ["/Users","/opt/nod-assets","/var/run/docker.sock"])if(fs.existsSync(p))process.exit(1);if(Object.keys(process.env).some(k=>!["PATH","HOSTNAME","HOME","NODE_VERSION","YARN_VERSION"].includes(k)))process.exit(1)',
   ]);
   const thread = randomUUID();
   const result = await computer.act(thread, { action: 'open', url: 'https://example.com' });

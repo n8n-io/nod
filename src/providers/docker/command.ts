@@ -95,9 +95,9 @@ try:
  else:
   install=float(r['installTimeoutMs'])/1000
   if not re.fullmatch(r'[0-9a-f-]{36}',cli['id']) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}',cli['command']) or not env or not 0<install: raise ValueError()
-  prefix=sealed('.')+'/otto-cli-'+cli['id']
+  prefix=sealed('.')+'/nod-cli-'+cli['id']
   os.close(os.open(prefix+'.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600))
-  home=tempfile.mkdtemp(prefix='otto-cli-')
+  home=tempfile.mkdtemp(prefix='nod-cli-')
   system='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
   base={'HOME':home,'XDG_CONFIG_HOME':home+'/.config','LANG':'C.UTF-8'}
   steps=[([sys.executable,'-I','-c',${JSON.stringify(cliInstallProgram)},prefix,json.dumps(cli)],{**base,'PATH':system},install),([prefix+'/bin/'+cli['command'],*r['args']],{**base,'PATH':prefix+'/bin:'+system,**env},timeout)]
@@ -162,7 +162,7 @@ for index,(args,child_env,seconds) in enumerate(steps):
  last=index==len(steps)-1
  try:
   if cli is not None:
-   if any(os.lstat(path).st_uid==os.getuid() for path in glob.glob(os.path.dirname(prefix)+'/otto-cli-*') if not path.startswith(prefix)): raise ValueError()
+   if any(os.lstat(path).st_uid==os.getuid() for path in glob.glob(os.path.dirname(prefix)+'/nod-cli-*') if not path.startswith(prefix)): raise ValueError()
    if last: sealed(args[0])
  except (OSError,ValueError):
   output('stderr',b'The connected CLI install is not sealed. Propose it again.\\n')
@@ -236,8 +236,8 @@ export async function runWorkspaceCommand(options: {
   spawn?: WorkspaceCommandLauncher;
   drainTimeoutMs?: number;
 }): Promise<{ stdout: Buffer; stderr: Buffer; exitCode: number }> {
-  if (!/^otto-workspace(?:-[a-zA-Z0-9_-]+)?$/.test(options.container))
-    throw new Error('WORKSPACE_CONTAINER must identify an Otto workspace.');
+  if (!/^nod-workspace(?:-[a-zA-Z0-9_-]+)?$/.test(options.container))
+    throw new Error('WORKSPACE_CONTAINER must identify a nod workspace.');
   const id = threadIdentity(options.threadId);
   return runSupervisedCommand({
     ...options,
@@ -301,7 +301,7 @@ export function runSupervisedCommand(options: {
       return reject(
         new WorkspaceCommandError(
           true,
-          'The workspace is unavailable. Start its container and restart Otto.',
+          'The workspace is unavailable. Start its container and restart nod.',
         ),
       );
     }
@@ -334,7 +334,7 @@ export function runSupervisedCommand(options: {
       reject(
         new WorkspaceCommandError(
           true,
-          'The workspace command did not stop safely. Restart Otto before continuing.',
+          'The workspace command did not stop safely. Restart nod before continuing.',
         ),
       );
     };

@@ -128,7 +128,7 @@ async function attempt(directory: string, item: WhisperCase, mode: WhisperMode, 
     .then((text) => JSON.parse(text) as WhisperRun)
     .catch(() => undefined);
   if (finished && !finished.error) return finished;
-  const specPath = join(tmpdir(), `otto-whisperbench-${randomUUID()}.json`);
+  const specPath = join(tmpdir(), `nod-whisperbench-${randomUUID()}.json`);
   await writeFile(specPath, JSON.stringify({ item, mode, model, outFile }));
   const child = spawn(
     process.execPath,
@@ -203,7 +203,7 @@ export function summarizeWhisper(runs: WhisperRun[], planned = runs.length) {
 
 function markdown(summary: ReturnType<typeof summarizeWhisper>, manifest: Record<string, unknown>) {
   const lines = [
-    `# WhisperBench on Otto: ${manifest.label}`,
+    `# WhisperBench on nod: ${manifest.label}`,
     '',
     `Model ${manifest.model}, judge ${manifest.judge}, commit ${manifest.commit}. Lower is better. $${summary.costUsd.toFixed(2)} total, ${summary.incomplete} incomplete.`,
     '',

@@ -35,7 +35,7 @@ export type DesktopFeedbackContext = {
 };
 
 type DesktopWindow = Window & {
-  ottoDesktop?: {
+  nodDesktop?: {
     ready?(): Promise<void>;
     getSettings(): Promise<DesktopSettings>;
     status?(): Promise<DesktopStatus>;
@@ -60,15 +60,15 @@ type DesktopWindow = Window & {
 };
 
 export function desktopRendererReady() {
-  void (window as DesktopWindow).ottoDesktop?.ready?.();
+  void (window as DesktopWindow).nodDesktop?.ready?.();
 }
 
 export function desktopSettingsAvailable() {
-  return typeof (window as DesktopWindow).ottoDesktop?.getSettings === 'function';
+  return typeof (window as DesktopWindow).nodDesktop?.getSettings === 'function';
 }
 
 export function openDesktopSettings(section: DesktopSettingsSection = 'general') {
-  window.dispatchEvent(new window.CustomEvent('otto:open-settings', { detail: section }));
+  window.dispatchEvent(new window.CustomEvent('nod:open-settings', { detail: section }));
 }
 
 export function subscribeDesktopSettings(listener: (section: DesktopSettingsSection) => void) {
@@ -77,16 +77,16 @@ export function subscribeDesktopSettings(listener: (section: DesktopSettingsSect
     if (section === 'general' || section === 'models' || section === 'preferences')
       listener(section);
   };
-  window.addEventListener('otto:open-settings', receive);
-  const unsubscribe = (window as DesktopWindow).ottoDesktop?.onOpenSettings(listener);
+  window.addEventListener('nod:open-settings', receive);
+  const unsubscribe = (window as DesktopWindow).nodDesktop?.onOpenSettings(listener);
   return () => {
-    window.removeEventListener('otto:open-settings', receive);
+    window.removeEventListener('nod:open-settings', receive);
     unsubscribe?.();
   };
 }
 
 function settingsBridge() {
-  const bridge = (window as DesktopWindow).ottoDesktop;
+  const bridge = (window as DesktopWindow).nodDesktop;
   if (!bridge) throw new Error('Desktop settings are unavailable.');
   return bridge;
 }
@@ -104,25 +104,25 @@ export function removeDesktopData() {
 }
 
 export function desktopPreferences() {
-  return (window as DesktopWindow).ottoDesktop?.getPreferences();
+  return (window as DesktopWindow).nodDesktop?.getPreferences();
 }
 
 export function setDesktopTheme(theme: DesktopPreferences['theme']) {
-  return (window as DesktopWindow).ottoDesktop?.setTheme(theme);
+  return (window as DesktopWindow).nodDesktop?.setTheme(theme);
 }
 
 export function subscribeDesktopPreferences(listener: (preferences: DesktopPreferences) => void) {
-  return (window as DesktopWindow).ottoDesktop?.onPreferences(listener) ?? (() => {});
+  return (window as DesktopWindow).nodDesktop?.onPreferences(listener) ?? (() => {});
 }
 
 export function desktopChatReadCursor(ownerId: string, threadId: string) {
-  return (window as DesktopWindow).ottoDesktop?.getChatReadCursor?.(ownerId, threadId);
+  return (window as DesktopWindow).nodDesktop?.getChatReadCursor?.(ownerId, threadId);
 }
 
 export function subscribeDesktopFocusMessage(
   listener: (target: { threadId: string; messageId: string } | null) => void,
 ) {
-  return (window as DesktopWindow).ottoDesktop?.onFocusMessage?.(listener) ?? (() => {});
+  return (window as DesktopWindow).nodDesktop?.onFocusMessage?.(listener) ?? (() => {});
 }
 
 export function saveDesktopChatReadCursor(
@@ -130,41 +130,41 @@ export function saveDesktopChatReadCursor(
   threadId: string,
   cursor: ChatReadCursor,
 ) {
-  return (window as DesktopWindow).ottoDesktop?.setChatReadCursor?.(ownerId, threadId, cursor);
+  return (window as DesktopWindow).nodDesktop?.setChatReadCursor?.(ownerId, threadId, cursor);
 }
 
 export function desktopLinksAvailable() {
-  return typeof (window as DesktopWindow).ottoDesktop?.openExternal === 'function';
+  return typeof (window as DesktopWindow).nodDesktop?.openExternal === 'function';
 }
 
 export async function openConnection(url: string) {
-  if (desktopLinksAvailable()) await (window as DesktopWindow).ottoDesktop!.openExternal(url);
+  if (desktopLinksAvailable()) await (window as DesktopWindow).nodDesktop!.openExternal(url);
   else window.location.assign(url);
 }
 
 export function desktopFeedbackContext() {
-  return (window as DesktopWindow).ottoDesktop?.getFeedbackContext?.();
+  return (window as DesktopWindow).nodDesktop?.getFeedbackContext?.();
 }
 
 export function desktopFeedbackScreenshot() {
-  return (window as DesktopWindow).ottoDesktop?.captureFeedbackScreenshot?.();
+  return (window as DesktopWindow).nodDesktop?.captureFeedbackScreenshot?.();
 }
 
 export function onFeedbackRequested(listener: () => void) {
-  return (window as DesktopWindow).ottoDesktop?.onFeedbackRequested?.(listener) ?? (() => {});
+  return (window as DesktopWindow).nodDesktop?.onFeedbackRequested?.(listener) ?? (() => {});
 }
 
 export function desktopStatus() {
-  return (window as DesktopWindow).ottoDesktop?.status?.();
+  return (window as DesktopWindow).nodDesktop?.status?.();
 }
 
 export function subscribeDesktopStatus(listener: (status: DesktopStatus) => void) {
-  return (window as DesktopWindow).ottoDesktop?.onStatus?.(listener) ?? (() => {});
+  return (window as DesktopWindow).nodDesktop?.onStatus?.(listener) ?? (() => {});
 }
 
 export async function retryDesktopRuntime() {
-  const bridge = (window as DesktopWindow).ottoDesktop;
-  if (!bridge?.prepare) throw new Error('Restart Otto to try setting up your workspace again.');
+  const bridge = (window as DesktopWindow).nodDesktop;
+  if (!bridge?.prepare) throw new Error('Restart nod to try setting up your workspace again.');
   const status = await bridge.prepare({ retry: true });
   const failure =
     status.error ||

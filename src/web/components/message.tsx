@@ -40,7 +40,7 @@ const analyticsReactions: Record<string, ReactionAnalytics['reaction']> = {
   '🙏': 'pray',
   '👎': 'thumbs_down',
 };
-type ReactionAnalytics = AnalyticsProperties<'otto_message_reaction_changed'>;
+type ReactionAnalytics = AnalyticsProperties<'nod_message_reaction_changed'>;
 const messageSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), 'u'],
@@ -338,7 +338,7 @@ export function MessageBubble({
       await post(`/api/messages/${message.id}/reaction`, { reaction: next });
       setReaction(next);
       setSelectedName(next ? name : '');
-      capture('otto_message_reaction_changed', {
+      capture('nod_message_reaction_changed', {
         operation: !next ? 'remove' : reaction ? 'change' : 'add',
         reaction: analyticsReactions[reactionEmoji(next ?? value)] ?? 'other',
         method,
@@ -351,7 +351,7 @@ export function MessageBubble({
     }
   }
   async function copy(method: 'button' | 'context_menu') {
-    captureAnalytics('otto_message_action', { action: 'copy', role: message.role, method });
+    captureAnalytics('nod_message_action', { action: 'copy', role: message.role, method });
     setPanel(null);
     try {
       await navigator.clipboard.writeText(message.text);
@@ -363,7 +363,7 @@ export function MessageBubble({
     }
   }
   function reply(method: 'button' | 'context_menu') {
-    captureAnalytics('otto_message_action', { action: 'reply', role: message.role, method });
+    captureAnalytics('nod_message_action', { action: 'reply', role: message.role, method });
     setPanel(null);
     onReply?.();
   }
@@ -371,7 +371,7 @@ export function MessageBubble({
     <article
       ref={articleElement}
       className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${selected ? ' message-selected' : ''}${panel ? ' message-panel-open' : ''}`}
-      aria-label={streaming ? 'Otto is responding' : message.role === 'user' ? 'You' : 'Otto'}
+      aria-label={streaming ? 'nod is responding' : message.role === 'user' ? 'You' : 'nod'}
       data-message-id={streaming ? undefined : message.id}
       onPointerUp={(event) => {
         if (!['touch', 'pen'].includes(event.pointerType)) return;
@@ -509,8 +509,8 @@ export function MessageBubble({
                       key={agentReaction}
                       className={reactionClass}
                       role="img"
-                      aria-label={`Otto reacted: ${reactionName(agentReaction)}`}
-                      title={`Otto reacted: ${reactionName(agentReaction)}`}
+                      aria-label={`nod reacted: ${reactionName(agentReaction)}`}
+                      title={`nod reacted: ${reactionName(agentReaction)}`}
                     >
                       {agentReaction}
                     </span>

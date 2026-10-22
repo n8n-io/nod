@@ -30,8 +30,8 @@ export type ControlQuery = {
   focused?: boolean;
 };
 
-const active = `(() => { if (!document.hasFocus()) return null; let node = document.activeElement; for (;;) { const root = node && (node.shadowRoot ?? (globalThis.__ottoRoots ?? []).find(root => root.host === node)); if (!root?.activeElement) break; node = root.activeElement; } return node && !['IFRAME', 'FRAME', 'BODY', 'HTML'].includes(node.tagName) ? node : null; })()`;
-const focusScript = `(() => { const node = ${active}; globalThis.__ottoFocused = node; return node ? node.tagName : ''; })()`;
+const active = `(() => { if (!document.hasFocus()) return null; let node = document.activeElement; for (;;) { const root = node && (node.shadowRoot ?? (globalThis.__nodRoots ?? []).find(root => root.host === node)); if (!root?.activeElement) break; node = root.activeElement; } return node && !['IFRAME', 'FRAME', 'BODY', 'HTML'].includes(node.tagName) ? node : null; })()`;
+const focusScript = `(() => { const node = ${active}; globalThis.__nodFocused = node; return node ? node.tagName : ''; })()`;
 const submitsScript = `function (enter) { const node = this.nodeType === 1 ? this : this.parentElement; const control = enter ? node : (node?.closest('button, input') ?? node?.closest('label')?.control); const form = control?.form; const button = ['submit', 'image'].includes(control?.type); if (!form || !(button || (enter && control.tagName === 'INPUT'))) return null; const own = (name) => Object.getOwnPropertyDescriptor(HTMLFormElement.prototype, name).get.call(form); const submitter = button ? control : [...own('elements')].find((element) => ['submit', 'image'].includes(element.type)); const method = (submitter?.hasAttribute('formmethod') ? submitter.formMethod : own('method')) || 'get'; if (method === 'dialog') return null; return { method: method.toUpperCase(), to: submitter?.hasAttribute('formaction') ? submitter.formAction : own('action') }; }`;
 const signInControlSelector =
   'button, a[href], input[type="submit"], input[type="button"], input[type="image"], [role="button"], [role="link"]';
@@ -44,16 +44,16 @@ const signInSnapshot = `function () {
 }`;
 const blurScript = `(() => { const node = document.activeElement; if (node && node !== document.body && typeof node.blur === 'function') node.blur(); return ''; })()`;
 const armScript = (privateValue: boolean) =>
-  `(() => { const node = ${active}; if (!node || node !== globalThis.__ottoFocused) return ''; globalThis.__ottoField = node; if (${privateValue}) (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); if (node.tagName !== 'SELECT') { if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); } return node.tagName; })()`;
+  `(() => { const node = ${active}; if (!node || node !== globalThis.__nodFocused) return ''; globalThis.__nodField = node; if (${privateValue}) (globalThis.__nodPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); if (node.tagName !== 'SELECT') { if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); } return node.tagName; })()`;
 const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot: boolean) =>
   `(() => {
-    globalThis.__ottoMaskObserver?.disconnect();
-    delete globalThis.__ottoMaskObserver;
-    const privateFields = [...(globalThis.__ottoPrivateFields ?? [])].filter(node => node.isConnected);
-    const types = globalThis.__ottoMaskedTypes ??= new Map();
+    globalThis.__nodMaskObserver?.disconnect();
+    delete globalThis.__nodMaskObserver;
+    const privateFields = [...(globalThis.__nodPrivateFields ?? [])].filter(node => node.isConnected);
+    const types = globalThis.__nodMaskedTypes ??= new Map();
     for (const [node, type] of types) if (type === null) node.removeAttribute('type'); else node.setAttribute('type', type);
     types.clear();
-    const styles = globalThis.__ottoMaskedStyles ??= new Map();
+    const styles = globalThis.__nodMaskedStyles ??= new Map();
     for (const [node, [hadStyle, properties]] of styles) {
       for (const [property, value, priority] of properties.slice().reverse()) {
         if (property === 'transition-property') getComputedStyle(node).opacity;
@@ -74,7 +74,7 @@ const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot
     const scan = ${allFields} || secrets.length;
     let roots = [];
     const apply = () => {
-    roots = [...new Set([document, ...(scan ? globalThis.__ottoRoots ?? [] : []), ...privateFields.map(node => node.getRootNode())])];
+    roots = [...new Set([document, ...(scan ? globalThis.__nodRoots ?? [] : []), ...privateFields.map(node => node.getRootNode())])];
     if (scan) for (let index = 0; index < roots.length; index++) for (const node of roots[index].querySelectorAll('*')) if (node.shadowRoot) roots.push(node.shadowRoot);
     const numbers = secrets.filter(secret => /^\\d{12,19}$/.test(secret));
     const matches = value => typeof value === 'string' && (secrets.some(secret => value.includes(secret)) || numbers.some(secret => value.replace(/\\D/g, '').includes(secret)));
@@ -98,7 +98,7 @@ const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot
       const watch = () => roots.forEach(root => observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true }));
       const observer = new MutationObserver(() => { observer.disconnect(); apply(); watch(); });
       watch();
-      globalThis.__ottoMaskObserver = observer;
+      globalThis.__nodMaskObserver = observer;
     }
     return '';
   })()`;
@@ -250,7 +250,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     if (known !== undefined) return known;
     const { executionContextId } = (await send(
       'Page.createIsolatedWorld',
-      { frameId, worldName: 'otto-private' },
+      { frameId, worldName: 'nod-private' },
       session,
     )) as { executionContextId: number };
     worlds.set(key, executionContextId);
@@ -299,8 +299,8 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
               'Runtime.evaluate',
               {
                 contextId: context,
-                expression: `globalThis.__ottoRoots = []; ${active}`,
-                objectGroup: 'otto-roots',
+                expression: `globalThis.__nodRoots = []; ${active}`,
+                objectGroup: 'nod-roots',
               },
               session,
             )) as { result?: { objectId?: string } };
@@ -318,7 +318,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
               (roots.get(frame.id) ?? []).map(async (backendNodeId) => {
                 const { object } = (await send(
                   'DOM.resolveNode',
-                  { backendNodeId, executionContextId: context, objectGroup: 'otto-roots' },
+                  { backendNodeId, executionContextId: context, objectGroup: 'nod-roots' },
                   session,
                 )) as { object: { objectId: string } };
                 return { objectId: object.objectId };
@@ -329,14 +329,14 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
                 'Runtime.callFunctionOn',
                 {
                   executionContextId: context,
-                  functionDeclaration: 'function(...roots) { globalThis.__ottoRoots = roots; }',
+                  functionDeclaration: 'function(...roots) { globalThis.__nodRoots = roots; }',
                   arguments: objects,
                 },
                 session,
               );
               if (exceptionDetails) throw new Error('The page check failed.');
             } else if (shadows === 'document')
-              await evaluate(session, context, 'globalThis.__ottoRoots = [];');
+              await evaluate(session, context, 'globalThis.__nodRoots = [];');
           }
           results.push({
             origin: frame.securityOrigin ?? '',
@@ -349,7 +349,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
           if (strict) throw error;
         }
       }
-      if (shadows) await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-roots' }, session);
+      if (shadows) await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-roots' }, session);
     }
     if (strict && !results.length) throw new Error('The browser inspector is unavailable.');
     return results;
@@ -424,13 +424,13 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
           'Runtime.evaluate',
           {
             contextId: hit.context,
-            expression: 'globalThis.__ottoFocused',
-            objectGroup: 'otto-control',
+            expression: 'globalThis.__nodFocused',
+            objectGroup: 'nod-control',
           },
           session,
         )) as { result?: { objectId?: string } };
         if (result?.objectId) backendNodeId = await describe({ objectId: result.objectId });
-        await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, session);
+        await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-control' }, session);
       }
       const [main] = backendNodeId ? [] : await tree(page);
       if (main) {
@@ -441,12 +441,12 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
             contextId: await world(page, main.id),
             expression:
               '(() => { let node = document.activeElement; while (node?.shadowRoot?.activeElement) node = node.shadowRoot.activeElement; return node === document.body && !node.isContentEditable ? null : node; })()',
-            objectGroup: 'otto-control',
+            objectGroup: 'nod-control',
           },
           page,
         )) as { result?: { objectId?: string } };
         if (result?.objectId) backendNodeId = await describe({ objectId: result.objectId });
-        await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, page);
+        await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-control' }, page);
       }
     }
     return backendNodeId ? { backendNodeId, session } : undefined;
@@ -460,7 +460,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       {
         backendNodeId: found.backendNodeId,
         executionContextId: await world(found.session, frame.id),
-        objectGroup: 'otto-control',
+        objectGroup: 'nod-control',
       },
       found.session,
     )) as { object: { objectId: string } };
@@ -484,7 +484,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         ? { method: value.method, to: value.to }
         : null;
     } finally {
-      await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, found.session);
+      await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-control' }, found.session);
     }
   };
 
@@ -500,7 +500,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
           {
             contextId: await world(session, frame.id),
             expression: `(() => { const nodes = document.querySelectorAll(${JSON.stringify(selector)}); if (nodes.length > 1) throw new Error('Ambiguous sign-in control'); return nodes[0] ?? null; })()`,
-            objectGroup: 'otto-sign-in',
+            objectGroup: 'nod-sign-in',
           },
           session,
         )) as { result?: { objectId?: string }; exceptionDetails?: unknown };
@@ -516,7 +516,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
           };
           found = { backendNodeId: node.backendNodeId, session };
         }
-        await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-sign-in' }, session);
+        await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-sign-in' }, session);
       }
     }
     return found;
@@ -557,7 +557,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       {
         backendNodeId,
         executionContextId: await world(session, frameId),
-        objectGroup: 'otto-sign-in',
+        objectGroup: 'nod-sign-in',
       },
       session,
     )) as { object: { objectId?: string } };
@@ -610,7 +610,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         (await evaluate(
           page,
           await world(page, main.id),
-          mark ? '(globalThis.__ottoScripted = true)' : 'Boolean(globalThis.__ottoScripted)',
+          mark ? '(globalThis.__nodScripted = true)' : 'Boolean(globalThis.__nodScripted)',
         )) === true
       );
     },
@@ -626,7 +626,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     async holding() {
       return (
         await everyFrame(
-          `[...(globalThis.__ottoPrivateFields ?? [])].some(node => node.isConnected && (node.value || (node.isContentEditable && node.textContent)))`,
+          `[...(globalThis.__nodPrivateFields ?? [])].some(node => node.isConnected && (node.value || (node.isContentEditable && node.textContent)))`,
           undefined,
           true,
         )
@@ -647,7 +647,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         (await evaluate(
           field.session,
           field.context,
-          `(() => { const node = ${active}; if (!node || node !== globalThis.__ottoField || node.tagName === 'SELECT') return false; for (const character of ${JSON.stringify(text)}) if (!node.isConnected || ${active} !== node || !document.execCommand('insertText', false, character)) return false; return true; })()`,
+          `(() => { const node = ${active}; if (!node || node !== globalThis.__nodField || node.tagName === 'SELECT') return false; for (const character of ${JSON.stringify(text)}) if (!node.isConnected || ${active} !== node || !document.execCommand('insertText', false, character)) return false; return true; })()`,
         )) === true
       );
     },
@@ -656,7 +656,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         (await evaluate(
           field.session,
           field.context,
-          `(() => { const active = ${active}; const nodes = ${selector.startsWith('@') ? '[active]' : `Array.from(document.querySelectorAll(${JSON.stringify(selector)}))`}; if (!active || active !== globalThis.__ottoFocused || !nodes.includes(active) || !nodes.length || nodes.length > ${value.length}) return false; const values = nodes.length === 1 ? [${JSON.stringify(value)}] : Array.from(${JSON.stringify(value)}); if (nodes.length !== values.length) return false; for (let index = 0; index < nodes.length; index++) { const node = nodes[index]; (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); node.focus(); if (${active} !== node) return false; if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); for (const character of values[index]) { if (${active} !== node || !document.execCommand('insertText', false, character)) return false; } } return true; })()`,
+          `(() => { const active = ${active}; const nodes = ${selector.startsWith('@') ? '[active]' : `Array.from(document.querySelectorAll(${JSON.stringify(selector)}))`}; if (!active || active !== globalThis.__nodFocused || !nodes.includes(active) || !nodes.length || nodes.length > ${value.length}) return false; const values = nodes.length === 1 ? [${JSON.stringify(value)}] : Array.from(${JSON.stringify(value)}); if (nodes.length !== values.length) return false; for (let index = 0; index < nodes.length; index++) { const node = nodes[index]; (globalThis.__nodPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); node.focus(); if (${active} !== node) return false; if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); for (const character of values[index]) { if (${active} !== node || !document.execCommand('insertText', false, character)) return false; } } return true; })()`,
         )) === true
       );
     },
@@ -665,7 +665,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         (await evaluate(
           field.session,
           field.context,
-          `(() => { const node = ${active}; const choices = ${JSON.stringify(choices)}; if (!node || node !== globalThis.__ottoField || node.tagName !== 'SELECT') return false; const options = [...node.options]; const option = options.find((item) => choices.includes(item.value) || choices.includes(item.text.trim())) ?? options.find((item) => choices.some(choice => choice.toLocaleLowerCase() === item.value.toLocaleLowerCase() || choice.toLocaleLowerCase() === item.text.trim().toLocaleLowerCase())); if (!option) return false; node.value = option.value; node.dispatchEvent(new Event('input', { bubbles: true })); node.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`,
+          `(() => { const node = ${active}; const choices = ${JSON.stringify(choices)}; if (!node || node !== globalThis.__nodField || node.tagName !== 'SELECT') return false; const options = [...node.options]; const option = options.find((item) => choices.includes(item.value) || choices.includes(item.text.trim())) ?? options.find((item) => choices.some(choice => choice.toLocaleLowerCase() === item.value.toLocaleLowerCase() || choice.toLocaleLowerCase() === item.text.trim().toLocaleLowerCase())); if (!option) return false; node.value = option.value; node.dispatchEvent(new Event('input', { bubbles: true })); node.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`,
         )) === true
       );
     },
@@ -704,7 +704,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
           {
             objectId,
             functionDeclaration: `function () { return (this.nodeType === 1 ? this : this.parentElement)?.closest(${JSON.stringify(signInControlSelector)}); }`,
-            objectGroup: 'otto-sign-in',
+            objectGroup: 'nod-sign-in',
           },
           found.session,
         )) as { result?: { objectId?: string }; exceptionDetails?: unknown };
@@ -743,7 +743,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
           submits: details.submits,
         };
       } finally {
-        await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-sign-in' }, found.session);
+        await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-sign-in' }, found.session);
       }
     },
     async selectSignInControl(control: BoundSignInControl) {
@@ -761,7 +761,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         }
       }
       if (!session) throw new Error('The sign-in document changed.');
-      const name = `ottoSignIn${crypto.randomUUID().replaceAll('-', '')}`;
+      const name = `nodSignIn${crypto.randomUUID().replaceAll('-', '')}`;
       let pressed = false;
       let outcome: boolean | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -895,7 +895,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         await send('Runtime.removeBinding', { name }, session, true).catch(() => {});
         await send(
           'Runtime.releaseObjectGroup',
-          { objectGroup: 'otto-sign-in' },
+          { objectGroup: 'nod-sign-in' },
           session,
           true,
         ).catch(() => {});

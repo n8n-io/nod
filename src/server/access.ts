@@ -19,7 +19,7 @@ async function localKey(dataRoot: string, name: 'access-key' | 'credential-reque
   }
   const info = await lstat(path);
   const key = info.isFile() ? await readFile(path, 'utf8') : '';
-  if (!token.test(key)) throw new Error(`Delete ${path} and restart Otto.`);
+  if (!token.test(key)) throw new Error(`Delete ${path} and restart nod.`);
   if (info.mode & 0o077) await chmod(path, 0o600);
   return key;
 }
@@ -28,7 +28,7 @@ export const accessKey = (dataRoot: string) => localKey(dataRoot, 'access-key');
 export const credentialRequestKey = (dataRoot: string) =>
   localKey(dataRoot, 'credential-request-key');
 
-export const accessCookie = (port: number) => `otto-access-${port}`;
+export const accessCookie = (port: number) => `nod-access-${port}`;
 
 export function registerLocalAccess(
   app: FastifyInstance,
@@ -47,7 +47,7 @@ export function registerLocalAccess(
   };
   const presented = (request: FastifyRequest) =>
     desktop
-      ? request.headers['x-otto-desktop-token']
+      ? request.headers['x-nod-desktop-token']
       : request.headers.cookie
           ?.split(';')
           .map((part) => part.trim())
@@ -86,7 +86,7 @@ export function registerLocalAccess(
       return;
     if (!desktop && request.method === 'GET' && path === '/api/webhooks/whatsapp') return;
     if (!hosts.has(request.headers.host || ''))
-      return reply.code(403).send({ error: 'Otto is only available on localhost.' });
+      return reply.code(403).send({ error: 'nod is only available on localhost.' });
     if (request.headers.origin) {
       let origin: URL;
       try {
@@ -127,8 +127,8 @@ export function registerLocalAccess(
     )
       return reply.code(401).send({
         error: desktop
-          ? 'Open Otto in the desktop app.'
-          : 'Open Otto from the link in your terminal.',
+          ? 'Open nod in the desktop app.'
+          : 'Open nod from the link in your terminal.',
       });
     if (request.headers['sec-fetch-site'] === 'cross-site' && !appCallback && !pageNavigation)
       return reply.code(403).send({ error: 'Cross-site requests are not permitted.' });

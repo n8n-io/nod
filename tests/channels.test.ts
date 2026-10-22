@@ -359,7 +359,7 @@ test('channel presentation isolates private links from the model and rejects uns
   const presentation: unknown[] = [];
   const present = async (threadId: string | null, input: unknown) => {
     presentation.push({ threadId, input });
-    return 'Continua na aplicação Otto.';
+    return 'Continua na aplicação nod.';
   };
   await channelReply(
     'Continua [em segurança](/credentials/secret-id?token=secret-token) ou [aprova](http://localhost:4310/payments/private-id). Consulta https://example.com/docs.',
@@ -371,7 +371,7 @@ test('channel presentation isolates private links from the model and rejects uns
   const ordinary = 'Consulta [a fatura](https://merchant.example/payments/invoice).';
   assert.equal(await channelReply(ordinary, { threadId: 'owned-thread', present }), ordinary);
   assert.equal(presentation.length, 1);
-  await channelReply('Save it in Otto: /trust?add=login', { threadId: 'owned-thread', present });
+  await channelReply('Save it in nod: /trust?add=login', { threadId: 'owned-thread', present });
   assert.doesNotMatch(JSON.stringify(presentation), /trust\?add/);
   for (const generated of [
     '',
@@ -574,7 +574,7 @@ test(
       ownerId: 'local-development',
       present: async (_thread, input) => {
         assert.doesNotMatch(JSON.stringify(input), /private-token|api\/artifacts/);
-        return 'Continua na aplicação Otto.';
+        return 'Continua na aplicação nod.';
       },
       transport: createChatSdkTransport(pool, fixtureEnv),
       resolveAttachments: async (resolvedThreadId, ids) => {
@@ -960,7 +960,7 @@ test(
       await app.close();
       const restarted = await createChannels(pool, {
         ownerId: 'local-development',
-        present: async () => 'Consulta os ficheiros na aplicação Otto.',
+        present: async () => 'Consulta os ficheiros na aplicação nod.',
         resolveAttachments: async (_threadId, ids) => {
           if (ids.length !== 1 || ids[0] !== whatsappFileId)
             throw new Error('Attachment unavailable.');

@@ -851,7 +851,7 @@ export function createComposioProvider(options: {
       );
     },
     setApiKey(apiKey, configuration) {
-      if (options.proxy) throw new Error('The integration provider is managed by Otto.');
+      if (options.proxy) throw new Error('The integration provider is managed by nod.');
       authConfigs = { ...defaults, ...configuredAuthConfigs(configuration ?? {}) };
       client = connect(apiKey);
       currentApiKey = apiKey;

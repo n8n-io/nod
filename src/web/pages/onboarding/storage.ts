@@ -2,8 +2,8 @@ import type { Connection } from '../../../shared/contracts';
 import { api, post } from '../../lib/api';
 import type { ChannelSettings } from '../../lib/secondary-pages';
 
-const prefix = 'otto.onboarding.';
-const stepCookie = 'otto_onboarding_step';
+const prefix = 'nod.onboarding.';
+const stepCookie = 'nod_onboarding_step';
 
 export function readStored<T>(key: string): T | undefined {
   try {

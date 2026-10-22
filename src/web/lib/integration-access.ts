@@ -66,7 +66,7 @@ export function startIntegrationAccess(): IntegrationAccessAttempt {
   const done = (async () => {
     try {
       if (!native && !popup)
-        throw new Error('Allow pop-up windows for Otto, then try signing in again.');
+        throw new Error('Allow pop-up windows for nod, then try signing in again.');
       const pair = native
         ? null
         : await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
@@ -166,7 +166,7 @@ export function startIntegrationAccess(): IntegrationAccessAttempt {
               access?.state === 'denied'
                 ? 'Easy Connect is not enabled for this Google account. Use your own Composio key.'
                 : access?.state === 'revoked'
-                  ? 'Access for this Otto installation was removed. Sign in again to check your access.'
+                  ? 'Access for this nod installation was removed. Sign in again to check your access.'
                   : 'Easy Connect access could not be verified. Try signing in again.',
             );
           return;

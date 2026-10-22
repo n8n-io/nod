@@ -5,9 +5,9 @@ sidebar:
   order: 2
 ---
 
-The **Tasks** page shows what Otto is working on, what's scheduled and what's done.
+The **Tasks** page shows what nod is working on, what's scheduled and what's done.
 
-Otto starts a saved task session for work that has to outlive its answer: work that waits on someone or something, runs for a long stretch, or runs alongside other jobs. The main chat stays available while the task runs. Work Otto can finish now stays in chat, even when it takes several steps. There is no fixed limit of three tasks.
+nod starts a saved task session for work that has to outlive its answer: work that waits on someone or something, runs for a long stretch, or runs alongside other jobs. The main chat stays available while the task runs. Work nod can finish now stays in chat, even when it takes several steps. There is no fixed limit of three tasks.
 
 For example, "Compare these options and make a report" stays in chat. "Ask three venues for quotes and tell me when they've all replied" becomes a task. The task keeps its goal and history while you discuss other work.
 
@@ -15,24 +15,24 @@ Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and own
 
 ## Three views
 
-| View          | Shows                                                                          |
-| ------------- | ------------------------------------------------------------------------------ |
-| **Current**   | Open task cards, with the ones that need you first                             |
-| **Scheduled** | Your schedules and Otto's planned check-ins. See [Schedules](/use/schedules/). |
-| **Previous**  | Finished cards and past schedule runs, newest first                            |
+| View          | Shows                                                                         |
+| ------------- | ----------------------------------------------------------------------------- |
+| **Current**   | Open task cards, with the ones that need you first                            |
+| **Scheduled** | Your schedules and nod's planned check-ins. See [Schedules](/use/schedules/). |
+| **Previous**  | Finished cards and past schedule runs, newest first                           |
 
 ![The Scheduled view with a weekday calendar check and a Friday weekly recap, each with its next run and a switch to pause it.](../../../assets/screens/tasks-light.png)
 
 ## What a card shows
 
-| Part           | What it tells you                                                                                   |
-| -------------- | --------------------------------------------------------------------------------------------------- |
-| Title          | The task in a few words                                                                             |
-| Status         | Where the task stands, such as **Working** or **Needs you**                                         |
-| Now line       | While Otto browses, the website it's on. Otherwise what Otto is doing, or the question it asked you |
-| **Waiting on** | Who Otto is waiting for, and how, such as an email reply                                            |
-| **Next check** | When Otto will look again                                                                           |
-| **Done when**  | What finished looks like                                                                            |
+| Part           | What it tells you                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------------------- |
+| Title          | The task in a few words                                                                           |
+| Status         | Where the task stands, such as **Working** or **Needs you**                                       |
+| Now line       | While nod browses, the website it's on. Otherwise what nod is doing, or the question it asked you |
+| **Waiting on** | Who nod is waiting for, and how, such as an email reply                                           |
+| **Next check** | When nod will look again                                                                          |
+| **Done when**  | What finished looks like                                                                          |
 
 The same compact task preview appears in chat and on the Tasks page. It shows the title, status, current activity and, when steps are available, a segmented step bar. Select the preview to open its available steps and controls in place. Select it again to close the details. While a task works, its card shows its latest step, such as the website it's on, and the task posts a short update in chat when a new step adds real value. Inside the details, select **Show activity** to read what it said, with the steps in between grouped under each update. This view does not show private model reasoning.
 
@@ -40,7 +40,7 @@ The same compact task preview appears in chat and on the Tasks page. It shows th
 
 ## Reply or stop one task
 
-Reply to a task message to continue that task. You can reply to its first message, a question or a result. Telegram and WhatsApp use their reply controls. A message without a reply target goes to the main chat. Otto can send that message to one or more open tasks when your intent is clear. If the target is unclear, Otto asks. To pick up a finished or stopped task, reply to one of its messages.
+Reply to a task message to continue that task. You can reply to its first message, a question or a result. Telegram and WhatsApp use their reply controls. A message without a reply target goes to the main chat. nod can send that message to one or more open tasks when your intent is clear. If the target is unclear, nod asks. To pick up a finished or stopped task, reply to one of its messages.
 
 An owner update has a revision. **Owner update queued** means the task has not received it at an execution boundary. An outside action that has already started can still finish. Other tasks continue while one task waits for your answer.
 
@@ -50,19 +50,19 @@ A task checks in when its spending since your last message to it passes the amou
 
 ## Inspect task activity
 
-On the **Tasks** page, open a preview and select **Show activity**. The details show planned steps, Otto's updates, and the tool and helper steps between them. Select **Show in chat** to return to the task's message.
+On the **Tasks** page, open a preview and select **Show activity**. The details show planned steps, nod's updates, and the tool and helper steps between them. Select **Show in chat** to return to the task's message.
 
 ![An expanded task with steps, activity from tools and helpers, and task controls.](../../../assets/screens/task-sessions-activity.png)
 
 ## Read task results
 
-A task delivers its result where you asked for it. When you ask for something a connected app holds, such as a sheet, a document or email drafts, Otto creates it in that app even if you don't name it. Other complete reports can be Markdown documents. Otto sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
+A task delivers its result where you asked for it. When you ask for something a connected app holds, such as a sheet, a document or email drafts, nod creates it in that app even if you don't name it. Other complete reports can be Markdown documents. nod sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
 
 ![A completed task with a Markdown document result in chat.](../../../assets/screens/task-sessions-result.png)
 
-Select the file to read it in a panel next to the chat. Select **Download** to save it. Press **Escape** to close the panel. See [Get files from Otto](/use/workspace/#get-files-from-otto) for every file type the panel opens.
+Select the file to read it in a panel next to the chat. Select **Download** to save it. Press **Escape** to close the panel. See [Get files from nod](/use/workspace/#get-files-from-nod) for every file type the panel opens.
 
-Otto previews Markdown files up to 4 MB. For a larger file, select **Download**.
+nod previews Markdown files up to 4 MB. For a larger file, select **Download**.
 
 ![A task result open in the panel next to the chat, showing a Markdown document with a comparison table and assumptions.](../../../assets/screens/task-sessions-document.png)
 
@@ -76,9 +76,9 @@ Mobile web uses the same compact previews. Open a preview to read the steps, rep
 
 ## Telegram without a task page
 
-Telegram shows each task as messages Otto writes in your language. The first one says what it is starting. Questions, approval requests and the result reply to that message, so they stay linked to the task.
+Telegram shows each task as messages nod writes in your language. The first one says what it is starting. Questions, approval requests and the result reply to that message, so they stay linked to the task.
 
-Use Telegram's **Reply** control to send an update or answer to a task. Other messages go to the main chat. These commands answer from Otto's task records, and Otto words the reply:
+Use Telegram's **Reply** control to send an update or answer to a task. Other messages go to the main chat. These commands answer from nod's task records, and nod words the reply:
 
 | Command   | Result                                                                                                  |
 | --------- | ------------------------------------------------------------------------------------------------------- |
@@ -86,25 +86,25 @@ Use Telegram's **Reply** control to send an update or answer to a task. Other me
 | `/status` | Show each open task's goal, steps and current state. Reply to a task message to see only that task.     |
 | `/stop`   | Stop all active work and close open tasks. Reply to a task message with `/stop` to stop only that task. |
 
-The task list sends one message per task. You can reply to that message, the task's first message, a progress message, a question, a file, a result or a status response. If Otto cannot match a reply to a task, `/stop` asks you to select a task. It does not stop all work.
+The task list sends one message per task. You can reply to that message, the task's first message, a progress message, a question, a file, a result or a status response. If nod cannot match a reply to a task, `/stop` asks you to select a task. It does not stop all work.
 
 A status message that shows a pending question keeps a link to that exact question. Your approval applies only to the saved action it shows. An old status message cannot approve a later action.
 
-Telegram and web use the same task record and saved session. Task commands do not grant permission for an outside action. Private sign-in and payment steps still use Otto's private forms.
+Telegram and web use the same task record and saved session. Task commands do not grant permission for an outside action. Private sign-in and payment steps still use nod's private forms.
 
 ## Statuses
 
-| Status            | Meaning                                                               |
-| ----------------- | --------------------------------------------------------------------- |
-| **Queued**        | The task is waiting for its session to run.                           |
-| **Failed**        | The run failed. Reply to its message to continue.                     |
-| **Working**       | Otto is on it right now.                                              |
-| **Needs you**     | Otto asked you a question or needs an approval. Reply to its message. |
-| **Waiting**       | Otto is waiting on someone else.                                      |
-| **Checking back** | Otto has a check planned for later.                                   |
-| **Stalled**       | Nothing is planned next. Tell Otto to keep going or stop.             |
-| **Done**          | Finished, with the result on the card.                                |
-| **Stopped**       | Closed before it finished.                                            |
+| Status            | Meaning                                                              |
+| ----------------- | -------------------------------------------------------------------- |
+| **Queued**        | The task is waiting for its session to run.                          |
+| **Failed**        | The run failed. Reply to its message to continue.                    |
+| **Working**       | nod is on it right now.                                              |
+| **Needs you**     | nod asked you a question or needs an approval. Reply to its message. |
+| **Waiting**       | nod is waiting on someone else.                                      |
+| **Checking back** | nod has a check planned for later.                                   |
+| **Stalled**       | Nothing is planned next. Tell nod to keep going or stop.             |
+| **Done**          | Finished, with the result on the card.                               |
+| **Stopped**       | Closed before it finished.                                           |
 
 ```mermaid
 stateDiagram-v2
@@ -122,16 +122,16 @@ stateDiagram-v2
   needs --> Stopped: you move on
 ```
 
-A question stays **Needs you** until you reply to it or continue its session. An unrelated chat message does not answer it. A failed or stalled task opens its card, so **Reply** and **Stop** are in view. A stopped task shows **Stopped**. Reply to the task to continue the same saved session. While a task works on your reply, the chat shows that Otto is working.
+A question stays **Needs you** until you reply to it or continue its session. An unrelated chat message does not answer it. A failed or stalled task opens its card, so **Reply** and **Stop** are in view. A stopped task shows **Stopped**. Reply to the task to continue the same saved session. While a task works on your reply, the chat shows that nod is working.
 
 ## Task status and permission
 
 A card is a view of the work. It does not grant permission or schedule a check. **Schedule task** creates an ordinary [schedule](/use/schedules/). Every outside action still goes through the [trust check](/trust/approvals/).
 
-To change a task, tell Otto in [chat](/use/chat/).
+To change a task, tell nod in [chat](/use/chat/).
 
 ## Related resources
 
-- [Chat with Otto](/use/chat/)
+- [Chat with nod](/use/chat/)
 - [Schedules and background work](/use/schedules/)
 - [Approvals and the trust check](/trust/approvals/)

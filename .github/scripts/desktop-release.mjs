@@ -18,16 +18,16 @@ import { automaticRelease, configuredRelease, isReleaseMerge } from './prepare-d
 
 const root = process.cwd();
 const runtimeDirectory = join(root, '.local/desktop-runtime-release');
-const output = process.env.OTTO_DESKTOP_OUTPUT || join(root, 'dist/desktop');
-const platform = process.env.OTTO_DESKTOP_TARGET || 'darwin-arm64';
+const output = process.env.NOD_DESKTOP_OUTPUT || join(root, 'dist/desktop');
+const platform = process.env.NOD_DESKTOP_TARGET || 'darwin-arm64';
 if (!['darwin-arm64', 'darwin-x64'].includes(platform))
   throw new Error('Unsupported Mac release target.');
 const arch = platform.slice(7);
 const sourceRepository = process.env.GITHUB_REPOSITORY;
-const sourceRevision = process.env.OTTO_RELEASE_SOURCE || process.env.GITHUB_SHA;
+const sourceRevision = process.env.NOD_RELEASE_SOURCE || process.env.GITHUB_SHA;
 const releaseRepository = sourceRepository;
 const runtimeRepository = releaseRepository;
-const signingMode = process.env.OTTO_SIGNING_MODE || 'self-signed';
+const signingMode = process.env.NOD_SIGNING_MODE || 'self-signed';
 const shaPattern = /^[a-f0-9]{40}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
 const maximumAssetBytes = 2 * 1024 ** 3;
@@ -118,7 +118,7 @@ async function jsonDownload(url) {
 
 function repositoryName(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value))
-    throw new Error('Configure an explicit source repository and OTTO_RUNTIME_REPO destination.');
+    throw new Error('Configure an explicit source repository and NOD_RUNTIME_REPO destination.');
   return value;
 }
 
@@ -129,12 +129,12 @@ function descriptor(value, fingerprint, baseUrl, isPublic) {
     value.fingerprint !== fingerprint ||
     !hashPattern.test(value.id) ||
     !hashPattern.test(value.archive?.sha256) ||
-    !new RegExp(`^Otto-Runtime-${platform}-[a-f0-9]{12}\\.tar\\.gz$`).test(value.archive?.file) ||
+    !new RegExp(`^nod-Runtime-${platform}-[a-f0-9]{12}\\.tar\\.gz$`).test(value.archive?.file) ||
     !Number.isSafeInteger(value.archive.bytes) ||
     value.archive.bytes <= 0 ||
     value.archive.bytes >= maximumAssetBytes ||
     value.signing?.mode !== signingMode ||
-    value.signing?.certificateSha256 !== process.env.OTTO_SIGNING_CERTIFICATE_SHA256 ||
+    value.signing?.certificateSha256 !== process.env.NOD_SIGNING_CERTIFICATE_SHA256 ||
     (signingMode === 'developer-id' && value.notarization?.status !== 'Accepted') ||
     (value.url !== undefined && (!isPublic || value.url !== `${baseUrl}/${value.archive.file}`))
   )
@@ -193,21 +193,21 @@ async function plan() {
       return;
     }
   }
-  if (process.env.OTTO_RELEASE_TARGETS === 'all') {
+  if (process.env.NOD_RELEASE_TARGETS === 'all') {
     const targets = [];
     let first;
     for (const target of ['arm64', 'x64']) {
       const environment = {
         ...process.env,
-        OTTO_RELEASE_TARGETS: '',
-        OTTO_DESKTOP_TARGET: `darwin-${target}`,
+        NOD_RELEASE_TARGETS: '',
+        NOD_DESKTOP_TARGET: `darwin-${target}`,
         GITHUB_OUTPUT: '',
       };
       if (first?.metadata_sha256)
         Object.assign(environment, {
-          OTTO_AUTOMATIC_RELEASE: 'false',
-          OTTO_RELEASE_PLAN: '.local/desktop-release-plan.json',
-          OTTO_RELEASE_PLAN_SHA256: first.metadata_sha256,
+          NOD_AUTOMATIC_RELEASE: 'false',
+          NOD_RELEASE_PLAN: '.local/desktop-release-plan.json',
+          NOD_RELEASE_PLAN_SHA256: first.metadata_sha256,
         });
       const result = JSON.parse(
         run(process.execPath, [fileURLToPath(import.meta.url), 'plan'], { env: environment }),
@@ -249,7 +249,7 @@ async function plan() {
     });
     return;
   }
-  const automatic = process.env.OTTO_AUTOMATIC_RELEASE === 'true';
+  const automatic = process.env.NOD_AUTOMATIC_RELEASE === 'true';
   const release = automatic
     ? automaticRelease(
         root,
@@ -287,7 +287,7 @@ async function plan() {
     throw new Error('The configured distribution repositories are unavailable.');
   if (signingMode === 'self-signed' && (!appRepo.private || !runtimeRepo.private))
     throw new Error('Self-signed builds are restricted to private distribution repositories.');
-  const tag = `desktop-v${release.version}`;
+  const tag = `nod-v${release.version}`;
   const existing = releaseByTag(releaseRepository, tag);
   if (existing && !existing.draft) {
     if (process.env.GITHUB_EVENT_NAME === 'push') {
@@ -319,10 +319,10 @@ async function plan() {
   const runtime = releases.find(
     (release) =>
       !release.draft &&
-      /^desktop-v/.test(release.tag_name) &&
+      /^nod-v/.test(release.tag_name) &&
       release.assets?.some((asset) => asset.name === alias) &&
       release.assets?.some((asset) =>
-        new RegExp(`^Otto-Runtime-${platform}-[a-f0-9]{12}\\.tar\\.gz$`).test(asset.name),
+        new RegExp(`^nod-Runtime-${platform}-[a-f0-9]{12}\\.tar\\.gz$`).test(asset.name),
       ),
   );
   const runtimeTag = runtime?.tag_name || tag;
@@ -378,7 +378,7 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
   const id = release?.id;
   const target =
     release || repository === sourceRepository ? releaseTarget(repository, release) : undefined;
-  const notesPath = join(process.env.RUNNER_TEMP || root, `otto-${tag}-notes.md`);
+  const notesPath = join(process.env.RUNNER_TEMP || root, `nod-${tag}-notes.md`);
   await writeFile(notesPath, notes);
   if (!release)
     gh(
@@ -476,7 +476,7 @@ function publishRelease(repository, tag) {
 }
 
 async function verifyDelivery(tag, version) {
-  const sourceUrl = process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL;
+  const sourceUrl = process.env.NOD_DESKTOP_UPDATE_SOURCE_URL;
   if (!sourceUrl) return;
   const { createUpdateSource } = await import('../../desktop/main/updates.mjs');
   const get = (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(30_000) });
@@ -486,7 +486,7 @@ async function verifyDelivery(tag, version) {
       const [os, arch] = target.split('-');
       let update;
       for (let attempt = 0; update?.version !== version; attempt++) {
-        if (attempt === 6) throw new Error(`it does not list Otto ${version}`);
+        if (attempt === 6) throw new Error(`it does not list nod ${version}`);
         if (attempt) await new Promise((resolve) => setTimeout(resolve, 10_000));
         update = await createUpdateSource({ sourceUrl, os, arch }).latest('0.0.0');
       }
@@ -506,7 +506,7 @@ async function verifyDelivery(tag, version) {
       if (
         installer.version !== version ||
         statuses.some((status) => status !== 302) ||
-        (feed && (!feed.ok || (await feed.json()).name !== `Otto ${version}`))
+        (feed && (!feed.ok || (await feed.json()).name !== `nod ${version}`))
       )
         throw new Error('its installer, runtime or update is unavailable');
     }
@@ -516,7 +516,7 @@ async function verifyDelivery(tag, version) {
       releaseRepository,
     );
     throw new Error(
-      `Otto ${version} is a draft again because ${sourceUrl} cannot deliver ${target}: ${error.message}`,
+      `nod ${version} is a draft again because ${sourceUrl} cannot deliver ${target}: ${error.message}`,
     );
   }
 }
@@ -525,10 +525,10 @@ async function draftApp({ stageOnly = false } = {}) {
   repositoryName(sourceRepository);
   repositoryName(releaseRepository);
   repositoryName(runtimeRepository);
-  const publish = process.env.OTTO_PUBLISH_RELEASE === 'true';
+  const publish = process.env.NOD_PUBLISH_RELEASE === 'true';
   const prepared = await configuredRelease(root);
   const version = prepared.version;
-  const tag = `desktop-v${version}`;
+  const tag = `nod-v${version}`;
   const source = sourceRevision;
   if (!shaPattern.test(source) || run('git', ['rev-parse', 'HEAD']) !== source)
     throw new Error('Invalid source revision.');
@@ -546,12 +546,12 @@ async function draftApp({ stageOnly = false } = {}) {
     metadata.version !== version ||
     metadata.source !== source ||
     metadata.signing?.mode !== signingMode ||
-    metadata.signing?.certificateSha256 !== process.env.OTTO_SIGNING_CERTIFICATE_SHA256 ||
+    metadata.signing?.certificateSha256 !== process.env.NOD_SIGNING_CERTIFICATE_SHA256 ||
     (await hash(join(output, 'signing.cer'))) !== metadata.signing.certificateSha256 ||
     (signingMode === 'developer-id' && metadata.notarized !== true)
   )
     throw new Error('Packaged release metadata does not match the approved source.');
-  if (metadata.updateSourceUrl !== (process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL || undefined))
+  if (metadata.updateSourceUrl !== (process.env.NOD_DESKTOP_UPDATE_SOURCE_URL || undefined))
     throw new Error('The packaged update source does not match the release configuration.');
   if (metadata.updateSourceUrl !== undefined) {
     if (typeof metadata.updateSourceUrl !== 'string' || !URL.canParse(metadata.updateSourceUrl))
@@ -589,10 +589,10 @@ async function draftApp({ stageOnly = false } = {}) {
   const marker = `Source: https://github.com/${sourceRepository}/commit/${source}`;
   const runtime = JSON.parse(await readFile(join(output, 'runtime-release.json'), 'utf8'));
   const runtimeTag = runtime.releaseTag || tag;
-  if (!/^desktop-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtimeTag))
-    throw new Error('The runtime must belong to an Otto version release.');
+  if (!/^nod-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtimeTag))
+    throw new Error('The runtime must belong to a nod version release.');
   const baseUrl = `https://github.com/${runtimeRepository}/releases/download/${runtimeTag}`;
-  descriptor(runtime, process.env.OTTO_EXPECTED_RUNTIME_FINGERPRINT, baseUrl, !runtimeRepo.private);
+  descriptor(runtime, process.env.NOD_EXPECTED_RUNTIME_FINGERPRINT, baseUrl, !runtimeRepo.private);
   const runtimeFiles = [];
   if (runtimeTag === tag) {
     const archive = join(runtimeDirectory, arch, runtime.archive.file);
@@ -654,7 +654,7 @@ async function draftApp({ stageOnly = false } = {}) {
       throw new Error('Packaged application assets do not match the release metadata.');
   }
   if (
-    disk !== `Otto-${arch}.dmg` ||
+    disk !== `nod-${arch}.dmg` ||
     zip !== disk.replace(/\.dmg$/, '.zip') ||
     (await readFile(join(output, 'SHA256SUMS'), 'utf8')).trim() !==
       `${metadata.disk.sha256}  ${disk}\n${metadata.update.sha256}  ${zip}`
@@ -663,7 +663,7 @@ async function draftApp({ stageOnly = false } = {}) {
   const feed = JSON.parse(await readFile(join(output, 'update.json'), 'utf8'));
   if (
     feed.url !== `https://github.com/${releaseRepository}/releases/download/${tag}/${zip}` ||
-    feed.name !== `Otto ${version}` ||
+    feed.name !== `nod ${version}` ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(feed.pub_date) ||
     !Number.isFinite(Date.parse(feed.pub_date)) ||
     new Date(feed.pub_date).toISOString().replace(/\.\d{3}Z$/, 'Z') !== feed.pub_date ||
@@ -691,12 +691,12 @@ async function draftApp({ stageOnly = false } = {}) {
   let release = await uploadDraft({
     repository: releaseRepository,
     tag,
-    title: `Otto v${version}`,
+    title: `nod v${version}`,
     marker,
     notes: releaseNotes(),
     files,
   });
-  const downloadDirectory = join(process.env.RUNNER_TEMP || root, `otto-download-check-${version}`);
+  const downloadDirectory = join(process.env.RUNNER_TEMP || root, `nod-download-check-${version}`);
   await mkdir(downloadDirectory, { recursive: true });
   for (const file of [disk, zip]) {
     gh(
@@ -725,7 +725,7 @@ async function draftApp({ stageOnly = false } = {}) {
     await uploadDraft({
       repository: releaseRepository,
       tag,
-      title: `Otto v${version}`,
+      title: `nod v${version}`,
       marker,
       notes: releaseNotes(),
       files: [],
@@ -758,7 +758,7 @@ async function draftAll() {
     metadata.version !== version ||
     metadata.source !== source ||
     metadata.platform !== 'win32-x64' ||
-    metadata.updateSourceUrl !== (process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL || undefined) ||
+    metadata.updateSourceUrl !== (process.env.NOD_DESKTOP_UPDATE_SOURCE_URL || undefined) ||
     metadata.signing?.mode !== 'unsigned' ||
     ['installed', 'engine', 'wsl', 'application', 'browser', 'workspaceFiles', 'reopened'].some(
       (key) => receipt[key] !== true,
@@ -766,8 +766,8 @@ async function draftAll() {
   )
     throw new Error('The Windows release does not match its source or native checks.');
   for (const [entry, name] of [
-    [metadata.installer, 'Otto-Setup-x64.exe'],
-    [metadata.runtime, 'Otto-Runtime-win32-x64.tar.gz'],
+    [metadata.installer, 'nod-Setup-x64.exe'],
+    [metadata.runtime, 'nod-Runtime-win32-x64.tar.gz'],
   ]) {
     if (
       entry?.file !== name ||
@@ -788,39 +788,39 @@ async function draftAll() {
   for (const target of ['arm64', 'x64']) {
     const environment = {
       ...process.env,
-      OTTO_DESKTOP_TARGET: `darwin-${target}`,
-      OTTO_DESKTOP_OUTPUT: join(root, `dist/desktop/${target}`),
+      NOD_DESKTOP_TARGET: `darwin-${target}`,
+      NOD_DESKTOP_OUTPUT: join(root, `dist/desktop/${target}`),
       GITHUB_OUTPUT: '',
     };
     const inputs = JSON.parse(
       run(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], { env: environment }),
     );
-    environment.OTTO_EXPECTED_RUNTIME_FINGERPRINT = inputs.fingerprint;
+    environment.NOD_EXPECTED_RUNTIME_FINGERPRINT = inputs.fingerprint;
     run(process.execPath, [fileURLToPath(import.meta.url), 'stage'], { env: environment });
   }
-  const tag = `desktop-v${version}`;
+  const tag = `nod-v${version}`;
   const marker = `Source: https://github.com/${sourceRepository}/commit/${source}`;
   const sum = join(windows, 'SHA256SUMS-win32-x64');
   await copyFile(join(windows, 'SHA256SUMS'), sum);
   const download = (file) =>
     `https://github.com/${releaseRepository}/releases/download/${tag}/${file}`;
-  const notes = `### Downloads\n\n- [Mac Intel](${download('Otto-x64.dmg')})\n- [Mac ARM](${download('Otto-arm64.dmg')})\n- [Windows](${download('Otto-Setup-x64.exe')})\n\nMac requires macOS 14 or later. Windows requires Windows 11 with WSL 2. To install with one Terminal or PowerShell command, follow the [install guide](https://otto-docs.pages.dev/get-started/install-desktop/). Installed apps update themselves. The first launch downloads the runtime.\n\nMac builds use ${signingMode === 'self-signed' ? 'the internal signing certificate' : 'Developer ID signing and Apple notarization'}. Windows builds are unsigned.\n\n${prepared.notes.trimEnd()}\n\n${marker}\n`;
+  const notes = `### Downloads\n\n- [Mac Intel](${download('nod-x64.dmg')})\n- [Mac ARM](${download('nod-arm64.dmg')})\n- [Windows](${download('nod-Setup-x64.exe')})\n\nMac requires macOS 14 or later. Windows requires Windows 11 with WSL 2. To install with one Terminal or PowerShell command, follow the [install guide](https://nod-docs.pages.dev/get-started/install-desktop/). Installed apps update themselves. The first launch downloads the runtime.\n\nMac builds use ${signingMode === 'self-signed' ? 'the internal signing certificate' : 'Developer ID signing and Apple notarization'}. Windows builds are unsigned.\n\n${prepared.notes.trimEnd()}\n\n${marker}\n`;
   let release = await uploadDraft({
     repository: releaseRepository,
     tag,
-    title: `Otto v${version}`,
+    title: `nod v${version}`,
     notes,
     marker,
-    files: ['Otto-Setup-x64.exe', 'Otto-Runtime-win32-x64.tar.gz', 'release-win32-x64.json']
+    files: ['nod-Setup-x64.exe', 'nod-Runtime-win32-x64.tar.gz', 'release-win32-x64.json']
       .map((name) => join(windows, name))
       .concat(sum),
   });
   const expected = [
-    'Otto-arm64.dmg',
-    'Otto-x64.dmg',
-    'Otto-Setup-x64.exe',
-    'Otto-arm64.zip',
-    'Otto-x64.zip',
+    'nod-arm64.dmg',
+    'nod-x64.dmg',
+    'nod-Setup-x64.exe',
+    'nod-arm64.zip',
+    'nod-x64.zip',
     'release.json',
     'release-darwin-x64.json',
     'runtime-release.json',
@@ -828,11 +828,11 @@ async function draftAll() {
     'update.json',
     'update-darwin-x64.json',
     'release-win32-x64.json',
-    'Otto-Runtime-win32-x64.tar.gz',
+    'nod-Runtime-win32-x64.tar.gz',
   ];
   if (expected.some((name) => release.assets.filter((asset) => asset.name === name).length !== 1))
     throw new Error('All three platform bundles are required before publication.');
-  const directory = join(process.env.RUNNER_TEMP || root, `otto-windows-download-check-${version}`);
+  const directory = join(process.env.RUNNER_TEMP || root, `nod-windows-download-check-${version}`);
   await mkdir(directory, { recursive: true });
   for (const entry of [metadata.installer, metadata.runtime]) {
     gh([
@@ -854,7 +854,7 @@ async function draftAll() {
       throw new Error('The downloaded Windows release failed verification.');
     await rm(join(directory, entry.file));
   }
-  if (process.env.OTTO_PUBLISH_RELEASE === 'true') {
+  if (process.env.NOD_PUBLISH_RELEASE === 'true') {
     publishRelease(releaseRepository, tag);
     await verifyDelivery(tag, version);
     release = releaseByTag(releaseRepository, tag);

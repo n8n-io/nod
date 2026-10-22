@@ -161,7 +161,7 @@ export async function createPayments(
   const cardFacts = (card: Pick<VaultPaymentCard, 'brand' | 'last4'>) => ({
     brand: card.brand,
     last4: card.last4,
-    savedInOtto: true,
+    savedInNod: true,
   });
   const payment = (row: Row) => ({
     id: row.id,
@@ -175,7 +175,7 @@ export async function createPayments(
     const cards = await options.cards();
     if (!cards.length)
       throw new PaymentError(
-        'Ask the owner to open Otto on desktop and [add a card in Trust](/trust?add=card), then tell you to continue. Do not ask for card details in chat.',
+        'Ask the owner to open nod on desktop and [add a card in Trust](/trust?add=card), then tell you to continue. Do not ask for card details in chat.',
       );
     const named = hint?.toLowerCase();
     const matches = named
@@ -194,7 +194,7 @@ export async function createPayments(
 
   async function enter(row: Row, card: VaultPaymentCard, securityCode: string) {
     let value: CardEntry['card'];
-    const message = `Otto entered ${cardName(card)} for ${money(row)} at ${site(row.origin)}. Otto submitted the checkout. Check whether the shop accepted the payment. Do not submit it again.`;
+    const message = `nod entered ${cardName(card)} for ${money(row)} at ${site(row.origin)}. nod submitted the checkout. Check whether the shop accepted the payment. Do not submit it again.`;
     await uses.run(
       {
         id: row.id,

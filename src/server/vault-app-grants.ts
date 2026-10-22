@@ -4,9 +4,9 @@ import { z } from 'zod';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 
 const seal = (key: Buffer, owner: string, id: string, value: string) =>
-  sealVaultValue(key, ['otto-app-grant-v1', owner, id], value);
+  sealVaultValue(key, ['nod-app-grant-v1', owner, id], value);
 const open = (key: Buffer, owner: string, id: string, value: string) =>
-  openVaultValue(key, ['otto-app-grant-v1', owner, id], value);
+  openVaultValue(key, ['nod-app-grant-v1', owner, id], value);
 
 export async function createAppGrantVault(
   pool: Pool,

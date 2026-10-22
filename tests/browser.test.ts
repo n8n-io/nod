@@ -72,9 +72,9 @@ test(
     const url = new URL(process.env.TEST_DATABASE_URL!);
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
-    const runtimeRoot = await mkdtemp(join(tmpdir(), 'otto-test-runtime-'));
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'nod-test-runtime-'));
     t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
-    process.env.OTTO_DATA_ROOT = runtimeRoot;
+    process.env.NOD_DATA_ROOT = runtimeRoot;
     const db = await import('../src/server/db.ts');
     const { createApp } = await import('../src/server/app.ts');
     const { activeThread } = await import('../src/server/thread.ts');
@@ -789,7 +789,7 @@ for (const action of ['snapshot', 'click'] as const)
   });
 
 test('a card goes only into the approved fields on the approved sites and stays out of what the model sees', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-card-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-browser-card-'));
   let url = 'about:blank';
   let maskedShot: boolean | undefined;
   let snapshots = 0;
@@ -1010,7 +1010,7 @@ test(
     });
     await new Promise<void>((resolve) => server.listen(0, '::', resolve));
     const { port } = server.address() as { port: number };
-    const directory = await mkdtemp(join(tmpdir(), 'otto-real-card-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-real-card-'));
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       privateNetwork: true,
@@ -1103,7 +1103,7 @@ test(
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address() as { port: number };
-    const directory = await mkdtemp(join(tmpdir(), 'otto-real-text-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-real-text-'));
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       privateNetwork: true,
@@ -1133,7 +1133,7 @@ test(
 );
 
 test('discarding a thread closes its browser and deletes only its throwaway data; clearing a finished session lets it start fresh', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-discard-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-browser-discard-'));
   const fixture = stagedLoginBrowser();
   const commands: string[] = [];
   const computer = createBrowserFixture({
@@ -1196,7 +1196,7 @@ test('discarding a thread closes its browser and deletes only its throwaway data
 });
 
 test('a browser that will not close is killed with its process groups so the next open starts fresh', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-drain-failure-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-browser-drain-failure-'));
   const fixture = stagedLoginBrowser();
   const commands: string[] = [];
   let failOpen = true;
@@ -1276,7 +1276,7 @@ async function runtimeFixture(
   run: (execute: Execute) => Promise<void>,
   controller = new AbortController(),
 ) {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-click-recovery-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-click-recovery-'));
   const threadId = randomUUID();
   const agent: Agent = {
     open: async ({ tools }) => ({
@@ -1323,7 +1323,7 @@ async function runtimeFixture(
 }
 
 test('every session drives its own browser, so background work never waits for the conversation', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-session-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-browser-session-'));
   const threadId = randomUUID();
   const opened = new Map<string, string>();
   const cleared: string[] = [];
@@ -1431,7 +1431,7 @@ test('every session drives its own browser, so background work never waits for t
 });
 
 test('at the browser cap a new browser waits for one idle past the window and never evicts a held one', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-cap-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-browser-cap-'));
   const fixture = stagedLoginBrowser();
   const computer = createBrowserFixture({
     dataRoot: directory,
@@ -2075,7 +2075,7 @@ test('browser text redaction hides every encoded form of any secret in any surro
 });
 
 test('observations reject embedded HTTP credentials and redact credentials in other tabs', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-url-credentials-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-url-credentials-'));
   const fixture = stagedLoginBrowser();
   const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
   try {
@@ -2095,7 +2095,7 @@ test('observations reject embedded HTTP credentials and redact credentials in ot
 });
 
 test('Pi can submit each staged sign-in step without exposing entered values', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-staged-login-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-staged-login-'));
   const fixture = stagedLoginBrowser();
   const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
   try {
@@ -2147,7 +2147,7 @@ test('Pi can submit each staged sign-in step without exposing entered values', a
 });
 
 test('visual browser actions fence the session when releasing the pointer fails', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-visual-release-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-visual-release-'));
   const fixture = stagedLoginBrowser();
   const commands: string[] = [];
   const computer = createBrowserFixture({
@@ -2173,11 +2173,11 @@ test('visual browser actions fence the session when releasing the pointer fails'
 test(
   'native container browser stays responsive, streams live frames and refuses passkeys after heavy stderr output',
   {
-    skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',
+    skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',
     timeout: 30_000,
   },
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'otto-stderr-native-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-stderr-native-'));
     const server = createHttpServer((_request, response) => {
       response.setHeader('content-type', 'text/html');
       response.end(
@@ -2267,11 +2267,11 @@ test(
 test(
   'a native page that freezes its renderer is killed at the deadline and the browser reopens',
   {
-    skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',
+    skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',
     timeout: 60_000,
   },
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'otto-frozen-native-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-frozen-native-'));
     const server = createHttpServer((request, response) => {
       response.setHeader('content-type', 'text/html');
       response.end(
@@ -2322,11 +2322,11 @@ test(
 
 test(
   'native handoff clicks stay aligned through page zoom, panning and viewport changes',
-  { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+  { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
   async () => {
     const { createCanvas, loadImage } = await import('@napi-rs/canvas');
     const context = createCanvas(1, 1).getContext('2d');
-    const directory = await mkdtemp(join(tmpdir(), 'otto-pointer-native-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-pointer-native-'));
     const server = createHttpServer((_request, response) => {
       response.setHeader('content-type', 'text/html');
       response.end(
@@ -2343,7 +2343,7 @@ test(
     let socketPath = '';
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
-      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
       privateNetwork: true,
       headless: true,
       daemonCommand: async (path, command, signal, timeoutMs) => {
@@ -2460,9 +2460,9 @@ test(
 
 test(
   'native visual browser actions solve a canvas interaction inside nested cross-origin frames',
-  { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+  { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'otto-visual-native-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-visual-native-'));
     let frameOrigin = '';
     const server = createHttpServer((request, response) => {
       response.setHeader('content-type', 'text/html');
@@ -2515,7 +2515,7 @@ test(
     const pageOrigin = await origin(server);
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
-      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
       privateNetwork: true,
       headless: true,
     });
@@ -2577,7 +2577,7 @@ test(
 );
 
 test('a password typed through the handoff in several pauses hides only the finished value', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-secret-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-handoff-secret-'));
   const fixture = stagedLoginBrowser();
   const secret = 'Sign-handoff-password';
   const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
@@ -2617,7 +2617,7 @@ test('a password typed through the handoff in several pauses hides only the fini
 });
 
 test('secure entry never sends a credential to a page on another origin', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-login-origin-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-login-origin-'));
   const fixture = stagedLoginBrowser();
   const secret = 'synthetic-origin-secret';
   let exposed = 0;
@@ -2662,9 +2662,9 @@ test('secure entry never sends a credential to a page on another origin', async 
 
 test(
   'native secure entry completes single and split OTP controls without maxlength hints',
-  { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+  { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'otto-code-native-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-code-native-'));
     const code = '072846';
     const received: string[] = [];
     const server = createHttpServer(async (request, response) => {
@@ -2716,7 +2716,7 @@ test(
     const origin = `http://127.0.0.1:${address.port}`;
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
-      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
       privateNetwork: true,
       headless: true,
     });
@@ -2820,7 +2820,7 @@ test(
 );
 
 test('the owner time zone and region reach a new browser launch without injecting browser flags', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-locale-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-browser-locale-'));
   const fixture = stagedLoginBrowser();
   const launches: Array<{ flags: string; zone?: string }> = [];
   const computer = createBrowserFixture({
@@ -2995,7 +2995,7 @@ test('Telegram chat cards require paired owned metadata and preserve ordinary li
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
-        url: 'https://otto.fixture.invalid',
+        url: 'https://nod.fixture.invalid',
         pretendToBeVisual: true,
       });
       Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
@@ -3010,8 +3010,8 @@ test('Telegram chat cards require paired owned metadata and preserve ordinary li
       setRequestAccount('synthetic-owner');
       const root = createRoot(document.getElementById('root'));
       let key = 0;
-      const owned = 'https://t.me/otto_owned_bot';
-      const paired = { ready: true, channels: [{provider:'telegram', enabled:true, accountHandle:'@otto_owned_bot', allowedUserId:'123', mode:'polling'}] };
+      const owned = 'https://t.me/nod_owned_bot';
+      const paired = { ready: true, channels: [{provider:'telegram', enabled:true, accountHandle:'@nod_owned_bot', allowedUserId:'123', mode:'polling'}] };
       const render = async (text, replace = true) => {
         if (replace) key++;
         await act(async () => root.render(h('div', {key}, ...(Array.isArray(text) ? text : [text]).map((text, index) => h(MessageText, {key:index, text})))));
@@ -3022,10 +3022,10 @@ test('Telegram chat cards require paired owned metadata and preserve ordinary li
       };
       await render('[Ordinary](https://example.com)');
       assert.equal(requests.length, 0);
-      const links = [owned, 'https://t.me/another_bot', owned+'?start=synthetic-pairing', owned+'#fragment', owned+'/', 'http://t.me/otto_owned_bot', 'https://t.me:443/otto_owned_bot', 'https://t.me.evil.invalid/otto_owned_bot'];
+      const links = [owned, 'https://t.me/another_bot', owned+'?start=synthetic-pairing', owned+'#fragment', owned+'/', 'http://t.me/nod_owned_bot', 'https://t.me:443/nod_owned_bot', 'https://t.me.evil.invalid/nod_owned_bot'];
       await render(links.map((href,i) => '[Link '+i+']('+href+')').join('\n\n'));
       assert.equal(requests.length, 1);
-      assert.equal(requests[0].options.headers.get('X-Otto-Account'), 'synthetic-owner');
+      assert.equal(requests[0].options.headers.get('X-nod-Account'), 'synthetic-owner');
       assert.equal(document.querySelector('[data-setup="telegram"]'), null);
       await respond(requests[0], paired);
       const card = document.querySelector('[data-setup="telegram"]');
@@ -3083,7 +3083,7 @@ test('Telegram chat cards require paired owned metadata and preserve ordinary li
       await render('[Open]('+owned+')');
       const current = requests.at(-1);
       assert.equal(old.options.signal.aborted, true);
-      assert.equal(current.options.headers.get('X-Otto-Account'), 'second-synthetic-owner');
+      assert.equal(current.options.headers.get('X-nod-Account'), 'second-synthetic-owner');
       await respond(old, paired);
       assert.equal(document.querySelector('[data-setup="telegram"]'), null);
       await respond(current, {ready:true,channels:[]});
@@ -3108,7 +3108,7 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
-        url: 'https://otto.fixture.invalid',
+        url: 'https://nod.fixture.invalid',
         pretendToBeVisual: true,
       });
       Object.assign(globalThis, {
@@ -3153,7 +3153,7 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
       fetch = (url, options) =>
         new Promise((resolve, reject) => {
           assert.equal(url, '/api/uploads');
-          assert.equal(options.headers.get('X-Otto-Account'), 'synthetic-owner');
+          assert.equal(options.headers.get('X-nod-Account'), 'synthetic-owner');
           const request = { url, options, resolve, reject };
           requests.push(request);
           options.signal.addEventListener(
@@ -3340,7 +3340,7 @@ test('automatic feedback captures exclude remote handoffs and unsent editable co
       const leaked = [];
       try {
         for (const mode of ['web', 'native']) {
-          window.ottoDesktop = mode === 'native' ? { captureFeedbackScreenshot: async () => { native++; return new Uint8Array([1, 2, 3]); } } : undefined;
+          window.nodDesktop = mode === 'native' ? { captureFeedbackScreenshot: async () => { native++; return new Uint8Array([1, 2, 3]); } } : undefined;
           for (const [name, markup] of privateViews) {
             document.body.innerHTML = markup;
             if (name === 'input draft') document.querySelector('input').value = 'Synthetic changed input property';
@@ -3361,7 +3361,7 @@ test('automatic feedback captures exclude remote handoffs and unsent editable co
         let release;
         let started;
         const requested = new Promise(resolve => started = resolve);
-        window.ottoDesktop = { captureFeedbackScreenshot: () => { native++; started(); return new Promise(resolve => release = resolve); } };
+        window.nodDesktop = { captureFeedbackScreenshot: () => { native++; started(); return new Promise(resolve => release = resolve); } };
         document.body.innerHTML = safe;
         const pending = captureFeedbackScreenshot();
         await requested;
@@ -3370,7 +3370,7 @@ test('automatic feedback captures exclude remote handoffs and unsent editable co
         assert.equal(await pending, null);
         assert.equal(document.querySelector('[contenteditable]').textContent, 'Synthetic draft typed during capture');
         document.body.innerHTML = safe;
-        window.ottoDesktop = { captureFeedbackScreenshot: async () => { native++; return new Uint8Array([1, 2, 3]); } };
+        window.nodDesktop = { captureFeedbackScreenshot: async () => { native++; return new Uint8Array([1, 2, 3]); } };
         const frame = window.requestAnimationFrame;
         window.requestAnimationFrame = callback => frame(() => {
           document.body.insertAdjacentHTML('beforeend', '<div class="browser-handoff">Synthetic newly opened remote page</div>');
@@ -3457,7 +3457,7 @@ for (const surface of ['channels', 'onboarding'])
       });
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
       let setup = {
-        provider: 'telegram', enabled: true, accountHandle: '@fixture_otto_bot', mode: 'polling',
+        provider: 'telegram', enabled: true, accountHandle: '@fixture_nod_bot', mode: 'polling',
         pairingExpiresAt: new Date(Date.now() + 900000).toISOString(),
         pairingCandidate: ${surface === 'channels' ? 'undefined' : "{ id: '123456789', name: 'Fixture Person', username: 'fixture_person' }"},
       };
@@ -3471,7 +3471,7 @@ for (const surface of ['channels', 'onboarding'])
         assert.equal(options.method, 'POST');
         await new Promise(resolve => confirm = resolve);
         setup = {
-          provider: 'telegram', enabled: true, accountHandle: '@fixture_otto_bot', mode: 'polling',
+          provider: 'telegram', enabled: true, accountHandle: '@fixture_nod_bot', mode: 'polling',
           allowedUserId: '123456789', pairedUser: 'Fixture Person', pairedUsername: 'fixture_person',
         };
         return Response.json({ channel: setup });
@@ -3521,7 +3521,7 @@ test('managed integration access proves browser possession and fences cancelled 
     input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
-      const dom = new JSDOM('', { url: 'https://otto.fixture.test', pretendToBeVisual: true });
+      const dom = new JSDOM('', { url: 'https://nod.fixture.test', pretendToBeVisual: true });
       globalThis.window = dom.window;
       const { startIntegrationAccess } = await import('./src/web/lib/integration-access.ts');
       const settle = () => new Promise(resolve => setTimeout(resolve, 10));
@@ -3789,7 +3789,7 @@ test('managed integration access proves browser possession and fences cancelled 
 
         const opened = [];
         const capability = 'A'.repeat(43);
-        window.ottoDesktop = { openExternal: async url => opened.push(url) };
+        window.nodDesktop = { openExternal: async url => opened.push(url) };
         for (const candidate of [
           'http://localhost:49152/' + capability,
           'http://[::1]:49152/' + capability,
@@ -3819,7 +3819,7 @@ test('managed integration access proves browser possession and fences cancelled 
         await assert.rejects(startIntegrationAccess().done, /Synthetic native status failed/);
         assert.equal(nativeCancelled, beforeNativeSuccess + 1);
         nativeStatusFailure = false;
-        window.ottoDesktop.openExternal = async () => { throw new Error('Synthetic native launch failed'); };
+        window.nodDesktop.openExternal = async () => { throw new Error('Synthetic native launch failed'); };
         await assert.rejects(startIntegrationAccess().done, /Synthetic native launch failed/);
         assert.equal(nativeCancelled, beforeNativeSuccess + 2);
         assert.equal(timers.size, 0);
@@ -3859,7 +3859,7 @@ test('feedback draft storage isolates owners', async () => {
       assert.equal(await loadFeedbackDraft('owner-three'), null);
       await assert.rejects(loadFeedbackDraft(''), /owner/);
       const db = await new Promise((resolve, reject) => {
-        const request = indexedDB.open('otto-feedback', 1);
+        const request = indexedDB.open('nod-feedback', 1);
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
@@ -3910,13 +3910,13 @@ test(
         return;
       }
       if (request.url === '/shadow') {
-        response.setHeader('Content-Security-Policy', "style-src 'nonce-otto-fixture'");
+        response.setHeader('Content-Security-Policy', "style-src 'nonce-nod-fixture'");
         response.end(
           `<card-panel></card-panel><button id="report">Report</button><script>
           document.querySelector('#report').onclick = () => { const mutated = globalThis.maskMutations > 0; globalThis.privateStyles[0].style.setProperty('outline-width', '1px'); setTimeout(() => fetch('/record?value=' + encodeURIComponent('report:' + JSON.stringify({ mutated, styles: globalThis.privateStyles.map(node => [getComputedStyle(node).opacity, getComputedStyle(node).transitionProperty, node.style.getPropertyValue('transition-property'), node.style.getPropertyValue('opacity')]) }))), 0); };
           customElements.define('card-panel', class extends HTMLElement { constructor() { super(); this.attachShadow({ mode: 'closed' }).innerHTML = '<card-fields></card-fields>'; } });
           customElements.define('card-fields', class extends HTMLElement { constructor() { super(); const root = this.attachShadow({ mode: 'closed' });
-          root.innerHTML = '<style nonce="otto-fixture">input[aria-label="Card number"],input[aria-label="Security code"],h2{background:rgb(255,0,0);transition:opacity 60s !important}button{background:rgb(0,0,255)}</style><form><input aria-label="Card number"><select aria-label="Month"><option value="1">January</option><option value="8">August</option></select><input aria-label="Year"><input aria-label="Security code"><h2></h2><button>Complete</button></form>';
+          root.innerHTML = '<style nonce="nod-fixture">input[aria-label="Card number"],input[aria-label="Security code"],h2{background:rgb(255,0,0);transition:opacity 60s !important}button{background:rgb(0,0,255)}</style><form><input aria-label="Card number"><select aria-label="Month"><option value="1">January</option><option value="8">August</option></select><input aria-label="Year"><input aria-label="Security code"><h2></h2><button>Complete</button></form>';
           root.querySelectorAll('input').forEach(node => node.style.setProperty('visibility', 'visible', 'important'));
           globalThis.privateStyles = Array.from(root.querySelectorAll('input[aria-label="Card number"],input[aria-label="Security code"],h2'));
           globalThis.maskMutations = 0;
@@ -3934,7 +3934,7 @@ test(
     });
     await new Promise<void>((resolve) => server.listen(0, '::', resolve));
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-    const directory = await mkdtemp(join(tmpdir(), 'otto-private-entry-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-private-entry-'));
     const native = createAgentBrowserComputer({
       dataRoot: directory,
       privateNetwork: true,
@@ -4112,10 +4112,10 @@ test(
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-    const directory = await mkdtemp(join(tmpdir(), 'otto-readonly-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-readonly-'));
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
-      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
       privateNetwork: true,
       headless: true,
     });
@@ -4164,10 +4164,10 @@ test(
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-    const directory = await mkdtemp(join(tmpdir(), 'otto-reload-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-reload-'));
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
-      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
       privateNetwork: true,
       headless: true,
     });
@@ -4192,7 +4192,7 @@ test(
 );
 
 test('navigation stays available when a saved script fence cannot reach the inspector', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-navigation-recovery-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-navigation-recovery-'));
   const fixture = stagedLoginBrowser();
   let offline = false;
   const navigated: string[] = [];
@@ -4247,7 +4247,7 @@ test('navigation stays available when a saved script fence cannot reach the insp
 });
 
 test('failed private entry holds every Pi action until the filled document changes', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-private-cleanup-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-private-cleanup-'));
   const fixture = stagedLoginBrowser();
   let failSubmit = true;
   const computer = createBrowserFixture({
@@ -4296,7 +4296,7 @@ test('failed private entry holds every Pi action until the filled document chang
     await computer.act('private', { action: 'reload' });
     const page = fixture.pages.get('private')!;
     page.afterInspect = (script) => {
-      if (script.includes('globalThis.__ottoFocused = node')) page.search.focus();
+      if (script.includes('globalThis.__nodFocused = node')) page.search.focus();
     };
     await assert.rejects(
       computer.injectCredentials({
@@ -4370,10 +4370,10 @@ test(
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-    const directory = await mkdtemp(join(tmpdir(), 'otto-private-state-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-private-state-'));
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
-      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
       privateNetwork: true,
       headless: true,
     });
@@ -4460,11 +4460,11 @@ test(
       await computer.act('fence', { action: 'open', url: `${origin}/card` });
       await computer.act('fence', {
         action: 'evaluate',
-        script: 'globalThis.__ottoScripted = false',
+        script: 'globalThis.__nodScripted = false',
       });
       const recovered = createAgentBrowserComputer({
         dataRoot: directory,
-        browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+        browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
         privateNetwork: true,
         headless: true,
       });
@@ -4493,7 +4493,7 @@ test(
 );
 
 test('a checked browser step is described from its snapshot and runs only on that page and control', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-checked-step-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-checked-step-'));
   const fixture = stagedLoginBrowser();
   const commands: Array<Record<string, unknown>> = [];
   const computer = createBrowserFixture({
@@ -4600,10 +4600,10 @@ test(
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-    const directory = await mkdtemp(join(tmpdir(), 'otto-submits-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-submits-'));
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
-      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
       privateNetwork: true,
       headless: true,
     });
@@ -4686,9 +4686,9 @@ test(
 
 test(
   'native sign-in methods bind observed controls and refuse changed or repeated selections',
-  { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 90_000 },
+  { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 90_000 },
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'otto-method-native-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-method-native-'));
     const received: string[] = [];
     const cancelling = new AbortController();
     const cancelled = deferred();
@@ -4768,7 +4768,7 @@ test(
     let socketPath = '';
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
-      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
       privateNetwork: true,
       headless: true,
       daemonCommand: async (path, command, signal, timeoutMs) => {

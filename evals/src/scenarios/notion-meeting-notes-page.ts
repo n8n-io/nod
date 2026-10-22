@@ -219,7 +219,7 @@ export default scenario({
         {
           failure: 'incomplete',
           otherwise:
-            'The new page Otto created under Meetings says, in its title or notes, that the call was with Harborline, in any wording.',
+            'The new page nod created under Meetings says, in its title or notes, that the call was with Harborline, in any wording.',
         },
       ),
       check(

@@ -8,7 +8,7 @@ import {
   type SelectHTMLAttributes,
 } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { OttoGlyph, prefersReducedMotion } from '../../components/motion';
+import { NodGlyph, prefersReducedMotion } from '../../components/motion';
 import { Button, Switch } from '../../components/ui';
 import { cn } from '../../lib/utils';
 
@@ -116,7 +116,7 @@ export function UserBubble({ className, ...props }: HTMLAttributes<HTMLDivElemen
 
 function Typing() {
   return (
-    <div className="ob-bubble ob-typing" role="status" aria-label="Otto is typing">
+    <div className="ob-bubble ob-typing" role="status" aria-label="nod is typing">
       <span />
       <span />
       <span />
@@ -146,7 +146,7 @@ export function Grow({
   );
 }
 
-function OttoRow({
+function NodRow({
   thinking = false,
   avatar,
   children,
@@ -161,7 +161,7 @@ function OttoRow({
     <div className={cn('ob-row', className)}>
       {avatar ?? (
         <span className="ob-avatar">
-          <OttoGlyph mode={thinking ? 'thinking' : 'idle'} />
+          <NodGlyph mode={thinking ? 'thinking' : 'idle'} />
         </span>
       )}
       <div className="ob-stack">{children}</div>
@@ -185,7 +185,7 @@ export function Messages({
   conversation?: boolean;
 }) {
   return (
-    <OttoRow
+    <NodRow
       thinking={typing}
       avatar={avatar}
       className={cn(!conversation && 'ob-intro', className)}
@@ -216,7 +216,7 @@ export function Messages({
       ) : (
         typing && !items.length && <Typing />
       )}
-    </OttoRow>
+    </NodRow>
   );
 }
 

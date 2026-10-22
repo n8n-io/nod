@@ -112,7 +112,7 @@ export function channelLabel(setup: ChannelSetupSummary | undefined, configured:
       : 'Waiting for Start in Telegram';
   }
   if (setup.allowedUserId)
-    return `Only ${telegramIdentity(setup.allowedUserId, setup.pairedUser, setup.pairedUsername)} can message Otto`;
+    return `Only ${telegramIdentity(setup.allowedUserId, setup.pairedUser, setup.pairedUsername)} can message nod`;
   if (setup.mode === 'polling') return null;
   return setup.webhookStatus === 'registered' ? 'Webhook registered' : 'Finish delivery setup';
 }

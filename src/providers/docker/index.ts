@@ -60,7 +60,7 @@ try:
  parts=r['path'].split('/')
  if not parts or any(p in ['', '.', '..'] for p in parts): raise ValueError()
  temporary=r['temporary']
- if not temporary.startswith('.otto-upload-') or '/' in temporary: raise ValueError()
+ if not temporary.startswith('.nod-upload-') or '/' in temporary: raise ValueError()
  fd=os.open(r['base'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
  fds.append(fd)
  for part in parts[:-1]:
@@ -103,7 +103,7 @@ export function createDockerWorkspace(options: {
   return createCommandWorkspace({
     workspaceRoot: options.workspaceRoot,
     instructions:
-      'Your Linux workspace uses Docker networking without an Otto egress firewall. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. A connected app CLI never runs from here: Otto installs its own copy from the source you propose. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Keep outputs in this workspace and install tools here, not on the user’s device.',
+      'Your Linux workspace uses Docker networking without a nod egress firewall. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. A connected app CLI never runs from here: nod installs its own copy from the source you propose. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Keep outputs in this workspace and install tools here, not on the user’s device.',
     runCommand: (id, args, input) =>
       runWorkspaceCommand({
         container: options.container,
@@ -153,7 +153,7 @@ export function createCommandWorkspace(options: {
     signal?: AbortSignal,
   ) {
     if (unavailable || disposed)
-      throw new Error('The workspace is unavailable. Restart Otto before continuing.');
+      throw new Error('The workspace is unavailable. Restart nod before continuing.');
     const operation = run(signal ? AbortSignal.any([signal, lifecycle.signal]) : lifecycle.signal);
     pending.add(operation);
     try {
@@ -191,7 +191,7 @@ export function createCommandWorkspace(options: {
       if (!bytes.byteLength) throw new Error('A file needs at least one byte.');
       const base = `/workspace/${id}`;
       const target = posix.relative(base, workspaceFile(id, path));
-      const temporary = `.otto-upload-${randomUUID()}`;
+      const temporary = `.nod-upload-${randomUUID()}`;
       try {
         for (let offset = 0; offset < bytes.byteLength; offset += 512 * 1024) {
           const chunk = bytes.subarray(offset, offset + 512 * 1024);

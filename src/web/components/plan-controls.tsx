@@ -26,7 +26,7 @@ const suggestions = {
   newSchedule: ['Remind me to stretch at 16:00', 'Summarize my inbox each Friday'],
 };
 
-export function AskOtto({
+export function AskNod({
   subject,
   onAsk,
   onClose,
@@ -46,14 +46,14 @@ export function AskOtto({
   };
   const placeholder = subject.title
     ? `What should change in ${subject.title}?`
-    : 'What should Otto do, and when?';
+    : 'What should nod do, and when?';
   return (
-    <div className="ask-otto" role="group" aria-labelledby={`${id}-label`}>
+    <div className="ask-nod" role="group" aria-labelledby={`${id}-label`}>
       <span className="sr-only" id={`${id}-label`}>
-        Ask Otto {subject.title ? `about ${subject.title}` : 'for a new schedule'}
+        Ask nod {subject.title ? `about ${subject.title}` : 'for a new schedule'}
       </span>
       <form
-        className="ask-otto-field"
+        className="ask-nod-field"
         onSubmit={(event) => {
           event.preventDefault();
           submit(text);
@@ -72,11 +72,11 @@ export function AskOtto({
             }
           }}
         />
-        <Button type="submit" size="icon" aria-label="Send to Otto" disabled={!text.trim()}>
+        <Button type="submit" size="icon" aria-label="Send to nod" disabled={!text.trim()}>
           <ArrowUp size={16} />
         </Button>
       </form>
-      <div className="ask-otto-chips">
+      <div className="ask-nod-chips">
         {chips.map((chip) => (
           <Button key={chip} type="button" variant="outline" size="sm" onClick={() => submit(chip)}>
             {chip}
@@ -184,7 +184,7 @@ type ScheduleChange = ReturnType<typeof useDirectChange>;
 
 function pauseNote(pausing: boolean, title: string) {
   return pausing
-    ? `Paused ${title}. Otto will not run it until you resume it.`
+    ? `Paused ${title}. nod will not run it until you resume it.`
     : `Resumed ${title}.`;
 }
 
@@ -385,8 +385,8 @@ export function ScheduleTiming({
       </div>
       {schedule.kind === 'recurring' && draft.frequency === 'custom' && (
         <p className="field-hint">
-          Custom timing is kept as saved. Choose a repeat option to replace it, or ask Otto to
-          adjust it.
+          Custom timing is kept as saved. Choose a repeat option to replace it, or ask nod to adjust
+          it.
         </p>
       )}
       {schedule.kind === 'recurring' && draft.frequency === 'monthly' && Number(draft.day) > 28 && (
@@ -724,7 +724,7 @@ export function NewPlan({ onAsk }: { onAsk(text: string): void }) {
       </Button>
       {open && (
         <div className="connection-menu-options menu new-plan-card">
-          <AskOtto subject={{}} onAsk={onAsk} onClose={() => setOpen(false)} />
+          <AskNod subject={{}} onAsk={onAsk} onClose={() => setOpen(false)} />
         </div>
       )}
     </>

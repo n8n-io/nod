@@ -78,7 +78,7 @@ export function createModelService(options: {
     status: 'connected' | 'disconnected' | 'failed',
   ) {
     analytics?.({
-      event: 'otto_model_connection_changed',
+      event: 'nod_model_connection_changed',
       properties: { provider, method, status },
     });
   }
@@ -197,13 +197,13 @@ export function createModelService(options: {
   async function checkStorage() {
     if (!options.keyStore.configured)
       throw new ConnectionError(
-        'Configure OTTO_VAULT_KEY in server settings before saving a connection.',
+        'Configure NOD_VAULT_KEY in server settings before saving a connection.',
       );
     try {
       await options.keyStore.getKey();
     } catch (cause) {
       throw new ConnectionError(
-        'Otto cannot open its credential storage. Check your server settings, then try again.',
+        'nod cannot open its credential storage. Check your server settings, then try again.',
         { cause },
       );
     }
@@ -229,7 +229,7 @@ export function createModelService(options: {
     remember(value);
     if (!managed && !options.keyStore.configured)
       throw new ConnectionError(
-        'Configure OTTO_VAULT_KEY in server settings before saving a connection.',
+        'Configure NOD_VAULT_KEY in server settings before saving a connection.',
       );
     if (status === 'connected' && !definitions.length)
       throw new ConnectionError('This connection has no supported models.');
@@ -574,12 +574,12 @@ export function createModelService(options: {
         await checkStorage();
         const definitions = await backend.catalog('compatible', 'api_key', value).catch(() => {
           throw new ConnectionError(
-            'Otto couldn’t list this server’s models. Check the address, the API key and that the server is running.',
+            'nod couldn’t list this server’s models. Check the address, the API key and that the server is running.',
           );
         });
         if (!definitions.length)
           throw new ConnectionError(
-            'This server has no models Otto can use. Otto needs models with tool support.',
+            'This server has no models nod can use. nod needs models with tool support.',
           );
         const state = await store.read();
         const same = state.connections.find(

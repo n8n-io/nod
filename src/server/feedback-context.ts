@@ -10,7 +10,7 @@ export async function feedbackContext(options: {
   const execute = promisify(childProcess.execFile);
   const { environment } = options;
   const development = environment.NODE_ENV !== 'production';
-  let appRelease = environment.OTTO_IMAGE_RELEASE || environment.OTTO_RELEASE || null;
+  let appRelease = environment.NOD_IMAGE_RELEASE || environment.NOD_RELEASE || null;
   let appModified: boolean | null = null;
   let computerName = '';
   try {
@@ -39,7 +39,7 @@ export async function feedbackContext(options: {
     } catch {}
   }
   return {
-    appVersion: environment.OTTO_APP_VERSION?.trim() || null,
+    appVersion: environment.NOD_APP_VERSION?.trim() || null,
     appRelease,
     development,
     source: 'local-web',

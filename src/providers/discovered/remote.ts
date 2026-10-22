@@ -214,7 +214,7 @@ export async function withRemoteMcp<T>(
     .digest('hex');
   let entry = pool.get(key);
   if (!entry) {
-    const client = new Client({ name: 'Otto', version: '0.1.0' });
+    const client = new Client({ name: 'nod', version: '0.1.0' });
     const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
       requestInit: { headers },
       fetch: (input, init) => request(input, init),
@@ -311,7 +311,7 @@ export function createDiscoveredTransport(
         signal,
         headers: {
           ...headers,
-          'User-Agent': 'Otto/0.1.0',
+          'User-Agent': 'nod/0.1.0',
           Accept: 'application/json, */*;q=0.1',
           ...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
         },

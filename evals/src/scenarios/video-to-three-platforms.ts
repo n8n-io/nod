@@ -62,7 +62,7 @@ const approvedAt = (run: { userMessages: Array<{ at: number; text: string }> }) 
 const confirmedOn = (run: Run, platform: string) =>
   run.approvals.some(
     (item) =>
-      item.action === 'OTTO_browser' &&
+      item.action === 'NOD_browser' &&
       ['completed', 'uncertain'].includes(item.status) &&
       (item.args as { website?: string } | null)?.website ===
         `https://${platforms.find((entry) => entry.id === platform)?.host}`,

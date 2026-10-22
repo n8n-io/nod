@@ -48,7 +48,7 @@ export function createN8nFeedback(options: {
         redirect: 'error',
         headers: {
           'content-type': 'application/json',
-          ...(options.token ? { 'x-otto-feedback-token': options.token } : {}),
+          ...(options.token ? { 'x-nod-feedback-token': options.token } : {}),
         },
         body: JSON.stringify(input),
         signal: AbortSignal.timeout(80_000),

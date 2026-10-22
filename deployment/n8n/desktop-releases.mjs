@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-export const base = 'https://internal.users.n8n.cloud/webhook/otto-desktop';
+export const base = 'https://internal.users.n8n.cloud/webhook/nod/desktop';
 
 export const posthog = {
   url: 'https://eu.i.posthog.com/i/v0/e/',
@@ -12,9 +12,9 @@ export function updateCheck(headers, key) {
     headers !== null && typeof headers === 'object' && typeof headers[name] === 'string'
       ? headers[name]
       : '';
-  const week = header('x-otto-week').toLowerCase();
-  const platform = header('x-otto-platform');
-  const version = header('x-otto-version');
+  const week = header('x-nod-week').toLowerCase();
+  const platform = header('x-nod-platform');
+  const version = header('x-nod-version');
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(week) ||
     !['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(platform) ||
@@ -23,12 +23,12 @@ export function updateCheck(headers, key) {
     return null;
   return {
     api_key: key,
-    event: 'otto_update_check',
+    event: 'nod_update_check',
     distinct_id: `week:${week}`,
     properties: {
       platform,
       app_version: version,
-      analytics_schema: 'otto_v3',
+      analytics_schema: 'nod_v3',
       environment: version.includes('-') ? 'development' : 'production',
       $process_person_profile: false,
       $geoip_disable: true,
@@ -56,7 +56,7 @@ export function checkRequest(input) {
     return invalid();
   const keys = Object.keys(params).sort().join(',');
   const queryKeys = Object.keys(query).sort().join(',');
-  const api = 'https://api.github.com/repos/n8n-io/otto/releases';
+  const api = 'https://api.github.com/repositories/1387586059/releases';
   if (!keys && !queryKeys) return { operation: 'list', apiUrl: `${api}?per_page=100` };
   if (
     !keys &&
@@ -75,7 +75,7 @@ export function checkRequest(input) {
   if (
     keys === 'tag' &&
     !queryKeys &&
-    ((params.tag.startsWith('desktop-v') && version.test(params.tag.slice(9))) ||
+    ((params.tag.startsWith('nod-v') && version.test(params.tag.slice(5))) ||
       /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}$/.test(params.tag))
   )
     return { operation: 'metadata', tag: params.tag, apiUrl: `${api}/tags/${params.tag}` };
@@ -117,8 +117,8 @@ export function releaseResponse(pages, request, baseUrl) {
   const desktopTag = (tag) =>
     typeof tag === 'string' &&
     tag.length < 140 &&
-    tag.startsWith('desktop-v') &&
-    versionPattern.test(tag.slice(9));
+    tag.startsWith('nod-v') &&
+    versionPattern.test(tag.slice(5));
   const runtimeTag = (tag) =>
     typeof tag === 'string' && /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}$/.test(tag);
   const positive = (value) => Number.isSafeInteger(value) && value > 0;
@@ -128,12 +128,12 @@ export function releaseResponse(pages, request, baseUrl) {
           'release.json',
           'runtime-release.json',
           'update.json',
-          'Otto-arm64.dmg',
-          'Otto-arm64.zip',
-          'Otto-x64.dmg',
-          'Otto-x64.zip',
-          'Otto-Setup-x64.exe',
-          'Otto-Runtime-win32-x64.tar.gz',
+          'nod-arm64.dmg',
+          'nod-arm64.zip',
+          'nod-x64.dmg',
+          'nod-x64.zip',
+          'nod-Setup-x64.exe',
+          'nod-Runtime-win32-x64.tar.gz',
           'release-darwin-x64.json',
           'runtime-release-darwin-x64.json',
           'update-darwin-x64.json',
@@ -145,9 +145,9 @@ export function releaseResponse(pages, request, baseUrl) {
           'CHANGELOG.md',
         ].includes(name) ||
         /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}\.json$/.test(name) ||
-        /^Otto-Runtime-darwin-(arm64|x64)-[a-f0-9]{12}\.tar\.gz$/.test(name)
+        /^nod-Runtime-darwin-(arm64|x64)-[a-f0-9]{12}\.tar\.gz$/.test(name)
       : ['runtime-release.json', 'SHA256SUMS', 'signing.cer'].includes(name) ||
-        /^Otto-Runtime-darwin-(arm64|x64)-[a-f0-9]{12}\.tar\.gz$/.test(name);
+        /^nod-Runtime-darwin-(arm64|x64)-[a-f0-9]{12}\.tar\.gz$/.test(name);
   const normalize = (release) => {
     if (
       !release ||
@@ -226,7 +226,9 @@ export function releaseResponse(pages, request, baseUrl) {
     if (!Array.isArray(pages) || !pages.length || pages.length > 5) return unavailable();
     if (request.operation === 'runtime' && !request.alias && pages.length === 1) {
       if (pages[0].statusCode === 404)
-        return { aliasApiUrl: 'https://api.github.com/repos/n8n-io/otto/releases?per_page=100' };
+        return {
+          aliasApiUrl: 'https://api.github.com/repositories/1387586059/releases?per_page=100',
+        };
       if (pages[0].statusCode === 200 && !Array.isArray(pages[0].body)) {
         const legacy = normalize(pages[0].body);
         return legacy?.tag_name === request.tag ? { status: 200, body: legacy } : missing();
@@ -258,7 +260,7 @@ export function releaseResponse(pages, request, baseUrl) {
               desktopTag(entry.tag_name) &&
               entry.assets.some((asset) => asset.name === `${request.tag}.json`) &&
               entry.assets.some((asset) =>
-                new RegExp(`^Otto-Runtime-${platform}-[a-f0-9]{12}\\.tar\\.gz$`).test(asset.name),
+                new RegExp(`^nod-Runtime-${platform}-[a-f0-9]{12}\\.tar\\.gz$`).test(asset.name),
               ),
           ) || releases.find((entry) => entry.tag_name === request.tag);
         return found ? { status: 200, body: { ...found, tag_name: request.tag } } : missing();
@@ -266,7 +268,7 @@ export function releaseResponse(pages, request, baseUrl) {
       if (request.operation === 'list') return { status: 200, body: releases };
       const latest = releases
         .filter((release) => desktopTag(release.tag_name))
-        .sort((a, b) => compare(b.tag_name.slice(9), a.tag_name.slice(9)))[0];
+        .sort((a, b) => compare(b.tag_name.slice(5), a.tag_name.slice(5)))[0];
       if (!latest) return missing();
       const file = (asset) => ({
         url: asset.url,
@@ -275,8 +277,8 @@ export function releaseResponse(pages, request, baseUrl) {
       });
       if (request.platform === 'win32-x64') {
         const [installer, runtime, manifest] = [
-          'Otto-Setup-x64.exe',
-          'Otto-Runtime-win32-x64.tar.gz',
+          'nod-Setup-x64.exe',
+          'nod-Runtime-win32-x64.tar.gz',
           'release-win32-x64.json',
         ].map((name) => latest.assets.find((asset) => asset.name === name));
         if (!installer || !runtime || !manifest || manifest.size > 2 * 1024 * 1024)
@@ -285,7 +287,7 @@ export function releaseResponse(pages, request, baseUrl) {
           status: 200,
           body: {
             schema: 1,
-            version: latest.tag_name.slice(9),
+            version: latest.tag_name.slice(5),
             releaseId: latest.id,
             installer: file(installer),
             runtime: file(runtime),
@@ -294,7 +296,7 @@ export function releaseResponse(pages, request, baseUrl) {
         };
       }
       const arch = request.platform === 'darwin-x64' ? 'x64' : 'arm64';
-      const disk = latest.assets.find((asset) => asset.name === `Otto-${arch}.dmg`);
+      const disk = latest.assets.find((asset) => asset.name === `nod-${arch}.dmg`);
       const manifest = latest.assets.find(
         (asset) => asset.name === (arch === 'x64' ? 'release-darwin-x64.json' : 'release.json'),
       );
@@ -303,7 +305,7 @@ export function releaseResponse(pages, request, baseUrl) {
         status: 200,
         body: {
           schema: 1,
-          version: latest.tag_name.slice(9),
+          version: latest.tag_name.slice(5),
           releaseId: latest.id,
           disk: file(disk),
           manifestUrl: manifest.url,
@@ -324,7 +326,7 @@ export function releaseResponse(pages, request, baseUrl) {
     if (request.operation === 'asset') {
       if (asset.name !== request.filename) return missing();
       const result = {
-        assetUrl: `https://api.github.com/repos/n8n-io/otto/releases/assets/${asset.id}`,
+        assetUrl: `https://api.github.com/repositories/1387586059/releases/assets/${asset.id}`,
       };
       if (asset.name.endsWith('.json')) {
         if (asset.size > 2 * 1024 * 1024) return unavailable();
@@ -335,16 +337,16 @@ export function releaseResponse(pages, request, baseUrl) {
     if (
       request.operation !== 'feed' ||
       !desktopTag(release.tag_name) ||
-      asset.name !== `Otto-${request.platform === 'darwin-x64' ? 'x64' : 'arm64'}.zip`
+      asset.name !== `nod-${request.platform === 'darwin-x64' ? 'x64' : 'arm64'}.zip`
     )
       return missing();
-    const version = release.tag_name.slice(9);
+    const version = release.tag_name.slice(5);
     if (compare(version, request.currentVersion) <= 0) return { status: 204, body: '' };
     return {
       status: 200,
       body: {
         url: asset.browser_download_url,
-        name: `Otto ${version}`,
+        name: `nod ${version}`,
         pub_date: release.published_at,
       },
     };
@@ -444,10 +446,10 @@ export function workflowNodes() {
     name,
     type: 'n8n-nodes-base.webhook',
     typeVersion: 2.1,
-    webhookId: 'otto-desktop',
+    webhookId: 'nod',
     parameters: {
       httpMethod: 'GET',
-      path: path.includes(':') ? path : `otto-desktop/${path}`,
+      path: path.includes(':') ? `desktop/${path}` : `nod/desktop/${path}`,
       authentication: 'none',
       responseMode: 'responseNode',
       options: {},
@@ -470,7 +472,7 @@ export function workflowNodes() {
           json: {
             operation: 'list',
             status: 0,
-            apiUrl: 'https://api.github.com/repos/n8n-io/otto/releases?per_page=100',
+            apiUrl: 'https://api.github.com/repositories/1387586059/releases?per_page=100',
           },
         },
       ],
@@ -628,7 +630,7 @@ export function workflowNodes() {
       onError: 'continueRegularOutput',
       parameters: {
         method: 'GET',
-        url: 'https://api.github.com/repos/n8n-io/otto/releases?per_page=100',
+        url: 'https://api.github.com/repositories/1387586059/releases?per_page=100',
         authentication: 'predefinedCredentialType',
         nodeCredentialType: 'githubApi',
         sendHeaders: true,
@@ -707,7 +709,7 @@ export function workflowCode() {
         `const n${index} = ${index < 5 ? 'trigger' : type === 'n8n-nodes-base.if' ? 'ifElse' : 'node'}(${literal({ ...(type === 'n8n-nodes-base.if' ? {} : { type }), version: typeVersion, config, output })});`,
     )
     .join('\n');
-  return `import { workflow, node, trigger, ifElse, expr } from '@n8n/workflow-sdk';\n${declarations}\nexport default workflow('otto-desktop-releases','Otto Desktop Releases')\n.add(n0).to(n5).to(n6.onTrue(n7.to(n8).to(n13.onTrue(n14.to(n15).to(n9)).onFalse(n9))).onFalse(n12))\n.add(n9.onTrue(n10.to(n11).to(n12)).onFalse(n12))
+  return `import { workflow, node, trigger, ifElse, expr } from '@n8n/workflow-sdk';\n${declarations}\nexport default workflow('nod-desktop-releases','nod Desktop Releases')\n.add(n0).to(n5).to(n6.onTrue(n7.to(n8).to(n13.onTrue(n14.to(n15).to(n9)).onFalse(n9))).onFalse(n12))\n.add(n9.onTrue(n10.to(n11).to(n12)).onFalse(n12))
 .add(n12).to(n16.onTrue(n17))
 .add(n1).to(n5).add(n2).to(n5).add(n3).to(n5).add(n4).to(n5)\n.group('Serve published desktop assets',[n5,n6,n7,n8,n9,n10,n11,n12,n13,n14,n15],{description:'Validate fixed-repository release and asset identities, then return metadata, an exact update feed, or a temporary asset redirect.'});\n`;
 }

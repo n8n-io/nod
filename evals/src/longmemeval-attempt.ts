@@ -293,7 +293,7 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
         user: { approve: false },
         deadline,
         stallSeconds: 1200,
-      }).say('Hi Otto.');
+      }).say('Hi nod.');
       const warmCalls = (
         await stack.pool.query(
           'SELECT details FROM model_usage WHERE created_at>=$1 ORDER BY created_at',

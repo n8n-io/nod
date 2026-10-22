@@ -259,11 +259,11 @@ export function waitingTurnSql(alias: string, reason?: 'credentials' | 'question
     AND NOT ${supersededSql(alias, `newer.started_at>=${alias}.started_at`)}`;
 }
 
-const keyCheck = { id: 'key-check', owner_id: owner, origin: 'otto:vault' };
+const keyCheck = { id: 'key-check', owner_id: owner, origin: 'nod:vault' };
 
 async function verifyKey(pool: Pool, key: Buffer) {
   await transaction(async (client) => {
-    await lockSetup(client, `otto-vault-key:${owner}`);
+    await lockSetup(client, `nod-vault-key:${owner}`);
     await client.query(
       'CREATE TABLE IF NOT EXISTS vault_key_check (owner_id text PRIMARY KEY, ciphertext text NOT NULL)',
     );
@@ -305,12 +305,12 @@ async function verifyKey(pool: Pool, key: Buffer) {
         for (const entry of entries) {
           const associated =
             name === 'vault_cards'
-              ? ['otto-vault-card-v1', entry.owner_id!, entry.id!]
+              ? ['nod-vault-card-v1', entry.owner_id!, entry.id!]
               : name === 'vault_app_grants'
-                ? ['otto-app-grant-v1', entry.owner_id!, entry.id!]
+                ? ['nod-app-grant-v1', entry.owner_id!, entry.id!]
                 : name === 'channel_settings'
-                  ? ['otto-channel-settings-v1', entry.owner_id!, entry.provider!]
-                  : ['otto-vault-v1', entry.owner_id!, entry.origin!, entry.id!];
+                  ? ['nod-channel-settings-v1', entry.owner_id!, entry.provider!]
+                  : ['nod-vault-v1', entry.owner_id!, entry.origin!, entry.id!];
           try {
             openVaultValue(key, associated, entry.ciphertext!);
             verified = true;
@@ -391,7 +391,7 @@ function requireFullHost(raw: unknown) {
 }
 
 function binding(entry: Pick<EntryRow, 'id' | 'owner_id' | 'origin'>) {
-  return ['otto-vault-v1', entry.owner_id, entry.origin, entry.id];
+  return ['nod-vault-v1', entry.owner_id, entry.origin, entry.id];
 }
 
 export function sealCredential(
@@ -472,7 +472,7 @@ function cardBrand(number: string) {
 }
 
 function cardBinding(entry: Pick<CardRow, 'id' | 'owner_id'>) {
-  return ['otto-vault-card-v1', entry.owner_id, entry.id];
+  return ['nod-vault-card-v1', entry.owner_id, entry.id];
 }
 
 function sealCard(key: Buffer, entry: Pick<CardRow, 'id' | 'owner_id'>, secret: CardSecret) {
@@ -599,7 +599,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       .catch(() => {
         keyPromise = undefined;
         throw new VaultError(
-          'Otto can’t open your Vault. Restore the Vault key and restart Otto.',
+          'nod can’t open your Vault. Restore the Vault key and restart nod.',
           503,
         );
       });
@@ -686,7 +686,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   ) {
     const domain = item_type === 'login' && origin ? analyticsDomain(origin) : undefined;
     options.analytics?.({
-      event: 'otto_vault_changed',
+      event: 'nod_vault_changed',
       properties: {
         item_type,
         operation,
@@ -707,7 +707,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     raw: unknown,
     database: PoolClient,
   ): Promise<{ entry: VaultLoginEntry; operation?: 'create' | 'update' }> {
-    await lockKey(database, `otto-vault-items:${ownerId}`);
+    await lockKey(database, `nod-vault-items:${ownerId}`);
     const input = passwordInput.extend({ password: z.string() }).parse(raw);
     const origin = savedCredentialOrigin(input.origin);
     const credentialKey = await key();
@@ -775,7 +775,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const result = { imported: 0, existing: 0, skipped: 0 };
     const origins: string[] = [];
     await transaction(async (client) => {
-      await lockKey(client, `otto-vault-items:${owner}`);
+      await lockKey(client, `nod-vault-items:${owner}`);
       const { rows } = await client.query<EntryRow>(
         'SELECT * FROM vault_entries WHERE owner_id=$1 FOR UPDATE',
         [owner],
@@ -828,7 +828,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     }, pool);
     for (let index = 0; index < origins.length; index += 100) {
       options.analytics?.({
-        event: 'otto_vault_imported',
+        event: 'nod_vault_imported',
         properties: {
           domains: origins
             .slice(index, index + 100)
@@ -1054,9 +1054,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     itemId: string | null,
     since?: number,
   ) {
-    const lock = `otto-vault-automatic:${owner}:${rootTurnId}:${origin}:${kind}`;
+    const lock = `nod-vault-automatic:${owner}:${rootTurnId}:${origin}:${kind}`;
     await lockKey(database, lock);
-    await database.query('DELETE FROM otto_locks WHERE key=$1', [lock]);
+    await database.query('DELETE FROM nod_locks WHERE key=$1', [lock]);
     const { rowCount } = await database.query(
       `SELECT 1 FROM vault_uses WHERE owner_id=$1 AND root_turn_id=$2 AND origin=$3 AND kind=$4
        AND (item_id IS NULL OR item_id=$5) AND ($6::timestamptz IS NULL OR created_at>=$6) LIMIT 1`,
@@ -1172,7 +1172,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
 
   async function requestToken(id: string, ownerId = owner) {
     return createHmac('sha256', options.requestKey)
-      .update(JSON.stringify(['otto-sign-in', ownerId, id]))
+      .update(JSON.stringify(['nod-sign-in', ownerId, id]))
       .digest('base64url');
   }
 
@@ -2076,7 +2076,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           const { secret } = await readCard(request.params.id);
           await options.onOwnerUse?.({
             action: 'reveal',
-            origin: 'otto:vault',
+            origin: 'nod:vault',
             itemId: request.params.id,
             itemKind: 'card',
           });

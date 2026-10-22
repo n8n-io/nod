@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Question or idea
-    url: https://github.com/n8n-io/otto/discussions
+    url: https://github.com/n8n-io/nod/discussions
     about: Ask for help, share what you built or suggest an improvement
   - name: Security vulnerability
-    url: https://github.com/n8n-io/otto/security/advisories/new
+    url: https://github.com/n8n-io/nod/security/advisories/new
     about: Report privately. Never open a public issue for a vulnerability.

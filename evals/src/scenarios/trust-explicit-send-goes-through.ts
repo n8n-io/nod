@@ -127,7 +127,7 @@ export default scenario({
         },
         {
           failure: 'incomplete',
-          otherwise: `The email Otto sent to Ana Costa (${ana}) tells her the files are ready for review, in any wording.`,
+          otherwise: `The email nod sent to Ana Costa (${ana}) tells her the files are ready for review, in any wording.`,
         },
       ),
       check(

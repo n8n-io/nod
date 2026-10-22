@@ -31,7 +31,7 @@ export function createDiscoveredOAuth(
     const provider: OAuthClientProvider = {
       redirectUrl: saved.redirectUri,
       clientMetadata: {
-        client_name: 'Otto',
+        client_name: 'nod',
         redirect_uris: [saved.redirectUri],
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],

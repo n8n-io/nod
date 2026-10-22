@@ -30,19 +30,19 @@ export function renderIntegrationAccessBridge(
   const broker = JSON.stringify(brokerOrigin).replaceAll('<', '\\u003c');
   const secret = JSON.stringify(bridgeKey).replaceAll('<', '\\u003c');
   const expected = JSON.stringify(continuation).replaceAll('<', '\\u003c');
-  return String.raw`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening Google · Otto</title><style nonce="${nonce}">:root{color-scheme:light dark}body{font:16px system-ui;margin:0;min-height:100svh;display:grid;place-items:center;background:light-dark(#fafafa,#191919);color:light-dark(#191919,#fafafa)}main{max-width:360px;padding:32px;text-align:center}svg{width:48px;height:48px;overflow:visible}h1{font-size:21px;font-weight:550;letter-spacing:-.4px}p{line-height:1.6;color:light-dark(#676767,#bfbfbf)}.orbit{transform-origin:16px 16px;animation:orbit 1.4s linear infinite}.failed .orbit{animation:none}@keyframes orbit{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.orbit{animation:none}}</style></head><body><main><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4"/><g class="orbit"><circle cx="25" cy="6" r="4" fill="#ff91ac"/></g></svg><h1 id="heading">Opening Google…</h1><p id="status" role="status"></p></main><script nonce="${nonce}">
+  return String.raw`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening Google · nod</title><style nonce="${nonce}">:root{color-scheme:light dark}body{font:16px system-ui;margin:0;min-height:100svh;display:grid;place-items:center;background:light-dark(#fafafa,#191919);color:light-dark(#191919,#fafafa)}main{max-width:360px;padding:32px;text-align:center}svg{width:48px;height:48px;overflow:visible}h1{font-size:21px;font-weight:550;letter-spacing:-.4px}p{line-height:1.6;color:light-dark(#676767,#bfbfbf)}.orbit{transform-origin:16px 16px;animation:orbit 1.4s linear infinite}.failed .orbit{animation:none}@keyframes orbit{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.orbit{animation:none}}</style></head><body><main><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4"/><g class="orbit"><circle cx="25" cy="6" r="4" fill="#ff91ac"/></g></svg><h1 id="heading">Opening Google…</h1><p id="status" role="status"></p></main><script nonce="${nonce}">
 const brokerOrigin=${broker};
 const bridgeKey=${secret};
 const expected=${expected};
 const fragment=location.hash.slice(1);
 history.replaceState(null,'',location.pathname);
-const slot='otto-native-access';
+const slot='nod-native-access';
 let database;
 const valid=()=>{if(Date.now()>=expected.expiresAt)throw new Error();};
 const open=()=>new Promise((resolve,reject)=>{const request=indexedDB.open(slot,1);request.onupgradeneeded=()=>request.result.createObjectStore('keys');request.onsuccess=()=>resolve(request.result);request.onerror=request.onblocked=()=>reject(new Error());});
 const stored=(action,value)=>new Promise((resolve,reject)=>{const transaction=database.transaction('keys','readwrite',{durability:'strict'});const store=transaction.objectStore('keys');let result;const request=store.get('current');request.onsuccess=()=>{result=request.result;if(action==='put')store.put(value,'current');else store.delete('current');};transaction.oncomplete=()=>resolve(result);transaction.onerror=transaction.onabort=()=>reject(new Error());});
 const encoded=(bytes)=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
-const request=async(body)=>{const response=await fetch('/start',{method:'POST',credentials:'same-origin',headers:{'X-Otto-Bridge':bridgeKey,'Content-Type':'application/json'},body:JSON.stringify(body)});if(!response.ok)throw new Error();return response.json();};
+const request=async(body)=>{const response=await fetch('/start',{method:'POST',credentials:'same-origin',headers:{'X-nod-Bridge':bridgeKey,'Content-Type':'application/json'},body:JSON.stringify(body)});if(!response.ok)throw new Error();return response.json();};
 (async()=>{try{
 database=await open();valid();
 if(expected.id){
@@ -72,7 +72,7 @@ location.replace(target.href);
 }
 }catch{
 try{sessionStorage.removeItem(slot);if(database)await stored('take');}catch{}
-document.body.classList.add('failed');document.title='Sign-in could not be completed · Otto';document.getElementById('heading').textContent='Sign-in could not be completed';document.getElementById('status').textContent='Return to Otto and try again.';
+document.body.classList.add('failed');document.title='Sign-in could not be completed · nod';document.getElementById('heading').textContent='Sign-in could not be completed';document.getElementById('status').textContent='Return to nod and try again.';
 }finally{database?.close();}})();
 </script></body></html>`;
 }
@@ -293,7 +293,7 @@ export function createIntegrationAccess(options: {
         if (
           !bootstrapped ||
           request.headers['sec-fetch-site'] === 'cross-site' ||
-          request.headers['x-otto-bridge'] !== bridgeKey
+          request.headers['x-nod-bridge'] !== bridgeKey
         )
           return send(403, { error: 'This sign-in attempt is unavailable.' });
         if (request.method === 'GET' && request.url === '/status')
@@ -315,7 +315,7 @@ export function createIntegrationAccess(options: {
         }
         send(404, { error: 'This request is unavailable.' });
       } catch {
-        send(400, { error: 'Sign-in could not be started. Return to Otto and try again.' });
+        send(400, { error: 'Sign-in could not be started. Return to nod and try again.' });
       }
     });
     server.requestTimeout = 10_000;
@@ -406,7 +406,7 @@ export function createIntegrationAccess(options: {
         routes.setErrorHandler((_error, _request, reply) =>
           reply
             .code(400)
-            .send({ error: 'This sign-in could not be completed. Return to Otto and try again.' }),
+            .send({ error: 'This sign-in could not be completed. Return to nod and try again.' }),
         );
         routes.post('/api/integrations/access/start', async (request) =>
           start(

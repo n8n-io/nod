@@ -15,7 +15,7 @@ function fail(message) {
 export function signingEnvironment(environment) {
   return Object.fromEntries(
     Object.entries(environment).filter(
-      ([key]) => !/^(APPLE_|OTTO_SIGNING_|OTTO_NOTARY_|OTTO_APPLE_)/.test(key),
+      ([key]) => !/^(APPLE_|NOD_SIGNING_|NOD_NOTARY_|NOD_APPLE_)/.test(key),
     ),
   );
 }
@@ -145,7 +145,7 @@ child.once('close', (code) => process.exit(code ?? 1));`;
 }
 
 async function readState(root) {
-  const path = join(root, 'otto-apple-signing-state.json');
+  const path = join(root, 'nod-apple-signing-state.json');
   let handle;
   try {
     handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -181,7 +181,7 @@ async function readState(root) {
       ) ||
       typeof state.directory !== 'string' ||
       dirname(state.directory) !== root ||
-      !/^otto-apple-signing-[A-Za-z0-9]{6}$/.test(basename(state.directory)) ||
+      !/^nod-apple-signing-[A-Za-z0-9]{6}$/.test(basename(state.directory)) ||
       state.keychain !== join(state.directory, 'signing.keychain-db') ||
       !Array.isArray(state.searchList) ||
       state.searchList.length > 64 ||
@@ -257,7 +257,7 @@ export async function cleanupAppleSigning({
 }
 
 export async function withAppleSigning(command, args, { env = process.env, run = execute } = {}) {
-  const mode = env.OTTO_SIGNING_MODE || 'self-signed';
+  const mode = env.NOD_SIGNING_MODE || 'self-signed';
   if (!['self-signed', 'developer-id'].includes(mode))
     fail('Select a supported Apple signing mode.');
   const identity = env.APPLE_SIGNING_IDENTITY?.trim();
@@ -313,12 +313,12 @@ export async function withAppleSigning(command, args, { env = process.env, run =
     )
   )
     fail('The current keychain search list could not be preserved.');
-  const directory = await mkdtemp(join(root, 'otto-apple-signing-'));
+  const directory = await mkdtemp(join(root, 'nod-apple-signing-'));
   await chmod(directory, 0o700);
   const keychain = join(directory, 'signing.keychain-db');
   const state = { version: 2, pid: process.pid, directory, keychain, searchList, groups: [] };
   try {
-    await writeFile(join(root, 'otto-apple-signing-state.json'), JSON.stringify(state), {
+    await writeFile(join(root, 'nod-apple-signing-state.json'), JSON.stringify(state), {
       mode: 0o600,
       flag: 'wx',
     });
@@ -327,12 +327,12 @@ export async function withAppleSigning(command, args, { env = process.env, run =
     fail('An unfinished signing operation exists; complete its cleanup before retrying.');
   }
   Object.assign(childEnv, {
-    OTTO_SIGNING_MODE: mode,
-    OTTO_SIGNING_IDENTITY: identity,
-    OTTO_SIGNING_KEYCHAIN: keychain,
-    OTTO_SIGNING_CERTIFICATE_SHA256: fingerprint,
+    NOD_SIGNING_MODE: mode,
+    NOD_SIGNING_IDENTITY: identity,
+    NOD_SIGNING_KEYCHAIN: keychain,
+    NOD_SIGNING_CERTIFICATE_SHA256: fingerprint,
     ...(mode === 'developer-id'
-      ? { OTTO_APPLE_TEAM_ID: team, OTTO_NOTARY_PROFILE: 'otto-release' }
+      ? { NOD_APPLE_TEAM_ID: team, NOD_NOTARY_PROFILE: 'nod-release' }
       : {}),
   });
   const password = randomBytes(32).toString('base64');
@@ -350,7 +350,7 @@ export async function withAppleSigning(command, args, { env = process.env, run =
     const save = () => {
       const pending = join(directory, 'cleanup-state.json');
       writeFileSync(pending, JSON.stringify(state), { mode: 0o600, flag: 'wx' });
-      renameSync(pending, join(root, 'otto-apple-signing-state.json'));
+      renameSync(pending, join(root, 'nod-apple-signing-state.json'));
     };
     state.groups.push({ pid, started: leader.started });
     save();
@@ -431,7 +431,7 @@ export async function withAppleSigning(command, args, { env = process.env, run =
         [
           'notarytool',
           'store-credentials',
-          childEnv.OTTO_NOTARY_PROFILE,
+          childEnv.NOD_NOTARY_PROFILE,
           '--validate',
           '--key',
           keyPath,

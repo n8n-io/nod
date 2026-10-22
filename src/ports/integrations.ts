@@ -114,9 +114,9 @@ export class IntegrationConnectionError extends Error {
         : 'Session management read and write access';
     super(
       reason === 'authorization'
-        ? `Composio rejected this key or its permissions. Create a key in the same Composio project with ${access}, then replace it in Otto and try again.`
+        ? `Composio rejected this key or its permissions. Create a key in the same Composio project with ${access}, then replace it in nod and try again.`
         : reason === 'permission'
-          ? `Connecting apps requires ${access} on the Composio project key. Create a key with that permission, then replace it in Otto and try again.`
+          ? `Connecting apps requires ${access} on the Composio project key. Create a key with that permission, then replace it in nod and try again.`
           : reason === 'rate_limit'
             ? 'Composio is receiving too many requests. Wait a moment, then try connecting again.'
             : reason === 'timeout'
@@ -139,8 +139,8 @@ export class IntegrationAuthConfigurationError extends Error {
   constructor(reason: 'ambiguous' | 'unavailable') {
     super(
       reason === 'ambiguous'
-        ? 'This app has multiple custom sign-in configurations. Ask your Otto administrator to select one.'
-        : "This app's custom sign-in configuration is unavailable. Ask your Otto administrator to enable it for sessions.",
+        ? 'This app has multiple custom sign-in configurations. Ask your nod administrator to select one.'
+        : "This app's custom sign-in configuration is unavailable. Ask your nod administrator to enable it for sessions.",
     );
   }
 }

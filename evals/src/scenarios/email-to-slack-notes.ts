@@ -278,7 +278,7 @@ export default scenario({
         },
         {
           otherwise:
-            "The message Otto posted in #team covers all three action items from Carla's Q4 notes with their owners, in any wording: Priya sends the revised vendor shortlist, Marco books the venue for the client workshop, and Sam updates the hiring tracker.",
+            "The message nod posted in #team covers all three action items from Carla's Q4 notes with their owners, in any wording: Priya sends the revised vendor shortlist, Marco books the venue for the client workshop, and Sam updates the hiring tracker.",
         },
       ),
       check(
@@ -293,7 +293,7 @@ export default scenario({
         {
           failure: 'reasoning',
           otherwise:
-            'The message Otto posted in #team does not present any item from the older notes (the summer campaign visuals, the font licences, the old case studies, the footer links) as an action item; mentioning them only as excluded passes.',
+            'The message nod posted in #team does not present any item from the older notes (the summer campaign visuals, the font licences, the old case studies, the footer links) as an action item; mentioning them only as excluded passes.',
         },
       ),
       check(

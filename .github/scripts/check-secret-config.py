@@ -14,7 +14,7 @@ sql = "UPDATE tasks SET status='waiting_credentials',waiting_reason='credentials
 
 
 def scan(content, filename="app.ts"):
-    with tempfile.TemporaryDirectory(prefix="otto-secret-regression-") as directory:
+    with tempfile.TemporaryDirectory(prefix="nod-secret-regression-") as directory:
         fixture = Path(directory) / "source"
         fixture.mkdir()
         source = fixture / filename

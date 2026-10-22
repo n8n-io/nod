@@ -21,7 +21,7 @@ import { availablePort, execute, finishRuntime } from './index.mjs';
 
 const holders = new Map();
 const distributionName = (root) =>
-  `Otto-${createHash('sha256').update(resolve(root).toLowerCase()).digest('hex').slice(0, 12)}`;
+  `nod-${createHash('sha256').update(resolve(root).toLowerCase()).digest('hex').slice(0, 12)}`;
 
 export function windowsEnvironment() {
   const environment = Object.fromEntries(
@@ -29,15 +29,15 @@ export function windowsEnvironment() {
       process.env[key] ? [[key, process.env[key]]] : [],
     ),
   );
-  if (!environment.SYSTEMROOT) throw new Error('Otto could not find the Windows system folder.');
+  if (!environment.SYSTEMROOT) throw new Error('nod could not find the Windows system folder.');
   environment.PATH = join(environment.SYSTEMROOT, 'System32');
   return environment;
 }
 
 export async function protectWindowsProfile(root, resourcesPath) {
   await mkdir(root, { recursive: true });
-  if ((await lstat(root)).isSymbolicLink()) throw new Error('The Otto profile cannot be a link.');
-  const env = { ...windowsEnvironment(), OTTO_PROFILE_PATH: root };
+  if ((await lstat(root)).isSymbolicLink()) throw new Error('The nod profile cannot be a link.');
+  const env = { ...windowsEnvironment(), NOD_PROFILE_PATH: root };
   await execute(
     join(env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
     [
@@ -83,7 +83,7 @@ async function download(
   for (let redirects = 0; redirects <= 3; redirects++) {
     const address = new URL(url);
     if (address.protocol !== 'https:' || address.username || address.password)
-      throw new Error('Otto received an unsafe download address.');
+      throw new Error('nod received an unsafe download address.');
     response = await request(url, {
       signal,
       redirect: 'manual',
@@ -94,7 +94,7 @@ async function download(
     await response.body?.cancel();
   }
   if (!response?.ok || !response.body)
-    throw new Error('The Otto download is unavailable. Try again.');
+    throw new Error('The nod download is unavailable. Try again.');
   const hash = createHash('sha256');
   let received = 0;
   let reported = 0;
@@ -107,7 +107,7 @@ async function download(
         onProgress(received / bytes);
       }
       callback(
-        received > bytes ? new Error('The Otto download is larger than expected.') : null,
+        received > bytes ? new Error('The nod download is larger than expected.') : null,
         chunk,
       );
     },
@@ -116,16 +116,16 @@ async function download(
     signal,
   });
   if (received !== bytes || hash.digest('hex') !== sha256)
-    throw new Error('The Otto download failed its integrity check. Try again.');
+    throw new Error('The nod download failed its integrity check. Try again.');
 }
 
 export async function stageWindowsUpdate(candidate, { directory, resourcesPath, signal, fetch }) {
   if (
     !/^\d+\.\d+\.\d+$/.test(candidate?.version) ||
-    candidate.installer?.file !== 'Otto-Setup-x64.exe' ||
-    candidate.runtime?.file !== 'Otto-Runtime-win32-x64.tar.gz'
+    candidate.installer?.file !== 'nod-Setup-x64.exe' ||
+    candidate.runtime?.file !== 'nod-Runtime-win32-x64.tar.gz'
   )
-    throw new Error('The Otto update is invalid.');
+    throw new Error('The nod update is invalid.');
   const target = join(directory, candidate.version);
   await rm(directory, { recursive: true, force: true });
   await mkdir(target, { recursive: true });
@@ -161,9 +161,9 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     signal?.throwIfAborted();
     throw Object.assign(
       new Error(
-        'Otto needs WSL 2. Select Install WSL, approve the Windows request, then restart your PC and open Otto.',
+        'nod needs WSL 2. Select Install WSL, approve the Windows request, then restart your PC and open nod.',
       ),
-      { code: 'OTTO_WSL_REQUIRED' },
+      { code: 'NOD_WSL_REQUIRED' },
     );
   }
   await protectWindowsProfile(dataRoot, resourcesPath);
@@ -211,7 +211,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   try {
     saved = JSON.parse(await readFile(configPath, 'utf8'));
   } catch (error) {
-    if (error.code !== 'ENOENT') throw new Error('The Otto computer configuration needs recovery.');
+    if (error.code !== 'ENOENT') throw new Error('The nod computer configuration needs recovery.');
   }
   let existing = (await distributions(wsl, hostEnvironment)).includes(distribution);
   if (existing && !saved) {
@@ -231,7 +231,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       saved.port < 1 ||
       saved.port > 65535)
   )
-    throw new Error('The Otto computer configuration needs recovery.');
+    throw new Error('The nod computer configuration needs recovery.');
   saved ??= {
     version: 1,
     distribution,
@@ -262,7 +262,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       2 * 1024 ** 3;
     if (space.bavail * space.bsize < required)
       throw new Error(
-        'Otto needs more free disk space to prepare its private computer. Free space, then select Try again.',
+        'nod needs more free disk space to prepare its private computer. Free space, then select Try again.',
       );
     const archive = present ? placed : join(controlRoot, 'guest.tar.gz');
     const guest = join(controlRoot, 'guest.tar');
@@ -270,7 +270,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       if (!present) {
         if (!options.resolveDownloadUrl)
           throw new Error(
-            'Put Otto-Runtime-win32-x64.tar.gz next to Otto-Setup-x64.exe, then run the installer again.',
+            'Put nod-Runtime-win32-x64.tar.gz next to nod-Setup-x64.exe, then run the installer again.',
           );
         const message = 'Downloading your private computer…';
         status({ phase: 'downloading', message, progress: 0 });
@@ -304,12 +304,12 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
           { env: hostEnvironment, signal, timeout: 1_200_000 },
         );
       } else {
-        const identity = await execute(wsl, [...guestArgs, '/bin/cat', '/var/lib/otto/identity'], {
+        const identity = await execute(wsl, [...guestArgs, '/bin/cat', '/var/lib/nod/identity'], {
           env: hostEnvironment,
           signal,
         });
-        if (identity !== distribution.slice(5))
-          throw new Error('The Otto computer identity changed.');
+        if (identity !== distribution.slice(4))
+          throw new Error('The nod computer identity changed.');
         await execute(
           wsl,
           [
@@ -319,8 +319,8 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
             '-',
             '-C',
             '/',
-            'opt/otto-assets',
-            'usr/local/lib/otto/windows-guest.py',
+            'opt/nod-assets',
+            'usr/local/lib/nod/windows-guest.py',
           ],
           { env: hostEnvironment, signal, timeout: 900_000, input: createReadStream(guest) },
         );
@@ -339,11 +339,11 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     execute(wsl, [...guestArgs, '/bin/bash', '-s'], { env: hostEnvironment, signal, input });
   await execute(
     wsl,
-    [...guestArgs, '/usr/bin/python3', '/usr/local/lib/otto/windows-guest.py', 'start'],
+    [...guestArgs, '/usr/bin/python3', '/usr/local/lib/nod/windows-guest.py', 'start'],
     {
       env: hostEnvironment,
       signal,
-      input: JSON.stringify({ identity: distribution.slice(5) }),
+      input: JSON.stringify({ identity: distribution.slice(4) }),
       timeout: 900_000,
     },
   );
@@ -365,7 +365,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     ...hostEnvironment,
     TEMP: join(controlRoot, 'temp'),
     TMP: join(controlRoot, 'temp'),
-    OTTO_WSL_DISTRIBUTION: distribution,
+    NOD_WSL_DISTRIBUTION: distribution,
     DOCKER_CONFIG: join(controlRoot, 'docker-config'),
     DOCKER_HOST: '',
     DOCKER_CONTEXT: '',
@@ -377,7 +377,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     resourcesPath,
     assets,
     manifest,
-    identity: distribution.slice(5),
+    identity: distribution.slice(4),
     saved,
     controlRoot,
     docker,
@@ -391,11 +391,11 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     prepareImage: async (name) => {
       await execute(
         wsl,
-        [...guestArgs, '/usr/bin/python3', '/usr/local/lib/otto/windows-guest.py', 'image'],
+        [...guestArgs, '/usr/bin/python3', '/usr/local/lib/nod/windows-guest.py', 'image'],
         {
           env: hostEnvironment,
           signal,
-          input: JSON.stringify({ identity: distribution.slice(5), name }),
+          input: JSON.stringify({ identity: distribution.slice(4), name }),
           timeout: 600_000,
         },
       );
@@ -426,7 +426,7 @@ export async function stopWindowsRuntime(options) {
           '--time',
           '20',
           ...['workspace', 'browser', 'postgres'].map(
-            (role) => `otto-${role}-${distribution.slice(5)}`,
+            (role) => `nod-${role}-${distribution.slice(4)}`,
           ),
         ],
         { env, timeout: 90_000 },
@@ -439,9 +439,9 @@ export async function stopWindowsRuntime(options) {
     if (error.code === 'ENOENT') return;
     throw Object.assign(
       new Error(
-        'Otto could not confirm that its private computer stopped. Try again before quitting.',
+        'nod could not confirm that its private computer stopped. Try again before quitting.',
       ),
-      { code: 'OTTO_RUNTIME_STOP_FAILED' },
+      { code: 'NOD_RUNTIME_STOP_FAILED' },
     );
   }
 }

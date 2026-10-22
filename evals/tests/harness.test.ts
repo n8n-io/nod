@@ -405,7 +405,7 @@ function fixtureThrough(proxy: string) {
 }
 
 test('fixture browser profiles keep separate production network guards across a profile switch', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-eval-proxy-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-eval-proxy-'));
   const guards = [
     createServer((_request, response) => response.writeHead(403).end('first guard')),
     createServer((_request, response) => response.end('second guard')),
@@ -728,7 +728,7 @@ test('scenario API calls use authenticated local transport and refuse outside ta
     '/\n/outside.example.test/api',
     '/\t/outside.example.test/api',
   ])
-    await assert.rejects(session.api('GET', path), /must stay on the Otto server/);
+    await assert.rejects(session.api('GET', path), /must stay on the nod server/);
   assert.equal(calls, 3);
   assert.equal(writes, 1);
   assert.equal(started, 1);
@@ -1335,7 +1335,7 @@ test('morning brief checks reject remembered preferences without a working daily
     interactions: [],
     approvals: [
       {
-        action: 'OTTO_schedule_create',
+        action: 'NOD_schedule_create',
         status: 'completed',
         args: {
           title: schedule.title,
@@ -1346,7 +1346,7 @@ test('morning brief checks reject remembered preferences without a working daily
         },
       },
       {
-        action: 'OTTO_notification_preferences_update',
+        action: 'NOD_notification_preferences_update',
         status: 'completed',
         args: {
           notificationRule: 'Leave non-urgent updates for the daily brief.',
@@ -1422,7 +1422,7 @@ test('caption approval is the explicit go-ahead, not any earlier answer', async 
   assert.equal((await check.check(run)).pass, false);
   const step = (status: string, website: string) => ({
     turnId: 't',
-    action: 'OTTO_browser',
+    action: 'NOD_browser',
     status,
     args: { website },
   });
@@ -2020,7 +2020,7 @@ test('the release gate is inconclusive without measurements and blocks only a ne
 });
 
 test('only calibrated scenarios that passed every one of at least five attempts earn a gate place', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-gate-'));
+  const root = await mkdtemp(join(tmpdir(), 'nod-gate-'));
   const file = join(root, 'gate.json');
   const write = async (label: string, id: string, statuses: AttemptResult['status'][]) => {
     await mkdir(join(root, label, 'attempts'), { recursive: true });
@@ -2077,7 +2077,7 @@ function quietRun(world: ReturnType<Scenario['world']>): Run {
   };
 }
 
-test('every release scenario fails a required code check when Otto does nothing, and its sites answer', async () => {
+test('every release scenario fails a required code check when nod does nothing, and its sites answer', async () => {
   const release = scenarios.filter((item) => item.tier === 'release');
   for (const definition of release) {
     const world = definition.world({ now: Date.now });
@@ -2114,7 +2114,7 @@ test('every release scenario fails a required code check when Otto does nothing,
   }
 });
 
-test('fake remote MCP servers sign in and answer through Otto’s own MCP client', async () => {
+test('fake remote MCP servers sign in and answer through nod’s own MCP client', async () => {
   const { remoteMcp } = await import('../src/world/mcp.ts');
   const { createDiscoveredOAuth } = await import('../../src/providers/discovered/oauth.ts');
   const { createDiscoveredTransport } = await import('../../src/providers/discovered/remote.ts');

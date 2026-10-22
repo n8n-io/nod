@@ -20,7 +20,7 @@ export default scenario({
   seconds: 420,
   timeZone: zone,
   user: {
-    approve: (action) => action === 'OTTO_notification_preferences_update',
+    approve: (action) => action === 'NOD_notification_preferences_update',
     persona:
       'You are Alex Rivera. Your boss is Helena Marques. You bank with Banco Atlântico, but any bank email counts. You want pings only for those two things and nothing else, starting now.',
   },

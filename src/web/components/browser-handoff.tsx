@@ -178,7 +178,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   }
 
   async function navigate(action: 'back' | 'reload') {
-    captureAnalytics('otto_browser_handoff_action', { action });
+    captureAnalytics('nod_browser_handoff_action', { action });
     setLoading(action);
     try {
       await flush();
@@ -193,7 +193,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
 
   async function done() {
     if (paused) return;
-    captureAnalytics('otto_browser_handoff_action', { action: 'done' });
+    captureAnalytics('nod_browser_handoff_action', { action: 'done' });
     setReturning(true);
     try {
       await flush();
@@ -209,7 +209,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   async function resize(value: boolean) {
     if (returning || loading) return;
     if (value !== expanded)
-      captureAnalytics('otto_browser_handoff_action', { action: value ? 'expand' : 'collapse' });
+      captureAnalytics('nod_browser_handoff_action', { action: value ? 'expand' : 'collapse' });
     setLoading('resize');
     try {
       await flush();
@@ -356,7 +356,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
       className={`browser-handoff${expanded ? ' browser-handoff-expanded' : ''}`}
       role={expanded ? 'dialog' : undefined}
       aria-modal={expanded || undefined}
-      aria-label={expanded ? "Otto's browser" : undefined}
+      aria-label={expanded ? "nod's browser" : undefined}
       style={
         expanded && naturalSize.width
           ? { width: `min(${naturalSize.width + 2}px, calc(100vw - 48px))` }
@@ -366,7 +366,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
       {expanded && (
         <div className="browser-handoff-header">
           <BrandMark small />
-          <span>Otto's browser</span>
+          <span>nod's browser</span>
           {sizeToggle}
         </div>
       )}
@@ -376,7 +376,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
         tabIndex={0}
         role="application"
         aria-disabled={!live || busy}
-        aria-label="Otto's browser. Click and type to use it."
+        aria-label="nod's browser. Click and type to use it."
         onKeyDown={key}
         onPaste={paste}
       >
@@ -384,7 +384,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
           <img
             key={attempt}
             src={frame || undefined}
-            alt="Otto's browser"
+            alt="nod's browser"
             draggable={false}
             hidden={!shown}
             onLoad={(event) => {
@@ -422,7 +422,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
             Try again
           </Button>
         ) : !shown ? (
-          <Loading label="Opening Otto's browser…" />
+          <Loading label="Opening nod's browser…" />
         ) : null}
       </div>
       <div className="browser-handoff-bar">
@@ -472,7 +472,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   return (
     <>
       <div className="browser-handoff browser-handoff-placeholder">
-        <span>Otto's browser is open in a larger view.</span>
+        <span>nod's browser is open in a larger view.</span>
         {sizeToggle}
       </div>
       {createPortal(

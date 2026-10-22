@@ -22,7 +22,7 @@ import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { firstInstruction, ownerContext, steeredInstruction, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
-import { connectedTools, ottoTools } from './tools.ts';
+import { connectedTools, nodTools } from './tools.ts';
 import type { Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import { delimit } from './untrusted.ts';
@@ -413,7 +413,7 @@ export function createAgentRuntime(dependencies: {
         return { gate, settle: () => decide(gate.asked) };
       };
       const bind = (turn: Turn, take: () => Promise<unknown>): AgentTool[] =>
-        [...ottoTools(turn, skills), ...connectedTools(turn)].map((tool): AgentTool => {
+        [...nodTools(turn, skills), ...connectedTools(turn)].map((tool): AgentTool => {
           const { name, description, parameters, execute } = tool;
           const deferred = (tool as Partial<Pick<AgentTool, 'deferred'>>).deferred;
           return {
@@ -486,7 +486,7 @@ export function createAgentRuntime(dependencies: {
           parentRunId: execution.runId,
           browserId: childBrowser,
         };
-        const childPath = `${workspace.path}/.otto/runs/${runId}`;
+        const childPath = `${workspace.path}/.nod/runs/${runId}`;
         if ((await workspace.exec(`mkdir -p -- '${childPath}'`, { signal })).exitCode)
           throw new Error('The subagent workspace could not be opened.');
         assertActive();

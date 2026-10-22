@@ -256,7 +256,7 @@ const ArtifactView = memo(function ArtifactView({
 });
 
 function storedWidth() {
-  const value = Number(readUiPreference('otto.artifact-width'));
+  const value = Number(readUiPreference('nod.artifact-width'));
   return Number.isFinite(value) && value >= minimumWidth ? value : null;
 }
 
@@ -351,7 +351,7 @@ function ArtifactDrawer({
   useEffect(() => {
     const forward = (event: MessageEvent) => {
       if (
-        event.data === 'otto:close' &&
+        event.data === 'nod:close' &&
         event.source &&
         event.source === root.current?.querySelector('iframe')?.contentWindow
       )
@@ -412,7 +412,7 @@ function ArtifactDrawer({
     const stop = () => {
       page.classList.remove('is-resizing-artifact');
       handle.removeEventListener('pointermove', follow);
-      writeUiPreference('otto.artifact-width', String(latest));
+      writeUiPreference('nod.artifact-width', String(latest));
     };
     handle.addEventListener('pointermove', follow);
     handle.addEventListener('pointerup', stop, { once: true });
@@ -452,7 +452,7 @@ function ArtifactDrawer({
           onPointerDown={resize}
           onDoubleClick={() => {
             setWidth(null);
-            writeUiPreference('otto.artifact-width', '');
+            writeUiPreference('nod.artifact-width', '');
           }}
           onKeyDown={(event) => {
             if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
@@ -462,7 +462,7 @@ function ArtifactDrawer({
               pageWidth - minimumChat,
             );
             setWidth(next);
-            writeUiPreference('otto.artifact-width', String(next));
+            writeUiPreference('nod.artifact-width', String(next));
           }}
         />
       )}

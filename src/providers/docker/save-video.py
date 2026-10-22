@@ -81,7 +81,7 @@ def normalize(path, full):
         raise Failure("The download has no video stream.")
     base = os.path.splitext(path)[0]
     target = base + ".mp4"
-    temporary = base + ".otto.mp4"
+    temporary = base + ".nod.mp4"
     kbps = BUDGET * 8 / 1000 / max(duration, 1)
     smallest = min(video["width"], video["height"])
     compatible = (

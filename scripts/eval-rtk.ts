@@ -14,7 +14,7 @@ const option = (name: string, fallback: string) => {
   const index = options.indexOf(name);
   return index === -1 ? fallback : options[index + 1];
 };
-const image = option('--image', 'otto-eval-workspace:latest');
+const image = option('--image', 'nod-eval-workspace:latest');
 const phase = option('--phase', 'candidate');
 const output = resolve(option('--output', join(root, '.local', 'rtk-eval', phase)));
 const baseline = option('--baseline', '437687bb17a3944ce9aa01ac37239e5163515365');
@@ -202,7 +202,7 @@ const definitions = [
               split: 'holdout',
               prompt: 'Find the JSON files in this project, including the saved run plan.',
               command: "find . -name '*.json'",
-              semantic: ['config.json', '.otto/plan.json'],
+              semantic: ['config.json', '.nod/plan.json'],
               compact: false,
             }
           : {
@@ -261,12 +261,12 @@ const manifest = {
 
 const inputFiles = (variant: string) => {
   const files: Record<string, string> = {
-    '.gitignore': '.otto/\nexported.csv\nchanges.patch\n',
+    '.gitignore': '.nod/\nexported.csv\nchanges.patch\n',
     'config.json': `${JSON.stringify({ project: variant, currency: variant === 'invoice' ? 'EUR' : 'USD', precision: 2 }, null, 2)}\n`,
     'ledger.csv': `id,description,amount,currency\n${Array.from({ length: 120 }, (_, index) => `${index + 1},${variant} record ${index + 1},${((index + 1) * 1.37).toFixed(2)},${variant === 'invoice' ? 'EUR' : 'USD'}`).join('\n')}\n`,
     'obsolete.txt': `Unused ${variant} export path\n`,
     'audit.txt': '',
-    ...(caseVersion >= 7 ? { '.otto/plan.json': `{"project": "${variant}", "step": 1}\n` } : {}),
+    ...(caseVersion >= 7 ? { '.nod/plan.json': `{"project": "${variant}", "step": 1}\n` } : {}),
   };
   for (const [name, value] of [
     ['alpha', 'invoiceRate = 0.15'],
@@ -284,9 +284,9 @@ const inputFiles = (variant: string) => {
 await mkdir(output, { recursive: true });
 await writeFile(join(output, 'cases.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 const startedAt = new Date().toISOString();
-const hostRoot = await mkdtemp(join(tmpdir(), 'otto-rtk-workspaces-'));
+const hostRoot = await mkdtemp(join(tmpdir(), 'nod-rtk-workspaces-'));
 await chmod(hostRoot, 0o755);
-const container = `otto-workspace-rtk-eval-${randomUUID().slice(0, 8)}`;
+const container = `nod-workspace-rtk-eval-${randomUUID().slice(0, 8)}`;
 const temporaryModule = await mkdtemp(join(root, 'scripts', '.rtk-eval-'));
 const sourcePath = 'src/providers/pi/sandbox.ts';
 const source = sourceRef
@@ -355,10 +355,10 @@ try {
     const files = inputFiles(variant);
     const directory = join(hostRoot, variant);
     await mkdir(join(directory, 'src'), { recursive: true });
-    await mkdir(join(directory, '.otto'));
+    await mkdir(join(directory, '.nod'));
     await chmod(directory, 0o777);
     await chmod(join(directory, 'src'), 0o777);
-    await chmod(join(directory, '.otto'), 0o777);
+    await chmod(join(directory, '.nod'), 0o777);
     for (const [path, contents] of Object.entries(files)) {
       await writeFile(join(directory, path), contents);
       await chmod(join(directory, path), 0o666);

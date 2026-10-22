@@ -169,7 +169,7 @@ function createLock() {
 }
 
 function binding(owner: string, provider: ChannelProvider) {
-  return ['otto-channel-settings-v1', owner, provider];
+  return ['nod-channel-settings-v1', owner, provider];
 }
 function seal(
   key: Buffer,
@@ -528,7 +528,7 @@ export async function createChannelSettings(
           webhook_failed:
             'Telegram did not confirm the webhook registration. Check the public URL and try again.',
           activation_pending:
-            'The setup was saved and the bot token is valid, but Otto could not start receiving messages. Retry the connection to continue.',
+            'The setup was saved and the bot token is valid, but nod could not start receiving messages. Retry the connection to continue.',
           pairing_unavailable:
             'This Telegram setup step is no longer available. Refresh Channels and try again.',
         };

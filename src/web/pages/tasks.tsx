@@ -147,7 +147,7 @@ export function TaskCard({
           aria-expanded={expanded}
           aria-controls={`${headingId}-body`}
           onClick={() => {
-            if (!expanded) captureAnalytics('otto_task_action', { action: 'expand' });
+            if (!expanded) captureAnalytics('nod_task_action', { action: 'expand' });
             setExpanded(!expanded);
           }}
         >
@@ -266,7 +266,7 @@ export function TaskCard({
               variant="ghost"
               size="sm"
               onClick={() => {
-                captureAnalytics('otto_task_action', { action: 'reply' });
+                captureAnalytics('nod_task_action', { action: 'reply' });
                 onReply();
               }}
             >
@@ -278,9 +278,9 @@ export function TaskCard({
               variant="ghost"
               size="sm"
               onClick={() => {
-                captureAnalytics('otto_task_action', { action: 'show_in_chat' });
+                captureAnalytics('nod_task_action', { action: 'show_in_chat' });
                 window.dispatchEvent(
-                  new window.CustomEvent('otto:focus-message', {
+                  new window.CustomEvent('nod:focus-message', {
                     detail: { messageId: task.messageId },
                   }),
                 );
@@ -295,7 +295,7 @@ export function TaskCard({
             size="sm"
             aria-expanded={showActivity}
             onClick={() => {
-              if (!showActivity) captureAnalytics('otto_task_action', { action: 'show_activity' });
+              if (!showActivity) captureAnalytics('nod_task_action', { action: 'show_activity' });
               setShowActivity(!showActivity);
             }}
           >
@@ -307,7 +307,7 @@ export function TaskCard({
               size="sm"
               disabled={stopping}
               onClick={async () => {
-                captureAnalytics('otto_task_action', { action: 'stop' });
+                captureAnalytics('nod_task_action', { action: 'stop' });
                 setStopping(true);
                 setError('');
                 try {
@@ -372,9 +372,9 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
   const schedules = usePageData<Schedule[]>('/api/schedules');
   const history = useScheduleHistory();
   const [view, setView] = useState<(typeof views)[number]>('current');
-  useEffect(() => captureAnalytics('otto_tab_viewed', { page: 'tasks', tab: view }), []);
+  useEffect(() => captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: view }), []);
   const selectView = (next: typeof view) => {
-    if (next !== view) captureAnalytics('otto_tab_viewed', { page: 'tasks', tab: next });
+    if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: next });
     setView(next);
   };
   const tabsId = useId();
@@ -412,7 +412,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
       <header className="page-heading secondary-heading">
         <div>
           <PageTitle path="/tasks" />
-          <p>What Otto is working on, what’s scheduled and what’s done.</p>
+          <p>What nod is working on, what’s scheduled and what’s done.</p>
         </div>
         {view === 'scheduled' && (
           <div className="secondary-heading-actions">
@@ -487,7 +487,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
             </div>
           ) : (
             <Empty title="Nothing in progress">
-              When you hand Otto something that takes time, like getting quotes or chasing a refund,
+              When you hand nod something that takes time, like getting quotes or chasing a refund,
               it shows up here with how it’s going.
             </Empty>
           )
@@ -509,7 +509,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
               )}
               {desktopSettingsAvailable() && (
                 <p className="saved-plan-note schedule-availability">
-                  Scheduled tasks run only while your Mac is on and Otto is open.
+                  Scheduled tasks run only while your Mac is on and nod is open.
                 </p>
               )}
               {inactive.length > 0 && (
@@ -560,7 +560,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
         ) : (
           (tasks.data || history.data) && (
             <Empty title="Nothing finished yet">
-              Tasks Otto finishes or stops, and past scheduled runs, appear here.
+              Tasks nod finishes or stops, and past scheduled runs, appear here.
             </Empty>
           )
         )}

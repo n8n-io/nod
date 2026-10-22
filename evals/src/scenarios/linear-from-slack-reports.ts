@@ -398,7 +398,7 @@ export default scenario({
         {
           failure: 'incomplete',
           otherwise:
-            'One of the new Linear issues Otto filed, other than the Firefox charts one, is about the invoice CSV export leaving out customers whose names have accents, described in any wording.',
+            'One of the new Linear issues nod filed, other than the Firefox charts one, is about the invoice CSV export leaving out customers whose names have accents, described in any wording.',
         },
       ),
       check(
@@ -413,7 +413,7 @@ export default scenario({
         {
           failure: 'incomplete',
           otherwise:
-            'One of the new Linear issues Otto filed is about the dashboard charts being blank in Firefox since the latest release, described in any wording.',
+            'One of the new Linear issues nod filed is about the dashboard charts being blank in Firefox since the latest release, described in any wording.',
         },
       ),
       check(

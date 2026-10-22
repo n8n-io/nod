@@ -5,7 +5,7 @@ import { logFailure } from './failure-log.ts';
 import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 import { analyticsDomain } from './analytics-connections.ts';
 
-type SecureEntry = Extract<AnalyticsEvent, { event: 'otto_secure_entry_changed' }>['properties'];
+type SecureEntry = Extract<AnalyticsEvent, { event: 'nod_secure_entry_changed' }>['properties'];
 
 export interface SecureEntryUse {
   kind: string;
@@ -27,7 +27,7 @@ export function captureSecureEntry(
   const domain = kind !== 'code' && use.origin ? analyticsDomain(use.origin) : undefined;
   const amount = use.payment && Math.round(use.payment.amount * 1000) / 1000;
   analytics?.({
-    event: 'otto_secure_entry_changed',
+    event: 'nod_secure_entry_changed',
     properties: {
       kind,
       status,

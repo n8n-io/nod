@@ -5,14 +5,13 @@ import { access, chmod, cp, mkdir, readFile, rename, rm, writeFile } from 'node:
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
-import { availableParallelism } from 'node:os';
 import { constants as zlib, createZstdCompress } from 'node:zlib';
 import { buildLima } from './build-lima.mjs';
 import { runtimeInputs, runtimePlatform } from './runtime-inputs.mjs';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const assets = resolve(
-  process.env.OTTO_RUNTIME_ASSETS || join(repository, '.local/desktop-runtime-assets'),
+  process.env.NOD_RUNTIME_ASSETS || join(repository, '.local/desktop-runtime-assets'),
 );
 const imagesOnly = process.argv.includes('--images-only');
 const hostOnly = process.argv.includes('--host-only');
@@ -33,7 +32,7 @@ if (hostOnly && prebuiltImages)
   throw new Error('Prebuilt image export cannot be combined with host-only preparation.');
 const input = await runtimeInputs();
 const cache = resolve(
-  process.env.OTTO_RUNTIME_DOWNLOADS || join(repository, '.local/desktop-runtime-downloads'),
+  process.env.NOD_RUNTIME_DOWNLOADS || join(repository, '.local/desktop-runtime-downloads'),
 );
 const buildLock = JSON.parse(
   await readFile(join(repository, 'desktop/scripts/runtime-build-lock.json'), 'utf8'),
@@ -116,12 +115,12 @@ async function extract(archive, folder) {
 const imageDefinitions = [
   {
     name: 'workspace',
-    tag: 'otto-desktop-workspace:experiment',
+    tag: 'nod-desktop-workspace:experiment',
     dockerfile: 'Dockerfile.workspace',
   },
   {
     name: 'browser',
-    tag: 'otto-desktop-browser:experiment',
+    tag: 'nod-desktop-browser:experiment',
     dockerfile: 'Dockerfile.browser',
   },
   { name: 'postgres', tag: 'postgres:17-alpine' },
@@ -209,12 +208,7 @@ if (hostOnly) {
       await Promise.all([
         pipeline(
           child.stdout,
-          createZstdCompress({
-            params: {
-              [zlib.ZSTD_c_compressionLevel]: imageCompressionLevel,
-              [zlib.ZSTD_c_nbWorkers]: availableParallelism(),
-            },
-          }),
+          createZstdCompress({ params: { [zlib.ZSTD_c_compressionLevel]: imageCompressionLevel } }),
           createWriteStream(`${target}.tmp`),
         ),
         exited,
@@ -300,7 +294,7 @@ if (!imagesOnly) {
   await writeFile(
     join(assets, 'licenses/COMPONENTS.md'),
     [
-      '# Otto runtime components',
+      '# nod runtime components',
       '',
       `- Docker CLI ${buildLock.dockerVersion}: https://github.com/docker/cli/tree/v${buildLock.dockerVersion}. License and notices: docker-cli/LICENSE, docker-cli/NOTICE.`,
       `- Docker Engine ${buildLock.dockerVersion}: https://github.com/moby/moby/tree/v${buildLock.dockerVersion}. License and notices: docker-engine/LICENSE, docker-engine/NOTICE.`,

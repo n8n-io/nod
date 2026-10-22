@@ -114,7 +114,7 @@ export function createBridgeComputer(options: {
         new Error(
           uncertain && !disposed && available
             ? `The workspace browser is unavailable. ${reopenNotice}`
-            : 'The workspace browser is unavailable. Restart Otto before continuing.',
+            : 'The workspace browser is unavailable. Restart nod before continuing.',
         ),
       );
     }

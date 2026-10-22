@@ -71,7 +71,7 @@ export function createLearnedSkills(options: {
   const { memory } = options;
   const remembered = (operation: MemoryChange['operation'], actor: MemoryChange['actor']) =>
     options.analytics?.({
-      event: 'otto_memory_changed',
+      event: 'nod_memory_changed',
       properties: { kind: 'skill', operation, actor },
     });
 

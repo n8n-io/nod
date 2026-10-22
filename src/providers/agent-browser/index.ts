@@ -243,9 +243,8 @@ export function createAgentBrowserComputer(options: {
   const screens = createScreenStore(runtimeRoot);
   const screenStatuses = new Map<string, ReturnType<NonNullable<Computer['screenStatus']>>>();
   const namespace = `sk-${createHash('sha256').update(runtimeRoot).digest('hex').slice(0, 12)}`;
-  const uploadRoot = resolve('/tmp/otto-browser-uploads', namespace);
-  const cachePath = (state: BrowserState) =>
-    resolve('/tmp/otto-browser-cache', namespace, state.id);
+  const uploadRoot = resolve('/tmp/nod-browser-uploads', namespace);
+  const cachePath = (state: BrowserState) => resolve('/tmp/nod-browser-cache', namespace, state.id);
   const executable =
     options.executable ?? resolve(process.cwd(), 'node_modules/.bin/agent-browser');
   const run = options.run ?? runProcess;
@@ -1274,7 +1273,7 @@ export function createAgentBrowserComputer(options: {
         if (!url.startsWith(`blob:${new URL(current).origin}/`)) browserUrl(url);
       }
       if (url && !crossOrigin) {
-        const key = `otto-download-${randomUUID()}`;
+        const key = `nod-download-${randomUUID()}`;
         try {
           const fetched = z
             .object({ size: z.number().int().min(0).max(fileBytes), mimeType: z.string() })
@@ -1297,7 +1296,7 @@ export function createAgentBrowserComputer(options: {
       }
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const capture = await createDownloadCapture(directory);
-      const anchor = target ? undefined : `otto-download-${randomUUID()}`;
+      const anchor = target ? undefined : `nod-download-${randomUUID()}`;
       try {
         if (anchor)
           await evaluate(

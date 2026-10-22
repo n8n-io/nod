@@ -1,7 +1,7 @@
 import type { ReactNode, Ref } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { onboardingSteps, type OnboardingStep } from '../../../shared/onboarding';
-import { OttoGlyph } from '../../components/motion';
+import { NodGlyph } from '../../components/motion';
 import { Button } from '../../components/ui';
 
 type DisplayStep = OnboardingStep | 'notifications' | 'launchAtLogin';
@@ -33,8 +33,8 @@ export function OnboardingFrame({
         <div className="ob-brand" data-analytics-public>
           {!welcome && (
             <>
-              <OttoGlyph mode="still" />
-              <span>otto</span>
+              <NodGlyph mode="still" />
+              <span>nod</span>
             </>
           )}
         </div>

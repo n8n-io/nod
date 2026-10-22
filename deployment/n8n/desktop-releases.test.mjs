@@ -33,11 +33,11 @@ const asset = (id, name) => ({
 });
 const release = (overrides = {}) => ({
   id: 42,
-  tag_name: 'desktop-v0.2.0',
+  tag_name: 'nod-v0.2.0',
   draft: false,
   prerelease: true,
   published_at: '2026-10-04T12:00:00Z',
-  assets: [asset(101, 'release.json'), asset(102, 'Otto-arm64.zip'), asset(103, 'Otto-arm64.dmg')],
+  assets: [asset(101, 'release.json'), asset(102, 'nod-arm64.zip'), asset(103, 'nod-arm64.dmg')],
   author: { secret: 'synthetic-private-field' },
   ...overrides,
 });
@@ -51,7 +51,7 @@ test('N8ND-REQUEST and N8ND-TAG: only fixed repository URLs and exact request sh
       [
         release({
           tag_name: tag,
-          assets: [asset(104, `Otto-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`)],
+          assets: [asset(104, `nod-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`)],
         }),
       ],
       { params: { tag } },
@@ -68,7 +68,7 @@ test('N8ND-REQUEST and N8ND-TAG: only fixed repository URLs and exact request sh
     { params: { releaseId: '42', assetId: '102', filename: 'https://attacker.invalid' } },
     { params: { releaseId: '9007199254740993' } },
     { params: { tag: 'v0.2.0' } },
-    { params: { tag: 'desktop-v01.2.0' } },
+    { params: { tag: 'nod-v01.2.0' } },
     {
       params: { releaseId: '42', assetId: '102' },
       query: { version: '0.1.0', platform: 'linux-x64' },
@@ -95,7 +95,7 @@ test('N8ND-PUBLISHED: broker omits drafts, legacy tags, unknown assets and priva
   assert.equal(result.body[1].assets.length, 0);
   assert.equal(
     result.body[0].assets[1].browser_download_url,
-    `${base}/releases/42/assets/102/Otto-arm64.zip`,
+    `${base}/releases/42/assets/102/nod-arm64.zip`,
   );
   assert.doesNotMatch(
     JSON.stringify(result),
@@ -109,10 +109,10 @@ test('N8ND-INSTALLER: latest metadata pins the highest published current desktop
   const input = { query: { installer: 'true' } };
   const result = read(
     [
-      release({ tag_name: 'desktop-v0.9.0' }),
-      release({ id: 43, tag_name: 'desktop-v0.10.0' }),
-      release({ id: 44, tag_name: 'desktop-v0.10.0-beta.1' }),
-      release({ id: 45, tag_name: 'desktop-v9.0.0', draft: true }),
+      release({ tag_name: 'nod-v0.9.0' }),
+      release({ id: 43, tag_name: 'nod-v0.10.0' }),
+      release({ id: 44, tag_name: 'nod-v0.10.0-beta.1' }),
+      release({ id: 45, tag_name: 'nod-v9.0.0', draft: true }),
       release({ id: 46, tag_name: 'v99.0.0' }),
       release({ id: 47, tag_name: `runtime-darwin-arm64-${'b'.repeat(64)}` }),
     ],
@@ -125,7 +125,7 @@ test('N8ND-INSTALLER: latest metadata pins the highest published current desktop
       version: '0.10.0',
       releaseId: 43,
       disk: {
-        url: `${base}/releases/43/assets/103/Otto-arm64.dmg`,
+        url: `${base}/releases/43/assets/103/nod-arm64.dmg`,
         bytes: 1234,
         sha256: 'a'.repeat(64),
       },
@@ -134,13 +134,13 @@ test('N8ND-INSTALLER: latest metadata pins the highest published current desktop
   });
   assert.equal(read([], input).status, 404);
   assert.equal(
-    read([release(), release({ id: 43, tag_name: 'desktop-v1.0.0', assets: [] })], input).status,
+    read([release(), release({ id: 43, tag_name: 'nod-v1.0.0', assets: [] })], input).status,
     503,
   );
-  assert.equal(read([release({ assets: [asset(103, 'Otto-arm64.dmg')] })], input).status, 503);
+  assert.equal(read([release({ assets: [asset(103, 'nod-arm64.dmg')] })], input).status, 503);
   const pages = [
     { statusCode: 200, body: [release()] },
-    { statusCode: 200, body: [release({ id: 43, tag_name: 'desktop-v0.3.0' })] },
+    { statusCode: 200, body: [release({ id: 43, tag_name: 'nod-v0.3.0' })] },
   ];
   assert.equal(releaseResponse(pages, checkRequest(input), base).body.version, '0.3.0');
   const full = Array.from({ length: 5 }, () => ({
@@ -151,29 +151,29 @@ test('N8ND-INSTALLER: latest metadata pins the highest published current desktop
 });
 
 test('N8ND-PIN: asset resolution binds release, asset ID and filename including replacement races', () => {
-  const input = { params: { releaseId: '42', assetId: '102', filename: 'Otto-arm64.zip' } };
+  const input = { params: { releaseId: '42', assetId: '102', filename: 'nod-arm64.zip' } };
   assert.deepEqual(read(release(), input), {
-    assetUrl: 'https://api.github.com/repos/n8n-io/otto/releases/assets/102',
+    assetUrl: 'https://api.github.com/repositories/1387586059/releases/assets/102',
   });
   assert.equal(read(release({ id: 43 }), input).status, 404);
   assert.equal(
-    read(release(), { params: { ...input.params, filename: 'Otto-arm64.dmg' } }).status,
+    read(release(), { params: { ...input.params, filename: 'nod-arm64.dmg' } }).status,
     404,
   );
-  assert.equal(read(release({ assets: [asset(200, 'Otto-arm64.zip')] }), input).status, 404);
+  assert.equal(read(release({ assets: [asset(200, 'nod-arm64.zip')] }), input).status, 404);
   assert.equal(
     read(
       release({
-        assets: [asset(102, 'Otto-arm64.zip'), asset(200, 'Otto-arm64.zip')],
+        assets: [asset(102, 'nod-arm64.zip'), asset(200, 'nod-arm64.zip')],
       }),
       input,
     ).status,
     503,
   );
-  const name = 'Otto-arm64.dmg';
+  const name = 'nod-arm64.dmg';
   const installer = { params: { releaseId: '42', assetId: '103', filename: name } };
   assert.deepEqual(read(release({ assets: [asset(103, name)] }), installer), {
-    assetUrl: 'https://api.github.com/repos/n8n-io/otto/releases/assets/103',
+    assetUrl: 'https://api.github.com/repositories/1387586059/releases/assets/103',
   });
   assert.equal(read(release({ assets: [asset(104, name)] }), installer).status, 404);
   assert.equal(
@@ -193,7 +193,7 @@ test('N8ND-PIN: asset resolution binds release, asset ID and filename including 
   assert.equal(
     read(
       release({
-        assets: [asset(102, 'Otto-arm64.zip'), { ...asset(200, 'release.json'), digest: null }],
+        assets: [asset(102, 'nod-arm64.zip'), { ...asset(200, 'release.json'), digest: null }],
       }),
       input,
     ).status,
@@ -242,24 +242,24 @@ test('N8ND-FEED: native feed uses the exact newer app ZIP and handles version or
   assert.deepEqual(result, {
     status: 200,
     body: {
-      url: `${base}/releases/42/assets/102/Otto-arm64.zip`,
-      name: 'Otto 0.2.0',
+      url: `${base}/releases/42/assets/102/nod-arm64.zip`,
+      name: 'nod 0.2.0',
       pub_date: '2026-10-04T12:00:00Z',
     },
   });
   assert.equal(read(release(), input('0.2.0')).status, 204);
   assert.equal(read(release(), input('0.3.0')).status, 204);
   assert.equal(
-    read(release({ tag_name: 'desktop-v0.2.0-alpha.2' }), input('0.2.0-alpha.10')).status,
+    read(release({ tag_name: 'nod-v0.2.0-alpha.2' }), input('0.2.0-alpha.10')).status,
     204,
   );
   assert.equal(
-    read(release({ tag_name: 'desktop-v0.2.0-alpha.10' }), input('0.2.0-alpha.2')).status,
+    read(release({ tag_name: 'nod-v0.2.0-alpha.10' }), input('0.2.0-alpha.2')).status,
     200,
   );
-  assert.equal(read(release({ tag_name: 'desktop-v0.2.0-alpha' }), input('0.2.0')).status, 204);
+  assert.equal(read(release({ tag_name: 'nod-v0.2.0-alpha' }), input('0.2.0')).status, 204);
   assert.equal(
-    read(release({ assets: [asset(102, 'Otto-arm64.dmg')] }), input('0.1.0')).status,
+    read(release({ assets: [asset(102, 'nod-arm64.dmg')] }), input('0.1.0')).status,
     404,
   );
   assert.equal(
@@ -294,7 +294,7 @@ test('N8ND-REDIRECT: archive resolution exposes only an exact HTTPS GitHub downl
 });
 
 test('N8ND-METADATA200: bounded JSON bytes and digest are verified before direct delivery', () => {
-  const body = JSON.stringify({ name: 'Otto \u00e1', version: '0.2.0' });
+  const body = JSON.stringify({ name: 'nod \u00e1', version: '0.2.0' });
   const digest = (value) => `sha256:${createHash('sha256').update(value).digest('hex')}`;
   const metadataAsset = {
     ...asset(101, 'release.json'),
@@ -335,7 +335,7 @@ test('N8ND-METADATA200: bounded JSON bytes and digest are verified before direct
     503,
   );
   const archive = read(release(), {
-    params: { releaseId: '42', assetId: '102', filename: 'Otto-arm64.zip' },
+    params: { releaseId: '42', assetId: '102', filename: 'nod-arm64.zip' },
   });
   assert.equal(method(archive), 'HEAD');
   assert.equal(execute({ statusCode: 200, body }, archive).status, 503);
@@ -358,7 +358,7 @@ test('N8ND-CONFIG: actual embedded request pipeline gates credentialed metadata 
   const nodes = workflowNodes();
   const requestNode = nodes.find((entry) => entry.name === 'Check desktop request');
   const responseNode = nodes.find((entry) => entry.name === 'Build desktop response');
-  const input = { params: { releaseId: '42', assetId: '102', filename: 'Otto-arm64.zip' } };
+  const input = { params: { releaseId: '42', assetId: '102', filename: 'nod-arm64.zip' } };
   const request = new Function('$input', requestNode.parameters.jsCode)({
     first: () => ({ json: input }),
   })[0].json;
@@ -366,7 +366,10 @@ test('N8ND-CONFIG: actual embedded request pipeline gates credentialed metadata 
     { all: () => [{ json: { statusCode: 200, body: release() } }] },
     () => ({ first: () => ({ json: request }) }),
   )[0].json;
-  assert.equal(result.assetUrl, 'https://api.github.com/repos/n8n-io/otto/releases/assets/102');
+  assert.equal(
+    result.assetUrl,
+    'https://api.github.com/repositories/1387586059/releases/assets/102',
+  );
   for (const entry of nodes.filter((value) => value.credentials)) {
     assert.equal(entry.type, 'n8n-nodes-base.httpRequest');
     assert.equal(entry.parameters.options.redirect.redirect.followRedirects, false);
@@ -378,7 +381,7 @@ test('N8ND-CONFIG: actual embedded request pipeline gates credentialed metadata 
 test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an older runtime tag', async () => {
   const fingerprint = 'b'.repeat(64);
   const archive = {
-    file: `Otto-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`,
+    file: `nod-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`,
     bytes: 1234,
     sha256: 'a'.repeat(64),
   };
@@ -386,8 +389,8 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
   const appRelease = release({
     assets: [
       asset(101, 'release.json'),
-      asset(102, 'Otto-arm64.zip'),
-      asset(103, 'Otto-arm64.dmg'),
+      asset(102, 'nod-arm64.zip'),
+      asset(103, 'nod-arm64.dmg'),
       asset(104, 'runtime-release.json'),
     ],
   });
@@ -401,8 +404,8 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
     platform: 'darwin-arm64',
     source: 'd'.repeat(40),
     signing: { mode: 'self-signed' },
-    disk: { file: 'Otto-arm64.dmg', bytes: 1234, sha256: 'a'.repeat(64) },
-    update: { file: 'Otto-arm64.zip', bytes: 1234, sha256: 'a'.repeat(64) },
+    disk: { file: 'nod-arm64.dmg', bytes: 1234, sha256: 'a'.repeat(64) },
+    update: { file: 'nod-arm64.zip', bytes: 1234, sha256: 'a'.repeat(64) },
     runtime,
   };
   const unrelated = Array.from({ length: 100 }, (_, index) =>
@@ -415,7 +418,7 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
   const list = [appRelease, ...unrelated];
   const requests = [];
   const counted = [];
-  const profile = await mkdtemp(join(tmpdir(), 'otto-update-week-'));
+  const profile = await mkdtemp(join(tmpdir(), 'nod-update-week-'));
   const metadata = new Map([
     [101, manifest],
     [104, runtime],
@@ -522,14 +525,14 @@ test('legacy runtime tag lookup stays exact and only a missing release starts al
     tag,
   );
   assert.deepEqual(releaseResponse([{ statusCode: 404 }], request, base), {
-    aliasApiUrl: 'https://api.github.com/repos/n8n-io/otto/releases?per_page=100',
+    aliasApiUrl: 'https://api.github.com/repositories/1387586059/releases?per_page=100',
   });
   assert.equal(releaseResponse([{ statusCode: 403 }], request, base).status, 503);
   const node = workflowNodes().find((entry) => entry.name === 'Build runtime alias response');
   const migrated = release({
     assets: [
       asset(110, `${tag}.json`),
-      asset(111, `Otto-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`),
+      asset(111, `nod-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`),
     ],
   });
   const result = new Function('$input', '$', node.parameters.jsCode)(
@@ -544,39 +547,39 @@ test('legacy runtime tag lookup stays exact and only a missing release starts al
 test('N8ND-WEEKLY: a valid weekly update check becomes one anonymous PostHog event, never with the IP', async () => {
   const week = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
   const headers = {
-    'x-otto-week': week,
-    'x-otto-platform': 'win32-x64',
-    'x-otto-version': '0.4.1',
+    'x-nod-week': week,
+    'x-nod-platform': 'win32-x64',
+    'x-nod-version': '0.4.1',
     'x-forwarded-for': '203.0.113.7',
     'x-real-ip': '203.0.113.7',
   };
   assert.deepEqual(updateCheck(headers, posthog.key), {
     api_key: posthog.key,
-    event: 'otto_update_check',
+    event: 'nod_update_check',
     distinct_id: `week:${week}`,
     properties: {
       platform: 'win32-x64',
       app_version: '0.4.1',
-      analytics_schema: 'otto_v3',
+      analytics_schema: 'nod_v3',
       environment: 'production',
       $process_person_profile: false,
       $geoip_disable: true,
     },
   });
   assert.equal(
-    updateCheck({ ...headers, 'x-otto-version': '0.5.0-beta.1' }, posthog.key).properties
+    updateCheck({ ...headers, 'x-nod-version': '0.5.0-beta.1' }, posthog.key).properties
       .environment,
     'development',
   );
   for (const invalid of [
     undefined,
     {},
-    { ...headers, 'x-otto-week': undefined },
-    { ...headers, 'x-otto-week': 'local:203.0.113.7' },
-    { ...headers, 'x-otto-week': ['aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'] },
-    { ...headers, 'x-otto-platform': 'linux-x64' },
-    { ...headers, 'x-otto-version': undefined },
-    { ...headers, 'x-otto-version': '203.0.113.7/private' },
+    { ...headers, 'x-nod-week': undefined },
+    { ...headers, 'x-nod-week': 'local:203.0.113.7' },
+    { ...headers, 'x-nod-week': ['aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'] },
+    { ...headers, 'x-nod-platform': 'linux-x64' },
+    { ...headers, 'x-nod-version': undefined },
+    { ...headers, 'x-nod-version': '203.0.113.7/private' },
   ])
     assert.equal(updateCheck(invalid, posthog.key), null);
 
@@ -602,7 +605,7 @@ test('N8ND-WEEKLY: a valid weekly update check becomes one anonymous PostHog eve
 });
 
 test('N8ND-WEEKLY: the desktop weekly ID stays for its ISO week and is replaced the next week', async () => {
-  const profile = await mkdtemp(join(tmpdir(), 'otto-update-week-'));
+  const profile = await mkdtemp(join(tmpdir(), 'nod-update-week-'));
   let now = new Date('2026-10-19T00:00:00Z');
   const weeklyId = createWeeklyId(join(profile, 'update-week.json'), () => now);
   const first = await weeklyId();

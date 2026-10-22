@@ -103,7 +103,7 @@ export default scenario({
   stance: 'regression',
   seconds: 600,
   user: {
-    approve: (action) => action === 'OTTO_schedule_create',
+    approve: (action) => action === 'NOD_schedule_create',
     persona:
       'You are Alex Rivera, a freelance designer who lives in Madrid. "My agenda" means the events in your Google Calendar for that day, sent to you here in the chat. The Friday reminder is just a message here in the chat telling you to send your invoices. You want both schedules to keep running; you never asked anyone to cancel them.',
   },

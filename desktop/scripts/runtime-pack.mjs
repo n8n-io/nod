@@ -19,10 +19,10 @@ import {
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const assets = resolve(
-  process.env.OTTO_RUNTIME_ASSETS || join(repository, '.local/desktop-runtime-assets'),
+  process.env.NOD_RUNTIME_ASSETS || join(repository, '.local/desktop-runtime-assets'),
 );
 const output = resolve(
-  process.env.OTTO_RUNTIME_RELEASE_DIR || join(repository, '.local/desktop-runtime-release'),
+  process.env.NOD_RUNTIME_RELEASE_DIR || join(repository, '.local/desktop-runtime-release'),
 );
 const signed = process.argv.includes('--release');
 const buildLock = JSON.parse(
@@ -32,12 +32,12 @@ const notices = new Set(['licenses/COMPONENTS.md', ...buildLock.notices.map((ite
 const configuration = signed ? signingConfiguration() : undefined;
 const inputs = await runtimeInputs();
 if (
-  process.env.OTTO_EXPECTED_RUNTIME_FINGERPRINT &&
-  process.env.OTTO_EXPECTED_RUNTIME_FINGERPRINT !== inputs.fingerprint
+  process.env.NOD_EXPECTED_RUNTIME_FINGERPRINT &&
+  process.env.NOD_EXPECTED_RUNTIME_FINGERPRINT !== inputs.fingerprint
 )
   throw new Error('The requested runtime fingerprint does not match these inputs.');
-const baseUrl = process.env.OTTO_RUNTIME_RELEASE_BASE_URL;
-const exactUrl = process.env.OTTO_RUNTIME_RELEASE_URL;
+const baseUrl = process.env.NOD_RUNTIME_RELEASE_BASE_URL;
+const exactUrl = process.env.NOD_RUNTIME_RELEASE_URL;
 if (baseUrl && exactUrl) throw new Error('Choose one runtime release URL setting.');
 if (baseUrl) runtimeUrl(baseUrl);
 if (exactUrl) runtimeUrl(exactUrl);
@@ -138,7 +138,7 @@ for (const path of (await entries(assets)).sort()) {
   });
 }
 const id = createHash('sha256').update(JSON.stringify(files)).digest('hex');
-const file = `Otto-Runtime-${inputs.platform}-${id.slice(0, 12)}.tar.gz`;
+const file = `nod-Runtime-${inputs.platform}-${id.slice(0, 12)}.tar.gz`;
 const path = join(output, file);
 let archive;
 try {
@@ -151,7 +151,7 @@ try {
     archive = saved.archive;
 } catch {}
 if (!archive) {
-  console.log('Creating the verified Otto Runtime pack.');
+  console.log('Creating the verified nod Runtime pack.');
   await rm(`${path}.tmp`, { force: true });
   const images = ['images/postgres.tar.zst', 'images/workspace.tar.zst', 'images/browser.tar.zst'];
   await create(
@@ -168,8 +168,8 @@ if (configured) runtimeUrl(configured, file);
 const release = {
   version: 1,
   platform: inputs.platform,
-  ...(process.env.OTTO_RUNTIME_RELEASE_TAG
-    ? { releaseTag: process.env.OTTO_RUNTIME_RELEASE_TAG }
+  ...(process.env.NOD_RUNTIME_RELEASE_TAG
+    ? { releaseTag: process.env.NOD_RUNTIME_RELEASE_TAG }
     : {}),
   id,
   archive,

@@ -26,9 +26,9 @@ function PrivateFormFrame({
   return (
     <Element className={embedded ? 'credential-embedded' : 'credential-page'}>
       {!embedded && (
-        <a href="/" onClick={returnToChat} className="credential-brand" aria-label="Otto home">
+        <a href="/" onClick={returnToChat} className="credential-brand" aria-label="nod home">
           <BrandMark />
-          <span>otto</span>
+          <span>nod</span>
         </a>
       )}
       {children}
@@ -95,7 +95,7 @@ function PaymentForm({ id, embedded, onClose }: PrivateFormProps) {
         }
       } catch {
         if (!controller.signal.aborted && version === updates.current)
-          setError('This payment request is unavailable. Ask Otto to check the checkout.');
+          setError('This payment request is unavailable. Ask nod to check the checkout.');
       }
     };
     void refresh();
@@ -139,9 +139,7 @@ function PaymentForm({ id, embedded, onClose }: PrivateFormProps) {
     } catch {
       if (!controller.signal.aborted) {
         setStatus('uncertain');
-        setError(
-          'The result is not confirmed. Ask Otto to check the order before another attempt.',
-        );
+        setError('The result is not confirmed. Ask nod to check the order before another attempt.');
         try {
           const result = await api<{ status: PaymentStatus }>(`${path}/status`, {
             signal: controller.signal,
@@ -179,10 +177,10 @@ function PaymentForm({ id, embedded, onClose }: PrivateFormProps) {
         {saving || status === 'entering' ? (
           <Loading label="Submitting your card…" />
         ) : status === 'submitted' ? (
-          <p>Otto will check the result and continue your task in the same conversation.</p>
+          <p>nod will check the result and continue your task in the same conversation.</p>
         ) : status === 'uncertain' ? (
           <p>
-            The card may have reached the website. Ask Otto to check the order before another
+            The card may have reached the website. Ask nod to check the order before another
             attempt.
           </p>
         ) : status === 'expired' ? (
@@ -399,7 +397,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
       '/method',
       { methodId },
       submitted,
-      'This method could not continue. Ask Otto to check the sign-in page.',
+      'This method could not continue. Ask nod to check the sign-in page.',
     );
   }
   function useSaved(entryId: string) {
@@ -457,7 +455,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
               <Check size={24} />
             </div>
             <h1>{request?.kind === 'method' ? 'Continuing sign-in' : 'Details submitted'}</h1>
-            <p>Otto will continue from the website’s response.</p>
+            <p>nod will continue from the website’s response.</p>
             <BackToChat onClose={onClose} />
           </div>
         ) : request?.status === 'entering' ? (
@@ -479,8 +477,8 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
               {retried
                 ? 'Return to chat for the next step.'
                 : uncertain
-                  ? 'The sign-in may have reached the website. Ask Otto to check its result before another attempt.'
-                  : 'Ask Otto to check the sign-in page again.'}
+                  ? 'The sign-in may have reached the website. Ask nod to check its result before another attempt.'
+                  : 'Ask nod to check the sign-in page again.'}
             </p>
             {!retried && (
               <Button disabled={saving} onClick={() => void retry()}>

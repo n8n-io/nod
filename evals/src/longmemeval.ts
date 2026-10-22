@@ -84,7 +84,7 @@ async function attempt(
   model: string,
 ) {
   const outFile = join(directory, 'raw', `${item.question_id}.json`);
-  const specPath = join(tmpdir(), `otto-longmemeval-${randomUUID()}.json`);
+  const specPath = join(tmpdir(), `nod-longmemeval-${randomUUID()}.json`);
   await writeFile(specPath, JSON.stringify({ item, setups, model, outFile }));
   const child = spawn(
     process.execPath,
@@ -197,7 +197,7 @@ function markdown(
   manifest: Record<string, unknown>,
 ) {
   const lines = [
-    `# LongMemEval-S on Otto: ${manifest.label}`,
+    `# LongMemEval-S on nod: ${manifest.label}`,
     '',
     `Model ${manifest.model}, judge ${manifest.judge}, commit ${manifest.commit}, ${summary.questions} questions, $${summary.totalCostUsd.toFixed(2)} total.`,
     '',

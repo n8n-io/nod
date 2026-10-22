@@ -38,8 +38,8 @@ function command(program, args, stdio = 'inherit', signal = interruption.signal)
 if (process.argv.includes('--run')) {
   if (
     process.platform !== 'linux' ||
-    process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true' ||
-    !process.env.OTTO_TEST_BROWSER_EXECUTABLE ||
+    process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true' ||
+    !process.env.NOD_TEST_BROWSER_EXECUTABLE ||
     !process.env.TEST_DATABASE_URL
   ) {
     throw new Error('Integration tests require the Linux browser and PostgreSQL fixtures.');
@@ -54,9 +54,9 @@ if (process.argv.includes('--run')) {
   });
   await pipeline(tests, new spec(), process.stdout);
 } else {
-  const name = `otto-tests-${randomUUID()}`;
+  const name = `nod-tests-${randomUUID()}`;
   const database = `${name}-db`;
-  const image = 'otto-integration-browser';
+  const image = 'nod-integration-browser';
   const cleanup = async () => {
     await command('docker', ['rm', '--force', name, database], 'ignore', null).catch(() => {});
     await command('docker', ['network', 'rm', name], 'ignore', null).catch(() => {});
@@ -88,25 +88,18 @@ if (process.argv.includes('--run')) {
       '--tmpfs',
       '/var/lib/postgresql/data',
       '--env',
-      'POSTGRES_USER=otto',
+      'POSTGRES_USER=nod',
       '--env',
-      'POSTGRES_PASSWORD=otto-test',
+      'POSTGRES_PASSWORD=nod-test',
       '--env',
-      'POSTGRES_DB=otto_test',
+      'POSTGRES_DB=nod_test',
       'postgres:17-alpine',
     ]);
     let ready = false;
     for (let attempt = 0; attempt < 60; attempt++) {
       ready = await command(
         'docker',
-        [
-          'exec',
-          database,
-          'pg_isready',
-          '--host=127.0.0.1',
-          '--username=otto',
-          '--dbname=otto_test',
-        ],
+        ['exec', database, 'pg_isready', '--host=127.0.0.1', '--username=nod', '--dbname=nod_test'],
         'ignore',
       ).then(
         () => true,
@@ -140,11 +133,11 @@ if (process.argv.includes('--run')) {
       '--tmpfs',
       '/app/.local:uid=1000,gid=1000',
       '--env',
-      `TEST_DATABASE_URL=postgresql://otto:otto-test@${database}:5432/otto_test`,
+      `TEST_DATABASE_URL=postgresql://nod:nod-test@${database}:5432/nod_test`,
       '--env',
-      'OTTO_TEST_NATIVE_DOWNLOAD=true',
+      'NOD_TEST_NATIVE_DOWNLOAD=true',
       '--env',
-      'OTTO_TEST_BROWSER_EXECUTABLE=/usr/bin/chromium',
+      'NOD_TEST_BROWSER_EXECUTABLE=/usr/bin/chromium',
       ...mounts,
       '--init',
       '--entrypoint',

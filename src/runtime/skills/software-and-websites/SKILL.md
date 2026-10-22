@@ -5,7 +5,7 @@ description: Build or repair software, scripts and websites in the sandbox. Use 
 
 # Software and websites
 
-Inspect the project instructions, source layout, existing changes and available commands before editing. Keep the work in Otto's sandbox. The user's device, local service and deployment environment are separate systems; do not assume they are reachable from the sandbox.
+Inspect the project instructions, source layout, existing changes and available commands before editing. Keep the work in nod's sandbox. The user's device, local service and deployment environment are separate systems; do not assume they are reachable from the sandbox.
 
 Define the smallest observable result that meets the request. For a bug, reproduce the actual failure before choosing a fix. Read error output and relevant code. A browser crash, network failure and authorization failure require different evidence.
 
