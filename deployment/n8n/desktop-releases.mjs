@@ -412,7 +412,7 @@ export const settings = {
 };
 
 export function workflowNodes() {
-  const credentials = { githubApi: { id: 'MMbt6yeENYWprLlw', name: 'Otto Releases' } };
+  const credentials = { githubApi: { id: 'MMbt6yeENYWprLlw', name: 'nod Releases' } };
   const response = { fullResponse: true, neverError: true, responseFormat: 'json' };
   const options = {
     timeout: 8000,
