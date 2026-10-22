@@ -13,7 +13,7 @@ import remarkGfm from 'remark-gfm';
 import { Download, ExternalLink, FileText, Folder } from 'lucide-react';
 import { safeMessageLink } from '../lib/message-links';
 import { formatNumber } from '../lib/date-format';
-import { fileSize } from '../lib/attachment-kind';
+import { fileSize, textPreviewBytes } from '../lib/attachment-kind';
 import { ownedArtifactUrl } from '../lib/attachment-url';
 import type { ImagePreview } from './attachment-images';
 import { FileGlyph } from './attachment-glyph';
@@ -44,15 +44,15 @@ const previewRows = 202;
 const previewColumns = 100;
 const previewCellLength = 10_000;
 const limits: Record<DataKind, number> = {
-  markdown: 4_000_000,
-  text: 4_000_000,
-  csv: 4_000_000,
-  html: 4_000_000,
-  spreadsheet: 4_000_000,
+  markdown: textPreviewBytes,
+  text: textPreviewBytes,
+  csv: textPreviewBytes,
+  html: textPreviewBytes,
+  spreadsheet: textPreviewBytes,
   document: 25_000_000,
   presentation: 60_000_000,
   archive: 100_000_000,
-  'n8n-workflow': 4_000_000,
+  'n8n-workflow': textPreviewBytes,
 };
 const WorkflowCanvas = lazy(() => import('./n8n-canvas'));
 const numberLike = /^[-+(]?[$€£¥]?\s?\d[\d,.\s]*%?\)?(?:\s?[$€£¥]|\s?[A-Z]{3})?$/;

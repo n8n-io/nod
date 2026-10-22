@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type { ChannelPairingRequest, MessagingAttachment } from '../../ports/messaging.ts';
 import { MessagingAttachmentError } from '../../ports/messaging.ts';
+import { contactAttachment, locationAttachment, telegramContactCard } from './content.ts';
+import { sharedLocation } from '../../shared/channel-content.ts';
 
 const telegramFile = z.object({
   file_id: z.string().min(1).max(512),
@@ -25,6 +27,27 @@ export const telegramMessage = z.object({
   voice: telegramFile.optional(),
   animation: telegramFile.optional(),
   video_note: telegramFile.optional(),
+  location: sharedLocation.optional(),
+  venue: z
+    .object({ location: sharedLocation, title: z.string().max(200), address: z.string().max(500) })
+    .optional(),
+  contact: z
+    .object({
+      first_name: z.string().max(200),
+      last_name: z.string().max(200).optional(),
+      phone_number: z.string().max(100),
+      vcard: z
+        .string()
+        .max(256 * 1024)
+        .optional(),
+    })
+    .optional(),
+  sticker: telegramFile
+    .extend({
+      is_animated: z.boolean().default(false),
+      is_video: z.boolean().default(false),
+    })
+    .optional(),
   from: z.object({
     id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     is_bot: z.literal(false),
@@ -43,6 +66,14 @@ export function telegramAttachments(
   token: string,
   request: typeof fetch,
 ): MessagingAttachment[] {
+  if (message.venue)
+    return locationAttachment({
+      ...message.venue.location,
+      name: message.venue.title,
+      address: message.venue.address,
+    });
+  if (message.location) return locationAttachment(message.location);
+  if (message.contact) return contactAttachment([telegramContactCard(message.contact)]);
   const file =
     message.photo?.at(-1) ??
     message.document ??
@@ -50,22 +81,48 @@ export function telegramAttachments(
     message.audio ??
     message.voice ??
     message.animation ??
-    message.video_note;
+    message.video_note ??
+    message.sticker;
   if (!file) return [];
   const image = Boolean(message.photo?.length);
   const video = Boolean(message.video || message.video_note || message.animation);
   const voice = Boolean(message.voice);
+  const sticker = message.sticker;
   const mimeType = image
     ? 'image/jpeg'
-    : (file.mime_type ?? (voice ? 'audio/ogg' : video ? 'video/mp4' : 'application/octet-stream'));
+    : (file.mime_type ??
+      (sticker
+        ? sticker.is_video
+          ? 'video/webm'
+          : sticker.is_animated
+            ? 'application/x-tgsticker'
+            : 'image/webp'
+        : voice
+          ? 'audio/ogg'
+          : video
+            ? 'video/mp4'
+            : 'application/octet-stream'));
   return [
     {
       name:
         file.file_name ??
-        (image ? 'photo.jpg' : voice ? 'voice.ogg' : video ? 'video.mp4' : 'file'),
+        (sticker
+          ? sticker.is_video
+            ? 'sticker.webm'
+            : sticker.is_animated
+              ? 'sticker.tgs'
+              : 'sticker.webp'
+          : image
+            ? 'photo.jpg'
+            : voice
+              ? 'voice.ogg'
+              : video
+                ? 'video.mp4'
+                : 'file'),
       mimeType,
       size: file.file_size ?? 0,
       ...(voice ? { voice: true } : {}),
+      ...(sticker ? { source: 'sticker' as const } : {}),
       async read(signal) {
         const operation = AbortSignal.any([
           AbortSignal.timeout(60_000),

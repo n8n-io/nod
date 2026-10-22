@@ -14,6 +14,7 @@ import type {
 } from '../../ports/messaging.ts';
 import { telegramSecret, telegramUserId } from '../../ports/channel-settings.ts';
 import { telegramMessage, telegramPairing, telegramAttachments } from './telegram.ts';
+import { contactCards, sharedLocation } from '../../shared/channel-content.ts';
 
 type Environment = Record<string, string | undefined>;
 
@@ -534,6 +535,8 @@ export function createChatSdkTransport(
         attachments.length === 1 &&
         !unsent.length &&
         !attachments[0].mimeType.startsWith('audio/') &&
+        !/^(?:text\/(?:x-)?vcard)$/.test(attachments[0].mimeType) &&
+        attachments[0].name !== 'location.json' &&
         input.text.trim() &&
         input.text.length <= 1024
           ? input.text
@@ -600,6 +603,82 @@ export function createChatSdkTransport(
             }
           unsent.push(file);
           continue;
+        }
+        if (
+          input.channelId === 'telegram' &&
+          bytes.length === file.size &&
+          ((/^(?:text\/(?:x-)?vcard)$/.test(file.mimeType) && bytes.length <= 2048) ||
+            (file.name === 'location.json' && bytes.length <= 4096))
+        ) {
+          const text = new TextDecoder().decode(bytes);
+          const contacts = /^(?:text\/(?:x-)?vcard)$/.test(file.mimeType) ? contactCards(text) : [];
+          let location;
+          try {
+            if (file.name === 'location.json')
+              location = sharedLocation.safeParse(JSON.parse(text));
+          } catch {}
+          const native =
+            contacts.length === 1 &&
+            /^\+?(?:[\s().-]*\d)+[\s().-]*$/.test(contacts[0].phones[0] ?? '')
+              ? contacts.map((contact) => ({
+                  method: 'sendContact',
+                  data: {
+                    phone_number: contact.phones[0],
+                    first_name: contact.name,
+                    vcard: contact.vcard,
+                  },
+                }))
+              : location?.success
+                ? [
+                    {
+                      method: 'sendLocation',
+                      data: {
+                        latitude: location.data.latitude,
+                        longitude: location.data.longitude,
+                      },
+                    },
+                  ]
+                : [];
+          const decoded = telegram!.decodeThreadId(input.threadId);
+          for (const message of native) {
+            const response = await request(
+              `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${message.method}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: decoded.chatId,
+                  ...(decoded.messageThreadId
+                    ? { message_thread_id: decoded.messageThreadId }
+                    : {}),
+                  ...(input.replyToMessageId
+                    ? {
+                        reply_parameters: {
+                          message_id: Number(input.replyToMessageId.split(':').at(-1)),
+                        },
+                      }
+                    : {}),
+                  ...message.data,
+                }),
+                signal: AbortSignal.timeout(60_000),
+                redirect: 'error',
+              },
+            );
+            if (!response.ok) {
+              await response.body?.cancel().catch(() => {});
+              throw new Error('Message delivery was not confirmed.');
+            }
+            const sent = z
+              .object({
+                ok: z.literal(true),
+                result: z.object({ message_id: z.number().int().positive() }),
+              })
+              .parse(await response.json());
+            const nativeId = `${decoded.chatId}:${sent.result.message_id}`;
+            id ||= nativeId;
+            ids.push(nativeId);
+          }
+          if (native.length) continue;
         }
         await post({
           markdown: caption,

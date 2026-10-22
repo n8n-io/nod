@@ -123,7 +123,12 @@ export interface RuntimeContext {
   tasks?: import('../shared/contracts.ts').Task[];
   workspacePath: string;
   signal: AbortSignal;
-  attachments: Array<{ path: string; mimeType: string; workspaceFile?: string }>;
+  attachments: Array<{
+    path: string;
+    mimeType: string;
+    workspaceFile?: string;
+    source?: Artifact['source'];
+  }>;
   emit(type: string, summary: string, event?: ExecutionEvent): Promise<void>;
   reply(text: string, streamId?: string, replyToMessageId?: string): Promise<void>;
   reactToMessage?(

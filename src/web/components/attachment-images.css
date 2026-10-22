@@ -33,6 +33,20 @@
   cursor: zoom-in;
 }
 
+.attachment-image-gallery.is-single:has(> .is-sticker) {
+  width: 180px;
+}
+
+.attachment-image-tile.is-sticker {
+  height: 180px;
+  border: 0;
+  background: transparent;
+}
+
+.attachment-image-tile.is-sticker img {
+  object-fit: contain;
+}
+
 .attachment-image-gallery.is-grid .attachment-image-tile {
   height: 122px;
 }

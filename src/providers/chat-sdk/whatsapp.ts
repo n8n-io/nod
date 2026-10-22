@@ -25,6 +25,8 @@ import type {
   MessagingTransport,
 } from '../../ports/messaging.ts';
 import type { ChannelLinkStatus } from '../../shared/contracts.ts';
+import { contactAttachment, locationAttachment } from './content.ts';
+import { contactCards, sharedLocation } from '../../shared/channel-content.ts';
 
 const silent: SocketConfig['logger'] = {
   level: 'silent',
@@ -206,6 +208,20 @@ export function createWhatsAppLinkedTransport(options: {
   }
   function attachment(message: WAMessage): MessagingAttachment[] {
     const content = normalizeMessageContent(message.message);
+    const location = content?.locationMessage ?? content?.liveLocationMessage;
+    if (location)
+      return locationAttachment({
+        latitude: location.degreesLatitude,
+        longitude: location.degreesLongitude,
+        ...('name' in location && location.name ? { name: location.name.slice(0, 200) } : {}),
+        ...('address' in location && location.address
+          ? { address: location.address.slice(0, 500) }
+          : {}),
+      });
+    const contacts = content?.contactMessage
+      ? [content.contactMessage]
+      : content?.contactsArrayMessage?.contacts;
+    if (contacts) return contactAttachment(contacts.map((contact) => contact.vcard ?? ''));
     const media =
       content?.imageMessage ??
       content?.documentMessage ??
@@ -214,26 +230,38 @@ export function createWhatsAppLinkedTransport(options: {
       content?.stickerMessage;
     if (!media) return [];
     const image = Boolean(content?.imageMessage || content?.stickerMessage);
+    const sticker = Boolean(content?.stickerMessage);
     const audio = Boolean(content?.audioMessage);
     const voice = Boolean(content?.audioMessage?.ptt);
     const mimeType =
       media.mimetype ??
-      (image
-        ? 'image/jpeg'
-        : audio
-          ? 'audio/ogg'
-          : content?.videoMessage
-            ? 'video/mp4'
-            : 'application/octet-stream');
+      (sticker
+        ? 'image/webp'
+        : image
+          ? 'image/jpeg'
+          : audio
+            ? 'audio/ogg'
+            : content?.videoMessage
+              ? 'video/mp4'
+              : 'application/octet-stream');
     const name =
       content?.documentMessage?.fileName?.slice(0, 255) ||
-      (image ? 'image.jpg' : audio ? 'voice.ogg' : content?.videoMessage ? 'video.mp4' : 'file');
+      (sticker
+        ? 'sticker.webp'
+        : image
+          ? 'image.jpg'
+          : audio
+            ? 'voice.ogg'
+            : content?.videoMessage
+              ? 'video.mp4'
+              : 'file');
     return [
       {
         name,
         mimeType,
         size: Number(media.fileLength ?? 0),
         voice,
+        ...(sticker ? { source: 'sticker' as const } : {}),
         async read(signal) {
           const operation = AbortSignal.any([
             lifetime.signal,
@@ -327,6 +355,11 @@ export function createWhatsAppLinkedTransport(options: {
       content.imageMessage?.contextInfo ??
       content.videoMessage?.contextInfo ??
       content.audioMessage?.contextInfo ??
+      content.stickerMessage?.contextInfo ??
+      content.locationMessage?.contextInfo ??
+      content.liveLocationMessage?.contextInfo ??
+      content.contactMessage?.contextInfo ??
+      content.contactsArrayMessage?.contextInfo ??
       content.documentMessage?.contextInfo;
     incoming.push({
       channelId: 'whatsapp',
@@ -566,6 +599,8 @@ export function createWhatsAppLinkedTransport(options: {
       const caption =
         input.attachments?.length === 1 &&
         !input.attachments[0].mimeType.startsWith('audio/') &&
+        !/^(?:text\/(?:x-)?vcard)$/.test(input.attachments[0].mimeType) &&
+        input.attachments[0].name !== 'location.json' &&
         text.length <= 1024
           ? text
           : '';
@@ -577,6 +612,50 @@ export function createWhatsAppLinkedTransport(options: {
           throw new Error('The WhatsApp file is too large.');
         const bytes = Buffer.from(await file.read(lifetime.signal));
         if (bytes.length !== file.size) throw new Error('The WhatsApp file has changed.');
+        if (file.name === 'location.json' && bytes.length <= 4096) {
+          let location;
+          try {
+            location = sharedLocation.safeParse(JSON.parse(bytes.toString('utf8')));
+          } catch {}
+          if (location?.success) {
+            ids.push(
+              await send(
+                input.threadId,
+                {
+                  location: {
+                    degreesLatitude: location.data.latitude,
+                    degreesLongitude: location.data.longitude,
+                    ...(location.data.name ? { name: location.data.name } : {}),
+                    ...(location.data.address ? { address: location.data.address } : {}),
+                  },
+                },
+                quote,
+              ),
+            );
+            continue;
+          }
+        }
+        const contacts = /^(?:text\/(?:x-)?vcard)$/.test(file.mimeType)
+          ? contactCards(bytes.toString('utf8'))
+          : [];
+        if (contacts.length) {
+          ids.push(
+            await send(
+              input.threadId,
+              {
+                contacts: {
+                  displayName: contacts[0].name,
+                  contacts: contacts.map((contact) => ({
+                    displayName: contact.name,
+                    vcard: contact.vcard,
+                  })),
+                },
+              },
+              quote,
+            ),
+          );
+          continue;
+        }
         const media = file.mimeType.startsWith('image/')
           ? { image: bytes, mimetype: file.mimeType }
           : file.mimeType.startsWith('video/')

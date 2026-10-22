@@ -15,6 +15,7 @@ const mimeTypes: Record<string, string> = {
   '.md': 'text/markdown',
   '.csv': 'text/csv',
   '.json': 'application/json',
+  '.vcf': 'text/vcard',
   '.pdf': 'application/pdf',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',

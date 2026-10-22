@@ -13,6 +13,7 @@ export interface ImagePreview {
   size: number;
   mimeType?: string;
   downloadUrl?: string;
+  source?: Artifact['source'];
 }
 
 export interface AttachmentTrigger {
@@ -105,7 +106,7 @@ export function ImageGallery({ images }: { images: ImagePreview[] }) {
       {visible.map((image, index) => (
         <button
           type="button"
-          className={`attachment-image-tile is-${attachmentKind(image.mimeType ?? 'image/png', image.name)}${drawer.selectedId === image.id ? ' is-selected' : ''}`}
+          className={`attachment-image-tile is-${attachmentKind(image.mimeType ?? 'image/png', image.name)}${image.source === 'sticker' ? ' is-sticker' : ''}${drawer.selectedId === image.id ? ' is-selected' : ''}`}
           key={image.id}
           aria-label={`View ${itemLabel} ${index + 1} of ${images.length}`}
           aria-current={drawer.selectedId === image.id || undefined}

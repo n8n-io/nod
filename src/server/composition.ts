@@ -1495,6 +1495,7 @@ async function initializeApplication(
       present: communication.present,
       resolveAttachments: artifacts.readThreadArtifacts,
       media: createChannelMedia({ artifacts, speech }),
+      modelConfigured: () => adapters.model.configured,
       attributeMediaUsage: ledger.attributeMediaUsage,
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,

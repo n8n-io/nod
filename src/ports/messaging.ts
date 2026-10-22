@@ -23,6 +23,7 @@ export interface MessagingAttachment {
   mimeType: string;
   size: number;
   voice?: boolean;
+  source?: 'sticker' | 'location' | 'contact';
   read(signal?: AbortSignal): Promise<Uint8Array>;
 }
 

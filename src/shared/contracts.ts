@@ -6,7 +6,7 @@ export interface Artifact {
   mimeType: string;
   size: number;
   url: string;
-  source?: 'browser_screenshot';
+  source?: 'browser_screenshot' | 'sticker' | 'location' | 'contact';
 }
 export type MessageReaction = string;
 export type AgentReactionResult =

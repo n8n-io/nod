@@ -1449,6 +1449,7 @@ test(
       chat: string;
     }> = [];
     const texts: string[] = [];
+    const native: { method: string; data: Record<string, unknown> }[] = [];
     let failDocument = false;
     t.mock.method(
       globalThis,
@@ -1472,6 +1473,13 @@ test(
               text: 'Fixture accepted',
             },
           });
+        }
+        if (/\/send(?:Contact|Location)$/.test(target)) {
+          const data = JSON.parse(String(init?.body));
+          native.push({ method: target.split('/').at(-1)!, data });
+          assert.equal(String(data.chat_id), '123456');
+          assert.equal(init?.redirect, 'error');
+          return Response.json({ ok: true, result: { message_id: 2000 + native.length } });
         }
         assert.match(
           target,
@@ -1652,6 +1660,36 @@ test(
         '123456:103',
       );
 
+      const contactText =
+        'BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Synthetic Contact\r\nTEL:+34600000000\r\nEND:VCARD';
+      for (const [name, mimeType, text] of [
+        ['contact.vcf', 'text/vcard', contactText],
+        ['location.json', 'application/json', JSON.stringify({ latitude: 41.4, longitude: 2.17 })],
+      ]) {
+        const artifact = await storeArtifact(Buffer.from(text), name, mimeType, threadId);
+        filePaths.push(join(dataRoot, 'artifacts', artifact.id));
+        const reply = await addReply(turnId, [artifact]);
+        await channels.drain();
+        assert.equal((await state(reply)).state, 'sent');
+      }
+      assert.deepEqual(
+        native.map((message) => message.method),
+        ['sendContact', 'sendLocation'],
+      );
+      assert.equal(native[0].data.vcard, contactText);
+      assert.equal(native[1].data.latitude, 41.4);
+      const grouped = await storeArtifact(
+        Buffer.from(`${contactText}\r\n${contactText}`),
+        'group.vcf',
+        'text/vcard',
+        threadId,
+      );
+      filePaths.push(join(dataRoot, 'artifacts', grouped.id));
+      const groupedReply = await addReply(turnId, [grouped]);
+      await channels.drain();
+      assert.equal((await state(groupedReply)).state, 'sent');
+      assert.equal(sent.at(-1)!.method, 'sendDocument');
+      assert.equal(native.length, 2);
       failDocument = true;
       const captionedImage = await addReply(turnId, [image], '**Image result**');
       const beforeCaption = texts.length;

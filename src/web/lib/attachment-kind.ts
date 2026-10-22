@@ -121,3 +121,5 @@ export function fileType(name: string) {
   if (/\.n8n\.json$/i.test(name)) return 'n8n workflow';
   return /\.([a-z0-9]{1,10})$/i.exec(name)?.[1].toUpperCase() ?? 'File';
 }
+
+export const textPreviewBytes = 4_000_000;

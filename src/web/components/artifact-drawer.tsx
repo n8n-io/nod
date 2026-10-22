@@ -35,6 +35,7 @@ import {
 import AttachmentData, { PreviewUnavailable } from './attachment-data';
 import PdfPreview from './attachment-pdf';
 import { Button } from './ui';
+import { SharedMessageCard } from './shared-message-card';
 
 const minimumWidth = 360;
 const minimumChat = 360;
@@ -245,6 +246,17 @@ const ArtifactView = memo(function ArtifactView({
   const fail = useCallback(() => setFailed(true), []);
   const kind = attachmentKind(item.mimeType ?? '', item.name);
   if (failed) return <PreviewUnavailable item={item} />;
+  if (
+    item.source === 'location' ||
+    item.source === 'contact' ||
+    item.name === 'location.json' ||
+    /\.vcf$/i.test(item.name)
+  )
+    return (
+      <div className="artifact-stage">
+        <SharedMessageCard item={item} />
+      </div>
+    );
   if (!kind) return <PreviewUnavailable item={item} message="No preview for this file type" />;
   if (kind === 'image' && mode === 'code' && ownedArtifactUrl(item.url))
     return <AttachmentData item={item} kind="text" mode="code" stage={stage} onDetail={onDetail} />;

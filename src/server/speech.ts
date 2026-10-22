@@ -4,12 +4,13 @@ import type { ProviderUsageEvent } from '../ports/provider-usage.ts';
 import { spendingLimitReached } from './ledger.ts';
 
 export class TranscriptionLengthError extends Error {}
+export class SpeechSetupError extends Error {}
 
 export function createSpeech(provider: SpeechProvider) {
   function available(signal?: AbortSignal) {
     signal?.throwIfAborted();
     if (!provider.configured)
-      throw Object.assign(new Error('Speech is not configured.'), { statusCode: 503 });
+      throw Object.assign(new SpeechSetupError('Speech is not configured.'), { statusCode: 503 });
   }
   return {
     async transcribe(

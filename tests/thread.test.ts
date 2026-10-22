@@ -1220,6 +1220,20 @@ test(
           assert.equal(ran(first.turnId)?.workspacePath, workspace);
           assert.equal(ran(first.turnId)?.attachments[0]?.path, join(workspace, staged));
           assert.equal(stagedReads.get('read attachment'), 'synthetic attachment bytes');
+          const sticker = await storeArtifact(
+            Buffer.from(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5ZkAAAAASUVORK5CYII=',
+              'base64',
+            ),
+            'sticker.png',
+            'image/png',
+          );
+          const stickerTurn = await thread.submitUserMessage('', [
+            { ...sticker, source: 'sticker' },
+          ]);
+          await waitFor(settled(stickerTurn.turnId));
+          assert.equal(ran(stickerTurn.turnId)?.prompt, '');
+          assert.equal(ran(stickerTurn.turnId)?.attachments[0]?.source, 'sticker');
           const second = await thread.submitUserMessage('use attachment again', [], {
             channel: 'web',
           });

@@ -3,7 +3,7 @@ import type { MessagingAttachment } from '../ports/messaging.ts';
 import { MessagingAttachmentError } from '../ports/messaging.ts';
 import type { ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
-import { TranscriptionLengthError } from './speech.ts';
+import { SpeechSetupError, TranscriptionLengthError } from './speech.ts';
 import { spendingLimitReached } from './ledger.ts';
 
 export class ChannelMediaFailure extends Error {
@@ -13,7 +13,8 @@ export class ChannelMediaFailure extends Error {
       | 'text_too_long'
       | 'spending_limit'
       | 'unavailable'
-      | 'transcription_unavailable',
+      | 'transcription_unavailable'
+      | 'speech_setup_required',
     readonly fileLimitMb?: number,
   ) {
     super(reason);
@@ -32,7 +33,12 @@ export function createChannelMedia(options: {
     ) {
       if (!attachments.length) throw new ChannelMediaFailure('unavailable');
       if (attachments.length > 10) throw new ChannelMediaFailure('too_large');
-      const files: { bytes: Buffer; name: string; mimeType: string }[] = [];
+      const files: {
+        bytes: Buffer;
+        name: string;
+        mimeType: string;
+        source?: MessagingAttachment['source'];
+      }[] = [];
       const transcripts: string[] = [];
       const usageIds = new Set<string>();
       const cleanup: Array<() => Promise<void>> = [];
@@ -68,6 +74,8 @@ export function createChannelMedia(options: {
             );
           } catch (error) {
             signal.throwIfAborted();
+            if (error instanceof SpeechSetupError)
+              throw new ChannelMediaFailure('speech_setup_required');
             if (error instanceof TranscriptionLengthError)
               throw new ChannelMediaFailure('text_too_long');
             if (error instanceof Error && error.message === spendingLimitReached)
@@ -75,7 +83,12 @@ export function createChannelMedia(options: {
             throw new ChannelMediaFailure('transcription_unavailable');
           }
         }
-        files.push({ bytes, name: attachment.name, mimeType: attachment.mimeType });
+        files.push({
+          bytes,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          source: attachment.source,
+        });
       }
       return {
         text: transcripts.join('\n\n'),
@@ -84,16 +97,15 @@ export function createChannelMedia(options: {
           const saved = [];
           for (const file of files) {
             signal.throwIfAborted();
-            saved.push(
-              await options.artifacts.storeArtifact(
-                file.bytes,
-                file.name,
-                file.mimeType,
-                threadId,
-                client,
-                (remove) => cleanup.push(remove),
-              ),
+            const artifact = await options.artifacts.storeArtifact(
+              file.bytes,
+              file.name,
+              file.mimeType,
+              threadId,
+              client,
+              (remove) => cleanup.push(remove),
             );
+            saved.push({ ...artifact, ...(file.source ? { source: file.source } : {}) });
           }
           return saved;
         },

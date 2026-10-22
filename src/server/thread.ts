@@ -973,7 +973,7 @@ async function drainNext(threadId: string) {
   console.error('The next turn could not be queued. It runs on the next message or start.');
 }
 
-type StoredAttachment = { id?: string; name?: string; mimeType?: string };
+type StoredAttachment = Partial<Pick<Artifact, 'id' | 'name' | 'mimeType' | 'source'>>;
 
 async function loadMessage(messageId: string | null) {
   const message = messageId
@@ -1218,10 +1218,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           signal,
         );
         stagedFiles.set(upload.id, name);
+        const source = items.find((item) => item.id === upload.id)?.source;
         staged.push({
           path: join(workspacePath, name),
           mimeType: upload.mime_type,
           workspaceFile: `/workspace/${threadId}/${name}`,
+          ...(source ? { source } : {}),
         });
       }
       return staged;
@@ -1235,6 +1237,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             attachments: files.map((file) => ({
               name: String(file?.name ?? ''),
               mimeType: String(file?.mimeType ?? ''),
+              ...(file.source ? { source: file.source } : {}),
               ...(file?.id && stagedFiles.has(file.id)
                 ? { workspaceFile: workspaceReference(stagedFiles.get(file.id)!) }
                 : {}),

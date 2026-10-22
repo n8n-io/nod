@@ -31,6 +31,73 @@ import { getHttpStream } from '@whiskeysockets/baileys';
 import { spendingLimitReached } from '../src/server/ledger.ts';
 import { ChannelMediaFailure } from '../src/server/channel-media.ts';
 import { runProcess } from '../src/providers/process.ts';
+import { loadAudioWaveform } from '../src/web/lib/audio-waveform.ts';
+import { contactCards } from '../src/shared/channel-content.ts';
+import { contactAttachment } from '../src/providers/chat-sdk/content.ts';
+
+test('audio waveform reads refuse foreign URLs, oversized streams, redirects and cancelled work', async (t) => {
+  const ids = Array.from({ length: 3 }, () => randomUUID());
+  let reads = 0;
+  let redirectReads = 0;
+  let started!: () => void;
+  const held = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const server = createServer((request, response) => {
+    reads++;
+    if (request.url === `/api/artifacts/${ids[0]}`) {
+      response.writeHead(200, { 'Content-Type': 'audio/ogg' });
+      response.end(Buffer.alloc(25 * 1024 * 1024 + 1));
+    } else if (request.url === `/api/artifacts/${ids[1]}`) {
+      response.writeHead(200, { 'Content-Type': 'audio/ogg' });
+      response.write('OggS');
+      started();
+    } else if (request.url === `/api/artifacts/${ids[2]}`) {
+      response.writeHead(302, { Location: '/foreign' });
+      response.end();
+    } else {
+      redirectReads++;
+      response.end();
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const address = server.address() as { port: number };
+  const original = globalThis.fetch;
+  globalThis.fetch = (input, options) =>
+    original(new URL(String(input), `http://127.0.0.1:${address.port}`), options);
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const url = `/api/artifacts/${ids[0]}`;
+  for (const input of [
+    { url: 'https://example.invalid/private.ogg', size: 10, duration: 1 },
+    { url, size: 25 * 1024 * 1024 + 1, duration: 1 },
+    { url, size: 10, duration: Infinity },
+    { url, size: 10, duration: 601 },
+  ])
+    await assert.rejects(
+      loadAudioWaveform(input.url, input.size, input.duration, new AbortController().signal),
+      /Waveform unavailable/,
+    );
+  assert.equal(reads, 0);
+  await assert.rejects(
+    loadAudioWaveform(url, 10, 1, new AbortController().signal),
+    /too large to preview/,
+  );
+  const controller = new AbortController();
+  const pending = loadAudioWaveform(`/api/artifacts/${ids[1]}`, 10, 1, controller.signal);
+  await held;
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  await assert.rejects(
+    loadAudioWaveform(`/api/artifacts/${ids[2]}`, 10, 1, new AbortController().signal),
+  );
+  assert.equal(redirectReads, 0);
+});
 
 test('WhatsApp setup closes the replacement generation despite stale polls and late restart responses', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
@@ -408,6 +475,66 @@ test(
             });
             await assert.rejects(collected.at(-1)!.attachments![0].read(), /address/);
             assert.equal(downloads, 3);
+            const contact =
+              'BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Synthetic Contact\r\nTEL:+34600000000\r\nEND:VCARD';
+            sockets[0].events.emit('messages.upsert', {
+              type: 'notify',
+              messages: [
+                {
+                  ...envelope('sticker-message'),
+                  message: {
+                    stickerMessage: {
+                      mimetype: 'image/webp',
+                      fileLength: 15,
+                      contextInfo: { stanzaId: 'task-prompt' },
+                    },
+                  },
+                },
+                {
+                  ...envelope('location-message'),
+                  message: {
+                    locationMessage: {
+                      degreesLatitude: 41.4,
+                      degreesLongitude: 2.17,
+                      name: 'Synthetic park',
+                      address: 'Synthetic address',
+                      contextInfo: { stanzaId: 'task-prompt' },
+                    },
+                  },
+                },
+                {
+                  ...envelope('contact-message'),
+                  message: {
+                    contactsArrayMessage: {
+                      contacts: [{ displayName: 'Synthetic Contact', vcard: contact }],
+                      contextInfo: { stanzaId: 'task-prompt' },
+                    },
+                  },
+                },
+                {
+                  ...envelope('foreign-location', '87654321@s.whatsapp.net', false),
+                  message: { locationMessage: { degreesLatitude: 0, degreesLongitude: 0 } },
+                },
+              ],
+            });
+            await transport.poll!(async (message) => {
+              collected.push(message);
+            });
+            const shared = collected.slice(-3);
+            assert.deepEqual(
+              shared.map((message) => message.attachments![0].source),
+              ['sticker', 'location', 'contact'],
+            );
+            assert.ok(shared.every((message) => message.replyToMessageId === 'task-prompt'));
+            assert.equal(
+              JSON.parse(Buffer.from(await shared[1].attachments![0].read()).toString()).name,
+              'Synthetic park',
+            );
+            assert.equal(
+              contactCards(Buffer.from(await shared[2].attachments![0].read()).toString())[0].name,
+              'Synthetic Contact',
+            );
+            assert.equal(downloads, 3);
             await combineMessagingTransports(transport).presence!({
               channelId: 'whatsapp',
               accountId,
@@ -459,6 +586,36 @@ test(
             assert.equal(sent.at(-1)!.content.caption, '*Image result*');
             assert.equal(sent.at(-1)!.content.text, undefined);
             assert.deepEqual(imageReply.ids, [sent.at(-1)!.id]);
+            await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: '',
+              attachments: [attachment('contact.vcf', 'text/vcard', contact)],
+              replyToMessageId: 'task-prompt',
+            });
+            assert.equal(
+              (sent.at(-1)!.content.contacts as { contacts: { vcard: string }[] }).contacts[0]
+                .vcard,
+              contact,
+            );
+            await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: '',
+              attachments: [
+                attachment(
+                  'location.json',
+                  'application/json',
+                  JSON.stringify({ latitude: 41.4, longitude: 2.17 }),
+                ),
+              ],
+            });
+            assert.equal(
+              (sent.at(-1)!.content.location as { degreesLatitude: number }).degreesLatitude,
+              41.4,
+            );
             failSend = true;
             await assert.rejects(
               transport.post({
@@ -651,6 +808,58 @@ test('Telegram media keeps native replies and checks the sender before any downl
   });
   assert.equal(voice.messages![0].attachments![0].voice, true);
   assert.equal(voice.messages![0].text, '');
+  for (const [payload, source] of [
+    [{ location: { latitude: 41.4, longitude: 2.17 } }, 'location'],
+    [
+      {
+        venue: {
+          location: { latitude: 41.4, longitude: 2.17 },
+          title: 'Synthetic park',
+          address: 'Synthetic address',
+        },
+      },
+      'location',
+    ],
+    [
+      { contact: { first_name: 'Synthetic', last_name: 'Contact', phone_number: '+34600000000' } },
+      'contact',
+    ],
+    [
+      {
+        sticker: { file_id: 'fixture-sticker', file_size: 12, is_animated: false, is_video: false },
+      },
+      'sticker',
+    ],
+  ] as const) {
+    const shared = await receive({ ...message, photo: undefined, caption: undefined, ...payload });
+    assert.equal(shared.messages![0].attachments![0].source, source);
+    assert.equal(shared.messages![0].replyToMessageId, '123456:41');
+    if (source !== 'sticker') {
+      const content = Buffer.from(await shared.messages![0].attachments![0].read()).toString(
+        'utf8',
+      );
+      if (source === 'location') assert.equal(JSON.parse(content).latitude, 41.4);
+      else assert.equal(contactCards(content)[0].phones[0], '+34600000000');
+    }
+    assert.equal(
+      (
+        await receive({
+          ...message,
+          photo: undefined,
+          ...payload,
+          from: { ...message.from, id: 654321 },
+          chat: { ...message.chat, id: 654321 },
+        })
+      ).messages?.length,
+      0,
+    );
+  }
+  assert.equal(
+    (await receive({ ...message, photo: undefined, location: { latitude: 91, longitude: 2.17 } }))
+      .messages?.length,
+    0,
+  );
+  assert.equal(requests.length, 0);
 });
 
 test('speech uses a bounded transcription request and generates Ogg voice output without exposing credentials', async () => {
@@ -761,10 +970,14 @@ test(
     const privateCodes: string[] = [];
     const presentations: { kind: string; reason?: string }[] = [];
     let voiceFailure: Error | undefined;
+    let modelConfigured = true;
+    let speechConfigured = true;
     let transcript = '483729';
     const speech = createSpeech({
       id: 'fixture',
-      configured: true,
+      get configured() {
+        return speechConfigured;
+      },
       synthesize: async () => {
         throw new Error('Not used by the fixture.');
       },
@@ -799,6 +1012,7 @@ test(
         intervalMs: 600_000,
         subscribe: () => () => {},
         media: createChannelMedia({ artifacts, speech }),
+        modelConfigured: () => modelConfigured,
         activeThread: async () => ({ id: threadId }),
         present: async (_thread, presentation) => {
           presentations.push(presentation);
@@ -970,6 +1184,55 @@ test(
       await pool.query('SELECT count(*)::int AS count FROM artifacts WHERE owner_id=$1', [owner])
     ).rows[0].count;
     assert.equal((await readdir(join(root, 'artifacts'))).length, stored);
+    message = {
+      ...message,
+      messageId: 'sticker-message',
+      text: '',
+      attachments: [
+        { ...attachment('sticker.webp', 'image/webp', 'synthetic sticker'), source: 'sticker' },
+      ],
+    };
+    await send();
+    await fixture.channels.drain();
+    assert.equal(submissions.at(-1)!.text, '');
+    assert.equal(submissions.at(-1)!.attachments[0].source, 'sticker');
+    const cards = Array.from(
+      { length: 17 },
+      (_, index) =>
+        `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Synthetic Contact ${index}\r\nTEL:+34600000000\r\nNOTE:${index ? 'Synthetic note' : 'x'.repeat(300_000)}\r\nEND:VCARD`,
+    );
+    message = { ...message, messageId: 'shared-contacts', attachments: contactAttachment(cards) };
+    await send();
+    await fixture.channels.drain();
+    const contacts = submissions.at(-1)!.attachments[0];
+    assert.equal(contacts.source, 'contact');
+    const savedCards = (await artifacts.readArtifact(contacts.id)).toString('utf8');
+    assert.equal(savedCards, cards.join('\r\n'));
+    assert.equal(contactCards(savedCards).length, 17);
+    const beforeVoice = reads;
+    const beforeSubmissions = submissions.length;
+    message = {
+      ...message,
+      messageId: 'voice-without-model',
+      attachments: [{ ...file, name: 'voice.ogg', mimeType: 'audio/ogg', voice: true }],
+    };
+    modelConfigured = false;
+    await send();
+    await send();
+    await fixture.channels.drain();
+    assert.equal(reads, beforeVoice);
+    assert.equal(submissions.length, beforeSubmissions);
+    const notices = (
+      await pool.query(
+        "SELECT text FROM messages WHERE role='assistant' AND text LIKE 'Connect a model service%'",
+      )
+    ).rows;
+    assert.equal(notices.length, 1);
+    modelConfigured = true;
+    speechConfigured = false;
+    await sendId('voice-without-speech');
+    await fixture.channels.drain();
+    assert.equal(presentations.at(-1)?.reason, 'speech_setup_required');
   },
 );
 

@@ -236,6 +236,7 @@ test(
     const sent: string[] = [];
     let incomingFile: MessagingAttachment | undefined;
     let voiceCalls = 0;
+    let modelConfigured = false;
     const voiceUsageId = randomUUID();
     const adapters: ApplicationAdapters = {
       onboardingCurator: {
@@ -283,7 +284,13 @@ test(
         image: async () => null,
       },
       keyStore,
-      model: { provider: 'fixture', name: 'fixture', configured: false },
+      model: {
+        provider: 'fixture',
+        name: 'fixture',
+        get configured() {
+          return modelConfigured;
+        },
+      },
       integrations: {
         id: 'fixture',
         configured: false,
@@ -455,6 +462,7 @@ test(
         voice: true,
         read: async () => new Uint8Array([1]),
       };
+      modelConfigured = true;
       assert.equal((await send(9, '', `fixture-sent-${sent.length}`)).statusCode, 200);
       await application.channels!.drain();
       assert.equal((await send(9, '', `fixture-sent-${sent.length}`)).statusCode, 200);

@@ -4,6 +4,8 @@ import type { Artifact, Message } from '../../shared/contracts';
 import { attachmentKind, fileSize, fileType } from '../lib/attachment-kind';
 import { Button } from './ui';
 import { FileGlyph } from './attachment-glyph';
+import { AudioPlayer } from './audio-player';
+import { SharedMessageCard } from './shared-message-card';
 import { useArtifactDrawer } from './artifact-context';
 import {
   ImageGallery,
@@ -208,15 +210,24 @@ export function MessageAttachments({
       {visual.length > 0 && <ImageGallery images={visual} />}
       {rest.length > 0 && (
         <div className="attachment-cards">
-          {rest.map((item) => (
-            <DocumentCard
-              key={item.id}
-              item={item}
-              selected={drawer.selectedId === item.id}
-              loadDocument={loadDocument}
-              onOpen={(trigger) => drawer.open(item.id, trigger)}
-            />
-          ))}
+          {rest.map((item) =>
+            item.source === 'location' ||
+            item.name === 'location.json' ||
+            item.source === 'contact' ||
+            /\.vcf$/i.test(item.name) ? (
+              <SharedMessageCard key={item.id} item={item} />
+            ) : attachmentKind(item.mimeType ?? '', item.name) === 'audio' ? (
+              <AudioPlayer key={item.id} item={item} selected={drawer.selectedId === item.id} />
+            ) : (
+              <DocumentCard
+                key={item.id}
+                item={item}
+                selected={drawer.selectedId === item.id}
+                loadDocument={loadDocument}
+                onOpen={(trigger) => drawer.open(item.id, trigger)}
+              />
+            ),
+          )}
         </div>
       )}
     </div>

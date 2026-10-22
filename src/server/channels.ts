@@ -88,6 +88,7 @@ interface ChannelOptions {
   intervalMs?: number;
   resolveAttachments?: (threadId: string, ids: string[]) => Promise<MessagingAttachment[]>;
   media?: ChannelMedia;
+  modelConfigured?: () => boolean;
   attributeMediaUsage?(client: PoolClient, ids: string[], turnId: string): Promise<void>;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
   activeThread?: (client: PoolClient) => Promise<{ id: string }>;
@@ -148,6 +149,7 @@ const messageSchema = z
           mimeType: z.string().min(1).max(200),
           size: z.number().int().nonnegative(),
           voice: z.boolean().optional(),
+          source: z.enum(['sticker', 'location', 'contact']).optional(),
           read: z.custom<MessagingAttachment['read']>((value) => typeof value === 'function'),
         }),
       )
@@ -560,6 +562,18 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         return false;
       }
       if (closed || replacing || receiveSignal.aborted || !permitted(identity)) return;
+      if (hasMedia && options.modelConfigured?.() === false) {
+        await transaction(async (client) => {
+          if (!(await currentConversation(client))) return;
+          await replyWithoutTurn(
+            client,
+            { ...identity, sourceId, threadId, sentAt, text: '' },
+            () => ({ text: 'Connect a model service and choose a model in Settings → Models.' }),
+          );
+        }, pool);
+        options.refresh?.();
+        return;
+      }
       if (hasMedia) {
         try {
           if (!options.media) throw new ChannelMediaFailure('unavailable');
@@ -573,7 +587,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           );
           text = [text, media.text].filter(Boolean).join('\n\n');
           if (text.length > 100_000) throw new ChannelMediaFailure('text_too_long');
-          if (!text) text = 'Review the attached files and briefly describe what they contain.';
+          if (!text && !parsed.data.attachments!.every((file) => file.source))
+            text = 'Review the attached files and briefly describe what they contain.';
         } catch (error) {
           if (closed || replacing || receiveSignal.aborted || !permitted(identity)) return;
           await transaction(async (client) => {

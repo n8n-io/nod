@@ -120,6 +120,34 @@ export function apiStream(
   });
 }
 
+export async function apiBytes(path: string, limit: number, options: RequestInit = {}) {
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  await apiStream(path, options, async (body, signal) => {
+    const reader = body.getReader();
+    try {
+      while (true) {
+        signal?.throwIfAborted();
+        const { done, value } = await reader.read();
+        if (done) break;
+        length += value.byteLength;
+        if (length > limit) throw new Error('The file is too large to preview.');
+        chunks.push(value);
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  });
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 export function post<T>(path: string, body: unknown = {}) {
   return api<T>(path, { method: 'POST', body: JSON.stringify(body) });
 }
