@@ -15,7 +15,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, getEventListeners } from 'node:events';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -2205,6 +2205,110 @@ test('native quit aborts storage startup without creating a late engine', async 
     f.children.map((child) => child.kind),
     [],
   );
+});
+
+test('native quit drains pending Keychain startup without approval or late vault writes', async (t) => {
+  for (const [saved, method] of [
+    [false, 'isAsyncEncryptionAvailable'],
+    [false, 'encryptStringAsync'],
+    [true, 'decryptStringAsync'],
+    [true, 'encryptStringAsync'],
+  ]) {
+    for (const rejected of [false, true]) {
+      await t.test(
+        `${saved ? 'saved' : 'fresh'} ${method} ${rejected ? 'denied' : 'allowed'} late`,
+        async (t) => {
+          const storage = await fixture(t, 'darwin');
+          await storage.store.save({ theme: 'dark' });
+          if (saved) await storage.store.environment();
+          const before = await readFile(storage.path, 'utf8');
+          const entered = deferred();
+          const pending = deferred();
+          const calls = [];
+          for (const name of [
+            'isAsyncEncryptionAvailable',
+            'encryptStringAsync',
+            'decryptStringAsync',
+          ]) {
+            const original = storage.encryption[name];
+            storage.encryption[name] = async (...args) => {
+              calls.push(name);
+              if (name === method) {
+                entered.resolve();
+                await pending.promise;
+              }
+              return original(...args);
+            };
+          }
+          let stopped = 0;
+          let completed = 0;
+          const f = await runningDesktop(
+            t,
+            async () => assert.fail('No engine may start while quitting.'),
+            {
+              initialState: 'fresh',
+              storedProfile: storage,
+              allowStart: true,
+              prepareRuntime: async ({ onStorageReady }) => {
+                const runtime = { env: {}, close: async () => stopped++ };
+                try {
+                  await onStorageReady(runtime);
+                  return runtime;
+                } catch (error) {
+                  await runtime.close();
+                  throw error;
+                }
+              },
+            },
+          );
+          let signal;
+          const environment = f.storage.store.environment;
+          f.storage.store.environment = (value) => {
+            signal = value;
+            return environment(value);
+          };
+          let closing;
+          let deadline;
+          try {
+            await f.launch();
+            await entered.promise;
+            closing = f.quit(() => completed++);
+            const settled = await Promise.race([
+              closing.then(() => true),
+              new Promise((resolve) => {
+                deadline = setTimeout(() => resolve(false), 1000);
+              }),
+            ]);
+            assert.equal(settled, true, 'Quit waited for the protected Keychain prompt.');
+            clearTimeout(deadline);
+            assert.equal(stopped, 1);
+            assert.equal(completed, 1);
+            assert.equal(signal.aborted, true);
+            assert.equal(getEventListeners(signal, 'abort').length, 0);
+            assert.equal(await readFile(storage.path, 'utf8'), before);
+            assert.equal(f.children.length, 0);
+            const count = calls.length;
+            if (rejected) pending.reject(new Error('Synthetic late keychain denial.'));
+            else pending.resolve();
+            await new Promise(setImmediate);
+            await f.settle();
+            assert.equal(calls.length, count);
+            assert.equal(await readFile(storage.path, 'utf8'), before);
+            assert.equal(f.children.length, 0);
+            await assert.rejects(readFile(join(f.profileRoot, 'profile.json')), { code: 'ENOENT' });
+            const diagnostic = await readFile(join(f.profileRoot, 'logs/startup.log'), 'utf8');
+            assert.match(diagnostic, /Lifecycle engine-stop settled/);
+            assert.match(diagnostic, /Lifecycle computer-stop settled/);
+          } finally {
+            clearTimeout(deadline);
+            pending.resolve();
+            await closing;
+            await f.close();
+          }
+        },
+      );
+    }
+  }
 });
 
 test('isolated packaged reopening without launch environment keeps its selected profile', async (t) => {

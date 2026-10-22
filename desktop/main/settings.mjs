@@ -42,10 +42,12 @@ export function createSettingsStore(path, encryption, platform = process.platfor
     writing = operation.catch(() => {});
     return operation;
   }
-  async function write(value) {
+  async function write(value, signal) {
+    signal?.throwIfAborted();
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${randomUUID()}.pending`;
     try {
+      signal?.throwIfAborted();
       const file = await open(temporary, 'wx', 0o600);
       try {
         await file.writeFile(JSON.stringify(value));
@@ -53,6 +55,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       } finally {
         await file.close();
       }
+      signal?.throwIfAborted();
       await rename(temporary, path);
       current = value;
       unsynced = true;
@@ -117,40 +120,72 @@ export function createSettingsStore(path, encryption, platform = process.platfor
     platform === 'darwin'
       ? 'Unlock your Mac keychain, then quit and reopen nod.'
       : 'Unlock your system key store, then try again.';
-  async function available() {
+  async function waitForKeyStore(operation, signal) {
+    if (!signal) return operation();
+    signal.throwIfAborted();
+    let aborted;
+    const cancelled = new Promise((_, reject) => {
+      aborted = () => reject(signal.reason);
+      signal.addEventListener('abort', aborted, { once: true });
+    });
+    try {
+      const result = await Promise.race([
+        Promise.resolve().then(() => {
+          signal.throwIfAborted();
+          return operation();
+        }),
+        cancelled,
+      ]);
+      signal.throwIfAborted();
+      return result;
+    } finally {
+      signal.removeEventListener('abort', aborted);
+    }
+  }
+  async function available(signal) {
+    signal?.throwIfAborted();
     if (
       !(platform === 'darwin'
-        ? await encryption.isAsyncEncryptionAvailable()
+        ? await waitForKeyStore(() => encryption.isAsyncEncryptionAvailable(), signal)
         : encryption.isEncryptionAvailable()) ||
       encryption.getSelectedStorageBackend?.() === 'basic_text'
     )
       throw new Error(keyStoreMessage);
   }
-  async function protect(value) {
+  async function protect(value, signal) {
     try {
-      await available();
+      await available(signal);
       return (
         platform === 'darwin'
-          ? await encryption.encryptStringAsync(value)
+          ? await waitForKeyStore(() => encryption.encryptStringAsync(value), signal)
           : encryption.encryptString(value)
       ).toString('base64');
     } catch {
+      signal?.throwIfAborted();
       throw new Error(keyStoreMessage);
     }
   }
-  async function reveal(value) {
+  async function reveal(value, signal) {
     if (!value) return '';
     try {
-      await available();
+      await available(signal);
       if (platform === 'darwin') {
         const ciphertext = Buffer.from(value, 'base64');
-        const { result } = await encryption.decryptStringAsync(ciphertext);
-        if (!(await encryption.encryptStringAsync(result)).equals(ciphertext))
+        const { result } = await waitForKeyStore(
+          () => encryption.decryptStringAsync(ciphertext),
+          signal,
+        );
+        if (
+          !(await waitForKeyStore(() => encryption.encryptStringAsync(result), signal)).equals(
+            ciphertext,
+          )
+        )
           throw new Error(keyStoreMessage);
         return result;
       }
       return encryption.decryptString(Buffer.from(value, 'base64'));
     } catch {
+      signal?.throwIfAborted();
       throw new Error(
         platform === 'darwin'
           ? keyStoreMessage
@@ -270,18 +305,23 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         await write({ ...value, welcome: { ...value.welcome, acknowledged: true } });
       });
     },
-    environment() {
+    environment(signal) {
       return exclusive(async () => {
+        signal?.throwIfAborted();
         const value = await read();
+        signal?.throwIfAborted();
         if (!value.secrets.vaultKey)
-          await write({
-            ...value,
-            secrets: {
-              ...value.secrets,
-              vaultKey: await protect(randomBytes(32).toString('base64')),
+          await write(
+            {
+              ...value,
+              secrets: {
+                ...value.secrets,
+                vaultKey: await protect(randomBytes(32).toString('base64'), signal),
+              },
             },
-          });
-        return { NOD_VAULT_KEY: await reveal(current.secrets.vaultKey) };
+            signal,
+          );
+        return { NOD_VAULT_KEY: await reveal(current.secrets.vaultKey, signal) };
       });
     },
   };

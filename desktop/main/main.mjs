@@ -1365,7 +1365,8 @@ async function startEngine({ runtime, signal, pending = false }) {
   update({ phase: 'starting', message: 'Unlocking your saved API keys…', unlockingKeys: true });
   await new Promise((accept) => setTimeout(accept, 50));
   if (quitting || signal.aborted) throw new Error('nod is closing.');
-  const providerEnvironment = await settings.environment();
+  const providerEnvironment = await settings.environment(signal);
+  if (quitting || signal.aborted) throw new Error('nod is closing.');
   const owner = await profileOwner();
   if (providerEnvironment.NOD_VAULT_KEY) knownSecrets.add(providerEnvironment.NOD_VAULT_KEY);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
