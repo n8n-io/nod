@@ -32,7 +32,7 @@ The media fixture uses the real message components, a synthetic Ogg recording, a
 | Voice, location, contact and sticker | [Ready](channel-media-ready.png), [playing](channel-media-playing.png) |
 | Mobile                               | [390-pixel view](channel-media-mobile.png)                             |
 
-These captures prove the stated browser behavior. They do not prove live media delivery, speech transcription or map tile loading.
+The fixture checks the stated browser behavior. The captures illustrate it. The fixture and captures do not prove live media delivery, speech transcription or map tile loading.
 
 ## Manual live check
 
