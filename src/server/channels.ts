@@ -9,6 +9,7 @@ import { transaction } from './transaction.ts';
 import { logFailure } from './failure-log.ts';
 import { ChannelMediaFailure, type ChannelMedia } from './channel-media.ts';
 import type { WorkAdmission } from './work-admission.ts';
+import type { LiveWork } from './activity.ts';
 import type {
   ChannelPairingRequest,
   InboundMessage,
@@ -88,6 +89,7 @@ interface ChannelOptions {
   media?: ChannelMedia;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
   activeThread?: (client: PoolClient) => Promise<{ id: string }>;
+  activity?: () => Promise<LiveWork[]>;
   commandReply?: (
     command: 'memory' | 'usage',
     client: PoolClient,
@@ -329,46 +331,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   let lastError: string | null = null;
   let receiving = new AbortController();
   const pendingMedia = new Map<string, Promise<void>>();
-  let typingRunning: Promise<void> | undefined;
-  let typingTargets = new Map<string, { channelId: string; accountId: string; threadId: string }>();
-
-  function updateTyping() {
-    if (closed || replacing || !transport.typing || typingRunning) return;
-    const current = transport;
-    typingRunning = (async () => {
-      const rows = (
-        await pool.query<ChannelIdentity & { thread_id: string }>(
-          `SELECT DISTINCT i.provider,i.account_id,i.sender_id,i.thread_id FROM channel_inbox i
-          JOIN turns u ON u.channel=i.channel AND u.owner_id=i.owner_id
-          WHERE i.owner_id=$1 AND i.state='submitted' AND u.status='running'`,
-          [ownerId],
-        )
-      ).rows;
-      if (closed || replacing || transport !== current) return;
-      const next = new Map(
-        rows.filter(permitted).map((row) => {
-          const target = {
-            channelId: row.provider,
-            accountId: row.account_id,
-            threadId: row.thread_id,
-          };
-          return [JSON.stringify(target), target] as const;
-        }),
-      );
-      for (const [key, target] of typingTargets)
-        if (!next.has(key) && !closed && !replacing && transport === current)
-          await current.typing!({ ...target, active: false }).catch(() => {});
-      for (const target of next.values())
-        if (!closed && !replacing && transport === current)
-          await current.typing!({ ...target, active: true }).catch(() => {});
-      typingTargets = next;
-    })()
-      .catch(() => {})
-      .finally(() => {
-        typingRunning = undefined;
-      });
-  }
-
   async function saveReply(
     client: PoolClient,
     sourceId: string,
@@ -1188,6 +1150,67 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     return true;
   }
 
+  const presence = new Map<string, { at: number; status: string }>();
+  async function presenceStep() {
+    if (
+      closed ||
+      replacing ||
+      !transport.presence ||
+      !options.activity ||
+      !channels.some((channel) => channel.status === 'configured' && channel.presenceMs)
+    )
+      return;
+    const live = new Map<string, string>();
+    for (const item of await options.activity())
+      if (item.channel !== 'web')
+        live.set(item.channel, [item.title, item.step].filter(Boolean).join(': '));
+    for (const channel of presence.keys()) if (!live.has(channel)) presence.delete(channel);
+    for (const [channel, text] of live) {
+      const safe = channelText(text);
+      const status = safe.secureAction || safe.artifact ? '' : safe.text;
+      const row = (
+        await pool.query<ChannelIdentity & { source_id: string; thread_id: string; at: Date }>(
+          `SELECT provider,account_id,sender_id,source_id,thread_id,received_at AS at FROM channel_inbox
+           WHERE owner_id=$1 AND channel=$2 AND state='submitted' ORDER BY received_at DESC LIMIT 1`,
+          [ownerId, channel],
+        )
+      ).rows[0];
+      if (!row || !permitted(row)) continue;
+      const settings = channels.find((item) => item.id === row.provider);
+      const prefix = `channel:${row.provider}:${row.account_id}:`;
+      const last = presence.get(channel);
+      if (
+        !settings?.presenceMs ||
+        !row.source_id.startsWith(prefix) ||
+        (settings.replyWindowMs !== undefined &&
+          Date.now() - row.at.getTime() >= settings.replyWindowMs) ||
+        (last?.status === status && Date.now() - last.at < settings.presenceMs)
+      )
+        continue;
+      if (closed || replacing) return;
+      presence.set(channel, { at: Date.now(), status });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          transport.presence({
+            channelId: row.provider,
+            accountId: row.account_id,
+            threadId: row.thread_id,
+            messageId: row.source_id.slice(prefix.length),
+            ...(status ? { status } : {}),
+          }),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Presence did not answer in time.')), 5000);
+          }),
+        ]);
+      } catch (cause) {
+        logFailure('channel_presence_failed', cause);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  }
+
   function drain() {
     if (closed || replacing || options.admission?.paused || options.admission?.closed)
       return Promise.resolve();
@@ -1230,6 +1253,11 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             }
             if (outbox) outbox = await attempt(outboxStep);
           }
+          try {
+            await presenceStep();
+          } catch (cause) {
+            logFailure('channel_presence_failed', cause);
+          }
         }
       } finally {
         lastError = processingFailed
@@ -1250,18 +1278,14 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     void drain();
   }, options.intervalMs ?? 2000);
   timer.unref();
-  const typingTimer = setInterval(updateTyping, 4000);
-  typingTimer.unref();
 
   async function close() {
     if (closed) return;
     closed = true;
     receiving.abort();
     clearInterval(timer);
-    clearInterval(typingTimer);
     unsubscribe();
     await running;
-    await typingRunning;
     await Promise.allSettled(pendingMedia.values());
     await transport.close();
   }
@@ -1275,8 +1299,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     receiving.abort();
     try {
       await running;
-      await typingRunning;
-      typingTargets.clear();
       await Promise.allSettled(pendingMedia.values());
       await transport.close();
       transport = next;

@@ -3,7 +3,7 @@
 Status: implemented and under PR review. The owner has deferred the manual live check.
 
 The implementation uses a separate Git worktree.
-Branch: `feat/whatsapp-telegram-channels`, with main merged at `543867ea`.
+Branch: `feat/whatsapp-telegram-channels`, with main merged at `a8ae5a1b`.
 The original checkout is unchanged. The change is under review in PR #423.
 
 ## Implemented behavior
@@ -14,14 +14,14 @@ The original checkout is unchanged. The change is under review in PR #423.
 - Sender checks reject unrelated people, groups, status messages, old history and self-chat echoes. Phone-number and LID addresses are supported. Self-chat LIDs must match the linked account's own LID, and replies cannot target another LID.
 - A lost connection uses bounded reconnect delays. Saved state survives a restart. A send with an unclear result is not repeated automatically. Pending sends wait while WhatsApp is disconnected.
 - Telegram and WhatsApp share the existing conversation, memory, workspace and task sessions. Task starts, progress, questions, confirmations, status, stop replies and results use channel messages.
-- Native replies to messages and files select the correct task. Files do not approve actions. Private sign-in and payment steps keep their existing private forms.
+- Native replies to messages and files select the correct task. Each private code question is bound to its exact request in the same transaction as the question. A closed question cannot fill a later request, including one in the same turn. Files do not approve actions. Private sign-in and payment steps keep their existing private forms.
 - Both channels receive images, documents, video, audio and captions. The server checks the sender before it downloads a file. Downloads use fixed provider hosts, reject redirects and have byte and time limits.
 - Incoming messages accept at most ten files with a combined limit of 50 MB. Telegram's hosted API limits each incoming file to 20 MB. Voice transcription has a 25 MB limit.
 - Files are saved before message acknowledgement. Queued media belongs to its conversation. Reset, channel replacement and shutdown fence or stop pending media. At most four distinct media messages prepare at once; duplicate messages join the same operation. A rollback removes files with no saved row.
 - Voice transcripts pass through the existing private verification-code path before normal storage or model use. A voice verification code leaves no audio artifact or raw code in the channel inbox.
 - Generated speech uses Ogg/Opus and is sent as a native voice note. Telegram and linked WhatsApp send images, documents, video and audio, with a 50 MB limit per outgoing file. WhatsApp Cloud API mode keeps files in nod and sends a notice to open them there.
 - A short reply with one image, video or document uses its native caption. A failed captioned send stays uncertain and is not repeated.
-- Both channels show typing, support reactions and split long replies. WhatsApp converts Markdown to its native text format.
+- Both channels use the shared activity model for typing, support reactions and split long replies. WhatsApp converts Markdown to its native text format.
 - Speech requests use the spending-limit check and the `model_usage` ledger. Reported transcription usage has an API-price estimate. Responses without usage are marked unpriced.
 - The existing Meta Cloud API setup remains available. A saved Cloud API choice overrides an environment default for QR mode. Cloud API file and reply-window limits still apply.
 - The pinned Signal dependency has a patch that removes direct console calls which could print session keys. A pinned Baileys patch forwards cancellation and redirect refusal to the actual download request. Container builds include both patches. Desktop runtime fingerprints include their bytes.
@@ -31,9 +31,7 @@ The original checkout is unchanged. The change is under review in PR #423.
 
 ### Synthetic channel checks
 
-The PR review run passed 41 focused tests with no skips. It uses the channel, delivery, application and private-code suites. It covers 64 concurrent duplicates, 32 duplicate replays after restart, four held uploads with refusal of a fifth, rollback cleanup, byte-bounded key batches, foreign self-chat LIDs, closed native code replies, speech failures and native captions. A separate earlier run passed 31 channel and browser-download tests with no skips.
-A separate run of the channel and approval checks passed 64 tests with no skips before the added WhatsApp task-command case.
-The ledger integration check also passed, including speech usage deduplication and refusal before provider access when the monthly limit is reached.
+All 139 focused checks pass with no skips after the merge from main. The checks cover channel intake and delivery, setup, private codes, the thread harness and Pi. They include 64 concurrent duplicates, 32 duplicate replays after restart, four held uploads with refusal of a fifth, rollback cleanup, byte-bounded key batches, foreign self-chat LIDs, exact private-code request binding, speech failures and native captions. A ledger check covers speech usage deduplication and refusal before provider access when the monthly limit is reached.
 
 The fixtures use disposable database schemas and synthetic protocol events. Test processes have an empty environment with an explicit allowlist, read-only source and toolchain, writable scratch space, resource limits and no external network. An internal network reaches only the disposable PostgreSQL fixture. Chromium checks also need a writable temporary home and permission to create its own sandbox. No live model, connected account or real recipient was used.
 
@@ -45,13 +43,13 @@ The [review captures and setup demo](../review/channels/README.md) use the real 
 
 ### Repository checks
 
-The final `pnpm run check`, `pnpm run build` and `pnpm --dir docs build` passed. The docs build checked every internal link. The final focused checks passed after the caption and disconnect changes.
+`pnpm run check`, `pnpm run build` and `pnpm --dir docs build` pass in bounded offline fixtures. The docs build checks every internal link. The focused desktop check verifies that a change to either dependency patch changes the runtime fingerprint.
 
-The complete integration run finished with 571 passes, three failures and no skips. All three failures also occur on the original branch: shell command rewriting, the sealed CLI environment and sealed CLI downloads. One tries to fetch the synthetic `fixturecli` package; the test network blocks that request. The browser, Trust, channel, scheduling and owner-isolation checks pass. The full fixture uses an init process, a temporary home and a limit of 4096 processes and threads, which Chromium needs. Earlier runs with a smaller limit had fixture failures.
+The normal GitHub CI fixture passed the full integration suite, desktop contracts, docs and Windows checks at `c4f232ec`. Later commits add exact private-code request binding and merge the shared activity model from main. The PR checks show the result for the current head.
 
-Desktop tests finished with 175 passes, six failures and two platform skips. All six release-fixture failures also occur on the original branch. The production dependency, packaged-engine and runtime-fingerprint checks pass. A regression check verifies that a change to the Signal patch changes the runtime fingerprint.
+The stricter local offline fixture has browser and sealed-CLI failures. The native download comparison also fails on unchanged main at `a8ae5a1b`. These results do not prove a channel regression or a live provider connection. A test from main also read a failure notice before its asynchronous save; the merged test now waits for that save before it checks the exact result.
 
-Logs are in `.local/channel-*.log`, outside Git. Fixture failures are not live-channel evidence.
+Local reports are kept outside Git. CI results are on PR #423. Synthetic fixtures, UI checks and live checks are separate evidence.
 
 ### Live check
 

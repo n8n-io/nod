@@ -1351,9 +1351,10 @@ test('a previous turn error reaches the next turn only as neutralised untrusted 
   }
 });
 
-test('a turn posts its opening line, an update after a quiet stretch and its final reply, never other narration', async (t) => {
+test('a turn posts its opening line and final reply, shows the lines between as live steps and answers a message sent mid-turn', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-narration-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
+  let continued: string[] = [];
   const runtime = createAgentRuntime({
     agent: {
       open: async (input) => ({
@@ -1363,15 +1364,21 @@ test('a turn posts its opening line, an update after a quiet stretch and its fin
         prompt: async (text) => {
           for (const words of [
             'Reading the synthetic comments.',
-            'Found three synthetic threads.',
+            ...(/quietly|directly/.test(text) ? [''] : []),
+            'Found three synthetic threads.\nAll of them mention pricing.',
           ]) {
             input.onEvent({ type: 'message_start' });
-            input.onEvent({ type: 'text_delta', text: words });
+            if (words) input.onEvent({ type: 'text_delta', text: words });
             input.onEvent({ type: 'message_end', status: 'succeeded' });
-            await input.tools
-              .find((item) => item.name === 'manage_personal_context')!
-              .execute({ action: 'memory_find', args: { query: 'synthetic' } });
-            if (/after a quiet stretch/.test(text)) t.mock.timers.tick(31_000);
+            if (!words && /directly/.test(text))
+              await input.tools
+                .find((item) => item.name === 'send_message')!
+                .execute({ text: 'There are three.' });
+            else
+              await input.tools
+                .find((item) => item.name === 'manage_personal_context')!
+                .execute({ action: 'memory_find', args: { query: 'synthetic' } });
+            continued.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
           }
           const answer = /without an answer/.test(text) ? '' : 'The synthetic summary is ready.';
           input.onEvent({ type: 'message_start' });
@@ -1392,48 +1399,98 @@ test('a turn posts its opening line, an update after a quiet stretch and its fin
     doneWhen: 'The summary is delivered.',
     revision: 1,
   };
-  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   try {
-    for (const [prompt, taskContext, expected] of [
+    for (const [prompt, taskContext, replies, steps] of [
       [
         'Summarize the synthetic comments',
         undefined,
         ['Reading the synthetic comments.', 'The synthetic summary is ready.'],
+        ['Found three synthetic threads.'],
       ],
       [
         'Summarize the synthetic comments without an answer',
         undefined,
-        ['Reading the synthetic comments.', 'Found three synthetic threads.'],
-      ],
-      ['Summarize the synthetic comments', task, ['The synthetic summary is ready.']],
-      [
-        'Summarize the synthetic comments after a quiet stretch',
-        undefined,
         [
           'Reading the synthetic comments.',
-          'Found three synthetic threads.',
-          'The synthetic summary is ready.',
+          'Found three synthetic threads.\nAll of them mention pricing.',
         ],
+        ['Found three synthetic threads.'],
       ],
       [
-        'Summarize the synthetic comments after a quiet stretch on telegram',
-        undefined,
-        ['Reading the synthetic comments.', 'The synthetic summary is ready.'],
+        'Summarize the synthetic comments',
+        task,
+        ['The synthetic summary is ready.'],
+        ['Reading the synthetic comments.', 'Found three synthetic threads.'],
+      ],
+      [
+        'Summarize the synthetic comments while the owner steers',
+        task,
+        [
+          'Found three synthetic threads.\nAll of them mention pricing.',
+          'The synthetic summary is ready.',
+        ],
+        ['Reading the synthetic comments.'],
+      ],
+      [
+        'Summarize the synthetic comments while the owner steers quietly',
+        task,
+        [
+          'Found three synthetic threads.\nAll of them mention pricing.',
+          'The synthetic summary is ready.',
+        ],
+        ['Reading the synthetic comments.'],
+      ],
+      [
+        'Summarize the synthetic comments while the owner steers directly',
+        task,
+        ['There are three.', 'The synthetic summary is ready.'],
+        ['Reading the synthetic comments.', 'Found three synthetic threads.'],
       ],
     ] as const) {
-      const replies: string[] = [];
+      const posted: string[] = [];
+      const events: Array<[string, string]> = [];
+      let steered = false;
+      continued = [];
       const result = await runtime.runTurn({
         ...context(directory),
         turnId: randomUUID(),
         prompt,
         ...(taskContext ? { taskContext, background: true } : {}),
-        ...(prompt.endsWith('on telegram') ? { channel: 'telegram' } : {}),
+        ...(/steers/.test(prompt)
+          ? {
+              takeMessages: async () =>
+                steered
+                  ? []
+                  : ((steered = true),
+                    [{ id: randomUUID(), text: 'Also count them', attachments: [] }]),
+            }
+          : {}),
+        emit: async (type, summary) => {
+          events.push([type, summary]);
+        },
         reply: async (text) => {
-          replies.push(text);
+          posted.push(text);
         },
       });
       assert.equal(result.status, 'succeeded');
-      assert.deepEqual(replies, expected);
+      assert.deepEqual(posted, replies);
+      assert.deepEqual(
+        events.filter(([type]) => type === 'step').map(([, summary]) => summary),
+        steps,
+      );
+      assert.equal(
+        continued.some((text) => text.includes('Also count them')),
+        /steers/.test(prompt),
+      );
+      assert.equal(
+        events.some(([type]) => type === 'steered'),
+        /steers/.test(prompt),
+      );
+      assert.equal(events.filter(([type]) => type === 'final').length, 1);
+      assert.ok(
+        events.findIndex(([type]) => type === 'final') <
+          events.findIndex(([type]) => type === 'agent_complete'),
+      );
     }
   } finally {
     await runtime.dispose();

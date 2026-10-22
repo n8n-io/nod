@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, Check, LoaderCircle, Trash2, User } from 'lucide-react';
+import Markdown from 'react-markdown';
+import { ArrowDown, Check, Globe2, LoaderCircle, Trash2, User } from 'lucide-react';
 import type {
+  Activity,
   AppState,
   Artifact,
   Connection,
@@ -41,7 +43,6 @@ import {
 } from '../lib/analytics';
 import {
   collapseScreenshotMessages,
-  hasVisibleChatActivity,
   mergeMessages,
   messagesAreGrouped,
   visibleConversationTurns,
@@ -71,6 +72,44 @@ function Welcome() {
   );
 }
 const taskSources = { gmail: 'Gmail', web: 'For you', telegram: 'Telegram' } as const;
+function Working({ item, label = 'nod is working' }: { item?: Activity; label?: string }) {
+  const detail = item?.step || item?.site;
+  const text = item?.title || detail;
+  return (
+    <div className="thinking" role="status" aria-label={text ? undefined : label}>
+      <div className="assistant-mark" aria-hidden="true">
+        <BrandMark small />
+      </div>
+      <div className="working-bubble">
+        <span className="thinking-dots" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+        {text && (
+          <span className="working-text">
+            {item.title && <strong>{item.title}</strong>}
+            {detail && (
+              <span key={detail}>
+                {item.step ? (
+                  <Markdown allowedElements={[]} unwrapDisallowed>
+                    {item.step}
+                  </Markdown>
+                ) : (
+                  <>
+                    <Globe2 size={14} aria-hidden="true" />
+                    {item.site}
+                  </>
+                )}
+              </span>
+            )}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TaskCards({
   id,
   suggestions,
@@ -292,7 +331,8 @@ export function Chat({
       .filter((item) => item.threadId === threadId && !persistedIds.has(item.message.id))
       .map((item) => item.message),
   ];
-  const working = hasVisibleChatActivity(state.turns);
+  const live = state.activity ?? [];
+  const working = live.length > 0;
   const [welcoming, setWelcoming] = useState(
     () => allMessages.length === 0 && !working && state.configuration.llmReady,
   );
@@ -352,7 +392,16 @@ export function Chat({
       bottom.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
     else updateAway();
     reportRead();
-  }, [state.messages, streams, sending, resetting, optimistic, visible, focusTarget]);
+  }, [
+    state.messages,
+    state.activity,
+    streams,
+    sending,
+    resetting,
+    optimistic,
+    visible,
+    focusTarget,
+  ]);
   useEffect(() => {
     let frame = 0;
     const update = () => {
@@ -959,6 +1008,7 @@ export function Chat({
                         <TaskCard
                           key={task.id}
                           task={task}
+                          live={live.find((item) => item.taskId === task.id)}
                           onReply={() => {
                             const target =
                               allMessages.find((item) => item.id === task.questionMessageId) ??
@@ -1004,25 +1054,22 @@ export function Chat({
                   </span>
                 </div>
               ) : (
-                (sending || resetting || working || welcoming) &&
-                streamEntries.length === 0 && (
-                  <div
-                    className="thinking"
-                    role="status"
-                    aria-label={
-                      resetting ? 'Starting setup' : sending ? 'Sending message' : 'nod is typing'
-                    }
-                  >
-                    <div className="assistant-mark">
-                      <BrandMark small />
-                    </div>
-                    <span className="thinking-dots" aria-hidden="true">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                  </div>
-                )
+                <>
+                  {live
+                    .filter((item) => item.taskId || streamEntries.length === 0)
+                    .map((item) => (
+                      <Working key={item.turnId} item={item} />
+                    ))}
+                  {(sending || resetting || welcoming) &&
+                    !working &&
+                    streamEntries.length === 0 && (
+                      <Working
+                        label={
+                          resetting ? 'Starting setup' : sending ? 'Sending message' : undefined
+                        }
+                      />
+                    )}
+                </>
               )}
             </div>
             <div ref={bottom} />

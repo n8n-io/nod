@@ -136,8 +136,9 @@ export function createPageDataCache(
       }
       entries.clear();
     },
-    revalidateActive() {
+    revalidateActive(prefix = '') {
       for (const [path, value] of entries) {
+        if (!path.startsWith(prefix)) continue;
         if (!value.listeners.size) {
           if (!value.visited) {
             value.generation++;

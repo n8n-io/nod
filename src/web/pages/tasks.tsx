@@ -14,7 +14,14 @@ import {
   MessageCircle,
   MessageSquare,
 } from 'lucide-react';
-import type { Schedule, ScheduleRun, Task, TaskDetail, TaskStatus } from '../../shared/contracts';
+import type {
+  Activity,
+  Schedule,
+  ScheduleRun,
+  Task,
+  TaskDetail,
+  TaskStatus,
+} from '../../shared/contracts';
 import { taskHeadline, taskLabels } from '../../shared/task-status';
 import { PageTitle } from '../components/page-title';
 import { NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
@@ -60,6 +67,7 @@ function TaskActivity({ id }: { id: string }) {
     if (
       last &&
       event.type !== 'message' &&
+      event.type !== 'step' &&
       last.type === event.type &&
       last.summary === event.summary &&
       last.site === event.site &&
@@ -73,10 +81,10 @@ function TaskActivity({ id }: { id: string }) {
       {rows.map((event) => (
         <li
           key={event.id}
-          data-kind={event.type === 'message' ? 'message' : 'step'}
+          data-kind={event.type === 'message' || event.type === 'step' ? event.type : 'tool'}
           data-helper={Boolean(event.parentRunId)}
         >
-          {event.type === 'message' ? (
+          {event.type === 'message' || event.type === 'step' ? (
             <Markdown allowedElements={[]} unwrapDisallowed>
               {event.summary}
             </Markdown>
@@ -99,10 +107,12 @@ function TaskActivity({ id }: { id: string }) {
 
 export function TaskCard({
   task,
+  live,
   onScheduled,
   onReply,
 }: {
   task: Task;
+  live?: Activity;
   onScheduled?(): void;
   onReply?(): void;
 }) {
@@ -131,7 +141,7 @@ export function TaskCard({
   const line =
     !onReply && expanded && task.status === 'needs_you'
       ? task.now || 'Waiting for your answer'
-      : taskHeadline(task);
+      : (live?.step ?? taskHeadline(task));
   return (
     <article
       className="task-preview"
@@ -166,10 +176,10 @@ export function TaskCard({
             {!steps.length && chevron}
           </span>
           <span className="task-preview-line">
-            {task.activity && (
+            {live?.site && (
               <>
                 <Globe2 size={14} aria-hidden="true" />
-                {task.activity.site} ·{' '}
+                {live.site} ·{' '}
               </>
             )}
             <Markdown allowedElements={[]} unwrapDisallowed>
@@ -366,7 +376,7 @@ function Empty({ title, children }: { title: string; children: string }) {
   );
 }
 
-export function Tasks({ onAsk }: { onAsk(text: string): void }) {
+export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity?: Activity[] }) {
   const tasks = usePageData<Task[]>('/api/tasks');
   const schedules = usePageData<Schedule[]>('/api/schedules');
   const history = useScheduleHistory();
@@ -478,7 +488,11 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
           ) : open.length ? (
             <div className="saved-plan-list">
               {open.map((task) => (
-                <TaskCard key={task.id} task={task} />
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  live={activity?.find((item) => item.taskId === task.id)}
+                />
               ))}
             </div>
           ) : (

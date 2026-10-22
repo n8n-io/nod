@@ -20,7 +20,7 @@ Type in the message box and press Enter. Press Shift+Enter for a new line.
 
 ## Keep talking while nod works
 
-You don't have to wait. The message box stays open while nod works. For work that takes more than a few seconds, nod says in one line what it will do, works without narrating, then answers. If you'd otherwise hear nothing for a while (half a minute in nod web, a few minutes in chat apps), it sends one short line on what it found and what's next. A file nod shares is attached to its next answer, or sent on its own when none follows.
+You don't have to wait. The message box stays open while nod works. For work that takes more than a few seconds, nod says in one line what it will do, then answers. While it works, a bubble from nod at the bottom of the chat shows what it's doing right now, such as "Found two flights under budget, checking seats now", and the answer replaces it. Tasks you started show there too, with their title. In Telegram you see **typing…** and the same line as a live draft, and in WhatsApp **typing…**. None of this sends you a notification; see [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file nod shares is attached to its next answer, or sent on its own when none follows.
 
 Reply to a task's message to continue that task. A message without a reply target goes to the main chat. If it clearly changes an existing task, nod sends your message to that task. If the target is unclear, nod asks which task you mean.
 
@@ -38,7 +38,7 @@ To stop nod, select **Stop** next to the send button.
 
 The main Stop control ends active work, cancels queued messages and open questions, and closes all open tasks. To stop only one task, open its preview and select **Stop**. Your schedules stay configured. Stop can't undo something that already happened, such as an email that was already sent.
 
-When a run stops on an error, nod tells you what failed, in the main chat or as a reply to the affected task, with the error's own details, such as low credits or a rejected key with your model provider. Its next turn knows what went wrong. If nod restarts during a run, that run fails and nod posts an interruption notice. nod never repeats failed or interrupted work on its own. Saved tasks and waiting questions survive a restart.
+When a run you started stops on an error or on your spending limit, nod tells you what failed, in the main chat or as a reply to the affected task, with the error's own details, such as low credits or a rejected key with your model provider. Its next turn knows what went wrong. If nod restarts during a run you started, that run fails and nod posts an interruption notice. nod never repeats failed or interrupted work on its own. Saved tasks and waiting questions survive a restart.
 
 If nod may have sent or changed something, verify the result yourself or ask nod to inspect it before continuing. Don't make a new attempt while the result is unclear.
 

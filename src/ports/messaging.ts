@@ -15,6 +15,7 @@ export interface MessagingChannel {
   replyWindowMs?: number;
   supportsAttachments?: boolean;
   available?: boolean;
+  presenceMs?: number;
 }
 
 export interface MessagingAttachment {
@@ -85,12 +86,6 @@ export interface MessagingTransport {
     react?: (reaction: InboundReaction) => Promise<void>,
   ): Promise<void>;
   receive(request: MessagingWebhook): Promise<MessagingWebhookResult>;
-  typing?(input: {
-    channelId: string;
-    accountId: string;
-    threadId: string;
-    active: boolean;
-  }): Promise<void>;
   post(input: {
     channelId: string;
     accountId: string;
@@ -109,5 +104,12 @@ export interface MessagingTransport {
     reaction: string | null;
     signal?: AbortSignal;
   }): Promise<'sent' | 'unsupported'>;
+  presence?(input: {
+    channelId: string;
+    accountId: string;
+    threadId: string;
+    messageId: string;
+    status?: string;
+  }): Promise<void>;
   close(): Promise<void>;
 }

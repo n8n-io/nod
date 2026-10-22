@@ -38,8 +38,8 @@ export function combineMessagingTransports(
     async react(input) {
       return (await forChannel(input.channelId)?.react?.(input)) ?? 'unsupported';
     },
-    async typing(input) {
-      await forChannel(input.channelId)?.typing?.(input);
+    async presence(input) {
+      await forChannel(input.channelId)?.presence?.(input);
     },
     async pairing() {
       const transport = transports.findLast((transport) => transport.pairing);

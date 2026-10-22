@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Chat, ConsoleLogger } from 'chat';
-import { createTelegramAdapter } from '@chat-adapter/telegram';
-import { createWhatsAppAdapter } from '@chat-adapter/whatsapp';
+import { TelegramAdapter } from '@chat-adapter/telegram';
+import { WhatsAppAdapter } from '@chat-adapter/whatsapp';
 import { createPostgresState } from '@chat-adapter/state-pg';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -34,6 +34,31 @@ const telegramReaction = z.object({
     .array(z.object({ type: z.string(), emoji: z.string().min(1).max(64).optional() }))
     .max(10),
 });
+class Telegram extends TelegramAdapter {
+  draft(threadId: string, text: string) {
+    return this.telegramFetch('sendMessageDraft', {
+      chat_id: this.decodeThreadId(threadId).chatId,
+      draft_id: 1,
+      text: Array.from(text).slice(0, 4096).join(''),
+    });
+  }
+}
+
+class WhatsApp extends WhatsAppAdapter {
+  async typing(messageId: string) {
+    const result = await this.graphApiRequest<{ success?: boolean }>(
+      `/${this.phoneNumberId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: messageId,
+        typing_indicator: { type: 'text' },
+      },
+    );
+    if (result.success === false) throw new Error('WhatsApp did not show typing.');
+  }
+}
+
 const telegramReactions = new Set(
   '❤ 👍 👎 🔥 🥰 👏 😁 🤔 🤯 😱 🤬 😢 🎉 🤩 🤮 💩 🙏 👌 🕊 🤡 🥱 🥴 😍 🐳 ❤‍🔥 🌚 🌭 💯 🤣 ⚡ 🍌 🏆 💔 🤨 😐 🍓 🍾 💋 🖕 😈 😴 😭 🤓 👻 👨‍💻 👀 🎃 🙈 😇 😨 🤝 ✍ 🤗 🫡 🎅 🎄 ☃ 💅 🤪 🗿 🆒 💘 🙉 🦄 😘 💊 🙊 😎 👾 🤷‍♂ 🤷 🤷‍♀ 😡'.split(
     ' ',
@@ -147,7 +172,7 @@ export function createChatSdkTransport(
       (channel) => channel.provider === provider && channel.status === 'configured',
     );
   const telegram = configured('telegram')
-    ? createTelegramAdapter({
+    ? new Telegram({
         botToken: env.TELEGRAM_BOT_TOKEN!,
         secretToken: env.TELEGRAM_WEBHOOK_SECRET_TOKEN!,
         allowedUserIds: [env.TELEGRAM_ALLOWED_USER_ID ?? ''],
@@ -158,7 +183,8 @@ export function createChatSdkTransport(
       })
     : undefined;
   const whatsapp = configured('whatsapp')
-    ? createWhatsAppAdapter({
+    ? new WhatsApp({
+        userName: 'nod',
         accessToken: env.WHATSAPP_ACCESS_TOKEN!,
         appSecret: env.WHATSAPP_APP_SECRET!,
         phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID!,
@@ -186,8 +212,8 @@ export function createChatSdkTransport(
       channel.provider === 'telegram' ? env.TELEGRAM_ALLOWED_USER_ID : env.WHATSAPP_ALLOWED_NUMBER,
     ].filter((value): value is string => Boolean(value)),
     ...(channel.provider === 'whatsapp'
-      ? { replyWindowMs: 86400000 }
-      : { supportsAttachments: true }),
+      ? { replyWindowMs: 86400000, presenceMs: 20000 }
+      : { supportsAttachments: true, presenceMs: 4000 }),
   }));
   const error = (status: number, message: string): MessagingWebhookResult => ({
     status,
@@ -442,36 +468,6 @@ export function createChatSdkTransport(
           }
       return accepted(messages, reactions);
     },
-    async typing(input) {
-      if (
-        !input.active ||
-        input.channelId !== 'telegram' ||
-        !telegram ||
-        !channels.some(
-          (channel) =>
-            channel.id === input.channelId &&
-            channel.accountId === input.accountId &&
-            channel.status === 'configured',
-        )
-      )
-        return;
-      const target = telegram.decodeThreadId(input.threadId);
-      const response = await request(
-        `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendChatAction`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: target.chatId,
-            ...(target.messageThreadId ? { message_thread_id: target.messageThreadId } : {}),
-            action: 'typing',
-          }),
-          signal: AbortSignal.timeout(5000),
-          redirect: 'error',
-        },
-      );
-      if (!response.ok) throw new Error('Typing status is unavailable.');
-    },
     async react(input) {
       input.signal?.throwIfAborted();
       if (
@@ -499,6 +495,23 @@ export function createChatSdkTransport(
       if (emoji) await adapter.addReaction(input.threadId, input.messageId, emoji);
       else await adapter.removeReaction(input.threadId, input.messageId, '');
       return 'sent';
+    },
+    async presence(input) {
+      if (
+        !channels.some(
+          (channel) =>
+            channel.id === input.channelId &&
+            channel.status === 'configured' &&
+            channel.accountId === input.accountId,
+        )
+      )
+        throw new Error('Channel is not configured.');
+      await bot.initialize();
+      if (input.channelId === 'telegram' && telegram) {
+        await telegram.startTyping(input.threadId);
+        if (input.status) await telegram.draft(input.threadId, input.status);
+      }
+      if (input.channelId === 'whatsapp' && whatsapp) await whatsapp.typing(input.messageId);
     },
     async post(input) {
       if (

@@ -12,6 +12,7 @@ import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
 import { createChannelSettings } from '../src/server/channel-settings.ts';
 import { createChannels } from '../src/server/channels.ts';
+import type { LiveWork } from '../src/server/activity.ts';
 
 const token = '987:fixture-never-live';
 
@@ -503,6 +504,85 @@ test(
   },
 );
 
+test(
+  'presence shows Telegram typing with the live step as a draft, and WhatsApp typing on the inbound message',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_channel_presence_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const calls: unknown[] = [];
+    t.mock.method(
+      globalThis,
+      'fetch',
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const target = input instanceof Request ? input.url : String(input);
+        if (target.endsWith('/getMe'))
+          return Response.json({
+            ok: true,
+            result: { id: 987, is_bot: true, first_name: 'Fixture', username: 'fixture_bot' },
+          });
+        const method = /(sendChatAction|sendMessageDraft|\/messages)$/.exec(target)?.[1];
+        if (method) {
+          const body = JSON.parse(String(init?.body));
+          calls.push([
+            method,
+            { ...body, ...(body.chat_id ? { chat_id: String(body.chat_id) } : {}) },
+          ]);
+        }
+        return Response.json({ ok: true, result: true, success: true });
+      },
+    );
+    const transport = createChatSdkTransport(pool, {
+      TELEGRAM_ENABLED: 'true',
+      TELEGRAM_BOT_TOKEN: token,
+      TELEGRAM_ALLOWED_USER_ID: '123456',
+      TELEGRAM_WEBHOOK_SECRET_TOKEN: 'fixture-secret-long-enough',
+      WHATSAPP_ENABLED: 'true',
+      WHATSAPP_ACCESS_TOKEN: 'fixture-not-live',
+      WHATSAPP_APP_SECRET: 'fixture-app-secret',
+      WHATSAPP_PHONE_NUMBER_ID: '555000',
+      WHATSAPP_VERIFY_TOKEN: 'fixture-verify-token',
+      WHATSAPP_ALLOWED_NUMBER: '351910000000',
+      WHATSAPP_POLICY_CONFIRMED: 'true',
+    });
+    try {
+      const telegram = { channelId: 'telegram', accountId: '987', threadId: 'telegram:123456' };
+      await transport.presence!({ ...telegram, messageId: '8', status: 'Trip: Checking seats.' });
+      await transport.presence!({ ...telegram, messageId: '8' });
+      await transport.presence!({
+        channelId: 'whatsapp',
+        accountId: '555000',
+        threadId: 'whatsapp:555000:351910000000',
+        messageId: 'wamid.fixture',
+      });
+      assert.deepEqual(calls, [
+        ['sendChatAction', { chat_id: '123456', action: 'typing' }],
+        ['sendMessageDraft', { chat_id: '123456', draft_id: 1, text: 'Trip: Checking seats.' }],
+        ['sendChatAction', { chat_id: '123456', action: 'typing' }],
+        [
+          '/messages',
+          {
+            messaging_product: 'whatsapp',
+            status: 'read',
+            message_id: 'wamid.fixture',
+            typing_indicator: { type: 'text' },
+          },
+        ],
+      ]);
+    } finally {
+      await transport.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
 async function outboxFixture(t: TestContext, max?: number, provider = 'telegram') {
   const schema = `test_channel_outbox_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -652,6 +732,85 @@ test(
         attempts,
       );
       assert.equal(posts.length, 5);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'presence follows live work in the conversation that asked, after its queued replies, and repeats only on a change or its cadence',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { posts, receive, turnOf, reply, create, transport } = await outboxFixture(t);
+    transport.channels[0]!.presenceMs = 60_000;
+    const shown: Array<{ after: number; threadId: string; messageId: string; status?: string }> =
+      [];
+    transport.presence = async (input) => {
+      shown.push({
+        after: posts.length,
+        threadId: input.threadId,
+        messageId: input.messageId,
+        ...(input.status ? { status: input.status } : {}),
+      });
+    };
+    let live: LiveWork[] = [];
+    const channels = await create({ activity: async () => live });
+    const work = (channel: string, step: string | null, title: string | null = null) => ({
+      turnId: randomUUID(),
+      taskId: title ? randomUUID() : null,
+      title,
+      step,
+      site: null,
+      since: new Date().toISOString(),
+      channel,
+    });
+    try {
+      receive('111', 'a1', 'chat-a1');
+      receive('222', 'b1', 'chat-b1');
+      await channels.drain();
+      const [a1, b1] = [await turnOf('a1'), await turnOf('b1')];
+      await reply(a1.turn_id, 'On it.', 'ffffffff-0000-4000-8000-0000000000a1', 1);
+      live = [work('web', 'A synthetic web step.'), work(a1.channel, 'Checking synthetic seats.')];
+      await channels.drain();
+      assert.deepEqual(posts, [{ threadId: 'chat-a1', text: 'On it.' }]);
+      assert.deepEqual(shown, [
+        { after: 1, threadId: 'chat-a1', messageId: 'a1', status: 'Checking synthetic seats.' },
+      ]);
+      await channels.drain();
+      assert.equal(shown.length, 1);
+      t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+      t.mock.timers.tick(61_000);
+      await channels.drain();
+      t.mock.timers.reset();
+      assert.deepEqual(shown.at(-1), {
+        after: 1,
+        threadId: 'chat-a1',
+        messageId: 'a1',
+        status: 'Checking synthetic seats.',
+      });
+      live = [
+        work(a1.channel, 'Comparing two synthetic fares.', 'Synthetic trip'),
+        work(b1.channel, null),
+      ];
+      await channels.drain();
+      assert.deepEqual(shown.slice(2), [
+        {
+          after: 1,
+          threadId: 'chat-a1',
+          messageId: 'a1',
+          status: 'Synthetic trip: Comparing two synthetic fares.',
+        },
+        { after: 1, threadId: 'chat-b1', messageId: 'b1' },
+      ]);
+      live = [work(a1.channel, 'Opening http://localhost:5678/home to build it.')];
+      await channels.drain();
+      assert.deepEqual(shown.at(-1), { after: 1, threadId: 'chat-a1', messageId: 'a1' });
+      live = [];
+      await channels.drain();
+      live = [work(b1.channel, null)];
+      await channels.drain();
+      assert.equal(shown.length, 6);
     } finally {
       await channels.close();
     }

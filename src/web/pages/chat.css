@@ -352,8 +352,53 @@
   font-size: var(--text-control);
   color: var(--muted-foreground);
 }
+.chat-page .working-bubble {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(82%, 640px);
+  min-height: 40px;
+  padding: 8px 16px;
+  border-radius: 22px;
+  background: var(--surface-subtle);
+}
+.chat-page .working-bubble .thinking-dots {
+  flex-shrink: 0;
+  padding: 0;
+  background: none;
+}
+.chat-page .working-text {
+  display: grid;
+  min-width: 0;
+  font-size: var(--text-body);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.chat-page .working-text strong {
+  font-weight: 500;
+}
+.chat-page .working-text svg {
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+.chat-page .working-text > span {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--text-secondary);
+  animation: working-step 240ms var(--ease-enter);
+}
+@keyframes working-step {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .chat-page .thinking-dots i {
+  .chat-page .thinking-dots i,
+  .chat-page .working-text > span {
     animation: none;
   }
 }

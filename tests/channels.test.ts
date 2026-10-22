@@ -16,6 +16,7 @@ import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
 import { createWhatsAppLinkedTransport } from '../src/providers/chat-sdk/whatsapp.ts';
+import { combineMessagingTransports } from '../src/providers/chat-sdk/combined.ts';
 import { createChannelSessionStore } from '../src/server/channel-session.ts';
 import { createChannelMedia } from '../src/server/channel-media.ts';
 import { createSpeech } from '../src/server/speech.ts';
@@ -129,6 +130,7 @@ test(
           }[] = [];
           const collected: InboundMessage[] = [];
           const reacted: string[] = [];
+          const presence: string[][] = [];
           let downloads = 0;
           let logouts = 0;
           let failSend = false;
@@ -159,7 +161,9 @@ test(
                 logouts++;
                 if (failLogout) throw new Error('Synthetic sign-out response was lost.');
               },
-              sendPresenceUpdate: async () => {},
+              sendPresenceUpdate: async (state: string, destination: string) => {
+                presence.push([state, destination]);
+              },
               sendMessage: async (
                 destination: string,
                 content: Record<string, unknown>,
@@ -333,6 +337,14 @@ test(
             });
             await assert.rejects(collected.at(-1)!.attachments![0].read(), /address/);
             assert.equal(downloads, 3);
+            await combineMessagingTransports(transport).presence!({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              messageId: 'owner',
+              status: 'Synthetic live work',
+            });
+            assert.deepEqual(presence, [['composing', jid]]);
             if (mode === 'self-chat') {
               await assert.rejects(
                 transport.post({

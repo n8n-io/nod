@@ -8,7 +8,7 @@ import { pool } from './db.ts';
 import { transaction } from './transaction.ts';
 import { turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId } from './config.ts';
-import { delta, refresh } from './events.ts';
+import { delta, refresh, working } from './events.ts';
 import { localArtifacts, type ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
 import type { Artifact, MessageReaction } from '../shared/contracts.ts';
@@ -44,6 +44,7 @@ const inflight = new Set<Promise<void>>();
 let stopping = false;
 
 export type TurnSource = 'user' | 'schedule' | 'event' | 'resume' | 'task';
+export const ownerStarted = (turn = 'u') => `${turn}.source IN ('user','task','resume')`;
 export interface TurnRef {
   threadId: string;
   turnId: string;
@@ -784,14 +785,14 @@ async function failTurn(
     const turn = (
       await client.query<{
         thread_id: string;
-        background: boolean;
+        owner_started: boolean;
         task_id: string | null;
         latest_user_message_id: string | null;
       }>(
         `${turnChainSql()}, origin AS (
           SELECT u.created_at,u.id FROM turns u JOIN chain c ON c.id=u.id
           ORDER BY u.created_at,u.id LIMIT 1
-        ) SELECT u.thread_id,u.background,to_jsonb(u)->>'task_id' AS task_id,
+        ) SELECT u.thread_id,${ownerStarted()} AS owner_started,to_jsonb(u)->>'task_id' AS task_id,
          (SELECT m.id FROM messages m LEFT JOIN turns author ON author.id=m.turn_id AND author.owner_id=m.owner_id
           WHERE m.owner_id=$2 AND m.thread_id=u.thread_id AND m.role='user'
             AND (m.turn_id IN (SELECT id FROM chain)
@@ -815,7 +816,7 @@ async function failTurn(
     return { ...turn, taskMessageId: task?.message_id as string | undefined };
   }, pool);
   if (!turn) return false;
-  if (turn.background && !turn.taskMessageId) return true;
+  if (!turn.owner_started && !turn.taskMessageId) return true;
   const presented = await present?.(
     turn.thread_id,
     error === interrupted ? { kind: 'interrupted' } : { kind: 'failed', error },
@@ -948,7 +949,9 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
 
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   if (stopping) return;
-  for (const turn of await claimTurns(threadId)) {
+  const claimed = await claimTurns(threadId);
+  if (claimed.length) refresh();
+  for (const turn of claimed) {
     const execute = () => executeTurn(turn, dependencies);
     const work = (dependencies.observeTurn ? dependencies.observeTurn(turn.id, execute) : execute())
       .catch((error) => console.error(`Turn ${turn.id} did not finish: ${describeFailure(error)}`))
@@ -1269,14 +1272,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     };
     const emit = async (type: string, summary: string, event?: ExecutionEvent) => {
       await current((client) => insertEvent(client, turnId, type, summary, event));
-      refresh();
+      working();
     };
     const { reactToMessage, connections, browserConnection } = dependencies;
     if (await dependencies.spendingLimitReached?.()) {
       limited = true;
-      await current((client) =>
-        finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
-      );
+      await failTurn(turnId, undefined, spendingLimitReached);
       return;
     }
     await emit('started', 'Turn started.');
@@ -1475,9 +1476,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     if (signal.aborted) outcome = 'cancelled';
     if (!signal.aborted && error instanceof Error && error.message === spendingLimitReached) {
       limited = true;
-      await current((client) =>
-        finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
-      );
+      await failTurn(turnId, undefined, spendingLimitReached);
     } else {
       failure = error instanceof ModelRequestError ? 'model' : 'unknown';
       if (await failTurn(turnId, dependencies.present, failureText(error)))

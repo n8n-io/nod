@@ -40,7 +40,7 @@ flowchart LR
 
 When the month's spending reaches your limit:
 
-- New chat messages, schedules and background work stop before nod calls the model. Chat shows that it's paused.
+- New chat messages, schedules and background work stop before nod calls the model. Work you started gets one message saying it's paused, in nod and in the chat app you used.
 - Work that's already running can finish.
 - An action you already approved still runs once.
 

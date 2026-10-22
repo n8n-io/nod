@@ -132,6 +132,7 @@ export function createWhatsAppLinkedTransport(options: {
     missing: [],
     allowedSenderIds: [],
     supportsAttachments: true,
+    presenceMs: 4000,
     available: false,
   };
 
@@ -603,10 +604,9 @@ export function createWhatsAppLinkedTransport(options: {
       });
       return 'sent';
     },
-    async typing(input) {
+    async presence(input) {
       target(input);
-      if (socket && channel.available)
-        await socket.sendPresenceUpdate(input.active ? 'composing' : 'paused', input.threadId);
+      if (socket && channel.available) await socket.sendPresenceUpdate('composing', input.threadId);
     },
     async unlink() {
       if (cleared) {

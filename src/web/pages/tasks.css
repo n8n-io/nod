@@ -303,7 +303,7 @@
 .task-activity li {
   margin: 0.35rem 0;
 }
-.task-activity [data-kind='step'] {
+.task-activity [data-kind='tool'] {
   padding-left: 0.75rem;
   color: var(--text-secondary);
 }
