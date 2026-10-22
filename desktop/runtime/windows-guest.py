@@ -39,7 +39,9 @@ for attempt in range(120):
         break
     time.sleep(0.5)
 else:
-    lines = [line for line in open('/var/log/otto-docker.log', errors='replace').read().split('\n') if line.strip()]
+    with open('/var/log/otto-docker.log', 'rb') as log:
+        log.seek(max(0, log.seek(0, os.SEEK_END) - 4096))
+        lines = [line for line in log.read().decode(errors='replace').split('\n') if line.strip()]
     sys.exit('Docker did not start: ' + (lines[-1][-200:] if lines else 'no log'))
 if sys.argv[1] == 'start':
     sys.exit(0)

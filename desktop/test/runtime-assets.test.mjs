@@ -1536,7 +1536,7 @@ test('a failed runtime command names its cause from the end of its output, inclu
   await assert.rejects(
     execute(process.execPath, [
       '-e',
-      'console.log("started"); console.error("x".repeat(400) + "\\nError response from daemon: Pool overlaps"); process.exit(3)',
+      'console.error("started\\n" + "x".repeat(400) + "\\nError response from daemon: Pool overlaps"); process.exit(3)',
     ]),
     {
       message: /^Otto runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
