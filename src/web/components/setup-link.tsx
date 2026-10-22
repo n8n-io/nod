@@ -7,8 +7,10 @@ import { captureAnalytics } from '../lib/analytics';
 import type { SetupKind } from '../lib/message-links';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
+import { AppDiscoveryDialog } from './app-discovery-dialog';
 import { ServiceLogo } from './service-logo';
 import { Notice } from './ui';
+import { usePrivateEntry } from './private-entry';
 
 const icons = { vault: KeyRound, website: Globe2, app: Link2, browser: MonitorSmartphone };
 const vaultLink = /^\/(?:vault|credentials)\/([A-Za-z0-9_-]+)\/?$/;
@@ -171,22 +173,25 @@ function SetupAction({
   onConnect(href: string, trigger: HTMLButtonElement): void;
 }) {
   const Icon = icons[setup];
+  const entry = usePrivateEntry();
   if (setup === 'app')
     return (
       <button
         type="button"
         data-setup={setup}
+        className="setup-app-card"
         onClick={(event) => {
           captureAnalytics('otto_setup_link_clicked', { setup });
           onConnect(href, event.currentTarget);
         }}
       >
         {app ? (
-          <ServiceLogo slug={app.slug} logoUrl={app.logoUrl} size={18} />
+          <ServiceLogo slug={app.slug} logoUrl={app.logoUrl} size={28} />
         ) : (
-          <Icon size={18} aria-hidden="true" />
+          <Icon size={28} aria-hidden="true" />
         )}
-        <span>{app ? `Connect ${app.name}` : label}</span>
+        <span className="setup-app-name">{app?.name ?? label.replace(/^Connect\s+/i, '')}</span>
+        <span className="setup-app-action">Connect</span>
       </button>
     );
   return (
@@ -200,7 +205,19 @@ function SetupAction({
           : 'noopener noreferrer'
       }
       referrerPolicy="no-referrer"
-      onClick={() => captureAnalytics('otto_setup_link_clicked', { setup })}
+      onClick={(event) => {
+        captureAnalytics('otto_setup_link_clicked', { setup });
+        if (
+          setup === 'vault' &&
+          !event.button &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.shiftKey &&
+          !event.altKey &&
+          entry?.open(href, event.currentTarget)
+        )
+          event.preventDefault();
+      }}
       title={href.startsWith('https://') ? new URL(href).host : undefined}
     >
       <Icon size={16} aria-hidden="true" />
@@ -221,6 +238,7 @@ export function SetupActions({
     actions.filter((action) => action.setup === 'vault').map((action) => action.href),
   );
   const [signIn, setSignIn] = useState<AppSignIn>();
+  const [discoveryHref, setDiscoveryHref] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState('');
   const [accessRenewed, setAccessRenewed] = useState(false);
@@ -234,6 +252,7 @@ export function SetupActions({
     request.current = null;
     window.clearTimeout(timer.current);
     setSignIn(undefined);
+    setDiscoveryHref(null);
     setOpening(false);
     setError('');
   }
@@ -253,7 +272,7 @@ export function SetupActions({
     if (!navigate && request.current) return;
     captureAnalytics('otto_app_connect_clicked', { entry: 'chat', result: 'opened' });
     if (navigate) {
-      window.location.assign(href);
+      setDiscoveryHref(href);
       return;
     }
     const controller = new AbortController();
@@ -387,7 +406,7 @@ export function SetupActions({
   const pending = actions.filter(
     (action) => !completed.has(action.href) && !privateCompleted.has(action.href),
   );
-  if (!pending.length && !signIn && !accessRenewed) return null;
+  if (!pending.length && !signIn && !discoveryHref && !accessRenewed) return null;
   return (
     <>
       {accessRenewed && (
@@ -409,6 +428,18 @@ export function SetupActions({
             />
           ))}
         </div>
+      )}
+      {discoveryHref && (
+        <AppDiscoveryDialog
+          key={discoveryHref}
+          id={appLink.exec(discoveryHref)![1]}
+          onClose={() => setDiscoveryHref(null)}
+          onConnected={() => {
+            complete(discoveryHref);
+            setDiscoveryHref(null);
+          }}
+          returnFocus={() => trigger.current}
+        />
       )}
       <AppConnectionDialog
         signIn={signIn}

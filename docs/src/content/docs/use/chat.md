@@ -15,8 +15,8 @@ Otto follows your conversation language, including questions, confirmations and 
 
 Type in the message box and press Enter. Press Shift+Enter for a new line.
 
-- **Attach files.** Select **Attach files**, paste an image or drop files on the box. Each file can be 90 MB or smaller. Otto gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
-- **Reply to a message.** Select **Reply** under a message to point Otto at it. Under each message you'll find its time, any reaction, and **Reply**, **Copy** and **React**. The controls stay light until you hover over, select or focus the message. On a long message they stay at the bottom of the window while you scroll.
+- **Attach files.** Select **Attach files**, paste an image or drop files on the box. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. Otto gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
+- **Reply to a message.** Hover over a message and select its arrow, or right-click inside the bubble, then select **Reply** or **Copy**. On touch screens, use the visible arrow. The time appears in the bottom-right corner of each bubble.
 
 ## Keep talking while Otto works
 
@@ -44,11 +44,15 @@ If Otto may have sent or changed something, verify the result yourself or ask Ot
 
 ## Choose the model
 
-Open **Settings → Models** to choose the model Otto uses from your connected providers. See [Models](/connect/models/).
+Open the **Settings** page, then **Models** to choose the model Otto uses from your connected providers. See [Models](/connect/models/).
+
+## Desktop shortcuts
+
+In the desktop app, hold Command on a Mac or Ctrl on Windows and Linux to show shortcut hints. Use that key with 1–5 for Chat, Tasks, Apps, Channels and Trust; B expands or collapses the sidebar, and comma opens Settings. Web browsers keep their own shortcuts.
 
 ## React to messages
 
-To react to one of Otto's replies, double-click it to add 👍, or select **React** under it and pick an emoji. Your reaction appears under the reply, next to its time. Select it to remove it. Otto takes a reaction as feedback on that reply, never as an answer to a question or an approval.
+To react to one of Otto's replies, hover over the bubble and select its reaction icon. Pick a quick reaction, or choose **More emoji** to search and scroll through the full picker. On touch screens, the reaction icon is always visible. Your reaction appears at the bottom of the bubble. Select it to remove it. Otto takes a reaction as feedback on that reply, never as an answer to a question or an approval.
 
 Otto sometimes reacts to your messages too, such as ✅ when you say yes to something it offered or ❤️ when you thank it. It reacts only now and then, and a reaction never replaces its reply.
 
@@ -70,7 +74,7 @@ Otto answers each request in the app you sent it from. A message from Telegram g
 
 Select **Send feedback** at the top of the chat, choose **Bug or issue**, **Idea** or **Other**, and describe what happened. Feedback goes to the Otto team at n8n.
 
-After setup, a short invitation points to **Send feedback**. Dismiss it with its close button or Escape; it stays dismissed on that device.
+After first-time setup, a short invitation points to **Send feedback**. Dismiss it with its close button or press Escape while the invitation or feedback button is focused; it stays dismissed on that device.
 
 By default it includes a diagnostic report of your recent chat, actions and their results. Select **Review** to see the report, or clear **Include diagnostic report** before you send.
 

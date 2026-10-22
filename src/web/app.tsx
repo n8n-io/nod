@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Chat } from './pages/chat';
 import { Trust } from './pages/trust';
@@ -77,18 +77,24 @@ function useSavedDateFormat() {
   }, [data]);
 }
 
+function settingsPage(path: string) {
+  return ['/settings', '/settings/models', '/settings/apps', '/settings/memory'].includes(path);
+}
+
 function Workspace({
   path,
   session,
   account,
   onFeedback,
   onDismissFeedbackDiscovery,
+  settings,
 }: {
   path: string;
   session: SessionResponse;
   account: AccountControls;
   onFeedback(): void;
   onDismissFeedbackDiscovery?(): void;
+  settings: ReactNode;
 }) {
   const { state, streams, error, connected, refresh, resetConversation } = useAppState(
     session.user!.id,
@@ -227,15 +233,17 @@ function Workspace({
             )}
             {currentPath === '/channels' && <Channels />}
             {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
-            {!sidebarItems.some((item) => item.path === currentPath) && (
-              <div className="empty-state">
-                <h1>This page isn’t here.</h1>
-                <Button variant="outline" onClick={() => navigate('/')}>
-                  <ArrowLeft size={16} />
-                  Back to chat
-                </Button>
-              </div>
-            )}
+            {settings}
+            {!settingsPage(currentPath) &&
+              !sidebarItems.some((item) => item.path === currentPath) && (
+                <div className="empty-state">
+                  <h1>This page isn’t here.</h1>
+                  <Button variant="outline" onClick={() => navigate('/')}>
+                    <ArrowLeft size={16} />
+                    Back to chat
+                  </Button>
+                </div>
+              )}
             {state && (error || !connected) && (
               <div className="connection-notice">
                 <Notice kind={error ? 'error' : 'info'}>{error || 'Reconnecting…'}</Notice>
@@ -300,19 +308,26 @@ function AuthenticatedApp({
     openFeedback();
     onFeedbackHandled();
   }, [feedbackRequest, onFeedbackHandled]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpen = settingsPage(path);
   const [finishingOnboarding, setFinishingOnboarding] = useState(false);
   const [settingsRequest, setSettingsRequest] = useState(0);
-  const [settingsTab, setSettingsTab] = useState<AccountTab>('General');
-  const settingsTrigger = useRef<HTMLElement | null>(null);
-  const lastPath = useRef('/');
-  const settingsPath = path === '/memory' ? 'Memory' : undefined;
-  if (!settingsPath) lastPath.current = path;
-  const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
+  const settingsTab: AccountTab =
+    path === '/settings/models'
+      ? 'Models'
+      : path === '/settings/apps'
+        ? 'App connections'
+        : path === '/settings/memory'
+          ? 'Memory'
+          : 'General';
+  const settingsPath = (tab: AccountTab) =>
+    tab === 'General'
+      ? '/settings'
+      : tab === 'App connections'
+        ? '/settings/apps'
+        : `/settings/${tab.toLowerCase()}`;
+  const openSettings = (tab: AccountTab, _trigger?: HTMLElement) => {
     setSettingsRequest((current) => current + 1);
-    settingsTrigger.current = trigger ?? (document.activeElement as HTMLElement);
-    setSettingsTab(tab);
-    setSettingsOpen(true);
+    navigate(settingsPath(tab));
   };
   useEffect(
     () =>
@@ -322,10 +337,9 @@ function AuthenticatedApp({
     [],
   );
   useEffect(() => {
-    if (!settingsPath || !session.settings!.onboardingCompleted) return;
-    window.history.replaceState(null, '', lastPath.current);
+    if (path !== '/memory' || !session.settings!.onboardingCompleted) return;
+    window.history.replaceState(null, '', '/settings/memory');
     window.dispatchEvent(new PopStateEvent('popstate'));
-    openSettings(settingsPath);
   }, [path, session.settings!.onboardingCompleted]);
   useEffect(() => {
     const openSettingsLink = (event: MouseEvent) => {
@@ -342,8 +356,11 @@ function AuthenticatedApp({
     return () => document.removeEventListener('click', openSettingsLink);
   }, []);
   useEffect(() => {
+    if (!desktopSettingsAvailable()) return;
     const shortcut = (event: KeyboardEvent) => {
-      const modifier = /Mac|iPhone|iPad/.test(navigator.platform) ? event.metaKey : event.ctrlKey;
+      const modifier = /Mac|iPhone|iPad/.test(navigator.platform)
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey;
       if (
         !modifier ||
         event.key !== ',' ||
@@ -420,9 +437,31 @@ function AuthenticatedApp({
         />
       ) : (
         <Workspace
-          path={lastPath.current}
+          path={path}
           session={session}
           account={account}
+          settings={
+            <AccountSettings
+              account={account}
+              open={settingsOpen}
+              initialTab={settingsTab}
+              openRequest={settingsRequest}
+              onOpenChange={(open) => {
+                if (!open) navigate('/');
+              }}
+              onTabChange={(tab, replace) => {
+                if (replace) {
+                  window.history.replaceState(null, '', settingsPath(tab));
+                  window.dispatchEvent(new PopStateEvent('popstate'));
+                } else navigate(settingsPath(tab));
+              }}
+              onReplayOnboarding={
+                import.meta.env?.DEV === true && !desktopSettingsAvailable()
+                  ? () => navigate('/onboarding?replay=1')
+                  : undefined
+              }
+            />
+          }
           onFeedback={openFeedback}
           onDismissFeedbackDiscovery={
             feedbackDiscovery && !feedbackOpen && !settingsOpen
@@ -441,28 +480,6 @@ function AuthenticatedApp({
           feedbackTrigger.current?.isConnected
             ? feedbackTrigger.current
             : document.getElementById('feedback-launcher')
-        }
-      />
-      <AccountSettings
-        account={account}
-        open={settingsOpen}
-        initialTab={settingsTab}
-        openRequest={settingsRequest}
-        onOpenChange={setSettingsOpen}
-        onReplayOnboarding={
-          import.meta.env?.DEV === true && !desktopSettingsAvailable()
-            ? () => {
-                setSettingsOpen(false);
-                navigate('/onboarding?replay=1');
-              }
-            : undefined
-        }
-        returnFocus={() =>
-          settingsTrigger.current?.isConnected
-            ? settingsTrigger.current
-            : document.querySelector<HTMLElement>(
-                window.innerWidth <= 640 ? '.mobile-menu-trigger' : '[aria-label="Settings"]',
-              )
         }
       />
     </>

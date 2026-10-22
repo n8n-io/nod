@@ -23,7 +23,7 @@ Otto can complete a checkout with a card saved in Vault, but only after you appr
 
 Otto never saves the card's security code. You enter it for each payment. Codes saved by earlier versions are deleted the next time Otto opens your Vault.
 
-If Otto reaches a checkout and you have no card saved, it points you to this form. Save the card, then tell Otto to continue.
+If Otto reaches a checkout and you have no card saved, select its add-card action to open this form beside chat. Save the card, then tell Otto to continue. You can also add it in Trust.
 
 ## Approve one payment
 
@@ -40,7 +40,7 @@ When Otto has filled in the rest of the checkout, it prepares one payment reques
 
 The request stays open while its task waits for you. If Otto can't write the approval question, the request closes at once. A newer request, a newer message from you in the same conversation, a changed card or **Stop** makes it unusable. A scheduled run or background task has its own session, so chatting with Otto never closes its payment request.
 
-In Otto web or desktop, Otto shows the checkout with the card fields hidden and asks, for example "Pay €7.99 at shop.example.com with Visa ••4242?". Reply with the card's security code by itself, such as `123` or `CVV 123`. Otto web sends it privately, so it never reaches the model or the chat history. While the payment waits, any other message with a 3- or 4-digit number, such as "card ending 4242", is refused instead of reaching the model.
+In Otto web or desktop, Otto shows the checkout with the card fields hidden. Select its payment action to open **Approve payment** beside chat. Check the amount, shop, card and destinations, then enter the card's security code and submit. The code never reaches the model or the chat history. Closing the panel clears an unsent code; it does not cancel a payment already submitted. Reopening shows the current result, including an expired or uncertain request.
 
 ### From Telegram or WhatsApp
 

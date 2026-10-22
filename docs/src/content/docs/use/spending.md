@@ -11,7 +11,7 @@ Otto itself doesn't charge you. Your model provider bills you for the requests O
 
 ## See your spending
 
-Open **Trust** in the sidebar (⌘I on a Mac, Ctrl+I elsewhere). **Activity** opens first.
+Open **Trust** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Linux app). **Activity** opens first.
 
 - **The sentence at the top.** This month's spending, your monthly limit and when a task checks in, then what Otto did this week and the [standing instruction](/trust/approvals/#standing-instructions) it follows on its own. Select a value to see more or change it.
 - **The list.** Every request that cost money or acted in a connected app, and every sign-in and card use, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what Otto did and the cost.

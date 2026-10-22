@@ -1,8 +1,11 @@
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { Button } from './ui';
 import { shortcutLabel } from '../lib/navigation';
+import { desktopSettingsAvailable } from '../lib/desktop';
 
 export function SidebarToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle?(): void }) {
+  const desktop = desktopSettingsAvailable();
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
   return (
     <Button
@@ -13,8 +16,8 @@ export function SidebarToggle({ collapsed, onToggle }: { collapsed: boolean; onT
       aria-label={label}
       aria-expanded={!collapsed}
       aria-controls="sidebar-navigation"
-      aria-keyshortcuts="Meta+B Control+B"
-      title={`${label} (${shortcutLabel('b', /Mac|iPhone|iPad/.test(navigator.platform))})`}
+      aria-keyshortcuts={desktop ? `${mac ? 'Meta' : 'Control'}+B` : undefined}
+      title={desktop ? `${label} (${shortcutLabel('b', mac)})` : label}
       disabled={!onToggle}
       onClick={onToggle}
     >

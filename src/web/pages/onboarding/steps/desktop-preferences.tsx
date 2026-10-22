@@ -1,3 +1,4 @@
+import { Bell, Check, LoaderCircle, Power } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { desktopOnboardingSteps, OnboardingFrame } from '../frame';
 import { Button, Notice } from '../../../components/ui';
@@ -8,7 +9,7 @@ import {
   saveDesktopSettings,
   type DesktopSettings,
 } from '../../../lib/desktop';
-import { Footer, Messages, PreferenceBubble, useReveal } from '../motion';
+import { Bubble, Footer, Messages, useReveal } from '../motion';
 
 type PreferenceStep = Exclude<DesktopSettings['onboardingPreferenceStep'], 'complete'>;
 
@@ -85,6 +86,12 @@ export function DesktopPreferencesSetup({
             }
           : {}),
       });
+      if (!advance && !saved[step])
+        throw new Error(
+          step === 'notifications'
+            ? 'Allow Otto in your computer’s notification settings, then try again.'
+            : 'Open at login could not be enabled. Try again.',
+        );
       if (active.current) accept(saved);
     } catch (cause) {
       if (active.current) setError(errorMessage(cause));
@@ -163,21 +170,48 @@ function DesktopPreferenceQuestion({
         revealed={revealed}
         typing={typing}
         items={[
-          <PreferenceBubble
-            label={notifications ? 'Desktop notifications' : 'Open at login'}
-            checked={enabled}
-            saving={saving}
-            disabled={saving}
-            error={error}
-            onChange={(value) => void choose(value)}
-          >
-            {notifications
-              ? 'I can let you know when setup is ready, a task finishes, or I need your attention — even when you’re using another app.'
-              : 'I can open when you sign in to your computer, so I’m ready when you need me.'}
-            {!enabled && ' Turn this on to continue.'}
-            {notifications &&
-              ' If alerts are blocked, allow Otto in your computer’s notification settings.'}
-          </PreferenceBubble>,
+          <Bubble>
+            <p>
+              {notifications
+                ? 'I’ll let you know when a task finishes or I need your attention, even when you’re using another app.'
+                : 'I can open when you sign in to your computer, so I’m ready when you need me.'}
+            </p>
+            <div className="ob-preference-action">
+              {enabled ? (
+                <span className="ob-preference-enabled" role="status">
+                  {notifications ? (
+                    <Bell size={17} aria-hidden="true" />
+                  ) : (
+                    <Power size={17} aria-hidden="true" />
+                  )}
+                  {notifications ? 'Notifications enabled' : 'Open at login enabled'}
+                  <Check size={15} aria-hidden="true" />
+                </span>
+              ) : (
+                <Button disabled={saving} aria-busy={saving} onClick={() => void choose(true)}>
+                  {saving ? (
+                    <LoaderCircle size={17} className="spin" aria-hidden="true" />
+                  ) : notifications ? (
+                    <Bell size={17} aria-hidden="true" />
+                  ) : (
+                    <Power size={17} aria-hidden="true" />
+                  )}
+                  {saving
+                    ? 'Enabling…'
+                    : error
+                      ? 'Try again'
+                      : notifications
+                        ? 'Enable notifications'
+                        : 'Enable open at login'}
+                </Button>
+              )}
+            </div>
+            {error && (
+              <p className="ob-preference-error" role="alert">
+                {error}
+              </p>
+            )}
+          </Bubble>,
         ]}
       />
       <Footer

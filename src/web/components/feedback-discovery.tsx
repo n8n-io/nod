@@ -56,7 +56,12 @@ export function FeedbackLauncher({
   useEffect(() => {
     if (!onDismissDiscovery) return;
     const dismiss = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
+      if (
+        !hint.current?.contains(document.activeElement) &&
+        document.activeElement !== launcher.current
+      )
+        return;
       if (!hint.current?.getClientRects().length) return;
       if (document.querySelector('[role="dialog"], [role="alertdialog"], dialog[open]')) return;
       if (hint.current?.contains(document.activeElement))

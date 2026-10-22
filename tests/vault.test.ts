@@ -8,6 +8,9 @@ import { JSDOM } from 'jsdom';
 import { runProcess } from '../src/providers/process.ts';
 import { Trust } from '../src/web/pages/trust.tsx';
 import { SetupActions } from '../src/web/components/setup-link.tsx';
+import { messageSetupLinks } from '../src/web/lib/message-links.ts';
+import { actionLink } from '../src/runtime/communication.ts';
+import { PrivateEntryWorkspace, usePrivateEntry } from '../src/web/components/private-entry.tsx';
 import { pageDataCache } from '../src/web/lib/page-data-cache.ts';
 import { Composio } from '@composio/core';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -2258,7 +2261,6 @@ test(
       vault.registerRoutes(app);
       const fills: CardEntry[] = [];
       const resumed: string[] = [];
-      let inOtto = true;
       const url = 'https://shop.fixture.test/checkout';
       let elsewhere: string | undefined;
       let captureFails = false;
@@ -2280,7 +2282,6 @@ test(
               secureEntries.push(event.properties.status);
           },
           uses: vault.uses,
-          inOtto: async () => inOtto,
           present: async (turn, input) => {
             if (presentationFailure) throw new Error('Synthetic payment presentation failure.');
             presentations.push(structuredClone({ turn, input }));
@@ -2397,6 +2398,11 @@ test(
         parallel.turnId,
       ]);
       assert.equal(first.question, 'Synthetic private payment step.');
+      assert.equal(first.url, `/payments/${(await latest()).id}`);
+      assert.deepEqual(
+        messageSetupLinks(actionLink(first.url, first.question), 'http://localhost:4310'),
+        [{ href: first.url, setup: 'vault', label: first.question }],
+      );
       assert.equal(presentations.at(-1)!.input.amount, '43.20');
       assert.equal(
         (await payments.submitCode(randomUUID(), '737', (await latest()).id)).status,
@@ -2437,7 +2443,7 @@ test(
         'https://pay.fixture.test',
         shop,
       ]);
-      assert.equal(presentations.at(-1)!.input.requires, 'security_code');
+      assert.equal(presentations.at(-1)!.input.requires, 'desktop_private_form');
       assert.equal(await reply('737'), 'submitted');
       assert.equal(fills.at(-1)?.card.securityCode, '737');
       assert.equal(fills.at(-1)?.destinations.number, 'https://pay.fixture.test');
@@ -2449,7 +2455,6 @@ test(
       await assert.rejects(payments.request(turn, order));
       captureFails = false;
 
-      inOtto = false;
       const linked = await payments.request(turn, order);
       const linkedId = linked.url!.split('/').at(-1)!;
       const securePath = `/api/payment-requests/${linkedId}`;
@@ -2487,7 +2492,6 @@ test(
       ]);
       assert.equal((await app.inject({ method: 'GET', url: securePath, headers })).statusCode, 409);
       assert.equal('securityCode' in (await vault.paymentCard(card.id)), false);
-      inOtto = true;
 
       await save('Travel card', '5555 5555 5555 4444');
       await assert.rejects(payments.request(turn, order));
@@ -2498,7 +2502,6 @@ test(
       assert.equal(yen.amountMinor, 1200);
       assert.equal(yen.amount, '1200');
       assert.equal(yen.currency, 'JPY');
-      inOtto = false;
       const privateCode = await payments.request(turn, { ...order, card: card.id });
       const codeId = privateCode.url!.split('/').at(-1)!;
       const codePath = `/api/payment-requests/${codeId}`;
@@ -3706,6 +3709,9 @@ async function vaultPage(
   await act(async () => root.render(element));
   return {
     document: dom.window.document,
+    async render(element: React.ReactNode) {
+      await act(async () => root.render(element));
+    },
     async close() {
       await act(async () => root.unmount());
       dom.window.close();
@@ -3806,6 +3812,275 @@ test('Vault does not open or prefill a login from arbitrary query data', async (
   }
 });
 
+test(
+  'beside-chat private entry clears closed fields and follows owned server submission without replay',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    const schema = `test_private_panel_${randomUUID().replaceAll('-', '')}`;
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    const turns = await seedTurns(pool);
+    const turn = await turns.turn();
+    let release = () => {};
+    let started = () => {};
+    let completed = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const injectionStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const submissionCompleted = new Promise<void>((resolve) => {
+      completed = resolve;
+    });
+    let submitted = 0;
+    let entered = 0;
+    let failed = false;
+    let requestSignal: AbortSignal | null | undefined;
+    const key = randomBytes(32);
+    const vault = await createVault(pool, {
+      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      page: async () => ({
+        origin: 'https://panel.example.test',
+        url: 'https://panel.example.test/login',
+      }),
+      inject: async (input) => {
+        entered++;
+        assert.equal(input.password, 'synthetic-panel-password');
+        if (failed) throw new Error('Synthetic private entry interruption');
+        started();
+        await gate;
+        return { status: 'submitted' as const };
+      },
+      resume: async () => {},
+      retry: async () => {},
+    });
+    vault.registerRoutes(app);
+    const request = await vault.request(turn, 'local-development', {
+      origin: 'https://panel.example.test',
+      label: 'Synthetic sign-in',
+      kind: 'password',
+      passwordSelector: '#password',
+    });
+    await turns.wait(turn);
+    const accepted: boolean[] = [];
+    function OpenEntry({ href }: { href: string }) {
+      const entry = usePrivateEntry();
+      return createElement(
+        'button',
+        {
+          id: 'open-private',
+          onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+            accepted.push(entry?.open(href, event.currentTarget) ?? false);
+          },
+        },
+        'Open private form',
+      );
+    }
+    const panel = (href = request.url, owner = 'first') =>
+      createElement(PrivateEntryWorkspace, {
+        key: owner,
+        children: createElement(OpenEntry, { href }),
+      });
+    const view = await vaultPage(
+      panel(),
+      async (path, init) => {
+        if (init.method === 'POST') {
+          submitted++;
+          requestSignal = init.signal;
+        }
+        const result = await app.inject({
+          method: (init.method ?? 'GET') as 'GET' | 'POST',
+          url: path,
+          headers: init.body ? { 'content-type': 'application/json' } : {},
+          payload: init.body ? String(init.body) : undefined,
+        });
+        if (init.method === 'POST') completed();
+        return new Response(result.body, {
+          status: result.statusCode,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+      'http://localhost:4310/?conversation=synthetic',
+    );
+    t.after(async () => {
+      release();
+      await view.close();
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const click = async (selector: string) =>
+      act(async () => {
+        const target = view.document.querySelector<HTMLButtonElement>(selector);
+        assert.ok(target, selector);
+        target.click();
+      });
+    const settle = async (predicate: () => boolean) => {
+      for (let attempt = 0; attempt < 100 && !predicate(); attempt++)
+        await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+      assert.ok(predicate());
+    };
+    await click('#open-private');
+    await settle(() => Boolean(view.document.querySelector('input[name="password"]')));
+    const password = view.document.querySelector<HTMLInputElement>('input[name="password"]')!;
+    password.value = 'synthetic-unsent-password';
+    await click('.private-entry-toolbar button');
+    assert.equal(view.document.querySelector('input[name="password"]'), null);
+    await click('#open-private');
+    await settle(() => Boolean(view.document.querySelector('input[name="password"]')));
+    assert.equal(
+      view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value,
+      '',
+    );
+    view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value =
+      'synthetic-panel-password';
+    await click('.credential-secret button');
+    assert.equal(
+      view.document.querySelector<HTMLInputElement>('input[name="password"]')!.type,
+      'text',
+    );
+    await act(async () => {
+      const form = view.document.querySelector('form')!;
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await injectionStarted;
+    assert.equal(submitted, 1);
+    assert.equal(entered, 1);
+    await click('.private-entry-toolbar button');
+    assert.equal(requestSignal?.aborted, true);
+    await click('#open-private');
+    await settle(() => Boolean(view.document.querySelector('.credential-complete')));
+    assert.equal(view.document.querySelector('form'), null);
+    await act(async () => {
+      release();
+      await submissionCompleted;
+    });
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    await settle(() => Boolean(view.document.querySelector('.success-mark')));
+    assert.equal(submitted, 1);
+    assert.equal(entered, 1);
+    assert.equal(window.location.pathname, '/');
+    assert.equal(window.location.search, '?conversation=synthetic');
+    assert.equal(window.localStorage.length, 0);
+    assert.equal(window.sessionStorage.length, 0);
+    await view.render(panel(request.url, 'second'));
+    assert.equal(view.document.querySelector('.private-entry-panel'), null);
+    for (const href of [
+      `https://other.example.test${request.url}`,
+      `${request.url}?secret=synthetic`,
+      `${request.url}#synthetic`,
+      `${request.url}/extra`,
+      'javascript:alert(1)',
+    ]) {
+      await view.render(panel(href, 'second'));
+      await click('#open-private');
+      assert.equal(accepted.at(-1), false);
+      assert.equal(view.document.querySelector('.private-entry-panel'), null);
+    }
+    const next = await turns.turn();
+    failed = true;
+    const uncertain = await vault.request(next, 'local-development', {
+      origin: 'https://panel.example.test',
+      label: 'Synthetic sign-in',
+      kind: 'password',
+      passwordSelector: '#password',
+    });
+    await turns.wait(next);
+    await view.render(panel(uncertain.url, 'second'));
+    await click('#open-private');
+    await settle(() =>
+      Boolean(view.document.querySelector('.credential-accounts .button-outline')),
+    );
+    await click('.credential-accounts .button-outline');
+    await settle(
+      () =>
+        Boolean(view.document.querySelector('.credential-complete')) &&
+        !view.document.querySelector('[aria-busy="true"]'),
+    );
+    assert.equal(view.document.querySelector('form'), null);
+    assert.equal(view.document.querySelector('.success-mark'), null);
+    assert.deepEqual(
+      (
+        await app.inject({
+          url: uncertain.url.replace('/vault/', '/api/credential-requests/') + '/status',
+        })
+      ).json(),
+      { status: 'uncertain' },
+    );
+    assert.equal(submitted, 2);
+    assert.equal(entered, 2);
+    await view.render(panel('/trust?add=card', 'card-owner'));
+    await click('#open-private');
+    const unsentCard = view.document.querySelector<HTMLInputElement>('input[name="cardNumber"]')!;
+    assert.ok(unsentCard);
+    unsentCard.value = '4242424242424242';
+    await click('.private-entry-toolbar button');
+    assert.equal(view.document.querySelector('input[name="cardNumber"]'), null);
+    await click('#open-private');
+    assert.equal(
+      view.document.querySelector<HTMLInputElement>('input[name="cardNumber"]')!.value,
+      '',
+    );
+    for (const [name, value] of Object.entries({
+      label: 'Synthetic review card',
+      cardholder: 'Synthetic Owner',
+      cardNumber: '4242424242424242',
+      expiry: '12 / 2030',
+    }))
+      view.document.querySelector<HTMLInputElement>(`input[name="${name}"]`)!.value = value;
+    await act(async () =>
+      view.document
+        .querySelector('form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    );
+    await settle(() => Boolean(view.document.querySelector('.private-entry-card [role="status"]')));
+    assert.equal(view.document.querySelector('form'), null);
+    const savedCards = (await app.inject({ url: '/api/vault' }))
+      .json()
+      .filter((entry: { kind: string }) => entry.kind === 'card');
+    assert.equal(savedCards.length, 1);
+    assert.equal(savedCards[0].last4, '4242');
+    assert.equal(JSON.stringify(savedCards).includes('4242424242424242'), false);
+    assert.equal(window.localStorage.length, 0);
+    assert.equal(window.sessionStorage.length, 0);
+    assert.equal(window.location.search, '?conversation=synthetic');
+    pageDataCache.clear();
+    for (const href of [
+      '/trust?add=card&cardNumber=4242424242424242',
+      '/trust?add=card&add=card',
+      '/trust?add=card#synthetic',
+      '/trust?add=login',
+      'https://foreign.example.test/trust?add=card',
+    ]) {
+      await view.render(panel(href, 'card-owner'));
+      await click('#open-private');
+      assert.equal(accepted.at(-1), false);
+      assert.equal(view.document.querySelector('form'), null);
+    }
+    const foreign = await turns.turn('foreign-owner');
+    const foreignRequest = await vault.request(foreign, 'foreign-owner', {
+      origin: 'https://panel.example.test',
+      label: 'Foreign sign-in',
+      kind: 'password',
+      passwordSelector: '#password',
+    });
+    await turns.wait(foreign);
+    await view.render(panel(foreignRequest.url, 'third'));
+    await click('#open-private');
+    await settle(() => Boolean(view.document.querySelector('.notice')));
+    assert.equal(view.document.querySelector('form'), null);
+    assert.equal(submitted, 3);
+  },
+);
+
 test('chat removes private-entry actions only after the server confirms submission', async () => {
   const token = 'synthetic-private-entry-token';
   const payment = randomUUID();
@@ -3873,6 +4148,12 @@ test('analytics routes collapse private paths to known pages', async () => {
     ['/', '/'],
     ['/you', '/'],
     ['/tasks/', '/tasks'],
+    ['/settings', '/settings'],
+    ['/settings/models?private=synthetic', '/settings'],
+    ['/settings/apps#synthetic', '/settings'],
+    ['/settings/memory', '/settings'],
+    ['/settings/unknown-private-section', '/not-found'],
+    ['/settings-typo', '/not-found'],
     ['/trust?tab=saved#private', '/trust'],
     ['https://private.invalid/apps?connect=synthetic-private', '/apps'],
     ['/browser-connect/synthetic-private-token', '/apps'],

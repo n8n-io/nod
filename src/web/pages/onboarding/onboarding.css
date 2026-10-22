@@ -354,3 +354,28 @@
     transition: none !important;
   }
 }
+
+.ob-preference-action {
+  display: flex;
+  align-items: center;
+  margin-top: 18px;
+  min-height: 38px;
+}
+.ob-preference-action > .button,
+.ob-preference-enabled {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-control);
+  font-weight: 500;
+}
+.ob-preference-enabled {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ob-preference-enabled > svg:last-child {
+  margin-left: 4px;
+}

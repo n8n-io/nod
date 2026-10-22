@@ -94,7 +94,6 @@ export async function createPayments(
     ownerId: string;
     analytics?: CaptureAnalytics;
     uses: Awaited<ReturnType<typeof createVaultUses>>;
-    inOtto(turn: TurnRef): Promise<boolean>;
     present(turn: TurnRef, input: { kind: string; [key: string]: unknown }): Promise<string>;
     page(threadId: string): Promise<BrowserPage>;
     destinations(
@@ -300,7 +299,6 @@ export async function createPayments(
 
   async function request(turn: TurnRef, raw: unknown) {
     const parsed = input.parse(raw);
-    const inOtto = await options.inOtto(turn);
     const origin = credentialOrigin((await options.page(browserOf(turn))).origin);
     const currency = parsed.currency.toUpperCase();
     const [whole, fraction = ''] = parsed.amount.split('.');
@@ -335,7 +333,7 @@ export async function createPayments(
       currency,
       card: cardFacts(card),
       destinations: [...new Set(Object.values(destinations))],
-      requires: inOtto ? 'security_code' : 'desktop_private_form',
+      requires: 'desktop_private_form',
     };
     const question = await options.present({ ...turn }, structuredClone(details));
     if (typeof question !== 'string' || !question.trim() || question.length > 12_000)
@@ -398,7 +396,7 @@ export async function createPayments(
       { kind: 'payment', origin, payment: spent(row) },
       'requested',
     );
-    return { image, question, ...(!inOtto ? { url: `/payments/${row.id}` } : {}) };
+    return { image, question, url: `/payments/${row.id}` };
   }
 
   async function submitCode(turnId: string, code: string, paymentId: string) {

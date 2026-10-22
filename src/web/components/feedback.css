@@ -264,7 +264,7 @@
   padding-left: 16px;
   color: var(--foreground);
   background: var(--hint-background);
-  box-shadow: 0 5px 20px var(--shadow-color);
+  box-shadow: 0 5px 20px var(--shadow-overlay);
   animation: feedback-hint-in 220ms ease-out both;
 }
 

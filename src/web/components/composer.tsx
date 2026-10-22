@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
-import { ArrowUp, Paperclip, X, FileText, LoaderCircle, CornerUpLeft, Square } from 'lucide-react';
+import { ArrowUp, Paperclip, X, RotateCcw, CornerUpLeft, Square } from 'lucide-react';
 import type { Artifact, Message } from '../../shared/contracts';
 import { fileBytes } from '../../shared/files';
 import { api, errorMessage } from '../lib/api';
@@ -8,12 +8,16 @@ import { captureAnalytics } from '../lib/analytics';
 import { createComposerExtensions } from '../lib/composer-editor';
 import { EditorFormatting } from './editor-formatting';
 import { Button, Notice } from './ui';
-import { AttachmentThumbnail, ownedArtifactUrl, type ImagePreview } from './attachment-images';
-import { attachmentKind, localPreviewable, previewableImage } from '../lib/attachment-kind';
+import { ownedArtifactUrl, type ImagePreview } from './attachment-images';
+import { FileGlyph } from './attachment-glyph';
+import { attachmentKind, fileSize, localPreviewable } from '../lib/attachment-kind';
 import { useArtifactDrawer } from './artifact-context';
 
 interface DraftAttachment {
   id: string;
+  file: File;
+  state: 'queued' | 'uploading' | 'failed' | 'ready';
+  error?: string;
   name: string;
   mimeType: string;
   size: number;
@@ -129,8 +133,69 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     releasePreview(item);
     updateAttachments(attachmentValues.current.filter((value) => value.id !== item.id));
   }
-  async function upload(files: File[], method: 'picker' | 'drop' | 'paste') {
+  async function queueUploads(items: DraftAttachment[]) {
+    const send = async () => {
+      for (const item of items) {
+        const controller = item.controller!;
+        if (!mounted.current || controller.signal.aborted) continue;
+        updateAttachments(
+          attachmentValues.current.map((value) =>
+            value.id === item.id ? { ...value, state: 'uploading' } : value,
+          ),
+        );
+        try {
+          const body = new FormData();
+          body.append('file', item.file);
+          const artifact = await api<Artifact>('/api/uploads', {
+            method: 'POST',
+            body,
+            signal: controller.signal,
+          });
+          if (mounted.current && !controller.signal.aborted)
+            updateAttachments(
+              attachmentValues.current.map((value) =>
+                value.id === item.id
+                  ? { ...value, artifact, state: 'ready', controller: undefined }
+                  : value,
+              ),
+            );
+        } catch (cause) {
+          if (mounted.current && !controller.signal.aborted)
+            updateAttachments(
+              attachmentValues.current.map((value) =>
+                value.id === item.id
+                  ? {
+                      ...value,
+                      state: 'failed',
+                      error: errorMessage(cause),
+                      controller: undefined,
+                    }
+                  : value,
+              ),
+            );
+        } finally {
+          uploads.current.delete(controller);
+        }
+      }
+    };
+    const queued = uploadQueue.current.then(send);
+    uploadQueue.current = queued;
+    await queued;
+    if (mounted.current) restoreFocus();
+  }
+  function retryAttachment(item: DraftAttachment) {
+    if (attachmentValues.current.find((value) => value.id === item.id)?.state !== 'failed') return;
+    const controller = new AbortController();
+    uploads.current.add(controller);
+    const queued: DraftAttachment = { ...item, state: 'queued', error: undefined, controller };
+    updateAttachments(
+      attachmentValues.current.map((value) => (value.id === item.id ? queued : value)),
+    );
+    void queueUploads([queued]);
+  }
+  function upload(files: File[], method: 'picker' | 'drop' | 'paste') {
     if (!files.length) return;
+    if (fileInput.current) fileInput.current.value = '';
     if (files.some((file) => file.size > fileBytes)) {
       setError(`Each file must be ${fileBytes / 1024 / 1024} MB or smaller.`);
       return;
@@ -157,6 +222,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       }
       return {
         id: crypto.randomUUID(),
+        file,
+        state: 'queued',
         name: file.name,
         mimeType: file.type,
         size: file.size,
@@ -166,41 +233,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     });
     updateAttachments([...attachmentValues.current, ...items]);
     setError('');
-    const send = async () => {
-      for (const [index, file] of files.entries()) {
-        const item = items[index];
-        const controller = item.controller!;
-        try {
-          const body = new FormData();
-          body.append('file', file);
-          const artifact = await api<Artifact>('/api/uploads', {
-            method: 'POST',
-            body,
-            signal: controller.signal,
-          });
-          if (mounted.current && !controller.signal.aborted)
-            updateAttachments(
-              attachmentValues.current.map((value) =>
-                value.id === item.id ? { ...value, artifact, controller: undefined } : value,
-              ),
-            );
-        } catch (cause) {
-          if (mounted.current && !controller.signal.aborted) {
-            removeAttachment(item);
-            setError(errorMessage(cause));
-          }
-        } finally {
-          uploads.current.delete(controller);
-        }
-      }
-    };
-    const queued = uploadQueue.current.then(send);
-    uploadQueue.current = queued;
-    await queued;
-    if (mounted.current) {
-      if (fileInput.current) fileInput.current.value = '';
-      restoreFocus();
-    }
+    void queueUploads(items);
   }
   function restoreUnsent() {
     const items = unsent.current.splice(0).sort((a, b) => a.sequence - b.sequence);
@@ -273,11 +306,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setDrafts(images);
     return () => setDrafts([]);
   }, [images, setDrafts]);
-  const previewLabel = images.every((image) =>
-    previewableImage(image.mimeType ?? 'image/png', image.name),
-  )
-    ? 'image'
-    : 'attachment';
   return (
     <div className="composer-wrap">
       {error && <Notice>{error}</Notice>}
@@ -316,62 +344,89 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           void upload(Array.from(event.dataTransfer.files), 'drop');
         }}
       >
-        {(attachments.length > 0 || pendingUploads > 0) && (
-          <div className="pending-attachments" aria-label="Message attachments">
+        {attachments.length > 0 && (
+          <div
+            className="pending-attachments composer-attachments"
+            aria-label="Message attachments"
+          >
             {attachments.map((item) => {
-              const imageIndex = images.findIndex((image) => image.id === item.id);
-              const image = images[imageIndex];
+              const preview = images.some((image) => image.id === item.id);
+              const uploading = item.state === 'uploading' || item.state === 'queued';
+              const status =
+                item.state === 'uploading'
+                  ? 'Uploading…'
+                  : item.state === 'queued'
+                    ? 'Waiting…'
+                    : item.state === 'failed'
+                      ? 'Upload failed'
+                      : item.size < 1024
+                        ? `${item.size} B`
+                        : fileSize(item.size);
               return (
                 <div
-                  className={`pending-attachment${image ? ` is-preview${previewableImage(item.mimeType, item.name) ? ' is-image' : ''}` : ''}`}
+                  className={`composer-file${item.state === 'failed' ? ' is-failed' : ''}`}
                   key={item.id}
                 >
-                  {image ? (
-                    <>
-                      <button
-                        type="button"
-                        className="pending-image-preview"
-                        aria-label={`Preview ${previewLabel} ${imageIndex + 1} of ${images.length}`}
-                        aria-current={drawer.selectedId === item.id || undefined}
-                        onClick={(event) =>
-                          drawer.open(
-                            item.id,
-                            { element: event.currentTarget, keyboard: event.detail === 0 },
-                            'drafts',
-                          )
-                        }
-                      >
-                        <AttachmentThumbnail image={image} />
-                      </button>
-                      {!item.artifact && (
-                        <span className="pending-image-uploading" aria-hidden="true">
-                          <LoaderCircle size={16} className="spin" />
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <FileText size={16} />
-                      <span>{item.name}</span>
-                    </>
+                  <button
+                    type="button"
+                    className="composer-file-open"
+                    disabled={!preview}
+                    aria-label={preview ? `Open ${item.name}` : item.name}
+                    aria-current={drawer.selectedId === item.id || undefined}
+                    aria-describedby={`attachment-status-${item.id}`}
+                    title={`${item.name} · ${item.size.toLocaleString()} bytes`}
+                    onClick={(event) =>
+                      drawer.open(
+                        item.id,
+                        { element: event.currentTarget, keyboard: event.detail === 0 },
+                        'drafts',
+                      )
+                    }
+                  >
+                    <FileGlyph name={item.name} mimeType={item.mimeType} />
+                    <span className="composer-file-name">{item.name}</span>
+                    <span
+                      className="composer-file-status"
+                      id={`attachment-status-${item.id}`}
+                      role="status"
+                      title={item.error}
+                    >
+                      {status}
+                      {item.error && <span className="sr-only">: {item.error}</span>}
+                    </span>
+                  </button>
+                  {item.state === 'failed' && (
+                    <button
+                      type="button"
+                      className="composer-file-retry"
+                      onClick={() => retryAttachment(item)}
+                      aria-label={`Retry uploading ${item.name}`}
+                      title={item.error}
+                    >
+                      <RotateCcw size={12} />
+                      Retry
+                    </button>
                   )}
                   <button
                     type="button"
-                    className="remove-attachment"
+                    className="composer-file-remove"
                     onClick={() => removeAttachment(item)}
                     aria-label={`Remove ${item.name}`}
                   >
-                    <X size={16} />
+                    <X size={14} />
                   </button>
+                  {uploading && (
+                    <span
+                      className={`composer-file-progress${item.state === 'queued' ? ' is-queued' : ''}`}
+                      role="progressbar"
+                      aria-label={`${item.state === 'queued' ? 'Waiting to upload' : 'Uploading'} ${item.name}`}
+                    >
+                      <span />
+                    </span>
+                  )}
                 </div>
               );
             })}
-            {pendingUploads > 0 && (
-              <span className="attachment-uploading" role="status">
-                <LoaderCircle size={16} className="spin" />
-                Uploading {pendingUploads === 1 ? 'file' : `${pendingUploads} files`}…
-              </span>
-            )}
           </div>
         )}
         <EditorContent editor={editor} />

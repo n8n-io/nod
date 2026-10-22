@@ -11,23 +11,14 @@ import {
   Plug,
   Monitor,
   Moon,
+  Settings,
   SlidersHorizontal,
   Sun,
 } from 'lucide-react';
 import type { AccountPreferences, AccountTheme } from '../../shared/account';
 import type { HourCycle } from '../../shared/contracts';
 import type { AccountControls, AccountTab } from './account-menu';
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  Field,
-  Input,
-  Loading,
-  Notice,
-  Switch,
-} from './ui';
+import { Button, Field, Input, Loading, Notice, Switch } from './ui';
 import { usePageData } from '../hooks/use-page-data';
 import { errorMessage } from '../lib/api';
 import { captureAnalytics, type AnalyticsProperties } from '../lib/analytics';
@@ -46,7 +37,6 @@ import { desktopSettingsAvailable, removeDesktopData } from '../lib/desktop';
 import { DesktopOptions, useDesktopSettings } from './desktop-settings';
 import { ConnectionSettings } from './connection-choice';
 import { Memory } from '../pages/memory';
-import { isEditingTarget, navigationShortcut, shortcutLabel } from '../lib/navigation';
 
 const editablePreferences = ['quietHoursEnabled', 'quietStart', 'quietEnd'] as const;
 const regionLabels = {
@@ -344,7 +334,7 @@ export function AccountSettings({
   openRequest,
   onOpenChange,
   onReplayOnboarding,
-  returnFocus,
+  onTabChange,
 }: {
   account: AccountControls;
   open: boolean;
@@ -352,7 +342,7 @@ export function AccountSettings({
   openRequest: number;
   onOpenChange(open: boolean): void;
   onReplayOnboarding?(): void;
-  returnFocus(): HTMLElement | null;
+  onTabChange?(tab: AccountTab, replace?: boolean): void;
 }) {
   const desktop = desktopSettingsAvailable();
   const native = useDesktopSettings(desktop && open);
@@ -363,7 +353,7 @@ export function AccountSettings({
   const [preferencesDirty, setPreferencesDirty] = useState(false);
   const [connectionDirty, setConnectionDirty] = useState(false);
   const pending = useRef(false);
-  const continuing = useRef(false);
+  const heading = useRef<HTMLHeadingElement>(null);
   pending.current =
     modelDirty || preferencesDirty || connectionDirty || native.busy || account.saving;
   const [error, setError] = useState('');
@@ -393,6 +383,7 @@ export function AccountSettings({
   useEffect(() => {
     if (open) {
       if (pending.current) {
+        if (selectedTab !== tab) onTabChange?.(tab, true);
         setError('Save or cancel your changes first.');
         return;
       }
@@ -407,278 +398,260 @@ export function AccountSettings({
       return false;
     }
     setTab(value);
+    onTabChange?.(value);
     recordTab(value);
     setError('');
     return true;
   }
+  useEffect(() => {
+    if (open) heading.current?.focus({ preventScroll: true });
+  }, [open]);
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (pending.current) event.preventDefault();
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, []);
   const theme = desktop ? native.settings?.theme : account.theme;
   const themeSaving = desktop ? native.busy || !native.settings : account.saving;
   return (
-    <Dialog open={open} onOpenChange={(value) => (value ? onOpenChange(true) : close())}>
-      <DialogContent
-        className="account-settings"
-        aria-describedby={undefined}
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          (event.currentTarget as HTMLElement).focus();
-        }}
-        onCloseAutoFocus={(event) => {
-          const composer =
-            continuing.current &&
-            document.querySelector<HTMLElement>('.composer-editor[contenteditable="true"]');
-          continuing.current = false;
-          const target = composer || returnFocus();
-          if (target?.isConnected) {
-            event.preventDefault();
-            target.focus({ preventScroll: true });
-          }
-        }}
-        onKeyDown={(event) => {
-          if (
-            navigationShortcut(event.nativeEvent)?.type !== 'memory' ||
-            isEditingTarget(event.target)
-          )
-            return;
-          event.preventDefault();
-          changeTab('Memory');
-        }}
-      >
-        <DialogTitle className="sr-only" data-analytics-public>
+    <section
+      className="account-settings settings-page"
+      hidden={!open}
+      aria-labelledby={`${id}-heading`}
+    >
+      <div className="page-title-row">
+        <h1
+          className="page-title"
+          id={`${id}-heading`}
+          ref={heading}
+          tabIndex={-1}
+          data-analytics-public
+        >
+          <Settings size={24} aria-hidden="true" />
           Settings
-        </DialogTitle>
-        <div className="account-settings-layout">
-          <nav
-            role="tablist"
-            aria-label="Settings"
-            aria-orientation="vertical"
-            data-analytics-public
-          >
-            {tabs.map((value, index) => {
-              const Icon =
-                value === 'Models'
-                  ? KeyRound
-                  : value === 'App connections'
-                    ? Plug
-                    : value === 'Memory'
-                      ? Brain
-                      : SlidersHorizontal;
-              return (
-                <button
-                  key={value}
-                  id={`${id}-${value}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={value === tab}
-                  aria-label={value}
-                  aria-keyshortcuts={value === 'Memory' ? 'Meta+Y Control+Y' : undefined}
-                  title={
-                    value === 'Memory'
-                      ? `${value} (${shortcutLabel('y', /Mac|iPhone|iPad/.test(navigator.platform))})`
-                      : value
-                  }
-                  aria-controls={`${id}-content`}
-                  tabIndex={value === tab ? 0 : -1}
-                  onClick={() => changeTab(value)}
-                  onKeyDown={(event) => {
-                    const next =
-                      event.key === 'ArrowDown' || event.key === 'ArrowRight'
-                        ? (index + 1) % tabs.length
-                        : event.key === 'ArrowUp' || event.key === 'ArrowLeft'
-                          ? (index - 1 + tabs.length) % tabs.length
-                          : event.key === 'Home'
-                            ? 0
-                            : event.key === 'End'
-                              ? tabs.length - 1
-                              : null;
-                    if (next === null) return;
-                    event.preventDefault();
-                    if (changeTab(tabs[next]))
-                      document.getElementById(`${id}-${tabs[next]}`)?.focus();
-                  }}
-                >
-                  <Icon size={24} aria-hidden="true" />
-                  <span>{value}</span>
-                </button>
-              );
-            })}
-          </nav>
-          <div
-            className="account-settings-pane"
-            id={`${id}-content`}
-            role="tabpanel"
-            aria-labelledby={`${id}-${tab}`}
-          >
-            <header className="account-settings-header" data-analytics-public>
-              <h3>{tab}</h3>
-            </header>
-            <div key={tab} className="account-settings-body" tabIndex={0}>
-              {tab === 'General' && (
-                <>
-                  {desktop && native.error && (
-                    <Notice>
-                      {native.error}{' '}
-                      {!native.settings && (
-                        <Button variant="ghost" size="sm" onClick={() => void native.refresh()}>
-                          Try again
-                        </Button>
-                      )}
-                    </Notice>
-                  )}
-                  <div
-                    className="account-theme-previews"
-                    role="group"
-                    aria-label="Theme"
-                    data-analytics-public
-                  >
-                    {(['light', 'dark', 'system'] as AccountTheme[]).map((value) => {
-                      const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor;
-                      const label = value[0].toUpperCase() + value.slice(1);
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          aria-label={`${label} theme`}
-                          aria-pressed={theme === value}
-                          disabled={themeSaving}
-                          onClick={() => {
-                            setError('');
-                            void (
-                              desktop ? native.save({ theme: value }) : account.onTheme(value)
-                            ).catch((cause) => {
-                              if (!desktop && active.current) setError(errorMessage(cause));
-                            });
-                          }}
-                        >
-                          <span className={`account-theme-sample ${value}`} aria-hidden="true">
-                            <i>
-                              <em />
-                              <em />
-                              <em />
-                            </i>
-                            <span>
-                              <b />
-                              <b />
-                              <b />
-                              <em />
-                            </span>
-                          </span>
-                          <span className="account-theme-label">
-                            <Icon size={16} aria-hidden="true" />
-                            {label}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {desktop && native.settings && (
-                    <DesktopOptions
-                      settings={native.settings}
-                      busy={native.busy}
-                      onChange={native.save}
-                    />
-                  )}
-                  <PreferencesForm onDirtyChange={setPreferencesDirty} />
-                  <section className="account-region" aria-labelledby={`${id}-privacy`}>
-                    <h4 id={`${id}-privacy`} data-analytics-public>
-                      Privacy
-                    </h4>
-                    <div className="account-preference-row">
-                      <span data-analytics-public>
-                        <ChartColumn size={16} aria-hidden="true" />
-                        Share usage data
-                      </span>
-                      <Switch
-                        checked={account.usageData}
-                        disabled={account.saving}
-                        aria-label="Share usage data"
-                        aria-describedby={`${id}-usage-data`}
-                        onCheckedChange={(usageData) => {
-                          setError('');
-                          void account.onUsageData(usageData).catch((cause) => {
-                            if (active.current) setError(errorMessage(cause));
-                          });
-                        }}
-                      />
-                    </div>
-                    <p id={`${id}-usage-data`} className="field-hint" data-analytics-public>
-                      Help us make Otto better by sharing how you use it. Never your messages.{' '}
-                      <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
-                        What’s shared
-                      </a>
-                    </p>
-                    {account.traces !== undefined && (
-                      <>
-                        <div className="account-preference-row">
-                          <span data-analytics-public>
-                            <MessageSquareText size={16} aria-hidden="true" />
-                            Share conversation traces
-                          </span>
-                          <Switch
-                            checked={account.traces}
-                            disabled={account.saving}
-                            aria-label="Share conversation traces"
-                            aria-describedby={`${id}-traces`}
-                            onCheckedChange={(traces) => {
-                              setError('');
-                              void account.onTraces(traces).catch((cause) => {
-                                if (active.current) setError(errorMessage(cause));
-                              });
-                            }}
-                          />
-                        </div>
-                        <p id={`${id}-traces`} className="field-hint" data-analytics-public>
-                          Send Otto’s conversations, including what it reads and does, to the Otto
-                          team at n8n to improve Otto. Your name, email addresses, phone numbers,
-                          card numbers and IBANs are removed first, and traces carry no account or
-                          device ID. Kept for 14 days and never used to train AI models.
-                        </p>
-                      </>
+        </h1>
+      </div>
+      <div className="account-settings-layout">
+        <nav role="tablist" aria-label="Settings" aria-orientation="vertical" data-analytics-public>
+          {tabs.map((value, index) => {
+            const Icon =
+              value === 'Models'
+                ? KeyRound
+                : value === 'App connections'
+                  ? Plug
+                  : value === 'Memory'
+                    ? Brain
+                    : SlidersHorizontal;
+            return (
+              <button
+                key={value}
+                id={`${id}-${value}`}
+                type="button"
+                role="tab"
+                aria-selected={value === tab}
+                aria-label={value}
+                title={value}
+                aria-controls={`${id}-content`}
+                tabIndex={value === tab ? 0 : -1}
+                onClick={() => changeTab(value)}
+                onKeyDown={(event) => {
+                  const next =
+                    event.key === 'ArrowDown' || event.key === 'ArrowRight'
+                      ? (index + 1) % tabs.length
+                      : event.key === 'ArrowUp' || event.key === 'ArrowLeft'
+                        ? (index - 1 + tabs.length) % tabs.length
+                        : event.key === 'Home'
+                          ? 0
+                          : event.key === 'End'
+                            ? tabs.length - 1
+                            : null;
+                  if (next === null) return;
+                  event.preventDefault();
+                  if (changeTab(tabs[next]))
+                    document.getElementById(`${id}-${tabs[next]}`)?.focus();
+                }}
+              >
+                <Icon size={24} aria-hidden="true" />
+                <span>{value}</span>
+              </button>
+            );
+          })}
+        </nav>
+        <div
+          className="account-settings-pane"
+          id={`${id}-content`}
+          role="tabpanel"
+          aria-labelledby={`${id}-${tab}`}
+        >
+          <header className="account-settings-header" data-analytics-public>
+            <h3>{tab}</h3>
+          </header>
+          <div key={tab} className="account-settings-body" tabIndex={0}>
+            {tab === 'General' && (
+              <>
+                {desktop && native.error && (
+                  <Notice>
+                    {native.error}{' '}
+                    {!native.settings && (
+                      <Button variant="ghost" size="sm" onClick={() => void native.refresh()}>
+                        Try again
+                      </Button>
                     )}
-                    {desktop && (
-                      <Button
-                        className="account-remove-data"
-                        variant="destructive"
-                        size="sm"
-                        disabled={pending.current}
+                  </Notice>
+                )}
+                <div
+                  className="account-theme-previews"
+                  role="group"
+                  aria-label="Theme"
+                  data-analytics-public
+                >
+                  {(['light', 'dark', 'system'] as AccountTheme[]).map((value) => {
+                    const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor;
+                    const label = value[0].toUpperCase() + value.slice(1);
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-label={`${label} theme`}
+                        aria-pressed={theme === value}
+                        disabled={themeSaving}
                         onClick={() => {
                           setError('');
-                          void removeDesktopData().catch((cause) => {
-                            if (active.current) setError(errorMessage(cause));
+                          void (
+                            desktop ? native.save({ theme: value }) : account.onTheme(value)
+                          ).catch((cause) => {
+                            if (!desktop && active.current) setError(errorMessage(cause));
                           });
                         }}
                       >
-                        Remove all data
-                      </Button>
-                    )}
-                  </section>
-                </>
-              )}
-              {tab === 'Memory' && (
-                <Memory
-                  onDone={() => {
-                    continuing.current = !pending.current;
-                    close();
-                  }}
-                />
-              )}
-              {tab === 'App connections' && (
-                <ConnectionSettings onDirtyChange={setConnectionDirty} />
-              )}
-              {tab === 'Models' && (
-                <>
-                  <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />
-                </>
-              )}
-              {onReplayOnboarding && tab === 'General' && (
-                <Button variant="outline" disabled={pending.current} onClick={onReplayOnboarding}>
-                  Replay onboarding
-                </Button>
-              )}
-              {error && <Notice>{error}</Notice>}
-            </div>
+                        <span className={`account-theme-sample ${value}`} aria-hidden="true">
+                          <i>
+                            <em />
+                            <em />
+                            <em />
+                          </i>
+                          <span>
+                            <b />
+                            <b />
+                            <b />
+                            <em />
+                          </span>
+                        </span>
+                        <span className="account-theme-label">
+                          <Icon size={16} aria-hidden="true" />
+                          {label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {desktop && native.settings && (
+                  <DesktopOptions
+                    settings={native.settings}
+                    busy={native.busy}
+                    onChange={native.save}
+                  />
+                )}
+                <PreferencesForm onDirtyChange={setPreferencesDirty} />
+                <section className="account-region" aria-labelledby={`${id}-privacy`}>
+                  <h4 id={`${id}-privacy`} data-analytics-public>
+                    Privacy
+                  </h4>
+                  <div className="account-preference-row">
+                    <span data-analytics-public>
+                      <ChartColumn size={16} aria-hidden="true" />
+                      Share usage data
+                    </span>
+                    <Switch
+                      checked={account.usageData}
+                      disabled={account.saving}
+                      aria-label="Share usage data"
+                      aria-describedby={`${id}-usage-data`}
+                      onCheckedChange={(usageData) => {
+                        setError('');
+                        void account.onUsageData(usageData).catch((cause) => {
+                          if (active.current) setError(errorMessage(cause));
+                        });
+                      }}
+                    />
+                  </div>
+                  <p id={`${id}-usage-data`} className="field-hint" data-analytics-public>
+                    Help us make Otto better by sharing how you use it. Never your messages.{' '}
+                    <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
+                      What’s shared
+                    </a>
+                  </p>
+                  {account.traces !== undefined && (
+                    <>
+                      <div className="account-preference-row">
+                        <span data-analytics-public>
+                          <MessageSquareText size={16} aria-hidden="true" />
+                          Share conversation traces
+                        </span>
+                        <Switch
+                          checked={account.traces}
+                          disabled={account.saving}
+                          aria-label="Share conversation traces"
+                          aria-describedby={`${id}-traces`}
+                          onCheckedChange={(traces) => {
+                            setError('');
+                            void account.onTraces(traces).catch((cause) => {
+                              if (active.current) setError(errorMessage(cause));
+                            });
+                          }}
+                        />
+                      </div>
+                      <p id={`${id}-traces`} className="field-hint" data-analytics-public>
+                        Send Otto’s conversations, including what it reads and does, to the Otto
+                        team at n8n to improve Otto. Your name, email addresses, phone numbers, card
+                        numbers and IBANs are removed first, and traces carry no account or device
+                        ID. Kept for 14 days and never used to train AI models.
+                      </p>
+                    </>
+                  )}
+                  {desktop && (
+                    <Button
+                      className="account-remove-data"
+                      variant="destructive"
+                      size="sm"
+                      disabled={pending.current}
+                      onClick={() => {
+                        setError('');
+                        void removeDesktopData().catch((cause) => {
+                          if (active.current) setError(errorMessage(cause));
+                        });
+                      }}
+                    >
+                      Remove all data
+                    </Button>
+                  )}
+                </section>
+              </>
+            )}
+            {tab === 'Memory' && (
+              <Memory
+                onDone={() => {
+                  close();
+                }}
+              />
+            )}
+            {tab === 'App connections' && <ConnectionSettings onDirtyChange={setConnectionDirty} />}
+            {tab === 'Models' && (
+              <>
+                <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />
+              </>
+            )}
+            {onReplayOnboarding && tab === 'General' && (
+              <Button variant="outline" disabled={pending.current} onClick={onReplayOnboarding}>
+                Replay onboarding
+              </Button>
+            )}
+            {error && <Notice>{error}</Notice>}
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </section>
   );
 }

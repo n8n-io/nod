@@ -7,7 +7,7 @@ sidebar:
 
 Otto remembers lasting facts and preferences about you, so you don't have to repeat yourself.
 
-You can see everything Otto remembers, where it learned it, and change or forget it in **Settings → Memory** (⌘Y on a Mac, Ctrl+Y elsewhere).
+You can see everything Otto remembers, where it learned it, and change or forget it in **Settings → Memory**.
 
 ## What Otto remembers
 

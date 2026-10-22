@@ -997,7 +997,6 @@ async function initializeApplication(
     analytics: captureAnalytics,
     present: (turn, input) => communication.present(turn.threadId, input),
     uses: vault.uses,
-    inOtto: trust.inOtto,
     page: (threadId) => computer.currentPage(threadId),
     destinations: (threadId, fields) => computer.cardDestinations(threadId, fields),
     capture: (threadId) => computer.checkoutImage(threadId),

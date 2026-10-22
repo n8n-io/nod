@@ -2987,6 +2987,213 @@ test('redaction masks secure links, common token strings and secret assignments 
   );
 });
 
+test('composer uploads preserve retry bytes, cancellation, previews and failed-send recovery', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://otto.fixture.invalid',
+        pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of [
+        'Node',
+        'Element',
+        'HTMLElement',
+        'HTMLInputElement',
+        'HTMLButtonElement',
+        'MutationObserver',
+        'Event',
+        'KeyboardEvent',
+        'CustomEvent',
+        'DOMParser',
+      ])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      const rect = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      HTMLElement.prototype.getBoundingClientRect = () => rect;
+      HTMLElement.prototype.getClientRects = () => [];
+      dom.window.Range.prototype.getBoundingClientRect = () => rect;
+      dom.window.Range.prototype.getClientRects = () => [];
+      const created = [],
+        revoked = [],
+        requests = [],
+        opened = [],
+        sends = [];
+      URL.createObjectURL = (file) => {
+        const url = 'blob:synthetic-' + created.length;
+        created.push({ file, url });
+        return url;
+      };
+      URL.revokeObjectURL = (url) => revoked.push(url);
+      fetch = (url, options) =>
+        new Promise((resolve, reject) => {
+          assert.equal(url, '/api/uploads');
+          assert.equal(options.headers.get('X-Otto-Account'), 'synthetic-owner');
+          const request = { url, options, resolve, reject };
+          requests.push(request);
+          options.signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true },
+          );
+        });
+      const { createElement, useState, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Composer } = await import('./src/web/components/composer.tsx');
+      const { ArtifactDrawerContext } = await import('./src/web/components/artifact-context.tsx');
+      const { setRequestAccount } = await import('./src/web/lib/api.ts');
+      setRequestAccount('synthetic-owner');
+      let drafts = [],
+        result = { sent: false, restoreText: true };
+      const setDrafts = (value) => {
+        drafts = value;
+      };
+      function Fixture() {
+        const [text, setText] = useState('Synthetic review request');
+        return createElement(
+          ArtifactDrawerContext.Provider,
+          { value: { selectedId: null, open: (...args) => opened.push(args), setDrafts } },
+          createElement(Composer, {
+            ready: true,
+            text,
+            setText,
+            replyTo: null,
+            clearReply() {},
+            onSend: async (text, attachments) => {
+              sends.push({ text, attachments });
+              return result;
+            },
+          }),
+        );
+      }
+      const root = createRoot(document.getElementById('root'));
+      const settle = async (check) => {
+        for (let i = 0; i < 100 && !check(); i++)
+          await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          });
+        assert.ok(check(), 'Expected operation to settle');
+      };
+      const click = async (label) => {
+        const button = document.querySelector('[aria-label="' + label + '"]');
+        assert.ok(button, label);
+        await act(async () => button.click());
+      };
+      const choose = async (files) => {
+        const input = document.querySelector('input[type="file"]');
+        Object.defineProperty(input, 'files', { configurable: true, value: files });
+        await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+      };
+      const submit = async () => {
+        await act(async () =>
+          document
+            .querySelector('form')
+            .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+        );
+      };
+      const artifact = {
+        id: '00000000-0000-4000-8000-000000000001',
+        name: 'Review.txt',
+        mimeType: 'text/plain',
+        size: 21,
+        url: '/api/artifacts/00000000-0000-4000-8000-000000000001',
+      };
+      let closed = false;
+      try {
+        await act(async () => root.render(createElement(Fixture)));
+        await settle(() => document.querySelector('[contenteditable]'));
+        const first = new File(['Synthetic review file'], 'Review.txt', { type: 'text/plain' });
+        const second = new File(['Queued file'], 'Queued.txt', { type: 'text/plain' });
+        await choose([first, second]);
+        await settle(() => requests.length === 1);
+        assert.equal(drafts.length, 2);
+        assert.equal(drafts[0].downloadUrl, undefined);
+        assert.ok(document.querySelector('[aria-label="Send message"]').disabled);
+        await click('Open Review.txt');
+        assert.equal(opened[0][2], 'drafts');
+        assert.equal(opened[0][0], drafts[0].id);
+        await click('Remove Queued.txt');
+        assert.equal(revoked.filter((url) => url === created[1].url).length, 1);
+        await act(async () =>
+          requests[0].resolve(Response.json({ error: 'Synthetic upload failure' }, { status: 503 })),
+        );
+        await settle(() => document.querySelector('[aria-label="Retry uploading Review.txt"]'));
+        assert.equal(drafts.length, 1);
+        assert.equal(drafts[0].url, created[0].url);
+        assert.equal(requests.length, 1);
+        await submit();
+        assert.equal(sends.length, 0);
+        await click('Retry uploading Review.txt');
+        await settle(() => requests.length === 2);
+        assert.equal(created.length, 2);
+        for (const request of requests) {
+          const file = request.options.body.get('file');
+          assert.equal(file.name, first.name);
+          assert.equal(file.type, first.type);
+          assert.equal(await file.text(), await first.text());
+        }
+        await act(async () => requests[1].resolve(Response.json(artifact)));
+        await settle(() => drafts[0]?.downloadUrl === artifact.url);
+        assert.equal(document.querySelector('[aria-label="Send message"]').disabled, false);
+        await submit();
+        await settle(
+          () =>
+            drafts.length === 1 &&
+            document.querySelector('[contenteditable]').textContent.includes('Synthetic review request'),
+        );
+        assert.deepEqual(sends[0].attachments, [artifact]);
+        assert.equal(revoked.includes(created[0].url), false);
+        result = { sent: true };
+        await submit();
+        await settle(() => drafts.length === 0);
+        assert.deepEqual(sends[1], sends[0]);
+        assert.equal(revoked.filter((url) => url === created[0].url).length, 1);
+        const unsafe = [
+          new File(['<h1>fixture</h1>'], 'Page.html', { type: 'text/html' }),
+          new File(['<svg/>'], 'Icon.svg', { type: 'image/svg+xml' }),
+          new File(['<fixture/>'], 'Data.xml', { type: 'application/xml' }),
+        ];
+        await choose(unsafe);
+        await settle(() => requests.length === 3);
+        assert.equal(created.length, 2);
+        assert.equal(drafts.length, 0);
+        for (const file of [...unsafe].reverse()) await click('Remove ' + file.name);
+        await settle(() => requests[2].options.signal.aborted);
+        assert.equal(requests.length, 3);
+        const finalFiles = [
+          new File(['Active'], 'Active.txt', { type: 'text/plain' }),
+          new File(['Waiting'], 'Waiting.txt', { type: 'text/plain' }),
+        ];
+        await choose(finalFiles);
+        await settle(() => requests.length === 4);
+        await act(async () => root.unmount());
+        closed = true;
+        assert.equal(requests[3].options.signal.aborted, true);
+        assert.equal(requests.length, 4);
+        assert.equal(drafts.length, 0);
+        assert.deepEqual([...new Set(revoked)].sort(), created.map((item) => item.url).sort());
+        for (const item of created) assert.equal(revoked.filter((url) => url === item.url).length, 1);
+
+      } finally {
+        if (!closed) await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
 test('automatic feedback captures exclude remote handoffs and unsent editable content without changing the page', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 15_000,
