@@ -424,7 +424,7 @@ export async function createDiscoveredConnections(
         {},
         'GET',
         undefined,
-        AbortSignal.timeout(1000),
+        AbortSignal.timeout(3000),
       )
       .catch(() => undefined);
     const body = answer && 'body' in answer ? (answer.body as { resource?: unknown }) : null;
