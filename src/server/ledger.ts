@@ -15,7 +15,7 @@ import { transaction } from './transaction.ts';
 import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
 
 export const spendingLimitReached =
-  'Paused because this month’s spending limit was reached. Raise the limit in Trust to resume.';
+  'Paused because this month’s spending limit was reached. Raise the limit in Activity to resume.';
 export const defaultTaskUsd = 5;
 const usd = z
   .number()

@@ -1,12 +1,18 @@
-import { ListChecks, MessageCircle, PlugZap, Radio, ShieldCheck } from 'lucide-react';
+import { History, KeyRound, ListChecks, MessageCircle, PlugZap, Radio } from 'lucide-react';
 
 export const sidebarItems = [
   { path: '/', label: 'Chat', key: '1', icon: MessageCircle },
   { path: '/tasks', label: 'Tasks', key: '2', icon: ListChecks },
   { path: '/apps', label: 'Apps', key: '3', icon: PlugZap },
   { path: '/channels', label: 'Channels', key: '4', icon: Radio },
-  { path: '/trust', label: 'Trust', key: '5', icon: ShieldCheck },
+  { path: '/activity', label: 'Activity', key: '5', icon: History },
+  { path: '/logins', label: 'Logins and payment', key: '6', icon: KeyRound },
 ] as const;
+
+export function navigate(path: string) {
+  window.history.pushState(null, '', path);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
 
 export function isEditingTarget(target: EventTarget | null): boolean {
   return (

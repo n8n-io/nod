@@ -99,7 +99,7 @@ Scheduled tasks run only while nod is open and your computer is awake. Closing t
 
 ### An action shows as uncertain
 
-An action nod started failed or was interrupted, so nod can't tell whether it ran. nod never runs it again on its own. For a sign-in or payment, **Trust → Activity** shows "Result unknown".
+An action nod started failed or was interrupted, so nod can't tell whether it ran. nod never runs it again on its own. For a sign-in or payment, **Activity** shows "Result unknown".
 
 ```mermaid
 stateDiagram-v2

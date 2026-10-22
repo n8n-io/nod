@@ -176,7 +176,7 @@ function channelText(text: string) {
     }
     if (
       /^\/(?:vault|credentials|payments|approvals)\//.test(url.pathname) ||
-      (url.pathname === '/trust' && url.searchParams.has('add'))
+      (['/logins', '/trust'].includes(url.pathname) && url.searchParams.has('add'))
     ) {
       if (!/^https?:\/\//.test(value)) {
         secureAction = true;
@@ -191,7 +191,7 @@ function channelText(text: string) {
       (match, label: string, url: string) => (privateUrl(url) ? label : match),
     )
     .replace(
-      /https?:\/\/[^\s)]+|\/(?:api\/artifacts|vault|trust|credentials|payments|approvals)[^\s)]*/g,
+      /https?:\/\/[^\s)]+|\/(?:api\/artifacts|vault|logins|trust|credentials|payments|approvals)[^\s)]*/g,
       (url) => (privateUrl(url) ? '' : url),
     );
   return { text: safe.trim(), secureAction, artifact };

@@ -453,13 +453,17 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
 
-test('Trust save links open only an empty local form without accepting secret query data', () => {
+test('Save links open only an empty local form without accepting secret query data', () => {
   for (const kind of ['login', 'card']) {
-    const path = `/trust?add=${kind}`;
+    const path = `/logins?add=${kind}`;
     const expected = { href: path, kind: 'setup', setup: 'vault' };
     assert.deepEqual(safeMessageLink(path, origin), expected);
     assert.deepEqual(safeMessageLink(`${origin}${path}`, origin), expected);
+    assert.deepEqual(safeMessageLink(`/trust?add=${kind}`, origin), expected);
+    assert.deepEqual(safeMessageLink(`${origin}/trust?add=${kind}`, origin), expected);
   }
+  for (const link of ['/trust', `${origin}/trust`])
+    assert.deepEqual(safeMessageLink(link, origin), { href: '/activity', kind: 'navigation' });
   for (const query of [
     '?add=card&cardNumber=4242424242424242',
     '?add=login&origin=https%3A%2F%2Fexample.test',
@@ -468,16 +472,18 @@ test('Trust save links open only an empty local form without accepting secret qu
     '?add=login&add=login',
     '?add=login#synthetic',
   ]) {
-    assert.equal(safeMessageLink(`/trust${query}`, origin), null);
-    assert.equal(safeMessageLink(`${origin}/trust${query}`, origin), null);
+    for (const page of ['/logins', '/trust']) {
+      assert.equal(safeMessageLink(`${page}${query}`, origin), null);
+      assert.equal(safeMessageLink(`${origin}${page}${query}`, origin), null);
+    }
   }
-  const external = safeMessageLink('https://outside.example/trust?add=login', origin)!;
+  const external = safeMessageLink('https://outside.example/logins?add=login', origin)!;
   assert.equal(external.kind, 'external');
   assert.equal(setupLink(external, 'Save login in Vault'), null);
-  assert.equal(safeMessageLink('//outside.example/trust?add=login', origin), null);
-  const result = render('[Save login in Vault](/trust?add=login)');
+  assert.equal(safeMessageLink('//outside.example/logins?add=login', origin), null);
+  const result = render('[Save login in Vault](/logins?add=login)');
   const link = JSDOM.fragment(result).querySelector('a[data-setup="vault"]');
-  assert.equal(link?.getAttribute('href'), '/trust?add=login');
+  assert.equal(link?.getAttribute('href'), '/logins?add=login');
   assert.equal(link?.getAttribute('rel'), 'noopener noreferrer');
 });
 

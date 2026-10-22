@@ -98,7 +98,7 @@ Memory notes come only from your own messages and the notes you add or import in
 ## Delete your data
 
 - **Memories.** Open **Settings → Memory**, select a note and choose **Forget**. This deletes the note and its earlier versions. You can also ask nod to forget something.
-- **Vault items.** Open the item in **Trust → Logins and cards** and delete it. For a saved browser session, select **Sign out**.
+- **Vault items.** Open the item in **Logins and payment** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
 - **Everything.** In the desktop app, select **Remove all data** in **Settings → General**. nod deletes your profile and private computer from the folders above, then quits. From source, stop nod and delete its `NOD_DATA_ROOT` folder (`.local/` by default) and its Docker volumes. Uninstalling the app alone keeps your data. A service you signed in to through nod may still list nod as a connected app until you remove it there.
 

@@ -1,7 +1,8 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Chat } from './pages/chat';
-import { Trust } from './pages/trust';
+import { Activity } from './pages/activity';
+import { Logins } from './pages/logins';
 import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
 import { Credentials, Payment } from './pages/credentials';
@@ -17,7 +18,7 @@ import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
 import { captureFeedbackScreenshot } from './lib/feedback-capture';
-import { sidebarItems } from './lib/navigation';
+import { navigate, sidebarItems } from './lib/navigation';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
@@ -41,10 +42,6 @@ import {
 
 function replayingOnboarding(path: string) {
   return (import.meta.env?.DEV === true || desktopSettingsAvailable()) && path === '/onboarding';
-}
-function navigate(path: string) {
-  window.history.pushState(null, '', path);
-  window.dispatchEvent(new PopStateEvent('popstate'));
 }
 function useSavedDateFormat() {
   const { data } = usePageData<AccountPreferences>('/api/preferences');
@@ -223,7 +220,12 @@ function Workspace({
                 <ChatSkeleton />
               )}
             </div>
-            {currentPath === '/trust' && <Trust onAsk={askInChat} />}
+            {(currentPath === '/activity' || currentPath === '/logins') && (
+              <>
+                <Activity hidden={currentPath !== '/activity'} />
+                <Logins hidden={currentPath !== '/logins'} onAsk={askInChat} />
+              </>
+            )}
             {currentPath === '/apps' && (
               <Apps configuration={state?.configuration} onAsk={askInChat} />
             )}
@@ -348,11 +350,11 @@ function AuthenticatedApp({
     const openSettingsLink = (event: MouseEvent) => {
       const link =
         event.target instanceof Element &&
-        event.target.closest<HTMLAnchorElement>('a[href="/memory"], a[href="/trust"]');
+        event.target.closest<HTMLAnchorElement>('a[href="/memory"], a[href="/activity"]');
       if (!link || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
         return;
       event.preventDefault();
-      if (link.getAttribute('href') === '/trust') navigate('/trust');
+      if (link.getAttribute('href') === '/activity') navigate('/activity');
       else openSettings('Memory', link);
     };
     document.addEventListener('click', openSettingsLink);

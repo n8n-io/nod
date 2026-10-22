@@ -14,7 +14,20 @@ type SafeLink =
   | { href: string; kind: 'artifact' | 'external' | 'navigation' }
   | { href: string; kind: 'setup'; setup: SetupKind };
 
-const navigationPaths = new Set(['/', '/apps', '/tasks', '/memory', '/trust', '/channels']);
+const navigationPaths = new Set([
+  '/',
+  '/apps',
+  '/tasks',
+  '/memory',
+  '/activity',
+  '/logins',
+  '/channels',
+]);
+const renamedPaths = new Map([
+  ['/trust', '/activity'],
+  ['/trust?add=login', '/logins?add=login'],
+  ['/trust?add=card', '/logins?add=card'],
+]);
 const connectionPath =
   /^\/apps\?connect=[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const e2eConsentPath =
@@ -47,15 +60,17 @@ export function setupLink(
   };
 }
 
-export function safeMessageLink(value: string, origin: string): SafeLink | null {
+export function safeMessageLink(link: string, origin: string): SafeLink | null {
+  const path = link.startsWith(`${origin}/`) ? link.slice(origin.length) : link;
+  const value = renamedPaths.get(path) ?? link;
   if (!value || /[\u0000-\u0020\u007f<>"'\\]/.test(value)) return null;
   const absolute = /^https?:\/\//i.test(value);
   if (
     !absolute &&
     !localPath.test(value.split(/[?#]/, 1)[0]) &&
     !navigationPaths.has(value) &&
-    value !== '/trust?add=login' &&
-    value !== '/trust?add=card' &&
+    value !== '/logins?add=login' &&
+    value !== '/logins?add=card' &&
     value !== '/browser' &&
     !connectionPath.test(value) &&
     !e2eConsentPath.test(value)
@@ -76,9 +91,9 @@ export function safeMessageLink(value: string, origin: string): SafeLink | null 
     )
       return { href: url.pathname, kind: 'navigation' };
     if (!absolute || url.origin === base.origin) {
-      if (url.pathname === '/trust' && (url.search || url.hash))
+      if (url.pathname === '/logins' && (url.search || url.hash))
         return ['?add=login', '?add=card'].includes(url.search) && !url.hash
-          ? { href: `/trust${url.search}`, kind: 'setup', setup: 'vault' }
+          ? { href: `/logins${url.search}`, kind: 'setup', setup: 'vault' }
           : null;
       if (url.origin === base.origin && url.pathname === '/browser' && !url.search && !url.hash)
         return { href: '/browser', kind: 'setup', setup: 'browser' };

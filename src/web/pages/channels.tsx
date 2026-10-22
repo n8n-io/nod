@@ -463,10 +463,7 @@ export function Channels() {
   return (
     <div className="content-page secondary-page channels-page" ref={page}>
       <header className="page-heading secondary-heading">
-        <div>
-          <PageTitle path="/channels" />
-          <p>Chat with nod in the apps you use.</p>
-        </div>
+        <PageTitle path="/channels" />
       </header>
       {(error || loadError) && !editing && <Notice>{error || loadError}</Notice>}
       {loadError && !editing && (

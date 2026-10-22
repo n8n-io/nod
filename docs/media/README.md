@@ -1,6 +1,6 @@
 # Docs media
 
-The Trust tour and six Trust and private-form screenshots use the current app components with synthetic API data. The capture has no backend, model connection or connected account. Fields for private values stay empty. The tour states that the model check can make mistakes.
+The Trust and Vault tour and six screenshots use the current app components with synthetic API data: four of Activity, one of Logins and payment and one of a private form. The capture has no backend, model connection or connected account. Fields for private values stay empty. The tour states that the model check can make mistakes.
 
 From the repository root, with dependencies installed:
 

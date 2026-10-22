@@ -43,6 +43,7 @@ function hasChanges(form: HTMLFormElement, details: VaultEntryDetails) {
 export function VaultDetails({
   entry,
   autoFocus,
+  backLabel,
   onClose,
   onSaved,
   onDeleted,
@@ -52,6 +53,7 @@ export function VaultDetails({
   entry: VaultEntry;
   visible?: boolean;
   autoFocus?: boolean;
+  backLabel: string;
   onClose(): void;
   onSaved(entry: VaultListEntry): void;
   onDeleted(id: string): void;
@@ -470,7 +472,7 @@ export function VaultDetails({
   return (
     <VaultSurface label={name} autoFocus={autoFocus} onClose={close}>
       <div className="vault-bar" ref={bar}>
-        <VaultBackButton onClick={close} />
+        <VaultBackButton label={backLabel} onClick={close} />
         <div className="vault-bar-actions">
           {editing ? (
             <>

@@ -9,7 +9,7 @@ A saved browser session keeps a website signed in inside nod's private browser, 
 
 ## Save a session
 
-1. In **Trust → Logins and cards**, select **Add**, then **Website session**.
+1. In **Logins and payment**, select **Add**, then **Website session**.
 2. Enter the **Website address** and, if you like, an **Account name**. Select **Continue in chat**.
 3. nod opens the website in a new private browser profile. Sign in through the secure form, or take over the browser yourself.
 4. nod saves the session once it sees you're signed in.
@@ -33,9 +33,9 @@ A session opens in one browser at a time. While you're still signing in to it in
 
 ## Sign out
 
-Open the session in **Trust → Logins and cards** and select **Sign out**. This deletes the saved profile. If a task is using it, stop the task first.
+Open the session in **Logins and payment** and select **Sign out**. This deletes the saved profile. If a task is using it, stop the task first.
 
-Deleting a saved login keeps its browser session. The session remains available in Trust so you can sign out separately.
+Deleting a saved login keeps its browser session. The session remains in **Logins and payment** so you can sign out separately.
 
 ## Passkeys and manual sign-in
 

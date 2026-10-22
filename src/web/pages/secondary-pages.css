@@ -12,7 +12,7 @@
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 32px;
-  align-items: flex-start;
+  align-items: center;
 }
 .page-title-row {
   display: flex;
@@ -26,10 +26,6 @@
 }
 .page-title > svg {
   flex: none;
-  color: var(--muted-foreground);
-}
-.secondary-page .secondary-heading p {
-  margin-top: 8px;
   color: var(--muted-foreground);
 }
 .secondary-heading-actions {

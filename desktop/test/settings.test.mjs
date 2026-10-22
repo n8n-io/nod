@@ -1260,7 +1260,13 @@ test('settings navigation keeps owner authentication confined to the owned app m
     const token = (await headers()).requestHeaders['x-nod-desktop-token'];
     assert.ok(token);
     assert.notEqual(token, 'forged');
-    for (const path of ['/settings', '/settings/models', '/settings/memory']) {
+    for (const path of [
+      '/settings',
+      '/settings/models',
+      '/settings/memory',
+      '/activity',
+      '/logins',
+    ]) {
       window.webContents.mainFrame.url = `${origin}${path}`;
       assert.equal((await headers()).requestHeaders['x-nod-desktop-token'], token, path);
       await f.handlers.get('nod:settings:get')({
@@ -1274,7 +1280,12 @@ test('settings navigation keeps owner authentication confined to the owned app m
       ])
         assert.equal((await headers(request)).requestHeaders['x-nod-desktop-token'], undefined);
     }
-    for (const url of [`${origin}/settings/unknown`, 'https://external.example.test/settings']) {
+    for (const url of [
+      `${origin}/settings/unknown`,
+      `${origin}/activity/unknown`,
+      `${origin}/logins/unknown`,
+      'https://external.example.test/settings',
+    ]) {
       window.webContents.mainFrame.url = url;
       assert.equal((await headers()).requestHeaders['x-nod-desktop-token'], undefined);
       assert.throws(() =>
@@ -2729,8 +2740,8 @@ async function fixture(t, platform = 'win32') {
 }
 
 test(
-  'Windows DPAPI keeps the Vault and completed setup across real Electron restarts behind private ACLs',
-  { skip: process.platform !== 'win32', timeout: 120_000 },
+  'Windows DPAPI keeps the Vault and completed setup across real Electron restarts behind private ACLs that reapply without admin privileges',
+  { skip: process.platform !== 'win32', timeout: 300_000 },
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), 'nod-dpapi-restart-'));
     t.after(() => rm(directory, { recursive: true, force: true }));
@@ -2805,6 +2816,10 @@ app.whenReady().then(async () => {
           else resolve(stdout);
         });
       });
+    const powershell = join(
+      process.env.SYSTEMROOT,
+      'System32/WindowsPowerShell/v1.0/powershell.exe',
+    );
     const { default: electron } = await import('../node_modules/electron/index.js');
     const run = async (mode) => {
       const output = await execute(electron, [script, mode]);
@@ -2813,6 +2828,21 @@ app.whenReady().then(async () => {
       return JSON.parse(result[1]);
     };
     const first = await run('write');
+    await execute(
+      powershell,
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        fileURLToPath(new URL('../scripts/drop-admin-privileges.ps1', import.meta.url)),
+        '-ProcessId',
+        String(process.pid),
+      ],
+      windowsEnvironment(),
+    );
+    await protectWindowsProfile(profile, engineRoot);
     const restarted = await run('read');
     assert.deepEqual(restarted, first);
     assert.deepEqual(restarted.preferences, {
@@ -2824,7 +2854,7 @@ app.whenReady().then(async () => {
     });
     const acl = JSON.parse(
       await execute(
-        join(process.env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+        powershell,
         [
           '-NoProfile',
           '-NonInteractive',
@@ -3202,6 +3232,8 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   for (const path of [
     '/credentials/synthetic',
     '/payments/synthetic',
+    '/activity',
+    '/logins',
     '/trust',
     '/vault/synthetic',
     '/browser',
