@@ -8,30 +8,6 @@ export interface IntegrationServiceInfo {
   categories?: string[];
 }
 
-export type IntegrationKeyStatus = {
-  mode: 'nod' | 'own';
-  switchable: boolean;
-  keyWritable: boolean;
-  suffix: string | null;
-  managed: IntegrationManagedAccess | null;
-  warning?: string;
-};
-
-export type IntegrationManagedAccess = {
-  state: 'sign_in_required' | 'enabled' | 'denied' | 'revoked' | 'unavailable';
-  email: string | null;
-};
-
-export type IntegrationAccessAttempt = {
-  id: string;
-  url: string;
-  expiresAt: number;
-};
-
-export type IntegrationAccessProgress = {
-  status: 'pending' | 'authorized' | 'completed' | 'cancelled' | 'denied';
-};
-
 export const integrationServices: Record<
   IntegrationService,
   { name: string; description: string }
@@ -50,6 +26,7 @@ export const integrationServices: Record<
   slack: { name: 'Slack', description: 'Find conversations and keep up with your team.' },
   notion: { name: 'Notion', description: 'Find and work with your pages and databases.' },
   linear: { name: 'Linear', description: 'Find and work with your projects and issues.' },
+  n8n: { name: 'n8n', description: 'Build, test and run your workflows and agents.' },
 };
 
 export const integrationServiceIds = Object.keys(integrationServices);

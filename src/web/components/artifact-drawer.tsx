@@ -283,9 +283,10 @@ function ArtifactDrawer({
   const index = items.indexOf(current);
   const kind = attachmentKind(current.mimeType ?? '', current.name);
   const vector = kind === 'image' && vectorImage(current.mimeType ?? '', current.name);
-  const modes = kind === 'markdown' || kind === 'html' || kind === 'csv' || vector;
+  const modes =
+    kind === 'markdown' || kind === 'html' || kind === 'csv' || kind === 'n8n-workflow' || vector;
   const copyable =
-    ['markdown', 'html', 'csv', 'text'].includes(kind ?? '') &&
+    ['markdown', 'html', 'csv', 'text', 'n8n-workflow'].includes(kind ?? '') &&
     (ownedArtifactUrl(current.url) || localPreviewUrl(current.url));
   const download =
     current.downloadUrl && ownedArtifactUrl(current.downloadUrl) ? current.downloadUrl : null;

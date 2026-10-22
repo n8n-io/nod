@@ -64,6 +64,7 @@ When nod shares a file, it appears as an attachment in the nod app, up to 90 MB.
 | Word (`.docx`) and PowerPoint (`.pptx`) | As a page or slides. The layout is close to, not exactly, Office's |
 | Excel, CSV and TSV                      | As a table with its sheets, up to the first 200 rows               |
 | Markdown, HTML and SVG                  | Rendered, with a **Code** view                                     |
+| n8n workflows (`.n8n.json`)             | As a canvas of nodes and connections, with a **Code** view         |
 | Code, JSON and text                     | With syntax highlighting                                           |
 | ZIP                                     | The list of files inside                                           |
 

@@ -10,6 +10,7 @@ export type AttachmentKind =
   | 'document'
   | 'presentation'
   | 'archive'
+  | 'n8n-workflow'
   | 'text';
 
 const extensionKinds: Record<string, AttachmentKind> = {
@@ -85,6 +86,7 @@ function kindFromType(type: string): AttachmentKind | null {
 
 export function attachmentKind(mimeType: string, name = ''): AttachmentKind | null {
   const type = mimeType.split(';', 1)[0].trim().toLowerCase();
+  if (/\.n8n\.json$/i.test(name)) return 'n8n-workflow';
   const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1].toLowerCase() ?? '';
   return Object.hasOwn(extensionKinds, extension) ? extensionKinds[extension] : kindFromType(type);
 }
@@ -116,5 +118,6 @@ export function fileSize(bytes: number) {
 }
 
 export function fileType(name: string) {
+  if (/\.n8n\.json$/i.test(name)) return 'n8n workflow';
   return /\.([a-z0-9]{1,10})$/i.exec(name)?.[1].toUpperCase() ?? 'File';
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import {
   createHash,
-  generateKeyPairSync,
+  createPublicKey,
   randomBytes,
   randomUUID,
   verify,
@@ -25,6 +25,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { packager } from '@electron/packager';
+import { transformWithEsbuild } from 'vite';
 import { withAppleSigning } from '../../.github/scripts/with-apple-signing.mjs';
 import { run, signApplication, signingConfiguration } from './release-tools.mjs';
 
@@ -45,6 +46,11 @@ async function packageFixtures(planPath) {
     const directory = join(dirname(planPath), `source-${fixture.name}-${fixture.version}`);
     await mkdir(directory);
     await copyFile(join(repository, 'desktop/main/settings.mjs'), join(directory, 'settings.mjs'));
+    const identityPath = join(repository, 'src/providers/composio/identity.ts');
+    await writeFile(
+      join(directory, 'identity.mjs'),
+      (await transformWithEsbuild(await readFile(identityPath, 'utf8'), identityPath)).code,
+    );
     await writeFile(
       join(directory, 'package.json'),
       JSON.stringify({
@@ -58,7 +64,7 @@ async function packageFixtures(planPath) {
       `
 const { app, autoUpdater, safeStorage } = require('electron');
 const { appendFileSync, readFileSync, writeFileSync } = require('node:fs');
-const { createHash, createPrivateKey, createPublicKey, sign } = require('node:crypto');
+const { createHash, sign } = require('node:crypto');
 const fixture = ${JSON.stringify(fixture)};
 app.setPath('userData', fixture.profile);
 const receipt = (event, fields = {}) => appendFileSync(fixture.events,
@@ -72,15 +78,30 @@ app.whenReady().then(async () => {
   if (app.getVersion() === fixture.installed)
     writeFileSync(fixture.settings, JSON.stringify({
       version: 1, theme: 'dark', launchAtLogin: true, notifications: false, onboardingCompleted: true,
-      secrets: { vaultKey: encrypted.toString('base64') }, keyMetadata: {},
+      secrets: { vaultKey: encrypted.toString('base64') },
     }), { mode: 0o600, flag: 'wx' });
   const settingsBefore = readFileSync(fixture.settings);
   const { createSettingsStore } = await import('./settings.mjs');
   const environment = await createSettingsStore(fixture.settings, safeStorage).environment();
   const owner = JSON.parse(readFileSync(fixture.ownerFile)).ownerId;
+  const { loadIntegrationIdentity } = await import('./identity.mjs');
+  const identity = await loadIntegrationIdentity({
+    dataRoot: fixture.integrationRoot, ownerId: owner,
+    keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.from(environment.NOD_VAULT_KEY, 'base64') },
+    checkpoint: {
+      read: async () => {
+        try { return readFileSync(fixture.checkpointFile, 'utf8'); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+      },
+      commit: async (publicKey) => {
+        try { writeFileSync(fixture.checkpointFile, publicKey, { mode: 0o600, flag: 'wx' }); }
+        catch (error) { if (error.code !== 'EEXIST') throw error; }
+        if (readFileSync(fixture.checkpointFile, 'utf8') !== publicKey) throw new Error('Fixture identity checkpoint changed.');
+      },
+    },
+  });
   const identityBytes = readFileSync(fixture.identityFile);
-  const identity = createPrivateKey(identityBytes);
-  const publicKey = createPublicKey(identity).export({ format: 'jwk' }).x;
+  const markerBytes = readFileSync(fixture.markerFile);
   receipt('ready', {
     encryptedHash: createHash('sha256').update(encrypted).digest('hex'),
     decryptedHash: createHash('sha256').update(safeStorage.decryptString(encrypted)).digest('hex'),
@@ -89,8 +110,11 @@ app.whenReady().then(async () => {
     settingsHash: createHash('sha256').update(readFileSync(fixture.settings)).digest('hex'),
     owner,
     identityHash: createHash('sha256').update(identityBytes).digest('hex'),
-    managedOwner: 'otto_' + createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex'),
-    identityProof: sign(null, Buffer.from(fixture.challenge + ':' + app.getVersion()), identity).toString('base64url'),
+    markerHash: createHash('sha256').update(markerBytes).digest('hex'),
+    checkpointHash: createHash('sha256').update(readFileSync(fixture.checkpointFile)).digest('hex'),
+    publicKey: identity.publicKey,
+    managedOwner: identity.userId,
+    identityProof: sign(null, Buffer.from(fixture.challenge + ':' + app.getVersion()), identity.key).toString('base64url'),
   });
   if (app.getVersion() !== fixture.installed) return setTimeout(() => app.quit(), 500);
   autoUpdater.on('error', (error) => {
@@ -204,6 +228,9 @@ async function main() {
     source: (await run('git', ['rev-parse', 'HEAD'], { cwd: repository })).trim(),
     fixtureHash: sha256(await readFile(source)),
     settingsModuleHash: sha256(await readFile(join(repository, 'desktop/main/settings.mjs'))),
+    identityModuleHash: sha256(
+      await readFile(join(repository, 'src/providers/composio/identity.ts')),
+    ),
     electron: configuration.devDependencies.electron,
     startedAt: new Date().toISOString(),
     root,
@@ -248,8 +275,11 @@ async function main() {
         encrypted: join(root, `${kind}-profile`, 'encrypted.bin'),
         settings: join(integrationRoot, 'settings.json'),
         sentinel: randomBytes(32).toString('base64'),
+        integrationRoot,
         ownerFile: join(integrationRoot, 'profile.json'),
-        identityFile: join(identityDirectory, `${sha256(owner)}.pem`),
+        identityFile: join(identityDirectory, `${sha256(owner)}.encrypted`),
+        markerFile: join(identityDirectory, `${sha256(owner)}.public`),
+        checkpointFile: join(integrationRoot, 'identity-checkpoint'),
         challenge: randomBytes(32).toString('base64url'),
         application: join(root, `NodFixture-${kind}.app`),
         archive: join(root, `${kind}.zip`),
@@ -265,14 +295,6 @@ async function main() {
       await mkdir(fixture.profile);
       await mkdir(identityDirectory, { recursive: true, mode: 0o700 });
       await writeFile(fixture.ownerFile, JSON.stringify({ ownerId: owner }), { mode: 0o600 });
-      const identity = generateKeyPairSync('ed25519');
-      await writeFile(
-        fixture.identityFile,
-        identity.privateKey.export({ format: 'pem', type: 'pkcs8' }),
-        { mode: 0o600 },
-      );
-      fixture.identityPublicKey = identity.publicKey.export({ format: 'pem', type: 'spki' });
-      fixture.managedOwner = `otto_${sha256(Buffer.from(identity.publicKey.export({ format: 'jwk' }).x, 'base64url'))}`;
       await writeFile(
         fixture.data,
         JSON.stringify({ saved: 'Synthetic update fixture', id: fixture.identifier }),
@@ -337,7 +359,6 @@ async function main() {
     for (const fixture of fixtures) {
       const before = sha256(await readFile(fixture.data));
       const ownerBefore = await readFile(fixture.ownerFile);
-      const identityBefore = sha256(await readFile(fixture.identityFile));
       const installedSignature = sha256(
         await readFile(join(fixture.application, 'Contents/_CodeSignature/CodeResources')),
       );
@@ -441,6 +462,13 @@ async function main() {
           events.every((event) => event.dataHash === before),
       );
       const readyEvents = events.filter((event) => event.event === 'ready');
+      const initialIdentity = readyEvents[0];
+      const publicKey = initialIdentity?.publicKey
+        ? createPublicKey({
+            key: { kty: 'OKP', crv: 'Ed25519', x: initialIdentity.publicKey },
+            format: 'jwk',
+          })
+        : undefined;
       check(
         'UPD-KEYS',
         readyEvents.length === (fixture.kind === 'install' ? 2 : 1) &&
@@ -464,23 +492,31 @@ async function main() {
       );
       check(
         'UPD-INTEGRATION-IDENTITY',
-        readyEvents.length === (fixture.kind === 'install' ? 2 : 1) &&
+        !!publicKey &&
+          readyEvents.length === (fixture.kind === 'install' ? 2 : 1) &&
           readyEvents.every(
             (event) =>
               event.owner === JSON.parse(ownerBefore).ownerId &&
-              event.identityHash === identityBefore &&
-              event.managedOwner === fixture.managedOwner &&
+              event.identityHash === initialIdentity.identityHash &&
+              event.markerHash === initialIdentity.markerHash &&
+              event.checkpointHash === initialIdentity.checkpointHash &&
+              event.publicKey === initialIdentity.publicKey &&
+              event.managedOwner ===
+                `nod_${sha256(Buffer.from(initialIdentity.publicKey, 'base64url'))}` &&
               typeof event.identityProof === 'string' &&
               verify(
                 null,
                 Buffer.from(`${fixture.challenge}:${event.version}`),
-                fixture.identityPublicKey,
+                publicKey,
                 Buffer.from(event.identityProof, 'base64url'),
               ),
           ) &&
           (await readFile(fixture.ownerFile)).equals(ownerBefore) &&
-          sha256(await readFile(fixture.identityFile)) === identityBefore &&
+          sha256(await readFile(fixture.identityFile)) === initialIdentity.identityHash &&
+          sha256(await readFile(fixture.markerFile)) === initialIdentity.markerHash &&
+          sha256(await readFile(fixture.checkpointFile)) === initialIdentity.checkpointHash &&
           ((await stat(fixture.identityFile)).mode & 0o777) === 0o600 &&
+          ((await stat(fixture.markerFile)).mode & 0o777) === 0o600 &&
           ((await stat(dirname(fixture.identityFile))).mode & 0o777) === 0o700,
       );
       await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', fixture.application]);

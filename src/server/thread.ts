@@ -108,6 +108,7 @@ export interface ThreadDependencies {
   skipTurn?: (sourceId: string) => Promise<boolean>;
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
+  mcpServers?: () => Promise<NonNullable<RuntimeContext['mcpServers']>>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   recall?: (
     text: string,
@@ -997,11 +998,20 @@ async function loadMessage(messageId: string | null) {
 async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const threadId = turn.thread_id as string;
   const sourceMessageId: string | null = turn.message_id ?? null;
-  const [source, history, previous, preferences, account, memory, learnedSkills, connectedApps] =
-    await Promise.all([
-      loadMessage(sourceMessageId),
-      pool.query(
-        `WITH seen AS (SELECT max(started_at) AS at FROM turns
+  const [
+    source,
+    history,
+    previous,
+    preferences,
+    account,
+    memory,
+    learnedSkills,
+    connectedApps,
+    mcpServers,
+  ] = await Promise.all([
+    loadMessage(sourceMessageId),
+    pool.query(
+      `WITH seen AS (SELECT max(started_at) AS at FROM turns
          WHERE owner_id=$1 AND thread_id=$2 AND session_id=$6 AND id<>$4),
        boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
        SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen,turn_id AS "turnId" FROM (
@@ -1014,23 +1024,24 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
          (u.id IS NULL OR u.session_id=$6
           OR (u.status IN ('succeeded','failed','cancelled') AND u.finished_at<=boundary.at))))
        ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
-        [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background), turn.session_id],
-      ),
-      pool.query<{ status: string; error: string | null }>(
-        `SELECT status,error FROM turns WHERE owner_id=$1 AND session_id=$2 AND id<>$3
+      [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background), turn.session_id],
+    ),
+    pool.query<{ status: string; error: string | null }>(
+      `SELECT status,error FROM turns WHERE owner_id=$1 AND session_id=$2 AND id<>$3
          AND (created_at,id)<(SELECT created_at,id FROM turns WHERE id=$3)
          ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [ownerId, turn.session_id, turn.id],
-      ),
-      pool.query(
-        'SELECT time_zone,locale,hour_cycle,notification_rule,quiet_hours_enabled,quiet_start,quiet_end FROM preferences WHERE owner_id=$1',
-        [ownerId],
-      ),
-      dependencies.accountProfile?.().catch(() => undefined),
-      dependencies.memoryContext?.().catch(() => ''),
-      dependencies.learnedSkills?.().catch(() => undefined),
-      turn.background ? dependencies.connectedApps?.() : undefined,
-    ]);
+      [ownerId, turn.session_id, turn.id],
+    ),
+    pool.query(
+      'SELECT time_zone,locale,hour_cycle,notification_rule,quiet_hours_enabled,quiet_start,quiet_end FROM preferences WHERE owner_id=$1',
+      [ownerId],
+    ),
+    dependencies.accountProfile?.().catch(() => undefined),
+    dependencies.memoryContext?.().catch(() => ''),
+    dependencies.learnedSkills?.().catch(() => undefined),
+    turn.background ? dependencies.connectedApps?.() : undefined,
+    dependencies.mcpServers?.().catch(() => undefined),
+  ]);
   const preference = preferences.rows[0];
   const related =
     !turn.background && sourceMessageId && dependencies.recall
@@ -1063,6 +1074,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       ...(related.length ? { relatedConversation: related } : {}),
       ...(learnedSkills?.length ? { learnedSkills } : {}),
       ...(connectedApps ? { connectedApps } : {}),
+      ...(mcpServers?.length ? { mcpServers } : {}),
     },
   };
 }

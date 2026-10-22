@@ -20,6 +20,7 @@ import { localPreviewable } from '../src/web/lib/attachment-kind.ts';
 import { MessageText } from '../src/web/components/message.tsx';
 import type { Artifact } from '../src/shared/contracts.ts';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
+import { ownerAddress } from '../src/providers/discovered/remote.ts';
 import { messageSetupLinks, safeMessageLink, setupLink } from '../src/web/lib/message-links.ts';
 
 const origin = 'http://localhost:4310';
@@ -304,7 +305,20 @@ test('connection navigation permits secure providers and same-origin app consent
     'https://accounts.example.com/consent',
   );
   assert.equal(connectionUrl('/e2e/connect/example', origin), origin + '/e2e/connect/example');
+  const bridge = `http://127.0.0.1:54321/${'a'.repeat(43)}`;
+  assert.equal(connectionUrl(bridge, origin), bridge);
+  for (const suffix of ['?', '#', '?#', '?unexpected=yes', '#unexpected'])
+    assert.throws(() => connectionUrl(bridge + suffix, origin));
   for (const value of [
+    `http://localhost:54321/${'a'.repeat(43)}`,
+    `http://[::1]:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.2:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.1.example.test:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.1/${'a'.repeat(43)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(42)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(44)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(42)}%2f`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}/extra`,
     'http://elsewhere.example/consent',
     'http://localhost:4310/consent',
     'javascript:alert(1)',
@@ -313,6 +327,33 @@ test('connection navigation permits secure providers and same-origin app consent
     'http://localhost:4320@elsewhere.example/consent',
   ])
     assert.throws(() => connectionUrl(value, origin));
+});
+
+test('an owner-entered address binds every request and consent page to that instance', async () => {
+  const check = ownerAddress('http://127.0.0.1:5678');
+  assert.equal(
+    (await check('http://127.0.0.1:5678/mcp-server/http')).url.href,
+    'http://127.0.0.1:5678/mcp-server/http',
+  );
+  assert.equal((await check('http://localhost:5678/mcp-oauth/token')).address, '127.0.0.1');
+  for (const value of [
+    'http://127.0.0.1:5679/mcp-server/http',
+    'http://192.168.1.1:5678/admin',
+    'https://127.0.0.1:5678/mcp-server/http',
+    'http://user:secret@127.0.0.1:5678/mcp-server/http',
+  ])
+    await assert.rejects(check(value));
+  await assert.rejects(
+    ownerAddress('http://93.184.216.34')('http://93.184.216.34/mcp-server/http'),
+  );
+  const origin = 'http://localhost:4320';
+  assert.equal(
+    connectionUrl('http://localhost:5678/mcp-oauth/authorize', origin, 'http://127.0.0.1:5678'),
+    'http://localhost:5678/mcp-oauth/authorize',
+  );
+  assert.throws(() =>
+    connectionUrl('http://localhost:5679/mcp-oauth/authorize', origin, 'http://127.0.0.1:5678'),
+  );
 });
 
 test('chat HTML cannot run scripts, submit forms, load trackers or link to local internals', () => {
@@ -366,10 +407,8 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.equal(ordinary?.getAttribute('referrerPolicy'), 'no-referrer');
   assert.equal(JSDOM.fragment(result).querySelector('button[data-setup="app"]'), null);
   for (const href of [
-    'https://connect.composio.dev/link/synthetic',
-    'https://CONNECT.COMPOSIO.DEV:443/link/synthetic',
-    'https://composio.n8n.cloud/v1/connect/pair?ticket=synthetic',
-    'https://custom-proxy.example.test/v1/connect/pair?ticket=synthetic',
+    `http://127.0.0.1:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.1:61530/${'B'.repeat(43)}`,
   ]) {
     const document = JSDOM.fragment(render(`[Connect Calendar](${href})`));
     assert.ok(document.querySelector('button[data-setup="app"]'));
@@ -397,8 +436,13 @@ test('setup links omit tokens and fragments and approval paths never become link
     'https://connect.composio.dev.example.test/link/synthetic',
     'https://connect.composio.dev:8443/link/synthetic',
     'http://connect.composio.dev/link/synthetic',
-    'https://outside.example/v1/connect/pairing?ticket=synthetic',
-    'https://outside.example/other/v1/connect/pair?ticket=synthetic',
+    `https://127.0.0.1:54321/${'a'.repeat(43)}`,
+    `http://localhost:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}?`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}#`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}?#`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}?unexpected=yes`,
+    `http://127.0.0.1:54321/${'a'.repeat(42)}`,
   ]) {
     for (const text of ['Connect Calendar', "Connect your calendar, then I'll continue."]) {
       const document = JSDOM.fragment(render(`[${text}](${href})`));

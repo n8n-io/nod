@@ -1,6 +1,7 @@
 import type { ProviderUsageEvent } from './provider-usage.ts';
 import type { ExecutionEvent, ExecutionScope } from '../shared/execution.ts';
 import type { ConnectedApp } from './integrations.ts';
+import type { DiscoveredTool } from './discovered.ts';
 import type { BrowserAction, BrowserPage, CredentialKind, WorkspaceSession } from './computer.ts';
 import type { AgentReactionResult, Artifact, MessageReaction } from '../shared/contracts.ts';
 
@@ -63,6 +64,16 @@ export interface RuntimeAccount {
   email: string | null;
 }
 
+export interface ConnectedMcpServer {
+  connectionId: string;
+  pathId: string;
+  service: string;
+  name: string;
+  accountName: string;
+  instructions?: string;
+  tools: DiscoveredTool[];
+}
+
 export interface RuntimeContext {
   threadId: string;
   turnId: string;
@@ -78,6 +89,7 @@ export interface RuntimeContext {
   quietHours?: boolean;
   account?: RuntimeAccount;
   connectedApps?: ConnectedApp[];
+  mcpServers?: ConnectedMcpServer[];
   currentMessageId?: string;
   replyTo?: { id: string; role: string; text: string; attachments?: MessageAttachment[] };
   history: Array<{
@@ -204,10 +216,11 @@ export interface AgentToolMetadata {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  deferred?: { namespace: string; description: string };
 }
 export interface AgentTool extends AgentToolMetadata {
   parallel?: boolean;
-  execute(args: Record<string, unknown>): Promise<AgentToolResult>;
+  execute(args: Record<string, unknown>, options?: { nested?: boolean }): Promise<AgentToolResult>;
 }
 export interface SkillLibrary {
   catalog: Array<{ name: string; description: string }>;

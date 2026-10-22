@@ -76,7 +76,7 @@ The server listens on a loopback port that needs a token, created again at every
 
 Electron `safeStorage` encrypts the Vault key. It uses the macOS key store on a Mac and DPAPI on Windows. Model connections and saved logins are encrypted with the Vault key. None of them enter the containers.
 
-App connections use nod's connection by default, without a Composio key. You can use your own Composio key instead. Notion and Linear connect directly to their hosted MCP servers. See [Apps](/connect/apps/).
+App connections use nod's connection service. The private installation identity is encrypted with the Vault key and retained in your profile. Notion and Linear connect directly to their hosted MCP servers, and n8n to your instance's MCP server. See [Apps](/connect/apps/).
 
 ## Where your data lives
 

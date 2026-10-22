@@ -22,7 +22,7 @@ import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { firstInstruction, ownerContext, steeredInstruction, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
-import { nodTools } from './tools.ts';
+import { connectedTools, nodTools } from './tools.ts';
 import type { Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import { delimit } from './untrusted.ts';
@@ -337,7 +337,7 @@ export function createAgentRuntime(dependencies: {
           if (
             !nested &&
             output !== confirmationNotice &&
-            (delimitedTools.has(name) || catalogResult)
+            (delimitedTools.has(name) || name.startsWith('mcp__') || catalogResult)
           )
             result = delimit(name, result);
           end({ status: 'succeeded', output });
@@ -412,41 +412,46 @@ export function createAgentRuntime(dependencies: {
         };
         return { gate, settle: () => decide(gate.asked) };
       };
-      const bind = (turn: Turn, take: () => Promise<unknown>) =>
-        nodTools(turn, skills).map(({ name, description, parameters, execute }): AgentTool => ({
-          name,
-          description,
-          parameters,
-          parallel: parallelTools.has(name),
-          execute: async (params) => {
-            assertActive();
-            if (browserTools.has(name) || handsOverBrowser(name, params)) await take();
-            assertActive();
-            const admitted = orderedTools.has(name) ? admission() : undefined;
-            const run = () =>
-              guard(
-                name,
-                params,
-                async () => {
-                  if (!Value.Check(parameters, params)) {
-                    const error = Value.Errors(parameters, params).First();
-                    throw new Error(
-                      `Invalid ${name} arguments${error ? ` at ${error.path || '/'}: ${error.message}` : ''}.`,
-                    );
-                  }
-                  if (handsOverBrowser(name, params))
-                    await computer.currentPage(turn.execution.browserId).catch(() => {
+      const bind = (turn: Turn, take: () => Promise<unknown>): AgentTool[] =>
+        [...nodTools(turn, skills), ...connectedTools(turn)].map((tool): AgentTool => {
+          const { name, description, parameters, execute } = tool;
+          const deferred = (tool as Partial<Pick<AgentTool, 'deferred'>>).deferred;
+          return {
+            name,
+            description,
+            parameters,
+            ...(deferred ? { deferred } : {}),
+            parallel: Boolean(deferred) || parallelTools.has(name),
+            execute: async (params, options) => {
+              assertActive();
+              if (browserTools.has(name) || handsOverBrowser(name, params)) await take();
+              assertActive();
+              const admitted = deferred || orderedTools.has(name) ? admission() : undefined;
+              const run = () =>
+                guard(
+                  name,
+                  params,
+                  async () => {
+                    if (!deferred && !Value.Check(parameters, params)) {
+                      const error = Value.Errors(parameters, params).First();
                       throw new Error(
-                        'Open the page in your browser before handing it to the user.',
+                        `Invalid ${name} arguments${error ? ` at ${error.path || '/'}: ${error.message}` : ''}.`,
                       );
-                    });
-                  return execute(params);
-                },
-                { execution: turn.execution },
-              );
-            return admitted ? admissions.run(admitted.gate, run).finally(admitted.settle) : run();
-          },
-        }));
+                    }
+                    if (handsOverBrowser(name, params))
+                      await computer.currentPage(turn.execution.browserId).catch(() => {
+                        throw new Error(
+                          'Open the page in your browser before handing it to the user.',
+                        );
+                      });
+                    return execute(params);
+                  },
+                  { execution: turn.execution, nested: Boolean(options?.nested) },
+                );
+              return admitted ? admissions.run(admitted.gate, run).finally(admitted.settle) : run();
+            },
+          };
+        });
       const system = systemPrompt(
         workspace,
         dependencies.skills,

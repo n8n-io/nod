@@ -1268,10 +1268,7 @@ async function startEngine({ runtime, signal, pending = false }) {
   await new Promise((accept) => setTimeout(accept, 50));
   if (quitting || signal.aborted) throw new Error('nod is closing.');
   const providerEnvironment = await settings.environment();
-  let legacyIntegration = await settings.legacyIntegration().catch(() => undefined);
-  if (legacyIntegration) knownSecrets.add(legacyIntegration.apiKey);
-  const legacyOwner = await profileOwner();
-  let legacyNonce;
+  const owner = await profileOwner();
   if (providerEnvironment.NOD_VAULT_KEY) knownSecrets.add(providerEnvironment.NOD_VAULT_KEY);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
   if (process.env.NOD_FEEDBACK_TOKEN) knownSecrets.add(process.env.NOD_FEEDBACK_TOKEN);
@@ -1288,10 +1285,9 @@ async function startEngine({ runtime, signal, pending = false }) {
     PORT: String(port),
     NOD_DESKTOP: 'true',
     NOD_APP_VERSION: app.getVersion(),
-    NOD_DESKTOP_OWNER_ID: legacyOwner,
+    NOD_DESKTOP_OWNER_ID: owner,
     NOD_DESKTOP_AUTH_TOKEN: authToken,
     NOD_DESKTOP_RUNTIME_PENDING: 'true',
-    ...(legacyIntegration ? { NOD_DESKTOP_LEGACY_INTEGRATION: 'true' } : {}),
     NOD_ANALYTICS_ENABLED: String(!testInstall && analytics.enabled),
     NOD_ANALYTICS_ENVIRONMENT: analyticsEnvironment(nodBuild),
     NOD_PUBLIC_URL: engineOrigin,
@@ -1316,54 +1312,6 @@ async function startEngine({ runtime, signal, pending = false }) {
   });
   engine = child;
   child.on('message', (message) => {
-    if (engine === child && legacyIntegration && message?.ownerId === legacyOwner) {
-      if (
-        message.type === 'nod-legacy-integration-request' &&
-        !legacyNonce &&
-        typeof message.nonce === 'string' &&
-        /^[a-f0-9-]{36}$/.test(message.nonce)
-      ) {
-        legacyNonce = message.nonce;
-        child.postMessage({
-          type: 'nod-legacy-integration',
-          ownerId: legacyOwner,
-          nonce: legacyNonce,
-          ...legacyIntegration,
-        });
-      }
-      if (
-        message.type === 'nod-legacy-integration-ack' &&
-        legacyNonce &&
-        message.nonce === legacyNonce &&
-        message.receipt === legacyIntegration.receipt
-      ) {
-        const receipt = legacyIntegration.receipt;
-        void settings
-          .acknowledgeLegacyIntegration(receipt)
-          .then(() => {
-            legacyIntegration = undefined;
-            if (engine === child)
-              child.postMessage({
-                type: 'nod-legacy-integration-cleaned',
-                ownerId: legacyOwner,
-                nonce: legacyNonce,
-                receipt,
-              });
-          })
-          .catch(() => {
-            if (engine === child) {
-              try {
-                child.postMessage({
-                  type: 'nod-legacy-integration-cleanup-deferred',
-                  ownerId: legacyOwner,
-                  nonce: legacyNonce,
-                  receipt,
-                });
-              } catch {}
-            }
-          });
-      }
-    }
     if (engine === child && message?.type === 'nod-ready' && message.port === port) {
       engineBound = true;
     }

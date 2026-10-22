@@ -17,6 +17,8 @@ import {
 
 type Discovery = {
   name: string;
+  needsAddress?: boolean;
+  localAddress?: string;
   oauthStatus?: 'pending' | 'connected' | 'cancelled' | 'failed' | null;
   authorizationUrl?: string;
   callbackUrl?: string;
@@ -167,6 +169,70 @@ export function AppDiscoveryDialog({
     }
   }
 
+  async function connect(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (action.current || !discovery) return;
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    const token = String(values.get('token') ?? '').trim();
+    const typed = String(values.get('instanceUrl') ?? '').trim();
+    const external = desktopLinksAvailable();
+    const popup = token || external ? null : window.open('about:blank', '_blank');
+    if (popup) popup.opener = null;
+    if (!token && !external && !popup) {
+      setError('Allow pop-ups for nod, then try again.');
+      return;
+    }
+    const controller = new AbortController();
+    action.current = controller;
+    read.current?.abort();
+    setSaving(true);
+    setError('');
+    try {
+      const result = await api<{ url?: string }>(
+        `/api/apps/discovery/${encodeURIComponent(id)}/instance`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ instanceUrl: typed, ...(token ? { token } : {}) }),
+          signal: controller.signal,
+        },
+      );
+      if (controller.signal.aborted) {
+        popup?.close();
+        return;
+      }
+      if (!result.url) {
+        popup?.close();
+        form.reset();
+        finish();
+        return;
+      }
+      const url = connectionUrl(
+        result.url,
+        window.location.origin,
+        /^https?:\/\//i.test(typed) ? typed : `http://${typed}`,
+      );
+      if (external) await openConnection(url);
+      else if (popup && !popup.closed) popup.location.href = url;
+      else throw new Error('The sign-in window was closed. Try again.');
+      setDiscovery((value) =>
+        value ? { ...value, oauthStatus: 'pending', authorizationUrl: url } : value,
+      );
+    } catch (cause) {
+      popup?.close();
+      if (controller.signal.aborted) return;
+      for (const input of form.querySelectorAll('input[type="password"]'))
+        if (input instanceof HTMLInputElement) input.value = '';
+      setError(errorMessage(cause));
+    } finally {
+      if (action.current === controller) action.current = null;
+      if (!controller.signal.aborted) {
+        setSaving(false);
+        setVersion((value) => value + 1);
+      }
+    }
+  }
+
   async function authorize(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (action.current || !discovery) return;
@@ -196,7 +262,7 @@ export function AppDiscoveryDialog({
         popup?.close();
         return;
       }
-      const url = connectionUrl(result.url, window.location.origin);
+      const url = connectionUrl(result.url, window.location.origin, paths[0]?.endpoint);
       if (external) await openConnection(url);
       else if (popup && !popup.closed) popup.location.href = url;
       else throw new Error('The sign-in window was closed. Try again.');
@@ -295,7 +361,43 @@ export function AppDiscoveryDialog({
         )}
         {!discovery && !loadError && <Loading />}
         {discovery &&
-          (oauth ? (
+          (discovery.needsAddress && discovery.oauthStatus !== 'pending' ? (
+            <form onSubmit={(event) => void connect(event)} autoComplete="off">
+              <Field
+                label={`Your ${discovery.name} address`}
+                hint={discovery.localAddress && 'Found on this computer.'}
+              >
+                <Input
+                  key={discovery.localAddress}
+                  name="instanceUrl"
+                  defaultValue={discovery.localAddress}
+                  required
+                  maxLength={2048}
+                  placeholder="https://you.app.n8n.cloud"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={saving}
+                />
+              </Field>
+              <details className="app-discovery-methods">
+                <summary>Use an access token instead</summary>
+                <Field label="MCP access token">
+                  <Input
+                    name="token"
+                    type="password"
+                    minLength={8}
+                    maxLength={8192}
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={saving}
+                  />
+                </Field>
+              </details>
+              <Button type="submit" disabled={saving}>
+                {saving ? 'Connecting…' : `Connect ${discovery.name}`}
+              </Button>
+            </form>
+          ) : oauth ? (
             <form onSubmit={(event) => void authorize(event)} autoComplete="off">
               {paths[0]?.clientIdRequired && (
                 <Field label="Client ID">

@@ -33,6 +33,212 @@ import { setRequestAccount } from '../src/web/lib/api.ts';
 import { loadLinkPreview } from '../src/web/lib/link-previews.ts';
 import { createOtlpTelemetry } from '../src/providers/otlp/telemetry.ts';
 import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
+import { runProcess } from '../src/providers/process.ts';
+
+test('settings Escape preserves nested interactions and pending changes before returning to the prior page', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'http://localhost/apps', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+        BroadcastChannel: undefined,
+        EventSource: class { close() {} },
+      });
+      for (const name of ['Node','NodeFilter','Element','HTMLElement','HTMLInputElement','HTMLButtonElement',
+        'HTMLTextAreaElement','HTMLSelectElement','MutationObserver','Event','KeyboardEvent',
+        'CustomEvent','PopStateEvent','FocusEvent']) globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      let session = {
+        user: { id: 'settings-owner', name: 'Synthetic owner', email: null, avatarUrl: null },
+        settings: { theme: 'system', onboardingCompleted: true, usageData: false, traces: false },
+        capabilities: { developer: false, traces: false },
+      };
+      let preferences = { notificationRule: '', locale: 'en-GB', timeZone: 'Europe/Lisbon',
+        hourCycle: 'h23', quietHoursEnabled: false, quietStart: '22:00', quietEnd: '08:00' };
+      let memory = { saving: true, sensitive: false, archive: [],
+        notes: [{ path: 'about/synthetic.md', area: 'about', text: 'Original note', status: 'stated',
+          updated: '2026-10-22T10:00:00Z', edited: null, expires: null, learnedFrom: null, sources: [] }],
+        skills: [{ name: 'synthetic-skill', description: 'Original description', body: 'Original steps',
+          learned: '2026-10-22T10:00:00Z', updated: '2026-10-22T10:00:00Z', edited: null, task: null }],
+      };
+      let finishSave;
+      let finishMemorySave;
+      globalThis.fetch = async (input, options = {}) => {
+        const path = typeof input === 'string' ? input : input.url;
+        if (path === '/api/session') return Response.json(session);
+        if (path === '/api/preferences' && options.method === 'PATCH') {
+          const change = JSON.parse(options.body);
+          return new Promise(resolve => {
+            finishSave = () => { preferences = { ...preferences, ...change }; resolve(Response.json(preferences)); };
+          });
+        }
+        if (path === '/api/preferences') return Response.json(preferences);
+        if (path === '/api/memory') return Response.json(memory);
+        if (path.startsWith('/api/memory/notes/') && options.method === 'PATCH') {
+          const change = JSON.parse(options.body);
+          return new Promise(resolve => {
+            finishMemorySave = () => {
+              memory = { ...memory, notes: memory.notes.map(note => ({ ...note, ...change })) };
+              resolve(Response.json(memory));
+            };
+          });
+        }
+        return new Promise(() => {});
+      };
+      const { createElement, useState, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { App } = await import('./src/web/app.tsx');
+      const { Dialog, DialogContent, DialogTitle } = await import('./src/web/components/ui.tsx');
+      let openDialog;
+      function Fixture() {
+        const [dialog, setDialog] = useState(false);
+        openDialog = () => setDialog(true);
+        return createElement('div', null, createElement(App), createElement(Dialog, {
+          open: dialog, onOpenChange: setDialog,
+        }, createElement(DialogContent, { 'aria-describedby': undefined },
+          createElement(DialogTitle, null, 'Nested action'), createElement('button', null, 'Nested control'))));
+      }
+      const root = createRoot(document.querySelector('#root'));
+      const settle = async (check) => {
+        for (let i = 0; i < 100 && !check(); i++)
+          await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+        assert.ok(check(), 'Expected settings interaction to settle');
+      };
+      const click = async (element) => { assert.ok(element); await act(async () => element.click()); };
+      const escape = async (target = document.activeElement, options = {}) => {
+        await act(async () => target.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Escape', bubbles: true, cancelable: true, ...options,
+        })));
+      };
+      const edit = async (label, value) => {
+        const input = document.querySelector('[aria-label="' + label + '"]');
+        assert.ok(input);
+        const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(prototype, 'value').set.call(input, value);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      };
+      const detailButton = label => [...document.querySelectorAll('.memory-detail button')]
+        .find(button => button.textContent.trim() === label);
+      const open = async () => {
+        const trigger = document.querySelector('button[aria-label="Settings"]');
+        trigger.focus();
+        await click(trigger);
+        await settle(() => document.querySelector('[aria-label="Quiet hours"]'));
+        assert.equal(window.location.pathname, '/settings');
+        return trigger;
+      };
+      try {
+        await act(async () => root.render(createElement(Fixture)));
+        await settle(() => document.querySelector('button[aria-label="Settings"]'));
+        const trigger = await open();
+        await click(document.querySelector('[role="tab"][aria-label="Memory"]'));
+        await escape();
+        await settle(() => window.location.pathname === '/apps');
+        await settle(() => document.activeElement === trigger);
+        await open();
+        await click(document.querySelector('[role="tab"][aria-label="Memory"]'));
+        await settle(() => detailButton('Edit'));
+        await click(detailButton('Edit'));
+        await edit('Note', 'Changed note');
+        await escape();
+        assert.equal(window.location.pathname, '/settings/memory');
+        assert.equal(document.querySelector('[aria-label="Note"]').value, 'Changed note');
+        await click(document.querySelector('[role="tab"][aria-label="General"]'));
+        assert.equal(window.location.pathname, '/settings/memory');
+        await click(document.querySelector('[aria-label="Close settings"]'));
+        assert.equal(window.location.pathname, '/settings/memory');
+        const noteForm = document.querySelector('[aria-label="Note"]').closest('form');
+        await act(async () => noteForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+        await settle(() => finishMemorySave);
+        await click(detailButton('Cancel'));
+        await escape();
+        assert.equal(window.location.pathname, '/settings/memory');
+        await act(async () => finishMemorySave());
+        await settle(() => detailButton('End date'));
+        await click(detailButton('End date'));
+        await edit('Keep until', '2099-10-22');
+        await escape();
+        assert.equal(window.location.pathname, '/settings/memory');
+        assert.equal(document.querySelector('[aria-label="Keep until"]').value, '2099-10-22');
+        await click(detailButton('Cancel'));
+        await click([...document.querySelectorAll('.memory-stage')].find(button => button.textContent.includes('Skills')));
+        await click(detailButton('Edit'));
+        await edit('When to use it', 'Changed description');
+        await escape();
+        assert.equal(window.location.pathname, '/settings/memory');
+        await edit('When to use it', 'Original description');
+        await edit('Steps', 'Changed steps');
+        await escape();
+        assert.equal(window.location.pathname, '/settings/memory');
+        assert.equal(document.querySelector('[aria-label="Steps"]').value, 'Changed steps');
+        await click(detailButton('Cancel'));
+        await escape();
+        await settle(() => window.location.pathname === '/apps');
+        await open();
+        await escape(document.activeElement, { isComposing: true });
+        await escape(document.activeElement, { repeat: true });
+        assert.equal(window.location.pathname, '/settings');
+        const consumed = event => event.preventDefault();
+        document.addEventListener('keydown', consumed);
+        await escape();
+        document.removeEventListener('keydown', consumed);
+        assert.equal(window.location.pathname, '/settings');
+        await click(document.querySelector('[aria-label="Quiet hours"]'));
+        await escape();
+        assert.equal(window.location.pathname, '/settings');
+        await click(document.querySelector('[role="tab"][aria-label="Models"]'));
+        assert.equal(window.location.pathname, '/settings');
+        const form = document.querySelector('[aria-label="Quiet hours"]').closest('form');
+        await act(async () => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+        await settle(() => finishSave);
+        await escape();
+        assert.equal(window.location.pathname, '/settings');
+        await act(async () => finishSave());
+        await settle(() => !document.querySelector('.account-settings-actions'));
+        await act(async () => openDialog());
+        await settle(() => document.querySelector('[role="dialog"]'));
+        await escape();
+        await settle(() => !document.querySelector('[role="dialog"]'));
+        assert.equal(window.location.pathname, '/settings');
+        await click(document.querySelector('.time-zone-picker-trigger'));
+        await settle(() => document.querySelector('[role="combobox"][aria-expanded="true"]'));
+        await escape();
+        await settle(() => !document.querySelector('[role="combobox"][aria-expanded="true"]'));
+        assert.equal(window.location.pathname, '/settings');
+        await escape();
+        await settle(() => window.location.pathname === '/apps');
+        await click(document.querySelector('a[href="/tasks"]'));
+        await open();
+        await escape();
+        await settle(() => window.location.pathname === '/tasks');
+        await act(async () => root.render(null));
+        window.history.replaceState(null, '', '/settings/models');
+        await act(async () => root.render(createElement(Fixture)));
+        await settle(() => document.querySelector('.account-settings:not([hidden])'));
+        await escape();
+        await settle(() => window.location.pathname === '/');
+        await settle(() => document.activeElement === document.querySelector('#workspace'));
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
 
 test('queued and cached link previews cannot cross an owner change', async (t) => {
   const calls: Array<{ url: string; account: string | null; respond(): void }> = [];

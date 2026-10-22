@@ -1,5 +1,7 @@
 # Feedback fixes: before and after
 
+These captures preserve the original branding and UI from the revisions listed below.
+
 ## Approved implementation
 
 These comparisons show the approved changes in actual application components, with the previous branch head `aad7d5c2` as the baseline. Each side uses synthetic content; external requests are intercepted. The desktop bridge is simulated.

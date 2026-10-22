@@ -56,27 +56,17 @@ Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an O
 
 ## Apps and Composio
 
-Desktop and source/server installs offer Easy Connect with Google sign-in or a personal Composio key. Easy Connect requires an email or verified Google Workspace domain allowed by the proxy operator. Select either in **Settings → App connections**; see [Apps](/connect/apps/#use-your-own-composio-project).
+nod routes Composio connections through n8n's connection service by default. Users connect each app directly from onboarding or **Apps**.
 
-Setting `COMPOSIO_API_KEY` pins a source/server install to its own project, and the app no longer offers the choice. The desktop app ignores `COMPOSIO_API_KEY`. Packaged and ordinary source desktop launches also ignore `NOD_COMPOSIO_PROXY_URL`; [isolated desktop development](/deploy/desktop-app/) can override it.
+`COMPOSIO_API_KEY`, `COMPOSIO_WEBHOOK_SECRET` and `COMPOSIO_*_AUTH_CONFIG_ID` are no longer read by nod. Remove them from your environment and reconnect apps in **Apps**.
 
-| Variable                           | What it does                                                                                                      | Default          |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `COMPOSIO_API_KEY`                 | Uses your own Composio project directly. Set it in the server environment or `.env`, then restart nod.            | Empty            |
-| `NOD_COMPOSIO_PROXY_URL`           | Uses a custom connection service in place of nod's when `COMPOSIO_API_KEY` is absent.                             | nod's connection |
-| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. The key also needs **Triggers → Read and write**. | Empty            |
-| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                               | Automatic        |
-| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                     | Automatic        |
-| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                        | Automatic        |
-| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                       | Automatic        |
-| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                         | Automatic        |
-| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                               | Automatic        |
+| Variable                 | What it does                                                                                      | Default                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `NOD_COMPOSIO_PROXY_URL` | Selects a trusted connection service for source/server installs and isolated desktop development. | `https://composio.n8n.cloud` |
 
-For `NOD_COMPOSIO_PROXY_URL`, use a trusted HTTPS origin without a path, query, fragment or user credentials. HTTP is allowed only for `localhost`, `127.0.0.1` or `[::1]` during local development.
+Use an HTTPS origin without a path, query, fragment or user credentials. HTTP is allowed only for `localhost`, `127.0.0.1` or `[::1]` during local development. Packaged and ordinary source desktop launches use nod's service; [isolated desktop development](/deploy/desktop-app/) can override it.
 
-Webhook and auth-config settings apply only when nod uses your own Composio project, through `COMPOSIO_API_KEY` or a key saved in the app. Explicit auth-config IDs take precedence. Otherwise, nod discovers eligible custom configurations across supported toolkits. It uses Composio defaults only when no custom configuration exists. Ambiguous or unavailable custom configurations stop the connection instead of falling back.
-
-Easy Connect's operator selects its configurations on the connection service. nod doesn't send these auth-config settings to that service. Notion and Linear connect through their own MCP servers, so these settings don't apply to them. See [Apps](/connect/apps/) for key permissions and automatic-update limits.
+The service operator configures the Composio project and app authorization settings. Those credentials never enter nod's client configuration. Notion, Linear and n8n connect through their own MCP servers. See [Apps](/connect/apps/).
 
 ## Vault
 

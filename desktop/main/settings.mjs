@@ -1,9 +1,8 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-const secretFields = ['composioApiKey'];
 const preferenceFields = ['launchAtLogin', 'notifications', 'onboardingCompleted'];
 const onboardingPreferenceSteps = ['notifications', 'launchAtLogin', 'complete'];
 
@@ -66,23 +65,23 @@ export function createSettingsStore(path, encryption, platform = process.platfor
     if (current) return current;
     let value;
     try {
-      value = JSON.parse(await readFile(path, 'utf8'));
+      const saved = JSON.parse(await readFile(path, 'utf8'));
       const record = (input) => input && typeof input === 'object' && !Array.isArray(input);
+      if (!record(saved) || !record(saved.secrets)) throw new Error();
+      const fields = [
+        'version',
+        'theme',
+        ...preferenceFields,
+        'onboardingPreferenceStep',
+        'welcome',
+        'secrets',
+      ];
+      value = Object.fromEntries(Object.entries(saved).filter(([field]) => fields.includes(field)));
+      value.secrets = Object.hasOwn(saved.secrets, 'vaultKey')
+        ? { vaultKey: saved.secrets.vaultKey }
+        : {};
       if (
-        !record(value) ||
         value.version !== 1 ||
-        Object.keys(value).some(
-          (field) =>
-            ![
-              'version',
-              'theme',
-              ...preferenceFields,
-              'onboardingPreferenceStep',
-              'welcome',
-              'secrets',
-              'keyMetadata',
-            ].includes(field),
-        ) ||
         !['system', 'light', 'dark'].includes(value.theme) ||
         preferenceFields.some((field) => typeof value[field] !== 'boolean') ||
         (value.onboardingPreferenceStep !== undefined &&
@@ -96,28 +95,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
               (value.welcome.acknowledged !== true || value.welcome.continued !== true)) ||
             typeof value.welcome.usageData !== 'boolean' ||
             typeof value.welcome.continued !== 'boolean')) ||
-        !record(value.secrets) ||
-        Object.entries(value.secrets).some(
-          ([field, secret]) =>
-            ![...secretFields, 'vaultKey', 'integrationConfiguration'].includes(field) ||
-            typeof secret !== 'string' ||
-            !secret,
-        ) ||
-        !record(value.keyMetadata) ||
-        Object.entries(value.keyMetadata).some(
-          ([field, metadata]) =>
-            !secretFields.includes(field) ||
-            !value.secrets[field] ||
-            !record(metadata) ||
-            Object.keys(metadata).some(
-              (name) => !['suffix', 'source', 'updatedAt'].includes(name),
-            ) ||
-            (metadata.suffix !== null &&
-              (typeof metadata.suffix !== 'string' || metadata.suffix.length !== 4)) ||
-            !['manual', 'import'].includes(metadata.source) ||
-            typeof metadata.updatedAt !== 'string',
-        ) ||
-        secretFields.some((field) => value.secrets[field] && !value.keyMetadata[field])
+        Object.values(value.secrets).some((secret) => typeof secret !== 'string' || !secret)
       )
         throw new Error();
     } catch (error) {
@@ -130,7 +108,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       notifications: false,
       onboardingCompleted: false,
       secrets: {},
-      keyMetadata: {},
     };
     unsynced = !!value;
     await durable();
@@ -216,7 +193,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         const value = {
           ...previous,
           secrets: { ...previous.secrets },
-          keyMetadata: { ...previous.keyMetadata },
         };
         if (input.theme !== undefined) {
           if (!['system', 'light', 'dark'].includes(input.theme))
@@ -292,84 +268,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         )
           throw new Error('Welcome changed. Try again.');
         await write({ ...value, welcome: { ...value.welcome, acknowledged: true } });
-      });
-    },
-    legacyIntegration() {
-      return exclusive(async () => {
-        const value = await read();
-        if (!value.secrets.composioApiKey) return;
-        const apiKey = await reveal(value.secrets.composioApiKey);
-        if (!apiKey.trim() || apiKey.length > 16384)
-          throw new Error('nod could not open its saved app connection.');
-        const names = {
-          COMPOSIO_GMAIL_AUTH_CONFIG_ID: 'gmail',
-          COMPOSIO_CALENDAR_AUTH_CONFIG_ID: 'googlecalendar',
-          COMPOSIO_DRIVE_AUTH_CONFIG_ID: 'googledrive',
-          COMPOSIO_SHEETS_AUTH_CONFIG_ID: 'googlesheets',
-          COMPOSIO_DOCS_AUTH_CONFIG_ID: 'googledocs',
-          COMPOSIO_SLACK_AUTH_CONFIG_ID: 'slack',
-          COMPOSIO_NOTION_AUTH_CONFIG_ID: 'notion',
-        };
-        let configuration = {};
-        if (value.secrets.integrationConfiguration) {
-          const encoded = await reveal(value.secrets.integrationConfiguration);
-          try {
-            configuration = JSON.parse(encoded);
-          } catch {
-            throw new Error('nod could not open its saved app connection.');
-          }
-        }
-        if (
-          !configuration ||
-          typeof configuration !== 'object' ||
-          Array.isArray(configuration) ||
-          Object.entries(configuration).some(
-            ([name, id]) =>
-              !Object.hasOwn(names, name) || typeof id !== 'string' || id.length > 16384,
-          )
-        )
-          throw new Error('nod could not open its saved app connection.');
-        return {
-          receipt: createHash('sha256')
-            .update(
-              JSON.stringify([
-                value.secrets.composioApiKey,
-                value.secrets.integrationConfiguration,
-              ]),
-            )
-            .digest('hex'),
-          apiKey,
-          authConfigs: Object.fromEntries(
-            Object.entries(configuration)
-              .filter(([, id]) => id.trim())
-              .map(([name, id]) => [names[name], id]),
-          ),
-        };
-      });
-    },
-    acknowledgeLegacyIntegration(receipt) {
-      return exclusive(async () => {
-        current = undefined;
-        const previous = await read();
-        if (!previous.secrets.composioApiKey) return;
-        const expected = createHash('sha256')
-          .update(
-            JSON.stringify([
-              previous.secrets.composioApiKey,
-              previous.secrets.integrationConfiguration,
-            ]),
-          )
-          .digest('hex');
-        if (receipt !== expected) throw new Error('The saved app connection changed.');
-        const value = {
-          ...previous,
-          secrets: { ...previous.secrets },
-          keyMetadata: { ...previous.keyMetadata },
-        };
-        delete value.secrets.composioApiKey;
-        delete value.secrets.integrationConfiguration;
-        delete value.keyMetadata.composioApiKey;
-        await write(value);
       });
     },
     environment() {

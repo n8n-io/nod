@@ -25,7 +25,6 @@ flowchart LR
   server --> model[Model provider<br/>chosen by the user]
   server -- managed app actions --> managed["nod hosted service (n8n)"]
   managed --> composio[Composio]
-  server -- own project --> composio
   server --> apps[MCP and app APIs]
   server --> chat[Telegram<br/>WhatsApp]
   server --> box[Workspace<br/>no keys]:::muted
@@ -34,20 +33,22 @@ flowchart LR
   server -. opt-in, scrubbed .-> traces[Conversation traces]:::muted
 ```
 
-Model requests go to the provider the user connects. Managed app requests and results pass through n8n's hosted connection service and Composio. Direct MCP connections and servers using their own Composio project bypass that service. Feedback, masked usage analytics and scrubbed [conversation traces](/trust/conversation-traces/) are optional.
+Model requests go to the provider the user connects. Managed app requests and results pass through the configured connection service and Composio; n8n hosts the default service. Direct MCP connections bypass that service. Feedback, masked usage analytics and scrubbed [conversation traces](/trust/conversation-traces/) are optional.
 
 ## What nod stores
 
-| Data                               | Where                                | Protection                                                                                                   | Kept                |
-| ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------- |
-| Conversations, tasks and schedules | PostgreSQL                           | Every query scoped to the owner                                                                              | No automatic expiry |
-| Saved logins and cards             | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed       |
-| Model and app keys users save      | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed       |
-| Server-managed model and app keys  | Server configuration                 | Not stored by nod; never sent to the sandbox                                                                 | Until unset         |
-| Vault activity                     | PostgreSQL                           | Owner-scoped, no secret values                                                                               | No automatic expiry |
-| Model costs and app actions        | PostgreSQL                           | Owner-scoped                                                                                                 | Permanent           |
-| Memory                             | A private file outside the workspace | From owner messages, Settings and chosen imports, plus a sent-email style note; skills without personal data | Until forgotten     |
-| Workspace files, browser profiles  | Local volumes                        | Separate containers per owner                                                                                | Until removed       |
+| Data                               | Where                                | Protection                                                                                                   | Kept                      |
+| ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| Conversations, tasks and schedules | PostgreSQL                           | Every query scoped to the owner                                                                              | No automatic expiry       |
+| Saved logins and cards             | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed             |
+| Model keys users save              | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed             |
+| MCP, API and CLI credentials       | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed             |
+| Server-managed model keys          | Server configuration                 | Not stored by nod; never sent to the sandbox                                                                 | Until unset               |
+| App installation identity          | Private installation files           | AES-256-GCM bound to the owner; desktop encryption root protected by the operating system                    | Until app data is removed |
+| Vault activity                     | PostgreSQL                           | Owner-scoped, no secret values                                                                               | No automatic expiry       |
+| Model costs and app actions        | PostgreSQL                           | Owner-scoped                                                                                                 | Permanent                 |
+| Memory                             | A private file outside the workspace | From owner messages, Settings and chosen imports, plus a sent-email style note; skills without personal data | Until forgotten           |
+| Workspace files, browser profiles  | Local volumes                        | Separate containers per owner                                                                                | Until removed             |
 
 ## Threats and controls
 

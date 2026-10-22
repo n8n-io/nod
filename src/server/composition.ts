@@ -50,7 +50,11 @@ import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
 import { createComposioProxy } from '../providers/composio/proxy.ts';
-import { createDiscoveredTransport } from '../providers/discovered/remote.ts';
+import {
+  createDiscoveredTransport,
+  ownerAddress,
+  ownerFetch,
+} from '../providers/discovered/remote.ts';
 import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from './discovered-connections.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
@@ -64,8 +68,8 @@ import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService, endpointAddress } from './models.ts';
-import { createIntegrationKeyService } from './integration-key.ts';
-import { createIntegrationAccess } from './integration-access.ts';
+import { createIntegrationBrowser } from './integration-browser.ts';
+import { createIntegrationIdentityCheckpoint } from './integration-identity.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createSkillLibrary } from '../providers/pi/skills.ts';
 import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
@@ -140,14 +144,12 @@ export interface ApplicationAdapters {
   initialize?(): Promise<void>;
   observe?(turnId: string, event: RuntimeObservation): void;
   models?: ReturnType<typeof createModelService>;
-  integrationKey?: ReturnType<typeof createIntegrationKeyService>;
-  integrationAccess?: ReturnType<typeof createIntegrationAccess>;
+  integrationBrowser?: ReturnType<typeof createIntegrationBrowser>;
   agent: Agent;
   computer: Computer;
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
-  standbyIntegrations?: IntegrationProvider[];
   keyStore: CredentialKeyStore;
   memoryCurator?: MemoryCurator;
   analyticsCurator?: MemoryCurator;
@@ -167,10 +169,6 @@ export interface ApplicationAdapters {
 
 export function createDefaultAdapters(
   env: Record<string, string | undefined> = process.env,
-  legacyIntegration?: {
-    input: import('./integration-key.ts').LegacyIntegration;
-    acknowledge(): Promise<void>;
-  },
 ): ApplicationAdapters {
   const defaultFeedbackUrl = 'https://internal.users.n8n.cloud/webhook/nod/feedback';
   const feedbackUrl = env.NOD_FEEDBACK_URL ?? defaultFeedbackUrl;
@@ -276,62 +274,22 @@ export function createDefaultAdapters(
       return { provider: access.provider, key: credential.key };
     },
   });
-  const authConfigs: Partial<Record<IntegrationService, string>> = {
-    gmail: env.COMPOSIO_GMAIL_AUTH_CONFIG_ID,
-    googlecalendar: env.COMPOSIO_CALENDAR_AUTH_CONFIG_ID,
-    googledrive: env.COMPOSIO_DRIVE_AUTH_CONFIG_ID,
-    googlesheets: env.COMPOSIO_SHEETS_AUTH_CONFIG_ID,
-    googledocs: env.COMPOSIO_DOCS_AUTH_CONFIG_ID,
-    slack: env.COMPOSIO_SLACK_AUTH_CONFIG_ID,
-  };
-  const environmentKey = desktopMode ? undefined : env.COMPOSIO_API_KEY?.trim() || undefined;
-  const integrationProxy = environmentKey
-    ? undefined
-    : createComposioProxy({
-        dataRoot,
-        ownerId,
-        url: !desktopMode || env.NOD_DESKTOP_USER_DATA ? env.NOD_COMPOSIO_PROXY_URL : undefined,
-      });
-  const ownIntegrations = createComposioProvider({
-    apiKey: environmentKey,
-    webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
-    webhookUrl: env.NOD_COMPOSIO_WEBHOOK_URL,
-    authConfigs,
-  });
-  const integrationAccess = integrationProxy
-    ? createIntegrationAccess({
-        proxy: integrationProxy,
-        origin: publicOrigin,
-        desktop: desktopMode,
-      })
-    : undefined;
-  const integrationKey = createIntegrationKeyService({
+  const integrationBrowser = createIntegrationBrowser();
+  const integrationProxy = createComposioProxy({
+    dataRoot,
     ownerId,
     keyStore,
-    provider: ownIntegrations,
-    fixed: environmentKey ? 'own' : undefined,
-    managed: integrationAccess,
+    checkpoint: createIntegrationIdentityCheckpoint(pool, ownerId),
+    browser: integrationBrowser,
+    url: !desktopMode || env.NOD_DESKTOP_USER_DATA ? env.NOD_COMPOSIO_PROXY_URL : undefined,
   });
-  const nodIntegrations = integrationProxy && createComposioProvider({ proxy: integrationProxy });
-  const integrations = nodIntegrations
-    ? new Proxy(ownIntegrations, {
-        get: (_, key) =>
-          Reflect.get(integrationKey.mode === 'own' ? ownIntegrations : nodIntegrations, key),
-      })
-    : ownIntegrations;
+  const integrations = createComposioProvider({ proxy: integrationProxy });
   return {
     ...(analyticsEnabled(env) ? { analytics: createPostHogAnalytics() } : {}),
     telemetry: createOtlpTelemetry(env.OTEL_EXPORTER_OTLP_ENDPOINT),
     initialize: async () => {
       await models.initialize();
-      await integrationProxy?.initialize();
-      await integrationKey.initialize();
-      if (
-        desktopMode &&
-        legacyIntegration &&
-        (await integrationKey.importLegacy(legacyIntegration.input))
-      )
-        await legacyIntegration.acknowledge();
+      await integrationProxy.initialize();
     },
     models,
     agent: createPiAgent({
@@ -353,9 +311,7 @@ export function createDefaultAdapters(
       voice: env.TTS_VOICE,
     }),
     integrations,
-    ...(nodIntegrations ? { standbyIntegrations: [ownIntegrations, nodIntegrations] } : {}),
-    integrationKey,
-    integrationAccess,
+    integrationBrowser,
     keyStore,
     memoryCurator: modelCurator,
     analyticsCurator: selectedCurator,
@@ -472,7 +428,6 @@ async function initializeApplication(
     } catch {}
   }
   adapters.models?.onSecrets((values) => secrets.push(...values));
-  adapters.integrationKey?.onSecrets((values) => secrets.push(...values));
   const memoryCurator =
     adapters.memoryCurator ?? createPiMemoryCurator({ provider: adapters.model.provider });
   const ledger = createLedger({
@@ -652,6 +607,18 @@ async function initializeApplication(
     grantVault,
     transport: createDiscoveredTransport(),
     oauth: createDiscoveredOAuth(),
+    local: (origin) => {
+      const fetch = ownerFetch(origin);
+      const check = ownerAddress(origin);
+      return {
+        transport: createDiscoveredTransport(fetch, async (endpoint) => {
+          const { url } = await check(endpoint);
+          if (url.hash || url.search) throw new Error('Use an address without a query.');
+          return url.href;
+        }),
+        oauth: createDiscoveredOAuth(fetch, async (link) => (await check(link)).url.href),
+      };
+    },
     runCli: workspace.connectedCliAvailable
       ? async (threadId, cli, args, environment, timeoutSeconds, signal) => {
           const session = workspace.open({
@@ -685,7 +652,6 @@ async function initializeApplication(
     resumeConnection: resumeAfterConnection,
     learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
     briefInbox: (read, stop) => onboardingSuggestions.briefInbox(read, stop),
-    standbyProviders: adapters.standbyIntegrations,
     wake: triage.triageEvent,
     refresh,
     baseUrl: publicOrigin,
@@ -1049,6 +1015,7 @@ async function initializeApplication(
       skipTurn: triage.staleCheck,
       accountProfile,
       connectedApps: integrations.connectedApps,
+      mcpServers: discovered.servers,
       memoryContext: memory.context,
       recall: personal.recall,
       learnedSkills: learnedSkills.index,
@@ -1386,8 +1353,7 @@ async function initializeApplication(
       }),
   });
   adapters.models?.register(app, captureAnalytics);
-  adapters.integrationKey?.register(app, integrations);
-  adapters.integrationAccess?.register(app);
+
   app.addHook('preClose', async () => {
     await adapters.models?.close();
   });
@@ -1590,6 +1556,7 @@ async function initializeApplication(
     stopConnectionInventory();
     const failures: unknown[] = [];
     for (const close of [
+      () => adapters.integrationBrowser?.close(),
       () => channels?.close(),
       () => stopThreadWorkers(),
       () => conversationAnalytics.close(),
