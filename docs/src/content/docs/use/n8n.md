@@ -5,7 +5,7 @@ sidebar:
   order: 9
 ---
 
-Connect your n8n once, then describe what you want in chat. Otto builds the workflow in your n8n, tests it with sample data and shows you the result.
+Connect your n8n once, then ask for it by name in chat, such as "build an n8n workflow that…". Without n8n in the request, Otto uses its own [tasks and schedules](/use/tasks/). Otto builds the workflow in your n8n, tests it with sample data and shows you the result.
 
 ## Connect
 

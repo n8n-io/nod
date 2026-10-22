@@ -1,6 +1,6 @@
 ---
 name: n8n
-description: Use when building, changing, testing, debugging, publishing or explaining n8n workflows or n8n Agents in the user's connected n8n instance.
+description: Use only when the user names n8n and wants something in their connected n8n, such as building, changing, testing, debugging, publishing or explaining an n8n workflow or n8n Agent. Otherwise use Otto's own tasks and schedules, even when n8n is connected.
 ---
 
 # n8n
