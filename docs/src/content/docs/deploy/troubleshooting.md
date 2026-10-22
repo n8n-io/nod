@@ -45,11 +45,11 @@ nod prints a link with `#access=` when it starts, and your browser keeps the coo
 
 ### macOS blocks the first launch
 
-Install the newest release, which Apple notarizes. Builds 0.1.12 and earlier aren't notarized: open **System Settings → Privacy & Security** and select **Open Anyway**. A managed Mac may need approval from your IT team.
+Every release is notarized by Apple. If macOS still blocks it, open **System Settings → Privacy & Security** and select **Open Anyway**. A managed Mac may need approval from your IT team.
 
-### nod 0.1.12 or earlier doesn't update
+### Otto doesn't update to nod
 
-Those builds were signed with an internal certificate, so macOS refuses an update signed with n8n's Developer ID. Download the newest release and replace nod in Applications, or run the Terminal installer. Your data is kept.
+nod is a separate app with its own profile, so Otto never updates to it. [Install nod](/get-started/install-desktop/) and set it up again. Otto keeps its data until you delete it.
 
 ### macOS asks for Keychain access after an update
 
