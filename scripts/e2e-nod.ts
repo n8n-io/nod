@@ -209,12 +209,16 @@ try {
   if (started.exitCode) throw new Error('Could not start the isolated workspace container.');
   containerStarted = true;
   const browserImage = await runProcess('docker', [
+    'image',
     'inspect',
-    'nod-browser',
+    'nod-eval-browser',
     '--format',
-    '{{.Image}}',
+    '{{.Id}}',
   ]);
-  if (browserImage.exitCode) throw new Error('Start the nod browser container first.');
+  if (browserImage.exitCode)
+    throw new Error(
+      'Docker image nod-eval-browser is missing. Run pnpm run eval:capability doctor --fix.',
+    );
   const fixtureScripts = join(directory, 'browser-fixtures');
   await mkdir(fixtureScripts);
   const signupOperatorPath = join(fixtureScripts, 'signup-operator.json');

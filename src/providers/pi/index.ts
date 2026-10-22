@@ -8,9 +8,11 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { Agent as Connections, Dispatcher1Wrapper, buildConnector } from 'undici';
+import { Compile } from 'typebox/compile';
 import {
   createAgentSession,
   createCodemodeExtension,
+  createToolSearchExtension,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
@@ -103,6 +105,36 @@ function webParameters<T>(schema: T): T {
       ? { required: value.required.filter((key) => !hiddenWebParameters.has(key)) }
       : {}),
   } as T;
+}
+
+const openSchema = { type: 'object', additionalProperties: true };
+
+function validPatterns(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(validPatterns);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, item]) => {
+      if (key === '$schema') return [];
+      if (key === 'pattern' && typeof item === 'string')
+        try {
+          new RegExp(item, 'u');
+        } catch {
+          return [];
+        }
+      return [[key, validPatterns(item)]];
+    }),
+  );
+}
+
+function toolSchema(schema: unknown) {
+  const cleaned = validPatterns(schema) as { type?: unknown } | undefined;
+  if (cleaned?.type !== 'object') return openSchema;
+  try {
+    Compile(cleaned as Parameters<typeof Compile>[0]);
+    return cleaned;
+  } catch {
+    return openSchema;
+  }
 }
 
 const compactAt = 256_000;
@@ -339,20 +371,37 @@ export function createPiAgent(options: {
           name: tool.name,
           label: tool.name.replaceAll('_', ' '),
           description: tool.description,
-          parameters: tool.parameters as ToolDefinition['parameters'],
-          exposure: 'model-only',
+          parameters: (tool.deferred
+            ? toolSchema(tool.parameters)
+            : tool.parameters) as ToolDefinition['parameters'],
+          ...(tool.deferred
+            ? {
+                exposure: 'deferred' as const,
+                namespace: {
+                  name: tool.deferred.namespace,
+                  description: tool.deferred.description,
+                },
+              }
+            : { exposure: 'model-only' as const }),
           executionMode: tool.parallel ? 'parallel' : 'sequential',
-          execute: async (_id, args) => {
-            return { ...(await tool.execute(args as Record<string, unknown>)), details: {} };
+          execute: async (id, args) => {
+            return {
+              ...(await tool.execute(args as Record<string, unknown>, {
+                nested: id.includes('/'),
+              })),
+              details: {},
+            };
           },
         })),
       ];
+      const deferred = input.tools.some((tool) => tool.deferred);
       const extensionLoader = new DefaultResourceLoader({
         cwd: input.workspace.path,
         agentDir: directory,
         additionalExtensionPaths: [webExtension],
         extensionFactories: [
           createCodemodeExtension(),
+          ...(deferred ? [createToolSearchExtension()] : []),
           recentImages,
           threadPromptCache(input.threadId),
           ownerContextCopies(input.ownerContext),
@@ -441,7 +490,9 @@ export function createPiAgent(options: {
       ];
       if (guidelines.some((rule) => rule.includes('codemode')))
         guidelines.push(
-          'Codemode scripts can call only workspace and web tools; call apps, browser and other nod tools directly.',
+          deferred
+            ? 'Codemode scripts can call workspace, web and connected MCP server tools (mcp__ names, found with tool_search, searchTools or describeTool); call apps, browser and other nod tools directly.'
+            : 'Codemode scripts can call only workspace and web tools; call apps, browser and other nod tools directly.',
         );
       const systemPrompt = guidelines.length
         ? `${input.systemPrompt}\n\nTool guidelines:\n${guidelines.map((rule) => `- ${rule}`).join('\n')}`
@@ -454,7 +505,7 @@ export function createPiAgent(options: {
         model,
         thinkingLevel: access?.effort ?? 'high',
         tools: [
-          ...tools.map((tool) => tool.name),
+          ...tools.filter((tool) => tool.exposure !== 'deferred').map((tool) => tool.name),
           ...extensions.extensions.flatMap((extension) => [...extension.tools.keys()]),
         ],
         customTools: tools,

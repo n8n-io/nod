@@ -20,6 +20,7 @@ import { localPreviewable } from '../src/web/lib/attachment-kind.ts';
 import { MessageText } from '../src/web/components/message.tsx';
 import type { Artifact } from '../src/shared/contracts.ts';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
+import { ownerAddress } from '../src/providers/discovered/remote.ts';
 import { messageSetupLinks, safeMessageLink, setupLink } from '../src/web/lib/message-links.ts';
 
 const origin = 'http://localhost:4310';
@@ -326,6 +327,33 @@ test('connection navigation permits secure providers and same-origin app consent
     'http://localhost:4320@elsewhere.example/consent',
   ])
     assert.throws(() => connectionUrl(value, origin));
+});
+
+test('an owner-entered address binds every request and consent page to that instance', async () => {
+  const check = ownerAddress('http://127.0.0.1:5678');
+  assert.equal(
+    (await check('http://127.0.0.1:5678/mcp-server/http')).url.href,
+    'http://127.0.0.1:5678/mcp-server/http',
+  );
+  assert.equal((await check('http://localhost:5678/mcp-oauth/token')).address, '127.0.0.1');
+  for (const value of [
+    'http://127.0.0.1:5679/mcp-server/http',
+    'http://192.168.1.1:5678/admin',
+    'https://127.0.0.1:5678/mcp-server/http',
+    'http://user:secret@127.0.0.1:5678/mcp-server/http',
+  ])
+    await assert.rejects(check(value));
+  await assert.rejects(
+    ownerAddress('http://93.184.216.34')('http://93.184.216.34/mcp-server/http'),
+  );
+  const origin = 'http://localhost:4320';
+  assert.equal(
+    connectionUrl('http://localhost:5678/mcp-oauth/authorize', origin, 'http://127.0.0.1:5678'),
+    'http://localhost:5678/mcp-oauth/authorize',
+  );
+  assert.throws(() =>
+    connectionUrl('http://localhost:5679/mcp-oauth/authorize', origin, 'http://127.0.0.1:5678'),
+  );
 });
 
 test('chat HTML cannot run scripts, submit forms, load trackers or link to local internals', () => {

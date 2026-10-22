@@ -609,6 +609,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         result.push({
           slug,
           name: service.name,
+          direct: true,
           ...(service.logoUrl ? { logoUrl: service.logoUrl } : {}),
           ...(service.categories?.length ? { categories: service.categories } : {}),
           status: options.discovered ? 'disconnected' : 'not_configured',

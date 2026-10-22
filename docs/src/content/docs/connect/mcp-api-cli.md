@@ -1,11 +1,11 @@
 ---
 title: MCP servers, APIs and CLIs
-description: Connect Notion and Linear through their MCP servers, and let nod set up other services through an MCP server, an HTTP API or a command-line tool.
+description: Connect Notion, Linear and n8n through their MCP servers, and let nod set up other services through an MCP server, an HTTP API or a command-line tool.
 sidebar:
   order: 4
 ---
 
-Besides [Composio apps](/connect/apps/), nod connects to Notion and Linear through their own MCP servers. For other services, it can set up an MCP server, an HTTP API or a command-line tool (CLI).
+Besides [Composio apps](/connect/apps/), nod connects to Notion, Linear and n8n through their own MCP servers. For other services, it can set up an MCP server, an HTTP API or a command-line tool (CLI).
 
 ## Notion and Linear
 
@@ -14,6 +14,18 @@ Notion and Linear connect through their own hosted MCP servers, the same way as 
 If you ask nod in chat, it sends a link to a private setup page in nod, and you start the sign-in there. The service's sign-in link never appears in the chat, so the model and chat apps never see it.
 
 nod can use every tool these servers offer, so it can read and change pages, issues and projects. Each change goes through the same [trust check](/trust/approvals/) as any app action. If nod can't refresh a sign-in because it expired or was revoked, **Apps** shows **Sign-in required** with **Reconnect** from then on.
+
+## n8n
+
+nod builds, tests and changes n8n workflows and n8n Agents through your n8n instance's MCP server. Open **Apps**, select **Connect** on n8n and enter your n8n address, such as `https://you.app.n8n.cloud` or `localhost:5678`. nod opens n8n's own sign-in and consent page. To use an access token instead, open **Use an access token instead** and paste the token from n8n under **Settings**, **Instance-level MCP**.
+
+If n8n runs on this computer at its default address, `http://localhost:5678`, the form opens with that address filled in, so connecting takes one click. nod checks only that address when the form opens, and connects only when you select **Connect n8n**.
+
+If n8n doesn't answer, turn on MCP access in n8n under **Settings**, **Instance-level MCP**, and try again.
+
+The address can be on your computer or your local network, such as a self-hosted n8n. Only an address you enter or confirm yourself can be local, never one the model proposes. nod sends that connection's requests and its token only to that address. `localhost` and `127.0.0.1` count as the same address when the port matches, because n8n can name itself either way.
+
+nod loads n8n's tools only when a task needs them and follows n8n's own guide for its tools, plus a short [n8n task guide](/how-it-works/skills/). It writes workflow code to a file in its workspace, checks it with n8n, then creates and tests the workflow with sample data before it reports back. A test doesn't run the steps that send or write to another service, so nod checks the data each of those steps would have sent. Each n8n action goes through the [trust check](/trust/approvals/), like every app action. See [Build with n8n](/use/n8n/) for what to ask.
 
 ## Connect another service
 

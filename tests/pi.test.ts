@@ -26,6 +26,7 @@ import {
   removedCredential,
 } from '../src/providers/pi/checkpoint.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
+import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
 import { createDecisionModel, type DecisionConnection } from '../src/providers/decisions.ts';
 import type { DecisionQuestion } from '../src/ports/decisions.ts';
 import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
@@ -3176,4 +3177,26 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('the memory model reply is read whole when a skill body holds its own code block', async () => {
+  const body = 'Run:\n\n```js\nconst check = await validate({ code });\n```\n\nThen test.';
+  const runtime = {
+    setRuntimeApiKey: async () => {},
+    getModel: () => ({ provider: 'anthropic', id: 'claude-haiku-4-5' }),
+    completeSimple: async () =>
+      fauxAssistantMessage(
+        '```json\n' +
+          JSON.stringify({ skill: { description: 'Use when building', body } }) +
+          '\n```',
+      ),
+  };
+  const curator = createPiMemoryCurator({
+    provider: 'anthropic',
+    model: 'claude-haiku-4-5',
+    apiKey: 'test',
+    runtime: runtime as never,
+  });
+  const reply = await curator.curate({ task: 'skill', instructions: '', input: {} });
+  assert.deepEqual(reply, { skill: { description: 'Use when building', body } });
 });

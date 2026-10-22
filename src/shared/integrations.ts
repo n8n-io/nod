@@ -26,6 +26,7 @@ export const integrationServices: Record<
   slack: { name: 'Slack', description: 'Find conversations and keep up with your team.' },
   notion: { name: 'Notion', description: 'Find and work with your pages and databases.' },
   linear: { name: 'Linear', description: 'Find and work with your projects and issues.' },
+  n8n: { name: 'n8n', description: 'Build, test and run your workflows and agents.' },
 };
 
 export const integrationServiceIds = Object.keys(integrationServices);

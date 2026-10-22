@@ -53,7 +53,11 @@ import type { OwnerComputer } from '../ports/owner-computer.ts';
 import { createComputerPolicy } from './computer.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
 import { createComposioProxy } from '../providers/composio/proxy.ts';
-import { createDiscoveredTransport } from '../providers/discovered/remote.ts';
+import {
+  createDiscoveredTransport,
+  ownerAddress,
+  ownerFetch,
+} from '../providers/discovered/remote.ts';
 import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from './discovered-connections.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
@@ -621,6 +625,18 @@ async function initializeApplication(
     grantVault,
     transport: createDiscoveredTransport(),
     oauth: createDiscoveredOAuth(),
+    local: (origin) => {
+      const fetch = ownerFetch(origin);
+      const check = ownerAddress(origin);
+      return {
+        transport: createDiscoveredTransport(fetch, async (endpoint) => {
+          const { url } = await check(endpoint);
+          if (url.hash || url.search) throw new Error('Use an address without a query.');
+          return url.href;
+        }),
+        oauth: createDiscoveredOAuth(fetch, async (link) => (await check(link)).url.href),
+      };
+    },
     runCli: workspace.connectedCliAvailable
       ? async (threadId, cli, args, environment, timeoutSeconds, signal) => {
           const session = workspace.open({
@@ -1057,6 +1073,7 @@ async function initializeApplication(
       skipTurn: triage.staleCheck,
       accountProfile,
       connectedApps: integrations.connectedApps,
+      mcpServers: discovered.servers,
       memoryContext: memory.context,
       recall: personal.recall,
       learnedSkills: learnedSkills.index,

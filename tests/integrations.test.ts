@@ -3446,7 +3446,7 @@ test(
         transport: {
           validateEndpoint: async (endpoint) => endpoint,
           http: async () => ({ status: 200, body: null }),
-          listTools: async () => [{ name: 'list_records', inputSchema: {} }],
+          listTools: async () => ({ tools: [{ name: 'list_records', inputSchema: {} }] }),
           callTool: async () => ({}),
         },
         oauth: {
@@ -3602,7 +3602,7 @@ test(
       transport: {
         validateEndpoint: async (endpoint: string) => endpoint,
         http: async () => ({ status: 200, body: null }),
-        listTools: async () => [{ name: 'list_records', inputSchema: {} }],
+        listTools: async () => ({ tools: [{ name: 'list_records', inputSchema: {} }] }),
         callTool: async () => ({}),
       },
       oauth: {
@@ -3770,6 +3770,82 @@ test(
       [id],
     );
     assert.deepEqual(await setupStatus(), { completed: [setupHash], apps: [] });
+  },
+);
+
+test(
+  'the n8n address form offers only its fixed local address, checked through that address alone',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const ownerId = 'local-development';
+    const grantVault = await createAppGrantVault(f.pool, {
+      ownerId,
+      keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 1) },
+    });
+    const transport = {
+      validateEndpoint: async (endpoint: string) => endpoint,
+      http: async () => {
+        throw new Error('Only the bound local transport may probe.');
+      },
+      listTools: async () => ({ tools: [] }),
+      callTool: async () => ({}),
+    };
+    const oauth = {
+      begin: async () => {
+        throw new Error('No sign-in is expected.');
+      },
+      finish: async () => {
+        throw new Error('No sign-in is expected.');
+      },
+      refresh: async () => {
+        throw new Error('No sign-in is expected.');
+      },
+    };
+    const probes: string[] = [];
+    let answer: unknown = { resource: 'https://elsewhere.example/mcp-server/http' };
+    const discovered = await createDiscoveredConnections(f.pool, {
+      ownerId,
+      baseUrl: 'http://127.0.0.1:4310',
+      grantVault,
+      transport,
+      oauth,
+      local: (origin) => ({
+        transport: {
+          ...transport,
+          http: async (endpoint: string) => {
+            probes.push(`${origin} ${endpoint}`);
+            if (!answer) throw new Error('Connection refused');
+            return { status: 200, body: answer };
+          },
+        },
+        oauth,
+      }),
+    });
+    const app = Fastify();
+    t.after(() => app.close());
+    discovered.registerRoutes(app);
+    const form = async (service: string) => {
+      const { url } = await discovered.signIn(service, {
+        threadId: randomUUID(),
+        turnId: randomUUID(),
+      });
+      const id = new URL(url, 'http://localhost').searchParams.get('connect');
+      const response = await app.inject(`/api/apps/discovery/${id}`);
+      assert.equal(response.statusCode, 200, response.body);
+      return response.json();
+    };
+    assert.equal((await form('n8n')).localAddress, 'http://localhost:5678');
+    assert.deepEqual(probes, [
+      'http://localhost:5678 http://localhost:5678/.well-known/oauth-protected-resource/mcp-server/http',
+    ]);
+    answer = undefined;
+    const unanswered = await form('n8n');
+    assert.equal(unanswered.needsAddress, true);
+    assert.equal(unanswered.localAddress, undefined);
+    answer = { resource: 'http://localhost:5678/mcp-server/http' };
+    assert.equal((await form('notion')).localAddress, undefined);
+    assert.equal(probes.length, 2);
   },
 );
 
@@ -5725,14 +5801,16 @@ test(
           listTools: async (endpoint, _headers, signal) => {
             await waitForAbort('listTools', signal);
             catalogs.push(endpoint);
-            return [
-              {
-                name: 'list_records',
-                inputSchema: { type: 'object' },
-                annotations: { readOnlyHint: true },
-              },
-              { name: 'find_user', description: 'Find a user by display name', inputSchema: {} },
-            ];
+            return {
+              tools: [
+                {
+                  name: 'list_records',
+                  inputSchema: { type: 'object' },
+                  annotations: { readOnlyHint: true },
+                },
+                { name: 'find_user', description: 'Find a user by display name', inputSchema: {} },
+              ],
+            };
           },
           callTool: async (_endpoint, _headers, _name, _input, signal) => {
             await waitForAbort('callTool', signal);
@@ -5958,7 +6036,7 @@ test(
       const cancellations: Array<
         [NonNullable<typeof blocked>, (signal: AbortSignal) => Promise<unknown>]
       > = [
-        ['listTools', (signal) => discovered.search('list_records', connectionId, signal)],
+        ['listTools', (signal) => discovered.search('list_records', otherId, signal)],
         ['callTool', (signal) => discovered.execute('CONNECTED_MCP_CALL', mcpArgs, ref, signal)],
         [
           'http',
@@ -6398,7 +6476,7 @@ test(
       transport: {
         validateEndpoint: async (endpoint) => endpoint,
         http: async () => ({ status: 200, body: null }),
-        listTools: async () => [{ name: 'search', inputSchema: {} }],
+        listTools: async () => ({ tools: [{ name: 'search', inputSchema: {} }] }),
         callTool: async () => ({}),
       },
       oauth: {

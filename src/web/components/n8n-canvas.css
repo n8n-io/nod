@@ -1,0 +1,240 @@
+.n8n-canvas {
+  --n8n-line: var(--input-hover);
+  --n8n-http: oklch(0.52 0.14 250);
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--artifact-stage);
+}
+
+:root[data-theme='dark'] .n8n-canvas {
+  --n8n-http: oklch(0.8 0.1 250);
+}
+
+.n8n-canvas > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+
+.n8n-canvas > svg:active {
+  cursor: grabbing;
+}
+
+.n8n-canvas > svg:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.n8n-canvas-dot {
+  fill: var(--dot-grid);
+}
+
+.n8n-canvas-arrow,
+.n8n-port {
+  fill: var(--n8n-line);
+}
+
+.n8n-edge {
+  fill: none;
+  stroke: var(--n8n-line);
+  stroke-width: 2;
+}
+
+.n8n-edge.is-ai {
+  stroke-dasharray: 6 5;
+}
+
+.n8n-sticky rect {
+  fill: var(--warning-soft);
+  stroke: color-mix(in srgb, var(--warning) 28%, transparent);
+}
+
+.n8n-sticky text {
+  fill: var(--foreground);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.n8n-node {
+  --tone: var(--text-secondary);
+  cursor: pointer;
+  outline: none;
+}
+
+.n8n-node.is-trigger {
+  --tone: var(--warning);
+}
+
+.n8n-node.is-ai {
+  --tone: var(--info);
+}
+
+.n8n-node.is-flow {
+  --tone: var(--success);
+}
+
+.n8n-node.is-code {
+  --tone: var(--accent);
+}
+
+.n8n-node.is-http {
+  --tone: var(--n8n-http);
+}
+
+.n8n-node-box {
+  fill: color-mix(in srgb, var(--tone) 8%, var(--surface));
+  stroke: var(--input);
+  stroke-width: 2;
+  transition: stroke 120ms ease;
+}
+
+.n8n-node:hover .n8n-node-box {
+  stroke: var(--input-hover);
+}
+
+.n8n-node[aria-pressed='true'] .n8n-node-box {
+  stroke: var(--accent);
+}
+
+.n8n-node-ring {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 2;
+}
+
+.n8n-node:focus-visible .n8n-node-ring {
+  stroke: var(--ring);
+}
+
+.n8n-node.is-disabled {
+  opacity: 0.45;
+}
+
+.n8n-node-glyph {
+  fill: var(--tone);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.n8n-node.is-sub .n8n-node-glyph {
+  font-size: 22px;
+}
+
+.n8n-node-icon {
+  color: var(--tone);
+}
+
+.n8n-node-label,
+.n8n-node-title {
+  fill: var(--foreground);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.n8n-node-title {
+  font-size: 17px;
+}
+
+.n8n-port-label {
+  fill: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.n8n-node-label,
+.n8n-port-label {
+  paint-order: stroke;
+  stroke: var(--artifact-stage);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.n8n-canvas-controls {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.n8n-canvas-controls .button {
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.n8n-canvas-controls .button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface), var(--foreground) 6%);
+}
+
+.n8n-canvas-details {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-menu);
+}
+
+.n8n-canvas-details header {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 8px 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.n8n-canvas-details header div {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.n8n-canvas-details h3 {
+  margin: 0;
+  font-size: var(--text-control);
+  font-weight: 500;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.n8n-canvas-details header span {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.n8n-canvas-details p {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.n8n-canvas-details .artifact-code {
+  padding: 12px 0;
+  font-size: 12px;
+  line-height: 18px;
+}

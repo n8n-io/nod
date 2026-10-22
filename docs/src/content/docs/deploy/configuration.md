@@ -66,7 +66,7 @@ nod routes Composio connections through n8n's connection service by default. Use
 
 Use an HTTPS origin without a path, query, fragment or user credentials. HTTP is allowed only for `localhost`, `127.0.0.1` or `[::1]` during local development. Packaged and ordinary source desktop launches use nod's service; [isolated desktop development](/deploy/desktop-app/) can override it.
 
-The service operator configures the Composio project and app authorization settings. Those credentials never enter nod's client configuration. Notion and Linear connect through their own MCP servers. See [Apps](/connect/apps/).
+The service operator configures the Composio project and app authorization settings. Those credentials never enter nod's client configuration. Notion, Linear and n8n connect through their own MCP servers. See [Apps](/connect/apps/).
 
 ## Vault
 

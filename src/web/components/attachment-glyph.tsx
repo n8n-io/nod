@@ -8,6 +8,7 @@ import {
   FileText,
   FileVideo,
   Presentation,
+  Workflow,
 } from 'lucide-react';
 import { attachmentKind } from '../lib/attachment-kind';
 
@@ -36,10 +37,12 @@ export function FileGlyph({
               ? FileSpreadsheet
               : kind === 'presentation'
                 ? Presentation
-                : kind === 'html' || (kind === 'text' && /\.(?!txt$|log$)[a-z0-9]+$/i.test(name))
-                  ? FileCode
-                  : kind
-                    ? FileText
-                    : File;
+                : kind === 'n8n-workflow'
+                  ? Workflow
+                  : kind === 'html' || (kind === 'text' && /\.(?!txt$|log$)[a-z0-9]+$/i.test(name))
+                    ? FileCode
+                    : kind
+                      ? FileText
+                      : File;
   return <Icon className={className} size={size} aria-hidden="true" />;
 }
