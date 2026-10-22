@@ -280,7 +280,7 @@ flowchart LR
 - The first message starts with `In n8n: `, because Otto is a general assistant and n8n's assistant runs inside n8n. n8n's own simulated user, with its own prompts and model, answers every later question and confirmation.
 - n8n's verifier runs the workflow against mocked services for each execution scenario. n8n's expectations judge grades outcome and process expectations from Otto's transcript, the workflow and any n8n Agent Otto built.
 - A case where Otto built nothing fails all its checks. Seeded cases restore their workflows, Agents and earlier turns first. Cases that need seeded data tables, memory compaction or a later attachment are skipped, and scenarios of an n8n Agent are marked incomplete, since n8n's verifier only runs them inside its own assistant.
-- A run broken by the harness itself, or one where n8n stayed unresponsive for about a minute, isn't scored. `--resume` builds it again. Only a time limit or an agent that stops making progress counts against the agent.
+- A run broken by the harness itself, or one where n8n stayed unresponsive for about a minute, isn't scored. `--resume` builds it again. Only a time limit or an agent that stops making progress counts against the agent. When an n8n instance stops answering during grading, only the scenarios graded on that instance are discarded, and `--resume` grades them again.
 
 It needs a local n8n from the image and eval-harness commit you compare against, a checkout of n8n for its harness, and the suite export with `cases/` and `dataset.json`:
 
