@@ -28,7 +28,7 @@
   min-height: 64px;
   padding: 12px 16px;
   border: 0;
-  border-radius: inherit;
+  border-radius: calc(var(--card-radius) - 1px);
   background: transparent;
   color: var(--foreground);
   font: inherit;
@@ -50,7 +50,8 @@
   outline-offset: 2px;
 }
 .ob-brain-rise[data-open='true'] > .ob-brain-heading > .ob-brain-option {
-  border-radius: var(--card-radius) var(--card-radius) 0 0;
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
 }
 .ob-brain-radio {
   display: grid;
@@ -255,6 +256,7 @@
   }
   .ob-brain-methods {
     flex-basis: 100%;
+    order: 1;
     padding-left: 74px;
   }
   .ob-brain-options {
