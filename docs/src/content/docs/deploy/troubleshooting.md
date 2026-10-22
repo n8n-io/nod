@@ -118,7 +118,7 @@ Ask nod to check the result in the app or website before you try again. See [One
 
 Select **Send feedback** in the chat. In the desktop app, it's also in the menu bar menu. The dialog names the recipient before you send: the nod team at n8n by default, or your operator's configured collector.
 
-By default it includes a diagnostic report of your recent chat, actions and their results. Review it, or clear **Include diagnostic report** before you send. Never add API keys, passwords or your settings file.
+Tick **Include diagnostic report** to add your recent chat, actions and their results, then select **Review** to read it before you send. nod removes known secrets and the personal details it recognizes first, but can miss others. Never add API keys, passwords or your settings file.
 
 To report a bug, use the [bug report form](https://github.com/n8n-io/nod/issues/new/choose). Report a vulnerability privately, as the [security policy](https://github.com/n8n-io/nod/blob/main/SECURITY.md) describes.
 

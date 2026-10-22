@@ -234,7 +234,8 @@ async function plan() {
         ...result,
         arch: target,
         platform: `darwin-${target}`,
-        linux_runner: target === 'arm64' ? 'ubuntu-24.04-arm' : 'blacksmith-4vcpu-ubuntu-2404',
+        linux_runner:
+          target === 'arm64' ? 'blacksmith-8vcpu-ubuntu-2404-arm' : 'blacksmith-8vcpu-ubuntu-2404',
         mac_runner: target === 'arm64' ? 'macos-15' : 'macos-15-intel',
         docker_arch: target === 'arm64' ? 'arm64' : 'amd64',
       });

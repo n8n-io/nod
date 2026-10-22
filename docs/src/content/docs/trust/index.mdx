@@ -7,10 +7,27 @@ sidebar:
 ---
 
 import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import trustVideo from '../../../assets/video/trust-layer.mp4?url';
+import trustPoster from '../../../assets/video/trust-layer-poster.jpg?url';
+import trustCaptions from '../../../assets/video/trust-layer.vtt?url&no-inline';
 
 Trust decides what nod can do in your apps and on websites. Vault decides how nod uses your saved logins and cards, and it never shows them to the model.
 
 nod can sign in to a website, read a report, prepare a reply and complete a checkout. The model plans that work. A separate check decides which app actions, browser steps and sign-ins can run. It sees your words and the action, never the pages or emails nod read: for a browser step, that's the website, the control's label and what nod typed. It asks you when your words don't cover the action. Every payment waits for your approval.
+
+<video
+  controls
+  preload="none"
+  poster={trustPoster}
+  width="1920"
+  height="1080"
+  aria-label="A narrated overview of Trust and Vault in nod"
+>
+  <source src={trustVideo} type="video/mp4" />
+  <track kind="captions" src={trustCaptions} srclang="en" label="English" />
+</video>
+
+Watch a narrated overview with synthetic data. The scenes show example states from the app. The model check can make mistakes.
 
 <CardGrid>
   <LinkCard
@@ -97,7 +114,7 @@ Open **Trust** in the sidebar (⌘I on a Mac, Ctrl+I elsewhere).
 - **Trust → Logins and cards** lists your logins, cards and saved browser sessions. Edit or remove logins and cards, and sign out of sessions.
 - **Settings → Memory** shows what nod remembers about you and where it learned it.
 
-![Trust → Activity: a line on what the page is for, then October spending of $18.42 of a $40 limit, tasks that check in at $5, the instruction nod follows on its own, and today's tasks, sign-in and schedule run.](../../../assets/screens/trust-light.png)
+![Trust → Activity shows model costs, a $40 monthly limit, the $5 task check-in, a standing instruction, completed tasks and a sign-in.](../../../assets/screens/trust-light.png)
 
 ## In this section
 

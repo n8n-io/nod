@@ -76,7 +76,7 @@ Select **Send feedback** at the top of the chat, choose **Bug or issue**, **Idea
 
 After first-time setup, a short invitation points to **Send feedback**. Dismiss it with its close button or press Escape while the invitation or feedback button is focused; it stays dismissed on that device.
 
-By default it includes a diagnostic report of your recent chat, actions and their results. Select **Review** to see the report, or clear **Include diagnostic report** before you send.
+To help the team investigate, tick **Include diagnostic report** to add your recent chat, actions and their results. It's off by default. nod removes known secrets and the personal details it recognizes, but can miss others, such as another person's name in a sentence. Select **Review** to see the report before you send.
 
 ## Start with an empty chat
 

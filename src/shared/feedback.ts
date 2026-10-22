@@ -71,7 +71,6 @@ export interface FeedbackContext {
   development: boolean;
   source: 'desktop' | 'local-web';
   appModified: boolean | null;
-  computerName: string | null;
   platform: string | null;
 }
 
@@ -91,7 +90,6 @@ export interface FeedbackSubmission {
   submissionId: string;
   category: 'bug' | 'feature' | 'other';
   feedback: string;
-  computerName: string | null;
   appVersion: string | null;
   appRelease: string | null;
   platform: string | null;

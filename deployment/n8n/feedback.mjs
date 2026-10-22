@@ -171,7 +171,6 @@ export function checkFeedback(input, hash) {
   const marker = `nod receipt: \`v1:${data.submissionId}:${data.payloadHash}:${fileKeys.join(',') || '-'}\``;
   const metadata = [
     `Category: ${data.category}`,
-    ...(data.computerName?.trim() ? [`Computer: ${data.computerName.trim()}`] : []),
     `Source: ${data.source}`,
     `Development: ${data.development ? 'Yes' : 'No'}`,
     ...(data.appVersion ? [`App version: ${data.appVersion}`] : []),

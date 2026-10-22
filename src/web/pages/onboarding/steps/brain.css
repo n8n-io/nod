@@ -2,80 +2,131 @@
   margin-top: 0;
   margin-bottom: auto;
 }
-.ob-brain-cards {
+.ob-brain-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
-  gap: 16px;
-}
-@media (min-width: 641px) {
-  .ob-brain-cards:has(> :nth-child(4)) {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  gap: 8px;
 }
 .ob-brain-rise {
   --rise-from: translateY(14px) scale(0.97);
-  display: grid;
-}
-.ob-brain-card {
-  position: relative;
-  display: grid;
-  justify-items: start;
-  gap: 16px;
-  padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--card-radius);
   background: var(--surface);
+  transition: border-color 160ms ease;
+}
+.ob-brain-rise[data-open='true'] {
+  border-color: var(--accent-border);
+}
+.ob-brain-heading {
+  font: inherit;
+}
+.ob-brain-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  width: 100%;
+  min-height: 64px;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: calc(var(--card-radius) - 1px);
+  background: transparent;
   color: var(--foreground);
   font: inherit;
   text-align: left;
   cursor: pointer;
   transition: background 160ms ease;
 }
-.ob-brain-card:hover {
+.ob-brain-option:hover:not(:disabled) {
   background: var(--nav-hover);
 }
-.ob-brain-card:focus:not(:focus-visible) {
+.ob-brain-option:disabled {
+  cursor: default;
+}
+.ob-brain-option:focus:not(:focus-visible) {
   outline: none;
 }
-.ob-brain-card[aria-pressed='true'] {
-  background: var(--accent-soft);
-}
-.ob-brain-card:is(:hover, [aria-pressed='true']) > .ob-brain-logo {
-  color: var(--accent);
-}
-.ob-brain-card:focus-visible {
+.ob-brain-option:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
-.ob-brain-card > .ob-brain-logo {
+.ob-brain-rise[data-open='true'] > .ob-brain-heading > .ob-brain-option {
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.ob-brain-radio {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--input-hover);
+  border-radius: 50%;
+}
+.ob-brain-option[aria-expanded='true'] > .ob-brain-radio {
+  border-color: var(--accent);
+}
+.ob-brain-option[aria-expanded='true'] > .ob-brain-radio::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.ob-brain-option > .ob-brain-logo {
   width: 24px;
   height: 24px;
 }
-.ob-brain-card-text {
-  display: grid;
-  gap: 4px;
+.ob-brain-option[aria-expanded='true'] > .ob-brain-logo {
+  color: var(--accent);
 }
-.ob-brain-card-name {
+.ob-brain-option-text {
+  display: grid;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.ob-brain-option-name {
   font-size: var(--text-body);
   font-weight: 500;
   line-height: 1.4;
 }
-.ob-brain-card-sub {
+.ob-brain-option-sub {
   color: var(--muted-foreground);
   font-size: var(--text-control);
   line-height: 1.4;
 }
+.ob-brain-methods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ob-brain-method {
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  background: var(--control);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.ob-brain-method[data-plan='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .ob-brain-badge {
-  position: absolute;
-  top: 16px;
-  right: 16px;
   display: grid;
+  flex-shrink: 0;
   place-items: center;
   width: 24px;
   height: 24px;
   border-radius: 50%;
   background: var(--success);
   color: var(--surface);
+}
+.ob-brain-options {
+  display: grid;
+  gap: 16px;
+  padding: 16px 24px 24px 50px;
+  border-top: 1px solid var(--border);
 }
 .ob-brain-logo {
   display: block;
@@ -98,14 +149,6 @@
 }
 .ob-brain-logo.compatible {
   mask-image: url('/logos/server.svg');
-}
-.ob-brain-panel {
-  display: grid;
-  gap: 16px;
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: var(--dialog-radius);
-  background: var(--surface);
 }
 .ob-brain-status {
   display: flex;
@@ -134,8 +177,30 @@
 .ob-brain-wait {
   flex: 1;
 }
-.ob-brain-title {
+.ob-brain-title,
+.ob-brain-label {
   font-weight: 500;
+}
+.ob-brain-label {
+  margin-top: 4px;
+}
+.ob-brain-optional {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+.ob-brain-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.ob-brain-or::before,
+.ob-brain-or::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
 }
 .ob-brain-note {
   color: var(--muted-foreground);
@@ -168,10 +233,6 @@
   flex: 1 1 240px;
   min-width: 0;
 }
-.ob-brain-form > .ob-link {
-  justify-self: start;
-  font-size: var(--text-control);
-}
 .ob-brain-fallback {
   flex-basis: 100%;
   color: var(--muted-foreground);
@@ -190,18 +251,15 @@
   margin-top: 8px;
 }
 @media (max-width: 640px) {
-  .ob-brain-cards {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+  .ob-brain-option {
+    padding-inline: 12px;
   }
-  .ob-brain-card {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
+  .ob-brain-methods {
+    flex-basis: 100%;
+    order: 1;
+    padding-left: 74px;
   }
-  .ob-brain-badge {
-    position: static;
-  }
-  .ob-brain-panel {
+  .ob-brain-options {
     padding: 16px;
   }
 }

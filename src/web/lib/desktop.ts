@@ -25,7 +25,6 @@ export type DesktopSettingsChange = { onboardingCompleted?: true } & Partial<
 export type DesktopSettingsSection = 'general' | 'models' | 'preferences';
 
 export type DesktopFeedbackContext = {
-  computerName: string | null;
   appVersion: string;
   appRelease: string | null;
   appModified: boolean | null;

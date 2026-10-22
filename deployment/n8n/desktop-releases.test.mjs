@@ -1,23 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test from 'node:test';
-import {
-  createDesktopUpdater,
-  createUpdateSource,
-  createWeeklyId,
-} from '../../desktop/main/updates.mjs';
+import { createDesktopUpdater, createUpdateSource } from '../../desktop/main/updates.mjs';
 import {
   base,
   checkRedirect,
   checkRequest,
-  posthog,
   releaseResponse,
-  updateCheck,
   workflowNodes,
 } from './desktop-releases.mjs';
 
@@ -417,8 +408,6 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
   );
   const list = [appRelease, ...unrelated];
   const requests = [];
-  const counted = [];
-  const profile = await mkdtemp(join(tmpdir(), 'nod-update-week-'));
   const metadata = new Map([
     [101, manifest],
     [104, runtime],
@@ -426,8 +415,7 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
   const request = async (address, options) => {
     const url = new URL(address);
     requests.push(url.href);
-    const event = updateCheck(options?.headers, posthog.key);
-    if (event) counted.push([url.href, event]);
+    assert.deepEqual(Object.keys(options?.headers ?? {}), ['accept']);
     if (url.origin === 'https://release-assets.githubusercontent.com') {
       const content = metadata.get(Number(url.pathname.slice(1)));
       assert.ok(content, 'Only synthetic metadata assets may be read.');
@@ -483,12 +471,7 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
     );
   };
   const updater = createDesktopUpdater({
-    source: createUpdateSource({
-      sourceUrl: base,
-      arch: 'arm64',
-      fetch: request,
-      weeklyId: createWeeklyId(join(profile, 'update-week.json')),
-    }),
+    source: createUpdateSource({ sourceUrl: base, arch: 'arm64', fetch: request }),
     currentVersion: '0.1.0',
     native,
     prepareRuntime: async (candidate) => {
@@ -498,12 +481,6 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
   });
   const candidate = await updater.check();
   await updater.dispose();
-  const { id } = JSON.parse(await readFile(join(profile, 'update-week.json'), 'utf8'));
-  await rm(profile, { recursive: true, force: true });
-  assert.deepEqual(
-    counted.map(([url, event]) => [url, event.distinct_id, event.properties.platform]),
-    [[`${base}/releases`, `week:${id}`, 'darwin-arm64']],
-  );
   assert.equal(requests[0], `${base}/releases`);
   assert.ok(requests.includes(`${base}/tags/runtime-darwin-arm64-${fingerprint}`));
   assert.equal(candidate.version, '0.2.0');
@@ -542,78 +519,4 @@ test('legacy runtime tag lookup stays exact and only a missing release starts al
   assert.equal(result.status, 200);
   assert.equal(result.body.tag_name, tag);
   assert.equal(result.body.id, migrated.id);
-});
-
-test('N8ND-WEEKLY: a valid weekly update check becomes one anonymous PostHog event, never with the IP', async () => {
-  const week = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-  const headers = {
-    'x-nod-week': week,
-    'x-nod-platform': 'win32-x64',
-    'x-nod-version': '0.4.1',
-    'x-forwarded-for': '203.0.113.7',
-    'x-real-ip': '203.0.113.7',
-  };
-  assert.deepEqual(updateCheck(headers, posthog.key), {
-    api_key: posthog.key,
-    event: 'nod_update_check',
-    distinct_id: `week:${week}`,
-    properties: {
-      platform: 'win32-x64',
-      app_version: '0.4.1',
-      analytics_schema: 'nod_v3',
-      environment: 'production',
-      $process_person_profile: false,
-      $geoip_disable: true,
-    },
-  });
-  assert.equal(
-    updateCheck({ ...headers, 'x-nod-version': '0.5.0-beta.1' }, posthog.key).properties
-      .environment,
-    'development',
-  );
-  for (const invalid of [
-    undefined,
-    {},
-    { ...headers, 'x-nod-week': undefined },
-    { ...headers, 'x-nod-week': 'local:203.0.113.7' },
-    { ...headers, 'x-nod-week': ['aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'] },
-    { ...headers, 'x-nod-platform': 'linux-x64' },
-    { ...headers, 'x-nod-version': undefined },
-    { ...headers, 'x-nod-version': '203.0.113.7/private' },
-  ])
-    assert.equal(updateCheck(invalid, posthog.key), null);
-
-  const nodes = workflowNodes();
-  const check = (input) =>
-    new Function(
-      '$input',
-      nodes.find((entry) => entry.name === 'Check desktop request').parameters.jsCode,
-    )({ first: () => ({ json: { params: {}, query: {}, ...input } }) })[0].json;
-  assert.equal(check({ headers }).updateCheck.distinct_id, `week:${week}`);
-  assert.doesNotMatch(JSON.stringify(check({ headers })), /203\.0\.113\.7/);
-  assert.equal(check({ headers: {} }).updateCheck, null);
-  assert.equal(check({ headers, query: { installer: 'true' } }).updateCheck, undefined);
-  const send = nodes.find((entry) => entry.name === 'Send update check');
-  assert.equal(send.parameters.url, 'https://eu.i.posthog.com/i/v0/e/');
-  assert.equal(send.onError, 'continueRegularOutput');
-  assert.equal(send.credentials, undefined);
-  assert.doesNotMatch(JSON.stringify(send), /headers|forwarded|\$ip/i);
-  assert.match(
-    await readFile(new URL('../../src/shared/analytics.ts', import.meta.url), 'utf8'),
-    new RegExp(posthog.key),
-  );
-});
-
-test('N8ND-WEEKLY: the desktop weekly ID stays for its ISO week and is replaced the next week', async () => {
-  const profile = await mkdtemp(join(tmpdir(), 'nod-update-week-'));
-  let now = new Date('2026-10-19T00:00:00Z');
-  const weeklyId = createWeeklyId(join(profile, 'update-week.json'), () => now);
-  const first = await weeklyId();
-  now = new Date('2026-10-25T23:59:59Z');
-  assert.equal(await weeklyId(), first);
-  now = new Date('2026-10-26T00:00:00Z');
-  const next = await weeklyId();
-  await rm(profile, { recursive: true, force: true });
-  assert.notEqual(next, first);
-  assert.match(next, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 });

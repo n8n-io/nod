@@ -166,16 +166,15 @@ export function TaskCard({
             {!steps.length && chevron}
           </span>
           <span className="task-preview-line">
-            {task.activity ? (
+            {task.activity && (
               <>
                 <Globe2 size={14} aria-hidden="true" />
-                {task.activity.site}
+                {task.activity.site} ·{' '}
               </>
-            ) : (
-              <Markdown allowedElements={[]} unwrapDisallowed>
-                {line}
-              </Markdown>
             )}
+            <Markdown allowedElements={[]} unwrapDisallowed>
+              {line}
+            </Markdown>
           </span>
           {steps.length > 0 && (
             <span className="task-preview-foot">

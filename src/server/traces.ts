@@ -1,6 +1,10 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { ModelTrace, ModelTraceDelivery, ModelTraces } from '../ports/traces.ts';
-import { createPersonalDataRedactor, personalKey, type PersonalProfile } from './personal-data.ts';
+import {
+  createPersonalDataRedactor,
+  withoutPersonalFields,
+  type PersonalProfile,
+} from './personal-data.ts';
 import { createTextRedactor, withoutSecretKeys } from './redaction.ts';
 
 const cacheLimit = 4096;
@@ -15,19 +19,7 @@ function structured(value: string, text: (value: string) => string) {
   } catch {
     return text(value);
   }
-  const visit = (item: unknown, key?: string): unknown =>
-    key !== undefined && personalKey(key) && item !== null && item !== ''
-      ? '[personal]'
-      : typeof item === 'string'
-        ? text(item)
-        : Array.isArray(item)
-          ? item.map((entry) => visit(entry))
-          : item && typeof item === 'object'
-            ? Object.fromEntries(
-                Object.entries(item).map(([name, entry]) => [text(name), visit(entry, name)]),
-              )
-            : item;
-  return JSON.stringify(visit(withoutSecretKeys(parsed)));
+  return JSON.stringify(withoutPersonalFields(withoutSecretKeys(parsed), text));
 }
 
 export function createModelTraces(deliver?: ModelTraceDelivery) {
