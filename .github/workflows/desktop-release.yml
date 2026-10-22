@@ -481,6 +481,7 @@ jobs:
   release:
     name: Verify uploaded assets and prepare the release
     needs: [plan, mac, windows]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.mac.result == 'success' && needs.windows.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release
