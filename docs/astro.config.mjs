@@ -95,7 +95,7 @@ export default defineConfig({
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/n8n-io/nod' }],
       editLink: { baseUrl: 'https://github.com/n8n-io/nod/edit/main/docs/' },
       lastUpdated: true,
-      customCss: ['./src/styles/nod.css'],
+      customCss: ['./src/styles/theme.css'],
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       sidebar: [
         section('Get started', 'get-started'),
