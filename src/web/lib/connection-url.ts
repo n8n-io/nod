@@ -6,8 +6,8 @@ export function isConnectionBridge(url: URL) {
     /^\/[A-Za-z0-9_-]{43}$/.test(url.pathname) &&
     !url.username &&
     !url.password &&
-    !url.search &&
-    !url.hash
+    !url.href.includes('?') &&
+    !url.href.includes('#')
   );
 }
 

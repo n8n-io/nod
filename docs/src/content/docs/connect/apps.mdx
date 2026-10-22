@@ -11,7 +11,7 @@ Connect Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many other apps f
 
 During onboarding, select **Connect Gmail** and choose an inbox. Setup continues when the connection is confirmed. Add other apps later from **Apps**.
 
-Otto uses [Composio](https://composio.dev) for these connections. App requests and results pass through n8n's hosted connection service and Composio. Otto checks each action before it reaches the connection service. Notion and Linear connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
+Otto uses [Composio](https://composio.dev) for these connections. By default, app requests and results pass through n8n's hosted connection service and Composio. Source installs can [select a trusted connection service](/deploy/configuration/#apps-and-composio). Otto checks each action before it reaches the connection service. Notion and Linear connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
 ```mermaid
 flowchart TD
@@ -19,7 +19,7 @@ flowchart TD
   trust -- allowed --> server[Otto server]
   trust -. held .-> you([You approve]):::accent
   you -. yes .-> server
-  server --> connection[n8n connection service]
+  server --> connection[Configured connection service]
   connection --> composio[Composio]
   composio --> apps[Gmail · Calendar<br/>Slack · more]
 ```

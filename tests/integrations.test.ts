@@ -1197,7 +1197,10 @@ for (const desktop of [false, true]) {
         );
         assert.ifError(result.error);
         assert.equal(result.status, 0, result.stdout + result.stderr);
-        assert.equal(JSON.parse(result.stdout.trim().split('\n').at(-1)!).connected, true);
+        const receipt = JSON.parse(result.stdout.trim().split('\n').at(-1)!);
+        assert.equal(receipt.connected, true);
+        assert.equal(receipt.executions, 1);
+        assert.equal(receipt.foreignDenied, 2);
       }
     },
   );

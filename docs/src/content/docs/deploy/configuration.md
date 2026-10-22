@@ -56,7 +56,7 @@ Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an O
 
 ## Apps and Composio
 
-Otto routes Composio connections through n8n's connection service. Users connect each app directly from onboarding or **Apps**, without creating a Composio account, entering a project key or signing in separately to use the connection service.
+Otto routes Composio connections through n8n's connection service by default. Users connect each app directly from onboarding or **Apps**, without creating a Composio account, entering a project key or signing in separately to use the connection service.
 
 | Variable                  | What it does                                                                                      | Default                      |
 | ------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------- |

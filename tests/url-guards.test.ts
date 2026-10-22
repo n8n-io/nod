@@ -304,6 +304,10 @@ test('connection navigation permits secure providers and same-origin app consent
     'https://accounts.example.com/consent',
   );
   assert.equal(connectionUrl('/e2e/connect/example', origin), origin + '/e2e/connect/example');
+  const bridge = `http://127.0.0.1:54321/${'a'.repeat(43)}`;
+  assert.equal(connectionUrl(bridge, origin), bridge);
+  for (const suffix of ['?', '#', '?#', '?unexpected=yes', '#unexpected'])
+    assert.throws(() => connectionUrl(bridge + suffix, origin));
   for (const value of [
     'http://elsewhere.example/consent',
     'http://localhost:4310/consent',
@@ -397,6 +401,9 @@ test('setup links omit tokens and fragments and approval paths never become link
     'http://connect.composio.dev/link/synthetic',
     `https://127.0.0.1:54321/${'a'.repeat(43)}`,
     `http://localhost:54321/${'a'.repeat(43)}`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}?`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}#`,
+    `http://127.0.0.1:54321/${'a'.repeat(43)}?#`,
     `http://127.0.0.1:54321/${'a'.repeat(43)}?unexpected=yes`,
     `http://127.0.0.1:54321/${'a'.repeat(42)}`,
   ]) {

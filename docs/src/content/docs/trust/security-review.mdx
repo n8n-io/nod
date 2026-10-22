@@ -33,7 +33,7 @@ flowchart LR
   server -. opt-in, scrubbed .-> traces[Conversation traces]:::muted
 ```
 
-Model requests go to the provider the user connects. Managed app requests and results pass through n8n's hosted connection service and Composio. Direct MCP connections bypass that service. Feedback, masked usage analytics and scrubbed [conversation traces](/trust/conversation-traces/) are optional.
+Model requests go to the provider the user connects. Managed app requests and results pass through the configured connection service and Composio; n8n hosts the default service. Direct MCP connections bypass that service. Feedback, masked usage analytics and scrubbed [conversation traces](/trust/conversation-traces/) are optional.
 
 ## What Otto stores
 
