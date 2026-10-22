@@ -33,15 +33,6 @@ import {
 
 const key = 'memory/MEMORY.md';
 const nilId = '00000000-0000-0000-0000-000000000000';
-const learnInput = z
-  .object({
-    area,
-    slug: slug.optional(),
-    quote: z.string(),
-    expires: z.iso.date().optional(),
-    replace: z.boolean().optional(),
-  })
-  .strict();
 const flat = (value: string) => value.replace(/\s+/g, ' ').trim();
 const findInput = z.object({ query: z.string().trim().min(1), area: area.optional() }).strict();
 const readInput = z.object({ path: z.union([area, path]) }).strict();
@@ -141,50 +132,6 @@ export function createMemoryService(options: {
     );
     if (!source.rowCount || flat(String(source.rows[0].text)) !== flat(quote))
       throw new Error('The complete current owned user message is required.');
-  }
-
-  async function learn(
-    raw: unknown,
-    provenance: { sourceMessageId: string | null; turnId: string },
-  ) {
-    const input = learnInput.parse(raw);
-    const text = line().parse(flat(input.quote));
-    if (unsafe(text))
-      throw new Error(
-        'Sign-in details, payment secrets and instructions to the assistant cannot be remembered.',
-      );
-    await currentSource(provenance, text);
-    const sourceMessageId = id.parse(provenance.sourceMessageId);
-    return edit((tree) => {
-      const now = new Date().toISOString();
-      const match = input.slug
-        ? undefined
-        : areaEntries(tree, input.area).find((entry) => fold(entry.text) === fold(text));
-      const name = input.slug ?? match?.slug ?? slugFor(tree, input.area, text);
-      const existing = locate(tree, `${input.area}/${name}`);
-      const replaced = !!existing && existing.text !== text;
-      if (replaced && !input.replace)
-        throw new Error(
-          'A change of memory text needs a replacement. For an additional fact or exception, choose a distinct new slug. Use replace:true only for a correction that preserves the details still valid.',
-        );
-      if (existing && replaced) archive(tree, existing, 'superseded', now);
-      const abstract = replaced ? undefined : existing?.abstract;
-      const expires = input.expires ?? (replaced ? undefined : existing?.expires);
-      const entry: Entry = {
-        area: input.area,
-        slug: name,
-        text,
-        ...(abstract ? { abstract } : {}),
-        origin: 'stated',
-        updated: now,
-        sources: replaced
-          ? [sourceMessageId]
-          : [...new Set([...(existing?.sources ?? []), sourceMessageId])].slice(-5),
-        ...(expires ? { expires } : {}),
-      };
-      tree.entries = [...tree.entries.filter((item) => item !== existing), entry];
-      return { path: pathOf(entry), text: entry.text, status: 'stated' };
-    });
   }
 
   async function control(raw: unknown) {
@@ -457,7 +404,6 @@ export function createMemoryService(options: {
   return {
     context,
     enabled: async () => (await load()).tree.enabled,
-    learn,
     currentSource,
     control,
     forget,

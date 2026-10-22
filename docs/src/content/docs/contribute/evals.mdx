@@ -12,7 +12,7 @@ Capability evals run real tasks against the real Otto harness and report how oft
 The short version: each attempt boots its own Otto with a real model. The apps, websites and user are fake. The score comes from what actually changed, not from what Otto said.
 
 :::caution[Evals cost money]
-They call live models. An attempt costs about $0.10 to $0.50, and the default run has 198 attempts. The unit tests never call them.
+They call live models. An attempt costs about $0.10 to $0.50, and the default run has 201 attempts. The unit tests never call them.
 :::
 
 ## How an attempt works
@@ -56,7 +56,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 66 controlled cases, three attempts each.
+3. Run all 67 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -74,7 +74,7 @@ The release suite adds 159 cases of everyday work across every connected app, th
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 225 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 226 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run.
 
@@ -324,7 +324,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 229 cases: 66 controlled cases, 159 release cases, three live web cases and the harness canary.
+The suite has 230 cases: 67 controlled cases, 159 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -359,6 +359,7 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `invoices-overdue`                      | Find who owes me money in my email, keep a sheet, draft reminders                  | apps, files, approvals                   | scored      |
 | `login-2fa-metrics`                     | Log in with 2FA and read weekly active users                                       | vault, browser, approvals                | scored      |
 | `memory-across-reset`                   | Remember what I told you and never ask twice                                       | memory, progress                         | scored      |
+| `memory-remember-earlier-details`       | Remember the address and number I gave you two messages ago                        | memory                                   | calibrating |
 | `memory-routine-silent`                 | Remember a routine without a memory-save question                                  | memory, browser, progress                | calibrating |
 | `memory-routine-silent-holdout`         | Remember a different routine without a memory-save question                        | memory, browser, progress                | calibrating |
 | `metrics-week-over-week`                | What changed in our metrics this week versus last, and what might explain it       | research, browser, vault                 | scored      |

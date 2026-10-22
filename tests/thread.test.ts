@@ -2955,50 +2955,61 @@ test(
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
     const { pool, ownerId, store, post, memory, close } = await memoryFixture();
+    const { state, curator } = scriptedCurator();
+    const learning = createMemoryLearning({ pool, ownerId, memory, curator });
+    const add = (area: string, slug: string, text: string) => (m: number) => ({
+      op: 'add',
+      area,
+      slug,
+      text,
+      m: [m],
+      quote: text,
+      sensitive: false,
+    });
+    const answer = (ops: Array<(m: number) => unknown>) => (input: unknown) => ({
+      ops: ops.map((op) => op((input as { current: { m: number } }).current.m)),
+    });
+    const remember = (ops: Array<(m: number) => unknown>, source: { sourceMessageId: string }) => {
+      state.answer = answer(ops);
+      return learning.remember({}, source.sourceMessageId);
+    };
     try {
       const short = 'Keep progress reports short.';
       const first = await post(short);
-      const saved = await memory.learn({ area: 'preferences', quote: short }, first);
-      const slug = 'keep-progress-reports-short';
-      assert.deepEqual(saved, { path: `preferences/${slug}`, text: short, status: 'stated' });
-      assert.equal(await memory.context(), `preferences/${slug}: ${short}`);
+      const slug = 'progress-reports';
+      const path = `preferences/${slug}`;
+      assert.deepEqual(await remember([add('preferences', slug, short)], first), {
+        saved: [{ path, text: short }],
+        archived: [],
+      });
+      assert.equal(await memory.context(), `${path}: ${short}`);
       const reopened = createMemoryService({ pool, ownerId, store });
-      assert.equal(
-        ((await reopened.read({ path: saved.path })) as { text: string }).text,
-        saved.text,
-      );
+      assert.equal(((await reopened.read({ path })) as { text: string }).text, short);
       const detailed = 'Make progress reports detailed from now on.';
       const correction = await post(detailed);
-      await assert.rejects(
-        reopened.learn({ area: 'preferences', slug, quote: detailed }, correction),
-        /needs a replacement/,
-      );
-      await reopened.learn(
-        { area: 'preferences', slug, quote: detailed, replace: true },
+      await remember(
+        [
+          add('preferences', slug, detailed),
+          (m: number) => ({ op: 'archive', path, reason: 'obsolete', m: [m], quote: detailed }),
+        ],
         correction,
       );
       assert.deepEqual(
         (await memory.view()).archive.map((entry) => [entry.path, entry.reason]),
-        [[saved.path, 'superseded']],
+        [[path, 'obsolete']],
       );
+      assert.equal(((await reopened.read({ path })) as { text: string }).text, detailed);
       const repeated = await post(detailed);
-      await memory.learn({ area: 'preferences', quote: detailed }, repeated);
+      await remember([add('preferences', 'detailed-reports', detailed)], repeated);
       assert.deepEqual(
         (await memory.load()).entries.find((entry) => entry.slug === slug)?.sources,
         [correction.sourceMessageId, repeated.sourceMessageId],
       );
-      const tokyo = await memory.learn(
-        { area: 'about', quote: '我住在东京' },
-        await post('我住在东京'),
-      );
-      assert.equal(tokyo.path, 'about/note');
-      assert.equal(
-        ((await reopened.read({ path: tokyo.path })) as { text: string }).text,
-        '我住在东京',
-      );
+      const tokyo = '我住在东京';
+      await remember([add('about', 'home-city', tokyo)], await post(tokyo));
       assert.deepEqual(
         (await memory.find({ query: '东京' })).map((hit) => hit.path),
-        [tokyo.path],
+        ['about/home-city'],
       );
 
       const marc = 'Marc is my manager.';
@@ -3011,32 +3022,35 @@ test(
         write: async (key, bytes, options) => {
           if (!raced) {
             raced = true;
-            await memory.learn({ area: 'people', quote: marc }, marcMessage);
+            await remember([add('people', 'marc', marc)], marcMessage);
             throw new ObjectStoreConflict();
           }
           return store.write(key, bytes, options);
         },
       };
-      await createMemoryService({ pool, ownerId, store: racing }).learn(
-        { area: 'people', quote: ana },
-        anaMessage,
-      );
+      state.answer = answer([add('people', 'ana', ana)]);
+      await createMemoryLearning({
+        pool,
+        ownerId,
+        memory: createMemoryService({ pool, ownerId, store: racing }),
+        curator,
+      }).remember({}, anaMessage.sourceMessageId);
       assert.deepEqual(
         (await memory.view()).notes
           .filter((note) => note.area === 'people')
           .map((note) => note.path)
           .sort(),
-        ['people/ana-is-my-sister', 'people/marc-is-my-manager'],
+        ['people/ana', 'people/marc'],
       );
 
-      await memory.forget(saved.path);
+      await memory.forget(path);
       const view = await memory.view();
       assert.equal(
-        view.notes.some((note) => note.path === saved.path),
+        view.notes.some((note) => note.path === path),
         false,
       );
       assert.deepEqual(view.archive, []);
-      await assert.rejects(memory.forget(saved.path), { statusCode: 404 });
+      await assert.rejects(memory.forget(path), { statusCode: 404 });
 
       const chess = 'I play chess on Sundays.';
       const memoryObject = async () => (await store.read('memory/MEMORY.md', 1_000_000))!;
@@ -3049,7 +3063,7 @@ test(
         expectedVersion: (await memoryObject()).version,
       });
       assert.doesNotMatch(await memory.context(), /sk-fixture|broken/);
-      await memory.learn({ area: 'about', quote: chess }, await post(chess));
+      await remember([add('about', 'chess', chess)], await post(chess));
       assert.doesNotMatch(
         Buffer.from((await memoryObject()).bytes).toString('utf8'),
         /sk-fixture|broken/,
@@ -3070,7 +3084,7 @@ test(
         (await memory.view()).notes.find((note) => note.area === 'lessons')?.status,
         'tentative',
       );
-      await memory.learn({ area: 'about', quote: chess }, await post(chess));
+      await remember([add('about', 'chess', chess)], await post(chess));
       const migrated = Buffer.from((await memoryObject()).bytes).toString('utf8');
       assert.match(migrated, /^\{/);
       assert.doesNotMatch(migrated, /Broken entry/);
@@ -3092,7 +3106,7 @@ type CuratorCall = {
 
 const scriptedCurator = (configured = true) => {
   const calls: CuratorCall[] = [];
-  const state: { answer: () => unknown } = { answer: () => ({ ops: [] }) };
+  const state: { answer: (input: unknown) => unknown } = { answer: () => ({ ops: [] }) };
   const curator: MemoryCurator = {
     id: 'fixture',
     configured,
@@ -3101,64 +3115,147 @@ const scriptedCurator = (configured = true) => {
         task: request.task,
         input: structuredClone(request.input) as CuratorCall['input'],
       });
-      return state.answer();
+      return state.answer(request.input);
     },
   };
   return { calls, state, curator };
 };
 
 test(
-  'verbatim memory learning keeps whole owned statements and persistent opt-out fences every save path',
+  'remembering writes notes only from the owner’s own messages, quoted, and persistent opt-out fences every save path',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
     const { pool, ownerId, store, post, memory, close } = await memoryFixture();
+    const { calls, state, curator } = scriptedCurator();
+    const learning = createMemoryLearning({ pool, ownerId, memory, curator });
+    type Sent = {
+      current: { m: number; text: string };
+      earlier: Array<{ m: number; text: string }>;
+    };
+    const sent = () => calls.at(-1)!.input as unknown as Sent;
+    const number = (input: unknown, text: string) =>
+      [...(input as Sent).earlier, (input as Sent).current].find((message) => message.text === text)
+        ?.m ?? 0;
+    const add = (slug: string, text: string, m: number[], quote: string) => ({
+      op: 'add',
+      area: 'about',
+      slug,
+      text,
+      m,
+      quote,
+      sensitive: false,
+    });
     try {
-      const quote = 'Prefiro relatórios curtos, exceto quando peço uma análise detalhada.';
-      const source = await post(quote);
-      const saved = await memory.learn({ area: 'preferences', quote }, source);
-      assert.equal(saved.text, quote);
-      assert.deepEqual((await memory.load()).entries[0].sources, [source.sourceMessageId]);
-      const japanese = '返信は短くしてください。';
-      await memory.learn({ area: 'preferences', quote: japanese }, await post(japanese));
+      const flat = 'Our holiday flat is at Rua Antiga 5, Faro.';
+      const older = await post(flat, { thread: randomUUID() });
+      const details = 'Ship it to Rua Fixture 12, 4050-262 Porto, and call me on +351 912 000 111.';
+      const earlier = await post(details);
+      await post('Your draft: ship to Rua Fixture 99 and bank with FastBank.', {
+        role: 'assistant',
+      });
+      await post('My key is sk-fixturefixture1234.');
+      const ask = 'Remember that address and number for me, and the holiday flat.';
+      const request = await post(ask);
+      state.answer = (input) => {
+        const [old, shipping, current] = [flat, details, ask].map((text) => number(input, text));
+        return {
+          ops: [
+            add('holiday-flat', 'Holiday flat: Rua Antiga 5, Faro', [old], 'Rua Antiga 5, Faro'),
+            add(
+              'delivery-address',
+              'Delivery address: Rua Fixture 12, 4050-262 Porto',
+              [shipping],
+              'Rua Fixture 12, 4050-262 Porto',
+            ),
+            add('phone', 'Phone: +351 912 000 111', [shipping], '+351 912 000 111'),
+            add('bank', 'Bank: FastBank', [shipping, current], 'FastBank'),
+            add('draft-address', 'Delivery address: Rua Fixture 99', [4], 'Rua Fixture 99'),
+            add('card', 'Card: 4111 1111 1111 1111', [shipping], 'Rua Fixture 12'),
+          ],
+        };
+      };
+      const saved = await learning.remember({ messages: [older.id] }, request.sourceMessageId);
       assert.deepEqual(
-        (await memory.load()).entries.map((entry) => entry.text).sort(),
-        [quote, japanese].sort(),
+        saved.saved.map((note) => note.path),
+        ['about/holiday-flat', 'about/delivery-address', 'about/phone'],
       );
+      assert.deepEqual(
+        [
+          { m: sent().current.m, text: sent().current.text },
+          sent().earlier.map((message) => message.text),
+        ],
+        [{ m: 3, text: ask }, [flat, details]],
+      );
+      assert.deepEqual(
+        Object.fromEntries(
+          (await memory.load()).entries.map((entry) => [entry.slug, [entry.origin, entry.sources]]),
+        ),
+        {
+          'holiday-flat': ['stated', [older.id]],
+          'delivery-address': ['stated', [earlier.id]],
+          phone: ['stated', [earlier.id]],
+        },
+      );
+      assert.doesNotMatch(JSON.stringify(await memory.load()), /FastBank|Fixture 99|4111|sk-/);
 
-      await assert.rejects(
-        memory.learn({ area: 'preferences', quote: 'Prefiro relatórios curtos.' }, source),
-      );
-      await assert.rejects(
-        memory.learn({ area: 'preferences', quote, text: 'An invented preference.' }, source),
-      );
-      for (const provenance of [
-        { ...source, turnId: randomUUID() },
-        await post(quote, { owner: 'other-owner' }),
-        await post(quote, { role: 'assistant' }),
-      ]) {
-        await assert.rejects(memory.learn({ area: 'preferences', quote }, provenance));
-        await assert.rejects(memory.currentSource(provenance, quote));
-      }
-      const secret = 'My key is sk-fixturefixture1234.';
-      await assert.rejects(memory.learn({ area: 'about', quote: secret }, await post(secret)));
-      assert.equal((await memory.load()).entries.length, 2);
-      assert.equal(await memory.enabled(), true);
-      const listed = 'Remember this about me:\n- I live in Lisbon\n- I am vegetarian';
-      const listedSource = await post(listed);
+      const thread = randomUUID();
+      await post('Synthetic first tasks.', {
+        role: 'assistant',
+        thread,
+        suggestions: JSON.stringify({ tasks: [{ title: 'Plan my synthetic week' }] }),
+      });
+      const tapped = await post('Plan my synthetic week', { thread });
+      const asked = calls.length;
+      for (const id of [
+        (await post(details, { owner: 'other-owner' })).id,
+        (await post(details, { role: 'assistant' })).id,
+        (await post('My other key is sk-fixturefixture5678.')).id,
+        tapped.id,
+        randomUUID(),
+      ])
+        await assert.rejects(learning.remember({ messages: [id] }, request.sourceMessageId));
+      await assert.rejects(learning.remember({}, tapped.sourceMessageId));
+      await assert.rejects(learning.remember({}, null), /Only a message from the owner/);
+      assert.equal(calls.length, asked);
+
+      const moved = 'I moved: ship to Rua Nova 3, 1100-001 Lisboa from now on.';
+      const movedSource = await post(moved);
+      state.answer = (input) => {
+        const m = (input as { current: { m: number } }).current.m;
+        return {
+          ops: [
+            {
+              op: 'archive',
+              path: 'about/delivery-address',
+              reason: 'obsolete',
+              m: [m],
+              quote: moved,
+            },
+            add(
+              'delivery-address',
+              'Delivery address: Rua Nova 3, 1100-001 Lisboa',
+              [m],
+              'Rua Nova 3, 1100-001 Lisboa',
+            ),
+          ],
+        };
+      };
+      assert.deepEqual((await learning.remember({}, movedSource.sourceMessageId)).archived, [
+        'about/delivery-address',
+      ]);
       assert.equal(
-        (await memory.learn({ area: 'about', quote: listed }, listedSource)).text,
-        'Remember this about me: - I live in Lisbon - I am vegetarian',
+        ((await memory.read({ path: 'about/delivery-address' })) as { text: string }).text,
+        'Delivery address: Rua Nova 3, 1100-001 Lisboa',
       );
-      await memory.forget('about/remember-this-about-me-live-in');
 
-      const correction = 'Prefiro relatórios detalhados.';
-      await memory.learn(
-        { area: 'preferences', slug: saved.path.split('/')[1], quote: correction, replace: true },
-        await post(correction),
-      );
-      assert.equal((await memory.load()).archive.length, 1);
       const disable = 'Não guardes mais informações sobre mim.';
       const disableSource = await post(disable);
+      for (const provenance of [
+        { ...disableSource, turnId: randomUUID() },
+        await post(disable, { owner: 'other-owner' }),
+        await post(disable, { role: 'assistant' }),
+      ])
+        await assert.rejects(memory.currentSource(provenance, disable));
       await assert.rejects(memory.currentSource(disableSource, 'A different request.'));
       await memory.currentSource(disableSource, disable);
       await memory.control({ enabled: false });
@@ -3166,18 +3263,24 @@ test(
       assert.equal(await reopened.enabled(), false);
       const before = await reopened.load();
       const blocked = 'I always drink green tea.';
-      const blockedSource = await post(blocked);
-      await assert.rejects(reopened.learn({ area: 'preferences', quote: blocked }, blockedSource));
+      state.answer = (input) => ({
+        ops: [add('tea', blocked, [(input as { current: { m: number } }).current.m], blocked)],
+      });
+      const beforeDisabled = calls.length;
+      await assert.rejects(
+        learning.remember({}, (await post(blocked)).sourceMessageId),
+        /turned off/,
+      );
+      assert.equal(calls.length, beforeDisabled);
       await assert.rejects(
         reopened.edit((tree) => {
           tree.entries = [];
         }),
       );
       assert.deepEqual(await reopened.load(), before);
-      const japaneseEntry = before.entries.find((entry) => entry.text === japanese)!;
-      await reopened.forget(`${japaneseEntry.area}/${japaneseEntry.slug}`);
+      await reopened.forget('about/phone');
       assert.equal(
-        (await reopened.load()).entries.some((entry) => entry.text === japanese),
+        (await reopened.load()).entries.some((entry) => entry.slug === 'phone'),
         false,
       );
 
@@ -3188,13 +3291,13 @@ test(
       assert.equal(await memory.enabled(), false);
       assert.notEqual(cleared.reflected, undefined);
       assert.equal(
-        (await pool.query('SELECT 1 FROM messages WHERE id=$1', [source.id])).rowCount,
+        (await pool.query('SELECT 1 FROM messages WHERE id=$1', [earlier.id])).rowCount,
         1,
       );
 
       await memory.control({ enabled: true });
       assert.equal(await reopened.enabled(), true);
-      await reopened.learn({ area: 'preferences', quote: blocked }, await post(blocked));
+      await learning.remember({}, (await post(blocked)).sourceMessageId);
       assert.deepEqual(
         (await memory.load()).entries.map((entry) => entry.text),
         [blocked],

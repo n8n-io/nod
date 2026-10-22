@@ -1211,10 +1211,14 @@ async function initializeApplication(
           );
         }
         await admit?.(false);
-        if (action === 'memory_learn')
-          return withTurnLock(turn.turnId, () =>
-            personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
+        if (action === 'memory_learn') {
+          const origin = await turnOrigin(turn.turnId);
+          if (!origin || !['user', 'task'].includes(origin.source))
+            throw new Error('Only work the owner started, in chat or a task, can save to memory.');
+          return learning.remember(args, provenance.sourceMessageId, (write) =>
+            withTurnLock(turn.turnId, write),
           );
+        }
         if (action === 'usage_get') return ledger.read();
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },

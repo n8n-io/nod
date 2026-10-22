@@ -7,7 +7,7 @@ sidebar:
 
 Otto keeps one private memory document per owner. This page explains how it's stored, how the model reads and writes it, and what the hourly maintenance job does. To see and edit memory in the app, read [Memory](/use/memory/).
 
-The short version: memory notes hold the owner's own words from their messages and Settings → Memory, what they choose to import from another assistant, and one style note learned from their own sent email. Otto saves the owner's message word for word, and an hourly job archives entries instead of deleting them. Next to the notes, memory keeps [learned skills](#learned-skills): procedures Otto writes itself after a task, without personal data.
+The short version: memory notes hold only what the owner said in their messages or wrote in Settings → Memory, what they choose to import from another assistant, and one style note learned from their own sent email. When the owner asks Otto to remember something, a separate memory model writes the notes from the owner's own messages only, and an hourly job archives entries instead of deleting them. Next to the notes, memory keeps [learned skills](#learned-skills): procedures Otto writes itself after a task, without personal data.
 
 ## Where memory lives
 
@@ -62,20 +62,34 @@ Pi is told to search when the conversation in front of it doesn't show what the 
 
 ## How the model saves memory
 
-The memory tools are actions of Pi's `manage_personal_context` tool. Pi can save only the owner's own words: `memory_learn` stores the current owner message as it was written, with line breaks turned into spaces, up to 4,000 characters. It keeps the message ID as evidence.
+The memory tools are actions of Pi's `manage_personal_context` tool. Pi never writes a note. `memory_learn` names the owner's messages, and the memory model writes the notes from them:
+
+```mermaid
+flowchart LR
+  pi["Pi calls memory_learn<br/>with optional message IDs"]:::muted --> read[Server reads the owner's<br/>messages from the database]:::go
+  read --> model[Memory model writes<br/>notes from those messages]:::accent
+  model --> check[Server keeps notes that quote<br/>a cited owner message]:::go
+  check --> save[(Saved as confirmed)]
+```
+
+1. The server reads the current owner message, the owner's last 10 messages in that conversation and any older owner messages Pi names by ID, such as one it found with `history_search`. It skips task-card titles the owner tapped, which are Otto's wording, messages over 4,000 characters and messages with a secret. A message Pi names that isn't one of the owner's own refuses the save.
+2. The memory model sees only those messages, with the current one apart from the earlier ones, and the memory index, never Otto's replies, tool results, web pages or emails. It saves every lasting fact the current message asks to remember or states, using the earlier messages to work out what it refers to, so "remember that address" saves the address from a few messages back. Each note is one declarative fact, such as `Delivery address: …`, with names and numbers as the owner wrote them, an optional expiry date, the messages it cites and a short quote from one of them.
+3. The server keeps a note only if a cited owner message contains its quote and it holds no card number, key or link with a login. It saves the note as confirmed, with the cited messages as evidence. When the messages make a saved note untrue, the model can archive it; the old version stays in the archive.
+
+This is one call to the memory model per save, about $0.0002 with GPT-6 Luna, made again once if its answer can't be read. If the model is unreachable or its answer still can't be read, nothing is saved and Pi gets the reason.
 
 | Action           | What the server requires                                                                                                                                                                         |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `memory_learn`   | The quote is the complete current owner message, word for word.                                                                                                                                  |
+| `memory_learn`   | Work the owner started, in chat or a task, with an owner message. Every message it reads is the owner's own, and every note quotes one.                                                          |
 | `memory_forget`  | A turn started by an owner message, and the [trust check](/trust/approvals/): unless the owner's words ask to forget that note, Otto asks first. It deletes the entry and its archived versions. |
 | `memory_control` | The complete current owner message, quoted, and the trust check: unless it asks to stop, resume or clear memory, Otto asks first. Clearing also needs a turn started by an owner message.        |
 
-So a fact from a web page, an email, a tool result or Otto's own reply can't be saved, and neither can a background or scheduled run, which has no owner message.
+So a fact from a web page, an email, a tool result or Otto's own reply can't be saved, even when it fools Pi, and neither can an event or scheduled run, or a session that started from one.
 
-Saves are silent: no notice appears in chat or on Telegram or WhatsApp. Text containing a card number, an API key or a link with a login in it is refused. A correction uses `replace: true` and archives the old version. Another owner message with the same text adds that message as evidence to the entry that has it. Learning the same message twice adds nothing.
+Saves are silent: no notice appears in chat or on Telegram or WhatsApp. A note that repeats an existing one adds the new message as evidence to it, and confirms it if it was only learned in the background.
 
 :::caution[Memory is context, not permission]
-A saved note never authorizes an action. For `memory_learn`, the sensitive-topic rule is a model instruction: the server checks the quote, not the topic.
+A saved note never authorizes an action. For `memory_learn`, the sensitive-topic rule is a model instruction: the memory model saves sensitive topics only when they're turned on or the owner explicitly asks it to remember them, and the server checks the quote, not the topic.
 :::
 
 ## Statuses
@@ -152,7 +166,7 @@ Learned skills are procedures Otto writes for itself after a task, as [Hermes Ag
 The owner sees, edits and forgets learned skills under **Skills** in **Settings → Memory**, and **Export** includes them. Clearing memory clears them too. The code is in [`src/server/learned-skills.ts`](https://github.com/n8n-io/otto/blob/main/src/server/learned-skills.ts).
 
 :::caution[Skills come from what Otto read]
-Otto writes a skill from what it did and read, so a web page or an email can shape one. A skill is guidance, never permission. It never counts as the owner's words: the trust check, the confirmation writer and the fact check never see it. Saving a note still needs the owner's current message word for word, and forgetting a note, turning memory off or clearing it, and changes to schedules, notification rules and limits still go through the check.
+Otto writes a skill from what it did and read, so a web page or an email can shape one. A skill is guidance, never permission. It never counts as the owner's words: the trust check, the confirmation writer and the fact check never see it. Saving a note still needs the owner's own messages, quoted, and forgetting a note, turning memory off or clearing it, and changes to schedules, notification rules and limits still go through the check.
 :::
 
 ## Related resources

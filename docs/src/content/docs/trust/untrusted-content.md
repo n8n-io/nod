@@ -33,7 +33,7 @@ What an email, page or file says is its sender's claim, not your word. An email 
 
 ## Memory ignores outside content
 
-Automatic memory learning reads only your own messages of up to 4,000 characters, without attachments. It never reads Otto's replies, tool results or web pages. Outside text reaches memory only if you paste it yourself, into a message or **Import** in **Settings → Memory**, and it can't make Otto forget a note, turn memory off or on, or clear it: those go through the [trust check](/trust/approvals/). The one exception: when you connect Gmail, Otto learns your writing style from your own sent email, with no facts, names or quotes. See [Memory](/use/memory/).
+Automatic memory learning reads only your own messages of up to 4,000 characters, without attachments. When you ask Otto to remember something, the server hands the memory model only your own messages, read from the database, and keeps only notes with a verbatim supporting quote from one of them, so a page that fools Otto still can't write a note. Neither reads Otto's replies, tool results or web pages. Outside text reaches memory only if you paste it yourself, into a message or **Import** in **Settings → Memory**, and it can't make Otto forget a note, turn memory off or on, or clear it: those go through the [trust check](/trust/approvals/). The one exception: when you connect Gmail, Otto learns your writing style from your own sent email, with no facts, names or quotes. See [Memory](/use/memory/).
 
 ## What this does and doesn't protect against
 
