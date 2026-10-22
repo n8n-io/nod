@@ -176,6 +176,7 @@ export function createAgentRuntime(dependencies: {
     let streamedText = '';
     let streamSubmitted = false;
     let speakNext = !context.taskContext;
+    let replyOwed = false;
     let answered = false;
     let lastNote = '';
     let reported = false;
@@ -210,6 +211,7 @@ export function createAgentRuntime(dependencies: {
       await context.reply(trimmed, id, replyToMessageId);
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
+      replyOwed = false;
     };
     const reply = deliverReply;
     const pause = async (reason: 'question' | 'approval' | 'credentials', message?: string) => {
@@ -230,7 +232,7 @@ export function createAgentRuntime(dependencies: {
 
     const flushText = () => {
       if (bufferedText && !stopped && speaks) {
-        if (speakNext) context.delta(bufferedText, (streamId ??= randomUUID()));
+        if (speakNext || replyOwed) context.delta(bufferedText, (streamId ??= randomUUID()));
         streamedText += bufferedText;
       }
       bufferedText = '';
@@ -640,7 +642,7 @@ export function createAgentRuntime(dependencies: {
             }
             if (messages.length) {
               checkInSpent = checkInStrikes = 0;
-              speakNext = true;
+              replyOwed = true;
               pendingReplies = pendingReplies.then(() =>
                 context.emit('steered', '', { execution }).catch(() => {}),
               );
@@ -667,9 +669,10 @@ export function createAgentRuntime(dependencies: {
               !modelError &&
               (event.status === undefined || event.status === 'succeeded')
             ) {
-              if (speakNext) {
+              if (speakNext || replyOwed) {
                 queueStreamReply(text, streamId ?? randomUUID());
                 lastNote = '';
+                replyOwed = false;
               } else {
                 lastNote = text;
                 const step = (dependencies.redactError ?? String)(text.split('\n')[0]!).replace(

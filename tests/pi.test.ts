@@ -1364,14 +1364,20 @@ test('a turn posts its opening line and final reply, shows the lines between as 
         prompt: async (text) => {
           for (const words of [
             'Reading the synthetic comments.',
+            ...(/quietly|directly/.test(text) ? [''] : []),
             'Found three synthetic threads.\nAll of them mention pricing.',
           ]) {
             input.onEvent({ type: 'message_start' });
-            input.onEvent({ type: 'text_delta', text: words });
+            if (words) input.onEvent({ type: 'text_delta', text: words });
             input.onEvent({ type: 'message_end', status: 'succeeded' });
-            await input.tools
-              .find((item) => item.name === 'manage_personal_context')!
-              .execute({ action: 'memory_find', args: { query: 'synthetic' } });
+            if (!words && /directly/.test(text))
+              await input.tools
+                .find((item) => item.name === 'send_message')!
+                .execute({ text: 'There are three.' });
+            else
+              await input.tools
+                .find((item) => item.name === 'manage_personal_context')!
+                .execute({ action: 'memory_find', args: { query: 'synthetic' } });
             continued.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
           }
           const answer = /without an answer/.test(text) ? '' : 'The synthetic summary is ready.';
@@ -1425,6 +1431,21 @@ test('a turn posts its opening line and final reply, shows the lines between as 
         ],
         ['Reading the synthetic comments.'],
       ],
+      [
+        'Summarize the synthetic comments while the owner steers quietly',
+        task,
+        [
+          'Found three synthetic threads.\nAll of them mention pricing.',
+          'The synthetic summary is ready.',
+        ],
+        ['Reading the synthetic comments.'],
+      ],
+      [
+        'Summarize the synthetic comments while the owner steers directly',
+        task,
+        ['There are three.', 'The synthetic summary is ready.'],
+        ['Reading the synthetic comments.', 'Found three synthetic threads.'],
+      ],
     ] as const) {
       const posted: string[] = [];
       const events: Array<[string, string]> = [];
@@ -1435,7 +1456,7 @@ test('a turn posts its opening line and final reply, shows the lines between as 
         turnId: randomUUID(),
         prompt,
         ...(taskContext ? { taskContext, background: true } : {}),
-        ...(prompt.endsWith('steers')
+        ...(/steers/.test(prompt)
           ? {
               takeMessages: async () =>
                 steered
@@ -1459,11 +1480,11 @@ test('a turn posts its opening line and final reply, shows the lines between as 
       );
       assert.equal(
         continued.some((text) => text.includes('Also count them')),
-        prompt.endsWith('steers'),
+        /steers/.test(prompt),
       );
       assert.equal(
         events.some(([type]) => type === 'steered'),
-        prompt.endsWith('steers'),
+        /steers/.test(prompt),
       );
       assert.equal(events.filter(([type]) => type === 'final').length, 1);
       assert.ok(
