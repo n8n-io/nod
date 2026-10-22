@@ -34,6 +34,8 @@ The media fixture uses the real message components, a synthetic Ogg recording, a
 
 The setup fixture also checks copying the Telegram pairing command, clipboard failure and private manual copy. The fixture checks the stated browser behavior. The captures illustrate it. The fixture and captures do not prove live media delivery, speech transcription or map tile loading.
 
+A later development-mode Chromium check runs the media components under React StrictMode. It checks video effect replay, replacement of a video source and cleanup after unmount. It also checks that a stalled TGS request is aborted when the preview times out. Local TGS previews wait for the uploaded artifact.
+
 ## Manual live check
 
 The owner confirmed incoming Telegram photos in the isolated test app. The remaining live checks are below. Use accounts that you control and disposable test content. Keep tokens and QR codes in the private setup UI. Do not attach them to the PR.

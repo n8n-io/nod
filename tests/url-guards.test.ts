@@ -570,6 +570,7 @@ test('file previews accept only owned artifact URLs and keep active content out 
     'brief.docx',
     'deck.pptx',
     'page.html',
+    'sticker.tgs',
   ]) {
     const file = { ...picture, name, mimeType: 'application/octet-stream' };
     assert.ok(artifactPreview(file));
@@ -593,6 +594,8 @@ test('file previews accept only owned artifact URLs and keep active content out 
     ['text/plain', 'page.html'],
     ['', 'logo.svg'],
     ['application/octet-stream', 'feed.xml'],
+    ['application/x-tgsticker', 'sticker'],
+    ['application/octet-stream', 'sticker.tgs'],
   ])
     assert.equal(localPreviewable(mimeType, name), false, `${mimeType} ${name}`);
   for (const [mimeType, name] of [

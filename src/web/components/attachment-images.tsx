@@ -96,6 +96,7 @@ function StickerVideo({ item }: { item: ImagePreview }) {
   useEffect(() => {
     const element = video.current;
     if (!element) return;
+    element.src = item.url;
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
     let visible = false;
     const update = () => {
@@ -119,16 +120,7 @@ function StickerVideo({ item }: { item: ImagePreview }) {
     };
   }, [item.url]);
   return (
-    <video
-      ref={video}
-      src={item.url}
-      preload="metadata"
-      muted
-      loop
-      playsInline
-      tabIndex={-1}
-      aria-hidden="true"
-    />
+    <video ref={video} preload="metadata" muted loop playsInline tabIndex={-1} aria-hidden="true" />
   );
 }
 

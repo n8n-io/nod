@@ -103,6 +103,7 @@ export function localPreviewable(mimeType: string, name = '') {
   return (
     Boolean(kind) &&
     kind !== 'html' &&
+    kind !== 'sticker' &&
     !/^(?:text\/html|image\/svg\+xml|(?:text|application)\/(?:[\w.-]+\+)?xml)$/.test(
       mimeType.split(';', 1)[0].trim().toLowerCase(),
     ) &&

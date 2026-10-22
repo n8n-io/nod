@@ -37,7 +37,7 @@ export function StickerPlayer({ item, onError }: { item: ImagePreview; onError?(
         '*',
       );
     const receive = (event: MessageEvent) => {
-      if (event.source !== frame.current?.contentWindow) return;
+      if (controller.signal.aborted || event.source !== frame.current?.contentWindow) return;
       if (event.data === 'nod:sticker:ready' && !initialized && animation) {
         initialized = true;
         frame.current.contentWindow?.postMessage(
@@ -51,6 +51,7 @@ export function StickerPlayer({ item, onError }: { item: ImagePreview; onError?(
     };
     const unavailable = () => {
       if (controller.signal.aborted) return;
+      controller.abort();
       setFailed(true);
       setReady(false);
       fail.current?.();
