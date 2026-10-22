@@ -77,7 +77,7 @@ Tests use synthetic data and disposable databases. They never call a live model 
 
 ## Common questions
 
-**Does n8n see our conversations?** Managed app requests and results pass through n8n and can include conversation content used in app actions. Feedback can also include a diagnostic report of recent chat and actions. Usage analytics are opt-in and mask content. Conversation traces are opt-in too: when a user turns them on, scrubbed model requests and replies go to the nod team's LangSmith project for 14 days, without any account or device identifier.
+**Does n8n see our conversations?** Managed app requests and results pass through n8n and can include conversation content used in app actions. Feedback includes a diagnostic report of recent chat and actions only when the user ticks it, with known secrets and recognized personal details removed. Usage analytics are opt-in and mask content. Conversation traces are opt-in too: when a user turns them on, scrubbed model requests and replies go to the nod team's LangSmith project for 14 days, without any account or device identifier.
 
 **Does nod train on our data?** nod doesn't train models, and n8n doesn't use conversation traces to train AI models. The model provider you connect processes requests under its own terms.
 

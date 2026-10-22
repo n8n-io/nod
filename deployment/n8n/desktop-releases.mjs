@@ -2,40 +2,6 @@ import { createHash } from 'node:crypto';
 
 export const base = 'https://internal.users.n8n.cloud/webhook/nod/desktop';
 
-export const posthog = {
-  url: 'https://eu.i.posthog.com/i/v0/e/',
-  key: 'phc_tLmmvBasQMKWVJ2BiwhEzVVDD3Rh9qDq2VTmw3qTm6EV',
-};
-
-export function updateCheck(headers, key) {
-  const header = (name) =>
-    headers !== null && typeof headers === 'object' && typeof headers[name] === 'string'
-      ? headers[name]
-      : '';
-  const week = header('x-nod-week').toLowerCase();
-  const platform = header('x-nod-platform');
-  const version = header('x-nod-version');
-  if (
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(week) ||
-    !['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(platform) ||
-    !/^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})(-[0-9a-zA-Z.-]{1,40})?$/.test(version)
-  )
-    return null;
-  return {
-    api_key: key,
-    event: 'nod_update_check',
-    distinct_id: `week:${week}`,
-    properties: {
-      platform,
-      app_version: version,
-      analytics_schema: 'nod_v3',
-      environment: version.includes('-') ? 'development' : 'production',
-      $process_person_profile: false,
-      $geoip_disable: true,
-    },
-  };
-}
-
 export function checkRequest(input) {
   const invalid = () => ({ status: 400, body: { error: 'Invalid desktop release request.' } });
   const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -465,7 +431,7 @@ export function workflowNodes() {
       parameters: {
         mode: 'runOnceForAllItems',
         language: 'javaScript',
-        jsCode: `const input=$input.first().json; const request=(${checkRequest.toString()})(input); return [{json:request.operation==='list'?{...request,updateCheck:(${updateCheck.toString()})(input.headers,${JSON.stringify(posthog.key)})}:request}];`,
+        jsCode: `return [{json:(${checkRequest.toString()})($input.first().json)}];`,
       },
       output: [
         {
@@ -665,29 +631,6 @@ export function workflowNodes() {
       },
       output: [{ json: { status: 200, body: {}, assetUrl: '', metadata: null } }],
     },
-    {
-      name: 'Count update check',
-      type: 'n8n-nodes-base.if',
-      typeVersion: 2.3,
-      parameters: condition("={{ !!$('Check desktop request').first().json.updateCheck }}"),
-      output: [{ json: {} }],
-    },
-    {
-      name: 'Send update check',
-      type: 'n8n-nodes-base.httpRequest',
-      typeVersion: 4.5,
-      onError: 'continueRegularOutput',
-      parameters: {
-        method: 'POST',
-        url: posthog.url,
-        sendBody: true,
-        contentType: 'raw',
-        rawContentType: 'application/json',
-        body: "={{ JSON.stringify($('Check desktop request').first().json.updateCheck) }}",
-        options: { timeout: 3000, redirect: { redirect: { followRedirects: false } } },
-      },
-      output: [{ json: {} }],
-    },
   ];
 }
 
@@ -710,6 +653,5 @@ export function workflowCode() {
     )
     .join('\n');
   return `import { workflow, node, trigger, ifElse, expr } from '@n8n/workflow-sdk';\n${declarations}\nexport default workflow('nod-desktop-releases','nod Desktop Releases')\n.add(n0).to(n5).to(n6.onTrue(n7.to(n8).to(n13.onTrue(n14.to(n15).to(n9)).onFalse(n9))).onFalse(n12))\n.add(n9.onTrue(n10.to(n11).to(n12)).onFalse(n12))
-.add(n12).to(n16.onTrue(n17))
 .add(n1).to(n5).add(n2).to(n5).add(n3).to(n5).add(n4).to(n5)\n.group('Serve published desktop assets',[n5,n6,n7,n8,n9,n10,n11,n12,n13,n14,n15],{description:'Validate fixed-repository release and asset identities, then return metadata, an exact update feed, or a temporary asset redirect.'});\n`;
 }

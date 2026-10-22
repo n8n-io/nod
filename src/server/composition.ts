@@ -891,21 +891,19 @@ async function initializeApplication(
   });
   const localConsent = await localAccounts.readConsent(ownerId);
   analytics.setUsageData(ownerId, localConsent?.enabled ?? false, localConsent?.revision);
+  const ownerProfile = async () => {
+    const [names, preferences] = await Promise.all([ownerNames(), getPreferences()]);
+    return {
+      names,
+      region: preferences.locale
+        ? new Intl.Locale(preferences.locale).maximize().region
+        : undefined,
+    };
+  };
   adapters.traces?.configure({
     enabled: (await localAccounts.read(ownerId)).traces,
     secrets,
-    profile: async () => {
-      const [account, preferences] = await Promise.all([
-        localAccounts.read(ownerId),
-        getPreferences(),
-      ]);
-      return {
-        names: await ownerNames(),
-        region: preferences.locale
-          ? new Intl.Locale(preferences.locale).maximize().region
-          : undefined,
-      };
-    },
+    profile: ownerProfile,
   });
   let pendingInventory = Promise.resolve();
   observeConnections = (only) =>
@@ -1367,6 +1365,7 @@ async function initializeApplication(
     get model() {
       return adapters.model.name;
     },
+    profile: ownerProfile,
     sessionEntries: (threadId) =>
       readPiSessionEntries({
         threadId,

@@ -3583,7 +3583,6 @@ async function feedbackFixture(t: TestContext) {
     },
   });
   const context = {
-    computerName: 'Synthetic Mac',
     appVersion: '1.2.3',
     appRelease: 'a'.repeat(40),
     platform: 'darwin',
@@ -3648,7 +3647,7 @@ test(
 );
 
 test(
-  'feedback diagnostics exclude unrelated personal context, redact mirrored credentials and stay bounded',
+  'feedback diagnostics exclude unrelated personal context, scrub personal data, redact mirrored credentials and stay bounded',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await feedbackFixture(t);
@@ -3669,6 +3668,8 @@ test(
     const secret = 'synthetic-saved-password/123';
     const username = 'synthetic-saved-user';
     const apiKey = 'synthetic-bootstrap/composio-value';
+    const personal =
+      'from Marta Vidal <marta.vidal@example.com>, card 4111 1111 1111 1111, call 612 345 678';
     const paddedApiKey = ` \t${apiKey}\r\n`;
     const echoes = [
       apiKey,
@@ -3693,7 +3694,7 @@ test(
       [
         ownerId,
         threadId,
-        `Visible diagnostic ${secret} ${encodeURIComponent(secret)} ${username} ${echoes.join('|')}`,
+        `Visible diagnostic ${secret} ${encodeURIComponent(secret)} ${username} ${echoes.join('|')} ${personal}`,
         'now()',
       ],
       [ownerId, archivedThread, 'synthetic-archived-thread', 'now()'],
@@ -3737,6 +3738,7 @@ test(
       secrets: [paddedApiKey],
       provider: 'synthetic',
       model: 'synthetic',
+      profile: async () => ({ names: ['Marta Vidal'], region: 'ES' }),
       sessionEntries: async (requested: string) => {
         assert.equal(requested, threadId);
         return [
@@ -3764,8 +3766,11 @@ test(
           ...toolCall(
             'browser',
             'browser',
-            { action: `echo ${secret}` },
-            `Visible tool activity ${username}; ${echoes.join('|')}`,
+            {
+              action: `echo ${secret}`,
+              attendees: [{ displayName: 'Ana Ruiz', email: 'ana.ruiz@example.com' }],
+            },
+            `Visible tool activity ${username}; ${echoes.join('|')} ${personal}`,
           ),
           ...toolCall(
             'fill',
@@ -3794,6 +3799,13 @@ test(
       'synthetic-private-fill',
       'synthetic-private-origin',
       'private-login',
+      'Marta',
+      'Vidal',
+      'marta.vidal@example.com',
+      '4111',
+      '612 345 678',
+      'Ana Ruiz',
+      'ana.ruiz@example.com',
     ])
       assert.ok(!encoded.includes(omitted), omitted);
     assert.ok(encoded.includes('Visible diagnostic'));

@@ -1,6 +1,11 @@
 import type { Pool } from 'pg';
 import { activeThread } from './thread.ts';
 import { createRedactor } from './redaction.ts';
+import {
+  createPersonalDataRedactor,
+  withoutPersonalFields,
+  type PersonalProfile,
+} from './personal-data.ts';
 import { feedbackLimits } from '../shared/feedback.ts';
 
 type RecordValue = Record<string, unknown>;
@@ -11,8 +16,11 @@ export interface FeedbackReportOptions {
   secrets?: string[];
   provider?: string;
   model?: string;
+  profile: () => Promise<PersonalProfile>;
   sessionEntries?: (threadId: string) => Promise<unknown[]>;
 }
+
+const contentFields = new Set(['text', 'error', 'waiting_reason', 'input', 'output', 'preview']);
 
 export async function buildFeedbackReport(options: FeedbackReportOptions) {
   const thread = await activeThread(options.pool, options.ownerId);
@@ -32,11 +40,19 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     ),
   ]);
   const entries = (await options.sessionEntries?.(thread.id)) ?? [];
-  const redact = createRedactor([...(options.secrets ?? []), ...savedCredentialValues(entries)], {
+  const secret = createRedactor([...(options.secrets ?? []), ...savedCredentialValues(entries)], {
     string: 4000,
     payload: 12_000,
     minimumSecretLength: 1,
   });
+  const personal = createPersonalDataRedactor(await options.profile());
+  const redact = (row: unknown) =>
+    Object.fromEntries(
+      Object.entries(secret(row) as RecordValue).map(([key, value]) => [
+        key,
+        contentFields.has(key) ? withoutPersonalFields(value, personal) : value,
+      ]),
+    );
   const toolTrace = savedToolTrace(entries, Date.now());
   const report = {
     format: 'nod-feedback-report-v1',

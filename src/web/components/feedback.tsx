@@ -86,7 +86,7 @@ function hasDraft(draft: FeedbackDraft) {
     !!draft.feedback ||
     !!draft.attachments.length ||
     draft.category !== 'bug' ||
-    !draft.includeReport ||
+    draft.includeReport ||
     !!draft.pendingId
   );
 }
@@ -107,7 +107,7 @@ function FeedbackDraftDialog({
   const [kind, setKind] = useState<FeedbackSubmission['category']>('bug');
   const [feedback, setFeedback] = useState('');
   const [attachments, setAttachments] = useState<FeedbackAttachment[]>([]);
-  const [includeReport, setIncludeReport] = useState(true);
+  const [includeReport, setIncludeReport] = useState(false);
   const [report, setReport] = useState<FeedbackReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState('');
@@ -174,7 +174,7 @@ function FeedbackDraftDialog({
       const value = saved ?? {
         category: 'bug' as const,
         feedback: '',
-        includeReport: true,
+        includeReport: false,
         attachments: [],
         pendingId: null,
       };
@@ -384,7 +384,7 @@ function FeedbackDraftDialog({
     const empty: FeedbackDraft = {
       category: 'bug',
       feedback: '',
-      includeReport: true,
+      includeReport: false,
       attachments: [],
       pendingId: null,
     };
@@ -400,7 +400,7 @@ function FeedbackDraftDialog({
     setKind('bug');
     setFeedback('');
     setAttachments(empty.attachments);
-    setIncludeReport(true);
+    setIncludeReport(false);
     setReport(null);
     reportRef.current = null;
     setReportError('');
@@ -490,7 +490,6 @@ function FeedbackDraftDialog({
         submissionId: crypto.randomUUID(),
         category: kind,
         feedback: feedback.trim(),
-        computerName: context.computerName,
         appVersion: context.appVersion,
         appRelease: context.appRelease,
         appModified: context.appModified,

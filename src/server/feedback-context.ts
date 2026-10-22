@@ -1,5 +1,4 @@
 import childProcess from 'node:child_process';
-import os from 'node:os';
 import { promisify } from 'node:util';
 import type { FeedbackContext } from '../shared/feedback.ts';
 
@@ -12,17 +11,6 @@ export async function feedbackContext(options: {
   const development = environment.NODE_ENV !== 'production';
   let appRelease = environment.NOD_IMAGE_RELEASE || environment.NOD_RELEASE || null;
   let appModified: boolean | null = null;
-  let computerName = '';
-  try {
-    if (os.platform() === 'darwin') {
-      const { stdout } = await execute('/usr/sbin/scutil', ['--get', 'ComputerName'], {
-        timeout: 2_000,
-        maxBuffer: 8_192,
-      }).catch(() => ({ stdout: '' }));
-      computerName = stdout.trim();
-    }
-    computerName ||= os.hostname().trim();
-  } catch {}
   if (development) {
     try {
       const { stdout } = await execute(
@@ -44,7 +32,6 @@ export async function feedbackContext(options: {
     development,
     source: 'local-web',
     appModified,
-    computerName: computerName.slice(0, 200) || null,
     platform: null,
   };
 }

@@ -3754,31 +3754,6 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
   );
 });
 
-test('desktop update checks send the weekly ID only to the update source origin', async () => {
-  const base = 'https://updates.example.invalid/nod-desktop';
-  const hops = {
-    [`${base}/releases`]: `${base}/moved`,
-    [`${base}/moved`]: 'https://mirror.example.invalid/releases',
-  };
-  const seen = [];
-  const source = createUpdateSource({
-    sourceUrl: base,
-    weeklyId: async () => 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-    fetch: async (url, options) => {
-      seen.push([url, options.headers['x-nod-week'], options.headers['x-nod-version']]);
-      return hops[url]
-        ? new Response(null, { status: 302, headers: { location: hops[url] } })
-        : Response.json([]);
-    },
-  });
-  assert.equal(await source.latest('0.1.0'), undefined);
-  assert.deepEqual(seen, [
-    [`${base}/releases`, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', '0.1.0'],
-    [`${base}/moved`, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', '0.1.0'],
-    ['https://mirror.example.invalid/releases', undefined, undefined],
-  ]);
-});
-
 test('Intel updates use their own app assets and an official nod runtime release', async () => {
   const f = updateReleaseFixture('https://updates.example.invalid/nod-desktop', 'x64', true);
   const candidate = await f.source.latest('0.1.0');

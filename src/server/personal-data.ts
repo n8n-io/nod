@@ -205,6 +205,22 @@ export function personalKey(key: string) {
   return personalKeys.has(key.replace(/[^a-z0-9]/gi, '').toLowerCase());
 }
 
+export function withoutPersonalFields(value: unknown, text: (value: string) => string): unknown {
+  const visit = (item: unknown, key?: string): unknown =>
+    key !== undefined && personalKey(key) && item !== null && item !== ''
+      ? '[personal]'
+      : typeof item === 'string'
+        ? text(item)
+        : Array.isArray(item)
+          ? item.map((entry) => visit(entry))
+          : item && typeof item === 'object'
+            ? Object.fromEntries(
+                Object.entries(item).map(([name, entry]) => [text(name), visit(entry, name)]),
+              )
+            : item;
+  return visit(value);
+}
+
 function valueEnd(text: string, start: number) {
   const first = text[start];
   if (first === '"') {

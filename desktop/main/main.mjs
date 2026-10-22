@@ -16,10 +16,9 @@ import {
   utilityProcess,
 } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { hostname } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createSettingsStore } from './settings.mjs';
@@ -34,12 +33,7 @@ import { createAppPreferencesStore } from './app-preferences.mjs';
 import { createChatReadCursorStore } from './chat-read-cursors.mjs';
 import { saveArtifactDownload } from './downloads.mjs';
 import { createDesktopLifecycle } from './lifecycle.mjs';
-import {
-  createDesktopUpdater,
-  createUpdateSource,
-  createWeeklyId,
-  startDesktopUpdateChecks,
-} from './updates.mjs';
+import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
 import { windowsInstallCommand } from './windows-update.mjs';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -694,19 +688,8 @@ function deliverFeedbackRequest(window) {
 }
 
 async function feedbackContext() {
-  let computerName = '';
-  if (process.platform === 'darwin')
-    computerName = await new Promise((resolve) => {
-      execFile(
-        '/usr/sbin/scutil',
-        ['--get', 'ComputerName'],
-        { encoding: 'utf8', timeout: 2_000, maxBuffer: 8_192 },
-        (error, value) => resolve(error ? '' : value.trim()),
-      );
-    });
   const { nodBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
   return {
-    computerName: (computerName || hostname()).trim().slice(0, 200) || null,
     appVersion: app.getVersion(),
     appRelease: typeof nodBuild?.source === 'string' ? nodBuild.source : null,
     appModified: typeof nodBuild?.modified === 'boolean' ? nodBuild.modified : null,
@@ -1491,10 +1474,7 @@ else {
         const { nodBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
         const windows = process.platform === 'win32';
         if (windows) await rm(windowsUpdates, { recursive: true, force: true }).catch(() => {});
-        updateSource = createUpdateSource({
-          sourceUrl: nodBuild?.updateSourceUrl,
-          weeklyId: createWeeklyId(join(profileRoot, 'update-week.json')),
-        });
+        updateSource = createUpdateSource({ sourceUrl: nodBuild?.updateSourceUrl });
         updates = createDesktopUpdater({
           source: updateSource,
           currentVersion: app.getVersion(),

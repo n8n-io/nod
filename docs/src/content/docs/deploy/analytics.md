@@ -13,7 +13,7 @@ nod never sends what you write, what nod replies, what your apps return, or what
 
 ## Turn usage data on or off
 
-You turn on **Share usage data** in the first onboarding step, or later in **Settings → General**. Opt-in usage events and recordings start only in the app after your choice is saved; the native Welcome window sends neither. Desktop update checks use separate weekly installation counts, described below.
+You turn on **Share usage data** in the first onboarding step, or later in **Settings → General**. Opt-in usage events and recordings start only in the app after your choice is saved; the native Welcome window sends neither.
 
 Next to the switch, nod says: "Help us make nod better by sharing how you use it. Never your messages." It links to this page, which lists everything that is sent.
 
@@ -212,17 +212,6 @@ When the turn only changed nod's own schedules, notification settings, spending 
 A **real job** is a task you asked for that nod finished in an app or on a website. In events, it's the latest `nod_task_updated` for a `task_id` with `source` `user` or `task`, `starter=false`, `outcome=completed` and `completion_evidence=action_succeeded`. First-chat task cards, scheduled runs, event turns and changes to nod's own settings don't count. Count distinct `task_id` values; a task reopened after completion counts once.
 
 `elapsed_ms` runs from the first associated request to the observed turn finish, including queueing and time between turns. `duration_ms` on turn completion measures that execution segment, excluding the classifier call. `queue_duration_ms` measures the queued turn's wait to execute. A turn that pauses includes the runtime's bounded `waiting_reason`. These timings don't yet separate active work, user waiting and provider latency within a task. Compare percentiles by task category, source and app version, and show unfinished requests alongside completed ones.
-
-## Weekly installations
-
-Opt-in analytics only covers people who turned usage data on. To estimate everyone, the desktop update check counts installations each week without identifying anyone, and with no consent switch because nothing in it is personal.
-
-On each check, the desktop app sends n8n's update service a random weekly ID, its platform and app version, on the release-list request only. The ID is a new random UUID each ISO week, kept in the desktop profile, so checks within a week count once. The update service sees the ID with your IP address, as it does on every update check, but PostHog receives no IP, so weeks can't be linked there. The service sends one `nod_update_check` event to PostHog per check, with `distinct_id` `week:<id>`, `platform`, `app_version`, `analytics_schema`, `environment` (`production` for stable versions), no person profile and GeoIP off. It never forwards your IP address, and a failed send never affects the update check.
-
-- **Weekly installations:** unique `distinct_id` values of `nod_update_check` per week. An app that is open on a few days still counts once. Source installs and apps that don't check that week aren't counted.
-- **Scale up opted-in numbers:** divide weekly installations by the opted-in installations active the same week (unique `local:` IDs with any event), then multiply opted-in counts, such as real jobs, by that factor. This assumes opted-in people use nod like everyone else, so treat the result as a rough total.
-
-The weekly IDs are separate from installation IDs and can't be joined with opt-in analytics.
 
 ## Connections and consent
 

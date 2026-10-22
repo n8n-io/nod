@@ -97,6 +97,7 @@ test('feedback bytes and metadata are bound to the canonical hash', () => {
   const request = checkFeedback(value, hashFeedback);
   assert.equal(request.submissionId, submissionId);
   assert.equal(request.files.length, 1);
+  assert.ok(!request.description.includes(value.computerName));
   for (const changes of [
     { feedback: 'Changed' },
     { appVersion: '0.2.0' },

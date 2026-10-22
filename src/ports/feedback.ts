@@ -9,6 +9,7 @@ export interface FeedbackFile {
 
 export interface FeedbackEnvelope extends Omit<FeedbackSubmission, 'reportId' | 'attachments'> {
   schemaVersion: 1;
+  computerName: null;
   action?: 'repair';
   payloadHash: string;
   report?: FeedbackFile;
