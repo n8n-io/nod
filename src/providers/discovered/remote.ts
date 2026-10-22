@@ -116,6 +116,12 @@ export async function safeRemoteFetch(
       (incoming) => {
         if (incoming.statusCode && incoming.statusCode >= 300 && incoming.statusCode < 400) {
           incoming.destroy();
+          if (prepared.redirect === 'error') {
+            reject(
+              new Error('The server redirected the request, which this connection does not allow.'),
+            );
+            return;
+          }
           const location = incoming.headers.location;
           if (!location || redirects <= 0) {
             reject(new Error('The connection redirected too many times or without a location.'));
@@ -217,7 +223,7 @@ export async function withRemoteMcp<T>(
     const client = new Client({ name: 'nod', version: '0.1.0' });
     const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
       requestInit: { headers },
-      fetch: (input, init) => request(input, init),
+      fetch: (input, init) => request(input, { ...init, redirect: 'error' }),
     });
     entry = {
       ready: client.connect(transport, { timeout: 60_000 }).then(() => client),
@@ -231,7 +237,14 @@ export async function withRemoteMcp<T>(
   const abort = () => release(pool, key, current);
   signal?.addEventListener('abort', abort, { once: true });
   try {
-    const client = await current.ready;
+    const client = await (signal
+      ? Promise.race([
+          current.ready,
+          new Promise<never>((_resolve, reject) =>
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
+          ),
+        ])
+      : current.ready);
     signal?.throwIfAborted();
     const result = await operation(client, {
       ...(signal ? { signal } : {}),

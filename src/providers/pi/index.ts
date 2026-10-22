@@ -380,9 +380,6 @@ export function createPiAgent(options: {
                 namespace: {
                   name: tool.deferred.namespace,
                   description: tool.deferred.description,
-                  ...(tool.deferred.instructions
-                    ? { instructions: tool.deferred.instructions }
-                    : {}),
                 },
               }
             : { exposure: 'model-only' as const }),

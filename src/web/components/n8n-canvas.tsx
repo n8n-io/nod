@@ -152,7 +152,7 @@ function parseWorkflow(text: string): Workflow | null {
       },
     ];
   });
-  if (!nodes.length) return null;
+  if (!nodes.length || nodes.length > 400) return null;
   const names = new Set(nodes.map((node) => node.name));
   const connections = Object.entries(record(workflow.connections) ?? {}).flatMap(([from, types]) =>
     names.has(from)
@@ -273,11 +273,12 @@ function layout({ nodes, connections }: Workflow): Box[] {
       1,
       ...incoming.filter(({ type }) => type === 'main').map(({ input }) => input + 1),
     );
+    const labels = outputLabels[segment(node.type)];
     const outputs = Math.max(
       1,
+      labels?.length ?? 0,
       ...outgoing.filter(({ type }) => type === 'main').map(({ output }) => output + 1),
     );
-    const labels = outputLabels[segment(node.type)];
     return {
       ...node,
       x: node.position[0],

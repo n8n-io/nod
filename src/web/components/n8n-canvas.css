@@ -221,7 +221,9 @@
 }
 
 .n8n-canvas-details p {
-  flex: none;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
   margin: 0;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);

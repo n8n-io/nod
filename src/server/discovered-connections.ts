@@ -463,12 +463,16 @@ export async function createDiscoveredConnections(
       !/^https?:\/\//i.test(parsed.instanceUrl)
     )
       throw error(`Enter an http or https address for ${server.name}.`);
+    if (/[?#]/.test(parsed.instanceUrl))
+      throw error(`Enter your ${server.name} address without ? or #.`);
     const schemeless = !/^https?:\/\//i.test(parsed.instanceUrl);
     const url = URL.parse(schemeless ? `https://${parsed.instanceUrl}` : parsed.instanceUrl);
     if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password)
       throw error(`Enter your ${server.name} address, such as https://you.app.n8n.cloud.`);
     const typedPath = url.pathname.replace(/\/+$/, '');
-    const servicePath = typedPath.endsWith(server.instancePath) ? typedPath : server.instancePath;
+    const servicePath = typedPath.endsWith(server.instancePath)
+      ? typedPath
+      : `${typedPath}${server.instancePath}`;
     let endpoint = `${url.origin}${servicePath}`;
     let local = false;
     await options.transport.validateEndpoint(endpoint).catch(async () => {

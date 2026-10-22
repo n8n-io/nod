@@ -20,7 +20,7 @@ nodes = {n['name']: n for n in flow['nodes'] if not n['type'].endswith('stickyNo
 at = {name: (n['position'][0] * 1.25, -n['position'][1] * 1.25) for name, n in nodes.items()}
 w, h = 150, 64
 xs, ys = [p[0] for p in at.values()], [p[1] for p in at.values()]
-fig, ax = plt.subplots(figsize=(max(6, (max(xs) - min(xs) + 2 * w) / 100), max(3, (max(ys) - min(ys) + 3 * h) / 100)), dpi=180)
+fig, ax = plt.subplots(figsize=(min(22, max(6, (max(xs) - min(xs) + 2 * w) / 100)), min(22, max(3, (max(ys) - min(ys) + 3 * h) / 100))), dpi=180)
 for start, kinds in flow.get('connections', {}).items():
     for kind, outputs in kinds.items():
         for links in outputs or []:

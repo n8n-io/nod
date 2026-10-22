@@ -1,6 +1,6 @@
 ---
 name: n8n
-description: Use only when the user names n8n and wants something in their connected n8n, such as building, changing, testing, debugging, publishing or explaining an n8n workflow or n8n Agent. Otherwise use nod's own tasks and schedules, even when n8n is connected.
+description: Use only when the user names n8n, or continues work on an n8n workflow or Agent already in this conversation, and wants something in their connected n8n, such as building, changing, testing, debugging, publishing or explaining it. Otherwise use nod's own tasks and schedules, even when n8n is connected.
 ---
 
 # n8n
@@ -16,6 +16,8 @@ Work through the connected n8n MCP server. Its tools are named mcp__n8n__<tool>;
 Show a workflow as a canvas. When the turn's channel is telegram, read [references/telegram.md](references/telegram.md) instead, because Telegram shows a picture, not the canvas. Otherwise, in codemode, write the workflow from get_workflow_details, with the url n8n returned, to `n8n/<short-name>.n8n.json`, then attach that file with share_file. For an n8n Agent, give its link instead.
 
 ```js
+const workflowId = 'aBc123';
+const url = 'https://you.app.n8n.cloud/workflow/aBc123';
 const { workflow } = JSON.parse(await tools.mcp__n8n__get_workflow_details({ workflowId }));
 await tools.write({
   path: 'n8n/order-alerts.n8n.json',
