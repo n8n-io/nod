@@ -55,7 +55,7 @@ export const scenes = [
   },
   {
     title: 'You stay in charge.',
-    text: 'The model check can make mistakes. Review important results. nod. You stay in charge.',
+    text: 'The model check can make mistakes. Review important results. You stay in charge.',
     points: ['Review important results.', 'The model check can make mistakes.'],
   },
 ];

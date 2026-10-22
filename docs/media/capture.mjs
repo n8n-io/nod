@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm, writeFile, mkdir, readdir } from 'node:fs/promises';
@@ -60,21 +61,23 @@ const server = createServer(async (request, response) => {
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const profile = await mkdtemp(`${tmpdir()}/nod-media-chrome-`);
-const chrome = spawn(
-  process.env.NOD_MEDIA_CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  [
-    '--headless=new',
-    '--hide-scrollbars',
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--remote-debugging-port=0',
-    `--user-data-dir=${profile}`,
-    'about:blank',
-  ],
-  { stdio: 'ignore' },
-);
+let chrome;
 let socket;
 try {
+  chrome = spawn(
+    process.env.NOD_MEDIA_CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    [
+      '--headless=new',
+      '--hide-scrollbars',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--remote-debugging-port=0',
+      `--user-data-dir=${profile}`,
+      'about:blank',
+    ],
+    { stdio: 'ignore' },
+  );
+  await once(chrome, 'spawn');
   let port;
   for (let i = 0; i < 100; i++) {
     try {
@@ -215,7 +218,7 @@ try {
   console.log(`Captured ${scenes.length} scenes with no page errors.`);
 } finally {
   socket?.close();
-  chrome.kill();
+  chrome?.kill();
   server.close();
   await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
