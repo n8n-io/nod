@@ -47,7 +47,7 @@ The [review captures and setup demo](../review/channels/README.md) use the real 
 
 The normal GitHub CI fixture passed the full integration suite, desktop contracts, docs and Windows checks at `c4f232ec`. Later commits add exact private-code request binding and merge the shared activity model from main. The PR checks show the result for the current head.
 
-The stricter local offline fixture has browser and sealed-CLI failures. The native download comparison also fails on unchanged main at `a8ae5a1b`. These results do not prove a channel regression or a live provider connection. A test from main also read a failure notice before its asynchronous save; the merged test now waits for that save before it checks the exact result.
+The stricter local offline integration run has 576 checks: 560 passes, 13 failures and three skips. An unchanged-main run at `a8ae5a1b` has 550 passes, the same 13 failures and the same three skips. The 12 failed native browser and download cases also fail on main; the failed parent test adds the thirteenth failure. These fixture results do not prove a channel regression or a live provider connection. A test from main also read a failure notice before its asynchronous save; the merged test now waits for that save before it checks the exact result.
 
 Local reports are kept outside Git. CI results are on PR #423. Synthetic fixtures, UI checks and live checks are separate evidence.
 
