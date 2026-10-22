@@ -4422,7 +4422,7 @@ test(
         response.end(
           `
           ${request.url === '/duplicate' ? '<button id="primary">Continue with Example</button>' : ''}
-          <iframe title="Sign in" src="${source}" style="width:700px;height:400px;margin:70px 100px;border:12px solid;${transform}"></iframe><button id="reload-frame" onclick="document.querySelector('iframe').contentWindow.location.reload()">Reload frame</button>`,
+          <iframe title="Sign in" src="${source}" onload="document.getElementById('frame-state').textContent='Frame ready'" style="width:700px;height:400px;margin:70px 100px;border:12px solid;${transform}"></iframe><button id="reload-frame" onclick="document.getElementById('frame-state').textContent='Loading frame';document.querySelector('iframe').contentWindow.location.reload()">Reload frame</button><p id="frame-state">Loading frame</p>`,
         );
         return;
       }
@@ -4555,6 +4555,7 @@ test(
         const framed = await inspect();
         assert.equal(framed.methods[0]!.label, 'Continue with Example');
         await act({ action: 'click', selector: '#reload-frame' });
+        await act({ action: 'wait', text: 'Frame ready' });
         await assert.rejects(
           client.selectSignInMethod!('fixture', {
             origin,
@@ -4603,6 +4604,7 @@ test(
 
       for (const [index, path] of ['/framed', '/foreign'].entries()) {
         await act({ action: 'open', url: origin + path });
+        await act({ action: 'wait', text: 'Frame ready' });
         const connection = await existingDaemonCommand(socketPath, { action: 'cdp_url' });
         const tabs = await existingDaemonCommand(socketPath, { action: 'tab_list' });
         const tab = (tabs.tabs as { active: boolean; targetId: string }[]).find(
@@ -4619,6 +4621,7 @@ test(
           assert.notEqual(bound.loaderId, await inspector.document());
           if (path === '/framed') {
             await act({ action: 'click', selector: '#reload-frame' });
+            await act({ action: 'wait', text: 'Frame ready' });
             await assert.rejects(inspector.selectSignInControl(bound));
           }
           inspector.close();

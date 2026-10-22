@@ -61,6 +61,8 @@ flowchart LR
 
 The network has no internet access, and your source folders are mounted read-only. The run fails if any test is skipped.
 
+Wait for a controlled frame to finish loading before checking an old control binding. A reload can still show the previous document while navigation is pending.
+
 ## Write tests that catch real regressions
 
 Add a test only when it would catch a real regression in one of these areas. Extend the existing file for that area instead of adding a new one.
