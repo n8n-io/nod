@@ -27,6 +27,7 @@ export default scenario({
   seconds: 600,
   user: {
     approve: true,
+    signInMethod: 'Autenticar com NIF e senha',
     persona:
       "You are Alex Rivera. Your tax login is Alex's (NIF 234567890). Maria Rivera is a relative and her login is not yours.",
     answers: [

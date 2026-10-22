@@ -54,6 +54,7 @@ export interface UserScript {
     | string[]
     | ((question: string, world: any, kind: 'otp' | 'payment' | 'password') => string | undefined);
   signIn?: { username: string; password: string };
+  signInMethod?: string;
   persona?: string;
 }
 

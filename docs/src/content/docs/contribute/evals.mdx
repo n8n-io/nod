@@ -36,7 +36,7 @@ flowchart TD
 | The workspace container, Chromium, downloads and uploads         | Websites with logins, codes, carts and bookings, served under made-up hostnames                                                                                          |
 | The clock                                                        | The user: scripted answers and approvals, plus a model-voiced persona for other questions                                                                                |
 
-Web search and page fetch (`web_search` and `fetch_content`) run on the server, so they reach the public web in every case.
+Web search and page fetch (`web_search` and `fetch_content`) run on the server. A fetch to a named fixture host uses the local test server. Other requests can reach the public web.
 
 Checks grade the end state: the fake world, the workspace files and the trace. Trust checks use decision models the way production chooses them: `TYPESAFE_API_KEY` first, otherwise the agent's provider. A separate judge model grades what needs judgement, and also reads the text of any file nod shares with the user. Every request to a lookalike website records which browser made it, so a check can tell what each browser, including a subagent's, was showing.
 
@@ -77,6 +77,8 @@ pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 
 `--tier release` runs the release cases together with every controlled case, 226 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run.
+
+The [v0.2.1 release evaluation report](https://github.com/n8n-io/nod/blob/main/docs/review/release-evals-v0.2.1.md) records the full run, fixture corrections, and comparisons with v0.2.0.
 
 ### Commands
 
@@ -590,6 +592,8 @@ Each scenario is one file in `evals/src/scenarios/`, named after its `id`. The s
 | `play`                   | What the simulated user says, and when schedules fire                                                                      |
 | `expect`                 | `check()` for state you can test, and one `judge()` criterion per judgement                                                |
 | `evidence`               | The exact end state the judge sees                                                                                         |
+
+`user.signInMethod` supplies the exact visible label of a sign-in method the simulated owner chooses. The harness selects its observed ID through the private form. A missing choice stays unanswered. It never turns that choice into a chat reply or a password submission.
 
 Every attempt also checks that the last turn finished, unless the scenario defines its own `completion` check, and that no saved password or key-shaped string appears in nod's messages.
 

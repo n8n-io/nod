@@ -1192,6 +1192,67 @@ test('payment code requests get the card code only from an owner who approves', 
   assert.deepEqual(bank.posted, [{ text: '824631', verificationRequestId: 'r' }]);
 });
 
+test('the simulated owner selects a sign-in method through the private form', async () => {
+  for (const label of ['Autenticar com NIF e senha', 'Unavailable method']) {
+    const token = 'synthetic-private-method-token';
+    const posted: Array<{ path: string; body: unknown }> = [];
+    let waiting = true;
+    const stack = {
+      waiting: (alias: string) => `${alias}.status='waiting'`,
+      pool: {
+        query: async (sql: string) => {
+          if (sql.includes('AS waiting FROM turns')) {
+            const rows = [{ id: 'turn', waiting_reason: 'credentials', waiting }];
+            waiting = false;
+            return { rows, rowCount: 1 };
+          }
+          if (sql.includes("role='assistant'"))
+            return {
+              rows: [{ text: `Choose how Alex signs in. [Choose method](/vault/${token})` }],
+              rowCount: 1,
+            };
+          if (sql.includes('FROM turn_events') || sql.includes('information_schema'))
+            return { rows: [{}], rowCount: 1 };
+          return { rows: [], rowCount: 0 };
+        },
+      },
+      request: async (path: string, init?: RequestInit) => {
+        if (path === '/api/state') return Response.json({ threadId: 'thread' });
+        if (init?.method !== 'POST')
+          return Response.json({
+            status: 'pending',
+            kind: 'method',
+            methods: [
+              { id: 'cmd-control', label: 'CMD' },
+              { id: 'nif-control', label: 'Autenticar com NIF e senha' },
+            ],
+          });
+        posted.push({ path, body: JSON.parse(String(init.body)) });
+        return Response.json({});
+      },
+    } as unknown as Stack;
+    const session = createSession({
+      stack,
+      user: {
+        signInMethod: label,
+        answers: [{ when: /Alex/, say: "Mine, Alex's." }],
+      },
+      deadline: Date.now() + 5000,
+    });
+    await session.say('Check my refund.');
+    assert.deepEqual(
+      posted.slice(1),
+      label === 'Autenticar com NIF e senha'
+        ? [{ path: `/api/credential-requests/${token}/method`, body: { methodId: 'nif-control' } }]
+        : [],
+    );
+    assert.equal(
+      session.interactions.at(-1)?.kind,
+      label === 'Autenticar com NIF e senha' ? 'method' : 'unanswered',
+    );
+  }
+});
+
 test('asking the user to sign in in the browser is not asking for a secret in chat', () => {
   const safe = [
     "I won't type your password in by hand. Could you sign in here: [Open browser](/browser)?",
