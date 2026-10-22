@@ -8,6 +8,18 @@ The first eleven comparisons use read-only snapshots of the branch base and capt
 - Every API request was intercepted. No live model, connected account, recipient, backend write, or OS setting was used. Desktop screenshots simulate the renderer bridge and do not demonstrate installed Electron or OS permission behavior.
 - Capture completed with no page errors, unexpected API requests, or external requests. Measured states and source revisions are in [the manifest](manifest.json).
 
+## Approved feedback invitation
+
+The selected Brand invitation is implemented at `23cd4db96e767cf7ba26a267b40ef6564b0b7e84`. These additional comparisons use the same synthetic state and real app onboarding controls before (`3edcdb19`) and after (`23cd4db9`), at 1280 × 900 in desktop light mode and 390 × 844 in web dark mode. The four original captures are retained in `feedback-discovery/`. These are new captures; the earlier eleven comparisons keep their original source attribution.
+
+Successful first-time onboarding shows an informational invitation beside Send feedback. It welcomes problems and ideas, says every message is read, and contains only a dismiss control. Dismissal persists per owner; existing users and replayed setup do not receive a new invitation. Opening the existing feedback form also dismisses it. A full-width file viewer temporarily hides it without consuming the invitation.
+
+![Approved feedback invitation, desktop before and after](feedback-discovery.png)
+
+![Approved feedback invitation, narrow dark before and after](feedback-discovery-narrow.png)
+
+[Source, screenshot hashes and validation](feedback-discovery.json). The actual-app fixture exercised completion and retry, owner isolation, persistence, routing, focus restoration, feedback form opening, file-viewer positioning and reduced motion. No feedback was submitted, no real account or model was used, and the simulated desktop bridge does not prove native OS behavior.
+
 ## Navigation and chat
 
 The web rail is vertically centered. The sidebar toggle stays at the same position between Chat and Trust. The chat model picker is removed. Closing a pointer-opened context menu no longer leaves an outline around the message, and the reaction no longer has the duplicate shadow. The collapsed default and centered desktop rail were already present and remain unchanged.
