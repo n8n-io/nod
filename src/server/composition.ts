@@ -1033,6 +1033,7 @@ async function initializeApplication(
       readArtifact: workspace.readArtifact.bind(workspace),
       mailCheck,
       executeConfirmation: approvals.executeConfirmed,
+      bindVerificationQuestion: chatVerification.bindQuestion,
       reactToMessage: reactions.react,
       runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
       spendingLimitReached: ledger.limitReached,

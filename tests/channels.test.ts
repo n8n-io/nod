@@ -1177,11 +1177,46 @@ test(
         "INSERT INTO channel_outbox(message_id,source_id,state,provider_message_id,provider_message_ids) VALUES($1,'channel:telegram:fixture-account:private-code','sent','native-current-question',ARRAY['native-current-question'])",
         [nextQuestion],
       );
+      await verification.bindQuestion(nextCodeTurn, nextQuestion);
       await send('reply-current-code', '481927', 'telegram', {
         replyToMessageId: 'native-current-question',
       });
       await fixture.channels.drain();
       assert.equal(vaultInjections, 2);
+      await pool.query(
+        "UPDATE turns SET status='running',waiting_reason=NULL,finished_at=NULL WHERE id=$1",
+        [nextCodeTurn],
+      );
+      await vault.request({ threadId, turnId: nextCodeTurn }, 'local-development', {
+        origin: 'https://1.1.1.1',
+        label: 'Next step in the same sign-in',
+        kind: 'otp',
+        passwordSelector: '#code',
+      });
+      await pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
+        [nextCodeTurn],
+      );
+      await send('reply-closed-same-turn', '481927', 'telegram', {
+        replyToMessageId: 'native-current-question',
+      });
+      await fixture.channels.drain();
+      assert.equal(vaultInjections, 2);
+      const finalQuestion = randomUUID();
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','assistant','Next synthetic code question',$2,$3)",
+        [finalQuestion, threadId, nextCodeTurn],
+      );
+      await pool.query(
+        "INSERT INTO channel_outbox(message_id,source_id,state,provider_message_id,provider_message_ids) VALUES($1,'channel:telegram:fixture-account:private-code','sent','native-next-question',ARRAY['native-next-question'])",
+        [finalQuestion],
+      );
+      await verification.bindQuestion(nextCodeTurn, finalQuestion);
+      await send('reply-next-code', '481927', 'telegram', {
+        replyToMessageId: 'native-next-question',
+      });
+      await fixture.channels.drain();
+      assert.equal(vaultInjections, 3);
       assert.doesNotMatch(
         JSON.stringify(
           (await pool.query('SELECT text FROM channel_inbox UNION ALL SELECT text FROM messages'))

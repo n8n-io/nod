@@ -171,6 +171,7 @@ test(
         "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Reply with the verification code.',$3,$4)",
         [messageId, owner, threadId, turnId],
       );
+      await verification.bindQuestion(turnId, messageId);
       if (options.archived)
         await db.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
       if (options.superseded || options.supersededLongAgo) {

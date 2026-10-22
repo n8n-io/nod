@@ -103,6 +103,11 @@ export interface ThreadDependencies {
     turnId: string,
     signal: AbortSignal,
   ) => Promise<{ prompt: string } | undefined>;
+  bindVerificationQuestion?: (
+    turnId: string,
+    messageId: string,
+    client: PoolClient,
+  ) => Promise<void>;
   spendingLimitReached?: () => Promise<boolean>;
   checkIn?: (sessionId: string, turnId: string) => Promise<RuntimeContext['checkIn']>;
   skipTurn?: (sourceId: string) => Promise<boolean>;
@@ -1445,8 +1450,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             : (result.waitingFor ?? 'question'),
         handoffBrowserId: result.handoffBrowserId,
       });
-      if (waiting && result.message)
-        await insertAssistantMessage(client, ref, result.message, shared.splice(0));
+      if (waiting && result.message) {
+        const messageId = await insertAssistantMessage(
+          client,
+          ref,
+          result.message,
+          shared.splice(0),
+        );
+        if (result.status === 'waiting_credentials' || result.waitingFor === 'credentials')
+          await dependencies.bindVerificationQuestion?.(turnId, messageId, client);
+      }
     }).catch((error) => {
       if (!signal.aborted) throw error;
     });

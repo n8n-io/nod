@@ -116,6 +116,15 @@ test(
       resume: thread.resumeAfterCredentials,
       retry: thread.retryCredentials,
     });
+    const { createChatVerification } = await import('../src/server/chat-verification.ts');
+    const verification = await createChatVerification(db.pool, {
+      ownerId,
+      keyStore: { getKey: async () => fixtureKey },
+      refresh() {},
+      submitCode: async () => {
+        throw new Error('Unused fixture capability.');
+      },
+    });
     const approvals = await createApprovals(
       async () => {
         executed++;
@@ -266,6 +275,7 @@ test(
       present: (...input) => presentInterruption(...input),
       observeTurn: (_turnId, operation) => analytics.withRun(ownerId, operation),
       executeConfirmation: async () => undefined,
+      bindVerificationQuestion: verification.bindQuestion,
       connectedApps: readConnectedApps,
       spendingLimitReached: async () => limitReached,
       speech: {
@@ -417,12 +427,19 @@ test(
           return { status: 'waiting_user', message: 'Which account should I use?' };
         if (context.prompt === 'ask-approval')
           return { status: 'waiting_user', waitingFor: 'approval' };
-        if (context.prompt === 'ask-credentials')
+        if (context.prompt === 'ask-credentials') {
+          const request = randomUUID();
+          await db.pool.query(
+            `INSERT INTO credential_requests(id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,selectors,inspection)
+             VALUES($1,$2,$3,$4,$5,$5,'https://fixture.test','Synthetic code','otp','{}','{}')`,
+            [request, `synthetic-${request}`, ownerId, context.threadId, context.turnId],
+          );
           return {
             status: 'waiting_credentials',
             waitingFor: 'credentials',
             message: 'Enter the synthetic password. [Sign in](/vault/fixture)',
           };
+        }
         await context.reply(`done: ${context.prompt}`);
         return { status: 'succeeded' };
       },
@@ -1189,10 +1206,27 @@ test(
               ).rows[0],
               { status: 'waiting', waiting_reason: reason },
             );
-            if (reason === 'credentials')
+            if (reason === 'credentials') {
               assert.deepEqual(await postedWithWaitingState(waiting.turnId), [
                 { text: 'Enter the synthetic password. [Sign in](/vault/fixture)', together: true },
               ]);
+              assert.deepEqual(
+                (
+                  await db.pool.query(
+                    `SELECT q.xmin=m.xmin AND m.xmin=u.xmin AS together
+                   FROM chat_verification_questions q JOIN messages m ON m.id=q.message_id
+                   JOIN credential_requests r ON r.id=q.request_id AND r.turn_id=m.turn_id AND r.owner_id=m.owner_id
+                   JOIN turns u ON u.id=m.turn_id WHERE u.id=$1`,
+                    [waiting.turnId],
+                  )
+                ).rows,
+                [{ together: true }],
+              );
+              await db.pool.query(
+                "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+                [waiting.turnId],
+              );
+            }
           }
           await waitFor(settledThread);
           const answer = await thread.submitUserMessage('the work account', [], { channel: 'web' });
