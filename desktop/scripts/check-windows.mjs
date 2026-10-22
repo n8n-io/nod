@@ -191,8 +191,18 @@ if (process.env.WORKSPACE_CONTAINER) {
       receipt.browser = true;
       receipt.workspaceFiles = true;
       console.log('Windows application, browser and workspace verified.');
-      await runtime.stopWindowsRuntime({ dataRoot: profile });
-      console.log('Checking restart and saved data.');
+      console.log('Checking a relaunch without admin rights after the PC went off.');
+      await run(wsl, ['--terminate', prepared.env.NOD_WSL_DISTRIBUTION]);
+      await run(join(process.env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'), [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        join(root, 'desktop/scripts/drop-admin-privileges.ps1'),
+        '-ProcessId',
+        String(process.pid),
+      ]);
       prepared = await runtime.prepareWindowsRuntime(
         {
           dataRoot: profile,
