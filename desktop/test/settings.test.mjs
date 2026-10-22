@@ -405,7 +405,26 @@ async function runningDesktop(
       getPath: (name) => paths.get(name) || dirname(storage.path),
       getVersion: () => version,
       requestSingleInstanceLock: () => false,
-      getLoginItemSettings: () => ({ openAtLogin, ...loginItemStatus() }),
+      getLoginItemSettings: () => {
+        const login = {
+          status: openAtLogin ? 'enabled' : 'not-registered',
+          executableWillLaunchAtLogin: openAtLogin,
+          ...loginItemStatus(),
+        };
+        return platform === 'darwin'
+          ? {
+              status: login.status,
+              executableWillLaunchAtLogin: false,
+              openAtLogin: login.status === 'enabled',
+              wasOpenedAtLogin: false,
+            }
+          : {
+              launchItems: [],
+              executableWillLaunchAtLogin: login.executableWillLaunchAtLogin,
+              openAtLogin,
+              wasOpenedAtLogin: false,
+            };
+      },
       setLoginItemSettings: (value) => {
         if (updateLoginItems(value)) openAtLogin = value.openAtLogin;
       },
@@ -3891,70 +3910,78 @@ test('desktop preference choices resume durably and cannot skip or regress expli
 });
 
 test('desktop preference steps and completion require the owned normal app and durable server completion', async (t) => {
-  let completed = false;
-  let loginItemsWritable = false;
-  let loginStatus = {};
-  const f = await runningDesktop(
-    t,
-    async (url) =>
-      new URL(url).pathname === '/api/account'
-        ? Response.json({ settings: { usageData: false } })
-        : Response.json({ ok: true, settings: { onboardingCompleted: completed } }),
-    {
-      initialState: 'fresh',
-      allowStart: true,
-      updateLoginItems: () => loginItemsWritable,
-      loginItemStatus: () => loginStatus,
-    },
-  );
-  await f.storage.store.save({ welcome: { usageData: false, continued: true } });
-  try {
-    await f.launch();
-    await f.settle();
-    const window = f.windows.at(-1);
-    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-    const save = f.handlers.get('nod:settings:save');
-    await assert.rejects(
-      save(
-        { ...event, senderFrame: { url: window.url } },
-        { notifications: true, onboardingPreferenceStep: 'launchAtLogin' },
-      ),
-    );
-    await assert.rejects(save(event, { welcome: { usageData: true, continued: true } }));
-    await assert.rejects(save(event, { onboardingCompleted: true }));
-    await assert.rejects(
-      save(event, { notifications: false, onboardingPreferenceStep: 'launchAtLogin' }),
-    );
-    await save(event, { notifications: true, onboardingPreferenceStep: 'launchAtLogin' });
-    await assert.rejects(
-      save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
-      /login items/,
-    );
-    assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
-    assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
-    loginItemsWritable = true;
-    for (const status of [
-      { status: 'requires-approval' },
-      { executableWillLaunchAtLogin: false },
-    ]) {
-      loginStatus = status;
-      await assert.rejects(
-        save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
-        /login items/,
+  for (const platform of ['darwin', 'win32'])
+    await t.test(platform, async (t) => {
+      let completed = false;
+      let loginItemsWritable = false;
+      let loginStatus = {};
+      let registered = false;
+      const f = await runningDesktop(
+        t,
+        async (url) =>
+          new URL(url).pathname === '/api/account'
+            ? Response.json({ settings: { usageData: false } })
+            : Response.json({ ok: true, settings: { onboardingCompleted: completed } }),
+        {
+          initialState: 'fresh',
+          allowStart: true,
+          platform,
+          updateLoginItems: (value) => {
+            if (loginItemsWritable) registered = value.openAtLogin;
+            return loginItemsWritable;
+          },
+          loginItemStatus: () => loginStatus,
+        },
       );
-      assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
-      assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
-    }
-    loginStatus = {};
-    await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
-    assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
-    completed = true;
-    await save(event, { onboardingCompleted: true });
-    assert.equal((await f.storage.reopen().get()).onboardingCompleted, true);
-    await assert.rejects(save(event, { onboardingCompleted: false }));
-  } finally {
-    await f.close();
-  }
+      await f.storage.store.save({ welcome: { usageData: false, continued: true } });
+      try {
+        await f.launch();
+        await f.settle();
+        const window = f.windows.at(-1);
+        const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+        const save = f.handlers.get('nod:settings:save');
+        await assert.rejects(
+          save(
+            { ...event, senderFrame: { url: window.url } },
+            { notifications: true, onboardingPreferenceStep: 'launchAtLogin' },
+          ),
+        );
+        await assert.rejects(save(event, { welcome: { usageData: true, continued: true } }));
+        await assert.rejects(save(event, { onboardingCompleted: true }));
+        await assert.rejects(
+          save(event, { notifications: false, onboardingPreferenceStep: 'launchAtLogin' }),
+        );
+        await save(event, { notifications: true, onboardingPreferenceStep: 'launchAtLogin' });
+        await assert.rejects(
+          save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
+          /login items/,
+        );
+        assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
+        assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
+        loginItemsWritable = true;
+        for (const status of platform === 'darwin'
+          ? [{ status: 'requires-approval' }, { status: 'not-found' }]
+          : [{ executableWillLaunchAtLogin: false }]) {
+          loginStatus = status;
+          await assert.rejects(
+            save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
+            /login items/,
+          );
+          assert.equal(registered, true);
+          assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
+          assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
+        }
+        loginStatus = {};
+        await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
+        assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
+        completed = true;
+        await save(event, { onboardingCompleted: true });
+        assert.equal((await f.storage.reopen().get()).onboardingCompleted, true);
+        await assert.rejects(save(event, { onboardingCompleted: false }));
+      } finally {
+        await f.close();
+      }
+    });
 });
 
 test('native readiness notification waits for full runtime readiness and reaches opted-in background users once', async (t) => {

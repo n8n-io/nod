@@ -1709,21 +1709,20 @@ else {
         }
         const loginChanged = typeof value.launchAtLogin === 'boolean';
         const previousLogin = loginChanged ? app.getLoginItemSettings().openAtLogin : undefined;
+        if (loginChanged) {
+          app.setLoginItemSettings({ openAtLogin: value.launchAtLogin });
+          const login = app.getLoginItemSettings();
+          if (
+            (process.platform === 'win32'
+              ? login.executableWillLaunchAtLogin
+              : login.openAtLogin) !== value.launchAtLogin
+          )
+            throw new Error(
+              'Open at login could not be updated. Check nod in your computer’s login items, then try again.',
+            );
+        }
         let saved;
         try {
-          if (loginChanged) {
-            app.setLoginItemSettings({ openAtLogin: value.launchAtLogin });
-            const login = app.getLoginItemSettings();
-            if (
-              login.openAtLogin !== value.launchAtLogin ||
-              (value.launchAtLogin &&
-                ((login.status && login.status !== 'enabled') ||
-                  login.executableWillLaunchAtLogin === false))
-            )
-              throw new Error(
-                'Open at login could not be updated. Check nod in your computer’s login items, then try again.',
-              );
-          }
           saved = await settings.save(value);
         } catch (error) {
           if (loginChanged) {
