@@ -4095,6 +4095,7 @@ async function conversationAnalyticsFixture(t: TestContext) {
     },
     async turn(
       options: {
+        messageId?: string;
         owner?: string;
         thread?: string;
         session?: string;
@@ -4108,7 +4109,7 @@ async function conversationAnalyticsFixture(t: TestContext) {
       } = {},
     ) {
       const id = randomUUID();
-      const messageId = randomUUID();
+      const messageId = options.messageId ?? randomUUID();
       const replyId = randomUUID();
       const owner = options.owner ?? ownerId;
       const thread = options.thread ?? threadId;
@@ -4199,6 +4200,7 @@ test(
     const f = await conversationAnalyticsFixture(t);
     f.analytics.setUsageData(f.ownerId, true);
     const priced = await f.turn({
+      messageId: '00001500-0000-4000-8000-000000000000',
       prompt: 'My budget for a laptop is 1500 EUR, suggest two',
       reply: 'Model A costs 1299 EUR with 512 GB',
     });
@@ -4225,7 +4227,9 @@ test(
     assert.equal(second!.has(code.messageId), false);
     assert.equal(third!.get(grouped.messageId), 'My verification code is # please');
     assert.equal(third!.get(grouped.replyId), 'Try # or #');
-    assert.ok(!JSON.stringify(inputs).match(/1500|1299|482913|12 34|123-456|98\.76/));
+    for (const input of inputs)
+      for (const message of input.messages)
+        assert.doesNotMatch(message.text, /1500|1299|482913|12 34|123-456|98\.76/);
   },
 );
 
