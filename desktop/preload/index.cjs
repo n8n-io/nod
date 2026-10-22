@@ -6,15 +6,15 @@ function subscribe(channel, listener) {
   return () => ipcRenderer.removeListener(channel, receive);
 }
 
-contextBridge.exposeInMainWorld('ottoDesktop', {
-  ready: () => ipcRenderer.invoke('otto:renderer-ready'),
-  status: () => ipcRenderer.invoke('otto:status'),
-  getSettings: () => ipcRenderer.invoke('otto:settings:get'),
-  saveSettings: (input) => ipcRenderer.invoke('otto:settings:save', input),
-  getPreferences: () => ipcRenderer.invoke('otto:preferences:get'),
-  prepare: (options) => ipcRenderer.invoke('otto:prepare', options),
-  importRuntime: () => ipcRenderer.invoke('otto:runtime:import'),
-  installWsl: () => ipcRenderer.invoke('otto:runtime:install-wsl'),
-  onStatus: (listener) => subscribe('otto:status', listener),
-  onPreferences: (listener) => subscribe('otto:preferences', listener),
+contextBridge.exposeInMainWorld('nodDesktop', {
+  ready: () => ipcRenderer.invoke('nod:renderer-ready'),
+  status: () => ipcRenderer.invoke('nod:status'),
+  getSettings: () => ipcRenderer.invoke('nod:settings:get'),
+  saveSettings: (input) => ipcRenderer.invoke('nod:settings:save', input),
+  getPreferences: () => ipcRenderer.invoke('nod:preferences:get'),
+  prepare: (options) => ipcRenderer.invoke('nod:prepare', options),
+  importRuntime: () => ipcRenderer.invoke('nod:runtime:import'),
+  installWsl: () => ipcRenderer.invoke('nod:runtime:install-wsl'),
+  onStatus: (listener) => subscribe('nod:status', listener),
+  onPreferences: (listener) => subscribe('nod:preferences', listener),
 });

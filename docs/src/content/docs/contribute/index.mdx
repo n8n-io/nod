@@ -1,6 +1,6 @@
 ---
-title: Contribute to Otto
-description: Report a problem, set up a development copy of Otto, find your way around the code and get a change merged.
+title: Contribute to nod
+description: Report a problem, set up a development copy of nod, find your way around the code and get a change merged.
 sidebar:
   label: Overview
   order: 1
@@ -8,17 +8,17 @@ sidebar:
 
 import { FileTree, Steps } from '@astrojs/starlight/components';
 
-This section is for anyone who wants to report a problem, fix a bug or build something in Otto.
+This section is for anyone who wants to report a problem, fix a bug or build something in nod.
 
-Everyone taking part follows the [code of conduct](https://github.com/n8n-io/otto/blob/main/CODE_OF_CONDUCT.md).
+Everyone taking part follows the [code of conduct](https://github.com/n8n-io/nod/blob/main/CODE_OF_CONDUCT.md).
 
 ## Ways to help
 
 | You want to                     | Do this                                                                                                                     |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Report a bug                    | Fill in the [bug report form](https://github.com/n8n-io/otto/issues/new/choose).                                            |
-| Ask a question or share an idea | Start a thread in [Discussions](https://github.com/n8n-io/otto/discussions).                                                |
-| Report a vulnerability          | [Report it privately](https://github.com/n8n-io/otto/security/advisories/new). Never in a public issue.                     |
+| Report a bug                    | Fill in the [bug report form](https://github.com/n8n-io/nod/issues/new/choose).                                             |
+| Ask a question or share an idea | Start a thread in [Discussions](https://github.com/n8n-io/nod/discussions).                                                 |
+| Report a vulnerability          | [Report it privately](https://github.com/n8n-io/nod/security/advisories/new). Never in a public issue.                      |
 | Fix or build something          | Send a [pull request](/contribute/pull-requests/). For anything larger than a small fix, open an issue or discussion first. |
 
 Agreeing on the approach first saves you from building something that can't merge.
@@ -31,7 +31,7 @@ Agreeing on the approach first saves you from building something that can't merg
 
 2. Follow [Install from source](/get-started/install-from-source/) for the first start, including the Vault key on Linux.
 
-3. Start Otto with automatic reload.
+3. Start nod with automatic reload.
 
    ```sh title="Terminal"
    pnpm run dev
@@ -43,7 +43,7 @@ Agreeing on the approach first saves you from building something that can't merg
 
 `pnpm run dev` turns analytics off by default. See [Analytics](/deploy/analytics/) for the settings.
 
-To work on the desktop app, follow its [development steps](https://github.com/n8n-io/otto/blob/main/desktop/README.md). Set `OTTO_DESKTOP_USER_DATA` to a new, absolute folder path to start a development run with a fresh profile.
+To work on the desktop app, follow its [development steps](https://github.com/n8n-io/nod/blob/main/desktop/README.md). Set `NOD_DESKTOP_USER_DATA` to a new, absolute folder path to start a development run with a fresh profile.
 
 :::note[Separate lockfiles]
 The app, the desktop build tools and the docs site each have their own pnpm lockfile. The app installs a flat `node_modules` folder so the desktop build can copy the whole engine and its dependencies.
@@ -51,7 +51,7 @@ The app, the desktop build tools and the docs site each have their own pnpm lock
 
 ## Find your way around the code
 
-Otto's server code is split into layers. `src/server/composition.ts` is the only file that chooses which providers and runtimes Otto uses.
+nod's server code is split into layers. `src/server/composition.ts` is the only file that chooses which providers and runtimes nod uses.
 
 <FileTree>
 
@@ -108,16 +108,16 @@ For how a request moves through these parts, read [Architecture](/how-it-works/a
 
 ## Coding agents
 
-Coding agents follow [AGENTS.md](https://github.com/n8n-io/otto/blob/main/AGENTS.md), and so does everyone else. It holds the rules every change follows, including the safety invariants. The same checks and review apply whether you or an agent wrote the change.
+Coding agents follow [AGENTS.md](https://github.com/n8n-io/nod/blob/main/AGENTS.md), and so does everyone else. It holds the rules every change follows, including the safety invariants. The same checks and review apply whether you or an agent wrote the change.
 
 ## License
 
-Otto is licensed under the [Apache License 2.0](https://github.com/n8n-io/otto/blob/main/LICENSE). Contributions you submit are licensed under the same terms, as section 5 of the license describes.
+nod is licensed under the [Apache License 2.0](https://github.com/n8n-io/nod/blob/main/LICENSE). Contributions you submit are licensed under the same terms, as section 5 of the license describes.
 
 ## In this section
 
 - [Checks and tests](/contribute/checks-and-tests/): the commands to run, Git hooks, the test policy and what CI checks.
-- [Capability evals](/contribute/evals/): real tasks against real Otto, and what the nightly verdict means.
+- [Capability evals](/contribute/evals/): real tasks against real nod, and what the nightly verdict means.
 - [Pull requests](/contribute/pull-requests/): title rules, review, merging and dependency updates.
 - [Desktop releases](/contribute/desktop-releases/): publish a new version of the desktop app.
 - [Change analytics](/contribute/analytics/): add, change or remove an analytics event and update the dashboards.

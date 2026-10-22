@@ -8,7 +8,7 @@ export function createDesktopAnalytics(path, { packaged = false, env = process.e
   let configuration;
   return () => {
     configuration ??= (async () => {
-      let id = env.OTTO_ANALYTICS_ID;
+      let id = env.NOD_ANALYTICS_ID;
       if (id && !uuid.test(id)) throw new Error('The analytics installation ID is invalid.');
       if (!id) {
         await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -26,8 +26,8 @@ export function createDesktopAnalytics(path, { packaged = false, env = process.e
       }
       return {
         enabled:
-          env.OTTO_ANALYTICS_ENABLED === 'true' ||
-          (env.OTTO_ANALYTICS_ENABLED !== 'false' && packaged),
+          env.NOD_ANALYTICS_ENABLED === 'true' ||
+          (env.NOD_ANALYTICS_ENABLED !== 'false' && packaged),
         distinctId: `local:${id.toLowerCase()}`,
       };
     })();

@@ -1,7 +1,7 @@
 (() => {
   let theme;
   try {
-    theme = localStorage.getItem('otto.theme');
+    theme = localStorage.getItem('nod.theme');
   } catch {}
   if (theme !== 'light' && theme !== 'dark')
     theme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

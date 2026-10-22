@@ -93,7 +93,7 @@ export async function reconcileUnreadChat(
 }
 
 export function chatReadStorageKey(ownerId: string, threadId: string) {
-  return `otto.chat-read.${JSON.stringify([ownerId, threadId])}`;
+  return `nod.chat-read.${JSON.stringify([ownerId, threadId])}`;
 }
 
 export async function readChatReadCursor(ownerId: string, threadId: string) {

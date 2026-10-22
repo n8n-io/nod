@@ -92,7 +92,7 @@ export async function createVaultAccess(
 
   async function confirmed(chain: Chain, args: Record<string, unknown>) {
     const { rowCount } = await pool.query(
-      `SELECT 1 FROM approvals WHERE owner_id=$1 AND action='OTTO_vault_allow' AND status='completed'
+      `SELECT 1 FROM approvals WHERE owner_id=$1 AND action='NOD_vault_allow' AND status='completed'
        AND turn_id=ANY($2::uuid[]) AND args=$3::jsonb LIMIT 1`,
       [ownerId, chain.ids, args],
     );
@@ -187,7 +187,7 @@ export async function createVaultAccess(
     if (await confirmed(chain, args)) return { ok: true, reason: 'allowed' };
     const verdict = await options.check(
       turn,
-      target.kind === 'session' ? 'OTTO_browser_session' : 'OTTO_sign_in',
+      target.kind === 'session' ? 'NOD_browser_session' : 'NOD_sign_in',
       {
         website: origin,
         ...(target.account ? { account: target.account } : {}),

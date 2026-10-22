@@ -97,16 +97,6 @@ body {
   width: 40px;
   height: 40px;
 }
-:root[data-desktop='true'] .main-nav {
-  position: absolute;
-  top: 50%;
-  inset-inline: 12px;
-  margin: 0;
-  transform: translateY(-50%);
-}
-:root[data-desktop='true'] .sidebar-bottom {
-  margin-top: auto;
-}
 :root[data-desktop='true'] .main-nav .nav-link > svg {
   width: 28px;
   height: 28px;
@@ -141,6 +131,7 @@ body {
   pointer-events: none;
 }
 .desktop-toolbar > .button {
+  position: static;
   width: 30px;
   height: 30px;
   color: var(--muted-foreground);
@@ -485,6 +476,8 @@ input[type='range']:disabled {
 .sidebar-toggle {
   position: absolute;
   left: 8px;
+  top: 14px;
+  z-index: 21;
 }
 .sidebar-toggle:hover:not(:disabled) {
   background: var(--nav-hover);
@@ -522,8 +515,10 @@ input[type='range']:disabled {
 .main-nav {
   display: grid;
   gap: 4px;
-  margin-top: 32px;
-  margin-bottom: auto;
+  position: absolute;
+  top: 50%;
+  inset-inline: 12px;
+  transform: translateY(-50%);
 }
 .main-nav ul {
   display: grid;
@@ -552,22 +547,26 @@ input[type='range']:disabled {
   right: 8px;
   top: 50%;
   transform: translateY(-50%);
-  border: 1px solid var(--border);
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 0;
   border-radius: 4px;
-  width: 20px;
+  min-width: 26px;
   height: 22px;
-  text-align: center;
-  background: var(--background);
-  color: var(--foreground);
-  box-shadow: var(--shadow-sm);
+  padding: 0 5px;
+  background: var(--control);
+  color: var(--text-secondary);
   font-family: inherit;
-  font-size: var(--text-control);
-  line-height: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
   pointer-events: none;
   z-index: 3;
 }
 .show-shortcuts .nav-shortcut {
-  display: block;
+  display: inline-flex;
 }
 .sidebar-collapsed .nav-shortcut {
   left: calc(100% + 6px);
@@ -612,9 +611,25 @@ input[type='range']:disabled {
 .sidebar-bottom {
   display: grid;
   gap: 4px;
+  margin-top: auto;
 }
 .sidebar-bottom .nav-link {
   font-size: var(--text-control);
+}
+@media (min-width: 641px) and (max-height: 360px) {
+  .sidebar {
+    overflow-y: auto;
+  }
+  .sidebar-header,
+  .main-nav,
+  .sidebar-bottom {
+    flex-shrink: 0;
+  }
+  .main-nav {
+    position: static;
+    transform: none;
+    margin-block: 16px;
+  }
 }
 .mobile-top-bar {
   display: none;
@@ -638,6 +653,7 @@ input[type='range']:disabled {
   padding-inline: 0;
 }
 .workspace-frame {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -900,58 +916,59 @@ input[type='range']:disabled {
 .message-text .setup-group {
   display: flex;
   flex-wrap: wrap;
-  width: fit-content;
+  gap: 8px;
   max-width: 100%;
-  margin: 8px 0 0;
-  border: 1px solid var(--border);
-  border-radius: var(--control-radius);
-  overflow: hidden;
+  margin: 10px 0 0;
 }
-.message-text .setup-group a,
-.message-text .setup-group button {
+.message-text .setup-group > :is(a, button) {
   display: inline-flex;
-  flex: 1 1 auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
   max-width: 100%;
-  min-height: 32px;
-  padding: 4px 12px 4px 8px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
   color: var(--accent);
+  background: var(--surface);
+  font-family: inherit;
   font-size: var(--text-control);
   font-weight: 500;
   text-decoration: none;
-  box-shadow:
-    -1px 0 0 var(--border),
-    0 -1px 0 var(--border);
-  transition: background 140ms;
-  border: 0;
-  background: transparent;
-  font-family: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 140ms;
 }
-.message-text .setup-group a:hover,
-.message-text .setup-group button:hover {
+.message-text .setup-group > :is(a, button):hover {
   background: var(--accent-soft);
 }
-.message-text .setup-group button:disabled {
-  color: var(--muted-foreground);
-  background: transparent;
-  cursor: default;
-}
-.message-text .setup-group a:focus-visible,
-.message-text .setup-group button:focus-visible {
-  outline-offset: -2px;
+.message-text .setup-group > :is(a, button):focus-visible {
+  outline-offset: 2px;
 }
 .message-text .setup-group :is(svg, img) {
   flex: none;
   margin: 0;
   border-radius: 0;
 }
-.message-text .setup-group button > span {
+.message-text .setup-group > .setup-app-card {
+  width: min(100%, 500px);
+  padding: 12px 14px;
+  gap: 12px;
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+}
+.setup-app-name {
+  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.setup-app-action {
+  flex: none;
+  padding: 7px 16px;
+  background: var(--control);
+  border-radius: var(--radius-full);
+  font-weight: 500;
 }
 .message-text blockquote {
   border-left: 3px solid var(--border);
@@ -1586,7 +1603,7 @@ input[type='range']:disabled {
   .app-shell {
     --sidebar-toggle-space: 0px;
   }
-  .sidebar-toggle {
+  .workspace-frame > .sidebar-toggle {
     display: none;
   }
   .brand > span:last-child,

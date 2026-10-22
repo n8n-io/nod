@@ -38,12 +38,12 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const desktop = join(root, 'desktop');
-const output = resolve(process.env.OTTO_DESKTOP_OUTPUT || join(root, 'dist', 'desktop'));
-const stage = resolve(process.env.OTTO_DESKTOP_STAGE || join(root, 'dist', 'desktop-staging'));
+const output = resolve(process.env.NOD_DESKTOP_OUTPUT || join(root, 'dist', 'desktop'));
+const stage = resolve(process.env.NOD_DESKTOP_STAGE || join(root, 'dist', 'desktop-staging'));
 const engine = join(stage, 'engine');
 const appSource = join(stage, 'app');
 const runtimeAssets = resolve(
-  process.env.OTTO_RUNTIME_ASSETS || join(root, '.local', 'desktop-runtime-assets'),
+  process.env.NOD_RUNTIME_ASSETS || join(root, '.local', 'desktop-runtime-assets'),
 );
 const descriptorOption = process.argv.indexOf('--runtime-descriptor');
 if (
@@ -71,20 +71,20 @@ if (basename(runtimeRelease) !== 'runtime-release.json')
 
 const signing = signed ? signingConfiguration() : undefined;
 const configuration = JSON.parse(await readFile(join(desktop, 'package.json'), 'utf8'));
-const version = process.env.OTTO_DESKTOP_VERSION || configuration.version;
+const version = process.env.NOD_DESKTOP_VERSION || configuration.version;
 if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version))
   throw new Error('The desktop version is invalid.');
-if (signed && process.env.OTTO_RELEASE_PLAN) await checkRelease(root, version);
+if (signed && process.env.NOD_RELEASE_PLAN) await checkRelease(root, version);
 else if (signed && version !== configuration.version)
   throw new Error('Prepare the desktop package version before its signed release.');
 configuration.version = version;
-const repository = process.env.GITHUB_REPOSITORY || 'n8n-io/otto';
+const repository = process.env.GITHUB_REPOSITORY || 'n8n-io/nod';
 if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository))
   throw new Error('The desktop release repository is invalid.');
-const tracesToken = process.env.OTTO_TRACES_TOKEN;
+const tracesToken = process.env.NOD_TRACES_TOKEN;
 if (tracesToken && !/^[A-Za-z0-9_-]{32,128}$/.test(tracesToken))
-  throw new Error('OTTO_TRACES_TOKEN must be 32 to 128 URL-safe characters.');
-const updateSourceUrl = process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL;
+  throw new Error('NOD_TRACES_TOKEN must be 32 to 128 URL-safe characters.');
+const updateSourceUrl = process.env.NOD_DESKTOP_UPDATE_SOURCE_URL;
 if (updateSourceUrl) {
   if (!URL.canParse(updateSourceUrl))
     throw new Error('The desktop update source must be a credential-free HTTPS URL.');
@@ -106,8 +106,8 @@ if (full) {
     await verifyIdentity(signing);
     const inputs = await runtimeInputs();
     if (
-      process.env.OTTO_EXPECTED_RUNTIME_FINGERPRINT &&
-      process.env.OTTO_EXPECTED_RUNTIME_FINGERPRINT !== inputs.fingerprint
+      process.env.NOD_EXPECTED_RUNTIME_FINGERPRINT &&
+      process.env.NOD_EXPECTED_RUNTIME_FINGERPRINT !== inputs.fingerprint
     )
       throw new Error('The requested runtime fingerprint does not match these inputs.');
     await verifyRuntimeRelease(release, inputs.fingerprint, signing, {
@@ -167,14 +167,14 @@ else {
   if (!(await readRuntimeRelease(engine)))
     throw new Error('The packaged runtime release is missing.');
 }
-configuration.ottoBuild = {
+configuration.nodBuild = {
   source: await sourceRevision(),
   builtAt: new Date().toISOString(),
   modified: Boolean(await run('/usr/bin/git', ['-C', root, 'status', '--porcelain'])),
   ...(release ? { runtime: release.id } : {}),
   ...(updateSourceUrl ? { updateSourceUrl } : {}),
   ...(tracesToken ? { tracesToken } : {}),
-  ...(process.env.OTTO_RELEASE_BUILD === 'true' ? { release: true } : {}),
+  ...(process.env.NOD_RELEASE_BUILD === 'true' ? { release: true } : {}),
 };
 delete configuration.devDependencies;
 delete configuration.scripts;
@@ -184,7 +184,7 @@ if (stageOnly) {
   process.exit(0);
 }
 
-const iconset = join(stage, 'Otto.iconset');
+const iconset = join(stage, 'nod.iconset');
 await mkdir(iconset, { recursive: true });
 for (const size of [16, 32, 64, 128, 256, 512, 1024]) {
   const filename = size === 1024 ? 'icon_512x512@2x.png' : `icon_${size}x${size}.png`;
@@ -192,19 +192,19 @@ for (const size of [16, 32, 64, 128, 256, 512, 1024]) {
     '-z',
     String(size),
     String(size),
-    join(desktop, 'assets', 'otto-macos.png'),
+    join(desktop, 'assets', 'nod-macos.png'),
     '--out',
     join(iconset, filename),
   ]);
 }
-const icon = join(stage, 'Otto.icns');
+const icon = join(stage, 'nod.icns');
 await run('/usr/bin/iconutil', ['--convert', 'icns', '--output', icon, iconset]);
 const paths = await packager({
   dir: appSource,
   out: output,
   name: configuration.productName,
   executableName: configuration.productName,
-  appBundleId: 'dev.otto.desktop',
+  appBundleId: 'dev.nod.desktop',
   appVersion: version,
   appCopyright: 'Copyright © 2026 n8n GmbH',
   electronVersion,
@@ -217,7 +217,7 @@ const paths = await packager({
   extendInfo: {
     LSMinimumSystemVersion: minimumSystemVersion,
     ElectronSquirrelPreventDowngrades: true,
-    NSMicrophoneUsageDescription: 'Otto uses your microphone when you record a voice message.',
+    NSMicrophoneUsageDescription: 'nod uses your microphone when you record a voice message.',
   },
 });
 const application = join(paths[0], `${configuration.productName}.app`);
@@ -265,7 +265,7 @@ for (const entry of await readdir(output, { withFileTypes: true }))
     await rm(join(output, entry.name));
 const updateArchive = join(
   output,
-  full ? `Otto-full-${process.arch}.zip` : `Otto-${process.arch}.zip`,
+  full ? `nod-full-${process.arch}.zip` : `nod-${process.arch}.zip`,
 );
 await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', application, updateArchive], {
   timeout: 10 * 60_000,
@@ -282,7 +282,7 @@ const diskStage = join(stage, 'disk');
 await mkdir(diskStage, { recursive: true });
 await run('/bin/cp', ['-cR', application, join(diskStage, `${configuration.productName}.app`)]);
 await run('/bin/ln', ['-s', '/Applications', join(diskStage, 'Applications')]);
-const diskImage = join(output, full ? `Otto-full-${process.arch}.dmg` : `Otto-${process.arch}.dmg`);
+const diskImage = join(output, full ? `nod-full-${process.arch}.dmg` : `nod-${process.arch}.dmg`);
 const writableImage = join(stage, 'disk.dmg');
 await run(
   '/usr/bin/hdiutil',
@@ -335,9 +335,9 @@ await writeFile(
   join(output, 'update.json'),
   JSON.stringify(
     {
-      url: `https://github.com/${repository}/releases/download/desktop-v${version}/${update.file}`,
-      name: `Otto ${version}`,
-      pub_date: configuration.ottoBuild.builtAt.replace(/\.\d{3}Z$/, 'Z'),
+      url: `https://github.com/${repository}/releases/download/nod-v${version}/${update.file}`,
+      name: `nod ${version}`,
+      pub_date: configuration.nodBuild.builtAt.replace(/\.\d{3}Z$/, 'Z'),
     },
     null,
     2,

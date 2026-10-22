@@ -18,7 +18,7 @@ export function createDesktopLifecycle({
   const controllers = new Set();
 
   function checkOpen(signal) {
-    if (closed || signal?.aborted) throw new Error('Otto is closing.');
+    if (closed || signal?.aborted) throw new Error('nod is closing.');
   }
 
   function report(value) {
@@ -38,7 +38,7 @@ export function createDesktopLifecycle({
       phase: 'error',
       message: error.message,
       needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
-      needsWsl: error.code === 'OTTO_WSL_REQUIRED',
+      needsWsl: error.code === 'NOD_WSL_REQUIRED',
     });
   }
 
@@ -80,7 +80,7 @@ export function createDesktopLifecycle({
         return runtime;
       })
       .catch((error) => {
-        if (error.code === 'OTTO_RUNTIME_STOP_FAILED') cleanupRequired = true;
+        if (error.code === 'NOD_RUNTIME_STOP_FAILED') cleanupRequired = true;
         runtimeFailure(error);
         throw error;
       })
@@ -116,7 +116,7 @@ export function createDesktopLifecycle({
   function install(installer, { warmup: prepare = true } = {}) {
     checkOpen();
     if (warming || starting || installing || runtime)
-      throw new Error('Wait for Otto to finish its current setup step.');
+      throw new Error('Wait for nod to finish its current setup step.');
     const controller = new AbortController();
     controllers.add(controller);
     installing = Promise.resolve()

@@ -89,10 +89,10 @@ export async function loadIntegrationIdentity(options: {
   keyStore: CredentialKeyStore;
 }) {
   if (!options.keyStore.configured)
-    throw new Error('Unlock or configure Otto’s key store before connecting apps.');
+    throw new Error('Unlock or configure nod’s key store before connecting apps.');
   const encryptionKey = Buffer.from(await options.keyStore.getKey());
   try {
-    if (encryptionKey.length !== 32) throw new Error('Otto’s key store returned an invalid key.');
+    if (encryptionKey.length !== 32) throw new Error('nod’s key store returned an invalid key.');
     await mkdir(options.dataRoot, { recursive: true, mode: 0o700 });
     const dataRoot = await realpath(options.dataRoot);
     const directory = join(dataRoot, 'integration-identity');
@@ -117,7 +117,7 @@ export async function loadIntegrationIdentity(options: {
     const binding = Buffer.from(JSON.stringify(['otto-integration-identity-v1', options.ownerId]));
     if (!encrypted) {
       if (marker)
-        throw new Error('Otto’s saved app identity is missing. Restore its app data to reconnect.');
+        throw new Error('nod’s saved app identity is missing. Restore its app data to reconnect.');
       const nonce = randomBytes(12);
       const cipher = createCipheriv('aes-256-gcm', encryptionKey, nonce);
       cipher.setAAD(binding);
@@ -145,7 +145,7 @@ export async function loadIntegrationIdentity(options: {
       if (key.asymmetricKeyType !== 'ed25519') throw new Error();
     } catch {
       throw new Error(
-        'Otto could not unlock its saved app identity. Restore its key store or app data.',
+        'nod could not unlock its saved app identity. Restore its key store or app data.',
       );
     }
     const publicKey = createPublicKey(key).export({ format: 'jwk' }).x;
@@ -153,7 +153,7 @@ export async function loadIntegrationIdentity(options: {
       throw new Error('The integration identity is invalid.');
     if (!marker) await publish(markerPath, Buffer.from(publicKey));
     if ((await readProtected(markerPath))?.toString() !== publicKey)
-      throw new Error('Otto’s saved app identity changed. Restore its app data to reconnect.');
+      throw new Error('nod’s saved app identity changed. Restore its app data to reconnect.');
     await persist(directory, dataRoot);
     return {
       key,

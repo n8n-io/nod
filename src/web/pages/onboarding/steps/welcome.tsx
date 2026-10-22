@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { OttoGlyph, Rise, type GlyphReaction } from '../../../components/motion';
+import { NodGlyph, Rise, type GlyphReaction } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import type { StepProps } from '..';
 import { errorMessage } from '../../../lib/api';
@@ -38,8 +38,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
   useEffect(() => {
     const press = (event: KeyboardEvent) => {
       if (event.key !== 'Enter' || event.target !== document.body || event.repeat) return;
-      if (!done) skip();
-      else if (saving === null) onNext();
+      if (done && saving === null) onNext();
     };
     window.addEventListener('keydown', press);
     return () => window.removeEventListener('keydown', press);
@@ -80,7 +79,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
             }
           : {
               transform: 'translate(0, 0) scale(1)',
-              transition: 'transform 760ms var(--ease-travel)',
+              transition: 'transform 500ms var(--ease-travel)',
             };
   return (
     <section
@@ -105,7 +104,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
                 replay();
               }}
             >
-              <OttoGlyph mode={typing ? 'thinking' : 'idle'} reaction={reaction} />
+              <NodGlyph mode={typing ? 'thinking' : 'idle'} reaction={reaction} />
             </button>
           </span>
         }
@@ -118,7 +117,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
               >
                 👋
               </span>
-              Hey, I’m Otto.
+              Hey, I’m nod.
             </span>
             <span className="ob-greeting-sub">
               Your personal assistant for <strong>work and life</strong>.
@@ -137,15 +136,17 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
             ? [
                 <PreferenceBubble
                   label="Share usage data"
+                  link={
+                    <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
+                      What’s shared
+                    </a>
+                  }
                   checked={enabled}
                   saving={saving !== null}
                   error={error}
                   onChange={(value) => void change(value)}
                 >
-                  Help us make Otto better by sharing how you use it. Never your messages.{' '}
-                  <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
-                    What’s shared
-                  </a>
+                  Help us make nod better by sharing how you use it. Never your messages.
                 </PreferenceBubble>,
               ]
             : []),

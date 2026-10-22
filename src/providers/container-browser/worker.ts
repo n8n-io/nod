@@ -79,6 +79,13 @@ async function dispatch(
     }
     case 'currentPage':
       return computer.currentPage(request.threadId, request.input);
+    case 'signInMethods':
+      if (!computer.signInMethods) throw new Error('Sign-in choices are not available.');
+      return computer.signInMethods(request.threadId, request.origin, request.methods, signal);
+    case 'selectSignInMethod':
+      if (!computer.selectSignInMethod) throw new Error('Sign-in choices are not available.');
+      await computer.selectSignInMethod(request.threadId, request.input, signal);
+      return null;
     case 'injectCredentials':
       return computer.injectCredentials(request.input);
     case 'fillCard':
@@ -379,7 +386,7 @@ export async function startContainerBrowserWorker(
     server.listen(path, resolve);
   });
   try {
-    await rm('/tmp/otto-browser-uploads', { recursive: true, force: true });
+    await rm('/tmp/nod-browser-uploads', { recursive: true, force: true });
     await chmod(path, 0o600);
   } catch (error) {
     await new Promise<void>((resolve) => server.close(() => resolve()));

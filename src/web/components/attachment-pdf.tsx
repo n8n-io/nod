@@ -16,8 +16,8 @@ export const loadPreviewPdf: LoadPdf = async (url, signal) => {
   if (!ownedArtifactUrl(url) && !localPreviewUrl(url)) throw new Error('Invalid PDF source.');
   if (typeof Worker === 'undefined') throw new Error('PDF worker unavailable.');
   const [pdf, worker] = await Promise.all([
-    import('pdfjs-dist'),
-    import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
+    import('pdfjs-dist/legacy/build/pdf.mjs'),
+    import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'),
   ]);
   signal.throwIfAborted();
   pdf.GlobalWorkerOptions.workerSrc = worker.default;

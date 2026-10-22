@@ -58,7 +58,7 @@ const sections: Array<{ id: string; kicker: string; lead: (runs: ChartRun[]) => 
     id: '08-capabilities-and-trust',
     kicker: '5 · How it feels to use',
     lead: () =>
-      'Beyond finishing the task: is it honest about what it did, does it sound like Otto, does it stay out of trouble.',
+      'Beyond finishing the task: is it honest about what it did, does it sound like nod, does it stay out of trouble.',
   },
 ];
 
@@ -122,14 +122,14 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
     [`$${Math.round(spent)}`, `for these ${attempts} attempts`],
   ];
   const steps: Array<[string, string]> = [
-    ['Real Otto', 'The real agent, a real model, a Docker workspace and a real Chromium browser.'],
+    ['Real nod', 'The real agent, a real model, a Docker workspace and a real Chromium browser.'],
     [
       'A fake outside world',
       'Stateful Gmail, Slack, Sheets and Calendar, plus lookalike bank, shop, booking and 2FA sites.',
     ],
     [
       'Graded on what happened',
-      'Emails sent, baskets filled, payments made, files saved. Then an independent judge and Otto’s own rules.',
+      'Emails sent, baskets filled, payments made, files saved. Then an independent judge and nod’s own rules.',
     ],
     [
       `Tried ${repeat} times`,
@@ -145,11 +145,11 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
     })
     .join('');
   const html = `<div class="story">
-<div class="hero"><div class="eyebrow">Otto capability evals</div><h1>${esc(notes.headline ?? 'Can you trust Otto to finish the job?')}</h1><div class="sub">We run real tasks end to end against a fake world, grade what actually happened, and compare models. This is how ${runs.length} of them do on ${tasks} tasks.</div><div class="chips">${chips.map(([value, text]) => `<div class="chip"><b>${esc(value)}</b><span>${esc(text)}</span></div>`).join('')}</div></div>
+<div class="hero"><div class="eyebrow">nod capability evals</div><h1>${esc(notes.headline ?? 'Can you trust nod to finish the job?')}</h1><div class="sub">We run real tasks end to end against a fake world, grade what actually happened, and compare models. This is how ${runs.length} of them do on ${tasks} tasks.</div><div class="chips">${chips.map(([value, text]) => `<div class="chip"><b>${esc(value)}</b><span>${esc(text)}</span></div>`).join('')}</div></div>
 <div class="how">${steps.map(([title, text]) => `<div class="step"><b>${esc(title)}</b><span>${esc(text)}</span></div>`).join('')}</div>
 ${body}
 <div class="learned"><h2>What we learned</h2><ul>${learned.map((line) => `<li>${esc(line)}</li>`).join('')}</ul></div>
-<div class="credit">Approach borrowed from n8n’s LangTracer: real scenarios, state-based grading, an independent judge, pass@k and pass^k, failure attribution and human review. Every model ran at Otto’s shipped reasoning setting (high). The full suite has ${suite.total} scenarios; ${suite.calibrating} are still being calibrated and ${suite.gaps} are stretch goals Otto cannot do yet. Judge: ${esc(first.judge.split('/').pop() ?? '')}. Code: evals/ in n8n-io/otto.</div>
+<div class="credit">Approach borrowed from n8n’s LangTracer: real scenarios, state-based grading, an independent judge, pass@k and pass^k, failure attribution and human review. Every model ran at nod’s shipped reasoning setting (high). The full suite has ${suite.total} scenarios; ${suite.calibrating} are still being calibrated and ${suite.gaps} are stretch goals nod cannot do yet. Judge: ${esc(first.judge.split('/').pop() ?? '')}. Code: evals/ in n8n-io/nod.</div>
 </div><script>document.title=String(document.documentElement.scrollHeight)</script>`;
   return { id: '00-the-story', html: `<style>${extra}</style>${html}` };
 }

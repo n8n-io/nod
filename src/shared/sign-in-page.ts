@@ -11,7 +11,7 @@ export function signInPage(succeeded: boolean, nonce: string) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${succeeded ? 'Signed in' : 'Sign-in failed'} · Otto</title>
+  <title>${succeeded ? 'Signed in' : 'Sign-in failed'} · nod</title>
   <style nonce="${nonce}">
     :root { color-scheme: light dark; --background: #fdfcfe; --foreground: #211c28; --muted: #6d6273; }
     * { box-sizing: border-box; }
@@ -26,9 +26,9 @@ export function signInPage(succeeded: boolean, nonce: string) {
 </head>
 <body>
   <main aria-labelledby="title">
-    <div class="brand"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4"/><circle cx="25" cy="6" r="4" fill="#ff91ac"/></svg><span>Otto</span></div>
+    <div class="brand"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4"/><circle cx="25" cy="6" r="4" fill="#ff91ac"/></svg><span>nod</span></div>
     <h1 id="title">${succeeded ? 'You’re signed in' : 'Sign-in didn’t finish'}</h1>
-    <p>${succeeded ? 'You can close this tab and return to Otto.' : 'Return to Otto and try connecting again.'}</p>
+    <p>${succeeded ? 'You can close this tab and return to nod.' : 'Return to nod and try connecting again.'}</p>
   </main>
   <script nonce="${nonce}">
     try { history.replaceState(null, '', location.pathname); } catch {}

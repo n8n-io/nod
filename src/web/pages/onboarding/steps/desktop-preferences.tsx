@@ -1,3 +1,4 @@
+import { Bell, Check, LoaderCircle, Power } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { desktopOnboardingSteps, OnboardingFrame } from '../frame';
 import { Button, Notice } from '../../../components/ui';
@@ -8,7 +9,7 @@ import {
   saveDesktopSettings,
   type DesktopSettings,
 } from '../../../lib/desktop';
-import { Footer, Messages, PreferenceBubble, useReveal } from '../motion';
+import { Bubble, Footer, Messages, useReveal } from '../motion';
 
 type PreferenceStep = Exclude<DesktopSettings['onboardingPreferenceStep'], 'complete'>;
 
@@ -64,14 +65,14 @@ export function DesktopPreferencesSetup({
 
   useEffect(() => {
     if (step)
-      captureAnalytics('otto_onboarding_step_viewed', {
+      captureAnalytics('nod_onboarding_step_viewed', {
         step: step === 'notifications' ? 'notifications' : 'launch_at_login',
         direction: 'forward',
       });
   }, [step]);
 
   async function choose(enabled: boolean, advance = false) {
-    if (!step || writing.current) return;
+    if (!step || writing.current || (advance && !enabled)) return;
     writing.current = true;
     setSaving(true);
     setError('');
@@ -85,6 +86,12 @@ export function DesktopPreferencesSetup({
             }
           : {}),
       });
+      if (!advance && !saved[step])
+        throw new Error(
+          step === 'notifications'
+            ? 'Allow nod in your computer’s notification settings, then try again.'
+            : 'Open at login could not be enabled. Try again.',
+        );
       if (active.current) accept(saved);
     } catch (cause) {
       if (active.current) setError(errorMessage(cause));
@@ -143,7 +150,7 @@ function DesktopPreferenceQuestion({
   error: string;
   choose(enabled: boolean, advance?: boolean): Promise<void>;
 }) {
-  const { revealed, typing } = useReveal(sequence);
+  const { revealed, typing, done, skip } = useReveal(sequence);
   const question = useRef<HTMLElement>(null);
   const notifications = step === 'notifications';
 
@@ -158,28 +165,61 @@ function DesktopPreferenceQuestion({
       ref={question}
       tabIndex={-1}
       data-analytics-public
+      onClick={done ? undefined : skip}
     >
       <Messages
         revealed={revealed}
         typing={typing}
         items={[
-          <PreferenceBubble
-            label={notifications ? 'Desktop notifications' : 'Open at login'}
-            checked={enabled}
-            saving={saving}
-            disabled={saving}
-            error={error}
-            onChange={(value) => void choose(value)}
-          >
-            {notifications
-              ? 'I can let you know when setup is ready, a task finishes, or I need your attention — even when you’re using another app.'
-              : 'I can open when you sign in to your computer, so I’m ready when you need me.'}
-          </PreferenceBubble>,
+          <Bubble>
+            <p>
+              {notifications
+                ? 'I’ll let you know when a task finishes or I need your attention, even when you’re using another app.'
+                : 'I can open when you sign in to your computer, so I’m ready when you need me.'}
+            </p>
+            <div className="ob-preference-action">
+              {enabled ? (
+                <span className="ob-preference-enabled" role="status">
+                  {notifications ? (
+                    <Bell size={17} aria-hidden="true" />
+                  ) : (
+                    <Power size={17} aria-hidden="true" />
+                  )}
+                  {notifications ? 'Notifications enabled' : 'Open at login enabled'}
+                  <Check size={15} aria-hidden="true" />
+                </span>
+              ) : (
+                <Button disabled={saving} aria-busy={saving} onClick={() => void choose(true)}>
+                  {saving ? (
+                    <LoaderCircle size={17} className="spin" aria-hidden="true" />
+                  ) : notifications ? (
+                    <Bell size={17} aria-hidden="true" />
+                  ) : (
+                    <Power size={17} aria-hidden="true" />
+                  )}
+                  {saving
+                    ? 'Enabling…'
+                    : error
+                      ? 'Try again'
+                      : notifications
+                        ? 'Enable notifications'
+                        : 'Enable open at login'}
+                </Button>
+              )}
+            </div>
+            {error && (
+              <p className="ob-preference-error" role="alert">
+                {error}
+              </p>
+            )}
+          </Bubble>,
         ]}
       />
       <Footer
         show={revealed >= sequence.length}
         busy={saving}
+        nextDisabled={!enabled}
+        nextLabel={notifications ? 'Continue' : 'Start chatting'}
         onNext={() => void choose(enabled, true)}
       />
     </section>

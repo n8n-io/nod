@@ -91,7 +91,7 @@ async function modelListRestricted(response: Response) {
 
 const levels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 let endpointConnections: Dispatcher1Wrapper | undefined;
-const keyless = 'otto-no-key';
+const keyless = 'nod-no-key';
 const ollamaShowSchema = z.object({
   capabilities: z.array(z.string()).catch([]),
   model_info: z.record(z.string(), z.unknown()).catch({}),
@@ -380,7 +380,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         if (error instanceof ModelAuthError) throw error;
         throw new ModelAuthError(
           error instanceof Error && 'code' in error && error.code === 'EADDRINUSE'
-            ? 'Port 1455 is already in use. Close the other Otto app or another sign-in, then try again.'
+            ? 'Port 1455 is already in use. Close the other nod app or another sign-in, then try again.'
             : 'ChatGPT sign-in could not start. Try again.',
         );
       }
@@ -628,7 +628,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         state,
         code_challenge: challenge,
         code_challenge_method: 'S256',
-        key_label: 'Otto',
+        key_label: 'nod',
       }).toString();
       return { url: url.toString(), state, secret: { state, verifier, redirectUri } };
     },
@@ -716,10 +716,10 @@ export async function createPiModelRuntime(
       return [{ providerId: provider, type: subscription ? 'oauth' : 'api_key' }];
     },
     async modify() {
-      throw new Error('Model credentials are managed by Otto.');
+      throw new Error('Model credentials are managed by nod.');
     },
     async delete() {
-      throw new Error('Model credentials are managed by Otto.');
+      throw new Error('Model credentials are managed by nod.');
     },
   };
   const runtime = await ModelRuntime.create({

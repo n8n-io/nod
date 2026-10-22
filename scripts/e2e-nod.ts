@@ -37,13 +37,13 @@ const environment = {
   ...parse(await readFile(join(repository, '.env'), 'utf8').catch(() => '')),
   ...process.env,
 };
-const configuredPort = environment.OTTO_E2E_PORT ?? '4320';
+const configuredPort = environment.NOD_E2E_PORT ?? '4320';
 const port = Number(configuredPort);
 if (!/^\d{1,5}$/.test(configuredPort) || port < 1 || port > 65_535)
-  throw new Error('OTTO_E2E_PORT must be an integer between 1 and 65535.');
+  throw new Error('NOD_E2E_PORT must be an integer between 1 and 65535.');
 const baseUrl = `http://localhost:${port}`;
-const scenario = environment.OTTO_E2E_SCENARIO;
-const eventMode = environment.OTTO_E2E_EVENT === 'true';
+const scenario = environment.NOD_E2E_SCENARIO;
+const eventMode = environment.NOD_E2E_EVENT === 'true';
 if (eventMode && !scenario) throw new Error('An inbox event needs a synthetic scenario.');
 if (
   scenario &&
@@ -86,9 +86,9 @@ const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
 const operatorToken = randomBytes(32).toString('base64url');
 const schema = `e2e_${suffix}`;
 const bossSchema = `e2e_boss_${suffix}`;
-const container = `otto-workspace-e2e-${suffix}`;
-const browserContainer = `otto-browser-e2e-${suffix}`;
-const directory = await realpath(await mkdtemp(join(tmpdir(), 'otto-e2e-')));
+const container = `nod-workspace-e2e-${suffix}`;
+const browserContainer = `nod-browser-e2e-${suffix}`;
+const directory = await realpath(await mkdtemp(join(tmpdir(), 'nod-e2e-')));
 const workspaceRoot = join(directory, '.local', 'workspaces');
 const toolsRoot = join(directory, 'workspace-tools');
 await mkdir(workspaceRoot, { recursive: true });
@@ -105,9 +105,9 @@ database.searchParams.set('options', `-c search_path=${schema}`);
 process.env.DATABASE_URL = database.href;
 process.env.PGBOSS_SCHEMA = bossSchema;
 process.env.PORT = String(port);
-process.env.OTTO_DATA_ROOT = join(directory, '.local');
-const access = await accessKey(process.env.OTTO_DATA_ROOT);
-process.env.OTTO_PUBLIC_URL = baseUrl;
+process.env.NOD_DATA_ROOT = join(directory, '.local');
+const access = await accessKey(process.env.NOD_DATA_ROOT);
+process.env.NOD_PUBLIC_URL = baseUrl;
 process.env.NODE_ENV = 'production';
 if (provider === 'anthropic') process.env.ANTHROPIC_API_KEY = apiKey;
 else process.env.OPENAI_API_KEY = apiKey;
@@ -159,22 +159,22 @@ async function shutdown(exitCode = 0) {
 process.on('SIGINT', () => void shutdown());
 process.on('SIGTERM', () => void shutdown());
 try {
-  const image = environment.OTTO_E2E_WORKSPACE_IMAGE
+  const image = environment.NOD_E2E_WORKSPACE_IMAGE
     ? await runProcess('docker', [
         'image',
         'inspect',
-        environment.OTTO_E2E_WORKSPACE_IMAGE,
+        environment.NOD_E2E_WORKSPACE_IMAGE,
         '--format',
         '{{.Id}}',
       ])
-    : await runProcess('docker', ['inspect', 'otto-workspace', '--format', '{{.Image}}']);
+    : await runProcess('docker', ['inspect', 'nod-workspace', '--format', '{{.Image}}']);
   const network = await runProcess('docker', [
     'inspect',
-    'otto-workspace',
+    'nod-workspace',
     '--format',
     '{{json .NetworkSettings.Networks}}',
   ]);
-  if (image.exitCode || network.exitCode) throw new Error('Start the Otto Docker workspace first.');
+  if (image.exitCode || network.exitCode) throw new Error('Start the nod Docker workspace first.');
   const networkName = workspaceNetwork(network.stdout);
   const started = await runProcess('docker', [
     'run',
@@ -210,11 +210,11 @@ try {
   containerStarted = true;
   const browserImage = await runProcess('docker', [
     'inspect',
-    'otto-browser',
+    'nod-browser',
     '--format',
     '{{.Image}}',
   ]);
-  if (browserImage.exitCode) throw new Error('Start the Otto browser container first.');
+  if (browserImage.exitCode) throw new Error('Start the nod browser container first.');
   const fixtureScripts = join(directory, 'browser-fixtures');
   await mkdir(fixtureScripts);
   const signupOperatorPath = join(fixtureScripts, 'signup-operator.json');

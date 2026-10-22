@@ -548,7 +548,7 @@ test(
         }
         return response === 'unsafe'
           ? '/credentials/credential-request'
-          : 'Continua na aplicação Otto.';
+          : 'Continua na aplicação nod.';
       },
     });
     const state = async (id: string) =>
@@ -1199,7 +1199,7 @@ test(
       transport: createChatSdkTransport(pool, telegramEnvironment),
       present: async (_threadId, input) => {
         if (input.kind === 'delivery' && input.attachments === 'pending')
-          return 'O ficheiro está disponível no Otto.';
+          return 'O ficheiro está disponível no nod.';
         if (presentationFails) throw new Error('Fixture presentation failure');
         return 'Ficheiro disponível na aplicação.';
       },

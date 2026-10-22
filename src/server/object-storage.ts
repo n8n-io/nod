@@ -31,7 +31,7 @@ export function createPostgresObjectStore(options: {
       safe(() =>
         atomic(async (client) => {
           if ('totalCount' in options.database) await client.query("SET LOCAL lock_timeout='5s'");
-          await lockSetup(client, 'otto:private-objects');
+          await lockSetup(client, 'nod:private-objects');
           await client.query(`CREATE TABLE IF NOT EXISTS private_objects (
         owner_id text NOT NULL, object_key text NOT NULL, version text NOT NULL,
         bytes bytea NOT NULL, PRIMARY KEY(owner_id,object_key)

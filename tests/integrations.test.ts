@@ -129,7 +129,7 @@ function fakeProvider(session: IntegrationSession): IntegrationProvider {
 test('installation identity persistence failures withhold signatures and preserve the published key across restart', async (t) => {
   for (const target of ['file', 'directory', 'ancestor']) {
     await t.test(target, { skip: process.platform === 'win32' && target !== 'file' }, async (t) => {
-      const root = await mkdtemp(join(tmpdir(), 'otto-proxy-durability-'));
+      const root = await mkdtemp(join(tmpdir(), 'nod-proxy-durability-'));
       t.after(() => rm(root, { recursive: true, force: true }));
       const dataRoot = join(root, 'new', 'profile');
       const directory = join(dataRoot, 'integration-identity');
@@ -321,7 +321,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   t.mock.method(globalThis, 'fetch', async () => {
     throw new Error('Unexpected external request in the managed integration fixture.');
   });
-  const root = await mkdtemp(join(tmpdir(), 'otto-integration-proxy-'));
+  const root = await mkdtemp(join(tmpdir(), 'nod-integration-proxy-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const calls: Array<{ path: string; body: Record<string, unknown>; key: string }> = [];
   let failExecution = false;
@@ -660,10 +660,10 @@ test('managed integration requests bind SDK calls to a private persisted install
       { type: 'loopback', host: 'ipv6', port: 65535 },
     ],
     [
-      `https://otto.customer.example/api/apps/callback?state=${state}`,
+      `https://nod.customer.example/api/apps/callback?state=${state}`,
       {
         type: 'https',
-        url: `https://otto.customer.example/api/apps/callback?state=${state}`,
+        url: `https://nod.customer.example/api/apps/callback?state=${state}`,
       },
     ],
   ] as const) {
@@ -685,8 +685,8 @@ test('managed integration requests bind SDK calls to a private persisted install
     `http://localhost:4310/api/apps/callback?state=${state}&redirect=synthetic`,
     'http://localhost:4310/api/apps/callback',
     'http://localhost:4310/api/apps/callback?state=short',
-    `https://otto.customer.example/api/apps/callback?state=${state}&state=${state}`,
-    `https://user@otto.customer.example/api/apps/callback?state=${state}`,
+    `https://nod.customer.example/api/apps/callback?state=${state}&state=${state}`,
+    `https://user@nod.customer.example/api/apps/callback?state=${state}`,
     ...[
       'localhost',
       'localhost.',
@@ -924,17 +924,17 @@ test('connection bridge binds a single browser bootstrap to one installation att
   for (const headers of [
     {},
     { origin },
-    { origin: 'https://attacker.example.test', 'x-otto-bridge': bridgeKey },
-    { origin, 'x-otto-bridge': bridgeKey, 'sec-fetch-site': 'cross-site' },
+    { origin: 'https://attacker.example.test', 'x-nod-bridge': bridgeKey },
+    { origin, 'x-nod-bridge': bridgeKey, 'sec-fetch-site': 'cross-site' },
   ] as Array<Record<string, string>>)
     assert.equal((await post(headers)).status, 403);
   assert.equal(calls, 0);
-  const started = await post({ origin, 'x-otto-bridge': bridgeKey });
+  const started = await post({ origin, 'x-nod-bridge': bridgeKey });
   assert.equal(started.status, 200);
   assert.equal((await started.json()).id, id);
   assert.equal(calls, 1);
   assert.equal(browser.remote(url), `${brokerOrigin}/v2/connect/pair?ticket=fixture`);
-  assert.equal((await post({ origin, 'x-otto-bridge': bridgeKey })).status, 403);
+  assert.equal((await post({ origin, 'x-nod-bridge': bridgeKey })).status, 403);
   assert.equal(
     (await fetch(origin + returnPath, { headers: { origin: 'https://attacker.example.test' } }))
       .status,
@@ -957,7 +957,7 @@ test('connection bridge binds a single browser bootstrap to one installation att
 test('app consent advances in one tab and consumes its non-exportable browser key before proof', async () => {
   const brokerOrigin = 'https://proxy.example.test';
   const { JSDOM } = await import('jsdom');
-  const slot = 'otto-native-connect';
+  const slot = 'nod-native-connect';
   for (const scenario of [
     'success',
     'wrong-tab',
@@ -1044,7 +1044,7 @@ test('app consent advances in one tab and consumes its non-exportable browser ke
         Date,
         fetch: async (path: string, options: RequestInit) => {
           assert.equal(path, '/start');
-          assert.equal(new Headers(options.headers).get('x-otto-bridge'), 'synthetic-bridge-key');
+          assert.equal(new Headers(options.headers).get('x-nod-bridge'), 'synthetic-bridge-key');
           publicKey = JSON.parse(String(options.body)).browserKey;
           assert.equal(publicKey.d, undefined);
           const pending = (await readStored()) as { key: CryptoKey };
@@ -1172,24 +1172,24 @@ for (const desktop of [false, true]) {
             maxBuffer: 1024 * 1024,
             env: {
               PATH: process.env.PATH,
-              USER: 'otto-test',
+              USER: 'nod-test',
               LANG: 'C.UTF-8',
               TZ: 'UTC',
               NODE_ENV: 'test',
               CI: 'true',
               DOTENV_CONFIG_PATH: '/dev/null',
-              OTTO_DATA_ROOT: root,
+              NOD_DATA_ROOT: root,
               PI_CODING_AGENT_DIR: join(root, 'pi'),
-              OTTO_VAULT_KEY: Buffer.alloc(32, 11).toString('base64'),
-              OTTO_ANALYTICS_ENABLED: 'false',
+              NOD_VAULT_KEY: Buffer.alloc(32, 11).toString('base64'),
+              NOD_ANALYTICS_ENABLED: 'false',
               DATABASE_URL: databaseUrl.href,
               PORT: '4310',
-              OTTO_PUBLIC_URL: desktop ? 'http://127.0.0.1:4310' : 'http://localhost:4310',
+              NOD_PUBLIC_URL: desktop ? 'http://127.0.0.1:4310' : 'http://localhost:4310',
               ...(desktop
                 ? {
-                    OTTO_DESKTOP: 'true',
-                    OTTO_DESKTOP_OWNER_ID: '11111111-1111-4111-8111-111111111111',
-                    OTTO_DESKTOP_AUTH_TOKEN: Buffer.alloc(32, 12).toString('base64url'),
+                    NOD_DESKTOP: 'true',
+                    NOD_DESKTOP_OWNER_ID: '11111111-1111-4111-8111-111111111111',
+                    NOD_DESKTOP_AUTH_TOKEN: Buffer.alloc(32, 12).toString('base64url'),
                   }
                 : {}),
             },
@@ -1207,7 +1207,7 @@ for (const desktop of [false, true]) {
 }
 
 test('managed authorization bounds streamed response bytes before parsing and cancels oversized bodies', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-integration-limit-'));
+  const root = await mkdtemp(join(tmpdir(), 'nod-integration-limit-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const variant of ['streamed', 'declared', 'misreported', 'utf8-overflow']) {
     await t.test(variant, async () => {
@@ -3104,7 +3104,7 @@ test('OAuth completion pages preserve valid service identities and clear callbac
           'BroadcastChannel',
           class {
             constructor(name: string) {
-              assert.equal(name, 'otto.apps');
+              assert.equal(name, 'nod.apps');
               assert.equal(window.location.search, '');
             }
             postMessage(message: unknown) {
@@ -3190,7 +3190,7 @@ test(
       integrations.registerRoutes(app);
       const headers = {
         host: '127.0.0.1:4310',
-        ...(desktop ? { 'x-otto-desktop-token': token } : { cookie: `otto-access-4310=${token}` }),
+        ...(desktop ? { 'x-nod-desktop-token': token } : { cookie: `nod-access-4310=${token}` }),
       };
       for (const fromChat of [false, true]) {
         const turn = fromChat ? { threadId: randomUUID(), turnId: randomUUID() } : undefined;
@@ -3366,7 +3366,7 @@ test(
     service.registerRoutes(app);
     const headers = {
       host: '127.0.0.1:4310',
-      'x-otto-desktop-token': 'synthetic-desktop-token',
+      'x-nod-desktop-token': 'synthetic-desktop-token',
     };
     const proposed = await discovered.propose({
       service: 'fixture-desktop',
@@ -3495,7 +3495,7 @@ test(
       `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_email)
        VALUES('foreign-owner','gmail','foreign-account','fixture','foreign@example.test')`,
     );
-    const directory = await mkdtemp(join(tmpdir(), 'otto-add-account-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-add-account-'));
     const threadId = randomUUID();
     const turnId = randomUUID();
     const replies: string[] = [];
@@ -4476,7 +4476,7 @@ async function searchFixture(
     execute?: IntegrationSession['execute'];
   } = {},
 ) {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-integration-search-recovery-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-integration-search-recovery-'));
   const schema = `test_search_recovery_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   const pool = new pg.Pool({
@@ -6758,7 +6758,7 @@ test(
         const service = await createIntegrations(db.pool, {
           ownerId,
           provider,
-          baseUrl: 'https://otto.example',
+          baseUrl: 'https://nod.example',
           wake: async (_text, id) => {
             delivered.get(ownerId)!.push(id);
           },
@@ -6791,12 +6791,12 @@ test(
       const before = inspectCount;
       assert.equal(
         (await apps[1].inject(callback.pathname + callback.search)).headers.location,
-        'https://otto.example/apps?connection=expired',
+        'https://nod.example/apps?connection=expired',
       );
       assert.equal(inspectCount, before);
       assert.equal(
         (await apps[0].inject(callback.pathname + callback.search)).headers.location,
-        'https://otto.example/onboarding?connection=connected',
+        'https://nod.example/onboarding?connection=connected',
       );
       await assert.rejects(services[1].list(owners[0]), { statusCode: 403 });
       assert.equal(
@@ -6811,7 +6811,7 @@ test(
       const second = new URL(callbacks.get(owners[1])!);
       assert.equal(
         (await apps[1].inject(second.pathname + second.search)).headers.location,
-        'https://otto.example/apps?connection=connected',
+        'https://nod.example/apps?connection=connected',
       );
       for (const [account, owner] of accounts) {
         await db.pool.query(
@@ -6846,7 +6846,7 @@ test(
       cancelled.searchParams.set('success', 'false');
       assert.equal(
         (await apps[0].inject(cancelled.pathname + cancelled.search)).headers.location,
-        'https://otto.example/onboarding?connection=cancelled',
+        'https://nod.example/onboarding?connection=cancelled',
       );
       await apps[0].inject({
         method: 'POST',
@@ -6860,7 +6860,7 @@ test(
       );
       assert.equal(
         (await apps[0].inject(expired.pathname + expired.search)).headers.location,
-        'https://otto.example/onboarding?connection=expired',
+        'https://nod.example/onboarding?connection=expired',
       );
     } finally {
       await Promise.all(apps.map((app) => app.close()));
@@ -7228,7 +7228,7 @@ test(
 );
 
 test('managed uploads retain the selected account across separate operation sessions', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-integration-uploads-'));
+  const root = await mkdtemp(join(tmpdir(), 'nod-integration-uploads-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const uploads: Array<Record<string, unknown>> = [];
   const proxy = createComposioProxy({

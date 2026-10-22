@@ -66,9 +66,9 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
         : null;
   const [view, setView] = useState<View>(addRequested ? 'saved' : 'activity');
   const [savedOpened, setSavedOpened] = useState(Boolean(addRequested));
-  useEffect(() => captureAnalytics('otto_tab_viewed', { page: 'trust', tab: view }), []);
+  useEffect(() => captureAnalytics('nod_tab_viewed', { page: 'trust', tab: view }), []);
   const selectView = (next: View) => {
-    if (next !== view) captureAnalytics('otto_tab_viewed', { page: 'trust', tab: next });
+    if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'trust', tab: next });
     setView(next);
   };
   useEffect(() => {
@@ -187,10 +187,23 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
   }
 
   function removed(id: string) {
+    const entry = entries?.find((value) => value.id === id);
+    const remaining =
+      entry?.kind === 'login'
+        ? entries?.filter(
+            (value) => value.id !== id && value.kind === 'login' && value.origin === entry.origin,
+          )
+        : undefined;
+    const next =
+      remaining?.find((value) => value.kind === 'login' && !value.unreadable) ??
+      (entry?.kind === 'login'
+        ? sessions.data?.find((value) => value.origin === entry.origin)
+        : undefined) ??
+      remaining?.[0];
     update((current) => current?.filter((value) => value.id !== id) ?? current);
     sessions.update((current) => current?.filter((value) => value.id !== id) ?? current);
-    returnTo.current = 'new';
-    setSelectedId(null);
+    returnTo.current = next?.id ?? 'new';
+    setSelectedId(next?.id ?? null);
     void refresh();
     void sessions.refresh();
   }
@@ -223,8 +236,7 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
   }
 
   const sessionsFor = (origin: string) =>
-    sessions.data?.filter((value) => value.origin === origin && value.state !== 'disconnecting') ??
-    [];
+    sessions.data?.filter((value) => value.origin === origin) ?? [];
 
   const detail = adding ? (
     <VaultSurface
@@ -299,7 +311,7 @@ export function Trust({ onAsk }: { onAsk?(text: string): void }) {
           <header className="page-heading secondary-heading">
             <div>
               <PageTitle path="/trust" />
-              <p>What Otto did and spent, what it may do on its own, and your logins and cards.</p>
+              <p>What nod did and spent, what it may do on its own, and your logins and cards.</p>
             </div>
             {view === 'saved' && (
               <div className="secondary-heading-actions">

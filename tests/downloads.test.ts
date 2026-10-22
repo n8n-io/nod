@@ -50,7 +50,7 @@ async function createDownloadBrowser(root: string) {
       browserRoot = dataRoot;
       return createAgentBrowserComputer({
         dataRoot,
-        browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+        browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
         privateNetwork: true,
         headless: true,
         evictIdleMs: 0,
@@ -155,7 +155,7 @@ test('browser captures refuse symlinks, partial files, multiple links and excess
 test(
   'authenticated browser PDFs cross the real private bridge without sharing the profile',
   {
-    skip: !process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+    skip: !process.env.NOD_TEST_BROWSER_EXECUTABLE,
     timeout: 180_000,
   },
   async (t) => {
@@ -226,11 +226,24 @@ test(
           );
           await computer.close('attachment');
           await computer.act('popup', { action: 'open', url: `${fixture.origin}/session` });
-          await computer.act('popup', { action: 'click', selector: '#popup' });
+          const beforePopup = fixture.authenticatedDownloads();
+          try {
+            await computer.act('popup', { action: 'click', selector: '#popup' });
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              !(error.cause instanceof BrowserActionError) ||
+              error.cause.code !== 'browser_observation_failed'
+            )
+              throw error;
+            assert.ok((await computer.screenshot('popup'))?.length);
+            assert.equal(computer.screenStatus!('popup').state, 'live');
+          }
           assert.deepEqual(
             (await computer.download!('popup', { name: 'popup.pdf' })).bytes,
             browserDownloadPdf,
           );
+          assert.equal(fixture.authenticatedDownloads(), beforePopup + 1);
           await assert.rejects(computer.download!('unrelated-task', {}));
           await assert.rejects(computer.download!('popup', { url: 'file:///etc/passwd' }));
           assert.equal(fixture.unauthenticatedDownloads(), 1);
@@ -377,7 +390,7 @@ test(
   'private artifacts survive actor restart and remain owned for downloads and channel delivery',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-artifact-store-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-artifact-store-'));
     const schema = 'test_durable_artifacts_' + randomUUID().replaceAll('-', '');
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);

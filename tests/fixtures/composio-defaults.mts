@@ -6,7 +6,7 @@ import { join } from 'node:path';
 let source = '';
 for await (const chunk of process.stdin) source += chunk;
 const { phase } = JSON.parse(source) as { phase: 'initial' | 'restart' };
-const root = process.env.OTTO_DATA_ROOT!;
+const root = process.env.NOD_DATA_ROOT!;
 const origin = 'https://composio.n8n.cloud';
 const statePath = join(root, 'fixture-state.json');
 const saved = phase === 'restart' ? JSON.parse(await readFile(statePath, 'utf8')) : undefined;

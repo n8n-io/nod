@@ -181,7 +181,7 @@ export function createMemoryService(options: {
 
   function safe(text: string | undefined) {
     if (unsafe(text))
-      fail('Passwords, codes, card numbers and instructions to Otto can’t be saved as notes.');
+      fail('Passwords, codes, card numbers and instructions to nod can’t be saved as notes.');
   }
 
   function duplicate(tree: Tree, target: Area, text: string, except?: Entry) {

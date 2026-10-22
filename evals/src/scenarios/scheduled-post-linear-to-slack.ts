@@ -165,7 +165,7 @@ export default scenario({
   window: { from: 8, to: 22 },
   user: {
     approve: (action, args) =>
-      action.startsWith('OTTO_schedule') ||
+      action.startsWith('NOD_schedule') ||
       (action === 'CONNECTED_MCP_CALL' &&
         /^(list_|get_)/.test(String((args as { tool?: unknown } | undefined)?.tool ?? ''))) ||
       (action === 'SLACK_SEND_MESSAGE' &&

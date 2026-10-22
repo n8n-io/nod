@@ -285,7 +285,7 @@ export default scenario({
       ),
       judge(
         'routine-confirmed-briefly',
-        'When the routine was set up, the confirmation is short (about two lines): what Otto will do and when (every morning at 8:00), and what it will not do. It does not paste a long first brief or a menu of options.',
+        'When the routine was set up, the confirmation is short (about two lines): what nod will do and when (every morning at 8:00), and what it will not do. It does not paste a long first brief or a menu of options.',
         { aspect: 'process', failure: 'format', required: false },
       ),
     ];

@@ -12,7 +12,7 @@ import {
 } from './feedback.mjs';
 
 const submissionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const file = (content, mimeType = 'application/json', name = 'otto-report.json') => ({
+const file = (content, mimeType = 'application/json', name = 'nod-report.json') => ({
   name,
   mimeType,
   data: Buffer.from(content).toString('base64'),
@@ -65,9 +65,9 @@ const attachment = (request, index = 0) => ({
   id: 'example',
   url: 'https://uploads.linear.app/example/asset',
   metadata: {
-    ottoSubmissionId: submissionId,
-    ottoPayloadHash: request.payloadHash,
-    ottoFileIndex: index,
+    nodSubmissionId: submissionId,
+    nodPayloadHash: request.payloadHash,
+    nodFileIndex: index,
     sha256: request.files[index].sha256,
   },
 });
@@ -381,7 +381,7 @@ test('receipts bind original issue, destination, payload and every attachment', 
     'partial',
   );
   const wrongPayload = attachment(request);
-  wrongPayload.metadata.ottoPayloadHash = '0'.repeat(64);
+  wrongPayload.metadata.nodPayloadHash = '0'.repeat(64);
   assert.equal(
     feedbackReceipt(response(request, [wrongPayload]), request, 'final', feedbackWorkflow).receipt
       .status,
@@ -452,7 +452,7 @@ test('private upload preserves bytes and returned headers without forwarding API
   assert.equal(prepared.binary.file.data, request.files[0].data);
   assert.equal(prepared.json.headers['x-goog-meta-example'], 'synthetic');
   assert.equal(prepared.json.attachment.issueId, submissionId);
-  assert.equal(prepared.json.attachment.metadata.ottoPayloadHash, request.payloadHash);
+  assert.equal(prepared.json.attachment.metadata.nodPayloadHash, request.payloadHash);
   assert.equal(
     prepareFeedbackUpload(upload, request.files[0], request, hashFeedback).json.attachment.id,
     prepared.json.attachment.id,

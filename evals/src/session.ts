@@ -395,7 +395,7 @@ export function createSession(options: {
     },
     async api(method, path, body) {
       if (new URL(path, stack.origin).origin !== stack.origin)
-        throw new Error('Scenario API calls must stay on the Otto server.');
+        throw new Error('Scenario API calls must stay on the nod server.');
       const response = await stack.request(path, {
         method,
         headers: { 'content-type': 'application/json', origin: stack.origin },
@@ -479,7 +479,7 @@ export function createSession(options: {
       },
       async list() {
         const result = await stack.exec(
-          "find /workspace -type f -not -path '*/.otto/*' -not -path '*/node_modules/*' | sort",
+          "find /workspace -type f -not -path '*/.nod/*' -not -path '*/node_modules/*' | sort",
         );
         return result.output.split('\n').filter(Boolean);
       },

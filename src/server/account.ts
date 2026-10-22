@@ -85,7 +85,7 @@ export function createAccountSession(options: {
       reply.code(403).send({ error: 'This origin is not permitted.' });
       return false;
     }
-    const expected = request.headers['x-otto-account'];
+    const expected = request.headers['x-nod-account'];
     if (expected !== undefined && expected !== owner) {
       reply.code(401).send({ error: 'Sign in to continue.' });
       return false;
@@ -156,7 +156,7 @@ export function createAccountSession(options: {
       if (onboardingCompletedNow) {
         const model = options.model?.();
         options.analytics?.capture(owner, {
-          event: 'otto_onboarding_completed',
+          event: 'nod_onboarding_completed',
           ...(model?.configured
             ? { properties: { model_provider: analyticsModel(model.provider).provider } }
             : {}),
@@ -164,7 +164,7 @@ export function createAccountSession(options: {
       }
       if (input.theme !== undefined)
         options.analytics?.capture(owner, {
-          event: 'otto_settings_updated',
+          event: 'nod_settings_updated',
           properties: { section: 'account', operation: 'update' },
         });
       reply.header('cache-control', 'no-store');

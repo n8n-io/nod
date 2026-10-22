@@ -1,0 +1,773 @@
+{
+  "base": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
+  "head": "117af4eb53958261b352c905c6bb91e451d42749",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "scope": "Actual frontend code from each revision. Synthetic API responses and desktop bridge only. Every /api request intercepted; external origins blocked. No real backend, model, connected account, recipient, or OS setting used. Desktop means renderer bridge simulation, not installed Electron acceptance.",
+  "screenshots": [
+    {
+      "side": "before",
+      "name": "01-web-default",
+      "file": "01-web-default-before.png",
+      "nav": {
+        "x": 8,
+        "y": 88,
+        "width": 56,
+        "height": 216
+      },
+      "collapsed": true,
+      "modelPickerCount": 1,
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "02-desktop-default",
+      "file": "02-desktop-default-before.png",
+      "nav": {
+        "x": 12,
+        "y": 282,
+        "width": 60,
+        "height": 236
+      },
+      "collapsed": true,
+      "modelPickerCount": 1,
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "03-chat-controls",
+      "file": "03-chat-controls-before.png",
+      "toggle": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      },
+      "reactionShadow": "rgb(250, 250, 250) 2px 0px 0px, rgb(250, 250, 250) 1.97px 0.35px 0px, rgb(250, 250, 250) 1.88px 0.68px 0px, rgb(250, 250, 250) 1.73px 1px 0px, rgb(250, 250, 250) 1.53px 1.29px 0px, rgb(250, 250, 250) 1.29px 1.53px 0px, rgb(250, 250, 250) 1px 1.73px 0px, rgb(250, 250, 250) 0.68px 1.88px 0px, rgb(250, 250, 250) 0.35px 1.97px 0px, rgb(250, 250, 250) 0px 2px 0px, rgb(250, 250, 250) -0.35px 1.97px 0px, rgb(250, 250, 250) -0.68px 1.88px 0px, rgb(250, 250, 250) -1px 1.73px 0px, rgb(250, 250, 250) -1.29px 1.53px 0px, rgb(250, 250, 250) -1.53px 1.29px 0px, rgb(250, 250, 250) -1.73px 1px 0px, rgb(250, 250, 250) -1.88px 0.68px 0px, rgb(250, 250, 250) -1.97px 0.35px 0px, rgb(250, 250, 250) -2px 0px 0px, rgb(250, 250, 250) -1.97px -0.35px 0px, rgb(250, 250, 250) -1.88px -0.68px 0px, rgb(250, 250, 250) -1.73px -1px 0px, rgb(250, 250, 250) -1.53px -1.29px 0px, rgb(250, 250, 250) -1.29px -1.53px 0px, rgb(250, 250, 250) -1px -1.73px 0px, rgb(250, 250, 250) -0.68px -1.88px 0px, rgb(250, 250, 250) -0.35px -1.97px 0px, rgb(250, 250, 250) 0px -2px 0px, rgb(250, 250, 250) 0.35px -1.97px 0px, rgb(250, 250, 250) 0.68px -1.88px 0px, rgb(250, 250, 250) 1px -1.73px 0px, rgb(250, 250, 250) 1.29px -1.53px 0px, rgb(250, 250, 250) 1.53px -1.29px 0px, rgb(250, 250, 250) 1.73px -1px 0px, rgb(250, 250, 250) 1.88px -0.68px 0px, rgb(250, 250, 250) 1.97px -0.35px 0px, rgba(0, 0, 0, 0.16) 0px 1.5px 2.5px",
+      "messageOutline": "solid",
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "04-trust-controls",
+      "file": "04-trust-controls-before.png",
+      "toggle": {
+        "x": 80,
+        "y": 42,
+        "width": 32,
+        "height": 32
+      },
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "05-onboarding-answer",
+      "file": "05-onboarding-answer-before.png",
+      "micButtons": 1,
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "06-required-notifications",
+      "file": "06-required-notifications-before.png",
+      "nextDisabled": false,
+      "nextLabel": "Continue",
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "07-required-login",
+      "file": "07-required-login-before.png",
+      "nextDisabled": false,
+      "nextLabel": "Continue",
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "08-after-last-setup-action",
+      "file": "08-after-last-setup-action-before.png",
+      "result": "Final feedback onboarding step",
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "10-completed-private-actions",
+      "file": "10-completed-private-actions-before.png",
+      "remainingActions": 2,
+      "serverStatuses": {
+        "credential": "filled",
+        "payment": "submitted"
+      },
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "09-credential-font",
+      "file": "09-credential-font-before.png",
+      "font": "\"Geist Mono\", SFMono-Regular, Consolas, monospace",
+      "secretSource": "Synthetic fixture only",
+      "errors": []
+    },
+    {
+      "side": "before",
+      "name": "11-vault-after-delete",
+      "file": "11-vault-after-delete-before.png",
+      "signOutVisible": false,
+      "remainingSessionRows": 1,
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "01-web-default",
+      "file": "01-web-default-after.png",
+      "nav": {
+        "x": 12,
+        "y": 292,
+        "width": 48,
+        "height": 216
+      },
+      "collapsed": true,
+      "modelPickerCount": 0,
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "02-desktop-default",
+      "file": "02-desktop-default-after.png",
+      "nav": {
+        "x": 12,
+        "y": 282,
+        "width": 60,
+        "height": 236
+      },
+      "collapsed": true,
+      "modelPickerCount": 0,
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "03-chat-controls",
+      "file": "03-chat-controls-after.png",
+      "toggle": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      },
+      "reactionShadow": "none",
+      "messageOutline": "none",
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "04-trust-controls",
+      "file": "04-trust-controls-after.png",
+      "toggle": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      },
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "05-onboarding-answer",
+      "file": "05-onboarding-answer-after.png",
+      "tools": {
+        "x": 317,
+        "y": 733,
+        "width": 646,
+        "height": 34
+      },
+      "send": {
+        "x": 929,
+        "y": 733,
+        "width": 34,
+        "height": 34
+      },
+      "rightEdgeGap": 0,
+      "micButtons": 0,
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "06-required-notifications",
+      "file": "06-required-notifications-after.png",
+      "nextDisabled": true,
+      "nextLabel": "Continue",
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "07-required-login",
+      "file": "07-required-login-after.png",
+      "nextDisabled": true,
+      "nextLabel": "Start chatting",
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "08-after-last-setup-action",
+      "file": "08-after-last-setup-action-after.png",
+      "result": "Main chat after onboarding completion",
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "10-completed-private-actions",
+      "file": "10-completed-private-actions-after.png",
+      "remainingActions": 0,
+      "serverStatuses": {
+        "credential": "filled",
+        "payment": "submitted"
+      },
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "09-credential-font",
+      "file": "09-credential-font-after.png",
+      "font": "Geist, system-ui, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+      "secretSource": "Synthetic fixture only",
+      "errors": []
+    },
+    {
+      "side": "after",
+      "name": "11-vault-after-delete",
+      "file": "11-vault-after-delete-after.png",
+      "signOutVisible": true,
+      "remainingSessionRows": 1,
+      "errors": []
+    }
+  ],
+  "checks": [
+    {
+      "side": "before",
+      "check": "Chat/Trust toggle positions",
+      "chat": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      },
+      "trust": {
+        "x": 80,
+        "y": 42,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "side": "after",
+      "check": "Chat/Trust toggle positions",
+      "chat": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      },
+      "trust": {
+        "x": 80,
+        "y": 14,
+        "width": 32,
+        "height": 32
+      }
+    }
+  ],
+  "unexpectedApi": [],
+  "blockedExternal": [],
+  "comparisons": [
+    {
+      "file": "navigation-and-chat.png",
+      "scenarios": ["01-web-default", "02-desktop-default", "03-chat-controls", "04-trust-controls"]
+    },
+    {
+      "file": "onboarding.png",
+      "scenarios": [
+        "05-onboarding-answer",
+        "06-required-notifications",
+        "07-required-login",
+        "08-after-last-setup-action"
+      ]
+    },
+    {
+      "file": "vault-and-sign-in.png",
+      "scenarios": ["09-credential-font", "10-completed-private-actions", "11-vault-after-delete"]
+    },
+    {
+      "file": "overview.png",
+      "scenarios": [
+        "01-web-default",
+        "02-desktop-default",
+        "03-chat-controls",
+        "04-trust-controls",
+        "05-onboarding-answer",
+        "06-required-notifications",
+        "07-required-login",
+        "08-after-last-setup-action",
+        "09-credential-font",
+        "10-completed-private-actions",
+        "11-vault-after-delete"
+      ]
+    }
+  ],
+  "capturedAt": "2026-10-21T22:37:15.431Z",
+  "assertions": {
+    "noPageErrors": true,
+    "noUnexpectedApiRequests": true,
+    "noExternalRequests": true,
+    "identicalViewport": true,
+    "webRailCentered": true,
+    "modelPickerRemoved": true,
+    "toggleStableAcrossPages": true,
+    "pointerEscapeOutlineRemoved": true,
+    "reactionShadowRemoved": true,
+    "onboardingMicrophoneRemoved": true,
+    "notificationsRequired": true,
+    "launchAtLoginRequired": true,
+    "vaultFontChanged": true,
+    "completedActionsRemoved": true,
+    "remainingSessionSelected": true,
+    "beforeImagesPreserved": true,
+    "matchedSemanticState": true,
+    "onboardingSendRightAligned": true
+  },
+  "browser": {
+    "comparison": "browser-pointer.png",
+    "capturedAt": "2026-10-21T20:36:30.441Z",
+    "beforeRevision": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
+    "afterRevision": "4b5bee4ab7a47d51f7a7226010a8edb80c492983",
+    "afterSourceObjects": {
+      "src/providers/agent-browser/index.ts": "41e6995e1ad2faf4054d26056551a796a1c27d72",
+      "src/web/components/browser-handoff.tsx": "861a4f983fda119f6e6171bec86e7c1fdca8380e"
+    },
+    "scope": "Actual agent-browser provider and native Chromium on a local synthetic page. Identical 1440x900 viewport, 2x page zoom and normalized input (0.3,0.3). No model, external website, connected account or recipient. Does not establish that all browser failures are fixed.",
+    "screenshots": [
+      {
+        "side": "before",
+        "file": "browser-screenshots/pointer-before.png",
+        "sha256": "4a86d2985cac7f7ff2f5d23ed44f2de0f22c4c9e45cbb07a26912fefad556089"
+      },
+      {
+        "side": "after",
+        "file": "browser-screenshots/pointer-after.png",
+        "sha256": "0d01e664c91c5223c2eb97f1ef56515cd095c743636aa0e770377b2d52ebb910"
+      }
+    ],
+    "observations": [
+      {
+        "name": "before",
+        "sourceRevision": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
+        "sourceObject": "26661470b3ed1212991453e904d63be4167f8747",
+        "readiness": "Wait for the decoded JPEG bottom-right pixel to contain the post-zoom magenta background marker.",
+        "decodedFrames": 2,
+        "markerPixel": [255, 0, 254, 255],
+        "restoredBackground": {
+          "body": "rgb(250, 250, 250)",
+          "html": "rgb(250, 250, 250)"
+        },
+        "zoom": 2,
+        "input": {
+          "x": 0.3,
+          "y": 0.3
+        },
+        "expected": {
+          "x": 216,
+          "y": 135
+        },
+        "observed": {
+          "target": "",
+          "x": 432,
+          "y": 270
+        },
+        "screenshot": "browser-screenshots/pointer-before.png",
+        "screenshotSha256": "4a86d2985cac7f7ff2f5d23ed44f2de0f22c4c9e45cbb07a26912fefad556089"
+      },
+      {
+        "name": "after",
+        "sourceRevision": "4b5bee4ab7a47d51f7a7226010a8edb80c492983",
+        "sourceObject": "41e6995e1ad2faf4054d26056551a796a1c27d72",
+        "readiness": "Wait for the decoded JPEG bottom-right pixel to contain the post-zoom magenta background marker.",
+        "decodedFrames": 2,
+        "markerPixel": [255, 0, 254, 255],
+        "restoredBackground": {
+          "body": "rgb(250, 250, 250)",
+          "html": "rgb(250, 250, 250)"
+        },
+        "zoom": 2,
+        "input": {
+          "x": 0.3,
+          "y": 0.3
+        },
+        "expected": {
+          "x": 216,
+          "y": 135
+        },
+        "observed": {
+          "target": "target",
+          "x": 216,
+          "y": 135
+        },
+        "screenshot": "browser-screenshots/pointer-after.png",
+        "screenshotSha256": "0d01e664c91c5223c2eb97f1ef56515cd095c743636aa0e770377b2d52ebb910"
+      }
+    ],
+    "details": "browser-pointer-results.json",
+    "loadingFrame": {
+      "comparison": "browser-loading-frame.png",
+      "details": "browser-loading-frame.json",
+      "scope": "Actual Chat and BrowserHandoff rendered in the review harness, with a synthetic JPEG stream and synthetic API acknowledgments. Measures accepted inputs, not native target hits or live provider delivery.",
+      "before": {
+        "sourceRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
+        "preservedOriginalFailingRun": true,
+        "droppedAtInput": 40,
+        "naturalWidth": 0,
+        "naturalHeight": 0,
+        "displayedWidth": 1230,
+        "displayedHeight": 768.75,
+        "screenshot": "browser-screenshots/loading-frame-before.png",
+        "screenshotSha256": "129d8c0ac4dc484fbae9a4d413dbb172db909aa8897f0456aaffcb31434c66c7"
+      },
+      "after": {
+        "sourceRevision": "ec9c7eebcd7c44dee7e556562c8812b8751ca261",
+        "sourceObjects": {
+          "src/web/components/browser-handoff.tsx": "861a4f983fda119f6e6171bec86e7c1fdca8380e",
+          "src/web/pages/chat.tsx": "55732e31ce9bb1711b8f8586961c03cbbe19956f"
+        },
+        "capturedAt": "2026-10-21T20:14:39.385Z",
+        "inputs": 400,
+        "accepted": 400,
+        "postedMouseDowns": 400,
+        "postedMouseUps": 400,
+        "zeroNaturalSizeInputs": 6,
+        "screenshot": "browser-screenshots/loading-frame-after.png",
+        "screenshotSha256": "41fa5d49cd440b33d8a041fc5e908a2d4b8f027c9e1b0dd6c094af37b0fbac52"
+      }
+    },
+    "comparisonSha256": "3680ca6ec5a504c8e16b75c832fd84310c4315e2b295cc28d509bc25dc47cd3f",
+    "comparisonBytes": 81994,
+    "captureHarness": {
+      "file": "capture-browser-pointer.mjs",
+      "sha256": "27104d3c4f2b481aab009dbb8291e62c14d6b5a4c3e869c95b562bc161f5a5b8",
+      "identicalReadiness": true,
+      "marker": {
+        "rgb": [255, 0, 255],
+        "removedBeforeScreenshot": true
+      },
+      "revision": "5aa801d3d38d9e03a88bb47ab808aab5b6acf28b"
+    },
+    "originalBefore": {
+      "file": "browser-screenshots/pointer-before-original.png",
+      "sha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab",
+      "sourceRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
+      "readiness": "Original harness read the first two stream frames without a decoded-marker check. Preserved as historical evidence; superseded by the matched-harness comparison."
+    },
+    "baselineIdentity": {
+      "providerPath": "src/providers/agent-browser/index.ts",
+      "originalRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
+      "originalSourceObject": "26661470b3ed1212991453e904d63be4167f8747",
+      "matchedRevision": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
+      "matchedSourceObject": "26661470b3ed1212991453e904d63be4167f8747",
+      "identicalProviderObject": true,
+      "note": "The new before image was captured from the reachable branch base e79bf5d2. The original 21456f70 image retains its original provenance and readiness procedure."
+    },
+    "reproductionHarness": {
+      "file": "capture-browser-pointer.mjs",
+      "sha256": "8550199937cc59b67c151755dc19a98f1c7311e8f929caa40369313f8c3a871c",
+      "scope": "Current reproduction script adds bounded CDP failure cleanup and descriptive marker EOF/timeout errors. Existing comparison PNGs retain the original capture revision and harness hash."
+    }
+  },
+  "artifacts": [
+    {
+      "file": "browser-pointer.png",
+      "bytes": 81994,
+      "sha256": "3680ca6ec5a504c8e16b75c832fd84310c4315e2b295cc28d509bc25dc47cd3f"
+    },
+    {
+      "file": "pdf-rendering.png",
+      "bytes": 390852,
+      "sha256": "3f4141949224a5b3392f0cbe16f998a22efa05effb05fab8787df3f4ff805929"
+    },
+    {
+      "file": "pdf-fixture.pdf",
+      "bytes": 663,
+      "sha256": "72ff9b76f0341d560a39f6edb62b1a936163f7a43fb11c92882ec1377ccc9587"
+    },
+    {
+      "file": "pdf-rendering.json",
+      "bytes": 11341,
+      "sha256": "207798d638970ea289690d5c988d805159273a2e3b6b27a1bdbe4b7a33d5de19"
+    },
+    {
+      "file": "navigation-and-chat.png",
+      "bytes": 484190,
+      "sha256": "552f96c5ab72f96be941ae2295fbe5cdf0eb4087ab4367e35e65177e85d6e9b3"
+    },
+    {
+      "file": "onboarding.png",
+      "bytes": 443459,
+      "sha256": "01a36f25ae68c376a3cc58e61b44d17458b673c3604ad769bb2ac50a4cb93a6e"
+    },
+    {
+      "file": "vault-and-sign-in.png",
+      "bytes": 400134,
+      "sha256": "53c201f4c3173827f1a6f4c6c8a4300af1fc9286841f8f6b3d0443480255bd79"
+    },
+    {
+      "file": "overview.png",
+      "bytes": 525214,
+      "sha256": "bc0117ece6519a5a5de30a0fa44bb06c370edf7848fb55769a06dead18ffcf47"
+    },
+    {
+      "file": "browser-loading-frame.png",
+      "bytes": 128667,
+      "sha256": "8a79f660f7e42c3f0a4c7b28834ccff3a91e15d3a0a3560c8efdddfc8966cd4a"
+    },
+    {
+      "file": "browser-loading-frame.json",
+      "bytes": 11422,
+      "sha256": "a757e15603271842e1979fe348e43c07bf1e3b8caeebb62e386eda98d7587731"
+    },
+    {
+      "file": "browser-pointer-results.json",
+      "bytes": 4117,
+      "sha256": "aa217acfbb5d210a8f7fd3ec4cd5a73c57b6b922d4e024a7fdb4615a59f79c89"
+    },
+    {
+      "file": "browser-screenshots/loading-frame-after.png",
+      "bytes": 94753,
+      "sha256": "41fa5d49cd440b33d8a041fc5e908a2d4b8f027c9e1b0dd6c094af37b0fbac52"
+    },
+    {
+      "file": "browser-screenshots/loading-frame-before.png",
+      "bytes": 94479,
+      "sha256": "129d8c0ac4dc484fbae9a4d413dbb172db909aa8897f0456aaffcb31434c66c7"
+    },
+    {
+      "file": "browser-screenshots/pointer-after.png",
+      "bytes": 20227,
+      "sha256": "0d01e664c91c5223c2eb97f1ef56515cd095c743636aa0e770377b2d52ebb910"
+    },
+    {
+      "file": "browser-screenshots/pointer-before.png",
+      "bytes": 21821,
+      "sha256": "4a86d2985cac7f7ff2f5d23ed44f2de0f22c4c9e45cbb07a26912fefad556089"
+    },
+    {
+      "file": "pdf-screenshots/1280-dark-after.png",
+      "bytes": 59134,
+      "sha256": "739f5d6460363bff1a3796db20ad5f8097c1733a6bb19d5241f849cea0fa73a0"
+    },
+    {
+      "file": "pdf-screenshots/1280-dark-before.png",
+      "bytes": 45902,
+      "sha256": "4438ad503c3131d80ce7b8442e5828417b0c4169e64457e31c8120cb4ae42d59"
+    },
+    {
+      "file": "pdf-screenshots/1280-light-after.png",
+      "bytes": 58735,
+      "sha256": "2bc886b75fdec409d7b33634792517a65b2de219015dedfd2ac66dd63975af7f"
+    },
+    {
+      "file": "pdf-screenshots/1280-light-before.png",
+      "bytes": 46427,
+      "sha256": "bd4e247026f5e859e793067a91ebb83265767ccc4646f9b50620752ea753f991"
+    },
+    {
+      "file": "pdf-screenshots/390-dark-after.png",
+      "bytes": 14694,
+      "sha256": "20d78a4ca115761fba9f1916f5e5b36a780358f19cb39a662da671967e0af38c"
+    },
+    {
+      "file": "pdf-screenshots/390-dark-before.png",
+      "bytes": 10704,
+      "sha256": "6d8811f02c134c8f46dc0c47109ed60996fabcba2066f88c566d98bc5bd308d2"
+    },
+    {
+      "file": "pdf-screenshots/390-light-after.png",
+      "bytes": 15959,
+      "sha256": "ab2055e3337ab7dc03a181d29aa570581aff22b0030fb3dbe9dfb0f23769a840"
+    },
+    {
+      "file": "pdf-screenshots/390-light-before.png",
+      "bytes": 10529,
+      "sha256": "b5bc5dcc3b267f7c1fb55543041abb319f8b8c0b04d6f004972d8e3d2f3628be"
+    },
+    {
+      "file": "capture-browser-pointer.mjs",
+      "bytes": 10589,
+      "sha256": "8550199937cc59b67c151755dc19a98f1c7311e8f929caa40369313f8c3a871c"
+    },
+    {
+      "file": "browser-screenshots/pointer-before-original.png",
+      "bytes": 21823,
+      "sha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab"
+    },
+    {
+      "file": "history/onboarding-answer-after-be9595b9.png",
+      "bytes": 24255,
+      "sha256": "59cc77262deffcc2e0726a273ceb2aa7f9eb9027a5e29cfe5a7b2798600c96fb"
+    }
+  ],
+  "beforeCapturedAt": "2026-10-21T19:29:50.275Z",
+  "afterCapturedAt": "2026-10-21T22:37:15.431Z",
+  "captureFixtureChanges": {
+    "scenario": "10-completed-private-actions",
+    "matchedSemanticState": {
+      "credentialStatus": "filled",
+      "paymentStatus": "submitted"
+    },
+    "identicalApiTransport": false,
+    "credentialStatus": {
+      "before": {
+        "path": "/api/credential-requests/:token",
+        "response": "Full synthetic request metadata including status: filled"
+      },
+      "after": {
+        "path": "/api/credential-requests/:token/status",
+        "response": {
+          "status": "filled"
+        }
+      }
+    },
+    "scope": "Compares the UI outcome for the same completed credential/payment state. The credential endpoint and response shape differ; this is not a byte-identical API-response comparison or server contract verification."
+  },
+  "pdf": {
+    "comparison": "pdf-rendering.png",
+    "details": "pdf-rendering.json",
+    "capturedAt": "2026-10-21T19:38:02.712Z",
+    "beforeRevision": "c60a75f8ed4071b130fdc4ebaa3426fbc5130874",
+    "beforeSourceObject": "47811c8babd7cf6cffd42017b771669912696e00",
+    "afterSourceObject": "db8009123d59a18788b5c114c796ca60738e9504",
+    "scope": "Actual application frontend; identical synthetic PDF and API fixtures. Native unmodified Chrome; no prototype styling, renderer mocks, browser compatibility shims, real backend, models, connected accounts or recipients.",
+    "fixture": {
+      "file": "pdf-fixture.pdf",
+      "bytes": 663,
+      "sha256": "72ff9b76f0341d560a39f6edb62b1a936163f7a43fb11c92882ec1377ccc9587",
+      "text": "Product review  Review decisions, open questions and next steps.",
+      "pages": 1
+    },
+    "assertions": {
+      "matchedInput": true,
+      "allFourBaselinePreviewsUnavailable": true,
+      "allFourFixedPreviewsVisible": true,
+      "pdfTextVerified": true,
+      "zoomAndFitRendered": true,
+      "noPageErrors": true,
+      "noUnexpectedApiRequests": true,
+      "noExternalRequests": true
+    }
+  },
+  "onboardingAlignmentCheck": [
+    {
+      "sourceRevision": "117af4eb53958261b352c905c6bb91e451d42749",
+      "desktop": false,
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "tools": {
+        "x": 317,
+        "y": 733,
+        "width": 646,
+        "height": 34
+      },
+      "send": {
+        "x": 929,
+        "y": 733,
+        "width": 34,
+        "height": 34
+      },
+      "rightEdgeGap": 0,
+      "micButtons": 0,
+      "errors": []
+    },
+    {
+      "sourceRevision": "117af4eb53958261b352c905c6bb91e451d42749",
+      "desktop": false,
+      "viewport": {
+        "width": 390,
+        "height": 800
+      },
+      "tools": {
+        "x": 44,
+        "y": 741,
+        "width": 302,
+        "height": 34
+      },
+      "send": {
+        "x": 312,
+        "y": 741,
+        "width": 34,
+        "height": 34
+      },
+      "rightEdgeGap": 0,
+      "micButtons": 0,
+      "errors": []
+    },
+    {
+      "sourceRevision": "117af4eb53958261b352c905c6bb91e451d42749",
+      "desktop": true,
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "tools": {
+        "x": 317,
+        "y": 733,
+        "width": 646,
+        "height": 34
+      },
+      "send": {
+        "x": 929,
+        "y": 733,
+        "width": 34,
+        "height": 34
+      },
+      "rightEdgeGap": 0,
+      "micButtons": 0,
+      "errors": []
+    },
+    {
+      "sourceRevision": "117af4eb53958261b352c905c6bb91e451d42749",
+      "desktop": true,
+      "viewport": {
+        "width": 390,
+        "height": 800
+      },
+      "tools": {
+        "x": 44,
+        "y": 741,
+        "width": 302,
+        "height": 34
+      },
+      "send": {
+        "x": 312,
+        "y": 741,
+        "width": 34,
+        "height": 34
+      },
+      "rightEdgeGap": 0,
+      "micButtons": 0,
+      "errors": []
+    }
+  ],
+  "onboardingSendCorrection": {
+    "sourceRevision": "117af4eb53958261b352c905c6bb91e451d42749",
+    "previousAfterRevision": "be9595b92b0101cb0fa2295313a1b764bb84b2f6",
+    "previousAfterScreenshot": {
+      "file": "history/onboarding-answer-after-be9595b9.png",
+      "bytes": 24255,
+      "sha256": "59cc77262deffcc2e0726a273ceb2aa7f9eb9027a5e29cfe5a7b2798600c96fb"
+    },
+    "previousPublishedSheet": {
+      "revision": "1ec4df1208707eab93225e276c92e7da41552146",
+      "file": "onboarding.png",
+      "sha256": "a2cfad0dc0c45b1f1bd1582030daea52af953a5e09bb77d60158b3e3e66df3c1"
+    },
+    "scope": "Send is right-aligned after removing the onboarding microphone. Four additional synthetic web/desktop bridge checks at 1280x800 and 390x800 measure the Send right edge against the tools row; this does not demonstrate installed Electron or native OS behavior."
+  }
+}

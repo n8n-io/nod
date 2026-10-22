@@ -70,7 +70,7 @@ function artifactDownload(overrides = {}) {
 }
 
 async function artifactDownloads(t) {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-artifact-downloads-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-artifact-downloads-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const errors = [];
   return {
@@ -335,6 +335,8 @@ async function runningDesktop(
     enginePageLoaded,
     readyRenderers = true,
     notificationsSupported = false,
+    updateLoginItems = () => true,
+    loginItemStatus = () => ({}),
     webPreferences = { quietHoursEnabled: false },
     openFile = open,
     environment = {},
@@ -350,16 +352,20 @@ async function runningDesktop(
   const storage = storedProfile
     ? { ...storedProfile, store: storedProfile.reopen() }
     : await fixture(t, platform);
-  if (!storedProfile)
+  if (!storedProfile && initialState !== 'fresh') {
     await storage.store.save({
-      onboardingCompleted: initialState !== 'fresh',
+      notifications: true,
+      launchAtLogin: true,
+      onboardingCompleted: true,
     });
+    await storage.store.save({ notifications: false, launchAtLogin: false });
+  }
   const windows = [];
   const children = [];
   const paths = new Map();
   const handlers = new Map();
   const rendererReady = (window) =>
-    handlers.get('otto:renderer-ready')?.({
+    handlers.get('nod:renderer-ready')?.({
       sender: window.webContents,
       senderFrame: window.webContents.mainFrame,
     });
@@ -386,9 +392,9 @@ async function runningDesktop(
       getPath: (name) => paths.get(name) || dirname(storage.path),
       getVersion: () => version,
       requestSingleInstanceLock: () => false,
-      getLoginItemSettings: () => ({ openAtLogin }),
+      getLoginItemSettings: () => ({ openAtLogin, ...loginItemStatus() }),
       setLoginItemSettings: (value) => {
-        openAtLogin = value.openAtLogin;
+        if (updateLoginItems(value)) openAtLogin = value.openAtLogin;
       },
       quit() {},
     },
@@ -414,7 +420,7 @@ async function runningDesktop(
     appendFile,
     readFile: (file, ...args) =>
       buildMetadata && file === fileURLToPath(new URL('../package.json', import.meta.url))
-        ? Promise.resolve(JSON.stringify({ ottoBuild: buildMetadata }))
+        ? Promise.resolve(JSON.stringify({ nodBuild: buildMetadata }))
         : readFile(file, ...args),
     open: openFile,
     rename,
@@ -481,7 +487,7 @@ async function runningDesktop(
         };
         if (reportReady)
           setImmediate(() =>
-            child.emit('message', { type: 'otto-ready', port: Number(options.env.PORT) }),
+            child.emit('message', { type: 'nod-ready', port: Number(options.env.PORT) }),
           );
         children.push(child);
         return child;
@@ -605,12 +611,12 @@ async function runningDesktop(
     status.phase = 'ready';
     ${initialState === 'running' ? '' : "engine = undefined; enginePreferencesReady = false; engineRuntimeReady = false; engineOrigin = ''; engineBound = false; onboardingCompleted = false; status.phase = 'idle';"}
     ${source.slice(source.indexOf('      const appSession ='), source.indexOf('      const image = nativeImage'))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:renderer-ready'"), source.indexOf("      ipcMain.handle('otto:feedback:context'"))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:feedback:context'"), source.indexOf("      ipcMain.handle('otto:preferences:get'"))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:preferences:get'"), source.indexOf("      ipcMain.handle('otto:prepare'"))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:prepare'"), source.indexOf("      ipcMain.handle('otto:runtime:import'"))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:runtime:install-wsl'"), source.indexOf("      ipcMain.handle('otto:chat-read:get'"))}
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:external'"), source.indexOf('      try {', source.indexOf("      ipcMain.handle('otto:external'")))}
+    ${source.slice(source.indexOf("      ipcMain.handle('nod:renderer-ready'"), source.indexOf("      ipcMain.handle('nod:feedback:context'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('nod:feedback:context'"), source.indexOf("      ipcMain.handle('nod:preferences:get'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('nod:preferences:get'"), source.indexOf("      ipcMain.handle('nod:prepare'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('nod:prepare'"), source.indexOf("      ipcMain.handle('nod:runtime:import'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('nod:runtime:install-wsl'"), source.indexOf("      ipcMain.handle('nod:chat-read:get'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('nod:external'"), source.indexOf('      try {', source.indexOf("      ipcMain.handle('nod:external'")))}
     globalThis.running = {
       prepare,
       launch: async () => { ${source.slice(source.lastIndexOf('      try {\n        const saved = await settings.get();'), source.indexOf('    })', source.lastIndexOf('      try {\n        const saved = await settings.get();')))} },
@@ -690,12 +696,12 @@ test('the normal engine uses the release boundary for analytics during first set
         );
         assert.ok(
           f.children.every(
-            (child) => child.environment.OTTO_ANALYTICS_ENVIRONMENT === scenario.expected,
+            (child) => child.environment.NOD_ANALYTICS_ENVIRONMENT === scenario.expected,
           ),
         );
         if (scenario.buildMetadata.testProfile)
           assert.ok(
-            f.children.every((child) => child.environment.OTTO_ANALYTICS_ENABLED === 'false'),
+            f.children.every((child) => child.environment.NOD_ANALYTICS_ENABLED === 'false'),
           );
       } finally {
         await f.close();
@@ -713,7 +719,7 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
       platform: 'win32',
       allowStart: true,
       prepareRuntime: async () => {
-        throw Object.assign(new Error('Synthetic WSL missing'), { code: 'OTTO_WSL_REQUIRED' });
+        throw Object.assign(new Error('Synthetic WSL missing'), { code: 'NOD_WSL_REQUIRED' });
       },
     },
   );
@@ -759,11 +765,11 @@ test('native Welcome is visible before storage and system-key access and accepts
     await launched;
     const window = f.windows[0];
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-    await f.handlers.get('otto:settings:save')(event, {
+    await f.handlers.get('nod:settings:save')(event, {
       welcome: { usageData: true, continued: false },
     });
     await assert.rejects(
-      f.handlers.get('otto:settings:save')(event, {
+      f.handlers.get('nod:settings:save')(event, {
         welcome: { usageData: true, continued: false, apiKey: 'synthetic-secret' },
       }),
     );
@@ -785,7 +791,7 @@ test('native Welcome is visible before storage and system-key access and accepts
 test('native startup recovery keeps current status and serializes retry, prerequisite installation, and runtime import', async (t) => {
   for (const initialResult of ['stale response', 'stale failure']) {
     await t.test(initialResult, async (t) => {
-      const output = await mkdtemp(join(tmpdir(), 'otto-native-recovery-'));
+      const output = await mkdtemp(join(tmpdir(), 'nod-native-recovery-'));
       t.after(() => rm(output, { recursive: true, force: true }));
       await buildDesktopUI(output);
       const page = new JSDOM(await readFile(join(output, 'index.html'), 'utf8'), {
@@ -798,7 +804,7 @@ test('native startup recovery keeps current status and serializes retry, prerequ
       let publish;
       const calls = [];
       let imports = 0;
-      page.window.ottoDesktop = {
+      page.window.nodDesktop = {
         onStatus(listener) {
           publish = listener;
         },
@@ -888,7 +894,7 @@ test('native startup recovery keeps current status and serializes retry, prerequ
 test('native startup preserves saved metadata failures until retry without replaying acknowledged consent', async (t) => {
   for (const failedMethod of ['getSettings', 'getPreferences']) {
     await t.test(failedMethod, async (t) => {
-      const output = await mkdtemp(join(tmpdir(), 'otto-native-metadata-'));
+      const output = await mkdtemp(join(tmpdir(), 'nod-native-metadata-'));
       t.after(() => rm(output, { recursive: true, force: true }));
       await buildDesktopUI(output);
       const page = new JSDOM(await readFile(join(output, 'index.html'), 'utf8'), {
@@ -911,7 +917,7 @@ test('native startup preserves saved metadata failures until retry without repla
         getSettings: { welcome: { usageData: false, continued: true, acknowledged: true } },
         getPreferences: { theme: 'light' },
       };
-      page.window.ottoDesktop = {
+      page.window.nodDesktop = {
         onStatus(listener) {
           publish = listener;
         },
@@ -1045,8 +1051,8 @@ test('native key-store failure needs an explicit retry and never completes onboa
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
     failing = false;
     await Promise.all([
-      f.handlers.get('otto:prepare')(event, { retry: true }),
-      f.handlers.get('otto:prepare')(event, { retry: true }),
+      f.handlers.get('nod:prepare')(event, { retry: true }),
+      f.handlers.get('nod:prepare')(event, { retry: true }),
     ]);
     assert.equal(f.children.length, 1);
     assert.equal((await f.storage.store.get()).onboardingCompleted, false);
@@ -1088,11 +1094,11 @@ test('native onboarding starts one normal backend at storage readiness and keeps
   try {
     await f.launch();
     const shell = f.windows[0];
-    await f.handlers.get('otto:settings:save')(
+    await f.handlers.get('nod:settings:save')(
       { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
       { welcome: { usageData: true, continued: true } },
     );
-    const opening = f.handlers.get('otto:prepare')({
+    const opening = f.handlers.get('nod:prepare')({
       sender: shell.webContents,
       senderFrame: shell.webContents.mainFrame,
     });
@@ -1105,9 +1111,9 @@ test('native onboarding starts one normal backend at storage readiness and keeps
     await connected.promise;
     assert.equal(f.children.length, 1);
     const engine = f.children[0];
-    assert.equal(engine.environment.OTTO_DESKTOP_RUNTIME_PENDING, 'true');
+    assert.equal(engine.environment.NOD_DESKTOP_RUNTIME_PENDING, 'true');
     assert.equal(
-      engine.sent.some((message) => message.type === 'otto-runtime-ready'),
+      engine.sent.some((message) => message.type === 'nod-runtime-ready'),
       false,
     );
     const window = f.windows.at(-1);
@@ -1120,12 +1126,12 @@ test('native onboarding starts one normal backend at storage readiness and keeps
       webContentsId: window.webContents.id,
       frame: window.webContents.mainFrame,
       resourceType: 'xhr',
-      requestHeaders: { 'X-Otto-Desktop-Token': 'forged' },
+      requestHeaders: { 'X-nod-Desktop-Token': 'forged' },
       ...extra,
     });
     assert.equal(
-      (await f.headers(request(`${origin}/api/session`))).requestHeaders['x-otto-desktop-token'],
-      engine.environment.OTTO_DESKTOP_AUTH_TOKEN,
+      (await f.headers(request(`${origin}/api/session`))).requestHeaders['x-nod-desktop-token'],
+      engine.environment.NOD_DESKTOP_AUTH_TOKEN,
     );
     for (const details of [
       request(`${origin}/api/session`, { webContentsId: -1 }),
@@ -1134,7 +1140,7 @@ test('native onboarding starts one normal backend at storage readiness and keeps
     ])
       assert.ok(
         Object.keys((await f.headers(details)).requestHeaders).every(
-          (name) => name.toLowerCase() !== 'x-otto-desktop-token',
+          (name) => name.toLowerCase() !== 'x-nod-desktop-token',
         ),
       );
     resources.resolve();
@@ -1142,7 +1148,7 @@ test('native onboarding starts one normal backend at storage readiness and keeps
     await f.settle();
     assert.equal(f.children.length, 1);
     assert.equal(new URL(window.url).origin, origin);
-    assert.equal(engine.sent.filter((message) => message.type === 'otto-runtime-ready').length, 1);
+    assert.equal(engine.sent.filter((message) => message.type === 'nod-runtime-ready').length, 1);
     assert.equal((await f.storage.store.get()).onboardingCompleted, false);
     assert.equal(f.status().phase, 'ready');
   } finally {
@@ -1291,7 +1297,7 @@ test('native windows wait for owned renderer readiness before replacing startup'
         if (scenario !== 'early-load-failure') await f.settle();
         assert.equal(engine.isVisible(), false);
         const frame = engine.webContents.mainFrame;
-        const ready = f.handlers.get('otto:renderer-ready');
+        const ready = f.handlers.get('nod:renderer-ready');
         for (const event of [
           { sender: { mainFrame: frame }, senderFrame: frame },
           { sender: engine.webContents, senderFrame: { ...frame } },
@@ -1330,7 +1336,7 @@ test('native windows wait for owned renderer readiness before replacing startup'
           let retry;
           if (scenario === 'reopen-load-failure') f.showEngine();
           else
-            retry = f.handlers.get('otto:prepare')(
+            retry = f.handlers.get('nod:prepare')(
               { sender: recovery.webContents, senderFrame: recovery.webContents.mainFrame },
               { retry: true },
             );
@@ -1487,7 +1493,7 @@ test('a missing native setup renderer offers explicit recovery without hidden ke
         const retry = async () => {
           let retried = false;
           const result = f.handlers
-            .get('otto:prepare')(
+            .get('nod:prepare')(
               { sender: recovery.webContents, senderFrame: recovery.webContents.mainFrame },
               { retry: true },
             )
@@ -1546,8 +1552,8 @@ test('completed upgrades retain settings and only explicit replay repeats onboar
           f.children.map((child) => child.kind),
           ['engine'],
         );
-        assert.equal(f.children.at(-1).environment.OTTO_DESKTOP_RUNTIME_PENDING, 'true');
-        assert.equal(f.children.at(-1).environment.OTTO_DESKTOP_LEGACY_INTEGRATION, undefined);
+        assert.equal(f.children.at(-1).environment.NOD_DESKTOP_RUNTIME_PENDING, 'true');
+        assert.equal(f.children.at(-1).environment.NOD_DESKTOP_LEGACY_INTEGRATION, undefined);
         if (initialState === 'replay')
           assert.ok(f.windows.some((window) => window.url?.endsWith('/onboarding?replay=1')));
         else
@@ -1587,16 +1593,16 @@ test('failed Welcome transfer preserves the saved answer and retries without a s
     const event = { sender: shell.webContents, senderFrame: shell.webContents.mainFrame };
     const choice = { usageData: true, continued: true };
     assert.deepEqual(
-      (await f.handlers.get('otto:settings:save')(event, { welcome: choice })).welcome,
+      (await f.handlers.get('nod:settings:save')(event, { welcome: choice })).welcome,
       choice,
     );
     assert.equal(writes, 0);
-    await assert.rejects(f.handlers.get('otto:prepare')(event));
+    await assert.rejects(f.handlers.get('nod:prepare')(event));
     assert.deepEqual((await f.storage.store.get()).welcome, choice);
     assert.equal(shell.isDestroyed(), false);
     failing = false;
     shell.focused = false;
-    await f.handlers.get('otto:prepare')(event, { retry: true });
+    await f.handlers.get('nod:prepare')(event, { retry: true });
     const background = f.windows.find((window) => window.url);
     assert.ok(background);
     assert.equal(background.isVisible(), true);
@@ -1657,7 +1663,7 @@ test('a failed saved Welcome transfer leaves storage and the normal backend read
     assert.equal(f.windows[0].isDestroyed(), false);
     failing = false;
     const shell = f.windows[0];
-    await f.handlers.get('otto:prepare')(
+    await f.handlers.get('nod:prepare')(
       { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
       { retry: true },
     );
@@ -1699,7 +1705,7 @@ test('one explicit retry after an engine exit also retries the saved Welcome cho
     assert.equal(f.children.length, 1);
     failing = false;
     const shell = f.windows.find((window) => !window.isDestroyed() && window.path);
-    await f.handlers.get('otto:prepare')(
+    await f.handlers.get('nod:prepare')(
       { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
       { retry: true },
     );
@@ -1742,6 +1748,7 @@ test('session reconciliation retries after runtime startup without rebuilding th
           },
         },
       );
+      await f.storage.store.save({ notifications: true, launchAtLogin: true });
       const save = f.storage.store.save;
       f.storage.store.save = async (value) => {
         if (value.onboardingCompleted && failing && failure === 'settings')
@@ -1758,7 +1765,7 @@ test('session reconciliation retries after runtime startup without rebuilding th
         assert.equal(f.children.length, 1);
         failing = false;
         const shell = f.windows[0];
-        const result = await f.handlers.get('otto:prepare')(
+        const result = await f.handlers.get('nod:prepare')(
           { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
           { retry: true },
         );
@@ -1769,7 +1776,7 @@ test('session reconciliation retries after runtime startup without rebuilding th
         assert.equal(f.children.length, 1);
         assert.equal((await f.storage.store.get()).onboardingCompleted, true);
         assert.equal(
-          f.children[0].sent.filter((message) => message.type === 'otto-runtime-ready').length,
+          f.children[0].sent.filter((message) => message.type === 'nod-runtime-ready').length,
           1,
         );
       } finally {
@@ -1800,10 +1807,10 @@ test('partial onboarding restart keeps acknowledged consent and normal app progr
     await first.settle();
     const shell = first.windows[0];
     const event = { sender: shell.webContents, senderFrame: shell.webContents.mainFrame };
-    await first.handlers.get('otto:settings:save')(event, {
+    await first.handlers.get('nod:settings:save')(event, {
       welcome: { usageData: true, continued: true },
     });
-    await first.handlers.get('otto:prepare')(event);
+    await first.handlers.get('nod:prepare')(event);
     assert.equal(writes, 1);
   } finally {
     await first.close();
@@ -1824,8 +1831,9 @@ test('partial onboarding restart keeps acknowledged consent and normal app progr
     assert.equal(new URL(window.url).pathname, '/onboarding');
     assert.equal(new URL(window.url).searchParams.get('welcome'), 'complete');
     assert.equal((await next.storage.store.get()).welcome.acknowledged, true);
+    await next.storage.store.save({ notifications: true, launchAtLogin: true });
     completed = true;
-    await next.handlers.get('otto:settings:save')(
+    await next.handlers.get('nod:settings:save')(
       { sender: window.webContents, senderFrame: window.webContents.mainFrame },
       { onboardingCompleted: true },
     );
@@ -1836,7 +1844,7 @@ test('partial onboarding restart keeps acknowledged consent and normal app progr
   }
 });
 
-test('completed backend onboarding wins over a stale native Welcome answer without changing consent', async (t) => {
+test('completed backend onboarding resumes required native preferences without changing consent', async (t) => {
   const f = await runningDesktop(
     t,
     async (url, options) => {
@@ -1853,9 +1861,13 @@ test('completed backend onboarding wins over a stale native Welcome answer witho
   try {
     await f.launch();
     await f.settle();
-    assert.equal((await f.storage.store.get()).onboardingCompleted, true);
-    assert.equal((await f.storage.store.get()).welcome, undefined);
-    assert.ok(f.windows.some((window) => window.url && new URL(window.url).pathname === '/'));
+    assert.equal((await f.storage.store.get()).onboardingCompleted, false);
+    assert.equal((await f.storage.store.get()).notifications, false);
+    const recovery = f.windows.find(
+      (window) => window.url && new URL(window.url).pathname === '/onboarding',
+    );
+    assert.ok(recovery);
+    assert.equal(new URL(recovery.url).searchParams.get('preferences'), 'required');
     assert.ok(f.windows.every((window) => !window.url?.includes('welcome=complete')));
   } finally {
     await f.close();
@@ -1896,7 +1908,7 @@ test('workspace failure leaves the pending backend intact and an explicit retry 
     assert.equal(attempts, 2);
     assert.equal(f.children.length, 1);
     assert.deepEqual(JSON.parse(JSON.stringify(f.children[0].sent)), [
-      { type: 'otto-runtime-ready' },
+      { type: 'nod-runtime-ready' },
     ]);
     assert.equal(f.status().phase, 'ready');
     assert.equal(f.windows[0].isDestroyed(), true);
@@ -1910,7 +1922,12 @@ test('native upgrades preserve the existing settings and vault through successfu
   for (const failed of [false, true]) {
     await t.test(failed ? 'failed runtime' : 'ready runtime', async (t) => {
       const storage = await fixture(t);
-      await storage.store.save({ onboardingCompleted: true, theme: 'dark' });
+      await storage.store.save({
+        onboardingCompleted: true,
+        notifications: true,
+        launchAtLogin: true,
+        theme: 'dark',
+      });
       const environment = await storage.store.environment();
       const saved = JSON.parse(await readFile(storage.path, 'utf8'));
       saved.secrets.composioApiKey = 'retired-ciphertext-must-not-be-unlocked';
@@ -1934,10 +1951,10 @@ test('native upgrades preserve the existing settings and vault through successfu
         await f.launch();
         await f.settle();
         assert.equal(f.status().phase, failed ? 'error' : 'ready');
-        assert.equal(f.children[0].environment.OTTO_VAULT_KEY, environment.OTTO_VAULT_KEY);
+        assert.equal(f.children[0].environment.NOD_VAULT_KEY, environment.NOD_VAULT_KEY);
         assert.deepEqual(
           JSON.parse(JSON.stringify(f.children[0].sent)),
-          failed ? [] : [{ type: 'otto-runtime-ready' }],
+          failed ? [] : [{ type: 'nod-runtime-ready' }],
         );
         assert.equal((await f.storage.store.get()).onboardingCompleted, true);
         assert.equal((await f.storage.store.get()).theme, 'dark');
@@ -2018,9 +2035,9 @@ test('desktop proxy overrides reach only isolated source engines and retain orig
           allowStart: true,
           packaged: scenario.packaged,
           environment: (path) => ({
-            OTTO_COMPOSIO_PROXY_URL: scenario.url,
+            NOD_COMPOSIO_PROXY_URL: scenario.url,
             COMPOSIO_API_KEY: 'synthetic-inherited-project-key',
-            ...(scenario.isolated ? { OTTO_DESKTOP_USER_DATA: join(path, 'isolated') } : {}),
+            ...(scenario.isolated ? { NOD_DESKTOP_USER_DATA: join(path, 'isolated') } : {}),
           }),
         },
       );
@@ -2029,13 +2046,13 @@ test('desktop proxy overrides reach only isolated source engines and retain orig
       const environment = f.children[0].environment;
       const allowed = scenario.isolated && !scenario.packaged;
       assert.equal(environment.COMPOSIO_API_KEY, undefined);
-      assert.equal(environment.OTTO_COMPOSIO_PROXY_URL, allowed ? scenario.url : undefined);
-      assert.equal(Boolean(environment.OTTO_DESKTOP_USER_DATA), Boolean(allowed));
+      assert.equal(environment.NOD_COMPOSIO_PROXY_URL, allowed ? scenario.url : undefined);
+      assert.equal(Boolean(environment.NOD_DESKTOP_USER_DATA), Boolean(allowed));
       assert.equal(
-        environment.OTTO_DATA_ROOT,
+        environment.NOD_DATA_ROOT,
         allowed
           ? join(dirname(f.storage.path), 'isolated', 'profiles', 'local')
-          : join(dirname(f.storage.path), 'Otto', 'profiles', 'local'),
+          : join(dirname(f.storage.path), 'nod', 'profiles', 'local'),
       );
       const expected = allowed ? scenario.url : 'https://composio.n8n.cloud';
       const script = `
@@ -2082,7 +2099,7 @@ test('desktop proxy overrides reach only isolated source engines and retain orig
               ...environment,
               DOTENV_CONFIG_PATH: join(dirname(f.storage.path), 'absent.env'),
               COMPOSIO_BASE_URL: 'https://backend.composio.dev',
-              OTTO_ANALYTICS_ENABLED: 'false',
+              NOD_ANALYTICS_ENABLED: 'false',
             },
             timeout: 20_000,
             maxBuffer: 128 * 1024,
@@ -2098,8 +2115,8 @@ test('desktop proxy overrides reach only isolated source engines and retain orig
   await assert.rejects(
     runningDesktop(t, () => assert.fail('No engine should launch.'), {
       environment: () => ({
-        OTTO_DESKTOP_USER_DATA: 'relative-profile',
-        OTTO_COMPOSIO_PROXY_URL: 'http://127.0.0.1:8787',
+        NOD_DESKTOP_USER_DATA: 'relative-profile',
+        NOD_COMPOSIO_PROXY_URL: 'http://127.0.0.1:8787',
       }),
     }),
     /profile path must be absolute/,
@@ -2153,7 +2170,7 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     () => assert.fail('Settings must not make an engine request.'),
     { platform: 'win32' },
   );
-  const { OTTO_VAULT_KEY: vaultKey } = await f.storage.store.environment();
+  const { NOD_VAULT_KEY: vaultKey } = await f.storage.store.environment();
   assert.ok(vaultKey);
   f.showEngine();
   const window = f.windows.at(-1);
@@ -2171,9 +2188,9 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   const event = { sender: window.webContents, senderFrame: frame };
   const invoke = (channel, target, ...args) =>
     Promise.resolve().then(() => f.handlers.get(channel)(target, ...args));
-  const get = (target = event) => invoke('otto:settings:get', target);
-  const save = (value, target = event) => invoke('otto:settings:save', target, value);
-  assert.equal(f.handlers.has('otto:settings:reveal'), false);
+  const get = (target = event) => invoke('nod:settings:get', target);
+  const save = (value, target = event) => invoke('nod:settings:save', target, value);
+  assert.equal(f.handlers.has('nod:settings:reveal'), false);
   for (const rejected of [
     { sender: { mainFrame: frame }, senderFrame: frame },
     { sender: window.webContents, senderFrame: { url: frame.url } },
@@ -2206,14 +2223,14 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   assert.equal(serialized.includes(vaultCiphertext), false);
   await save({ theme: 'dark', launchAtLogin: true });
   assert.equal((await f.storage.store.get()).launchAtLogin, true);
-  await invoke('otto:preferences:theme', event, 'light');
+  await invoke('nod:preferences:theme', event, 'light');
   assert.equal((await f.storage.store.get()).theme, 'light');
-  await invoke('otto:external', event, 'https://example.test/');
+  await invoke('nod:external', event, 'https://example.test/');
   assert.deepEqual(f.externalURLs, ['https://example.test/']);
   window.loading = false;
-  await invoke('otto:settings:open', event, 'models');
+  await invoke('nod:settings:open', event, 'models');
   assert.ok(
-    window.sent.some(([channel, value]) => channel === 'otto:settings:focus' && value === 'models'),
+    window.sent.some(([channel, value]) => channel === 'nod:settings:focus' && value === 'models'),
   );
   window.destroy();
   await assert.rejects(save({ theme: 'light' }));
@@ -2222,9 +2239,9 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   const setup = f.windows.at(-1).webContents;
   const setupEvent = { sender: setup, senderFrame: setup.mainFrame };
   for (const [channel, value] of [
-    ['otto:preferences:theme', 'dark'],
-    ['otto:external', 'https://example.test/'],
-    ['otto:settings:open', 'models'],
+    ['nod:preferences:theme', 'dark'],
+    ['nod:external', 'https://example.test/'],
+    ['nod:settings:open', 'models'],
   ])
     await assert.rejects(invoke(channel, setupEvent, value), /This action is unavailable/);
   f.status().runtime = { phase: 'error', needsWsl: true };
@@ -2233,7 +2250,7 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     { sender: { mainFrame: setup.mainFrame }, senderFrame: setup.mainFrame },
     { sender: setup, senderFrame: { url: setup.mainFrame.url } },
   ])
-    await assert.rejects(invoke('otto:runtime:install-wsl', rejected));
+    await assert.rejects(invoke('nod:runtime:install-wsl', rejected));
 });
 
 test('an engine crash retires every stale chat window before recovery opens the new engine', async (t) => {
@@ -2266,7 +2283,7 @@ test('an engine crash retires every stale chat window before recovery opens the 
   assert.equal(f.children.length, 2);
 });
 
-test('the engine token waits for the engine Otto started to report its port', async (t) => {
+test('the engine token waits for the engine nod started to report its port', async (t) => {
   const requests = [];
   const f = await runningDesktop(
     t,
@@ -2288,7 +2305,7 @@ test('the engine token waits for the engine Otto started to report its port', as
 });
 
 async function fixture(t, platform = 'win32') {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-desktop-settings-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-desktop-settings-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'profile', 'settings.json');
   const key = randomBytes(32);
@@ -2337,7 +2354,7 @@ test(
   'Windows DPAPI keeps the Vault and completed setup across real Electron restarts behind private ACLs',
   { skip: process.platform !== 'win32', timeout: 120_000 },
   async (t) => {
-    const directory = await mkdtemp(join(tmpdir(), 'otto-dpapi-restart-'));
+    const directory = await mkdtemp(join(tmpdir(), 'nod-dpapi-restart-'));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const profile = join(directory, 'profile');
     await mkdir(join(directory, 'electron'));
@@ -2362,16 +2379,18 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createSettingsStore } from ${JSON.stringify(new URL('../main/settings.mjs', import.meta.url).href)};
 import { sealVaultValue, openVaultValue } from ${JSON.stringify(pathToFileURL(vault).href)};
-app.setPath('userData', process.env.OTTO_STORAGE_TEST_USER_DATA);
+app.setPath('userData', process.env.NOD_STORAGE_TEST_USER_DATA);
 app.whenReady().then(async () => {
   assert.equal(safeStorage.isEncryptionAvailable(), true);
-  const profile = process.env.OTTO_STORAGE_TEST_PROFILE;
+  const profile = process.env.NOD_STORAGE_TEST_PROFILE;
   const settingsPath = join(profile, 'settings.json');
   const store = createSettingsStore(settingsPath, safeStorage);
-  if (process.argv.at(-1) === 'write')
-    await store.save({ notifications: false, launchAtLogin: true, onboardingCompleted: true });
-  const { OTTO_VAULT_KEY } = await store.environment();
-  const key = Buffer.from(OTTO_VAULT_KEY, 'base64');
+  if (process.argv.at(-1) === 'write') {
+    await store.save({ notifications: true, launchAtLogin: true, onboardingCompleted: true });
+    await store.save({notifications:false});
+  }
+  const { NOD_VAULT_KEY } = await store.environment();
+  const key = Buffer.from(NOD_VAULT_KEY, 'base64');
   const binding = ['synthetic-owner', 'synthetic-account'];
   const secret = 'synthetic-private-provider-key';
   const ciphertextPath = join(profile, 'vault');
@@ -2381,9 +2400,9 @@ app.whenReady().then(async () => {
   assert.equal(openVaultValue(key, binding, ciphertext), secret);
   assert.throws(() => openVaultValue(key, ['different-owner', binding[1]], ciphertext));
   const settings = await readFile(settingsPath);
-  assert.equal(settings.includes(OTTO_VAULT_KEY), false);
+  assert.equal(settings.includes(NOD_VAULT_KEY), false);
   assert.equal(ciphertext.includes(secret), false);
-  process.stdout.write('OTTO_STORAGE_RESULT=' + JSON.stringify({
+  process.stdout.write('NOD_STORAGE_RESULT=' + JSON.stringify({
     keyHash: createHash('sha256').update(key).digest('hex'),
     settingsHash: createHash('sha256').update(settings).digest('hex'),
     preferences: await store.get(),
@@ -2397,8 +2416,8 @@ app.whenReady().then(async () => {
     );
     const environment = {
       ...process.env,
-      OTTO_STORAGE_TEST_PROFILE: profile,
-      OTTO_STORAGE_TEST_USER_DATA: join(directory, 'electron'),
+      NOD_STORAGE_TEST_PROFILE: profile,
+      NOD_STORAGE_TEST_USER_DATA: join(directory, 'electron'),
     };
     delete environment.ELECTRON_RUN_AS_NODE;
     const execute = (file, args, env = environment) =>
@@ -2411,7 +2430,7 @@ app.whenReady().then(async () => {
     const { default: electron } = await import('../node_modules/electron/index.js');
     const run = async (mode) => {
       const output = await execute(electron, [script, mode]);
-      const result = output.match(/OTTO_STORAGE_RESULT=([^\r\n]+)/);
+      const result = output.match(/NOD_STORAGE_RESULT=([^\r\n]+)/);
       assert.ok(result, 'The Electron process must return its storage receipt.');
       return JSON.parse(result[1]);
     };
@@ -2436,9 +2455,9 @@ app.whenReady().then(async () => {
 $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 $owner = $identity.User.Value
 $expected = @($owner, 'S-1-5-18', 'S-1-5-32-544')
-$results = foreach ($path in @($env:OTTO_STORAGE_TEST_PROFILE, (Join-Path $env:OTTO_STORAGE_TEST_PROFILE 'settings.json'), (Join-Path $env:OTTO_STORAGE_TEST_PROFILE 'vault'))) {
+$results = foreach ($path in @($env:NOD_STORAGE_TEST_PROFILE, (Join-Path $env:NOD_STORAGE_TEST_PROFILE 'settings.json'), (Join-Path $env:NOD_STORAGE_TEST_PROFILE 'vault'))) {
   $acl = Get-Acl -LiteralPath $path
-  $expectedOwner = if ($path -eq $env:OTTO_STORAGE_TEST_PROFILE) { $owner } else { $identity.Owner.Value }
+  $expectedOwner = if ($path -eq $env:NOD_STORAGE_TEST_PROFILE) { $owner } else { $identity.Owner.Value }
   $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
   [pscustomobject]@{
     private = ($rules.Count -eq 3 -and @($rules | Where-Object { $_.IdentityReference.Value -notin $expected -or $_.AccessControlType -ne 'Allow' -or $_.FileSystemRights -ne 'FullControl' }).Count -eq 0)
@@ -2448,7 +2467,7 @@ $results = foreach ($path in @($env:OTTO_STORAGE_TEST_PROFILE, (Join-Path $env:O
 }
 ConvertTo-Json -InputObject @($results) -Compress`,
         ],
-        { ...windowsEnvironment(), OTTO_STORAGE_TEST_PROFILE: profile },
+        { ...windowsEnvironment(), NOD_STORAGE_TEST_PROFILE: profile },
       ),
     );
     assert.equal(acl.length, 3);
@@ -2462,7 +2481,12 @@ ConvertTo-Json -InputObject @($results) -Compress`,
 
 test('startup reads preserve older settings for rollback until an owner preference changes', async (t) => {
   const f = await fixture(t);
-  await f.store.save({ theme: 'dark', notifications: true, onboardingCompleted: true });
+  await f.store.save({
+    theme: 'dark',
+    notifications: true,
+    launchAtLogin: true,
+    onboardingCompleted: true,
+  });
   const expected = await f.store.environment();
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
   saved.secrets.composioApiKey = 'unreadable-retired-ciphertext';
@@ -2677,17 +2701,18 @@ test('a keyless installation creates one persistent encrypted vault across concu
   const f = await fixture(t);
   assert.equal(Object.hasOwn(await f.store.get(), 'hasComposioKey'), false);
   const environments = await Promise.all(Array.from({ length: 8 }, () => f.store.environment()));
-  const vault = environments[0].OTTO_VAULT_KEY;
+  const vault = environments[0].NOD_VAULT_KEY;
   assert.equal(Buffer.from(vault, 'base64').length, 32);
-  for (const environment of environments) assert.deepEqual(environment, { OTTO_VAULT_KEY: vault });
-  assert.equal((await f.reopen().environment()).OTTO_VAULT_KEY, vault);
+  for (const environment of environments) assert.deepEqual(environment, { NOD_VAULT_KEY: vault });
+  assert.equal((await f.reopen().environment()).NOD_VAULT_KEY, vault);
   assert.ok(!(await readFile(f.path, 'utf8')).includes(vault));
-  await f.store.save({ notifications: true, onboardingCompleted: true });
-  assert.equal((await f.store.environment()).OTTO_VAULT_KEY, vault);
+  await f.store.save({ notifications: true, launchAtLogin: true, onboardingCompleted: true });
+  assert.equal((await f.store.environment()).NOD_VAULT_KEY, vault);
 });
 
 test('settings withhold completion when temporary bytes fail to persist', async (t) => {
   const f = await fixture(t);
+  await f.store.save({ notifications: true, launchAtLogin: true });
   const environment = await f.store.environment();
   const saved = await readFile(f.path, 'utf8');
   const handle = await open(f.path, 'r');
@@ -2743,6 +2768,7 @@ test(
     fail = false;
     const environment = await f.store.environment();
     assert.deepEqual(await reopened.environment(), environment);
+    await f.store.save({ notifications: true, launchAtLogin: true });
     fail = true;
     await assert.rejects(f.store.save({ onboardingCompleted: true }), { code: 'EIO' });
     assert.equal(JSON.parse(await readFile(f.path, 'utf8')).onboardingCompleted, true);
@@ -2766,7 +2792,7 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   const contents = window.webContents;
   const frame = contents.mainFrame;
   const event = { sender: contents, senderFrame: frame };
-  const capture = f.handlers.get('otto:feedback:capture');
+  const capture = f.handlers.get('nod:feedback:capture');
   let safe = true;
   let captured = 0;
   const dom = new JSDOM(
@@ -2914,18 +2940,18 @@ test('engine preload exposes no credential reveal and withholds privileged IPC e
     received = values;
   });
   const value = { theme: 'dark', resolvedTheme: 'dark', notifications: true, launchAtLogin: false };
-  listeners.get('otto:preferences')({ sender: 'privileged-synthetic-ipc' }, value);
+  listeners.get('nod:preferences')({ sender: 'privileged-synthetic-ipc' }, value);
   assert.deepEqual(received, [value]);
   bridge.onStatus((...values) => {
     received = values;
   });
   const status = { phase: 'preparing', runtime: { phase: 'starting' } };
-  listeners.get('otto:status')({ sender: 'privileged-synthetic-ipc' }, status);
+  listeners.get('nod:status')({ sender: 'privileged-synthetic-ipc' }, status);
   assert.deepEqual(received, [status]);
 });
 
 async function chatReadFixture(t) {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-chat-read-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-chat-read-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'positions.json');
   const identity = { ownerId: randomUUID() };
@@ -2964,7 +2990,7 @@ test('native chat read positions reject cross-owner and malformed metadata witho
 });
 
 async function preferencesFixture(t) {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-native-preferences-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-native-preferences-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'profile', 'preferences.json');
   const state = {
@@ -3068,13 +3094,13 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
   const platform = `darwin-${arch}`;
   const name = (kind) => (arch === 'arm64' ? `${kind}.json` : `${kind}-darwin-x64.json`);
   const archive = {
-    file: `Otto-Runtime-${platform}-${'b'.repeat(12)}.tar.gz`,
+    file: `nod-Runtime-${platform}-${'b'.repeat(12)}.tar.gz`,
     bytes: 180,
     sha256: 'c'.repeat(64),
   };
   const runtime = {
     platform,
-    ...(official ? { releaseTag: 'desktop-v0.1.9' } : {}),
+    ...(official ? { releaseTag: 'nod-v0.1.9' } : {}),
     id: 'b'.repeat(64),
     fingerprint: 'd'.repeat(64),
     archive,
@@ -3088,12 +3114,12 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
   });
   const release = {
     id: 12,
-    tag_name: 'desktop-v0.2.0',
+    tag_name: 'nod-v0.2.0',
     draft: false,
     prerelease: true,
     assets: [
       item(101, name('release'), 300),
-      item(103, `Otto-${arch}.zip`, 1000),
+      item(103, `nod-${arch}.zip`, 1000),
       item(102, name('runtime-release'), 500),
       item(104, name('update'), 150),
     ],
@@ -3110,9 +3136,9 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
     source: 'a'.repeat(40),
     signing: { mode: 'self-signed' },
     runtime,
-    update: { file: `Otto-${arch}.zip`, bytes: 1000, sha256: 'e'.repeat(64) },
+    update: { file: `nod-${arch}.zip`, bytes: 1000, sha256: 'e'.repeat(64) },
   };
-  const base = sourceUrl || 'https://api.github.com/repos/n8n-io/otto';
+  const base = sourceUrl || 'https://api.github.com/repos/n8n-io/nod';
   const assetPath = (owner, entry) =>
     sourceUrl
       ? `${base}/releases/${owner.id}/assets/${entry.id}/${entry.name}`
@@ -3121,8 +3147,8 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
     [
       `${base}/releases${sourceUrl ? '' : '?per_page=100'}`,
       [
-        { ...release, id: 11, tag_name: 'desktop-v0.1.0' },
-        { ...release, id: 13, tag_name: 'desktop-v9.0.0', draft: true },
+        { ...release, id: 11, tag_name: 'nod-v0.1.0' },
+        { ...release, id: 13, tag_name: 'nod-v9.0.0', draft: true },
         { ...release, id: 14, tag_name: 'runtime-darwin-arm64-irrelevant' },
         release,
       ],
@@ -3134,8 +3160,8 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
     [
       assetPath(release, release.assets[3]),
       {
-        url: `https://github.com/n8n-io/otto/releases/download/desktop-v0.2.0/Otto-${arch}.zip`,
-        name: 'Otto 0.2.0',
+        url: `https://github.com/n8n-io/nod/releases/download/nod-v0.2.0/nod-${arch}.zip`,
+        name: 'nod 0.2.0',
       },
     ],
   ]);
@@ -3157,9 +3183,9 @@ function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
 test('desktop updates bind newer published releases and both source adapters to exact app and runtime assets', async () => {
   for (const suffix of ['?', '#'])
     assert.throws(() =>
-      createUpdateSource({ sourceUrl: `https://updates.example.invalid/otto${suffix}` }),
+      createUpdateSource({ sourceUrl: `https://updates.example.invalid/nod${suffix}` }),
     );
-  for (const sourceUrl of [undefined, 'https://updates.example.invalid/otto-desktop']) {
+  for (const sourceUrl of [undefined, 'https://updates.example.invalid/nod-desktop']) {
     const f = updateReleaseFixture(sourceUrl);
     const candidate = await f.source.latest('0.1.0');
     assert.equal(candidate.version, '0.2.0');
@@ -3168,13 +3194,13 @@ test('desktop updates bind newer published releases and both source adapters to 
       candidate.downloadUrl,
       sourceUrl
         ? `${sourceUrl}/releases/18/assets/201/${f.runtime.archive.file}`
-        : 'https://api.github.com/repos/n8n-io/otto/releases/assets/201',
+        : 'https://api.github.com/repos/n8n-io/nod/releases/assets/201',
     );
     assert.equal(
       candidate.feedUrl,
       sourceUrl
         ? `${sourceUrl}/releases/12/feed/103?version=0.1.0&platform=darwin-arm64`
-        : 'https://github.com/n8n-io/otto/releases/download/desktop-v0.2.0/update.json',
+        : 'https://github.com/n8n-io/nod/releases/download/nod-v0.2.0/update.json',
     );
     assert.equal(await f.source.latest('0.2.0'), undefined);
     f.manifest.runtime = { ...f.runtime, id: 'f'.repeat(64) };
@@ -3192,9 +3218,9 @@ test('desktop updates bind newer published releases and both source adapters to 
 });
 
 test('an incomplete newest release falls back to the next newer complete release', async () => {
-  for (const sourceUrl of [undefined, 'https://updates.example.invalid/otto-desktop']) {
+  for (const sourceUrl of [undefined, 'https://updates.example.invalid/nod-desktop']) {
     const f = updateReleaseFixture(sourceUrl);
-    const broken = { ...f.release, id: 15, tag_name: 'desktop-v0.3.0', assets: [] };
+    const broken = { ...f.release, id: 15, tag_name: 'nod-v0.3.0', assets: [] };
     f.values.get(`${f.base}/releases${sourceUrl ? '' : '?per_page=100'}`).push(broken);
     f.values.set(`${f.base}/releases/15`, broken);
     assert.equal((await f.source.latest('0.1.0')).version, '0.2.0');
@@ -3299,7 +3325,7 @@ test(
       native.setFeedURL = () => {};
       native.checkForUpdates = () => {
         downloads++;
-        queueMicrotask(() => native.emit('update-downloaded', {}, '', 'Otto 0.2.0'));
+        queueMicrotask(() => native.emit('update-downloaded', {}, '', 'nod 0.2.0'));
       };
       const updater = createDesktopUpdater({
         source: {
@@ -3361,7 +3387,7 @@ test('background update readiness respects notification permission and quiet tim
       },
       currentVersion: '0.1.0',
       prepareRuntime: async () => {},
-      restart: async () => assert.fail('Background readiness cannot restart Otto.'),
+      restart: async () => assert.fail('Background readiness cannot restart nod.'),
     });
     t.after(() => updater.dispose());
     const prompts = [];
@@ -3380,7 +3406,7 @@ test('background update readiness respects notification permission and quiet tim
     });
     await f.showSettings();
     const window = f.windows.at(-1);
-    await f.handlers.get('otto:settings:save')(
+    await f.handlers.get('nod:settings:save')(
       { sender: window.webContents, senderFrame: window.webContents.mainFrame },
       { notifications: scenario.enabled },
     );
@@ -3431,20 +3457,20 @@ test('automatic update checks retry failures sooner and return to the normal int
 });
 
 test('first installation resolves its exact published runtime without a newer app and rejects changed identities', async () => {
-  for (const sourceUrl of [undefined, 'https://updates.example.invalid/otto-desktop']) {
+  for (const sourceUrl of [undefined, 'https://updates.example.invalid/nod-desktop']) {
     const f = updateReleaseFixture(sourceUrl);
     assert.equal(await f.source.latest('0.2.0'), undefined);
     assert.equal(
       await f.source.runtimeDownloadUrl(f.runtime),
       sourceUrl
         ? `${sourceUrl}/releases/18/assets/201/${f.runtime.archive.file}`
-        : 'https://api.github.com/repos/n8n-io/otto/releases/assets/201',
+        : 'https://api.github.com/repos/n8n-io/nod/releases/assets/201',
     );
     for (const change of [
       (runtime) => (runtime.fingerprint = '../other'),
       (runtime) => (runtime.id = 'invalid'),
       (runtime) => (runtime.archive.file = '../runtime.tar.gz'),
-      (runtime) => (runtime.archive.file = `Otto-Runtime-darwin-arm64-${'f'.repeat(12)}.tar.gz`),
+      (runtime) => (runtime.archive.file = `nod-Runtime-darwin-arm64-${'f'.repeat(12)}.tar.gz`),
       (runtime) => (runtime.archive.bytes = 0),
       (runtime) => (runtime.archive.bytes = 1.5),
       (runtime) => (runtime.archive.sha256 = 'invalid'),
@@ -3522,7 +3548,7 @@ test('desktop staging waits for runtime preparation and a native downloaded even
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(events, ['runtime verified', candidate.feedUrl, 'stage']);
   assert.equal(next.ready, undefined);
-  native.emit('update-downloaded', {}, '', 'Otto 0.2.0');
+  native.emit('update-downloaded', {}, '', 'nod 0.2.0');
   assert.equal(await staged, candidate);
   assert.equal(await next.check(), candidate);
   assert.equal(events.includes('restart'), false);
@@ -3557,7 +3583,7 @@ test('native download attempts remain exclusive until their terminal event and r
   await staged.promise;
   assert.equal(updater.check(), first);
   assert.equal(selections, 1);
-  native.emit('update-downloaded', {}, '', 'Otto 0.2.0');
+  native.emit('update-downloaded', {}, '', 'nod 0.2.0');
   assert.equal((await first).version, '0.2.0');
   assert.equal((await updater.check()).version, '0.2.0');
   assert.equal(selections, 1);
@@ -3565,7 +3591,7 @@ test('native download attempts remain exclusive until their terminal event and r
   const wrongNative = new EventEmitter();
   wrongNative.setFeedURL = () => {};
   wrongNative.checkForUpdates = () =>
-    queueMicrotask(() => wrongNative.emit('update-downloaded', {}, '', 'Otto 0.1.0'));
+    queueMicrotask(() => wrongNative.emit('update-downloaded', {}, '', 'nod 0.1.0'));
   const wrong = createDesktopUpdater({
     source: {
       latest: async () => ({ version: '0.2.0', feedUrl: 'https://updates.example.invalid/pinned' }),
@@ -3581,13 +3607,13 @@ test('native download attempts remain exclusive until their terminal event and r
 });
 
 test('Windows downloads stage the verified installer and fetch the runtime pack only when it changed', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-windows-update-'));
+  const root = await mkdtemp(join(tmpdir(), 'nod-windows-update-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const base = 'https://updates.example.invalid/otto-desktop';
+  const base = 'https://updates.example.invalid/nod-desktop';
   const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
   const bytes = {
-    'Otto-Setup-x64.exe': Buffer.from('synthetic Windows installer'),
-    'Otto-Runtime-win32-x64.tar.gz': Buffer.from('synthetic Windows runtime pack'),
+    'nod-Setup-x64.exe': Buffer.from('synthetic Windows installer'),
+    'nod-Runtime-win32-x64.tar.gz': Buffer.from('synthetic Windows runtime pack'),
   };
   const entry = (file) => ({ file, bytes: bytes[file].length, sha256: digest(bytes[file]) });
   const manifest = {
@@ -3595,8 +3621,8 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
     platform: 'win32-x64',
     source: 'a'.repeat(40),
     signing: { mode: 'unsigned' },
-    installer: entry('Otto-Setup-x64.exe'),
-    runtime: entry('Otto-Runtime-win32-x64.tar.gz'),
+    installer: entry('nod-Setup-x64.exe'),
+    runtime: entry('nod-Runtime-win32-x64.tar.gz'),
   };
   const item = (id, name, size, sha256) => ({
     id,
@@ -3607,20 +3633,20 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
   });
   const release = {
     id: 12,
-    tag_name: 'desktop-v0.2.0',
+    tag_name: 'nod-v0.2.0',
     draft: false,
     assets: [
       item(301, 'release-win32-x64.json', 400, 'f'.repeat(64)),
-      item(302, 'Otto-Setup-x64.exe', manifest.installer.bytes, manifest.installer.sha256),
-      item(303, 'Otto-Runtime-win32-x64.tar.gz', manifest.runtime.bytes, manifest.runtime.sha256),
+      item(302, 'nod-Setup-x64.exe', manifest.installer.bytes, manifest.installer.sha256),
+      item(303, 'nod-Runtime-win32-x64.tar.gz', manifest.runtime.bytes, manifest.runtime.sha256),
     ],
   };
   const served = { ...bytes };
   const downloads = [];
   const request = async (url) => {
     if (url === `${base}/releases`)
-      return Response.json([{ ...release, id: 11, tag_name: 'desktop-v0.1.0' }, release]);
-    if (url === `${base}/releases/12` || url === `${base}/tags/desktop-v0.2.0`)
+      return Response.json([{ ...release, id: 11, tag_name: 'nod-v0.1.0' }, release]);
+    if (url === `${base}/releases/12` || url === `${base}/tags/nod-v0.2.0`)
       return Response.json(release);
     if (url === `${base}/releases/12/assets/301/release-win32-x64.json`)
       return Response.json(manifest);
@@ -3647,7 +3673,7 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
         JSON.stringify({ guest: { file: 'guest.tar.gz', sha256: digest(pack) } }),
       ),
     ]);
-  await installRuntime(bytes['Otto-Runtime-win32-x64.tar.gz']);
+  await installRuntime(bytes['nod-Runtime-win32-x64.tar.gz']);
   const directory = join(root, 'updates');
   const updater = createDesktopUpdater({
     source: createUpdateSource({ sourceUrl: base, os: 'win32', fetch: request }),
@@ -3658,11 +3684,11 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
   });
   const ready = await updater.check();
   assert.equal(ready.version, '0.2.0');
-  assert.deepEqual(downloads, ['Otto-Setup-x64.exe']);
-  assert.deepEqual(await readdir(join(directory, '0.2.0')), ['Otto-Setup-x64.exe']);
+  assert.deepEqual(downloads, ['nod-Setup-x64.exe']);
+  assert.deepEqual(await readdir(join(directory, '0.2.0')), ['nod-Setup-x64.exe']);
   assert.deepEqual(
-    await readFile(join(directory, '0.2.0', 'Otto-Setup-x64.exe')),
-    bytes['Otto-Setup-x64.exe'],
+    await readFile(join(directory, '0.2.0', 'nod-Setup-x64.exe')),
+    bytes['nod-Setup-x64.exe'],
   );
   await updater.dispose();
 
@@ -3674,24 +3700,24 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
   downloads.length = 0;
   await installRuntime(Buffer.from('older Windows runtime pack'));
   await stageWindowsUpdate(candidate, { directory, resourcesPath, fetch: request });
-  assert.deepEqual(downloads, ['Otto-Runtime-win32-x64.tar.gz', 'Otto-Setup-x64.exe']);
+  assert.deepEqual(downloads, ['nod-Runtime-win32-x64.tar.gz', 'nod-Setup-x64.exe']);
   for (const [name, value] of Object.entries(bytes))
     assert.deepEqual(await readFile(join(directory, '0.2.0', name)), value);
 
   const source = createUpdateSource({ sourceUrl: base, os: 'win32', fetch: request });
   const runtime = {
-    releaseTag: 'desktop-v0.2.0',
+    releaseTag: 'nod-v0.2.0',
     guest: { bytes: manifest.runtime.bytes, sha256: manifest.runtime.sha256 },
   };
   assert.equal(
     await source.runtimeDownloadUrl(runtime),
-    `${base}/releases/12/assets/303/Otto-Runtime-win32-x64.tar.gz`,
+    `${base}/releases/12/assets/303/nod-Runtime-win32-x64.tar.gz`,
   );
   await assert.rejects(
     source.runtimeDownloadUrl({ ...runtime, guest: { ...runtime.guest, sha256: 'e'.repeat(64) } }),
   );
 
-  served['Otto-Setup-x64.exe'] = Buffer.alloc(bytes['Otto-Setup-x64.exe'].length, 'x');
+  served['nod-Setup-x64.exe'] = Buffer.alloc(bytes['nod-Setup-x64.exe'].length, 'x');
   await assert.rejects(stageWindowsUpdate(candidate, { directory, resourcesPath, fetch: request }));
   await assert.rejects(stat(directory), { code: 'ENOENT' });
 
@@ -3702,7 +3728,7 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
 });
 
 test('desktop update checks send the weekly ID only to the update source origin', async () => {
-  const base = 'https://updates.example.invalid/otto-desktop';
+  const base = 'https://updates.example.invalid/nod-desktop';
   const hops = {
     [`${base}/releases`]: `${base}/moved`,
     [`${base}/moved`]: 'https://mirror.example.invalid/releases',
@@ -3712,7 +3738,7 @@ test('desktop update checks send the weekly ID only to the update source origin'
     sourceUrl: base,
     weeklyId: async () => 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
     fetch: async (url, options) => {
-      seen.push([url, options.headers['x-otto-week'], options.headers['x-otto-version']]);
+      seen.push([url, options.headers['x-nod-week'], options.headers['x-nod-version']]);
       return hops[url]
         ? new Response(null, { status: 302, headers: { location: hops[url] } })
         : Response.json([]);
@@ -3726,13 +3752,13 @@ test('desktop update checks send the weekly ID only to the update source origin'
   ]);
 });
 
-test('Intel updates use their own app assets and an official Otto runtime release', async () => {
-  const f = updateReleaseFixture('https://updates.example.invalid/otto-desktop', 'x64', true);
+test('Intel updates use their own app assets and an official nod runtime release', async () => {
+  const f = updateReleaseFixture('https://updates.example.invalid/nod-desktop', 'x64', true);
   const candidate = await f.source.latest('0.1.0');
   assert.equal(candidate.runtime.platform, 'darwin-x64');
   assert(candidate.feedUrl.endsWith('platform=darwin-x64'));
   assert(f.calls.some((url) => url.endsWith('/release-darwin-x64.json')));
-  assert(f.calls.some((url) => url.endsWith('/tags/desktop-v0.1.9')));
+  assert(f.calls.some((url) => url.endsWith('/tags/nod-v0.1.9')));
   f.manifest.platform = 'darwin-arm64';
   await assert.rejects(f.source.latest('0.1.0'));
   f.manifest.platform = 'darwin-x64';
@@ -3743,22 +3769,33 @@ test('Intel updates use their own app assets and an official Otto runtime releas
 test('desktop preference choices resume durably and cannot skip or regress explicit consent', async (t) => {
   const f = await fixture(t);
   assert.equal((await f.store.get()).onboardingPreferenceStep, 'notifications');
+  await assert.rejects(f.store.save({ onboardingCompleted: true }));
+  await assert.rejects(f.store.save({ notifications: true, onboardingCompleted: true }));
+  assert.equal((await f.store.get()).onboardingCompleted, false);
   await assert.rejects(f.store.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' }));
   await assert.rejects(f.store.save({ onboardingPreferenceStep: 'launchAtLogin' }));
-  await f.store.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
-  const reopened = f.reopen();
-  assert.equal((await reopened.get()).notifications, false);
-  assert.equal((await reopened.get()).onboardingPreferenceStep, 'launchAtLogin');
-  await reopened.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
   await assert.rejects(
-    reopened.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' }),
+    f.store.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' }),
   );
-  await reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' });
-  await reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' });
+  await f.store.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' });
+  const reopened = f.reopen();
+  assert.equal((await reopened.get()).notifications, true);
+  assert.equal((await reopened.get()).onboardingPreferenceStep, 'launchAtLogin');
+  await reopened.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' });
+  await assert.rejects(
+    reopened.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' }),
+  );
+  await assert.rejects(
+    reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' }),
+  );
+  await reopened.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' });
+  await reopened.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' });
   assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
   delete saved.onboardingPreferenceStep;
   saved.onboardingCompleted = true;
+  saved.notifications = false;
+  saved.launchAtLogin = false;
   await writeFile(f.path, JSON.stringify(saved));
   assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
   assert.equal((await f.reopen().get()).notifications, false);
@@ -3767,6 +3804,8 @@ test('desktop preference choices resume durably and cannot skip or regress expli
 
 test('desktop preference steps and completion require the owned normal app and durable server completion', async (t) => {
   let completed = false;
+  let loginItemsWritable = false;
+  let loginStatus = {};
   const f = await runningDesktop(
     t,
     async (url) =>
@@ -3776,6 +3815,8 @@ test('desktop preference steps and completion require the owned normal app and d
     {
       initialState: 'fresh',
       allowStart: true,
+      updateLoginItems: () => loginItemsWritable,
+      loginItemStatus: () => loginStatus,
     },
   );
   await f.storage.store.save({ welcome: { usageData: false, continued: true } });
@@ -3784,7 +3825,7 @@ test('desktop preference steps and completion require the owned normal app and d
     await f.settle();
     const window = f.windows.at(-1);
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-    const save = f.handlers.get('otto:settings:save');
+    const save = f.handlers.get('nod:settings:save');
     await assert.rejects(
       save(
         { ...event, senderFrame: { url: window.url } },
@@ -3793,8 +3834,31 @@ test('desktop preference steps and completion require the owned normal app and d
     );
     await assert.rejects(save(event, { welcome: { usageData: true, continued: true } }));
     await assert.rejects(save(event, { onboardingCompleted: true }));
-    await save(event, { notifications: false, onboardingPreferenceStep: 'launchAtLogin' });
-    await save(event, { launchAtLogin: false, onboardingPreferenceStep: 'complete' });
+    await assert.rejects(
+      save(event, { notifications: false, onboardingPreferenceStep: 'launchAtLogin' }),
+    );
+    await save(event, { notifications: true, onboardingPreferenceStep: 'launchAtLogin' });
+    await assert.rejects(
+      save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
+      /login items/,
+    );
+    assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
+    assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
+    loginItemsWritable = true;
+    for (const status of [
+      { status: 'requires-approval' },
+      { executableWillLaunchAtLogin: false },
+    ]) {
+      loginStatus = status;
+      await assert.rejects(
+        save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
+        /login items/,
+      );
+      assert.equal((await f.storage.reopen().get()).launchAtLogin, false);
+      assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'launchAtLogin');
+    }
+    loginStatus = {};
+    await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
     assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
     completed = true;
     await save(event, { onboardingCompleted: true });

@@ -193,6 +193,32 @@ export const browserRequest = z.discriminatedUnion('method', [
   z
     .object({
       ...identity,
+      method: z.literal('signInMethods'),
+      threadId: thread,
+      origin: z.string().min(1).max(2048),
+      methods: z
+        .array(z.object({ label: z.string().max(300), selector: selector.max(8192) }).strict())
+        .min(1)
+        .max(10),
+    })
+    .strict(),
+  z
+    .object({
+      ...identity,
+      method: z.literal('selectSignInMethod'),
+      threadId: thread,
+      input: z
+        .object({
+          origin: z.string().min(1).max(2048),
+          document: z.string().min(1).max(200),
+          methodId: z.uuid(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...identity,
       method: z.literal('injectCredentials'),
       input: browserCredentialInput.strict(),
     })

@@ -87,14 +87,14 @@ app.whenReady().then(async () => {
   const { loadIntegrationIdentity } = await import('./identity.mjs');
   const identity = await loadIntegrationIdentity({
     dataRoot: fixture.integrationRoot, ownerId: owner,
-    keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.from(environment.OTTO_VAULT_KEY, 'base64') },
+    keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.from(environment.NOD_VAULT_KEY, 'base64') },
   });
   const identityBytes = readFileSync(fixture.identityFile);
   const markerBytes = readFileSync(fixture.markerFile);
   receipt('ready', {
     encryptedHash: createHash('sha256').update(encrypted).digest('hex'),
     decryptedHash: createHash('sha256').update(safeStorage.decryptString(encrypted)).digest('hex'),
-    asyncDecryptedHash: createHash('sha256').update(environment.OTTO_VAULT_KEY).digest('hex'),
+    asyncDecryptedHash: createHash('sha256').update(environment.NOD_VAULT_KEY).digest('hex'),
     settingsBeforeHash: createHash('sha256').update(settingsBefore).digest('hex'),
     settingsHash: createHash('sha256').update(readFileSync(fixture.settings)).digest('hex'),
     owner,
@@ -147,7 +147,7 @@ app.whenReady().then(async () => {
 }
 
 async function certificate(root, name) {
-  const identity = `Otto Update Fixture ${randomUUID()}`;
+  const identity = `nod Update Fixture ${randomUUID()}`;
   const base = join(root, name);
   const password = randomBytes(32).toString('hex');
   await writeFile(`${base}.password`, password, { mode: 0o600 });
@@ -190,7 +190,7 @@ async function certificate(root, name) {
     APPLE_CERTIFICATE_SHA256: new X509Certificate(await readFile(`${base}.pem`)).fingerprint256
       .replaceAll(':', '')
       .toLowerCase(),
-    OTTO_SIGNING_MODE: 'self-signed',
+    NOD_SIGNING_MODE: 'self-signed',
   };
 }
 
@@ -209,7 +209,7 @@ async function ownedProcesses(root, identifiers) {
 
 async function main() {
   process.umask(0o077);
-  const root = await mkdtemp(join(runner, 'otto-native-updates-'));
+  const root = await mkdtemp(join(runner, 'nod-native-updates-'));
   const output = join(repository, '.local/native-update-acceptance');
   await mkdir(output, { recursive: true });
   const report = {
@@ -255,8 +255,8 @@ async function main() {
       const integrationRoot = join(root, `${kind}-profile`, 'profiles', 'local');
       const identityDirectory = join(integrationRoot, 'integration-identity');
       const fixture = {
-        name: `OttoFixture-${kind}`,
-        identifier: `dev.otto.updatefixture.${randomUUID()}.${kind}`,
+        name: `NodFixture-${kind}`,
+        identifier: `dev.nod.updatefixture.${randomUUID()}.${kind}`,
         profile: join(root, `${kind}-profile`),
         events: join(root, `${kind}.jsonl`),
         data: join(root, `${kind}-profile`, 'saved.json'),
@@ -268,7 +268,7 @@ async function main() {
         identityFile: join(identityDirectory, `${sha256(owner)}.encrypted`),
         markerFile: join(identityDirectory, `${sha256(owner)}.public`),
         challenge: randomBytes(32).toString('base64url'),
-        application: join(root, `OttoFixture-${kind}.app`),
+        application: join(root, `NodFixture-${kind}.app`),
         archive: join(root, `${kind}.zip`),
         feed: `${origin}/${kind}/feed`,
         installed: kind === 'downgrade' ? '1.0.2' : '1.0.0',
@@ -293,7 +293,7 @@ async function main() {
     await withAppleSigning(process.execPath, [source, '--package', plan], {
       env: await certificate(root, 'different'),
     });
-    assert.equal(existsSync(join(runner, 'otto-apple-signing-state.json')), false);
+    assert.equal(existsSync(join(runner, 'nod-apple-signing-state.json')), false);
     await writeFile(
       plan,
       JSON.stringify([
@@ -305,7 +305,7 @@ async function main() {
     await withAppleSigning(process.execPath, [source, '--package', plan], {
       env: await certificate(root, 'current'),
     });
-    assert.equal(existsSync(join(runner, 'otto-apple-signing-state.json')), false);
+    assert.equal(existsSync(join(runner, 'nod-apple-signing-state.json')), false);
     const keychains = {
       default: JSON.parse(await run('/usr/bin/security', ['default-keychain', '-d', 'user'])),
       search: (await run('/usr/bin/security', ['list-keychains', '-d', 'user']))
@@ -536,7 +536,7 @@ async function main() {
         'Owned application processes must stop before cleanup.',
       );
       assert.equal(
-        existsSync(join(runner, 'otto-apple-signing-state.json')),
+        existsSync(join(runner, 'nod-apple-signing-state.json')),
         false,
         'The signing keychain must be removed.',
       );

@@ -87,7 +87,7 @@ function Problem({ children }: { children: string }) {
 }
 
 export function Brain({ arrived, onNext, onBack }: StepProps) {
-  const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
+  const { revealed, typing, done, skip } = useReveal(sequence, { enabled: arrived === 'forward' });
   const models = useModels();
   const [connected, setConnected] = useState<ModelProvider | null>(null);
   const flow = useModelSignIn(models, setConnected);
@@ -487,7 +487,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
     );
 
   return (
-    <section className="ob-step ob-brain">
+    <section className="ob-step ob-brain" onClick={done ? undefined : skip}>
       <Messages
         revealed={revealed}
         typing={typing}

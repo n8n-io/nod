@@ -128,7 +128,7 @@ async function moveHostOutputs(texts: string[], workspace: WorkspaceSession, sig
   const owned: string[] = [];
   if (!paths.length) return moved;
   try {
-    const directory = posix.join(workspace.path, '.otto/outputs');
+    const directory = posix.join(workspace.path, '.nod/outputs');
     for (const path of paths) {
       const bytes = await readHostOutput(path, owned).catch((error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT') return undefined;
@@ -219,23 +219,23 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
     options: { onData(data: Buffer): void; signal?: AbortSignal; timeout?: number },
   ) {
     const seconds = Math.max(1, Math.ceil(options.timeout ?? 3540));
-    const file = `${workspace.path}/.otto/outputs/bash-${randomUUID()}.log`;
+    const file = `${workspace.path}/.nod/outputs/bash-${randomUUID()}.log`;
     const diagnostics = `${file}.timeout`;
-    const marker = `\notto-timeout-${randomUUID()}`;
+    const marker = `\nnod-timeout-${randomUUID()}`;
     const script = [
       `cd -- ${quote(cwd)} || exit 1`,
       `mkdir -p ${quote(posix.dirname(file))}`,
       ...(timeZone ? [`export TZ=${quote(timeZone)}`] : []),
       'export RTK_TELEMETRY_DISABLED=1',
-      `otto_command=${quote(command)}`,
+      `nod_command=${quote(command)}`,
       ...(!rawCommand.test(command) && !/^\s*(?:git\s+log\s*$|find(?:\s|$))/.test(command)
         ? [
-            'otto_rewrite=$(timeout -k 1 2 rtk rewrite "$otto_command" 2>/dev/null)',
-            'otto_rewrite_code=$?',
-            `if { [ "$otto_rewrite_code" -eq 0 ] || [ "$otto_rewrite_code" -eq 3 ]; } && [ -n "$otto_rewrite" ]${invocationWrapper.test(command) ? ' && [ "$otto_rewrite" = "rtk $otto_command" ]' : ''}; then otto_command=$otto_rewrite; fi`,
+            'nod_rewrite=$(timeout -k 1 2 rtk rewrite "$nod_command" 2>/dev/null)',
+            'nod_rewrite_code=$?',
+            `if { [ "$nod_rewrite_code" -eq 0 ] || [ "$nod_rewrite_code" -eq 3 ]; } && [ -n "$nod_rewrite" ]${invocationWrapper.test(command) ? ' && [ "$nod_rewrite" = "rtk $nod_command" ]' : ''}; then nod_command=$nod_rewrite; fi`,
           ]
         : []),
-      `timeout --verbose -k 5 ${seconds} bash -c ${quote('exec bash -c "$1" 2>&1')} bash "$otto_command" > ${quote(file)} 2> ${quote(diagnostics)} < /dev/null`,
+      `timeout --verbose -k 5 ${seconds} bash -c ${quote('exec bash -c "$1" 2>&1')} bash "$nod_command" > ${quote(file)} 2> ${quote(diagnostics)} < /dev/null`,
       'code=$?',
       'timed_out=0',
       `if { [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; } && [ -s ${quote(diagnostics)} ]; then timed_out=1; fi`,

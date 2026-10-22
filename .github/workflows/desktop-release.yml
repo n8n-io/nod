@@ -11,7 +11,7 @@ on:
         type: boolean
         default: false
       publish:
-        description: Publish one checked Otto release with all three installers
+        description: Publish one checked nod release with all three installers
         type: boolean
         default: false
 
@@ -20,7 +20,7 @@ permissions:
   pull-requests: read
 
 env:
-  OTTO_RELEASE_SOURCE: ${{ github.sha }}
+  NOD_RELEASE_SOURCE: ${{ github.sha }}
 
 concurrency:
   group: desktop-build-release
@@ -37,8 +37,8 @@ jobs:
       name: release
       deployment: false
     env:
-      OTTO_RELEASE_TARGETS: all
-      OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
+      NOD_RELEASE_TARGETS: all
+      NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
     permissions:
       contents: write
       actions: read
@@ -61,7 +61,7 @@ jobs:
       - name: Check out the requested main revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ env.OTTO_RELEASE_SOURCE }}
+          ref: ${{ env.NOD_RELEASE_SOURCE }}
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Node.js
@@ -73,16 +73,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          until run=$(gh run list -R "$GITHUB_REPOSITORY" -w ci.yml -b main -c "$OTTO_RELEASE_SOURCE" -L 1 --json databaseId --jq '.[0].databaseId // empty') && [ -n "$run" ]; do sleep 10; done
+          until run=$(gh run list -R "$GITHUB_REPOSITORY" -w ci.yml -b main -c "$NOD_RELEASE_SOURCE" -L 1 --json databaseId --jq '.[0].databaseId // empty') && [ -n "$run" ]; do sleep 10; done
           gh run watch "$run" -R "$GITHUB_REPOSITORY" --exit-status --interval 30 > /dev/null
       - name: Require tested source, signing configuration and runtime integrity
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-          OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
-          OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
-          APPLE_CONFIGURED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && vars.APPLE_SIGNING_IDENTITY != '' && vars.APPLE_CERTIFICATE_SHA256 != '' && ((vars.OTTO_SIGNING_MODE || 'self-signed') == 'self-signed' || (secrets.APPLE_API_KEY != '' && vars.APPLE_API_KEY_ID != '' && vars.APPLE_API_ISSUER != '' && vars.APPLE_TEAM_ID != '')) }}
-          OTTO_AUTOMATIC_RELEASE: ${{ inputs.automatic || false }}
+          NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+          APPLE_CONFIGURED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && vars.APPLE_SIGNING_IDENTITY != '' && vars.APPLE_CERTIFICATE_SHA256 != '' && ((vars.NOD_SIGNING_MODE || 'self-signed') == 'self-signed' || (secrets.APPLE_API_KEY != '' && vars.APPLE_API_KEY_ID != '' && vars.APPLE_API_ISSUER != '' && vars.APPLE_TEAM_ID != '')) }}
+          NOD_AUTOMATIC_RELEASE: ${{ inputs.automatic || false }}
         run: node .github/scripts/desktop-release.mjs plan
       - name: Save source-bound release metadata
         if: steps.plan.outputs.metadata_sha256 != ''
@@ -115,10 +115,10 @@ jobs:
       name: release
       deployment: false
     env:
-      OTTO_DESKTOP_TARGET: ${{ matrix.platform }}
-      OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
-      OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
-      OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      NOD_DESKTOP_TARGET: ${{ matrix.platform }}
+      NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
+      NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -143,7 +143,7 @@ jobs:
           file: Dockerfile.workspace
           platforms: linux/${{ matrix.docker_arch }}
           load: true
-          tags: otto-desktop-workspace:experiment
+          tags: nod-desktop-workspace:experiment
           cache-from: type=gha,scope=desktop-workspace-${{ matrix.arch }}
           cache-to: type=gha,scope=desktop-workspace-${{ matrix.arch }},mode=max
       - name: Build the browser image
@@ -153,7 +153,7 @@ jobs:
           file: Dockerfile.browser
           platforms: linux/${{ matrix.docker_arch }}
           load: true
-          tags: otto-desktop-browser:experiment
+          tags: nod-desktop-browser:experiment
           cache-from: type=gha,scope=desktop-browser-${{ matrix.arch }}
           cache-to: type=gha,scope=desktop-browser-${{ matrix.arch }},mode=max
       - name: Verify and export the native images
@@ -185,14 +185,14 @@ jobs:
     permissions:
       contents: write
     env:
-      OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
-      OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
-      OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
-      OTTO_DESKTOP_TARGET: ${{ matrix.platform }}
-      OTTO_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
-      OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
-      OTTO_RUNTIME_RELEASE_TAG: desktop-v${{ needs.plan.outputs.version }}
-      OTTO_RUNTIME_RELEASE_BASE_URL: ${{ (github.event_name == 'push' || inputs.publish) && matrix.runtime_public == 'true' && matrix.runtime_base_url || '' }}
+      NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
+      NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      NOD_DESKTOP_TARGET: ${{ matrix.platform }}
+      NOD_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
+      NOD_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
+      NOD_RUNTIME_RELEASE_TAG: nod-v${{ needs.plan.outputs.version }}
+      NOD_RUNTIME_RELEASE_BASE_URL: ${{ (github.event_name == 'push' || inputs.publish) && matrix.runtime_public == 'true' && matrix.runtime_base_url || '' }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -273,14 +273,14 @@ jobs:
       name: release
       deployment: false
     env:
-      OTTO_DESKTOP_TARGET: ${{ matrix.platform }}
-      OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
-      OTTO_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
-      OTTO_RELEASE_BUILD: 'true'
-      OTTO_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.OTTO_DESKTOP_UPDATE_SOURCE_URL }}
-      OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
-      OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
-      OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      NOD_DESKTOP_TARGET: ${{ matrix.platform }}
+      NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
+      NOD_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
+      NOD_RELEASE_BUILD: 'true'
+      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
+      NOD_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
+      NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -329,7 +329,7 @@ jobs:
           cp ".local/reused-runtime-descriptors/${{ matrix.arch }}/runtime-release.json" .local/desktop-runtime-release/runtime-release.json
       - name: Bind the checked runtime descriptor
         if: (github.event_name == 'push' || inputs.publish) && matrix.runtime_public == 'true' && matrix.runtime_reused != 'true'
-        run: echo "OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256=$(shasum -a 256 .local/desktop-runtime-release/runtime-release.json | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
+        run: echo "NOD_PENDING_RUNTIME_DESCRIPTOR_SHA256=$(shasum -a 256 .local/desktop-runtime-release/runtime-release.json | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
       - name: Download source-bound release metadata
         if: needs.plan.outputs.metadata_sha256 != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -338,8 +338,8 @@ jobs:
           path: .local
       - name: Sign, package and verify the app
         env:
-          OTTO_RELEASE_PLAN: ${{ needs.plan.outputs.metadata_sha256 && '.local/desktop-release-plan.json' || '' }}
-          OTTO_RELEASE_PLAN_SHA256: ${{ needs.plan.outputs.metadata_sha256 }}
+          NOD_RELEASE_PLAN: ${{ needs.plan.outputs.metadata_sha256 && '.local/desktop-release-plan.json' || '' }}
+          NOD_RELEASE_PLAN_SHA256: ${{ needs.plan.outputs.metadata_sha256 }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
@@ -348,7 +348,7 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ vars.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ vars.APPLE_API_ISSUER }}
-          OTTO_TRACES_TOKEN: ${{ secrets.OTTO_TRACES_TOKEN }}
+          NOD_TRACES_TOKEN: ${{ secrets.NOD_TRACES_TOKEN }}
         run: >-
           node .github/scripts/with-apple-signing.mjs
           pnpm --dir desktop run build --release
@@ -388,8 +388,8 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     env:
-      OTTO_DESKTOP_TARGET: win32-x64
-      OTTO_RUNTIME_ASSETS: .local/windows-runtime-assets
+      NOD_DESKTOP_TARGET: win32-x64
+      NOD_RUNTIME_ASSETS: .local/windows-runtime-assets
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -422,9 +422,9 @@ jobs:
       name: release
       deployment: false
     env:
-      OTTO_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
-      OTTO_RELEASE_BUILD: 'true'
-      OTTO_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.OTTO_DESKTOP_UPDATE_SOURCE_URL }}
+      NOD_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
+      NOD_RELEASE_BUILD: 'true'
+      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -462,15 +462,15 @@ jobs:
       - run: pnpm run build
       - name: Package the Windows installer
         env:
-          OTTO_TRACES_TOKEN: ${{ secrets.OTTO_TRACES_TOKEN }}
+          NOD_TRACES_TOKEN: ${{ secrets.NOD_TRACES_TOKEN }}
         run: node desktop/scripts/build-windows.mjs
       - run: node desktop/scripts/check-windows.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-windows-x64
           path: |
-            dist/windows/Otto-Setup-x64.exe
-            dist/windows/Otto-Runtime-win32-x64.tar.gz
+            dist/windows/nod-Setup-x64.exe
+            dist/windows/nod-Runtime-win32-x64.tar.gz
             dist/windows/SHA256SUMS
             dist/windows/release-win32-x64.json
             dist/windows/windows-check.json
@@ -485,13 +485,13 @@ jobs:
     timeout-minutes: 30
     environment: release
     env:
-      OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
-      OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
-      OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
-      OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
-      OTTO_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.OTTO_DESKTOP_UPDATE_SOURCE_URL }}
-      OTTO_RELEASE_PLAN: ${{ needs.plan.outputs.metadata_sha256 && '.local/desktop-release-plan.json' || '' }}
-      OTTO_RELEASE_PLAN_SHA256: ${{ needs.plan.outputs.metadata_sha256 }}
+      NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
+      NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      NOD_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
+      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
+      NOD_RELEASE_PLAN: ${{ needs.plan.outputs.metadata_sha256 && '.local/desktop-release-plan.json' || '' }}
+      NOD_RELEASE_PLAN_SHA256: ${{ needs.plan.outputs.metadata_sha256 }}
     permissions:
       contents: write
     steps:
@@ -541,5 +541,5 @@ jobs:
       - name: Verify GitHub asset digests and download the DMG and ZIP again
         env:
           GH_TOKEN: ${{ github.token }}
-          OTTO_PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
+          NOD_PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
         run: node .github/scripts/desktop-release.mjs draft-all

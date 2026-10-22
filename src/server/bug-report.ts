@@ -39,7 +39,7 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
   });
   const toolTrace = savedToolTrace(entries, Date.now());
   const report = {
-    format: 'otto-feedback-report-v1',
+    format: 'nod-feedback-report-v1',
     generatedAt: new Date().toISOString(),
     threadId: thread.id,
     provider: options.provider,

@@ -23,7 +23,7 @@ import { scenarios } from './scenarios/index.ts';
 import { loadEnvironment, parseModel } from './stack.ts';
 import { listRuns, loadRun, resultsRoot, saveRun } from './store.ts';
 
-export const help = `Otto capability evals
+export const help = `nod capability evals
 
   Start here
     doctor [--fix]             check Docker, images, database and keys; --fix sets up what is missing
@@ -33,10 +33,10 @@ export const help = `Otto capability evals
                                (--repeat 3, --scenario a,b, --label name, --out directory)
     decisions --model <provider/name>  compare trust checks with main using live models and synthetic inputs
                                (--baseline main, --repeat 3, --label name, --out directory)
-    longmemeval --data <file>  run the LongMemEval-S memory benchmark on the real Otto, graded by the official judge
+    longmemeval --data <file>  run the LongMemEval-S memory benchmark on the real nod, graded by the official judge
                                (--setups memory,chat, --sample 30, --chat-sample 10, --questions a,b,
                                 --concurrency 6, --budget 50, --label name, --resume)
-    whisperbench --data <folder>  run the WhisperBench memory-poisoning benchmark on the real Otto
+    whisperbench --data <folder>  run the WhisperBench memory-poisoning benchmark on the real nod
                                (--modes foreground,background, --cases a,b, --model provider/name,
                                 --concurrency 6, --budget 50, --label name, --resume)
 
@@ -58,7 +58,7 @@ export const help = `Otto capability evals
   Look closer
     report <label> [--open]    show a saved run (and open its HTML report)
     markdown <label> [<label>] a saved run, or a baseline and a candidate, as Markdown for a CI summary
-    review <label>             judge attempts as a user would: would you trust Otto with this?
+    review <label>             judge attempts as a user would: would you trust nod with this?
     diagnose <label>           explain why failed attempts failed (agent, scenario, mock or harness)
     rejudge <label> --label <new> [--judge <provider/model>]   re-grade saved attempts with another judge
 
@@ -145,7 +145,7 @@ async function matrix(args: Args, kind: 'model' | 'ref') {
   console.log(table);
   await writeFile(join(base.root, `${prefix}.compare.txt`), table);
   const chart = join(base.root, `${prefix}.compare.html`);
-  await writeFile(chart, comparisonChart(runs, `Otto capability evals: ${items.join(' vs ')}`));
+  await writeFile(chart, comparisonChart(runs, `nod capability evals: ${items.join(' vs ')}`));
   console.log(`Saved ${chart}\nDetails: pnpm run eval:capability report <label>`);
   if (has(args, 'open')) open(chart);
 }
@@ -387,7 +387,7 @@ export async function main(args: Args) {
       await writeFile(join(root, `${name}.report.html`), comparisonChart(runs));
       console.log(`Rendered ${files.length} images in ${directory}`);
       if (has(args, 'desktop')) {
-        const target = join(process.env.HOME ?? '.', 'Desktop', `otto-evals-${name}`);
+        const target = join(process.env.HOME ?? '.', 'Desktop', `nod-evals-${name}`);
         await mkdir(target, { recursive: true });
         for (const file of files) await copyFile(file, join(target, file.split('/').pop()!));
         console.log(`Copied to ${target}`);

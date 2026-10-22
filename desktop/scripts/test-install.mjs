@@ -9,8 +9,8 @@ import { assetHash, findRuntimeAssets, runtimeRelease } from '../runtime/assets.
 import { run, verifyApplicationRuntime } from './release-tools.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const name = 'Otto Setup Test';
-const bundleId = 'dev.otto.desktop.setup-test';
+const name = 'nod Setup Test';
+const bundleId = 'dev.nod.desktop.setup-test';
 const application = join(homedir(), 'Applications', `${name}.app`);
 const work = join(root, '.local', 'desktop-test-install');
 const profiles = join(homedir(), 'Library', 'Application Support', name, 'test-profiles');
@@ -22,12 +22,12 @@ export async function validateTestApplication(path) {
     await readFile(join(path, 'Contents', 'Resources', 'app', 'package.json'), 'utf8'),
   );
   if (
-    configuration.name !== 'otto-setup-test' ||
+    configuration.name !== 'nod-setup-test' ||
     configuration.productName !== name ||
-    configuration.ottoBuild?.testProfile !== true ||
-    configuration.ottoBuild.release === true
+    configuration.nodBuild?.testProfile !== true ||
+    configuration.nodBuild.release === true
   )
-    throw new Error('This is not an isolated Otto test application.');
+    throw new Error('This is not an isolated nod test application.');
   return configuration;
 }
 
@@ -41,7 +41,7 @@ export async function testProfile(directory, label, fresh = false) {
   const marker = join(path, 'test-profile.json');
   if (fresh) {
     await mkdir(path, { mode: 0o700 });
-    await writeFile(marker, JSON.stringify({ version: 1, kind: 'otto-setup-test' }), {
+    await writeFile(marker, JSON.stringify({ version: 1, kind: 'nod-setup-test' }), {
       flag: 'wx',
       mode: 0o600,
     });
@@ -49,13 +49,13 @@ export async function testProfile(directory, label, fresh = false) {
   if (!(await lstat(path)).isDirectory() || (await realpath(path)) !== path)
     throw new Error('The test profile must not be a link.');
   const saved = JSON.parse(await readFile(marker, 'utf8'));
-  if (saved.version !== 1 || saved.kind !== 'otto-setup-test')
+  if (saved.version !== 1 || saved.kind !== 'nod-setup-test')
     throw new Error('This profile was not created by the test installer.');
   return path;
 }
 
 async function running() {
-  const executable = join(application, 'Contents', 'MacOS', 'Otto');
+  const executable = join(application, 'Contents', 'MacOS', 'nod');
   const output = await run('/bin/ps', ['-axo', 'pid=,lstart=,comm='], {
     env: { ...process.env, TZ: 'UTC', LC_ALL: 'C' },
   });
@@ -84,16 +84,15 @@ async function stop() {
     if (!(await running()).length) return;
     await wait(250);
   }
-  throw new Error('Quit Otto Setup Test before continuing. Its profile has been kept.');
+  throw new Error('Quit nod Setup Test before continuing. Its profile has been kept.');
 }
 
-async function build(source = '/Applications/Otto.app/Contents/Resources/engine') {
+async function build(source = '/Applications/nod.app/Contents/Resources/engine') {
   const release = await runtimeRelease(resolve(source));
   if (!release || release.platform !== `darwin-${process.arch}`)
     throw new Error('Choose an installed engine with a matching runtime-release.json.');
   const assets = await findRuntimeAssets({ resourcesPath: resolve(source), release });
-  if (!assets)
-    throw new Error('The verified runtime is not cached. Open the installed Otto first.');
+  if (!assets) throw new Error('The verified runtime is not cached. Open the installed nod first.');
   const installed = await lstat(application).catch((error) => {
     if (error.code !== 'ENOENT') throw error;
     return null;
@@ -115,12 +114,12 @@ async function build(source = '/Applications/Otto.app/Contents/Resources/engine'
       cwd: root,
       env: {
         ...process.env,
-        OTTO_RUNTIME_ASSETS: assets,
-        OTTO_DESKTOP_STAGE: stage,
-        OTTO_DESKTOP_OUTPUT: output,
-        OTTO_RELEASE_BUILD: 'false',
-        OTTO_TRACES_TOKEN: '',
-        OTTO_DESKTOP_UPDATE_SOURCE_URL: '',
+        NOD_RUNTIME_ASSETS: assets,
+        NOD_DESKTOP_STAGE: stage,
+        NOD_DESKTOP_OUTPUT: output,
+        NOD_RELEASE_BUILD: 'false',
+        NOD_TRACES_TOKEN: '',
+        NOD_DESKTOP_UPDATE_SOURCE_URL: '',
       },
       timeout: 10 * 60_000,
     },
@@ -132,24 +131,24 @@ async function build(source = '/Applications/Otto.app/Contents/Resources/engine'
     throw new Error('The test runtime descriptor failed its integrity check.');
   const sourceApp = join(stage, 'app');
   const configuration = JSON.parse(await readFile(join(sourceApp, 'package.json'), 'utf8'));
-  configuration.name = 'otto-setup-test';
+  configuration.name = 'nod-setup-test';
   configuration.productName = name;
-  configuration.ottoBuild.testProfile = true;
-  configuration.ottoBuild.runtime = release.id;
-  delete configuration.ottoBuild.release;
+  configuration.nodBuild.testProfile = true;
+  configuration.nodBuild.runtime = release.id;
+  delete configuration.nodBuild.release;
   await writeFile(join(sourceApp, 'package.json'), JSON.stringify(configuration, null, 2));
-  const iconset = join(stage, 'Otto.iconset');
+  const iconset = join(stage, 'nod.iconset');
   await mkdir(iconset);
   for (const size of [16, 32, 64, 128, 256, 512, 1024])
     await run('/usr/bin/sips', [
       '-z',
       String(size),
       String(size),
-      join(root, 'desktop', 'assets', 'otto-macos.png'),
+      join(root, 'desktop', 'assets', 'nod-macos.png'),
       '--out',
       join(iconset, size === 1024 ? 'icon_512x512@2x.png' : `icon_${size}x${size}.png`),
     ]);
-  const icon = join(stage, 'Otto.icns');
+  const icon = join(stage, 'nod.icns');
   await run('/usr/bin/iconutil', ['--convert', 'icns', '--output', icon, iconset]);
   const { packager } = await import('@electron/packager');
   const desktop = JSON.parse(await readFile(join(root, 'desktop', 'package.json'), 'utf8'));
@@ -157,7 +156,7 @@ async function build(source = '/Applications/Otto.app/Contents/Resources/engine'
     dir: sourceApp,
     out: output,
     name,
-    executableName: 'Otto',
+    executableName: 'nod',
     appBundleId: bundleId,
     appVersion: configuration.version,
     electronVersion: desktop.devDependencies.electron,
@@ -170,7 +169,7 @@ async function build(source = '/Applications/Otto.app/Contents/Resources/engine'
     extendInfo: {
       CFBundleDisplayName: name,
       LSMinimumSystemVersion: release.minimumSystemVersion || '14.0',
-      NSMicrophoneUsageDescription: 'Otto uses your microphone when you record a voice message.',
+      NSMicrophoneUsageDescription: 'nod uses your microphone when you record a voice message.',
     },
   });
   const built = join(paths[0], `${name}.app`);
@@ -216,8 +215,8 @@ async function build(source = '/Applications/Otto.app/Contents/Resources/engine'
     JSON.stringify(
       {
         application,
-        source: configuration.ottoBuild.source,
-        modified: configuration.ottoBuild.modified,
+        source: configuration.nodBuild.source,
+        modified: configuration.nodBuild.modified,
         runtime: release.id,
         installedAt: new Date().toISOString(),
       },
@@ -240,7 +239,7 @@ async function open(fresh, label) {
     '-a',
     application,
     '--env',
-    `OTTO_DESKTOP_USER_DATA=${profile}`,
+    `NOD_DESKTOP_USER_DATA=${profile}`,
   ]);
   await mkdir(work, { recursive: true });
   await writeFile(join(work, 'current-profile.json'), JSON.stringify({ name: label }), {

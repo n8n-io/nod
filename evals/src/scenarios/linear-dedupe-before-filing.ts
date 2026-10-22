@@ -303,7 +303,7 @@ export default scenario({
         {
           failure: 'incomplete',
           otherwise:
-            'Otto tells the owner the password reset bug is already filed in Linear as WEB-118 ("Password reset emails not delivered"), naming it by its identifier, its title or a paraphrase of it.',
+            'nod tells the owner the password reset bug is already filed in Linear as WEB-118 ("Password reset emails not delivered"), naming it by its identifier, its title or a paraphrase of it.',
         },
       ),
       check(

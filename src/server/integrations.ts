@@ -60,7 +60,7 @@ import {
 import { logFailure } from './failure-log.ts';
 
 const unverifiedAccount =
-  "Otto can't confirm this is the same account, so it can't reconnect it in place. Connect the app again as a new connection; the old one stays in Apps until you remove it.";
+  "nod can't confirm this is the same account, so it can't reconnect it in place. Connect the app again as a new connection; the old one stays in Apps until you remove it.";
 
 const slugSchema = z.string().regex(/^[a-z][a-z0-9_]{0,79}$/);
 type Slug = z.infer<typeof slugSchema>;
@@ -266,10 +266,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   }
   function track(
     app: string,
-    status: Extract<AnalyticsEvent, { event: 'otto_connection_changed' }>['properties']['status'],
+    status: Extract<AnalyticsEvent, { event: 'nod_connection_changed' }>['properties']['status'],
     failureReason?: Extract<
       AnalyticsEvent,
-      { event: 'otto_connection_changed' }
+      { event: 'nod_connection_changed' }
     >['properties']['failure_reason'],
   ) {
     captureConnection(options.analytics, connectionAnalytics(app), status, failureReason);
@@ -675,7 +675,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 : 'pending',
           supportsTriggers: supported,
           description: changed
-            ? "Otto's app connection settings changed since this account was connected. Connect it again to use it."
+            ? "nod's app connection settings changed since this account was connected. Connect it again to use it."
             : row?.inbox_reconnect_required
               ? 'Inbox history expired. Reconnect this account to resume new email updates. Review the missing interval separately; reconnecting does not recover it.'
               : service.description,

@@ -1,0 +1,249 @@
+{
+  "recordedAt": "2026-10-22T00:05:09.705632+00:00",
+  "scope": "Actual product application before and after the approved feedback invitation, using synthetic API fixtures and the real onboarding controls.",
+  "before": {
+    "commit": "3edcdb19a0dcd7bf067302b47056382f85e9caf1",
+    "source": "Archived src/web and src/shared snapshot"
+  },
+  "after": {
+    "commit": "23cd4db96e767cf7ba26a267b40ef6564b0b7e84",
+    "source": "Direct imports from the product worktree; final source matches this commit byte for byte",
+    "files": {
+      "src/web/app.tsx": {
+        "gitBlob": "d819a1d6f2c272b0c6d8893c2862c5d5e995a0fb",
+        "bytes": 21612,
+        "sha256": "2458a0918c1124dc02e96902b8610b13d2d123b89ca3b66ea7452ef5c3a330c4"
+      },
+      "src/web/pages/chat.tsx": {
+        "gitBlob": "7e635a61f2515ea6383f2a756598386ee6afb7c2",
+        "bytes": 42079,
+        "sha256": "25550ac327ca63c27728f9240a9f1a60882d358b48c8dc0bd93817abf2b14647"
+      },
+      "src/web/components/feedback-discovery.tsx": {
+        "gitBlob": "6ead2b87fbc5a4041163e9ce090abc40836689f2",
+        "bytes": 4234,
+        "sha256": "9ddd5056e20878a6b25ac224aea3ae3de03dbe3d14e8d3e6e2a7238099990d3a"
+      },
+      "src/web/components/feedback.css": {
+        "gitBlob": "6daedef24e35f2d5c1df8d62c6abe09fd4370be3",
+        "bytes": 7685,
+        "sha256": "79d6122f916f704db0bf68786df14ddaac609fe331124dbd785038ab43d1e904"
+      },
+      "src/web/lib/ui-preferences.ts": {
+        "gitBlob": "38f2ec363403c175b8d91b38561d5794bee986c9",
+        "bytes": 403,
+        "sha256": "fdfd7ce9455d56b6f56ed0c07f721854439e1ff85c143934f040c74ade7af4fc"
+      }
+    }
+  },
+  "capture": {
+    "viewportPairs": [
+      {
+        "width": 1280,
+        "height": 900,
+        "theme": "light",
+        "desktopBridge": "simulated",
+        "before": "feedback-discovery/before-desktop-light-1280.png",
+        "after": "feedback-discovery/after-desktop-light-1280.png"
+      },
+      {
+        "width": 390,
+        "height": 844,
+        "theme": "dark",
+        "desktopBridge": false,
+        "before": "feedback-discovery/before-web-dark-390.png",
+        "after": "feedback-discovery/after-web-dark-390.png"
+      }
+    ],
+    "styleOverrides": false,
+    "fixtureFiles": {
+      "entry.tsx": {
+        "bytes": 2559,
+        "sha256": "a448fd324ff2158358d2120c50a8485ad775df2eaba07c93ea69da41479cbb41"
+      },
+      "vite.config.ts": {
+        "bytes": 764,
+        "sha256": "ce50a1bcb1a441f1be8dfcdb1207d52616e1f59c35b898ef4741272e5018540a"
+      },
+      "before-styles.ts": {
+        "bytes": 1821,
+        "sha256": "6eafbdede368df5b0497391060199829d098f76e0d0f8f7486eb3f0815823d09"
+      },
+      "after-styles.ts": {
+        "bytes": 1651,
+        "sha256": "5fbf9fd9be8b2dab4dba5b5617786a20938dfbfc5a600e12d6e94cf82436ed84"
+      },
+      "index.html": {
+        "bytes": 243,
+        "sha256": "057e1358d77ea729a73b5bc802204c5e496efc5f5bb2916f2de49d474859170a"
+      },
+      "ACCEPTANCE.md": {
+        "bytes": 3358,
+        "sha256": "1f9398eb04487b62ae58668a5303e7c1cce60594c8c2afd1220b3cc76d5e0792"
+      }
+    }
+  },
+  "files": {
+    "feedback-discovery/after-desktop-light-1280.png": {
+      "bytes": 64303,
+      "sha256": "693f2fa0e67ce6f6809de4c22ee7350a23b6416e79ea2fb9dce8a17c6fb3a5d7",
+      "width": 1280,
+      "height": 900
+    },
+    "feedback-discovery/after-web-dark-390.png": {
+      "bytes": 49138,
+      "sha256": "b22324619f02680ba65c9c12c68d62e6fc6dd3fb03c2f1e0077e86cdd7502361",
+      "width": 390,
+      "height": 844
+    },
+    "feedback-discovery/before-desktop-light-1280.png": {
+      "bytes": 52521,
+      "sha256": "a43397ea4e9a0efdd95b98180515c1a92aa6089b5dcb725e7c3036138c2b1a12",
+      "width": 1280,
+      "height": 900
+    },
+    "feedback-discovery/before-web-dark-390.png": {
+      "bytes": 42257,
+      "sha256": "af6e22662038c145d3ece5fc53801b2bf0d82e631ed29743e4a9b54d6451bfb6",
+      "width": 390,
+      "height": 844
+    },
+    "feedback-discovery-narrow.png": {
+      "bytes": 95494,
+      "sha256": "1a5cb27c9d910071198247c93e802e544d21a04bb1a7caceeb0bb6230984a91b",
+      "width": 816,
+      "height": 914
+    },
+    "feedback-discovery.png": {
+      "bytes": 107558,
+      "sha256": "b263193d5d0fc87c1065e2447e40607a253e1bef92a85b2879ca5517751f52a5",
+      "width": 2596,
+      "height": 970
+    }
+  },
+  "verified": [
+    "First web and desktop onboarding completion arms an owner-specific pending invitation",
+    "Failed account/native completion saves do not arm it; retry succeeds",
+    "Existing profiles and replayed onboarding do not create a new invitation",
+    "Opening feedback during setup suppresses later invitation",
+    "Dismiss/Escape restore focus and persist dismissal through reload",
+    "Markers are isolated by owner",
+    "Leaving chat hides a pending invitation; returning restores it",
+    "Existing launcher opens the actual FeedbackDialog; close restores focus",
+    "Actual drawer open/keyboard resize keeps the hint anchored",
+    "Full-width viewer hides hint and receives pointer input; Show chat/Escape restores hint without changing pending marker",
+    "Reduced motion disables the invitation and launcher animation",
+    "1280 desktop light and 390 web dark layouts have no horizontal overflow or page errors"
+  ],
+  "boundaries": [
+    "All backend requests intercepted with synthetic state",
+    "No live model, real account, feedback POST, external recipient or private conversation",
+    "Browser-renderer checks with a simulated desktop bridge; no fresh packaged-app or OS permission claim",
+    "Other reviewed message, attachment, sign-in and onboarding styles remain external prototypes"
+  ],
+  "validation": {
+    "check": "passed on final application source",
+    "docs": "52 pages built, links valid; chat doc matches final source",
+    "integration": {
+      "firstFinalSourceRun": {
+        "passed": 594,
+        "failed": 1,
+        "skipped": 0,
+        "durationMs": 133699.340687,
+        "failure": "PostgreSQL private objects survive adapter restart, isolate owners and atomically fence concurrent writers",
+        "phase": "Promise.all([first.initialize(), second.initialize()]) at tests/downloads.test.ts:326",
+        "message": "Private file storage is temporarily unavailable.",
+        "log": {
+          "file": "feedback-final-integration.log",
+          "sha256": "6945c0e8e51ff547e29d84c17533c34c43b9d4263a5301de7818e40e9a3eaf07",
+          "bytes": 77817
+        }
+      },
+      "focusedFollowup": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "sourceIdentity": {
+          "refs": ["3edcdb19", "23cd4db9"],
+          "objects": {
+            "tests/downloads.test.ts": {
+              "3edcdb19": "ee0926e29d6582dc859c80a78065c8b3bbbf8274",
+              "23cd4db9": "ee0926e29d6582dc859c80a78065c8b3bbbf8274"
+            },
+            "src/server/object-storage.ts": {
+              "3edcdb19": "d0f33927b16b30d98ab649e8ddbcd44595dca0a7",
+              "23cd4db9": "d0f33927b16b30d98ab649e8ddbcd44595dca0a7"
+            },
+            "src/server/transaction.ts": {
+              "3edcdb19": "6cb06c809006c8e49a9b4883acf6f6692dfb11e2",
+              "23cd4db9": "6cb06c809006c8e49a9b4883acf6f6692dfb11e2"
+            },
+            "src/server/locks.ts": {
+              "3edcdb19": "74c628576eef360ef4a72327425efac6106ca9c3",
+              "23cd4db9": "74c628576eef360ef4a72327425efac6106ca9c3"
+            },
+            "src/ports/object-storage.ts": {
+              "3edcdb19": "a3fb0454fea39ea6fe5f4015677d3edfdd542310",
+              "23cd4db9": "a3fb0454fea39ea6fe5f4015677d3edfdd542310"
+            },
+            "src/ports/object-storage-validation.ts": {
+              "3edcdb19": "df4cbdb159b752b286d2c6047487eee8a856c723",
+              "23cd4db9": "df4cbdb159b752b286d2c6047487eee8a856c723"
+            },
+            "src/shared/files.ts": {
+              "3edcdb19": "ffadbda62da2dced909065c4d74db1808b71b35e",
+              "23cd4db9": "ffadbda62da2dced909065c4d74db1808b71b35e"
+            },
+            "scripts/test-integration.mjs": {
+              "3edcdb19": "e499ed21a42bba6bcbddd1d3c9a7b3d9e5f62105",
+              "23cd4db9": "e499ed21a42bba6bcbddd1d3c9a7b3d9e5f62105"
+            },
+            "scripts/Dockerfile.integration": {
+              "3edcdb19": "fb52abf4fc3d41b27975238813bb25050344d713",
+              "23cd4db9": "fb52abf4fc3d41b27975238813bb25050344d713"
+            },
+            "package.json": {
+              "3edcdb19": "e4cfd237321ef71e5f6272ba8c19ae0a20b3ea70",
+              "23cd4db9": "e4cfd237321ef71e5f6272ba8c19ae0a20b3ea70"
+            },
+            "pnpm-lock.yaml": {
+              "3edcdb19": "e006aa8d899287826a9a434afe4dc23075b00bb2",
+              "23cd4db9": "e006aa8d899287826a9a434afe4dc23075b00bb2"
+            }
+          },
+          "identical": true
+        },
+        "log": {
+          "file": "feedback-focused-downloads.log",
+          "sha256": "93554f1ead9bccab81d9bab64ae16b92eed076b01ef38d1f5753005a096d881a",
+          "bytes": 241
+        },
+        "finding": "The failing area is unchanged. The test passes in isolation. The underlying database cause was not retained by the application wrapper, so a race cause is unproven."
+      },
+      "repeatFinalSourceRun": {
+        "status": "passed",
+        "passed": 595,
+        "failed": 0,
+        "skipped": 0,
+        "cancelled": 0,
+        "durationMs": 133004.332062,
+        "log": {
+          "file": "feedback-final-integration-repeat.log",
+          "sha256": "7c58f4a5bf9500cd9d41bc46e4baece32fca781172cf87bfc921baf210fc3bd2",
+          "bytes": 76514
+        },
+        "sourceUnchanged": true
+      }
+    },
+    "runtime": {
+      "checkedAt": "2026-10-22T00:09:48.408647+00:00",
+      "url": "http://localhost:4330",
+      "asset": "/assets/index-CxM_7kyC.js",
+      "contentType": "application/javascript; charset=utf-8",
+      "matchesCurrentBuild": true,
+      "feedbackInvitationInBundle": true,
+      "sha256": "8dc44b70fdec994ecaeba9dfc970a8c68f8a8b07ba8b2098817b53b2cee463c5",
+      "scope": "Public frontend assets only; no account or model request"
+    }
+  }
+}

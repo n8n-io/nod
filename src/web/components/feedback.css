@@ -249,3 +249,126 @@
     margin-inline: 16px;
   }
 }
+
+.feedback-discovery-hint {
+  --hint-background: var(--surface);
+  --hint-border: var(--border);
+  position: fixed;
+  z-index: 25;
+  width: 280px;
+  max-width: calc(100vw - 24px);
+  padding: 18px;
+  border: 1px solid var(--hint-border);
+  border-left: 3px solid var(--brand-pink);
+  border-radius: 14px;
+  padding-left: 16px;
+  color: var(--foreground);
+  background: var(--hint-background);
+  box-shadow: 0 5px 20px var(--shadow-overlay);
+  animation: feedback-hint-in 220ms ease-out both;
+}
+
+.feedback-discovery-hint::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: calc(var(--hint-arrow) - 4px);
+  width: 8px;
+  height: 8px;
+  border-left: 1px solid var(--hint-border);
+  border-top: 1px solid var(--hint-border);
+  background: var(--hint-background);
+  transform: rotate(45deg);
+}
+
+body:has(.artifact-drawer.is-overlay) .feedback-discovery-hint {
+  display: none;
+}
+
+.feedback-discovery-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 24px;
+  padding-right: 16px;
+}
+
+.feedback-discovery-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 550;
+  letter-spacing: -0.25px;
+}
+
+.feedback-discovery-heading .brand-glyph {
+  flex: none;
+  width: 25px;
+  height: 25px;
+}
+
+.feedback-discovery-hint p {
+  margin: 7px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.feedback-discovery-dismiss {
+  position: absolute;
+  top: 9px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  background: transparent;
+  cursor: pointer;
+}
+
+.feedback-discovery-dismiss:hover {
+  color: var(--foreground);
+  background: var(--hover);
+}
+
+.chat-report-button[data-discovery] {
+  color: var(--foreground);
+  background: var(--accent-soft);
+  animation: feedback-control-notice 900ms ease-out 1;
+}
+
+.feedback-discovery-dismiss:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+@keyframes feedback-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes feedback-control-notice {
+  from {
+    box-shadow: 0 0 0 3px var(--accent-border);
+  }
+  to {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feedback-discovery-hint,
+  .chat-report-button[data-discovery] {
+    animation: none;
+  }
+}

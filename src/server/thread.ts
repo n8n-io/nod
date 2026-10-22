@@ -1084,12 +1084,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       ? { model_provider: model.provider, ...(model.model ? { model: model.model } : {}) }
       : {}),
   };
-  let outcome: Extract<AnalyticsEvent, { event: 'otto_turn_completed' }>['properties']['outcome'] =
+  let outcome: Extract<AnalyticsEvent, { event: 'nod_turn_completed' }>['properties']['outcome'] =
     'failed';
   let waitingReason: 'question' | 'approval' | 'credentials' | undefined;
   let limited = false;
   let failure: 'model' | 'unknown' = 'unknown';
-  dependencies.analytics?.({ event: 'otto_turn_started', properties: analyticsProperties });
+  dependencies.analytics?.({ event: 'nod_turn_started', properties: analyticsProperties });
   const turnId = turn.id as string;
   const threadId = turn.thread_id as string;
   const ref: TurnRef = { threadId, turnId, browserId: turn.session_id };
@@ -1460,7 +1460,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     }
   } finally {
     dependencies.analytics?.({
-      event: 'otto_turn_completed',
+      event: 'nod_turn_completed',
       properties: {
         ...analyticsProperties,
         outcome,

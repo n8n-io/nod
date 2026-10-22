@@ -140,17 +140,26 @@ export interface RuntimeContext {
     mimeType: string;
   }): Promise<Artifact & { workspaceFile: string }>;
   createAudio?(text: string): Promise<Artifact>;
-  requestCredential(input: {
-    origin: string;
-    label: string;
-    kind: CredentialKind;
-    usernameSelector?: string;
-    passwordSelector?: string | string[];
-    submitSelector?: string;
-    emailCode?: boolean;
-    emailRecipient?: string;
-    savedLoginId?: string;
-  }): Promise<{ url: string } | { filled: true } | { [appConfirmation]: string }>;
+  requestCredential(
+    input: {
+      origin: string;
+      label: string;
+    } & (
+      | {
+          kind: CredentialKind;
+          savedLoginId?: string;
+          usernameSelector?: string;
+          passwordSelector?: string | string[];
+          submitSelector?: string;
+          emailCode?: boolean;
+          emailRecipient?: string;
+        }
+      | {
+          kind: 'method';
+          methods: { label: string; selector: string }[];
+        }
+    ),
+  ): Promise<{ url: string } | { filled: true } | { [appConfirmation]: string }>;
   requestPayment?(input: unknown): Promise<{ question: string; url?: string }>;
   integration(
     action: string,

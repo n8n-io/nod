@@ -172,17 +172,17 @@ export async function createApprovals(
   ) => {
     if (!['user', 'schedule', 'event', 'resume', 'task'].includes(source)) return;
     analytics?.({
-      event: 'otto_confirmation_changed',
+      event: 'nod_confirmation_changed',
       properties: {
         status,
         action_kind:
-          action === 'OTTO_browser'
+          action === 'NOD_browser'
             ? 'browser'
-            : action === 'OTTO_vault_allow'
+            : action === 'NOD_vault_allow'
               ? 'sign_in'
-              : action.startsWith('OTTO_memory_')
+              : action.startsWith('NOD_memory_')
                 ? 'memory'
-                : action.startsWith('OTTO_')
+                : action.startsWith('NOD_')
                   ? 'settings'
                   : 'app',
         source: source as TurnSource,
@@ -205,7 +205,7 @@ export async function createApprovals(
     CREATE INDEX IF NOT EXISTS approvals_turn ON approvals(turn_id);
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
     CREATE INDEX IF NOT EXISTS approvals_confirmation_message ON approvals(confirmation_message_id);
-    CREATE INDEX IF NOT EXISTS approvals_memory_save ON approvals(owner_id,source_message_id) WHERE action='OTTO_memory_save';
+    CREATE INDEX IF NOT EXISTS approvals_memory_save ON approvals(owner_id,source_message_id) WHERE action='NOD_memory_save';
     UPDATE approvals SET status='uncertain' WHERE status='executing';
   `);
 

@@ -53,7 +53,7 @@ export async function runtimeRelease(resourcesPath) {
     release = JSON.parse(await readFile(join(resourcesPath, 'runtime-release.json'), 'utf8'));
   } catch (error) {
     if (error.code === 'ENOENT') return undefined;
-    throw new Error('The Otto runtime release information is damaged. Reinstall this app.');
+    throw new Error('The nod runtime release information is damaged. Reinstall this app.');
   }
   return validateRuntimeRelease(release);
 }
@@ -72,7 +72,7 @@ export function validateRuntimeRelease(release) {
     release.files.length > 5000 ||
     !release.files.length
   )
-    throw new Error('This Otto runtime release is incompatible.');
+    throw new Error('This nod runtime release is incompatible.');
   const paths = new Set();
   let total = 0;
   for (const file of release.files) {
@@ -84,7 +84,7 @@ export function validateRuntimeRelease(release) {
       file.bytes < 0 ||
       ![0o644, 0o755].includes(file.mode)
     )
-      throw new Error('The Otto runtime file manifest is invalid.');
+      throw new Error('The nod runtime file manifest is invalid.');
     paths.add(file.path);
     total += file.bytes;
   }
@@ -95,18 +95,18 @@ export function validateRuntimeRelease(release) {
       `lima/share/lima/lima-guestagent.Linux-${release.platform === 'darwin-x64' ? 'x86_64' : 'aarch64'}.gz`,
     ].some((path) => !paths.has(path))
   )
-    throw new Error('The Otto runtime file manifest is incomplete.');
+    throw new Error('The nod runtime file manifest is incomplete.');
   if (createHash('sha256').update(JSON.stringify(release.files)).digest('hex') !== release.id)
-    throw new Error('The Otto runtime content identifier does not match its files.');
+    throw new Error('The nod runtime content identifier does not match its files.');
   if (release.url) {
     const url = new URL(release.url);
     if (url.protocol !== 'https:' || url.username || url.password)
-      throw new Error('The Otto runtime download address is invalid.');
+      throw new Error('The nod runtime download address is invalid.');
   }
   return release;
 }
 
-export const defaultRuntimeCache = join(homedir(), 'Library/Application Support/Otto/runtime');
+export const defaultRuntimeCache = join(homedir(), 'Library/Application Support/nod/runtime');
 
 export function runtimeCacheRoot(release, cacheRoot) {
   return join(cacheRoot || defaultRuntimeCache, release.id);
@@ -155,7 +155,7 @@ async function verifiedCache(release, signal, cacheRoot) {
   } catch (error) {
     signal?.throwIfAborted();
     if (error.code === 'EACCES')
-      throw new Error('Otto cannot read its saved runtime. Check this Mac’s storage permissions.');
+      throw new Error('nod cannot read its saved runtime. Check this Mac’s storage permissions.');
     return undefined;
   }
 }
@@ -164,7 +164,7 @@ export async function findRuntimeAssets({ resourcesPath, signal, cacheRoot, rele
   const release = supplied ? validateRuntimeRelease(supplied) : await runtimeRelease(resourcesPath);
   if (release) return verifiedCache(release, signal, cacheRoot);
   for (const root of [
-    process.env.OTTO_RUNTIME_ASSETS,
+    process.env.NOD_RUNTIME_ASSETS,
     join(resourcesPath, 'runtime-assets'),
     join(resourcesPath, 'desktop/runtime/assets'),
     join(resourcesPath, '.local/desktop-runtime-assets'),
@@ -187,7 +187,7 @@ async function verifyFiles(root, release, signal) {
       metadata.size !== file.bytes ||
       (await assetHash(path, signal)) !== file.sha256
     )
-      throw new Error('The Otto runtime pack failed its integrity check. Choose a fresh copy.');
+      throw new Error('The nod runtime pack failed its integrity check. Choose a fresh copy.');
     await chmod(path, file.mode);
   }
 }
@@ -201,7 +201,7 @@ async function requireDiskSpace(release, directory, inspectDisk) {
   if (available < required)
     throw Object.assign(
       new Error(
-        `Otto needs ${(Math.ceil((Number(required) / 1024 ** 3) * 10) / 10).toFixed(1)} GiB of free space to install its runtime. Free at least ${(Math.ceil((Number(required - available) / 1024 ** 3) * 100) / 100).toFixed(2)} GiB on this Mac, then retry. Your saved conversations and settings are kept.`,
+        `nod needs ${(Math.ceil((Number(required) / 1024 ** 3) * 10) / 10).toFixed(1)} GiB of free space to install its runtime. Free at least ${(Math.ceil((Number(required - available) / 1024 ** 3) * 100) / 100).toFixed(2)} GiB on this Mac, then retry. Your saved conversations and settings are kept.`,
       ),
       { code: 'RUNTIME_DISK_SPACE' },
     );
@@ -211,7 +211,7 @@ function installationError(error) {
   if (!['ENOSPC', 'EDQUOT'].includes(error.code)) return error;
   return Object.assign(
     new Error(
-      'Otto ran out of disk space while installing its runtime. Free space on this Mac, then retry. Your saved conversations and settings are kept.',
+      'nod ran out of disk space while installing its runtime. Free space on this Mac, then retry. Your saved conversations and settings are kept.',
     ),
     { code: 'RUNTIME_DISK_SPACE' },
   );
@@ -411,7 +411,7 @@ export async function installRuntimeArchive({
 }) {
   const release = supplied ? validateRuntimeRelease(supplied) : await runtimeRelease(resourcesPath);
   if (!release) throw new Error('This build has no managed runtime release.');
-  const failure = 'This runtime pack does not match your Otto app. Choose the matching pack.';
+  const failure = 'This runtime pack does not match your nod app. Choose the matching pack.';
   const metadata = await lstat(archivePath);
   if (!metadata.isFile() || metadata.size !== release.archive.bytes) throw new Error(failure);
   return unpackRuntime(release, () => createReadStream(archivePath), {
@@ -440,7 +440,7 @@ function downloadRuntime(release, options) {
       () =>
         stalled.abort(
           new Error(
-            'The Otto runtime download stopped receiving data. Check your connection, then try again.',
+            'The nod runtime download stopped receiving data. Check your connection, then try again.',
           ),
         ),
       stallTimeout,
@@ -450,7 +450,7 @@ function downloadRuntime(release, options) {
   let url = options.downloadUrl || release.url;
   const address = new URL(url);
   if (address.protocol !== 'https:' || address.username || address.password)
-    throw new Error('The Otto runtime download address is invalid.');
+    throw new Error('The nod runtime download address is invalid.');
   const assets = unpackRuntime(
     release,
     async () => {
@@ -466,18 +466,18 @@ function downloadRuntime(release, options) {
         const next = new URL(response.headers.get('location') || '', url);
         await response.body?.cancel();
         if (next.protocol !== 'https:' || next.username || next.password)
-          throw new Error('Otto received an unsafe runtime download address.');
+          throw new Error('nod received an unsafe runtime download address.');
         url = next.href;
       }
       if (!response?.ok || !response.body)
-        throw new Error('The Otto runtime download is unavailable. Try again.');
+        throw new Error('The nod runtime download is unavailable. Try again.');
       const body = Readable.fromWeb(response.body);
       body.once('end', () => clearTimeout(timer));
       return body;
     },
     {
       message: 'Downloading your local computer…',
-      failure: 'The Otto runtime download did not complete. Try again.',
+      failure: 'The nod runtime download did not complete. Try again.',
       onStatus,
       onBytes: alive,
       signal: downloadSignal,
@@ -503,7 +503,7 @@ export async function openRuntimeAssets(options) {
     options.signal?.throwIfAborted();
   }
   if (release && downloadUrl) return downloadRuntime(release, { ...options, downloadUrl });
-  throw Object.assign(new Error('Choose the Otto Runtime pack to finish setting up this Mac.'), {
+  throw Object.assign(new Error('Choose the nod Runtime pack to finish setting up this Mac.'), {
     code: 'RUNTIME_ARCHIVE_REQUIRED',
   });
 }

@@ -5,7 +5,7 @@
 .ob-glyph-pulse {
   transform-box: view-box;
   transform-origin: 25px 6px;
-  animation: ob-pulse 2.8s ease-in-out infinite;
+  animation: ob-pulse 2.8s ease-in-out 2;
 }
 .ob-glyph-orbit {
   transform-box: view-box;
@@ -22,10 +22,10 @@
   transform-origin: 25px 6px;
 }
 .ob-glyph-react[data-reaction='on'] {
-  animation: ob-dot-hop 480ms var(--ease-pop);
+  animation: ob-dot-hop 480ms var(--ease-enter);
 }
 .ob-glyph-react[data-reaction='off'] {
-  animation: ob-dot-droop 440ms var(--ease-reveal);
+  animation: ob-dot-droop 440ms var(--ease-enter);
 }
 @keyframes ob-pulse {
   0%,

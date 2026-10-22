@@ -10,7 +10,7 @@ const zone = 'Europe/Madrid';
 
 export default scenario({
   id: 'proactive-standing-intro',
-  title: 'The first unprompted update says Otto will keep doing it, once',
+  title: 'The first unprompted update says nod will keep doing it, once',
   linear: 'LAB-508',
   capabilities: ['apps', 'progress'],
   tier: 'pr',
@@ -123,12 +123,12 @@ export default scenario({
       }),
       judge(
         'first-update-says-it-will-keep-doing-this',
-        'The first update is two messages. The first reports that the 1:1 with Niklas moved from 10:00 to 09:00 tomorrow (Europe/Madrid), and is not held back behind a question. The second is a short separate message saying Otto will keep flagging calendar changes like this and that the owner can tell it to stop or do less. Neither lists other things Otto can do.',
+        'The first update is two messages. The first reports that the 1:1 with Niklas moved from 10:00 to 09:00 tomorrow (Europe/Madrid), and is not held back behind a question. The second is a short separate message saying nod will keep flagging calendar changes like this and that the owner can tell it to stop or do less. Neither lists other things nod can do.',
         { failure: 'format' },
       ),
       judge(
         'second-update-does-not-repeat-it',
-        'The second update reports that the design review with Priya moved to tomorrow at 09:15 and now overlaps the 09:00 to 09:30 1:1 with Niklas, and no message in it repeats that Otto will keep flagging calendar changes or how to stop it.',
+        'The second update reports that the design review with Priya moved to tomorrow at 09:15 and now overlaps the 09:00 to 09:30 1:1 with Niklas, and no message in it repeats that nod will keep flagging calendar changes or how to stop it.',
         { failure: 'format' },
       ),
       judge(

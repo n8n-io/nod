@@ -50,7 +50,7 @@ export async function browserSources(root = repository) {
 
 export function runtimePlatform(env = process.env) {
   const target =
-    env.OTTO_DESKTOP_TARGET || `darwin-${process.platform === 'darwin' ? process.arch : 'arm64'}`;
+    env.NOD_DESKTOP_TARGET || `darwin-${process.platform === 'darwin' ? process.arch : 'arm64'}`;
   if (!['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(target))
     throw new Error('Unsupported desktop target.');
   return target;
@@ -82,12 +82,12 @@ export async function runtimeInputs() {
   );
   entries.push(['@electron/osx-sign', configuration.devDependencies['@electron/osx-sign']]);
   const signingMode =
-    process.env.OTTO_SIGNING_MODE || (process.env.OTTO_SIGNING_IDENTITY ? 'self-signed' : 'ad-hoc');
+    process.env.NOD_SIGNING_MODE || (process.env.NOD_SIGNING_IDENTITY ? 'self-signed' : 'ad-hoc');
   if (!['ad-hoc', 'self-signed', 'developer-id'].includes(signingMode))
     throw new Error('Unknown runtime signing mode.');
   if (signingMode !== 'ad-hoc') {
-    const identity = process.env.OTTO_SIGNING_IDENTITY?.trim();
-    const certificate = process.env.OTTO_SIGNING_CERTIFICATE_SHA256?.toLowerCase();
+    const identity = process.env.NOD_SIGNING_IDENTITY?.trim();
+    const certificate = process.env.NOD_SIGNING_CERTIFICATE_SHA256?.toLowerCase();
     if (!identity || /[\r\n\0]/.test(identity) || !/^[a-f0-9]{64}$/.test(certificate || ''))
       throw new Error(
         'Signed runtime inputs require the permanent identity and certificate SHA256.',

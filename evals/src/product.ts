@@ -1,8 +1,8 @@
-import { ottoPersonality } from '../../src/runtime/personality.ts';
+import { nodPersonality } from '../../src/runtime/personality.ts';
 import { check, judge, type Expectation } from './scenario.ts';
 import type { Run } from './trace.ts';
 
-export const standard = ottoPersonality;
+export const standard = nodPersonality;
 
 const product = { group: 'product' as const, aspect: 'process' as const };
 
@@ -104,7 +104,7 @@ export const criteria: Expectation[] = [
   },
   {
     ...judge(
-      'sounds-like-otto',
+      'sounds-like-nod',
       'The messages follow the style guide above: short, the result first, direct, with a point of view, written like a text from a sharp colleague. No help-desk tone, no recap of the request, no menu of options, no filler openers or sign-offs, prose instead of report formatting unless a deliverable was asked for, no routine tool activity or read counts narrated. A requested deliverable stays whole. Length is proportional to what the user asked.',
       { required: false, ...product, failure: 'format' },
     ),

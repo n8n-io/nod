@@ -38,22 +38,22 @@ test('analytics drops revoked owner queues while preserving another owner and re
   for (const owner of ['alex', 'sam', 'never']) {
     if (owner !== 'never') analytics.setUsageData(owner, true);
     analytics.capture(owner, {
-      event: owner === 'sam' ? 'otto_chat_stopped' : 'otto_conversation_reset',
+      event: owner === 'sam' ? 'nod_chat_stopped' : 'nod_conversation_reset',
     });
   }
   analytics.setUsageData('alex', false);
   await analytics.shutdown();
   assert.deepEqual(
     received.map((event) => [event.distinct_id, event.event]),
-    [[local, 'otto_chat_stopped']],
+    [[local, 'nod_chat_stopped']],
   );
 
   received.length = 0;
   const ownerBound = createPostHogAnalytics();
   const signal = new AbortController().signal;
-  ownerBound.capture({ distinctId: local, event: 'otto_chat_stopped', properties: {} }, signal);
+  ownerBound.capture({ distinctId: local, event: 'nod_chat_stopped', properties: {} }, signal);
   ownerBound.capture(
-    { distinctId: `local:${randomUUID()}`, event: 'otto_chat_stopped', properties: {} },
+    { distinctId: `local:${randomUUID()}`, event: 'nod_chat_stopped', properties: {} },
     signal,
   );
   await ownerBound.shutdown();
@@ -78,7 +78,7 @@ test(
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
-    process.env.OTTO_DATA_ROOT = join(objects, 'runtime');
+    process.env.NOD_DATA_ROOT = join(objects, 'runtime');
     const { pool } = await import('../src/server/db.ts');
     const { createApplication } = await import('../src/server/composition.ts');
     const { dataRoot, port } = await import('../src/server/config.ts');

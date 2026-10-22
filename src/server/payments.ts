@@ -94,7 +94,6 @@ export async function createPayments(
     ownerId: string;
     analytics?: CaptureAnalytics;
     uses: Awaited<ReturnType<typeof createVaultUses>>;
-    inOtto(turn: TurnRef): Promise<boolean>;
     present(turn: TurnRef, input: { kind: string; [key: string]: unknown }): Promise<string>;
     page(threadId: string): Promise<BrowserPage>;
     destinations(
@@ -162,7 +161,7 @@ export async function createPayments(
   const cardFacts = (card: Pick<VaultPaymentCard, 'brand' | 'last4'>) => ({
     brand: card.brand,
     last4: card.last4,
-    savedInOtto: true,
+    savedInNod: true,
   });
   const payment = (row: Row) => ({
     id: row.id,
@@ -176,7 +175,7 @@ export async function createPayments(
     const cards = await options.cards();
     if (!cards.length)
       throw new PaymentError(
-        'Ask the owner to open Otto on desktop and [add a card in Trust](/trust?add=card), then tell you to continue. Do not ask for card details in chat.',
+        'Ask the owner to open nod on desktop and [add a card in Trust](/trust?add=card), then tell you to continue. Do not ask for card details in chat.',
       );
     const named = hint?.toLowerCase();
     const matches = named
@@ -195,7 +194,7 @@ export async function createPayments(
 
   async function enter(row: Row, card: VaultPaymentCard, securityCode: string) {
     let value: CardEntry['card'];
-    const message = `Otto entered ${cardName(card)} for ${money(row)} at ${site(row.origin)}. Otto submitted the checkout. Check whether the shop accepted the payment. Do not submit it again.`;
+    const message = `nod entered ${cardName(card)} for ${money(row)} at ${site(row.origin)}. nod submitted the checkout. Check whether the shop accepted the payment. Do not submit it again.`;
     await uses.run(
       {
         id: row.id,
@@ -300,7 +299,6 @@ export async function createPayments(
 
   async function request(turn: TurnRef, raw: unknown) {
     const parsed = input.parse(raw);
-    const inOtto = await options.inOtto(turn);
     const origin = credentialOrigin((await options.page(browserOf(turn))).origin);
     const currency = parsed.currency.toUpperCase();
     const [whole, fraction = ''] = parsed.amount.split('.');
@@ -335,7 +333,7 @@ export async function createPayments(
       currency,
       card: cardFacts(card),
       destinations: [...new Set(Object.values(destinations))],
-      requires: inOtto ? 'security_code' : 'desktop_private_form',
+      requires: 'desktop_private_form',
     };
     const question = await options.present({ ...turn }, structuredClone(details));
     if (typeof question !== 'string' || !question.trim() || question.length > 12_000)
@@ -398,7 +396,7 @@ export async function createPayments(
       { kind: 'payment', origin, payment: spent(row) },
       'requested',
     );
-    return { image, question, ...(!inOtto ? { url: `/payments/${row.id}` } : {}) };
+    return { image, question, url: `/payments/${row.id}` };
   }
 
   async function submitCode(turnId: string, code: string, paymentId: string) {
@@ -416,6 +414,34 @@ export async function createPayments(
   }
 
   function registerRoutes(app: FastifyInstance) {
+    app.get<{ Params: { id: string } }>(
+      '/api/payment-requests/:id/status',
+      async (request, reply) => {
+        reply.header('Cache-Control', 'no-store');
+        if (!z.uuid().safeParse(request.params.id).success)
+          return reply.code(404).send({ error: 'This payment request is unavailable.' });
+        const result = await pool.query<{ status: string; card_id: string; card_version: string }>(
+          `SELECT p.card_id,p.card_version,CASE WHEN v.status='running' THEN 'entering' WHEN v.status IS NOT NULL THEN v.status
+           WHEN p.status='pending' AND EXISTS(SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
+             WHERE u.id=p.turn_id AND u.owner_id=p.owner_id AND th.archived_at IS NULL AND ${currentTurnSql}) THEN 'pending'
+           ELSE 'expired' END AS status
+         FROM vault_payments p LEFT JOIN vault_uses v ON v.id=p.id::text AND v.owner_id=p.owner_id
+         WHERE p.id=$1 AND p.owner_id=$2`,
+          [request.params.id, ownerId],
+        );
+        if (!result.rows[0])
+          return reply.code(404).send({ error: 'This payment request is unavailable.' });
+        const row = result.rows[0];
+        if (
+          row.status === 'pending' &&
+          !(await options.cards()).some(
+            (card) => card.id === row.card_id && card.version === row.card_version,
+          )
+        )
+          return { status: 'expired' };
+        return { status: row.status };
+      },
+    );
     app.get<{ Params: { id: string } }>('/api/payment-requests/:id', async (request, reply) => {
       reply.header('Cache-Control', 'no-store');
       if (!z.uuid().safeParse(request.params.id).success)

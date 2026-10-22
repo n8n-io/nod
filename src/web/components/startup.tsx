@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowUp, PanelLeftClose, PanelLeftOpen, Paperclip } from 'lucide-react';
+import { ArrowUp, Paperclip } from 'lucide-react';
 import { BrandMark } from './brand';
 import { Skeleton } from './ui';
 import { readUiPreference } from '../lib/ui-preferences';
@@ -29,18 +29,11 @@ export function ChatSkeleton({
 }) {
   const slow = useElapsed(slowAfterMs);
   const long = useElapsed(longAfterMs);
-  const conversation = readUiPreference('otto.chat-layout') === 'conversation';
+  const conversation = readUiPreference('nod.chat-layout') === 'conversation';
   return (
     <div className="chat-page chat-skeleton" aria-busy="true">
       {!desktopSettingsAvailable() && (
         <div className="chat-report-action" aria-hidden="true">
-          <span className="button button-ghost button-icon sidebar-toggle">
-            {readUiPreference('otto.sidebar') !== 'expanded' ? (
-              <PanelLeftOpen size={16} />
-            ) : (
-              <PanelLeftClose size={16} />
-            )}
-          </span>
           <span className="chat-title">Chat</span>
         </div>
       )}
@@ -79,11 +72,11 @@ export function ChatSkeleton({
           ) : slow ? (
             <span key="slow">Getting things ready…</span>
           ) : (
-            <span className="sr-only">Opening Otto…</span>
+            <span className="sr-only">Opening nod…</span>
           )}
         </p>
         <div className="composer ghost-composer" aria-hidden="true">
-          <p>Message Otto…</p>
+          <p>Message nod…</p>
           <div className="composer-tools">
             <div className="composer-left">
               <span className="button button-ghost button-icon">
