@@ -1531,6 +1531,29 @@ test('runtime cache reuse rejects same-size noncritical changes and executable-m
   assert.equal(await findRuntimeAssets(options), installed);
 });
 
+test('a failed runtime command names its cause from the end of its output, including WSL errors', async () => {
+  const { execute } = await import('../runtime/index.mjs');
+  await assert.rejects(
+    execute(process.execPath, [
+      '-e',
+      'console.log("started"); console.error("x".repeat(400) + "\\nError response from daemon: Pool overlaps"); process.exit(3)',
+    ]),
+    {
+      message: /^Otto runtime command failed \(3\): …x+ Error response from daemon: Pool overlaps$/,
+    },
+  );
+  await assert.rejects(
+    execute(process.execPath, [
+      '-e',
+      'process.stdout.write(Buffer.from("Error code: Wsl/Service/CreateInstance/CreateVm/HCS_E_HYPERV_NOT_INSTALLED\\r\\n", "utf16le")); process.exit(1)',
+    ]),
+    {
+      message:
+        'Otto runtime command failed (1): Error code: Wsl/Service/CreateInstance/CreateVm/HCS_E_HYPERV_NOT_INSTALLED',
+    },
+  );
+});
+
 test('runtime networks reject isolation drift before any workload can start', async () => {
   const { ensureNetwork } = await import('../runtime/index.mjs');
   const expected = {

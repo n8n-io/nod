@@ -95,10 +95,16 @@ export function execute(
           new Error(`Otto could not launch its bundled runtime (${spawnError.code || 'unknown'}).`),
         );
       if (timedOut) return reject(new Error('Otto runtime setup took too long. Please retry.'));
-      if (code !== 0)
+      if (code !== 0) {
+        const detail = output.replaceAll('\0', '').replace(/\s+/g, ' ').trim();
         return reject(
-          Object.assign(new Error(`Otto runtime command failed (${code}).`), { output }),
+          new Error(
+            `Otto runtime command failed (${code})${
+              detail ? `: ${detail.length > 300 ? '…' : ''}${detail.slice(-300)}` : '.'
+            }`,
+          ),
         );
+      }
       resolveRun(output.trim());
     });
   });
@@ -752,7 +758,7 @@ exec "$docker" "$@"
         names.browser,
         'node',
         '-e',
-        'const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))',
+        'const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",(e)=>{console.error("The browser did not answer: "+e.message);process.exit(1)})',
       ]);
     },
     { signal },

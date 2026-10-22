@@ -27,7 +27,7 @@ identity = '/var/lib/otto/identity'
 os.makedirs('/var/lib/otto', mode=0o700, exist_ok=True)
 if os.path.exists(identity):
     if open(identity).read() != config['identity']:
-        sys.exit(64)
+        sys.exit('The Otto computer identity changed.')
 else:
     with open(identity, 'x') as file:
         file.write(config['identity'])
@@ -39,7 +39,8 @@ for attempt in range(120):
         break
     time.sleep(0.5)
 else:
-    sys.exit(1)
+    lines = [line for line in open('/var/log/otto-docker.log', errors='replace').read().split('\n') if line.strip()]
+    sys.exit('Docker did not start: ' + (lines[-1][-200:] if lines else 'no log'))
 if sys.argv[1] == 'start':
     sys.exit(0)
 name = config.get('name')
@@ -57,8 +58,10 @@ if result.returncode or result.stdout.strip() != image['id']:
     path = '/opt/otto-assets/' + image['file']
     with open(path, 'rb') as file:
         if hashlib.file_digest(file, 'sha256').hexdigest() != image['sha256']:
-            sys.exit(1)
-    subprocess.run([docker, 'load', '--input', path], check=True, stdout=subprocess.DEVNULL)
-result = subprocess.run([docker, 'image', 'inspect', '--format', '{{.Id}}', image['reference']], check=True, capture_output=True, text=True)
-if result.stdout.strip() != image['id']:
-    sys.exit(1)
+            sys.exit(f'The {name} image failed its integrity check.')
+    loaded = subprocess.run([docker, 'load', '--input', path], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if loaded.returncode:
+        sys.exit(f'Docker could not load the {name} image: {loaded.stderr.strip()[-200:]}')
+result = subprocess.run([docker, 'image', 'inspect', '--format', '{{.Id}}', image['reference']], capture_output=True, text=True)
+if result.returncode or result.stdout.strip() != image['id']:
+    sys.exit(f'The {name} image does not match the Otto computer manifest.')
