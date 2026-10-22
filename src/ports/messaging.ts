@@ -6,6 +6,7 @@ export interface MessagingChannel {
   allowedSenderIds: string[];
   replyWindowMs?: number;
   supportsAttachments?: boolean;
+  presenceMs?: number;
 }
 
 export interface MessagingAttachment {
@@ -88,5 +89,12 @@ export interface MessagingTransport {
     reaction: string | null;
     signal?: AbortSignal;
   }): Promise<'sent' | 'unsupported'>;
+  presence?(input: {
+    channelId: string;
+    accountId: string;
+    threadId: string;
+    messageId: string;
+    status?: string;
+  }): Promise<void>;
   close(): Promise<void>;
 }

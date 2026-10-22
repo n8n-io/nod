@@ -57,7 +57,7 @@ A model-written task list in the workspace does not replace the ledger. The exis
 
 1. The owner gives the coordinator an independent goal. The coordinator uses `task start` with a title, completion condition, brief and planned steps.
 2. One transaction saves the task, posts its first message and queues its first turn. A task started from chat uses its task ID as the session ID. The original owner message stays linked to the task.
-3. The worker opens that saved session. The task updates its current activity and steps as it works. Text the model writes between tool calls isn't posted, because the task's first message already says what it is doing. Its questions, files, deliberate `send_message` updates and final reply reach the conversation; if it ends without a final reply, its last such text is posted instead. Event and schedule runs stay quiet. While the turn runs and its latest step is in the browser, the task's card shows the website.
+3. The worker opens that saved session. The task updates its steps as it works. Text the model writes between tool calls becomes the task's live status: its card and the working bubble at the bottom of the chat show it, with the website while it browses. It isn't posted, because the task's first message already says what it is doing. Its questions, files, deliberate `send_message` updates and final reply reach the conversation; if it ends without a final reply, its last such text is posted instead. A reply from the owner while the task works gets its answer as a message. Event and schedule runs stay quiet.
 4. If the task needs the owner, it asks a question and waits. Other sessions continue.
 5. A reply to the task's first message, question, file or result continues that task. An ordinary message goes to the coordinator, which can forward the exact owner message to one or more selected open tasks. A finished or stopped task reopens only when the owner replies to one of its messages. If the target is unclear, it asks.
 6. The task checks its completion condition, shares any result files and calls `task finish`. Its final reply goes directly to its message in the shared conversation.
@@ -96,7 +96,7 @@ Shared information does not grant permission. For a task started from chat, the 
 
 Web chat and the Tasks page show the same compact preview. Expand it for steps, activity, the completion condition and task controls. Activity shows tool and helper events, not private model reasoning.
 
-Telegram shows the task as messages nod writes. Its questions and result reply to its first message. `/tasks` sends a replyable status message for each open task. Reply with `/status` to inspect it or `/stop` to stop it. Native reply links for text parts and files select the same saved task in Telegram and WhatsApp.
+Telegram shows the task as messages nod writes and, while it works, its current step as a live draft. Its questions and result reply to its first message. `/tasks` sends a replyable status message for each open task. Reply with `/status` to inspect it or `/stop` to stop it. Native reply links for text parts and files select the same saved task in Telegram and WhatsApp.
 
 These are views of one task record and session. A pending approval remains bound to its exact question and action. An old status message cannot approve a later action. Private sign-in and payment steps remain in nod's private forms.
 

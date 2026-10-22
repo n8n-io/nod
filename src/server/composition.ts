@@ -134,6 +134,7 @@ import { browserOf } from './turn-chain.ts';
 import type { VaultActivityReason } from '../shared/contracts.ts';
 import { createTriage, getPreferences } from './triage.ts';
 import { createTasks } from './tasks.ts';
+import { createActivity } from './activity.ts';
 import { checkedKeyStore, createVault, credentialOrigin, sealedDataExists } from './vault.ts';
 import { createVaultAccess } from './vault-access.ts';
 import { createPayments } from './payments.ts';
@@ -590,6 +591,7 @@ async function initializeApplication(
     clearBrowser: (id) => adapters.computer.clear(id),
   });
   await tasks.initialize();
+  const activity = createActivity({ pool, ownerId });
   const triage = createTriage({
     consumers,
     connectedApps: () => integrations.connectedApps(ownerId, true),
@@ -1339,6 +1341,7 @@ async function initializeApplication(
     submitMessage: userMessages.submit,
     verification: chatVerification,
     taskLedger: tasks.read,
+    activity: activity.current,
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,
     computer,
@@ -1458,6 +1461,7 @@ async function initializeApplication(
       reacted: (messageId, reaction) =>
         reactToAssistantMessage(messageId, reaction, adapters.model.configured),
       activeThread: (client) => activeThread(client),
+      activity: activity.read,
       taskCommand: tasks.chatCommand,
       commandReply: async (command, client, threadId) => {
         const now = new Date();
@@ -1557,6 +1561,7 @@ async function initializeApplication(
     for (const close of [
       () => adapters.integrationBrowser?.close(),
       () => channels?.close(),
+      () => activity.close(),
       () => stopThreadWorkers(),
       () => conversationAnalytics.close(),
       finishWork,

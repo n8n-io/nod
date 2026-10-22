@@ -8,6 +8,7 @@ import { isMessageReaction } from '../shared/emoji.ts';
 import { transaction } from './transaction.ts';
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
+import type { LiveWork } from './activity.ts';
 import type {
   ChannelPairingRequest,
   InboundMessage,
@@ -83,6 +84,7 @@ interface ChannelOptions {
   resolveAttachments?: (threadId: string, ids: string[]) => Promise<MessagingAttachment[]>;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
   activeThread?: (client: PoolClient) => Promise<{ id: string }>;
+  activity?: () => Promise<LiveWork[]>;
   commandReply?: (
     command: 'memory' | 'usage',
     client: PoolClient,
@@ -995,6 +997,45 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     return true;
   }
 
+  const presence = new Map<string, { at: number; status: string }>();
+  async function presenceStep() {
+    if (closed || replacing || !transport.presence || !options.activity) return;
+    const live = new Map<string, string>();
+    for (const item of await options.activity())
+      if (item.channel !== 'web')
+        live.set(item.channel, [item.title, item.step].filter(Boolean).join(': '));
+    for (const channel of presence.keys()) if (!live.has(channel)) presence.delete(channel);
+    for (const [channel, status] of live) {
+      const row = (
+        await pool.query<ChannelIdentity & { source_id: string; thread_id: string; at: Date }>(
+          `SELECT provider,account_id,sender_id,source_id,thread_id,received_at AS at FROM channel_inbox
+           WHERE owner_id=$1 AND channel=$2 AND state='submitted' ORDER BY received_at DESC LIMIT 1`,
+          [ownerId, channel],
+        )
+      ).rows[0];
+      if (!row || !permitted(row)) continue;
+      const settings = channels.find((item) => item.id === row.provider);
+      const prefix = `channel:${row.provider}:${row.account_id}:`;
+      const last = presence.get(channel);
+      if (
+        !settings?.presenceMs ||
+        !row.source_id.startsWith(prefix) ||
+        (settings.replyWindowMs !== undefined &&
+          Date.now() - row.at.getTime() >= settings.replyWindowMs) ||
+        (last?.status === status && Date.now() - last.at < settings.presenceMs)
+      )
+        continue;
+      presence.set(channel, { at: Date.now(), status });
+      await transport.presence({
+        channelId: row.provider,
+        accountId: row.account_id,
+        threadId: row.thread_id,
+        messageId: row.source_id.slice(prefix.length),
+        ...(status ? { status } : {}),
+      });
+    }
+  }
+
   function drain() {
     if (closed || replacing || options.admission?.paused || options.admission?.closed)
       return Promise.resolve();
@@ -1036,6 +1077,11 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               outbox = true;
             }
             if (outbox) outbox = await attempt(outboxStep);
+          }
+          try {
+            await presenceStep();
+          } catch (cause) {
+            logFailure('channel_presence_failed', cause);
           }
         }
       } finally {

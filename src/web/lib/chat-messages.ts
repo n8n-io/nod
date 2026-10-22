@@ -1,4 +1,4 @@
-import type { Message, Turn } from '../../shared/contracts';
+import type { Message } from '../../shared/contracts';
 import { isSameDay, type DateFormat } from './date-format';
 
 export function visibleConversationTurns(
@@ -11,12 +11,6 @@ export function visibleConversationTurns(
         turn.top < viewport.bottom && (turns[index + 1]?.top ?? Infinity) > viewport.top,
     )
     .map((turn) => turn.id);
-}
-
-export function hasVisibleChatActivity(turns: Pick<Turn, 'status' | 'showTyping'>[]) {
-  return turns.some(
-    (turn) => turn.showTyping !== false && ['queued', 'running'].includes(turn.status),
-  );
 }
 
 export function messagesAreGrouped(

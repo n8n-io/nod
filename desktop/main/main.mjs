@@ -1099,11 +1099,13 @@ async function confirmRestart() {
     ? [
         ...new Set(
           running.map((turn) =>
-            turn?.visible
-              ? 'a reply in your chat'
-              : turn?.source === 'schedule'
-                ? 'a scheduled task'
-                : 'a background check',
+            turn?.task
+              ? 'a task'
+              : turn?.visible
+                ? 'a reply in your chat'
+                : turn?.source === 'schedule'
+                  ? 'a scheduled task'
+                  : 'a background check',
           ),
         ),
       ]

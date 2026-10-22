@@ -175,8 +175,7 @@ export function createAgentRuntime(dependencies: {
     let bufferedText = '';
     let streamedText = '';
     let streamSubmitted = false;
-    let firstMessage = true;
-    let lastSpoke = Date.now();
+    let speakNext = !context.taskContext;
     let answered = false;
     let lastNote = '';
     let reported = false;
@@ -211,7 +210,6 @@ export function createAgentRuntime(dependencies: {
       await context.reply(trimmed, id, replyToMessageId);
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
-      lastSpoke = Date.now();
     };
     const reply = deliverReply;
     const pause = async (reason: 'question' | 'approval' | 'credentials', message?: string) => {
@@ -232,7 +230,7 @@ export function createAgentRuntime(dependencies: {
 
     const flushText = () => {
       if (bufferedText && !stopped && speaks) {
-        if (firstMessage) context.delta(bufferedText, (streamId ??= randomUUID()));
+        if (speakNext) context.delta(bufferedText, (streamId ??= randomUUID()));
         streamedText += bufferedText;
       }
       bufferedText = '';
@@ -640,7 +638,10 @@ export function createAgentRuntime(dependencies: {
               const { images, omitted } = await inline(message.attachments, budget);
               messages.push({ text: instruct(steeredInstruction(message, omitted)), images });
             }
-            if (messages.length) checkInSpent = checkInStrikes = 0;
+            if (messages.length) {
+              checkInSpent = checkInStrikes = 0;
+              speakNext = true;
+            }
             return messages;
           }),
         onEvent: (event) => {
@@ -662,18 +663,19 @@ export function createAgentRuntime(dependencies: {
               !modelError &&
               (event.status === undefined || event.status === 'succeeded')
             ) {
-              if (
-                !context.taskContext &&
-                (firstMessage ||
-                  Date.now() - lastSpoke >=
-                    (!context.channel || context.channel === 'web' ? 30_000 : 180_000))
-              ) {
+              if (speakNext) {
                 queueStreamReply(text, streamId ?? randomUUID());
-                lastSpoke = Date.now();
                 lastNote = '';
-              } else lastNote = text;
+              } else {
+                lastNote = text;
+                const step = (dependencies.redactError ?? String)(text).replace(/\s+/g, ' ');
+                pendingReplies = pendingReplies.then(() =>
+                  context.emit('step', step, { execution }).catch(() => {}),
+                );
+                void pendingReplies.catch(() => {});
+              }
             }
-            firstMessage = false;
+            speakNext = false;
             completeStream();
           }
           if (event.type === 'error') modelError = event.message;
@@ -689,7 +691,12 @@ export function createAgentRuntime(dependencies: {
             bufferedText += event.text;
             if (/[.!?\n]\s*$/.test(bufferedText)) flushText();
           }
-          if (event.type === 'final') queueStreamReply(event.text, streamId ?? randomUUID());
+          if (event.type === 'final') {
+            pendingReplies = pendingReplies.then(() =>
+              context.emit('final', '', { execution }).catch(() => {}),
+            );
+            queueStreamReply(event.text, streamId ?? randomUUID());
+          }
         },
       });
       session = await opening;

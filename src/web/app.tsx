@@ -230,7 +230,7 @@ function Workspace({
               <Apps configuration={state?.configuration} onAsk={askInChat} />
             )}
             {currentPath === '/channels' && <Channels />}
-            {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
+            {currentPath === '/tasks' && <Tasks onAsk={askInChat} activity={state?.activity} />}
             {settings}
             {!settingsPage(currentPath) &&
               !sidebarItems.some((item) => item.path === currentPath) && (

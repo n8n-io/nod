@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import type { AppState } from '../../shared/contracts';
+import type { Activity, AppState } from '../../shared/contracts';
 import { api, errorMessage, post } from '../lib/api';
 import { initialStreamState, streamReducer } from '../lib/streams';
 import { pageDataCache } from '../lib/page-data-cache';
@@ -34,6 +34,7 @@ export function useAppState(accountId?: string) {
             threadId: next,
             messages: [],
             turns: [],
+            activity: [],
           }
         : current,
     );
@@ -123,7 +124,13 @@ export function useAppState(accountId?: string) {
             text?: string;
             streamId?: string;
             done?: boolean;
+            items?: Activity[];
           };
+          if (data.type === 'activity' && Array.isArray(data.items)) {
+            const activity = data.items;
+            setState((current) => (current ? { ...current, activity } : current));
+            pageDataCache.revalidateActive('/api/tasks/');
+          }
           if (data.type === 'refresh') {
             pageDataCache.revalidateActive();
             void refresh();

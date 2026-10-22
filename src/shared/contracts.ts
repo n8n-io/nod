@@ -50,7 +50,14 @@ export interface Turn {
   createdAt: string;
   finishedAt?: string | null;
   error?: string | null;
-  showTyping?: boolean;
+}
+export interface Activity {
+  turnId: string;
+  taskId: string | null;
+  title: string | null;
+  step: string | null;
+  site: string | null;
+  since: string;
 }
 export interface TurnEvent {
   id: string;
@@ -222,6 +229,7 @@ export interface AppState {
   planningTasks?: boolean;
   messages: Message[];
   turns: Turn[];
+  activity?: Activity[];
   configuration: Configuration;
 }
 export interface MessageHistoryPage {
@@ -267,7 +275,6 @@ export interface Task {
   stepIndex?: number;
   revision?: number;
   appliedRevision?: number;
-  activity?: { site: string };
 }
 export interface TaskDetail {
   task: Task;
