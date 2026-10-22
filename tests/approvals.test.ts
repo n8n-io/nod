@@ -1998,7 +1998,8 @@ test(
         async (t) => {
           const turn = await begin('Share the synthetic Desktop file.');
           t.after(() => finish(turn.turnId, 'cancelled'));
-          const bytes = randomBytes(320 * 1024);
+          const marker = 'SYNTHETIC_HOST_FILE_CONTENT_MUST_STAY_OUT_OF_MODEL_TEXT';
+          const bytes = Buffer.concat([Buffer.from(`${marker}\n`), randomBytes(320 * 1024)]);
           const path = '/Users/fixture/Desktop/report.bin';
           const controller = new AbortController();
           let reads = 0;
@@ -2050,7 +2051,7 @@ test(
             return policy.execute(call.action, call.args, call.context);
           };
           try {
-            await execute(pending.id, controller.signal);
+            const outcome = await execute(pending.id, controller.signal);
             assert.equal(reads, 1);
             assert.equal(await execute(pending.id, controller.signal), undefined);
             assert.equal(reads, 1);
@@ -2062,8 +2063,19 @@ test(
             assert.equal(delivered.length, 1);
             assert.equal(delivered[0].name, 'report.bin');
             assert.deepEqual(await artifacts.localArtifacts.readArtifact(delivered[0].id), bytes);
-            assert.ok(JSON.stringify(delivered[0]).length < 1024);
-            assert.equal(delivered[0].source, 'computer_file');
+            const result = (await stored(pending.id)).result;
+            assert.deepEqual(result, {
+              id: delivered[0].id,
+              name: 'report.bin',
+              mimeType: 'application/octet-stream',
+              size: bytes.length,
+              url: `/api/artifacts/${delivered[0].id}`,
+              source: 'computer_file',
+            });
+            assert.deepEqual(delivered[0], result);
+            assert.ok(outcome?.prompt);
+            assert.equal(outcome.prompt.includes(marker), false);
+            assert.equal(outcome.prompt.includes(bytes.toString('base64')), false);
             const count = async () =>
               Number((await db.pool.query('SELECT count(*) FROM artifacts')).rows[0].count);
             let before = await count();

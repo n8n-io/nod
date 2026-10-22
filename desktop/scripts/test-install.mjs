@@ -106,7 +106,7 @@ async function build(source = '/Applications/nod.app/Contents/Resources/engine')
   const assets = await findRuntimeAssets({ resourcesPath: resolve(source), release });
   if (!assets)
     throw new Error(
-      'The verified runtime is not cached. Open the installed nod, or run runtime-pack.mjs --seed-cache after desktop:prepare.',
+      'The verified runtime is not cached. Open the installed nod, or run node desktop/scripts/runtime-pack.mjs --seed-cache after pnpm run desktop:prepare.',
     );
   const installed = await lstat(application).catch((error) => {
     if (error.code !== 'ENOENT') throw error;

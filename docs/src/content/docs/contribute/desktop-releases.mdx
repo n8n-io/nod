@@ -171,6 +171,7 @@ node desktop/scripts/test-install.mjs fresh first-run
 Without an existing installation, build and cache this branch's runtime first. This needs a running Docker builder, Apple's Command Line Tools, and space for the downloaded components and images:
 
 ```sh title="Terminal"
+pnpm --dir desktop install --frozen-lockfile
 pnpm run desktop:prepare
 node desktop/scripts/runtime-pack.mjs --seed-cache
 pnpm run build

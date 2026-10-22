@@ -233,7 +233,7 @@ test('only completed native observations carry context-pruning metadata', async 
   }
 });
 
-test('computer file delivery validates host paths and returns only artifact metadata', async () => {
+test('computer file delivery validates host paths before dispatch', async () => {
   const calls: Record<string, unknown>[] = [];
   const artifact = {
     id: randomUUID(),
@@ -248,12 +248,10 @@ test('computer file delivery validates host paths and returns only artifact meta
       for (const path of ['', 'relative.bin', '~/Desktop/report.bin', '/tmp/file\0.bin'])
         await assert.rejects(call(tools, 'computer', { action: 'share_file', path }));
       assert.deepEqual(calls, []);
-      const result = await call(tools, 'computer', {
+      await call(tools, 'computer', {
         action: 'share_file',
         path: '/Users/fixture/Desktop/report.bin',
       });
-      assert.ok(JSON.stringify(result).includes(artifact.id));
-      assert.ok(JSON.stringify(result).length < 1024);
     },
     {
       computer: async (input) => {
