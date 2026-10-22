@@ -2225,7 +2225,12 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     await assert.rejects(get(rejected));
     await assert.rejects(save({ composioApiKey: 'synthetic-injected-key' }, rejected));
   }
-  for (const url of ['https://example.test/', 'http://127.0.0.1:4310/api/files/synthetic']) {
+  for (const url of [
+    'https://example.test/',
+    'https://example.test/settings',
+    'http://127.0.0.1:4310/api/files/synthetic',
+    'http://127.0.0.1:4310/settings/foreign',
+  ]) {
     frame.url = url;
     await assert.rejects(get());
     await assert.rejects(save({ theme: 'dark' }));
@@ -2259,6 +2264,15 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   assert.ok(
     window.sent.some(([channel, value]) => channel === 'nod:settings:focus' && value === 'models'),
   );
+  for (const path of ['/settings', '/settings/models', '/settings/memory']) {
+    frame.url = `http://127.0.0.1:4310${path}`;
+    assert.equal((await get()).theme, 'light');
+    assert.equal((await invoke('nod:preferences:get', event)).theme, 'light');
+    await save({ theme: 'dark' });
+    assert.equal((await invoke('nod:preferences:get', event)).theme, 'dark');
+    await invoke('nod:preferences:theme', event, 'light');
+    await assert.rejects(get({ sender: window.webContents, senderFrame: { url: frame.url } }));
+  }
   window.destroy();
   await assert.rejects(save({ theme: 'light' }));
   f.setReady(false);

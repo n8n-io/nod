@@ -129,7 +129,7 @@ export function WhatsAppSetup({
               });
           }}
         >
-          <fieldset disabled={busy} className="channel-requirements">
+          <fieldset disabled={busy} className="channel-modes">
             <legend>Choose how you will message nod</legend>
             <label>
               <input
