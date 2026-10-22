@@ -7,6 +7,7 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
 import { SKIP, visit } from 'unist-util-visit';
 import { rehypeLocalLinks } from './markdown';
+import { isConnectionBridge } from './connection-url';
 
 export type SetupKind = 'vault' | 'website' | 'app' | 'browser';
 type SafeLink =
@@ -35,10 +36,7 @@ export function setupLink(
   } as const;
   if (link.kind === 'external') {
     const url = new URL(link.href);
-    return url.protocol === 'https:' &&
-      (url.origin === 'https://connect.composio.dev' || url.pathname === '/v1/connect/pair')
-      ? app
-      : null;
+    return isConnectionBridge(url) ? app : null;
   }
   if (link.kind !== 'setup') return null;
   if (link.setup === 'app') return app;

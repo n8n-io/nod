@@ -8,7 +8,6 @@ import {
   Globe,
   MessageSquareText,
   MapPin,
-  Plug,
   Monitor,
   Moon,
   SlidersHorizontal,
@@ -44,7 +43,6 @@ import { savePreferences } from '../lib/preferences';
 import { localeRegion } from '../../shared/date-locale';
 import { desktopSettingsAvailable, removeDesktopData } from '../lib/desktop';
 import { DesktopOptions, useDesktopSettings } from './desktop-settings';
-import { ConnectionSettings } from './connection-choice';
 import { Memory } from '../pages/memory';
 import { isEditingTarget, navigationShortcut, shortcutLabel } from '../lib/navigation';
 
@@ -356,16 +354,14 @@ export function AccountSettings({
 }) {
   const desktop = desktopSettingsAvailable();
   const native = useDesktopSettings(desktop && open);
-  const tabs: AccountTab[] = ['General', 'Models', 'App connections', 'Memory'];
+  const tabs: AccountTab[] = ['General', 'Models', 'Memory'];
   const selectedTab = tabs.includes(initialTab) ? initialTab : 'General';
   const [tab, setTab] = useState<AccountTab>(selectedTab);
   const [modelDirty, setModelDirty] = useState(false);
   const [preferencesDirty, setPreferencesDirty] = useState(false);
-  const [connectionDirty, setConnectionDirty] = useState(false);
   const pending = useRef(false);
   const continuing = useRef(false);
-  pending.current =
-    modelDirty || preferencesDirty || connectionDirty || native.busy || account.saving;
+  pending.current = modelDirty || preferencesDirty || native.busy || account.saving;
   const [error, setError] = useState('');
   const close = () => {
     if (pending.current) setError('Save or cancel your changes first.');
@@ -455,13 +451,7 @@ export function AccountSettings({
           >
             {tabs.map((value, index) => {
               const Icon =
-                value === 'Models'
-                  ? KeyRound
-                  : value === 'App connections'
-                    ? Plug
-                    : value === 'Memory'
-                      ? Brain
-                      : SlidersHorizontal;
+                value === 'Models' ? KeyRound : value === 'Memory' ? Brain : SlidersHorizontal;
               return (
                 <button
                   key={value}
@@ -660,9 +650,6 @@ export function AccountSettings({
                     close();
                   }}
                 />
-              )}
-              {tab === 'App connections' && (
-                <ConnectionSettings onDirtyChange={setConnectionDirty} />
               )}
               {tab === 'Models' && (
                 <>

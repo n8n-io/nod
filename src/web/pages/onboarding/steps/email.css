@@ -1,53 +1,10 @@
 .ob-email-card {
   display: grid;
   gap: 24px;
-  padding: 24px;
+  padding: 28px;
   border: 1px solid var(--border);
   border-radius: var(--dialog-radius);
   background: var(--surface);
-}
-.ob-email-card-personal {
-  padding: 28px;
-}
-.ob-email-choice:not(:last-child) {
-  padding-bottom: 24px;
-  border-bottom: 1px solid var(--border);
-}
-.ob-email-summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
-  padding-top: 17px;
-  border-top: 1px solid var(--border);
-  color: var(--muted-foreground);
-  font-size: 13px;
-}
-.ob-email-summary > p {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.ob-email-summary > p > svg {
-  flex-shrink: 0;
-}
-.ob-email-summary > p > span {
-  overflow-wrap: anywhere;
-}
-.ob-email-summary > p:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-.ob-email-summary > .connection-link {
-  margin-left: auto;
-  color: var(--muted-foreground);
-  font-size: inherit;
-}
-.ob-email-summary-connected {
-  padding-top: 0;
-  border-top: 0;
 }
 .ob-email-retry {
   display: flex;
@@ -71,20 +28,13 @@
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--card-radius);
+  width: 52px;
+  height: 52px;
+  border-radius: var(--dialog-radius);
   background: var(--control);
 }
 .ob-email-tile > img {
   display: block;
-}
-.ob-email-card-personal .ob-email-tile {
-  width: 52px;
-  height: 52px;
-  border-radius: var(--dialog-radius);
-}
-.ob-email-card-personal .ob-email-tile > img {
   width: 30px;
   height: 30px;
 }
@@ -93,10 +43,8 @@
   min-width: 0;
 }
 .ob-email-name {
-  font-weight: 500;
-}
-.ob-email-card-personal .ob-email-name {
   font-size: 18px;
+  font-weight: 500;
 }
 .ob-email-muted {
   color: var(--muted-foreground);
@@ -135,17 +83,11 @@
 .ob-email-waiting > p {
   flex: 1 1 200px;
 }
-.ob-email-done > strong {
-  font-weight: 500;
-}
 @media (max-width: 640px) {
   .ob-email-card {
-    padding: 16px;
-  }
-  .ob-email-card-personal {
     padding: 20px;
   }
-  .ob-email-card-personal .ob-gmail-connect {
+  .ob-gmail-connect {
     width: 100%;
     margin-top: 8px;
   }

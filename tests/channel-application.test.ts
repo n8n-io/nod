@@ -226,7 +226,6 @@ test(
     };
     try {
       const { createModelService } = await import('../src/server/models.ts');
-      const { createIntegrationKeyService } = await import('../src/server/integration-key.ts');
       createModelService({
         database: pool,
         ownerId: 'route-fixture',
@@ -234,11 +233,6 @@ test(
         backend: {} as never,
         origin: headers.origin,
       }).register(application.app);
-      createIntegrationKeyService({
-        ownerId: 'route-fixture',
-        keyStore,
-        provider: {} as never,
-      }).register(application.app, {} as never);
       await application.app.ready();
       for (const route of analyticsRoutes.keys()) {
         const [method, url] = route.split(' ');

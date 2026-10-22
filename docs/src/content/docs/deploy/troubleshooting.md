@@ -77,21 +77,11 @@ Select **Install WSL** in Otto, approve the administrator request, restart the P
 
 ChatGPT sign-in receives its callback on port 1455. Another Otto app or another sign-in is using it. Close it, then try again.
 
-### Composio says "Invalid API key"
+### An app connection fails
 
-If you use your own Composio key, a valid key without the right permissions can show this error. Composio's [permission troubleshooting](https://docs.composio.dev/kb/guide/platform-project-api-key-permissions) explains why. Saving a key in Otto doesn't verify every permission needed to connect Gmail.
+Return to **Apps** and select **Connect** again. Complete the authorization in the same browser tab; a copied, expired or already used link cannot finish a connection. If the system's encrypted storage is locked, unlock it and restart Otto.
 
-For Gmail sign-in, check **Auth configs → Read only** and **Session management → Read and write**. Keep the other permissions listed in [Apps](/connect/apps/), including **Connected accounts** and **Session tool execution**.
-
-You can't edit a key's permissions. Create a replacement in the same Composio project and save it in **Settings → App connections → My Composio key**. If your server sets `COMPOSIO_API_KEY`, replace the environment value and restart Otto. Then select **Connect Gmail** again. Your existing connected accounts belong to that project.
-
-Otto's connection doesn't need a personal Composio key. If the error persists there, [send feedback](/deploy/troubleshooting/#send-feedback-with-a-diagnostic-report).
-
-### Apps disconnected after switching connection
-
-Switching between Otto's connection and your own Composio key disconnects the apps connected through the one you left, because their accounts belong to that project. Connect them again in **Apps**.
-
-If Otto says it couldn't disconnect an app, it kept your current connection. Apps it disconnected before that stay disconnected, so connect them again if you don't switch. Check your network and try again.
+If the connection service is unavailable or reports a limit, try again later. If the problem persists, [send feedback with a diagnostic report](/deploy/troubleshooting/#send-feedback-with-a-diagnostic-report).
 
 ## Channels
 

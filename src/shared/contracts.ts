@@ -204,7 +204,6 @@ export interface AppSetupStatus {
     name: string;
     logoUrl?: string;
     pairingConfirmed?: boolean;
-    signInRequired?: boolean;
   }>;
 }
 export interface Configuration {

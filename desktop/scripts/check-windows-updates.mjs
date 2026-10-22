@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
+import { createHash, createPublicKey, randomBytes, randomUUID, verify } from 'node:crypto';
 import {
   copyFile,
   mkdir,
@@ -38,6 +38,7 @@ const configuration = JSON.parse(await readFile(join(repository, 'desktop/packag
 const environment = { ...process.env, OTTO_UPDATE_FIXTURE_ROOT: root };
 delete environment.ELECTRON_RUN_AS_NODE;
 const receipt = { source: await run('git', ['rev-parse', 'HEAD'], { cwd: repository }) };
+const challenge = randomBytes(32).toString('base64url');
 let child;
 let installed = false;
 let failure;
@@ -112,11 +113,6 @@ try {
   await mkdir(join(root, 'electron'));
   const owner = randomUUID();
   await writeFile(join(profile, 'profile.json'), JSON.stringify({ ownerId: owner }));
-  const identity = generateKeyPairSync('ed25519').privateKey.export({
-    format: 'pem',
-    type: 'pkcs8',
-  });
-  await writeFile(join(profile, 'integration.pem'), identity);
   const source = join(root, 'source');
   await mkdir(source);
   await copyFile(join(repository, 'desktop/main/settings.mjs'), join(source, 'settings.mjs'));
@@ -125,15 +121,23 @@ try {
     join(source, 'vault-crypto.mjs'),
     (await transformWithEsbuild(await readFile(vaultPath, 'utf8'), vaultPath)).code,
   );
+  const identityPath = join(repository, 'src/providers/composio/identity.ts');
+  const identitySource = await readFile(identityPath, 'utf8');
+  receipt.identityModuleHash = createHash('sha256').update(identitySource).digest('hex');
+  await writeFile(
+    join(source, 'identity.mjs'),
+    (await transformWithEsbuild(identitySource, identityPath)).code,
+  );
   await writeFile(
     join(source, 'main.mjs'),
     `import assert from 'node:assert/strict';
 import { app, safeStorage } from 'electron';
-import { createHash } from 'node:crypto';
+import { createHash, sign } from 'node:crypto';
 import { appendFile, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createSettingsStore } from './settings.mjs';
 import { sealVaultValue, openVaultValue } from './vault-crypto.mjs';
+import { loadIntegrationIdentity } from './identity.mjs';
 const root = process.env.OTTO_UPDATE_FIXTURE_ROOT;
 const profile = join(root, 'profile');
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -144,6 +148,11 @@ app.whenReady().then(async () => {
   const fresh = await stat(join(profile, 'settings.json')).then(() => false, (error) => { if (error.code === 'ENOENT') return true; throw error; });
   if (fresh) await store.save({ onboardingCompleted: true, notifications: false, launchAtLogin: true });
   const key = Buffer.from((await store.environment()).OTTO_VAULT_KEY, 'base64');
+  const owner = JSON.parse(await readFile(join(profile, 'profile.json'), 'utf8')).ownerId;
+  const identity = await loadIntegrationIdentity({
+    dataRoot: profile, ownerId: owner,
+    keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.from(key) },
+  });
   const binding = ['synthetic-owner', 'synthetic-model'];
   const secret = 'synthetic-saved-provider-credential';
   if (fresh) await writeFile(join(profile, 'vault'), sealVaultValue(key, binding, secret));
@@ -152,8 +161,9 @@ app.whenReady().then(async () => {
   assert.equal(saved.onboardingCompleted, true);
   assert.equal(saved.onboardingPreferenceStep, 'complete');
   const files = {};
-  for (const name of ['settings.json', 'profile.json', 'integration.pem', 'vault']) files[name] = hash(await readFile(join(profile, name)));
-  await record('ready', { files, keyHash: hash(key), preferences: saved });
+  for (const name of ['settings.json', 'profile.json', 'vault', 'integration-identity/' + hash(owner) + '.encrypted', 'integration-identity/' + hash(owner) + '.public']) files[name] = hash(await readFile(join(profile, name)));
+  await record('ready', { files, keyHash: hash(key), preferences: saved, publicKey: identity.publicKey, managedOwner: identity.userId,
+    identityProof: sign(null, Buffer.from(${JSON.stringify(challenge)} + ':' + app.getVersion()), identity.key).toString('base64url') });
   if (app.getVersion() === '1.0.1') { await record('stopped'); app.exit(0); }
   else {
     let stopping = false;
@@ -220,6 +230,27 @@ app.whenReady().then(async () => {
   await stat(join(installation, 'Uninstall.exe'));
   receipt.stage = 'starting 1.0.0';
   const first = await start();
+  const identityPublicKey = createPublicKey({
+    key: { kty: 'OKP', crv: 'Ed25519', x: first.publicKey },
+    format: 'jwk',
+  });
+  const verifyIdentity = (entry) => {
+    assert.equal(entry.publicKey, first.publicKey);
+    assert.equal(
+      entry.managedOwner,
+      `otto_${createHash('sha256').update(Buffer.from(first.publicKey, 'base64url')).digest('hex')}`,
+    );
+    assert.equal(
+      verify(
+        null,
+        Buffer.from(`${challenge}:${entry.version}`),
+        identityPublicKey,
+        Buffer.from(entry.identityProof, 'base64url'),
+      ),
+      true,
+    );
+  };
+  verifyIdentity(first);
   const rejected = join(root, 'rejected');
   await mkdir(rejected);
   const rejectedSource = join(rejected, 'failed.nsi');
@@ -238,6 +269,7 @@ app.whenReady().then(async () => {
   assert.equal(recovered.version, '1.0.0');
   assert.deepEqual(recovered.files, first.files);
   assert.equal(recovered.keyHash, first.keyHash);
+  verifyIdentity(recovered);
   receipt.stage = 'updating to 1.0.1';
   const success = await replace(dirname(installers['1.0.1']));
   assert.equal(success.ok, true, success.error?.diagnostic);
@@ -250,6 +282,7 @@ app.whenReady().then(async () => {
   assert.deepEqual(updated.files, first.files);
   assert.equal(updated.keyHash, first.keyHash);
   assert.deepEqual(updated.preferences, first.preferences);
+  verifyIdentity(updated);
   Object.assign(receipt, {
     passed: true,
     stage: 'completed',
@@ -259,6 +292,7 @@ app.whenReady().then(async () => {
     realElectron: true,
     failedInstallPreserved: true,
     encryptedProfilePreserved: true,
+    encryptedIntegrationIdentityPreserved: true,
     completedOnboardingPreserved: true,
     files: updated.files,
     keyHash: updated.keyHash,

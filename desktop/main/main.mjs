@@ -1257,10 +1257,7 @@ async function startEngine({ runtime, signal, pending = false }) {
   await new Promise((accept) => setTimeout(accept, 50));
   if (quitting || signal.aborted) throw new Error('Otto is closing.');
   const providerEnvironment = await settings.environment();
-  let legacyIntegration = await settings.legacyIntegration().catch(() => undefined);
-  if (legacyIntegration) knownSecrets.add(legacyIntegration.apiKey);
-  const legacyOwner = await profileOwner();
-  let legacyNonce;
+  const owner = await profileOwner();
   if (providerEnvironment.OTTO_VAULT_KEY) knownSecrets.add(providerEnvironment.OTTO_VAULT_KEY);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
   if (process.env.OTTO_FEEDBACK_TOKEN) knownSecrets.add(process.env.OTTO_FEEDBACK_TOKEN);
@@ -1279,10 +1276,9 @@ async function startEngine({ runtime, signal, pending = false }) {
     PORT: String(port),
     OTTO_DESKTOP: 'true',
     OTTO_APP_VERSION: app.getVersion(),
-    OTTO_DESKTOP_OWNER_ID: legacyOwner,
+    OTTO_DESKTOP_OWNER_ID: owner,
     OTTO_DESKTOP_AUTH_TOKEN: authToken,
     OTTO_DESKTOP_RUNTIME_PENDING: 'true',
-    ...(legacyIntegration ? { OTTO_DESKTOP_LEGACY_INTEGRATION: 'true' } : {}),
     OTTO_ANALYTICS_ENABLED: String(!testInstall && analytics.enabled),
     OTTO_ANALYTICS_ENVIRONMENT: analyticsEnvironment(ottoBuild),
     OTTO_PUBLIC_URL: engineOrigin,
@@ -1307,54 +1303,6 @@ async function startEngine({ runtime, signal, pending = false }) {
   });
   engine = child;
   child.on('message', (message) => {
-    if (engine === child && legacyIntegration && message?.ownerId === legacyOwner) {
-      if (
-        message.type === 'otto-legacy-integration-request' &&
-        !legacyNonce &&
-        typeof message.nonce === 'string' &&
-        /^[a-f0-9-]{36}$/.test(message.nonce)
-      ) {
-        legacyNonce = message.nonce;
-        child.postMessage({
-          type: 'otto-legacy-integration',
-          ownerId: legacyOwner,
-          nonce: legacyNonce,
-          ...legacyIntegration,
-        });
-      }
-      if (
-        message.type === 'otto-legacy-integration-ack' &&
-        legacyNonce &&
-        message.nonce === legacyNonce &&
-        message.receipt === legacyIntegration.receipt
-      ) {
-        const receipt = legacyIntegration.receipt;
-        void settings
-          .acknowledgeLegacyIntegration(receipt)
-          .then(() => {
-            legacyIntegration = undefined;
-            if (engine === child)
-              child.postMessage({
-                type: 'otto-legacy-integration-cleaned',
-                ownerId: legacyOwner,
-                nonce: legacyNonce,
-                receipt,
-              });
-          })
-          .catch(() => {
-            if (engine === child) {
-              try {
-                child.postMessage({
-                  type: 'otto-legacy-integration-cleanup-deferred',
-                  ownerId: legacyOwner,
-                  nonce: legacyNonce,
-                  receipt,
-                });
-              } catch {}
-            }
-          });
-      }
-    }
     if (engine === child && message?.type === 'otto-ready' && message.port === port) {
       engineBound = true;
     }

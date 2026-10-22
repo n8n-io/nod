@@ -16,8 +16,6 @@ import type { AppSetupStatus, Configuration, Connection } from '../../shared/con
 import { SetupNotice } from '../components/setup-notice';
 import { ServiceLogo } from '../components/service-logo';
 import { AppConnectionDialog, type AppSignIn } from '../components/app-connection-dialog';
-import { connectionStatusText, integrationAccessReady } from '../components/connection-choice';
-import type { IntegrationKeyStatus } from '../../shared/integrations';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
@@ -289,11 +287,9 @@ export function ConnectedAccount({
 export function Apps({
   configuration,
   onAsk,
-  onManageConnection,
 }: {
   configuration?: Configuration;
   onAsk(text: string): void;
-  onManageConnection(trigger?: HTMLElement): void;
 }) {
   const {
     data: connections,
@@ -310,7 +306,6 @@ export function Apps({
     refreshing: catalogRefreshing,
     refresh: refreshCatalog,
   } = usePageData<Connection[]>('/api/apps/catalog');
-  const connectionSetup = usePageData<IntegrationKeyStatus>('/api/integrations/key');
   const tabsId = useId();
   const [view, setView] = useState<'all' | 'connected'>('all');
   useEffect(() => captureAnalytics('otto_tab_viewed', { page: 'apps', tab: view }), []);
@@ -328,7 +323,6 @@ export function Apps({
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(24);
   const [error, setError] = useState('');
-  const [connectionNotice, setConnectionNotice] = useState('');
   const [connectErrorService, setConnectErrorService] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
   const [signIn, setSignIn] = useState<AppSignIn & { attempt?: string }>();
@@ -462,15 +456,6 @@ export function Apps({
         if (!result.completed.includes(hash)) {
           const app = result.apps.find((app) => app.hash === hash);
           if (app) {
-            setSignIn((current) =>
-              current?.url === url &&
-              current.service === signIn.service &&
-              current.attempt === signIn.attempt &&
-              !current.signInRequired &&
-              app.signInRequired === true
-                ? { ...current, signInRequired: true }
-                : current,
-            );
             if (app.pairingConfirmed === true && !pairingConfirmed) {
               pairingConfirmed = true;
               setSignIn((current) =>
@@ -688,17 +673,6 @@ export function Apps({
   async function connect(connection: Connection, entry: 'apps' | 'manage', addAccount = false) {
     if (actionRequest.current || locked) return;
     const capture = analyticsForCurrentSession();
-    if (
-      !connection.direct &&
-      !connection.accessPaths?.length &&
-      !integrationAccessReady(connectionSetup.data)
-    ) {
-      capture('otto_app_connect_clicked', { entry, result: 'needs_access_setup' });
-      onManageConnection(
-        document.activeElement instanceof HTMLElement ? document.activeElement : undefined,
-      );
-      return;
-    }
     capture('otto_app_connect_clicked', { entry, result: 'opened' });
     const request = new AbortController();
     const external = desktopLinksAvailable();
@@ -721,7 +695,6 @@ export function Apps({
         : `connect:${connection.slug}`,
     );
     setError('');
-    setConnectionNotice('');
     setSignIn({
       service: connection.slug,
       name: connection.name,
@@ -930,11 +903,6 @@ export function Apps({
         </div>
       </header>
       {configuration && <SetupNotice configuration={configuration} />}
-      {connectionNotice && (
-        <Notice kind="success" onDismiss={() => setConnectionNotice('')}>
-          {connectionNotice}
-        </Notice>
-      )}
       {error && !manageError && <Notice onDismiss={() => setError('')}>{error}</Notice>}
       {loadError && (
         <Notice>
@@ -946,28 +914,6 @@ export function Apps({
           )}
         </Notice>
       )}
-      <section
-        className="apps-connection apps-connection-summary"
-        aria-labelledby="apps-connection"
-      >
-        <div>
-          <h2 id="apps-connection">
-            {connectionSetup.data?.mode === 'own' ? 'Your Composio project' : 'Easy Connect'}
-          </h2>
-          <p className="connection-muted" data-analytics-private>
-            {connectionSetup.data
-              ? connectionStatusText(connectionSetup.data)
-              : connectionSetup.error || 'Checking connection setup…'}
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          disabled={Boolean(busy || signIn)}
-          onClick={(event) => onManageConnection(event.currentTarget)}
-        >
-          Manage connection setup
-        </Button>
-      </section>
       {!connections ? (
         loading ? (
           <Loading label="Checking apps…" />
@@ -1244,11 +1190,6 @@ export function Apps({
         signIn={signIn}
         opening={Boolean(busy)}
         onClose={closeSignIn}
-        onAccessRenewed={() => {
-          closeSignIn();
-          setManageService(null);
-          setConnectionNotice('Browser sign-in renewed. Connect the app again.');
-        }}
         onOpened={() =>
           setSignIn((current) =>
             current && current === signIn ? { ...current, opened: true } : current,

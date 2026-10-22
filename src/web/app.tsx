@@ -219,11 +219,7 @@ function Workspace({
               </div>
               {currentPath === '/trust' && <Trust onAsk={askInChat} />}
               {currentPath === '/apps' && (
-                <Apps
-                  configuration={state?.configuration}
-                  onAsk={askInChat}
-                  onManageConnection={(trigger) => account.onSettings('App connections', trigger)}
-                />
+                <Apps configuration={state?.configuration} onAsk={askInChat} />
               )}
               {currentPath === '/channels' && <Channels />}
               {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
