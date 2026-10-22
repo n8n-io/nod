@@ -64,7 +64,7 @@ else {
     if (path.startsWith('desktop/')) {
       scope.desktop = true;
       if (
-        /^desktop\/(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|main\/settings\.mjs|runtime\/(index\.mjs|windows\.mjs|protect-profile\.ps1)|test\/settings\.test\.mjs)$/.test(
+        /^desktop\/(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|main\/settings\.mjs|runtime\/(index\.mjs|windows\.mjs|protect-profile\.ps1)|scripts\/drop-admin-privileges\.ps1|test\/settings\.test\.mjs)$/.test(
           path,
         )
       )
