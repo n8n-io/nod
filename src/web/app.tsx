@@ -305,13 +305,30 @@ function AuthenticatedApp({
     onFeedbackHandled();
   }, [feedbackRequest, onFeedbackHandled]);
   const settingsOpen = settingsPage(path);
+  const settingsReturn = useRef<{ path: string; trigger: HTMLElement | null }>({
+    path: settingsOpen || path === '/memory' ? '/' : path,
+    trigger: null,
+  });
+  useEffect(() => {
+    if (!settingsOpen && path !== '/memory') settingsReturn.current = { path, trigger: null };
+  }, [path, settingsOpen]);
   const [finishingOnboarding, setFinishingOnboarding] = useState(false);
   const [settingsRequest, setSettingsRequest] = useState(0);
   const settingsTab: AccountTab =
     path === '/settings/models' ? 'Models' : path === '/settings/memory' ? 'Memory' : 'General';
   const settingsPath = (tab: AccountTab) =>
     tab === 'General' ? '/settings' : `/settings/${tab.toLowerCase()}`;
-  const openSettings = (tab: AccountTab, _trigger?: HTMLElement) => {
+  const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
+    const current = window.location.pathname;
+    if (!settingsPage(current) && current !== '/memory')
+      settingsReturn.current = {
+        path: current,
+        trigger:
+          trigger ??
+          (document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+            ? document.activeElement
+            : null),
+      };
     setSettingsRequest((current) => current + 1);
     navigate(settingsPath(tab));
   };
@@ -434,12 +451,27 @@ function AuthenticatedApp({
               openRequest={settingsRequest}
               onOpenChange={(open) => {
                 if (!open) {
-                  navigate('/');
-                  window.requestAnimationFrame(() =>
-                    document
-                      .querySelector<HTMLElement>('.composer-editor[contenteditable="true"]')
-                      ?.focus(),
-                  );
+                  const previous = settingsReturn.current;
+                  navigate(previous.path);
+                  window.requestAnimationFrame(() => {
+                    if (window.location.pathname !== previous.path) return;
+                    if (
+                      previous.trigger?.isConnected &&
+                      !previous.trigger.closest('[hidden], [inert]')
+                    ) {
+                      previous.trigger.focus({ preventScroll: true });
+                      if (document.activeElement === previous.trigger) return;
+                    }
+                    const composer =
+                      previous.path === '/'
+                        ? document.querySelector<HTMLElement>(
+                            '.composer-editor[contenteditable="true"]',
+                          )
+                        : null;
+                    (composer ?? document.getElementById('workspace'))?.focus({
+                      preventScroll: true,
+                    });
+                  });
                 }
               }}
               onTabChange={(tab, replace) => {
