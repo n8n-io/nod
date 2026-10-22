@@ -32,11 +32,11 @@ The media fixture uses the real message components, a synthetic Ogg recording, a
 | Voice, location, contact and sticker | [Ready](channel-media-ready.png), [playing](channel-media-playing.png), [mobile stickers](channel-stickers-mobile.png) |
 | Mobile                               | [390-pixel view](channel-media-mobile.png)                                                                             |
 
-The fixture checks the stated browser behavior. The captures illustrate it. The fixture and captures do not prove live media delivery, speech transcription or map tile loading.
+The setup fixture also checks copying the Telegram pairing command, clipboard failure and private manual copy. The fixture checks the stated browser behavior. The captures illustrate it. The fixture and captures do not prove live media delivery, speech transcription or map tile loading.
 
 ## Manual live check
 
-Live verification is pending at the owner's request. Use accounts that you control and disposable test content. Keep tokens and QR codes in the private setup UI. Do not attach them to the PR.
+The owner confirmed incoming Telegram photos in the isolated test app. The remaining live checks are below. Use accounts that you control and disposable test content. Keep tokens and QR codes in the private setup UI. Do not attach them to the PR.
 
 1. Start this branch with a disposable database and data root. Follow the [source setup](../../src/content/docs/get-started/install-from-source.mdx) and [channel setup](../../src/content/docs/use/channels.mdx). Use the source setup page's current commands. For voice input, connect an OpenAI or OpenRouter API key in **Settings → Models**, or set server `OPENAI_API_KEY` or `OPENROUTER_API_KEY` in a source install. Voice replies need OpenAI. Check voice input with only an OpenRouter key, with only an OpenAI key and with both keys. With both keys, only OpenAI must receive the audio.
 2. In **Channels**, connect Telegram. Create a bot with BotFather, enter its token in the private panel, press **Start** in Telegram, then confirm your account in nod. Check both the desktop app link and the QR code. If Start loses its payload, copy the private pairing command. A plain `/start` must not pair an account. Check that a different Telegram account cannot start work.
