@@ -1365,6 +1365,15 @@ test(
     await fixture.channels.drain();
     assert.equal(submissions.at(-1)!.text, '');
     assert.equal(submissions.at(-1)!.attachments[0].source, 'sticker');
+    message = { ...message, messageId: 'photo-without-caption', attachments: [file] };
+    await send();
+    await fixture.channels.drain();
+    assert.equal(submissions.at(-1)!.text, '');
+    assert.equal(submissions.at(-1)!.attachments[0].mimeType, 'image/png');
+    assert.deepEqual(
+      await artifacts.readArtifact(submissions.at(-1)!.attachments[0].id),
+      Buffer.from('fixture image'),
+    );
     const cards = Array.from(
       { length: 17 },
       (_, index) =>

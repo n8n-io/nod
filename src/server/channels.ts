@@ -599,8 +599,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           );
           text = [text, media.text].filter(Boolean).join('\n\n');
           if (text.length > 100_000) throw new ChannelMediaFailure('text_too_long');
-          if (!text && !parsed.data.attachments!.every((file) => file.source))
-            text = 'Review the attached files and briefly describe what they contain.';
         } catch (error) {
           if (closed || replacing || receiveSignal.aborted || !permitted(identity)) return;
           if (modelMissingAtIntake || options.modelConfigured?.() === false) {

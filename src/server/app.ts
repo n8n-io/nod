@@ -273,10 +273,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
     if (result.rowCount !== input.attachmentIds.length)
       throw Object.assign(new Error('An attachment is unavailable.'), { statusCode: 400 });
-    const prompt =
-      input.text || 'Review the attached files and briefly describe what they contain.';
     const submitted = await (dependencies.submitMessage ?? submitUserMessage)(
-      prompt,
+      input.text,
       input.attachmentIds.map((id) =>
         artifactView(result.rows.find((artifact) => artifact.id === id)!),
       ),

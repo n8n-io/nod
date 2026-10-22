@@ -1234,6 +1234,19 @@ test(
           await waitFor(settled(stickerTurn.turnId));
           assert.equal(ran(stickerTurn.turnId)?.prompt, '');
           assert.equal(ran(stickerTurn.turnId)?.attachments[0]?.source, 'sticker');
+          const photo = await sendJson({ text: '', attachmentIds: [sticker.id] });
+          assert.equal(photo.statusCode, 200);
+          const photoTurn = photo.json();
+          await waitFor(settled(photoTurn.turnId));
+          assert.equal(ran(photoTurn.turnId)?.prompt, '');
+          assert.equal(ran(photoTurn.turnId)?.attachments[0]?.mimeType, 'image/png');
+          const storedPhoto = (
+            await db.pool.query('SELECT text,attachments FROM messages WHERE id=$1', [
+              photoTurn.messageId,
+            ])
+          ).rows[0];
+          assert.equal(storedPhoto.text, '');
+          assert.equal(storedPhoto.attachments[0].id, sticker.id);
           const second = await thread.submitUserMessage('use attachment again', [], {
             channel: 'web',
           });

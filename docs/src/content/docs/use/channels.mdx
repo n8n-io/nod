@@ -96,6 +96,8 @@ A file message sent before model setup gets a setup notice without a media downl
 
 With Telegram or the WhatsApp QR connection, send an image, document, video or audio file with your message. Captions stay with the file. Reply directly to a task message or its file to continue that task. A reply to a pending question goes to the session that asked it.
 
+You can send a photo or file without a caption. nod uses its content and the conversation to respond, and can ask what you want when that is unclear. It does not add a request to review the file. Image understanding needs a model that supports image input. PNG, JPEG and WebP images can reach the model directly within the runtime's [image limits](/how-it-works/agent-runtime/#keeping-the-context-small). Other files remain in the workspace for file tools.
+
 Shared locations show their coordinates and place details in a map card. Select **View map** to load the map from [OpenStreetMap](https://www.openstreetmap.org). No map request runs before that click. A live-location share is a snapshot; nod does not track later movements.
 
 Shared contacts show a contact card. The original vCard stays available to download, including extra contacts and fields that the card preview does not show. A shared location or contact is data, not permission to contact a person or change an app.
