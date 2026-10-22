@@ -76,7 +76,6 @@ async function installationId(root: string, supplied?: string) {
 
 const hostedProviders: Record<string, 'openai' | 'anthropic' | 'openrouter' | 'typesafe'> = {
   openai: 'openai',
-  'openai-codex': 'openai',
   anthropic: 'anthropic',
   openrouter: 'openrouter',
   typesafe: 'typesafe',

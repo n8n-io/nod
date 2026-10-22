@@ -83,7 +83,7 @@ Analytics have no fields for raw messages, nod's replies, tool arguments or resu
 
 Conversation traces are off until you turn on **Share conversation traces** in **Settings**. While it's on, each request nod makes to your model is sent with the model's reply to the nod team at n8n, through n8n's nod Traces service to n8n's LangSmith project in the EU. Traces are deleted after 14 days, and n8n doesn't use them to train AI models.
 
-Before a trace leaves your computer, nod removes known secrets, your name, email addresses, phone numbers, card numbers, IBANs, crypto wallets, common ID numbers, IP addresses, personal fields in app data and images. A trace carries no account or device identifier, its conversation ID changes every day and whenever nod restarts, and your saved memory is left out. Removal is automatic and can miss details written in other forms, such as another person's name in a sentence. See [Conversation traces](/trust/conversation-traces/) for every layer, an example and where traces go.
+Before a trace leaves your computer, nod removes known secrets, your name, email addresses, phone numbers, card numbers, IBANs, crypto wallets, common ID numbers, IP addresses, personal fields in app data and images. A trace carries no account or device identifier, its conversation ID changes every day and whenever nod restarts, and your saved memory is left out. Removal is automatic and can miss details written in other forms, such as another person's name in a sentence, so traces are pseudonymised, not anonymous. See [Conversation traces](/trust/conversation-traces/) for every layer, an example and where traces go.
 
 ## Feedback
 
