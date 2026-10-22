@@ -17,6 +17,11 @@ const imagesOnly = process.argv.includes('--images-only');
 const hostOnly = process.argv.includes('--host-only');
 const prebuiltImages = process.argv.includes('--prebuilt-images');
 const imageCompressionLevel = 15;
+const parallelCompression = await new Promise((resolveCheck) => {
+  const check = spawn('zstd', ['--version'], { stdio: 'ignore' });
+  check.on('error', () => resolveCheck(false));
+  check.on('close', (code) => resolveCheck(code === 0));
+});
 const platform = runtimePlatform();
 const nodeArchitecture = platform.endsWith('-x64') ? 'x64' : 'arm64';
 const architecture = nodeArchitecture === 'x64' ? 'amd64' : 'arm64';
@@ -199,19 +204,33 @@ if (hostOnly) {
         cwd: repository,
         stdio: ['ignore', 'pipe', 'inherit'],
       });
-      const exited = new Promise((resolveExit, reject) => {
-        child.on('error', reject);
-        child.on('close', (code) =>
-          code === 0 ? resolveExit() : reject(new Error(`Image export failed (${code}).`)),
-        );
-      });
+      const exited = (program, message) =>
+        new Promise((resolveExit, reject) => {
+          program.on('error', reject);
+          program.on('close', (code) =>
+            code === 0 ? resolveExit() : reject(new Error(`${message} (${code}).`)),
+          );
+        });
+      const compressor = parallelCompression
+        ? spawn('zstd', [`-${imageCompressionLevel}`, '-T0', '-q', '-c'], {
+            stdio: ['pipe', 'pipe', 'inherit'],
+          })
+        : undefined;
       await Promise.all([
-        pipeline(
-          child.stdout,
-          createZstdCompress({ params: { [zlib.ZSTD_c_compressionLevel]: imageCompressionLevel } }),
-          createWriteStream(`${target}.tmp`),
-        ),
-        exited,
+        compressor
+          ? Promise.all([
+              pipeline(child.stdout, compressor.stdin),
+              pipeline(compressor.stdout, createWriteStream(`${target}.tmp`)),
+              exited(compressor, 'Image compression failed'),
+            ])
+          : pipeline(
+              child.stdout,
+              createZstdCompress({
+                params: { [zlib.ZSTD_c_compressionLevel]: imageCompressionLevel },
+              }),
+              createWriteStream(`${target}.tmp`),
+            ),
+        exited(child, 'Image export failed'),
       ]);
       await rename(`${target}.tmp`, target);
       await writeFile(stamp, stampValue);

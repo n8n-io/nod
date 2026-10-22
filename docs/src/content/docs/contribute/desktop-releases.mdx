@@ -117,6 +117,8 @@ The **Build desktop release** workflow runs on `main` by hand for a draft or a r
 
 Release builds run one at a time, and up to 100 runs can wait in the queue. A failed build can reuse its matching draft. Published assets are never replaced.
 
+The container images, the Windows runtime and the publishing steps run on Blacksmith runners. Mac signing and notarization, the Mac update checks and the Windows installer check run on GitHub's macOS and Windows runners. The Mac update checks run alongside the image builds, and each Mac app job signs its own runtime before packaging the app.
+
 ## How installed apps update
 
 Drafts are never offered to the installer or the updater.
