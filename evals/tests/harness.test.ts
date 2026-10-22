@@ -1193,7 +1193,7 @@ test('payment code requests get the card code only from an owner who approves', 
 });
 
 test('the simulated owner selects a sign-in method through the private form', async () => {
-  for (const label of ['Autenticar com NIF e senha', 'Unavailable method']) {
+  for (const label of ['Autenticar com NIF e senha', 'Unavailable method', undefined]) {
     const token = 'synthetic-private-method-token';
     const posted: Array<{ path: string; body: unknown }> = [];
     let waiting = true;

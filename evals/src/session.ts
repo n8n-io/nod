@@ -160,7 +160,7 @@ export function createSession(options: {
     if (turn.waiting_reason === 'credentials')
       for (const started = Date.now(); ; await sleep(250)) {
         const form = await credentialForm(text);
-        if (form && (form.kind === 'method' ? user.signInMethod : user.signIn))
+        if (form && (form.kind === 'method' || user.signIn))
           return { kind: 'form' as const, form, text };
         if (form) return { kind: 'question' as const, text };
         const state = await (await stack.request('/api/state')).json();
