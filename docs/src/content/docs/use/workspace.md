@@ -39,7 +39,7 @@ flowchart LR
   server -- drives --> br
 ```
 
-- **Your files.** The workspace doesn't see your home folder. It only gets the files you attach or that nod fetches. nod reaches your own files only through [your computer](/use/your-computer/), when you turn it on.
+- **Your files.** The workspace doesn't see your home folder. It only gets the files you attach or that nod fetches. Direct access to files on your Mac requires [Your computer](/use/your-computer/), when you turn it on. Attached files and connected-app downloads already enter the workspace as copies.
 - **Keys.** Model provider keys and nod's access key never enter the workspace. If you connect a command-line tool, its token reaches only that tool, never code nod writes.
 - **The browser.** nod's browser runs in its own container. The workspace can't read its saved sign-ins.
 

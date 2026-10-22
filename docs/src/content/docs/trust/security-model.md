@@ -39,7 +39,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 
 - Only your messages, a schedule's instruction, your standing instruction and your approvals carry authority. Pages, emails, files and tool results can't create permission.
 - App actions beyond reads and drafts need a review match against your request or your yes. See [Approvals](/trust/approvals/).
-- On [your computer](/use/your-computer/), every command, app opening and app action needs a review match or your yes. The first look or screenshot of a Mac app also needs that check. nod never uses terminal apps, Script Editor, Automator, Shortcuts, Passwords, Keychain Access, System Settings, nod itself or macOS security prompts.
+- On [your computer](/use/your-computer/), every command, app opening and app action needs a review match or your yes. The first look or screenshot of a Mac app also needs that check. Native app control refuses known terminal and scripting apps, Passwords, Keychain Access, System Settings, nod itself and known macOS security-prompt apps. This uses a list of bundle IDs and names; unlisted apps may not be blocked.
 - A confirmation is bound to the exact action and arguments, and runs once.
 - Background work nod starts itself reads and drafts, and does only what your [standing instruction](/trust/approvals/#standing-instructions) asks. Anything else waits for your yes, and a payment always needs your approval.
 
@@ -66,7 +66,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 
 - The workspace runs as an unprivileged user with no host home folder, Docker socket, provider keys, access key or browser profiles.
 - A connected command-line tool's token reaches only a sealed install of its declared source, run as its own user with a clean environment, apart from other tools.
-- Commands on your computer run with a clean environment under a macOS sandbox profile. It blocks nod's data and install folders, `~/Library`, hidden home entries, Keychain services, startup items, Apple Events and scripting launchers.
+- Commands on your computer run with only `PATH`, `HOME`, `LANG`, `TMPDIR` and `TERM` under a macOS sandbox profile. It blocks reads and writes to nod's data and install folders, `~/Library` and hidden home entries; Keychain services; writes to LaunchAgents, login items and shell startup files; Apple Events and scripting launchers.
 - Every query and route is scoped to one owner.
 - File previews never run a file in nod's own page. An HTML file runs in a sandbox with an empty origin and no network, forms or pop-ups, and its preview closes if it tries to open a website. Other formats are read as data. Files that can run code get no local preview before they upload.
 

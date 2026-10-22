@@ -40,7 +40,7 @@ Mac app control runs through nod Computer Use, a helper bundled with the desktop
 
 If macOS asks you to quit, reopen nod from Applications. Your setup progress is saved.
 
-Commands run with a clean environment inside a macOS sandbox profile. The profile blocks:
+Commands run with a restricted environment inside a macOS sandbox profile. The profile blocks:
 
 - nod's data and install folders.
 - Your `Library` folder and hidden files and folders directly in your home folder, including browser profiles and command-line credentials.
@@ -54,13 +54,15 @@ Every command, every app nod opens and every action in an app goes through the s
 
 When your request names the Mac app, nod uses it and remembers it. Otherwise it asks once, for example "May I use Notes on your computer?". That yes covers the step and the app, and is remembered. Allowed apps are listed in **Settings**, where you can remove one. Listing running apps, looking at an allowed app and taking its screenshot don't ask.
 
-nod never uses these, even if you ask:
+Native app control blocks these known apps by bundle ID or name, even if you ask:
 
 - Terminal apps: Terminal, iTerm, Warp, Ghostty, kitty and Alacritty.
 - Script Editor, Automator and Shortcuts.
 - Passwords, Keychain Access and System Settings.
 - nod itself.
 - macOS security prompts and the login window.
+
+Unlisted terminal and scripting apps may not be blocked.
 
 What nod reads or sees on your Mac goes to your selected model. nod marks these results as untrusted data.
 
