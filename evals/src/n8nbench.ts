@@ -633,10 +633,17 @@ export async function runN8nBench(options: N8nBenchOptions) {
         }),
       );
     }
-    if (lanes.some((lane) => lane.health.failedSince(verifyStarted))) {
-      for (const name of await readdir(join(directory, 'verify')))
-        if (Number(name.split('-').at(-1)) >= verifyStarted)
+    const down = new Set(
+      lanes
+        .filter((lane) => lane.health.failedSince(verifyStarted))
+        .map((lane) => new URL(lane.url).port),
+    );
+    if (down.size) {
+      for (const name of await readdir(join(directory, 'verify'))) {
+        const [port, started] = name.split('-').slice(-2);
+        if (Number(started) >= verifyStarted && down.has(port))
           await rm(join(directory, 'verify', name), { recursive: true, force: true });
+      }
       throw new Error(
         'n8n was unavailable during verification. Restart it and resume to verify again.',
       );
