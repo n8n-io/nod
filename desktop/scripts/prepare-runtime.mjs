@@ -5,7 +5,6 @@ import { access, chmod, cp, mkdir, readFile, rename, rm, writeFile } from 'node:
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
-import { availableParallelism } from 'node:os';
 import { constants as zlib, createZstdCompress } from 'node:zlib';
 import { buildLima } from './build-lima.mjs';
 import { runtimeInputs, runtimePlatform } from './runtime-inputs.mjs';
@@ -209,12 +208,7 @@ if (hostOnly) {
       await Promise.all([
         pipeline(
           child.stdout,
-          createZstdCompress({
-            params: {
-              [zlib.ZSTD_c_compressionLevel]: imageCompressionLevel,
-              [zlib.ZSTD_c_nbWorkers]: availableParallelism(),
-            },
-          }),
+          createZstdCompress({ params: { [zlib.ZSTD_c_compressionLevel]: imageCompressionLevel } }),
           createWriteStream(`${target}.tmp`),
         ),
         exited,
