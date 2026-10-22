@@ -4,7 +4,7 @@ export const tracesWorkflow = {
   path: 'nod/traces',
   langsmithUrl: 'https://eu.api.smith.langchain.com/runs',
   langsmithWorkspaceId: 'df8b0b69-354e-412c-bfbd-8f8f9e06fdb0',
-  langsmithProject: 'otto',
+  langsmithProjectId: 'e809fc78-6fbd-4140-a0f4-b1e5b9515586',
   credentialName: 'Otto LangSmith traces',
   webhookCredentialName: 'nod traces webhook',
   tokenHeader: 'x-nod-traces-token',
@@ -95,7 +95,7 @@ export function checkTrace(input, project) {
       inputs: { messages: run.inputs.messages, tools: run.inputs.tools },
       outputs: run.outputs,
       ...(run.error === undefined ? {} : { error: run.error }),
-      session_name: project,
+      session_id: project,
       extra: {
         metadata: {
           ...metadata,
@@ -145,7 +145,7 @@ export function tracesWorkflowNodes(credentials = {}) {
       parameters: {
         mode: 'runOnceForAllItems',
         language: 'javaScript',
-        jsCode: `const admitted = (${admitTrace.toString()})($getWorkflowStaticData('global'), $now.toMillis(), ${tracesWorkflow.perMinute});\nreturn [{json: admitted ? (${checkTrace.toString()})($input.first().json,${JSON.stringify(tracesWorkflow.langsmithProject)}) : { ok: false }}];`,
+        jsCode: `const admitted = (${admitTrace.toString()})($getWorkflowStaticData('global'), $now.toMillis(), ${tracesWorkflow.perMinute});\nreturn [{json: admitted ? (${checkTrace.toString()})($input.first().json,${JSON.stringify(tracesWorkflow.langsmithProjectId)}) : { ok: false }}];`,
       },
     },
     {

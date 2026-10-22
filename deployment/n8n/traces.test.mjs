@@ -45,7 +45,7 @@ test('valid traces become one llm run pinned to the nod project with usage for c
     assert.deepEqual(json.run[field], sent[field], field);
   assert.deepEqual(json.run.inputs, sent.inputs);
   assert.equal(json.run.error, 'Synthetic');
-  assert.equal(json.run.session_name, tracesWorkflow.langsmithProject);
+  assert.equal(json.run.session_id, tracesWorkflow.langsmithProjectId);
   assert.equal(json.run.run_type, 'llm');
   assert.equal(json.run.parent_run_id, undefined);
   assert.deepEqual(json.run.extra.metadata, {
