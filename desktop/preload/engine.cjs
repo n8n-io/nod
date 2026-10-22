@@ -1,5 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+const invoke = (channel, ...values) =>
+  ipcRenderer.invoke(channel, ...values).catch((error) => {
+    throw new Error(
+      String(error?.message).replace(/^Error invoking remote method '[^']+': (?:\w*Error: )?/, ''),
+    );
+  });
+
 const focusListeners = new Set();
 const settingsListeners = new Set();
 const feedbackListeners = new Set();
@@ -27,19 +34,19 @@ ipcRenderer.on('nod:feedback:open', () => {
 });
 
 contextBridge.exposeInMainWorld('nodDesktop', {
-  ready: () => ipcRenderer.invoke('nod:renderer-ready'),
-  status: () => ipcRenderer.invoke('nod:status'),
-  prepare: (options) => ipcRenderer.invoke('nod:prepare', options),
+  ready: () => invoke('nod:renderer-ready'),
+  status: () => invoke('nod:status'),
+  prepare: (options) => invoke('nod:prepare', options),
   onStatus: (listener) => {
     const receive = (_event, value) => listener(value);
     ipcRenderer.on('nod:status', receive);
     return () => ipcRenderer.removeListener('nod:status', receive);
   },
-  openSettings: (section = 'general') => ipcRenderer.invoke('nod:settings:open', section),
-  openExternal: (url) => ipcRenderer.invoke('nod:external', url),
-  getSettings: () => ipcRenderer.invoke('nod:settings:get'),
-  saveSettings: (input) => ipcRenderer.invoke('nod:settings:save', input),
-  removeAllData: () => ipcRenderer.invoke('nod:data:remove'),
+  openSettings: (section = 'general') => invoke('nod:settings:open', section),
+  openExternal: (url) => invoke('nod:external', url),
+  getSettings: () => invoke('nod:settings:get'),
+  saveSettings: (input) => invoke('nod:settings:save', input),
+  removeAllData: () => invoke('nod:data:remove'),
   onOpenSettings: (listener) => {
     if (typeof listener !== 'function') throw new TypeError('A settings listener is required.');
     settingsListeners.add(listener);
@@ -50,9 +57,9 @@ contextBridge.exposeInMainWorld('nodDesktop', {
     }
     return () => settingsListeners.delete(listener);
   },
-  getPreferences: () => ipcRenderer.invoke('nod:preferences:get'),
-  getFeedbackContext: () => ipcRenderer.invoke('nod:feedback:context'),
-  captureFeedbackScreenshot: () => ipcRenderer.invoke('nod:feedback:capture'),
+  getPreferences: () => invoke('nod:preferences:get'),
+  getFeedbackContext: () => invoke('nod:feedback:context'),
+  captureFeedbackScreenshot: () => invoke('nod:feedback:capture'),
   onFeedbackRequested: (listener) => {
     if (typeof listener !== 'function') throw new TypeError('A feedback listener is required.');
     feedbackListeners.add(listener);
@@ -62,11 +69,10 @@ contextBridge.exposeInMainWorld('nodDesktop', {
     }
     return () => feedbackListeners.delete(listener);
   },
-  setTheme: (theme) => ipcRenderer.invoke('nod:preferences:theme', theme),
-  getChatReadCursor: (ownerId, threadId) =>
-    ipcRenderer.invoke('nod:chat-read:get', ownerId, threadId),
+  setTheme: (theme) => invoke('nod:preferences:theme', theme),
+  getChatReadCursor: (ownerId, threadId) => invoke('nod:chat-read:get', ownerId, threadId),
   setChatReadCursor: (ownerId, threadId, cursor) =>
-    ipcRenderer.invoke('nod:chat-read:set', ownerId, threadId, cursor),
+    invoke('nod:chat-read:set', ownerId, threadId, cursor),
   onFocusMessage: (listener) => {
     if (typeof listener !== 'function') throw new TypeError('A message listener is required.');
     focusListeners.add(listener);
