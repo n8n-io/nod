@@ -3407,7 +3407,7 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
 
-test('automatic feedback captures exclude remote handoffs and unsent editable content without changing the page', async () => {
+test('automatic feedback captures exclude private routes, remote handoffs and unsent editable content without changing the page', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 15_000,
     input: `
@@ -3450,12 +3450,24 @@ test('automatic feedback captures exclude remote handoffs and unsent editable co
             assert.equal(document.body.innerHTML, before);
             assert.deepEqual([...document.querySelectorAll('input, textarea')].map(field => field.value), fields);
           }
+          document.body.innerHTML = '<section class="account-settings"><strong>Synthetic connected account</strong></section>';
+          for (const path of ['/settings', '/settings/', '/settings/models', '/settings/memory']) {
+            window.history.replaceState(null, '', path);
+            const before = document.body.innerHTML;
+            const captures = images + native;
+            if ((await captureFeedbackScreenshot()) !== null || images + native !== captures) leaked.push(mode + ': ' + path);
+            assert.equal(document.body.innerHTML, before);
+          }
           document.body.innerHTML = safe;
-          const before = document.body.innerHTML;
-          const file = await captureFeedbackScreenshot();
-          assert.ok(file?.size, mode + ' empty composer');
-          assert.equal(document.body.innerHTML, before);
+          for (const path of ['/', '/settings-preview']) {
+            window.history.replaceState(null, '', path);
+            const before = document.body.innerHTML;
+            const file = await captureFeedbackScreenshot();
+            assert.ok(file?.size, mode + ' empty composer at ' + path);
+            assert.equal(document.body.innerHTML, before);
+          }
         }
+        window.history.replaceState(null, '', '/');
         assert.deepEqual(leaked, []);
         let release;
         let started;

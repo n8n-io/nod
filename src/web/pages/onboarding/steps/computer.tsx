@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ComputerPermission } from '../../../../shared/computer';
 import { OnboardingFrame, type DisplayStep } from '../frame';
-import { Notice } from '../../../components/ui';
+import { Button, Notice } from '../../../components/ui';
 import {
   ComputerPermissions,
   computerPermissions,
@@ -21,7 +21,7 @@ export function ComputerSetup({
   onReady(): void;
   notice?: ReactNode;
 }) {
-  const { status, error, busy, checking, allow, setEnabled, refresh } = useComputer();
+  const { status, error, busy, requesting, checking, allow, setEnabled, refresh } = useComputer();
   const [requested, setRequested] = useState<ComputerPermission | null>(null);
   const { revealed, typing } = useReveal(sequence, { enabled: Boolean(status?.available) });
   const ready = useRef(onReady);
@@ -41,11 +41,7 @@ export function ComputerSetup({
     : undefined;
 
   async function next() {
-    if (!status) return refresh();
-    if (missing) {
-      setRequested(missing);
-      return allow(missing);
-    }
+    if (!status || missing) return;
     if ((await setEnabled(true))?.enabled) onReady();
   }
 
@@ -71,8 +67,16 @@ export function ComputerSetup({
               <div className="ob-computer-access">
                 {status.appControlAvailable ? (
                   <>
-                    <ComputerPermissions status={status} busy={busy} />
-                    {missing && requested === missing && (
+                    <ComputerPermissions
+                      status={status}
+                      busy={busy || checking}
+                      requesting={requesting}
+                      onAllow={(key) => {
+                        setRequested(key);
+                        void allow(key);
+                      }}
+                    />
+                    {requested && !status.permissions[requested] && (
                       <div className="ob-computer-guide" aria-live="polite">
                         {checking ? (
                           <p role="status">Checking permissions…</p>
@@ -82,7 +86,7 @@ export function ComputerSetup({
                             here.
                           </p>
                         )}
-                        {missing === 'screen' && (
+                        {requested === 'screen' && (
                           <p className="ob-computer-detail">
                             If macOS asks you to quit, reopen this app. Your progress is saved.
                           </p>
@@ -102,21 +106,22 @@ export function ComputerSetup({
         ) : (
           <Messages items={[]} typing={!error} />
         )}
-        {error && <Notice>{error}</Notice>}
+        {error && (
+          <Notice>
+            {error}
+            {!status && (
+              <Button variant="ghost" disabled={busy || checking} onClick={() => void refresh()}>
+                Try again
+              </Button>
+            )}
+          </Notice>
+        )}
         <Footer
           show={Boolean(error) || (Boolean(status?.available) && revealed >= sequence.length)}
           busy={busy}
           onSkip={onReady}
           skipLabel="Not now"
-          nextLabel={
-            !status
-              ? 'Try again'
-              : missing === 'accessibility'
-                ? 'Allow Accessibility'
-                : missing === 'screen'
-                  ? 'Allow Screen Recording'
-                  : 'Continue'
-          }
+          nextDisabled={!status || Boolean(missing) || checking}
           onNext={() => void next()}
         />
       </section>

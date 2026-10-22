@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { Check, Laptop } from 'lucide-react';
+import { Laptop } from 'lucide-react';
 import type { ComputerPermission, ComputerStatus } from '../../shared/computer';
 import { api, errorMessage, post } from '../lib/api';
 import { Button, Notice, Switch } from './ui';
@@ -13,6 +13,7 @@ export function useComputer() {
   const [status, setStatus] = useState<ComputerStatus | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [requesting, setRequesting] = useState<ComputerPermission | null>(null);
   const [checking, setChecking] = useState(false);
   const active = useRef(false);
   const writing = useRef(false);
@@ -73,12 +74,16 @@ export function useComputer() {
     return () => window.clearInterval(timer);
   }, [missing, refresh]);
 
-  async function run(change: () => Promise<ComputerStatus>) {
+  async function run(
+    change: () => Promise<ComputerStatus>,
+    permission: ComputerPermission | null = null,
+  ) {
     if (writing.current) return null;
     writing.current = true;
     reading.current?.abort();
     reading.current = null;
     setBusy(true);
+    setRequesting(permission);
     setChecking(false);
     setError('');
     try {
@@ -91,7 +96,10 @@ export function useComputer() {
       return null;
     } finally {
       writing.current = false;
-      if (active.current) setBusy(false);
+      if (active.current) {
+        setBusy(false);
+        setRequesting(null);
+      }
     }
   }
 
@@ -99,6 +107,7 @@ export function useComputer() {
     status,
     error,
     busy,
+    requesting,
     checking,
     refresh,
     setEnabled: (enabled: boolean) =>
@@ -109,7 +118,7 @@ export function useComputer() {
         }),
       ),
     allow: (permission: ComputerPermission) =>
-      run(() => post<ComputerStatus>('/api/computer/permissions', { permission })),
+      run(() => post<ComputerStatus>('/api/computer/permissions', { permission }), permission),
     remove: (bundleId: string) =>
       run(() =>
         api<ComputerStatus>(`/api/computer/apps/${encodeURIComponent(bundleId)}`, {
@@ -122,42 +131,39 @@ export function useComputer() {
 export function ComputerPermissions({
   status,
   busy,
+  requesting,
   onAllow,
 }: {
   status: ComputerStatus;
   busy: boolean;
-  onAllow?(permission: ComputerPermission): void;
+  requesting: ComputerPermission | null;
+  onAllow(permission: ComputerPermission): void;
 }) {
+  const id = useId();
   if (!status.appControlAvailable) return null;
-  const next = computerPermissions.find(([key]) => !status.permissions[key])?.[0];
   return (
-    <ul className="computer-permissions" data-guided={!onAllow || undefined} aria-live="polite">
+    <ul className="computer-permissions">
       {computerPermissions.map(([key, name, unlocks]) => (
         <li key={key}>
           <span>
-            <strong>{name}</strong>
-            <small>{unlocks}</small>
+            <strong>
+              <label htmlFor={`${id}-${key}`}>{name}</label>
+            </strong>
+            <small id={`${id}-${key}-reason`}>{unlocks}</small>
           </span>
-          {status.permissions[key] ? (
-            <span className="computer-permission-state" data-allowed>
-              <Check size={15} aria-hidden="true" />
-              Allowed
-            </span>
-          ) : onAllow ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              aria-label={`Allow ${name}`}
-              onClick={() => onAllow(key)}
-            >
-              Allow {name}
-            </Button>
-          ) : (
-            <span className="computer-permission-state" data-next={key === next || undefined}>
-              {key === next ? 'Next' : 'Needed'}
-            </span>
-          )}
+          <span className="computer-permission-control">
+            {requesting === key && <small role="status">Opening…</small>}
+            <Switch
+              id={`${id}-${key}`}
+              checked={status.permissions[key]}
+              disabled={busy || status.permissions[key]}
+              aria-busy={requesting === key}
+              aria-describedby={`${id}-${key}-reason`}
+              onCheckedChange={(checked) => {
+                if (checked) onAllow(key);
+              }}
+            />
+          </span>
         </li>
       ))}
     </ul>
@@ -165,7 +171,7 @@ export function ComputerPermissions({
 }
 
 export function YourComputer() {
-  const { status, error, busy, allow, remove, setEnabled, refresh } = useComputer();
+  const { status, error, busy, requesting, allow, remove, setEnabled, refresh } = useComputer();
   const id = useId();
 
   return (
@@ -201,7 +207,12 @@ export function YourComputer() {
               screen is sent to your selected model.
             </p>
             {status.appControlAvailable ? (
-              <ComputerPermissions status={status} busy={busy} onAllow={(key) => void allow(key)} />
+              <ComputerPermissions
+                status={status}
+                busy={busy}
+                requesting={requesting}
+                onAllow={(key) => void allow(key)}
+              />
             ) : (
               <p className="computer-note">
                 Files and commands are available. Mac app control isn't available in this

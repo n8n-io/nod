@@ -1180,6 +1180,59 @@ test('native onboarding starts one normal backend at storage readiness and keeps
   }
 });
 
+test('settings navigation keeps owner authentication confined to the owned app main frame', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'idle',
+    allowStart: true,
+  });
+  try {
+    await f.launch();
+    await f.settle();
+    f.showEngine();
+    await new Promise(setImmediate);
+    const window = f.windows.at(-1);
+    const origin = new URL(window.url).origin;
+    const headers = (overrides = {}) =>
+      f.headers({
+        url: `${origin}/api/session`,
+        webContentsId: window.webContents.id,
+        frame: window.webContents.mainFrame,
+        resourceType: 'xhr',
+        requestHeaders: { 'X-Nod-Desktop-Token': 'forged' },
+        ...overrides,
+      });
+    const token = (await headers()).requestHeaders['x-nod-desktop-token'];
+    assert.ok(token);
+    assert.notEqual(token, 'forged');
+    for (const path of ['/settings', '/settings/models', '/settings/memory']) {
+      window.webContents.mainFrame.url = `${origin}${path}`;
+      assert.equal((await headers()).requestHeaders['x-nod-desktop-token'], token, path);
+      await f.handlers.get('nod:settings:get')({
+        sender: window.webContents,
+        senderFrame: window.webContents.mainFrame,
+      });
+      for (const request of [
+        { webContentsId: -1 },
+        { frame: { routingId: -1, processId: -1, url: `${origin}${path}` } },
+        { url: `https://external.example.test${path}` },
+      ])
+        assert.equal((await headers(request)).requestHeaders['x-nod-desktop-token'], undefined);
+    }
+    for (const url of [`${origin}/settings/unknown`, 'https://external.example.test/settings']) {
+      window.webContents.mainFrame.url = url;
+      assert.equal((await headers()).requestHeaders['x-nod-desktop-token'], undefined);
+      assert.throws(() =>
+        f.handlers.get('nod:settings:get')({
+          sender: window.webContents,
+          senderFrame: window.webContents.mainFrame,
+        }),
+      );
+    }
+  } finally {
+    await f.close();
+  }
+});
+
 test('runtime handoff and readiness respect closed, minimized and background windows', async (t) => {
   for (const scenario of [
     'closed',
@@ -2916,6 +2969,9 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
     '/browser',
     '/browser-connect/synthetic',
     '/onboarding',
+    '/settings',
+    '/settings/models',
+    '/settings/memory',
   ]) {
     frame.url = `http://127.0.0.1:4310${path}`;
     assert.equal(await capture(event), null);

@@ -26,7 +26,7 @@ When you ask for a screenshot, nod can attach the app window image to your conve
 
 ## Turn it on
 
-Onboarding asks you to allow **Accessibility** and **Screen Recording**. After granting both, return to nod and select **Continue** to turn on **Let nod use your computer**. You can select **Not now** to skip the step.
+In onboarding, use the switch beside **Accessibility** or **Screen Recording** to open its macOS permission settings. Each switch turns on after macOS confirms the permission. After granting both, return to nod and select **Continue** to turn on **Let nod use your computer**. You can select **Not now** to skip the step.
 
 If permissions can't be checked, select **Try again** or **Not now**. nod keeps the feature off until you turn it on.
 
