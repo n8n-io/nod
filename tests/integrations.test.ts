@@ -7573,6 +7573,27 @@ test(
       );
       assert.deepEqual(await ledger.checkIn(task, started), { budgetUsd: 5, spentUsd: 4.75 });
       assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.75 });
+      const preprocessing = randomUUID();
+      await pool.query(
+        `INSERT INTO model_usage(id,owner_id,cost_usd,details,created_at)
+         VALUES($1,'owner',0.4,'{"operation":"transcribe"}',now()-interval '31 minutes')`,
+        [preprocessing],
+      );
+      const attribution = await pool.connect();
+      try {
+        await ledger.attributeMediaUsage(attribution, [preprocessing], started);
+        await ledger.attributeMediaUsage(attribution, [preprocessing], resumed);
+      } finally {
+        attribution.release();
+      }
+      assert.deepEqual(await ledger.checkIn(task, started), { budgetUsd: 5, spentUsd: 5.15 });
+      assert.equal(
+        (await pool.query('SELECT turn_id FROM model_usage WHERE id=$1', [preprocessing])).rows[0]
+          .turn_id,
+        started,
+      );
+      assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.75 });
+
       await pool.query(
         `INSERT INTO turns(id,owner_id,source,prompt,session_id,created_at)
          VALUES($1,'owner','task','Also compare buses',$2,now()-interval '6 minutes')`,
@@ -7593,9 +7614,12 @@ test(
         "INSERT INTO spending_limits(owner_id,monthly_usd) VALUES('speech-owner',1)",
       );
       let transcriptionRequests = 0;
+      let speechReady = false;
       const speech = speechLedger.speech({
         id: 'fixture',
-        configured: true,
+        get configured() {
+          return speechReady;
+        },
         async synthesize() {
           throw new Error('Not used.');
         },
@@ -7616,15 +7640,29 @@ test(
           return 'Synthetic transcript';
         },
       });
+      const { createSpeech } = await import('../src/server/speech.ts');
+      const service = createSpeech(speech);
       const audio = { bytes: new Uint8Array([1]), mimeType: 'audio/ogg', name: 'voice.ogg' };
-      await speech.transcribe!(audio);
-      await speech.transcribe!(audio);
-      await assert.rejects(speech.transcribe!(audio), /spending limit was reached/);
+      await assert.rejects(service.transcribe(audio));
+      speechReady = true;
+      await speechLedger.withTurn(chat, () => service.transcribe(audio));
+      await service.transcribe(audio);
+      await assert.rejects(service.transcribe(audio), /spending limit was reached/);
+      speechReady = false;
+      await assert.rejects(service.transcribe(audio));
       assert.equal(transcriptionRequests, 2);
       const billedSpeech = await pool.query(
         "SELECT count(*)::int AS n,sum(cost_usd)::float8 AS spent FROM model_usage WHERE owner_id='speech-owner'",
       );
       assert.deepEqual(billedSpeech.rows[0], { n: 2, spent: 1.2 });
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT count(*)::int AS n FROM model_usage WHERE owner_id='speech-owner' AND turn_id IS NOT NULL",
+          )
+        ).rows[0].n,
+        0,
+      );
     } finally {
       await app.close();
       await pool.end();

@@ -644,8 +644,9 @@ export function createWhatsAppLinkedTransport(options: {
         state = { state: 'logged_out' };
       }
     },
-    async cancelPairing(expected) {
-      if (expected !== pairingId || linkedAt) return false;
+    async cancelPairing(expected, restart = false) {
+      if (expected !== pairingId || state.state === 'connected' || (!restart && linkedAt))
+        return false;
       await this.unlink!();
       return true;
     },

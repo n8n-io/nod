@@ -255,15 +255,33 @@ test(
             await linkedApp.inject({
               method: 'POST',
               url: '/api/channel-settings/whatsapp/pairing',
-              payload: {},
+              payload: { pairingId: oldId },
             })
           ).statusCode,
-          200,
+          400,
         );
+        assert.equal(unlinks, 0);
+        link.state = 'logged_out';
+        const restarted = await linkedApp.inject({
+          method: 'POST',
+          url: '/api/channel-settings/whatsapp/pairing',
+          payload: { pairingId: oldId },
+        });
+        assert.equal(restarted.statusCode, 200);
+        assert.equal(restarted.headers['cache-control'], 'no-store');
+        assert.equal(restarted.json().pairingId, link.pairingId);
         assert.notEqual(link.pairingId, oldId);
+        const replacementId = link.pairingId;
+        const staleRestart = await linkedApp.inject({
+          method: 'POST',
+          url: '/api/channel-settings/whatsapp/pairing',
+          payload: { pairingId: oldId },
+        });
+        assert.equal(staleRestart.statusCode, 400);
+        assert.equal(link.pairingId, replacementId);
         assert.equal((await cancel(oldId)).json().channel.enabled, true);
         assert.equal((await cancel(link.pairingId)).json().channel.enabled, false);
-        assert.equal(unlinks, 2);
+        assert.equal(unlinks, 1);
         assert.equal(
           (await pool.query("SELECT ciphertext FROM channel_settings WHERE provider='whatsapp'"))
             .rows[0].ciphertext,

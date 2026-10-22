@@ -25,11 +25,16 @@ export function createChannelMedia(options: {
   speech: Pick<SpeechService, 'transcribe'>;
 }) {
   return {
-    async prepare(attachments: MessagingAttachment[], signal: AbortSignal) {
-      if (!attachments.length || attachments.length > 10)
-        throw new ChannelMediaFailure('too_large');
+    async prepare(
+      attachments: MessagingAttachment[],
+      signal: AbortSignal,
+      beforeTranscribe?: () => Promise<void>,
+    ) {
+      if (!attachments.length) throw new ChannelMediaFailure('unavailable');
+      if (attachments.length > 10) throw new ChannelMediaFailure('too_large');
       const files: { bytes: Buffer; name: string; mimeType: string }[] = [];
       const transcripts: string[] = [];
+      const usageIds = new Set<string>();
       const cleanup: Array<() => Promise<void>> = [];
       let total = 0;
       for (const attachment of attachments) {
@@ -46,17 +51,21 @@ export function createChannelMedia(options: {
         }
         signal.throwIfAborted();
         total += bytes.length;
-        if (
-          !bytes.length ||
-          total > 50 * 1024 * 1024 ||
-          (attachment.size && bytes.length !== attachment.size)
-        )
-          throw new ChannelMediaFailure('too_large');
+        if (!bytes.length) throw new ChannelMediaFailure('unavailable');
+        if (attachment.size && bytes.length !== attachment.size)
+          throw new ChannelMediaFailure('unavailable');
+        if (total > 50 * 1024 * 1024) throw new ChannelMediaFailure('too_large');
         if (attachment.voice) {
-          if (!attachment.mimeType.startsWith('audio/') || bytes.length > 25 * 1024 * 1024)
-            throw new ChannelMediaFailure('too_large');
+          if (!attachment.mimeType.startsWith('audio/'))
+            throw new ChannelMediaFailure('unavailable');
+          if (bytes.length > 25 * 1024 * 1024) throw new ChannelMediaFailure('too_large');
           try {
-            transcripts.push(await options.speech.transcribe({ ...attachment, bytes }, signal));
+            await beforeTranscribe?.();
+            transcripts.push(
+              await options.speech.transcribe({ ...attachment, bytes }, signal, (usage) => {
+                usageIds.add(usage.id);
+              }),
+            );
           } catch (error) {
             signal.throwIfAborted();
             if (error instanceof TranscriptionLengthError)
@@ -70,6 +79,7 @@ export function createChannelMedia(options: {
       }
       return {
         text: transcripts.join('\n\n'),
+        usageIds: [...usageIds],
         async save(client: PoolClient, threadId?: string) {
           const saved = [];
           for (const file of files) {

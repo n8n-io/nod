@@ -25,7 +25,7 @@ The Chromium fixture checks both WhatsApp modes, Telegram owner confirmation, ca
 
 Live verification is pending at the owner's request. Use accounts that you control and disposable test content. Keep tokens and QR codes in the private setup UI. Do not attach them to the PR.
 
-1. Start this branch with a disposable database and data root. Follow the [source setup](../../src/content/docs/get-started/install-from-source.mdx) and [channel setup](../../src/content/docs/use/channels.mdx). Use the source setup page's current commands. Set the server's `OPENAI_API_KEY` only if you will check voice transcription and generation.
+1. Start this branch with a disposable database and data root. Follow the [source setup](../../src/content/docs/get-started/install-from-source.mdx) and [channel setup](../../src/content/docs/use/channels.mdx). Use the source setup page's current commands. For voice, connect an OpenAI API key in **Settings → Models**, or set server `OPENAI_API_KEY` in a source install.
 2. In **Channels**, connect Telegram. Create a bot with BotFather, enter its token in the private panel, press **Start** in Telegram, then confirm your account in nod. Check that a different Telegram account cannot start work.
 3. Connect WhatsApp with a separate bot number. Register that number in WhatsApp first. Enter your personal number in nod. On the bot account's phone, open **Linked Devices → Link a Device**, then scan the QR shown in nod. Check that your personal number can start work and another number cannot.
 4. Repeat WhatsApp setup with **Use my own number**. Send a request in **Message yourself**. Check that an outgoing message in another direct chat does not start a nod turn or receive a nod reply. Check that nod's own reply causes no loop.

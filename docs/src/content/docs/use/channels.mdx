@@ -71,7 +71,7 @@ Select **Use Meta Cloud API instead** in the setup panel. You need a Meta app wi
 The Cloud API replies only within 24 hours of your last message. Its file support is limited: open nod to get files. The QR connection supports files directly.
 
 :::caution[Keep nod private]
-Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest of nod. The desktop app doesn't provide a public address, so WhatsApp suits nod running on a server.
+Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest of nod. The desktop app does not provide a public address, so Cloud API mode suits nod running on a server. This mode accepts text only. It does not accept incoming media. Use the QR connection for files and voice.
 :::
 
 </details>
@@ -88,13 +88,13 @@ When you run nod from source, you can set the `TELEGRAM_*` and `WHATSAPP_*` valu
 
 ## Files and voice messages
 
-Send an image, document, video or audio file with your message. Captions stay with the file. Reply directly to a task message or its file to continue that task. A reply to a pending question goes to the session that asked it.
+With Telegram or the WhatsApp QR connection, send an image, document, video or audio file with your message. Captions stay with the file. Reply directly to a task message or its file to continue that task. A reply to a pending question goes to the session that asked it.
 
-nod accepts up to ten files per message, with a combined limit of 50 MB. Telegram's hosted file API limits each incoming file to 20 MB. A voice message has a 25 MB limit. nod checks the sender before it downloads a file. Files belong to your shared conversation workspace.
+Each provider message has one file. Album files arrive as separate messages and are not combined. The shared intake has a safety cap of ten files and 50 MB, but the current adapters do not create a multi-file message. Telegram's hosted file API limits each incoming file to 20 MB. A voice message has a 25 MB limit. nod checks the sender before it downloads a file. Files belong to your shared conversation workspace.
 
 nod prepares at most four file messages at a time. If the channel is busy, send the message again after the current files finish. A caption and its transcript must fit within 100,000 characters. A failed save removes files that have no saved record.
 
-Voice messages are sent to OpenAI for transcription. They need `OPENAI_API_KEY` in the server environment. `STT_MODEL` selects the transcription model; its default is `gpt-transcribe`. Without speech setup, nod asks you to send text. Text and file messages still work.
+Voice messages are sent to OpenAI for transcription. In **Settings → Models**, connect an OpenAI API key. If you have several OpenAI API keys, select the one you want to use. A single connected OpenAI API key can supply speech while another provider supplies chat. A ChatGPT subscription does not supply the audio API. A source install can instead set server `OPENAI_API_KEY`. `STT_MODEL` selects the transcription model; its default is `gpt-transcribe`. Without speech setup, nod asks you to send text. Text and file messages still work.
 
 Use text to approve an action. A file or voice attachment does not approve it.
 

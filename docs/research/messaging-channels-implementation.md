@@ -16,13 +16,13 @@ The original checkout is unchanged. The change is under review in PR #423.
 - Telegram and WhatsApp share the existing conversation, memory, workspace and task sessions. Task starts, progress, questions, confirmations, status, stop replies and results use channel messages.
 - Native replies to messages and files select the correct task. Each private code question is bound to its exact request in the same transaction as the question. A closed question cannot fill a later request, including one in the same turn. Files do not approve actions. Private sign-in and payment steps keep their existing private forms.
 - Both channels receive images, documents, video, audio and captions. The server checks the sender before it downloads a file. Downloads use fixed provider hosts, reject redirects and have byte and time limits.
-- Incoming messages accept at most ten files with a combined limit of 50 MB. Telegram's hosted API limits each incoming file to 20 MB. Voice transcription has a 25 MB limit.
+- Each provider message has one file. Album files remain separate messages. Shared intake has safety caps of ten files and 50 MB. Telegram's hosted API limits each incoming file to 20 MB. Voice transcription has a 25 MB limit.
 - Files are saved before message acknowledgement. Queued media belongs to its conversation. Reset, channel replacement and shutdown fence or stop pending media. At most four distinct media messages prepare at once; duplicate messages join the same operation. A rollback removes files with no saved row.
 - Voice transcripts pass through the existing private verification-code path before normal storage or model use. A voice verification code leaves no audio artifact or raw code in the channel inbox.
 - Generated speech uses Ogg/Opus and is sent as a native voice note. Telegram and linked WhatsApp send images, documents, video and audio, with a 50 MB limit per outgoing file. WhatsApp Cloud API mode keeps files in nod and sends a notice to open them there.
 - A short reply with one image, video or document uses its native caption. A failed captioned send stays uncertain and is not repeated.
 - Both channels use the shared activity model for typing, support reactions and split long replies. WhatsApp converts Markdown to its native text format.
-- Speech requests use the spending-limit check and the `model_usage` ledger. Reported transcription usage has an API-price estimate. Responses without usage are marked unpriced.
+- Speech uses a selected or unique OpenAI API key saved through Models, with server `OPENAI_API_KEY` as an override. A ChatGPT subscription cannot supply speech. Key removal takes effect on later requests. Speech requests use the spending-limit check and the `model_usage` ledger. Transcription usage binds to the actual admitted turn and session, including a native task reply, and counts toward its check-in budget. Reported transcription usage has an API-price estimate. Responses without usage are marked unpriced.
 - The existing Meta Cloud API setup remains available. A saved Cloud API choice overrides an environment default for QR mode. Cloud API file and reply-window limits still apply.
 - The pinned Signal dependency has a patch that removes direct console calls which could print session keys. A pinned Baileys patch forwards cancellation and redirect refusal to the actual download request. Container builds include both patches. Desktop runtime fingerprints include their bytes.
 - A failed key deletion leaves WhatsApp unavailable. An explicit retry can finish deletion without repeating the remote sign-out.
@@ -31,7 +31,7 @@ The original checkout is unchanged. The change is under review in PR #423.
 
 ### Synthetic channel checks
 
-All 139 focused checks pass with no skips after the merge from main. The checks cover channel intake and delivery, setup, private codes, the thread harness and Pi. They include 64 concurrent duplicates, 32 duplicate replays after restart, four held uploads with refusal of a fifth, rollback cleanup, byte-bounded key batches, foreign self-chat LIDs, exact private-code request binding, speech failures and native captions. A ledger check covers speech usage deduplication and refusal before provider access when the monthly limit is reached.
+All 180 combined focused checks pass with no skips after the full Cubic review fixes. The checks cover channel intake and delivery, setup, private codes, the thread harness and Pi. They include 64 concurrent duplicates, 32 duplicate replays after restart, four held uploads with refusal of a fifth, rollback cleanup, byte-bounded key batches, foreign self-chat LIDs, exact private-code request binding, speech failures and native captions. A ledger check covers speech usage deduplication and refusal before provider access when the monthly limit is reached.
 
 The fixtures use disposable database schemas and synthetic protocol events. Test processes have an empty environment with an explicit allowlist, read-only source and toolchain, writable scratch space, resource limits and no external network. An internal network reaches only the disposable PostgreSQL fixture. Chromium checks also need a writable temporary home and permission to create its own sandbox. No live model, connected account or real recipient was used.
 
@@ -45,7 +45,7 @@ The [review captures and setup demo](../review/channels/README.md) use the real 
 
 `pnpm run check`, `pnpm run build` and `pnpm --dir docs build` pass in bounded offline fixtures. The docs build checks every internal link. The focused desktop check verifies that a change to either dependency patch changes the runtime fingerprint.
 
-The normal GitHub CI fixture passed the full integration suite, desktop contracts, docs and Windows checks at `c4f232ec`. Later commits add exact private-code request binding and merge the shared activity model from main. The PR checks show the result for the current head.
+The normal GitHub CI fixture passed the full integration suite, desktop contracts, docs and Windows checks at `d0094265`. Later changes fix the full Cubic review findings and private Models speech setup. The PR checks show the result for the current head.
 
 The stricter local offline integration run has 576 checks: 560 passes, 13 failures and three skips. An unchanged-main run at `a8ae5a1b` has 550 passes, the same 13 failures and the same three skips. The 12 failed native browser and download cases also fail on main; the failed parent test adds the thirteenth failure. These fixture results do not prove a channel regression or a live provider connection. A test from main also read a failure notice before its asynchronous save; the merged test now waits for that save before it checks the exact result.
 

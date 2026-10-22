@@ -3,7 +3,10 @@ import type { SpeechProvider } from '../../ports/speech.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 
 async function readResponse(response: Response, limit: number) {
-  if (!response.ok || !response.body) throw new Error('Speech request failed.');
+  if (!response.ok || !response.body) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error('Speech request failed.');
+  }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -21,16 +24,18 @@ async function readResponse(response: Response, limit: number) {
 }
 
 export function createOpenAISpeechProvider(options: {
-  apiKey?: string;
+  apiKey?: string | (() => Promise<string | undefined>);
+  configured?: () => boolean;
   speechModel?: string;
   transcriptionModel?: string;
   voice?: string;
   fetch?: typeof fetch;
 }): SpeechProvider {
   const request = options.fetch ?? fetch;
-  function headers() {
-    if (!options.apiKey) throw new Error('Speech is not configured.');
-    return { Authorization: `Bearer ${options.apiKey}` };
+  async function headers() {
+    const key = typeof options.apiKey === 'function' ? await options.apiKey() : options.apiKey;
+    if (!key) throw new Error('Speech is not configured.');
+    return { Authorization: `Bearer ${key}` };
   }
   async function measured<T>(
     model: string,
@@ -63,7 +68,9 @@ export function createOpenAISpeechProvider(options: {
   }
   return {
     id: 'openai',
-    configured: Boolean(options.apiKey),
+    get configured() {
+      return options.configured?.() ?? Boolean(options.apiKey);
+    },
     async transcribe(audio, signal, report) {
       signal?.throwIfAborted();
       const model = options.transcriptionModel || 'gpt-transcribe';
@@ -80,7 +87,7 @@ export function createOpenAISpeechProvider(options: {
         );
         const response = await request('https://api.openai.com/v1/audio/transcriptions', {
           method: 'POST',
-          headers: headers(),
+          headers: await headers(),
           body,
           signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]),
         });
@@ -138,7 +145,7 @@ export function createOpenAISpeechProvider(options: {
         const response = await request('https://api.openai.com/v1/audio/speech', {
           method: 'POST',
           signal: AbortSignal.any([AbortSignal.timeout(600_000), ...(signal ? [signal] : [])]),
-          headers: { ...headers(), 'Content-Type': 'application/json' },
+          headers: { ...(await headers()), 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model,
             input: text,

@@ -124,6 +124,7 @@ import {
   createUserMessageService,
   enqueueTurn,
   initializeThreads,
+  lockThread,
   reactToAssistantMessage,
   resumeAfterConnection,
   resumeAfterCredentials,
@@ -311,7 +312,8 @@ export function createDefaultAdapters(
       workspaceRoot: join(dataRoot, 'workspaces'),
     }),
     speech: createOpenAISpeechProvider({
-      apiKey: env.OPENAI_API_KEY,
+      apiKey: env.OPENAI_API_KEY || (() => models.apiKey('openai')),
+      configured: () => Boolean(env.OPENAI_API_KEY) || models.hasApiKey('openai'),
       speechModel: env.TTS_MODEL,
       transcriptionModel: env.STT_MODEL,
       voice: env.TTS_VOICE,
@@ -1471,7 +1473,8 @@ async function initializeApplication(
         unlink: async () => {
           await channels?.unlink();
         },
-        cancelPairing: async (pairingId) => (await channels?.cancelPairing(pairingId)) ?? false,
+        cancelPairing: async (pairingId, restart) =>
+          (await channels?.cancelPairing(pairingId, restart)) ?? false,
         apply: async (environment) => {
           if (!channels) throw new Error('Messaging is not ready.');
           await channels.replaceTransport(setup.create(environment));
@@ -1492,12 +1495,13 @@ async function initializeApplication(
       present: communication.present,
       resolveAttachments: artifacts.readThreadArtifacts,
       media: createChannelMedia({ artifacts, speech }),
+      attributeMediaUsage: ledger.attributeMediaUsage,
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
       reacted: (messageId, reaction) =>
         reactToAssistantMessage(messageId, reaction, adapters.model.configured),
-      activeThread: (client) => activeThread(client),
+      activeThread: (client) => lockThread(client),
       activity: activity.read,
       taskCommand: tasks.chatCommand,
       commandReply: async (command, client, threadId) => {

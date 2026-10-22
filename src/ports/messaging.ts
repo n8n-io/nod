@@ -78,7 +78,7 @@ export interface MessagingWebhookResult {
 export interface MessagingTransport {
   channels: MessagingChannel[];
   pairing?(): Promise<ChannelLinkStatus>;
-  cancelPairing?(pairingId: string): Promise<boolean>;
+  cancelPairing?(pairingId: string, restart?: boolean): Promise<boolean>;
   unlink?(): Promise<void>;
   poll?(
     accept: (message: InboundMessage) => Promise<void>,

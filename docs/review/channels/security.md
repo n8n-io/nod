@@ -26,13 +26,17 @@ The audit does not claim a redirect to an internal host, account access, private
 - Retain file-size, transcript-length and spending-limit failures through the media wrappers, so the channel notice describes the actual failure.
 - Save settings before starting unlink. A failed SQL write does not unlink. A local key-deletion failure stays failed and can be retried without a second remote logout.
 - Keep failed provider sends uncertain. A local file-read failure before a send can still deliver text and the missing-file notice.
+- Capture the conversation before media preparation. Under the reset lock, discard old intake before file persistence or verification. A reset also fences saved media before submission.
+- Bind transcription usage IDs to the admitted turn and its actual session. Count that input cost in its task budget even when transcription finished before the turn was created.
+- Restart only the exact setup generation, with a synchronous transport guard that refuses a connected device. Closing after restart cancels the replacement; old polls cannot replace its status.
+- Speech can use a selected or unique owned OpenAI API key from Models. It excludes subscription and compatible-endpoint credentials and reads again before each request. Removing a key stops later requests.
 - Poll WhatsApp setup only while its panel is open. Keep QR data transient, private, excluded from recordings and out of screenshots with real accounts.
 
 The Signal console patch was already present at the audit source. A regression fixture checks that session changes do not write keys to the console. Container and desktop inputs include both dependency patches.
 
 ## Finite load and failure checks
 
-The channel fixtures send 64 concurrent copies of one message and 32 replays after restart. They check one saved file and one submitted turn. They also send 32 foreign messages, hold four distinct uploads, refuse a fifth, release capacity and accept its explicit retry. Other checks exceed UTF-8 key-batch and actual media-stream byte limits, fail a file save after bytes are written, cancel a late stream, lose a send response and fail key deletion.
+The channel fixtures send 64 concurrent copies of one message and 32 replays after restart. They check one saved file and one submitted turn. They also send 32 duplicate deliveries of one foreign message, hold four distinct uploads, refuse a fifth, release capacity and accept its explicit retry. Other checks exceed UTF-8 key-batch and actual media-stream byte limits, fail a file save after bytes are written, cancel a late stream, lose a send response and fail key deletion.
 
 These are finite synthetic regression checks. They do not measure live provider throughput or perform a saturation test.
 

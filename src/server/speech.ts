@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { GeneratedAudio, SpeechProvider } from '../ports/speech.ts';
+import type { ProviderUsageEvent } from '../ports/provider-usage.ts';
 import { spendingLimitReached } from './ledger.ts';
 
 export class TranscriptionLengthError extends Error {}
@@ -14,6 +15,7 @@ export function createSpeech(provider: SpeechProvider) {
     async transcribe(
       audio: { bytes: Uint8Array; mimeType: string; name: string },
       signal?: AbortSignal,
+      report?: (usage: ProviderUsageEvent) => void,
     ) {
       available(signal);
       if (!provider.transcribe) throw new Error('Voice transcription is not configured.');
@@ -28,7 +30,7 @@ export function createSpeech(provider: SpeechProvider) {
           .string()
           .trim()
           .min(1)
-          .parse(await provider.transcribe(audio, signal));
+          .parse(await provider.transcribe(audio, signal, report));
         if (text.length > 100_000) throw new TranscriptionLengthError();
         signal?.throwIfAborted();
         return text;

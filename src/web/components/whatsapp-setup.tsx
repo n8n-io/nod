@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { ChannelLinkStatus, ChannelSetupSummary } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
@@ -33,55 +33,80 @@ export function WhatsAppSetup({
   const [link, setLink] = useState<ChannelLinkStatus>();
   const [failure, setFailure] = useState('');
   const [restarting, setRestarting] = useState(false);
+  const currentLink = useRef<ChannelLinkStatus | undefined>(undefined);
+  const visible = useRef(false);
+  const restartPending = useRef(false);
+  const revision = useRef(0);
   const saved = Boolean(setup?.enabled && setup.mode === 'linked');
+  async function cancel(link?: ChannelLinkStatus) {
+    if (!link?.pairingId || link.state === 'connected') return;
+    await api('/api/channel-settings/whatsapp/pairing', {
+      method: 'DELETE',
+      body: JSON.stringify({ pairingId: link.pairingId }),
+    })
+      .then(() => onRefresh())
+      .catch(() => {});
+  }
   useEffect(() => {
     if (!saved) return;
+    visible.current = true;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
-    let last: ChannelLinkStatus | undefined;
     async function poll() {
+      const version = revision.current;
       try {
+        if (restartPending.current) return;
         const next = await api<ChannelLinkStatus>('/api/channel-settings/whatsapp/pairing', {
           signal: controller.signal,
           cache: 'no-store',
         });
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || restartPending.current || version !== revision.current)
+          return;
         setLink(next);
         setFailure('');
-        if (next.state === 'connected' && last?.state !== 'connected') void onRefresh();
-        last = next;
+        if (next.state === 'connected' && currentLink.current?.state !== 'connected')
+          void onRefresh();
+        currentLink.current = next;
       } catch (cause) {
-        if (!controller.signal.aborted) setFailure(errorMessage(cause));
+        if (!controller.signal.aborted && !restartPending.current && version === revision.current)
+          setFailure(errorMessage(cause));
       } finally {
         if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 2000);
       }
     }
     void poll();
     return () => {
+      visible.current = false;
       controller.abort();
       clearTimeout(timer);
-      if (last?.pairingId && last.state !== 'connected')
-        void api('/api/channel-settings/whatsapp/pairing', {
-          method: 'DELETE',
-          body: JSON.stringify({ pairingId: last.pairingId }),
-        })
-          .then(() => onRefresh())
-          .catch(() => {});
+      void cancel(currentLink.current);
     };
   }, [saved]);
 
   async function restart() {
-    if (busy || restarting) return;
+    const pairingId = currentLink.current?.pairingId;
+    if (busy || restartPending.current || !pairingId) return;
+    restartPending.current = true;
+    revision.current++;
     setRestarting(true);
     try {
-      await api('/api/channel-settings/whatsapp/pairing', { method: 'POST', body: '{}' });
-      setLink(undefined);
+      const next = await api<ChannelLinkStatus>('/api/channel-settings/whatsapp/pairing', {
+        method: 'POST',
+        body: JSON.stringify({ pairingId }),
+      });
+      currentLink.current = next;
+      if (!visible.current) {
+        await cancel(next);
+        return;
+      }
+      setLink(next);
       setFailure('');
       await onRefresh();
     } catch (cause) {
-      setFailure(errorMessage(cause));
+      if (visible.current) setFailure(errorMessage(cause));
     } finally {
-      setRestarting(false);
+      restartPending.current = false;
+      if (visible.current) setRestarting(false);
     }
   }
 
@@ -266,7 +291,11 @@ export function WhatsAppSetup({
                 >
                   Close
                 </Button>
-                <Button type="button" onClick={() => void restart()} disabled={busy || restarting}>
+                <Button
+                  type="button"
+                  onClick={() => void restart()}
+                  disabled={busy || restarting || !link?.pairingId}
+                >
                   {restarting ? 'Preparing connection…' : 'Start again'}
                 </Button>
               </>

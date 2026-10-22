@@ -30,6 +30,76 @@ import type { InboundMessage } from '../src/ports/messaging.ts';
 import { getHttpStream } from '@whiskeysockets/baileys';
 import { spendingLimitReached } from '../src/server/ledger.ts';
 import { ChannelMediaFailure } from '../src/server/channel-media.ts';
+import { runProcess } from '../src/providers/process.ts';
+
+test('WhatsApp setup closes the replacement generation despite stale polls and late restart responses', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import {JSDOM} from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {url:'http://localhost/channels'});
+      Object.assign(globalThis, {window:dom.window,document:dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT:true,HTMLElement:dom.window.HTMLElement,
+        getComputedStyle:dom.window.getComputedStyle.bind(dom.window)});
+      const {createElement,act} = await import('react');
+      const {createRoot} = await import('react-dom/client');
+      const {WhatsAppSetup} = await import('./src/web/components/whatsapp-setup.tsx');
+      const sleep = globalThis.setTimeout;
+      const clear = globalThis.clearTimeout;
+      let poll;
+      globalThis.setTimeout = (fn,ms,...args) => ms===2000 ? (poll=fn,{poll:true}) : sleep(fn,ms,...args);
+      globalThis.clearTimeout = id => {if(!id?.poll) clear(id);};
+      const settle = async check => {
+        for(let i=0;i<100&&!check();i++) await act(async()=>{await new Promise(resolve=>sleep(resolve,5));});
+        assert.ok(check(),'The setup request did not settle.');
+      };
+      for(const closeDuringRestart of [false,true]) {
+        const oldId='11111111-1111-4111-8111-111111111111';
+        const nextId='22222222-2222-4222-8222-222222222222';
+        const old={state:'expired',pairingId:oldId};
+        const next={state:'awaiting_scan',pairingId:nextId,qr:'synthetic-invalid-qr'};
+        let reads=0,resolvePost,resolvePoll;
+        const cancelled=[];
+        globalThis.fetch=async (_url,options={})=>{
+          if(options.method==='DELETE') {
+            cancelled.push(JSON.parse(options.body).pairingId);
+            return Response.json({ok:true});
+          }
+          if(options.method==='POST') {
+            assert.equal(JSON.parse(options.body).pairingId,oldId);
+            return new Promise(resolve=>{resolvePost=()=>resolve(Response.json(next));});
+          }
+          if(++reads===1) return Response.json(old);
+          return new Promise(resolve=>{resolvePoll=()=>resolve(Response.json(old));});
+        };
+        const root=createRoot(document.querySelector('#root'));
+        await act(async()=>root.render(createElement(WhatsAppSetup,{
+          setup:{provider:'whatsapp',enabled:true,mode:'linked',connectionState:'expired'},
+          busy:false,ready:true,error:'',onSave:async()=>true,onRefresh:async()=>{},onCloud(){},onDone(){},
+        })));
+        const restart=()=>[...document.querySelectorAll('button')].find(button=>button.textContent.includes('Start again'));
+        await settle(()=>restart()&&!restart().disabled);
+        if(!closeDuringRestart) {
+          await act(async()=>poll());
+          await settle(()=>Boolean(resolvePoll));
+        }
+        await act(async()=>restart().click());
+        await settle(()=>Boolean(resolvePost));
+        if(closeDuringRestart) await act(async()=>root.unmount());
+        await act(async()=>resolvePost());
+        if(resolvePoll) await act(async()=>resolvePoll());
+        if(!closeDuringRestart) await act(async()=>root.unmount());
+        await settle(()=>cancelled.includes(nextId));
+        assert.equal(cancelled.at(-1),nextId);
+      }
+      globalThis.setTimeout=sleep;
+      globalThis.clearTimeout=clear;
+      dom.window.close();
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
 
 const attachment = (name: string, mimeType: string, text: string) => ({
   name,
@@ -226,6 +296,7 @@ test(
             sockets[0].events.emit('connection.update', { connection: 'open' });
             assert.equal((await transport.pairing!()).qr, undefined);
             assert.equal(await transport.cancelPairing!(initial.pairingId!), false);
+            assert.equal(await transport.cancelPairing!(initial.pairingId!, true), false);
             await sockets[0].config.auth.keys.set({
               session: { fixture: Uint8Array.from([1, 2, 3]) },
             });
@@ -428,6 +499,10 @@ test(
               lastDisconnect: { error: { output: { statusCode: 428 } } },
             });
             assert.equal((await transport.pairing!()).state, 'disconnected');
+            assert.equal(
+              await transport.cancelPairing!((await transport.pairing!()).pairingId!),
+              false,
+            );
             const attempts = sent.length;
             await assert.rejects(
               transport.post({
@@ -462,6 +537,10 @@ test(
               0,
             );
             assert.equal((await transport.pairing!()).state, 'logged_out');
+            assert.equal(
+              await transport.cancelPairing!((await transport.pairing!()).pairingId!, true),
+              true,
+            );
           } finally {
             await transport.close();
           }
@@ -577,9 +656,12 @@ test('Telegram media keeps native replies and checks the sender before any downl
 test('speech uses a bounded transcription request and generates Ogg voice output without exposing credentials', async () => {
   const bytes = Buffer.from('synthetic voice bytes');
   const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  let key: string | undefined;
   const provider = createOpenAISpeechProvider({
-    apiKey: 'fixture-never-live',
+    apiKey: async () => key,
+    configured: () => Boolean(key),
     fetch: async (input, init) => {
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
       if (String(input).endsWith('/transcriptions')) {
         assert.ok(init?.body instanceof FormData);
         assert.equal(init.body.get('model'), 'gpt-transcribe');
@@ -598,10 +680,15 @@ test('speech uses a bounded transcription request and generates Ogg voice output
   });
   const speech = createSpeech({
     ...provider,
+    get configured() {
+      return provider.configured;
+    },
     transcribe: (audio, signal) =>
       provider.transcribe!(audio, signal, (event) => usage.push(event)),
     synthesize: (text, signal) => provider.synthesize(text, signal, (event) => usage.push(event)),
   });
+  await assert.rejects(speech.transcribe({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }));
+  key = 'fixture-never-live';
   assert.equal(
     await speech.transcribe({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }),
     'Read the attached image.',
@@ -622,6 +709,26 @@ test('speech uses a bounded transcription request and generates Ogg voice output
     JSON.stringify(usage),
     /fixture-never-live|Read the attached image|synthetic voice bytes/,
   );
+  key = 'fixture-rotated';
+  await speech.synthesize('Synthetic changed key');
+  key = undefined;
+  await assert.rejects(speech.synthesize('Synthetic removed key'));
+  let cancelled = 0;
+  const failed = createOpenAISpeechProvider({
+    apiKey: 'fixture-never-live',
+    fetch: async () =>
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled++;
+          },
+        }),
+        { status: 503 },
+      ),
+  });
+  await assert.rejects(failed.transcribe!({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }));
+  await assert.rejects(failed.synthesize('Synthetic provider error'));
+  assert.equal(cancelled, 2);
 });
 
 test(
@@ -807,6 +914,12 @@ test(
         (item) => item.kind === 'media_failure' && item.reason === 'text_too_long',
       ),
     );
+    const originalAttachments = message.attachments;
+    message = { ...message, attachments: [attachment('empty.png', 'image/png', '')] };
+    await sendId('empty-image');
+    await fixture.channels.drain();
+    assert.equal(presentations.at(-1)?.reason, 'unavailable');
+    message = { ...message, attachments: originalAttachments };
     let release!: () => void;
     let entered!: () => void;
     const held = new Promise<void>((resolve) => {

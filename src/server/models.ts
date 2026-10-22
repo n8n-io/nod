@@ -157,6 +157,15 @@ export function createModelService(options: {
     if (value) remember(value);
     return value;
   }
+  function apiKeyConnection(provider: ModelProvider) {
+    const candidates = rows.filter(
+      (row) => row.provider === provider && row.method === 'api_key' && row.status === 'connected',
+    );
+    return (
+      candidates.find((row) => row.id === selection?.connectionId) ??
+      (candidates.length === 1 ? candidates[0] : undefined)
+    );
+  }
   async function read(id: string) {
     const result = await store.change(async (state) => {
       const row = state.connections.find((item) => item.id === id);
@@ -642,6 +651,14 @@ export function createModelService(options: {
       });
     },
     refreshCatalog,
+    hasApiKey(provider: ModelProvider) {
+      return Boolean(apiKeyConnection(provider));
+    },
+    async apiKey(provider: ModelProvider) {
+      const row = apiKeyConnection(provider);
+      const value = row && (await read(row.id));
+      return value?.type === 'api_key' ? value.key : undefined;
+    },
     async resolve(auxiliary = false): Promise<ModelAccess> {
       const selected = selection && { ...selection };
       const row = rows.find(

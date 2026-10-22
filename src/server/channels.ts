@@ -52,6 +52,7 @@ interface ChannelOptions {
     input: {
       clientMessageId: string;
       channel: string;
+      threadId?: string;
       replyToMessageId?: string;
       receiptOnly?: boolean;
       persistOrdinary: (client: PoolClient) => Promise<void>;
@@ -87,6 +88,7 @@ interface ChannelOptions {
   intervalMs?: number;
   resolveAttachments?: (threadId: string, ids: string[]) => Promise<MessagingAttachment[]>;
   media?: ChannelMedia;
+  attributeMediaUsage?(client: PoolClient, ids: string[], turnId: string): Promise<void>;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
   activeThread?: (client: PoolClient) => Promise<{ id: string }>;
   activity?: () => Promise<LiveWork[]>;
@@ -119,6 +121,7 @@ interface InboxRow extends ChannelIdentity {
   message_id: string | null;
   attachments: Artifact[];
   conversation_thread_id: string | null;
+  media_usage_ids: string[];
 }
 interface OutboxRow extends ChannelIdentity {
   message_id: string;
@@ -303,6 +306,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   ALTER TABLE channel_inbox ADD COLUMN IF NOT EXISTS provider_reply_id text;
   ALTER TABLE channel_inbox ADD COLUMN IF NOT EXISTS attachments jsonb NOT NULL DEFAULT '[]';
   ALTER TABLE channel_inbox ADD COLUMN IF NOT EXISTS conversation_thread_id uuid;
+  ALTER TABLE channel_inbox ADD COLUMN IF NOT EXISTS media_usage_ids text[] NOT NULL DEFAULT '{}';
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS provider_message_ids text[] NOT NULL DEFAULT '{}';
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS presentation jsonb;
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS claim_id uuid;
@@ -532,6 +536,29 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       ).rows[0];
       const hasMedia = Boolean(parsed.data.attachments?.length);
       if (recorded && hasMedia) return;
+      const mediaThreadId = hasMedia
+        ? (await transaction(async (client) => options.activeThread?.(client), pool))?.id
+        : undefined;
+      async function currentConversation(client: PoolClient) {
+        if (!mediaThreadId || (await options.activeThread?.(client))?.id === mediaThreadId)
+          return true;
+        await client.query(
+          `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,state,owner_id,channel,conversation_thread_id)
+           VALUES($1,$2,$3,$4,$5,'',$6,'discarded',$7,$8,$9) ON CONFLICT(source_id) DO NOTHING`,
+          [
+            sourceId,
+            channelId,
+            accountId,
+            senderId,
+            threadId,
+            sentAt,
+            ownerId,
+            conversationChannel(identity),
+            mediaThreadId,
+          ],
+        );
+        return false;
+      }
       if (closed || replacing || receiveSignal.aborted || !permitted(identity)) return;
       if (hasMedia) {
         try {
@@ -539,30 +566,33 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           media = await options.media.prepare(
             parsed.data.attachments!,
             AbortSignal.any([receiveSignal, AbortSignal.timeout(120_000)]),
+            async () => {
+              if (!(await transaction(currentConversation, pool)))
+                throw new ChannelMediaFailure('unavailable');
+            },
           );
           text = [text, media.text].filter(Boolean).join('\n\n');
           if (text.length > 100_000) throw new ChannelMediaFailure('text_too_long');
           if (!text) text = 'Review the attached files and briefly describe what they contain.';
         } catch (error) {
           if (closed || replacing || receiveSignal.aborted || !permitted(identity)) return;
-          await transaction(
-            (client) =>
-              replyWithoutTurn(
-                client,
-                { ...identity, sourceId, threadId, sentAt, text: '' },
-                () => ({
-                  text: '',
-                  presentation: {
-                    kind: 'media_failure',
-                    reason: error instanceof ChannelMediaFailure ? error.reason : 'unavailable',
-                    ...(error instanceof ChannelMediaFailure && error.fileLimitMb
-                      ? { fileLimitMb: error.fileLimitMb }
-                      : {}),
-                  },
-                }),
-              ),
-            pool,
-          );
+          await transaction(async (client) => {
+            if (!(await currentConversation(client))) return;
+            return replyWithoutTurn(
+              client,
+              { ...identity, sourceId, threadId, sentAt, text: '' },
+              () => ({
+                text: '',
+                presentation: {
+                  kind: 'media_failure',
+                  reason: error instanceof ChannelMediaFailure ? error.reason : 'unavailable',
+                  ...(error instanceof ChannelMediaFailure && error.fileLimitMb
+                    ? { fileLimitMb: error.fileLimitMb }
+                    : {}),
+                },
+              }),
+            );
+          }, pool);
           options.refresh?.();
           return;
         }
@@ -583,6 +613,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           if (!strict) return false;
           throw new Error('Channel configuration changed.');
         }
+        if (!(await currentConversation(database))) return true;
         let attachments: Artifact[] = [];
         let conversationThreadId: string | undefined;
         if (media && !verification) {
@@ -596,13 +627,14 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             ).rowCount
           )
             return true;
-          const thread = await options.activeThread?.(database);
-          conversationThreadId = thread?.id;
-          attachments = await media.save(database, thread?.id);
+          conversationThreadId = mediaThreadId;
+          attachments = await media.save(database, mediaThreadId);
         }
+        if (verification?.turnId && media?.usageIds.length)
+          await options.attributeMediaUsage?.(database, media.usageIds, verification.turnId);
         await database.query(
-          `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,turn_id,owner_id,channel,provider_reply_id,attachments,conversation_thread_id)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT(source_id) DO NOTHING`,
+          `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,turn_id,owner_id,channel,provider_reply_id,attachments,conversation_thread_id,media_usage_ids)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT(source_id) DO NOTHING`,
           [
             sourceId,
             channelId,
@@ -619,6 +651,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             replyToMessageId ?? null,
             JSON.stringify(attachments),
             conversationThreadId ?? null,
+            media?.usageIds ?? [],
           ],
         );
         if (strict && (closed || replacing || receiveSignal.aborted || !permitted(identity)))
@@ -652,6 +685,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           verification = await options.acceptVerification(text, {
             clientMessageId: acceptedMessageId,
             channel: conversationChannel(identity),
+            ...(mediaThreadId ? { threadId: mediaThreadId } : {}),
             ...(target ? { replyToMessageId: target } : {}),
             ...(recorded ? { receiptOnly: true } : {}),
             persistOrdinary: async (client) => {
@@ -669,6 +703,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
                 response.messageId !== acceptedMessageId
               )
                 return;
+              if (!(await currentConversation(client))) return;
               const current = await client.query(
                 `SELECT 1 FROM messages m JOIN turns u ON u.id=m.turn_id JOIN threads th ON th.id=m.thread_id
                  WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.turn_id=$4
@@ -727,15 +762,14 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             cause instanceof Error && 'statusCode' in cause && cause.statusCode === 409;
           if (!conflict) throw cause;
           if (recorded) return;
-          await transaction(
-            (client) =>
-              replyWithoutTurn(
-                client,
-                { ...identity, sourceId, threadId, sentAt, text: '' },
-                () => ({ text: '', presentation: { kind: 'verification_refused' } }),
-              ),
-            pool,
-          );
+          await transaction(async (client) => {
+            if (!(await currentConversation(client))) return;
+            return replyWithoutTurn(
+              client,
+              { ...identity, sourceId, threadId, sentAt, text: '' },
+              () => ({ text: '', presentation: { kind: 'verification_refused' } }),
+            );
+          }, pool);
           return;
         }
       }
@@ -865,6 +899,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         replyToMessageId,
         row.attachments ?? [],
       );
+      await options.attributeMediaUsage?.(client, row.media_usage_ids ?? [], turnId);
       await client.query(
         "UPDATE channel_inbox SET state='submitted',turn_id=$2,message_id=$3,channel=$5 WHERE source_id=$1 AND owner_id=$4",
         [row.source_id, turnId, messageId, ownerId, channel],
@@ -1397,9 +1432,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       if (closed || replacing) throw new Error('Channel configuration is unavailable.');
       await transport.unlink?.();
     },
-    async cancelPairing(pairingId: string) {
+    async cancelPairing(pairingId: string, restart = false) {
       if (closed || replacing) return false;
-      return (await transport.cancelPairing?.(pairingId)) ?? false;
+      return (await transport.cancelPairing?.(pairingId, restart)) ?? false;
     },
   };
 }

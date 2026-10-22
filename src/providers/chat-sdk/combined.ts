@@ -49,9 +49,9 @@ export function combineMessagingTransports(
     async unlink() {
       for (const transport of transports) await transport.unlink?.();
     },
-    async cancelPairing(pairingId) {
+    async cancelPairing(pairingId, restart) {
       const transport = transports.findLast((transport) => transport.cancelPairing);
-      return (await transport?.cancelPairing?.(pairingId)) ?? false;
+      return (await transport?.cancelPairing?.(pairingId, restart)) ?? false;
     },
     async close() {
       const results = await Promise.allSettled(transports.map((transport) => transport.close()));

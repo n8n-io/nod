@@ -9,6 +9,8 @@ import pg from 'pg';
 import { createChannelSettings } from '../src/server/channel-settings.ts';
 import type { ApplicationAdapters } from '../src/server/composition.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
+import type { MessagingAttachment } from '../src/ports/messaging.ts';
+import { createLedger } from '../src/server/ledger.ts';
 import { memoryObjectStore } from './fixtures/object-store.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
@@ -232,6 +234,9 @@ test(
     await seedApp.close();
     const applied: Record<string, string>[] = [];
     const sent: string[] = [];
+    let incomingFile: MessagingAttachment | undefined;
+    let voiceCalls = 0;
+    const voiceUsageId = randomUUID();
     const adapters: ApplicationAdapters = {
       onboardingCurator: {
         id: 'fixture',
@@ -252,7 +257,21 @@ test(
       }),
       speech: {
         id: 'fixture',
-        configured: false,
+        configured: true,
+        transcribe: async (_audio, _signal, report) => {
+          voiceCalls++;
+          report?.({
+            id: voiceUsageId,
+            provider: 'fixture',
+            category: 'agent',
+            operation: 'transcribe',
+            model: 'fixture',
+            status: 'succeeded',
+            durationMs: 1,
+            costUsd: 0.4,
+          });
+          return 'Synthetic voice task answer';
+        },
         synthesize: async () => ({
           bytes: Buffer.alloc(0),
           mimeType: 'audio/mpeg',
@@ -313,6 +332,8 @@ test(
                     messageId: String(body.id),
                     threadId: 'telegram:123',
                     text: body.text,
+                    attachments: incomingFile ? [incomingFile] : undefined,
+                    replyToMessageId: body.replyTo,
                     sentAt: new Date(),
                   },
                 ],
@@ -348,6 +369,15 @@ test(
         (
           await application.app.inject({
             url: '/api/channel-settings/whatsapp/pairing',
+            headers,
+          })
+        ).statusCode,
+        400,
+      );
+      assert.equal(
+        (
+          await application.app.inject({
+            url: '/api/channel-settings/whatsapp/pairing',
             headers: { host: headers.host },
           })
         ).statusCode,
@@ -369,12 +399,12 @@ test(
         assert.ok(application.app.hasRoute({ method: method as 'GET', url }), route);
       }
       assert.equal(applied[0].TELEGRAM_BOT_TOKEN, '42:private-fixture');
-      const send = async (id: number, text: string) =>
+      const send = async (id: number, text: string, replyTo?: string) =>
         application.app.inject({
           method: 'POST',
           url: '/api/webhooks/telegram',
           headers: { 'content-type': 'application/json' },
-          payload: { id, text },
+          payload: { id, text, replyTo },
         });
       assert.equal((await send(1, 'Fixture request')).statusCode, 200);
       await application.channels!.drain();
@@ -405,6 +435,108 @@ test(
           .rows[0].turn_id,
         turns[1].id,
       );
+      const taskTurn = randomUUID();
+      const taskSession = randomUUID();
+      await pool.query(
+        `INSERT INTO turns(id,owner_id,thread_id,session_id,parent_turn_id,source,prompt,status,waiting_reason,background,channel,channel_source_id)
+         VALUES($1,'local-development',$2,$3,$4,'task','Synthetic task','waiting','question',true,$5,'channel:telegram:42:2')`,
+        [taskTurn, first.thread_id, taskSession, first.id, first.channel],
+      );
+      await pool.query(
+        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
+         VALUES($1,'local-development','assistant','Synthetic task question',$2,$3)`,
+        [randomUUID(), first.thread_id, taskTurn],
+      );
+      await application.channels!.drain();
+      incomingFile = {
+        name: 'voice.ogg',
+        mimeType: 'audio/ogg',
+        size: 1,
+        voice: true,
+        read: async () => new Uint8Array([1]),
+      };
+      assert.equal((await send(9, '', `fixture-sent-${sent.length}`)).statusCode, 200);
+      await application.channels!.drain();
+      assert.equal((await send(9, '', `fixture-sent-${sent.length}`)).statusCode, 200);
+      const voiceUsage = (
+        await pool.query(
+          `SELECT m.turn_id,m.session_id,m.created_at<u.created_at AS before_turn FROM model_usage m
+         JOIN turns u ON u.id=m.turn_id WHERE m.id=$1 AND m.owner_id='local-development'`,
+          [voiceUsageId],
+        )
+      ).rows[0];
+      assert.equal(voiceCalls, 1);
+      assert.equal(voiceUsage.session_id, taskSession);
+      assert.equal(voiceUsage.before_turn, true);
+      assert.deepEqual(
+        await createLedger({ pool, ownerId: 'local-development' }).checkIn(
+          taskSession,
+          voiceUsage.turn_id,
+        ),
+        { budgetUsd: 5, spentUsd: 0.4 },
+      );
+      let resetThreadId = first.thread_id;
+      for (const [id, voice] of [
+        [10, false],
+        [11, true],
+      ] as const) {
+        let releaseUpload!: () => void;
+        let startUpload!: () => void;
+        const heldUpload = new Promise<void>((resolve) => {
+          releaseUpload = resolve;
+        });
+        const uploadStarted = new Promise<void>((resolve) => {
+          startUpload = resolve;
+        });
+        let uploadReads = 0;
+        const name = voice ? 'reset-voice.ogg' : 'reset-image.png';
+        incomingFile = {
+          name,
+          mimeType: voice ? 'audio/ogg' : 'image/png',
+          size: 1,
+          voice,
+          read: async () => {
+            uploadReads++;
+            startUpload();
+            await heldUpload;
+            return new Uint8Array([1]);
+          },
+        };
+        const intake = send(id, 'Media before reset');
+        await uploadStarted;
+        try {
+          const reset = await application.app.inject({
+            method: 'POST',
+            url: '/api/conversation/reset',
+            headers,
+            payload: { threadId: resetThreadId },
+          });
+          assert.equal(reset.statusCode, 200, reset.body);
+          resetThreadId = reset.json().threadId;
+        } finally {
+          releaseUpload();
+        }
+        assert.equal((await intake).statusCode, 200);
+        await application.channels!.drain();
+        assert.equal((await send(id, 'Media before reset')).statusCode, 200);
+        assert.equal(uploadReads, 1);
+        const source = `channel:telegram:42:${id}`;
+        assert.equal(
+          (await pool.query('SELECT state FROM channel_inbox WHERE source_id=$1', [source])).rows[0]
+            .state,
+          'discarded',
+        );
+        assert.equal(
+          (await pool.query('SELECT id FROM artifacts WHERE name=$1', [name])).rowCount,
+          0,
+        );
+        assert.equal(
+          (await pool.query('SELECT id FROM turns WHERE channel_source_id=$1', [source])).rowCount,
+          0,
+        );
+        assert.equal(voiceCalls, 1);
+      }
+      incomingFile = undefined;
       const disabled = await application.app.inject({
         method: 'DELETE',
         url: '/api/channel-settings/telegram',

@@ -235,7 +235,7 @@ export async function createChannelSettings(
     verifier: ChannelSetupVerifier;
     apply(environment: Record<string, string>): Promise<void>;
     linkStatus?(): Promise<ChannelLinkStatus>;
-    cancelPairing?(pairingId: string): Promise<boolean>;
+    cancelPairing?(pairingId: string, restart?: boolean): Promise<boolean>;
     unlink?(): Promise<void>;
     paired?(candidate: TelegramPairingCandidate, client: PoolClient): Promise<() => void>;
   },
@@ -607,17 +607,20 @@ export async function createChannelSettings(
         if (!row || !options.linkStatus) throw new ChannelSetupFailure('pairing_unavailable');
         return options.linkStatus();
       });
-      scope.post('/api/channel-settings/whatsapp/pairing', { bodyLimit: 1024 }, () =>
+      scope.post('/api/channel-settings/whatsapp/pairing', { bodyLimit: 1024 }, (request, reply) =>
         exclusive(async () => {
+          reply.header('Cache-Control', 'no-store');
+          const { pairingId } = z.object({ pairingId: z.uuid() }).strict().parse(request.body);
           const row = (await store.read()).find(
             (item) =>
               item.provider === 'whatsapp' && item.enabled && item.summary.mode === 'linked',
           );
-          if (!row || !options.linkStatus || !options.unlink)
+          if (!row || !options.linkStatus || !options.cancelPairing)
             throw new ChannelSetupFailure('pairing_unavailable');
-          await options.unlink();
+          if (!(await options.cancelPairing(pairingId, true)))
+            throw new ChannelSetupFailure('pairing_unavailable');
           await options.apply(await environment());
-          return { ok: true, channel: summarySchema.parse(row.summary) };
+          return options.linkStatus();
         }),
       );
       scope.delete('/api/channel-settings/whatsapp/pairing', { bodyLimit: 1024 }, (request) => {
