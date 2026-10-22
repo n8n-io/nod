@@ -41,7 +41,7 @@ Every trace passes through these layers on your computer before it's sent.
 | --------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | Known secrets               | Keys you saved, model and app keys, Otto's own tokens, and text shaped like a key, token or password | The exact values Otto knows, plus known key formats          |
 | Secret fields               | The value of fields such as `password`, `token` or `api_key` in tool arguments and app data          | The field name                                               |
-| Your name                   | Your name as set in Otto, in full or in part                                                         | An exact match                                               |
+| Your name                   | The name on each Gmail account you connected, in full or in part                                     | An exact match                                               |
 | Email addresses             | Every address, and the name written beside one, as in `Jane Doe <jane@example.com>`                  | The address format                                           |
 | Phone numbers               | Numbers that are valid in a country's numbering plan, using your region for local formats            | Google's libphonenumber rules                                |
 | Payment cards               | Card numbers from Visa, Mastercard, American Express and other issuers                               | The issuer prefix and the Luhn checksum                      |
@@ -73,7 +73,7 @@ Otto removes what it can recognize. A trace can still contain personal details w
 
 - **No account or device ID.** A trace carries no account, installation or device identifier, and no analytics ID.
 - **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever Otto restarts. It can't be used to link traces to you, to other days or to other Otto data such as feedback reports.
-- **No owner context.** Otto leaves your saved memory, learned skills and format preferences out of the instructions it sends.
+- **No owner context.** Otto replaces your saved memory, learned skills and format preferences with `[owner context omitted]`.
 - **No images.** Images are replaced with `[image]`.
 
 These steps remove the direct links to you. What a conversation says can still identify you, for example a detail the scrubber doesn't recognize, so treat traces as private data rather than anonymous data.

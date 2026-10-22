@@ -20,9 +20,11 @@ export function createAccountSession(options: {
   developerIds?: ReadonlySet<string>;
   analytics?: Analytics;
   model?(): { provider: string; name: string; configured: boolean };
-  start?(ownerId: string, name?: string): Promise<void>;
+  start?(): Promise<void>;
+  onboardingReady?(): Promise<boolean>;
   traces?: boolean;
   onTraces?(enabled: boolean): void;
+  prepare?(signal: AbortSignal): Promise<void>;
 }) {
   const origin = new URL(options.origin).origin;
   const user = options.localUser;
@@ -64,7 +66,7 @@ export function createAccountSession(options: {
   async function response(): Promise<SessionResponse> {
     const account = await readAccount();
     return {
-      user: { ...user, name: account.displayName ?? user.name },
+      user,
       settings: {
         theme: account.theme,
         onboardingCompleted: account.onboardingCompleted,
@@ -90,9 +92,21 @@ export function createAccountSession(options: {
     }
     return true;
   }
+  async function prepare(reply: FastifyReply) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    reply.raw.once('close', abort);
+    try {
+      if (reply.raw.destroyed) controller.abort();
+      await options.prepare?.(controller.signal);
+    } finally {
+      reply.raw.off('close', abort);
+    }
+  }
   async function start(reply: FastifyReply, complete?: () => Promise<unknown>) {
     try {
-      await options.start?.(owner, (await options.accounts.read(owner)).displayName?.slice(0, 100));
+      await prepare(reply);
+      await options.start?.();
       await complete?.();
       return true;
     } catch {
@@ -111,6 +125,7 @@ export function createAccountSession(options: {
         .strict()
         .parse(request.body ?? {});
       reply.header('cache-control', 'no-store');
+      await prepare(reply);
       return { ok: true };
     });
     app.patch('/api/account', async (request, reply) => {
@@ -120,6 +135,16 @@ export function createAccountSession(options: {
         return reply.code(400).send({ error: 'Conversation traces are not available here.' });
       let onboardingCompletedNow = false;
       if (input.onboardingCompleted) {
+        if (options.onboardingReady && !(await options.accounts.read(owner)).onboardingCompleted) {
+          try {
+            if (!(await options.onboardingReady()))
+              return reply
+                .code(409)
+                .send({ error: 'Connect an AI provider and Gmail before finishing setup.' });
+          } catch {
+            return reply.code(503).send({ error: 'Could not verify setup. Try again.' });
+          }
+        }
         if (
           !(await start(reply, async () => {
             const account = await updateAccount(input);

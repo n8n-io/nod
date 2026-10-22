@@ -53,7 +53,8 @@ function included(path) {
     ].includes(path)
   )
     return true;
-  if (/^images\/(workspace|browser|postgres)\.tar\.gz$/.test(path)) return true;
+  if (/^images\/(workspace|browser|postgres)\.tar\.zst$/.test(path)) return true;
+  if (/^guest-packages\/[a-z0-9._-]+\.deb$/.test(path)) return true;
   if (!path.startsWith('lima/share/')) return false;
   if (/lima-guestagent\./.test(path))
     return path.endsWith(
@@ -91,7 +92,7 @@ if (
   throw new Error('Rebuild the runtime assets from these pinned release inputs.');
 for (const item of [manifest.guest, manifest.dockerGuest, ...manifest.images])
   if (
-    !/^(?:guest\.img|docker-guest\.tar\.gz|images\/(?:workspace|browser|postgres)\.tar\.gz)$/.test(
+    !/^(?:guest\.img|docker-guest\.tar\.gz|images\/(?:workspace|browser|postgres)\.tar\.zst)$/.test(
       item.file,
     ) ||
     (await assetHash(join(assets, item.file))) !== item.sha256
@@ -152,9 +153,10 @@ try {
 if (!archive) {
   console.log('Creating the verified Otto Runtime pack.');
   await rm(`${path}.tmp`, { force: true });
+  const images = ['images/postgres.tar.zst', 'images/workspace.tar.zst', 'images/browser.tar.zst'];
   await create(
     { cwd: assets, file: `${path}.tmp`, gzip: { level: 6 }, portable: true, noMtime: true },
-    files.map((entry) => entry.path),
+    files.map((entry) => entry.path).sort((a, b) => images.indexOf(a) - images.indexOf(b)),
   );
   await rename(`${path}.tmp`, path);
   archive = { file, bytes: (await lstat(path)).size, sha256: await assetHash(path) };

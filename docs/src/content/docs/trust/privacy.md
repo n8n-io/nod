@@ -20,6 +20,8 @@ The desktop app checks n8n's update service for new versions, which sees your IP
 | Data folder                  | `~/Library/Application Support/Otto/` and `~/.otto-desktop/` on a Mac. `%APPDATA%\Otto\` and the `Otto-` WSL distribution on Windows | `.local/` (`OTTO_DATA_ROOT`) and Docker volumes |
 | Who can read it              | You                                                                                                                                  | You                                             |
 
+Unfinished setup interviews are encrypted in your installation’s private storage. Continuing saves your answers to memory and removes the draft text; **Change my answers** discards it without saving. An encrypted completion marker contains only a random interview identifier and expiry, so returning through setup does not save old answers again. Drafts and completion markers expire after 30 days and are discarded the next time Otto reads them. A completed interview can remain in the current tab while you go back through setup; that temporary copy is shown only while its completion marker is current and is cleared when onboarding finishes.
+
 For what Otto stores and how long it keeps it, see the [Security review guide](/trust/security-review/#what-otto-stores).
 
 ## What leaves your computer
@@ -96,13 +98,13 @@ Memory notes come only from your own messages and the notes you add or import in
 ## Delete your data
 
 - **Memories.** Open **Settings → Memory**, select a note and choose **Forget**. This deletes the note and its earlier versions. You can also ask Otto to forget something.
-- **Vault items.** Open the item in **Trust → Saved** and delete it. For a saved browser session, select **Sign out**.
+- **Vault items.** Open the item in **Trust → Logins and cards** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
 - **Composio key.** Sign in to Easy Connect and confirm the switch in **Settings → App connections**. This deletes your saved key and disconnects the apps you connected through your project.
-- **Everything.** Quit Otto and delete its data folders from the table above. Uninstalling the app alone keeps your data. A service you signed in to through Otto may still list Otto as a connected app until you remove it there.
+- **Everything.** In the desktop app, select **Remove all data** in **Settings → General**. Otto deletes your profile and private computer from the folders above, then quits. From source, stop Otto and delete its `OTTO_DATA_ROOT` folder (`.local/` by default) and its Docker volumes. Uninstalling the app alone keeps your data. A service you signed in to through Otto may still list Otto as a connected app until you remove it there.
 
 :::caution
-Released builds don't have a button to clear your chat history yet. To remove it, delete Otto's data folders.
+There's no button to clear only your chat history yet. **Remove all data** deletes it along with everything else.
 :::
 
 ## Where this is enforced

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, KeyRound, LockKeyhole, ArrowUpRight } from 'lucide-react';
+import { Check, ChevronLeft, Eye, EyeOff, KeyRound, LockKeyhole, ArrowUpRight } from 'lucide-react';
 import type { CredentialRequest, PaymentRequest } from '../../shared/contracts';
 import { api } from '../lib/api';
 import { originLabel } from '../lib/vault-name';
@@ -8,69 +8,187 @@ import { subscribeAppEvents } from '../lib/app-events';
 import { Button, Field, Input, Loading, Notice } from '../components/ui';
 import { BrandMark } from '../components/brand';
 
-export function Credentials({ id }: { id: string }) {
-  return <CredentialForm key={id} id={id} />;
+type PrivateFormProps = {
+  id: string;
+  embedded?: boolean;
+  onClose?(): void;
+  onRequestChange?(id: string): void;
+};
+
+function PrivateFormFrame({
+  embedded,
+  children,
+}: {
+  embedded?: boolean;
+  children: React.ReactNode;
+}) {
+  const Element = embedded ? 'div' : 'main';
+  return (
+    <Element className={embedded ? 'credential-embedded' : 'credential-page'}>
+      {!embedded && (
+        <a href="/" onClick={returnToChat} className="credential-brand" aria-label="Otto home">
+          <BrandMark />
+          <span>otto</span>
+        </a>
+      )}
+      {children}
+    </Element>
+  );
 }
 
-export function Payment({ id }: { id: string }) {
+function BackToChat({ onClose }: { onClose?(): void }) {
+  return (
+    <Button variant="outline" asChild>
+      <a
+        href="/"
+        onClick={(event) => {
+          if (onClose) {
+            event.preventDefault();
+            onClose();
+          } else returnToChat(event);
+        }}
+      >
+        Back to chat
+      </a>
+    </Button>
+  );
+}
+
+export function Credentials(props: PrivateFormProps) {
+  return <CredentialForm key={props.id} {...props} />;
+}
+
+export function Payment(props: PrivateFormProps) {
+  return <PaymentForm key={props.id} {...props} />;
+}
+
+type PaymentStatus = 'pending' | 'entering' | 'submitted' | 'uncertain' | 'expired';
+
+function PaymentForm({ id, embedded, onClose }: PrivateFormProps) {
+  const card = useRef<HTMLDivElement>(null);
   const [request, setRequest] = useState<PaymentRequest>();
+  const [status, setStatus] = useState<PaymentStatus>();
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
   const action = useRef<AbortController | null>(null);
+  const updates = useRef(0);
   const path = `/api/payment-requests/${encodeURIComponent(id)}`;
   useEffect(() => {
     const controller = new AbortController();
-    void api<PaymentRequest>(path, { signal: controller.signal, cache: 'no-store' })
-      .then(setRequest)
-      .catch(() => {
-        if (!controller.signal.aborted)
+    const refresh = async () => {
+      if (action.current) return;
+      const version = ++updates.current;
+      try {
+        const result = await api<{ status: PaymentStatus }>(`${path}/status`, {
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        if (controller.signal.aborted || version !== updates.current) return;
+        setStatus(result.status);
+        if (result.status !== 'pending') setError('');
+        if (result.status === 'pending') {
+          const value = await api<PaymentRequest>(path, {
+            signal: controller.signal,
+            cache: 'no-store',
+          });
+          if (!controller.signal.aborted && version === updates.current) setRequest(value);
+        }
+      } catch {
+        if (!controller.signal.aborted && version === updates.current)
           setError('This payment request is unavailable. Ask Otto to check the checkout.');
-      });
+      }
+    };
+    void refresh();
+    const unsubscribe = subscribeAppEvents(undefined, {
+      open: () => void refresh(),
+      error() {},
+      message: (event) => {
+        if (JSON.parse(event.data).type === 'refresh') void refresh();
+      },
+    });
+    const onFocus = () => void refresh();
+    window.addEventListener('focus', onFocus);
     return () => {
       controller.abort();
       action.current?.abort();
+      unsubscribe();
+      window.removeEventListener('focus', onFocus);
     };
   }, [path]);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!request || action.current) return;
+    if (!request || action.current || status !== 'pending') return;
+    updates.current++;
     const form = event.currentTarget;
     const code = new FormData(form).get('code');
     form.reset();
     const controller = new AbortController();
     action.current = controller;
+    if (embedded && card.current?.contains(document.activeElement)) card.current.focus();
     setSaving(true);
     setError('');
     try {
-      await api(path, {
+      const result = await api<{ ok: boolean }>(path, {
         method: 'POST',
         body: JSON.stringify({ code }),
+        cache: 'no-store',
         signal: controller.signal,
       });
-      if (!controller.signal.aborted) setSubmitted(true);
+      if (result.ok !== true) throw new Error('Unconfirmed payment submission');
+      if (!controller.signal.aborted) setStatus('submitted');
     } catch {
-      if (!controller.signal.aborted)
+      if (!controller.signal.aborted) {
+        setStatus('uncertain');
         setError(
           'The result is not confirmed. Ask Otto to check the order before another attempt.',
         );
+        try {
+          const result = await api<{ status: PaymentStatus }>(`${path}/status`, {
+            signal: controller.signal,
+            cache: 'no-store',
+          });
+          if (!controller.signal.aborted) {
+            setStatus(result.status);
+            if (result.status === 'submitted' || result.status === 'entering') setError('');
+          }
+        } catch {}
+      }
     } finally {
       if (!controller.signal.aborted) setSaving(false);
-      action.current = null;
+      if (action.current === controller) action.current = null;
     }
   }
   return (
-    <main className="credential-page">
-      <a href="/" onClick={returnToChat} className="credential-brand" aria-label="Otto home">
-        <BrandMark />
-        <span>otto</span>
-      </a>
-      <div className="credential-card" data-analytics-private aria-busy={saving}>
-        <h1>{submitted ? 'Card submitted' : 'Approve payment'}</h1>
-        {submitted ? (
+    <PrivateFormFrame embedded={embedded}>
+      <div
+        className="credential-card credential-payment"
+        ref={card}
+        tabIndex={embedded ? -1 : undefined}
+        data-analytics-private
+        aria-busy={saving}
+      >
+        <h1>
+          {status === 'submitted'
+            ? 'Card submitted'
+            : status === 'uncertain'
+              ? 'The result is unknown.'
+              : status === 'expired'
+                ? 'This payment request has expired.'
+                : 'Approve payment'}
+        </h1>
+        {saving || status === 'entering' ? (
+          <Loading label="Submitting your card…" />
+        ) : status === 'submitted' ? (
           <p>Otto will check the result and continue your task in the same conversation.</p>
-        ) : request && !error ? (
-          <form onSubmit={(event) => void submit(event)}>
+        ) : status === 'uncertain' ? (
+          <p>
+            The card may have reached the website. Ask Otto to check the order before another
+            attempt.
+          </p>
+        ) : status === 'expired' ? (
+          <p>Return to chat to check the checkout and request a new approval.</p>
+        ) : request && status === 'pending' ? (
+          <form className="form-stack" autoComplete="off" onSubmit={(event) => void submit(event)}>
             <p>
               {request.amount} at {originLabel(request.origin)} with {request.card}
             </p>
@@ -90,47 +208,70 @@ export function Payment({ id }: { id: string }) {
               />
             </Field>
             <Button type="submit" disabled={saving}>
-              {saving ? 'Submitting…' : `Pay ${request.amount}`}
+              Pay {request.amount}
             </Button>
           </form>
         ) : (
           !error && <Loading label="Opening secure payment…" />
         )}
         {error && <Notice>{error}</Notice>}
-        <Button variant="outline" asChild>
-          <a href="/" onClick={returnToChat}>
-            Back to Otto
-          </a>
-        </Button>
+        <BackToChat onClose={onClose} />
       </div>
-    </main>
+    </PrivateFormFrame>
   );
 }
 
-function CredentialForm({ id }: { id: string }) {
+function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormProps) {
+  const card = useRef<HTMLDivElement>(null);
   const [activeId, setActiveId] = useState(id);
   const generation = useRef(0);
+  const updates = useRef(0);
   const action = useRef<AbortController | null>(null);
   const [request, setRequest] = useState<CredentialRequest | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [retried, setRetried] = useState(false);
   const [enterNew, setEnterNew] = useState(false);
+  const [revealed, setRevealed] = useState(false);
   useEffect(() => {
-    if (request?.status !== 'entering') return;
+    if (!request || (request.status === 'uncertain' && !retried)) return;
     const controller = new AbortController();
-    let latest = 0;
-    const refresh = () => {
-      const version = ++latest;
-      void api<CredentialRequest>(`/api/credential-requests/${encodeURIComponent(activeId)}`, {
-        signal: controller.signal,
-        cache: 'no-store',
-      })
-        .then((value) => {
-          if (!controller.signal.aborted && version === latest) setRequest(value);
-        })
-        .catch(() => {});
+    const refresh = async () => {
+      if (action.current) return;
+      const version = ++updates.current;
+      const path = `/api/credential-requests/${encodeURIComponent(activeId)}`;
+      try {
+        const value = await api<CredentialRequest>(path, {
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        if (controller.signal.aborted || version !== updates.current) return;
+        setRequest(value);
+        if (value.status === 'filled' || value.status === 'expired' || retried) {
+          const flow = await api<{ nextId?: string }>(`${path}/flow`, {
+            signal: controller.signal,
+            cache: 'no-store',
+          });
+          if (
+            !controller.signal.aborted &&
+            version === updates.current &&
+            flow.nextId &&
+            /^[A-Za-z0-9_-]{43}$/.test(flow.nextId) &&
+            flow.nextId !== activeId
+          ) {
+            if (!embedded) window.history.replaceState(null, '', `/vault/${flow.nextId}`);
+            onRequestChange?.(flow.nextId);
+            setRequest(null);
+            setError('');
+            setEnterNew(false);
+            setRevealed(false);
+            setRetried(false);
+            setActiveId(flow.nextId);
+          }
+        }
+      } catch {}
     };
+    void refresh();
     const unsubscribe = subscribeAppEvents(undefined, {
       open: refresh,
       error() {},
@@ -144,11 +285,11 @@ function CredentialForm({ id }: { id: string }) {
       unsubscribe();
       window.removeEventListener('focus', refresh);
     };
-  }, [activeId, request?.status]);
+  }, [activeId, request?.status, retried, embedded]);
   useEffect(() => {
     const current = ++generation.current;
     const controller = new AbortController();
-    if (window.location.search || window.location.hash)
+    if (!embedded && (window.location.search || window.location.hash))
       window.history.replaceState(null, '', window.location.pathname);
     void api<CredentialRequest>(`/api/credential-requests/${encodeURIComponent(activeId)}`, {
       signal: controller.signal,
@@ -168,7 +309,7 @@ function CredentialForm({ id }: { id: string }) {
       action.current?.abort();
       action.current = null;
     };
-  }, [activeId]);
+  }, [activeId, embedded]);
   const uncertain = request?.status === 'uncertain';
   const expired = uncertain || request?.status === 'expired';
   const filled = request?.status === 'filled';
@@ -184,9 +325,11 @@ function CredentialForm({ id }: { id: string }) {
     failure: string,
   ) {
     if (action.current) return;
+    updates.current++;
     const controller = new AbortController();
     action.current = controller;
     const current = generation.current;
+    if (embedded && card.current?.contains(document.activeElement)) card.current.focus();
     setSaving(true);
     setError('');
     try {
@@ -201,7 +344,16 @@ function CredentialForm({ id }: { id: string }) {
       );
       if (generation.current === current && !controller.signal.aborted) accepted(result);
     } catch {
-      if (generation.current === current && !controller.signal.aborted) setError(failure);
+      if (generation.current === current && !controller.signal.aborted) {
+        setError(failure);
+        try {
+          const value = await api<CredentialRequest>(
+            `/api/credential-requests/${encodeURIComponent(activeId)}`,
+            { signal: controller.signal, cache: 'no-store' },
+          );
+          if (generation.current === current && !controller.signal.aborted) setRequest(value);
+        } catch {}
+      }
     } finally {
       if (action.current === controller) action.current = null;
       if (generation.current === current) setSaving(false);
@@ -218,7 +370,7 @@ function CredentialForm({ id }: { id: string }) {
   function submitted(result: { ok: boolean; retryUrl?: string; error?: string }) {
     if (result.ok === true) {
       setRequest((current) => (current ? { ...current, status: 'filled' } : current));
-      returnToChat();
+
       return;
     }
     const retry = new URL(result.retryUrl || '', window.location.origin);
@@ -234,12 +386,21 @@ function CredentialForm({ id }: { id: string }) {
       setError('A new Vault form could not be opened. Return to chat for a new link.');
       return;
     }
-    window.history.replaceState(null, '', retry.pathname);
+    if (!embedded) window.history.replaceState(null, '', retry.pathname);
+    onRequestChange?.(match[1]);
     setRequest(null);
     setRetried(false);
     setEnterNew(true);
     setError(result.error ?? '');
     setActiveId(match[1]);
+  }
+  function useMethod(methodId: string) {
+    return perform(
+      '/method',
+      { methodId },
+      submitted,
+      'This method could not continue. Ask Otto to check the sign-in page.',
+    );
   }
   function useSaved(entryId: string) {
     return perform(
@@ -262,6 +423,7 @@ function CredentialForm({ id }: { id: string }) {
             ...(username ? { username: data.get('username') } : {}),
           };
     form.reset();
+    setRevealed(false);
     return perform(
       '',
       input,
@@ -270,13 +432,11 @@ function CredentialForm({ id }: { id: string }) {
     );
   }
   return (
-    <main className="credential-page">
-      <a href="/" onClick={returnToChat} className="credential-brand" aria-label="Otto home">
-        <BrandMark />
-        <span>otto</span>
-      </a>
+    <PrivateFormFrame embedded={embedded}>
       <div
         className="credential-card"
+        ref={card}
+        tabIndex={embedded ? -1 : undefined}
         aria-busy={saving || (!request && !error)}
         data-analytics-private
       >
@@ -296,13 +456,9 @@ function CredentialForm({ id }: { id: string }) {
             <div className="success-mark">
               <Check size={24} />
             </div>
-            <h1>Details submitted</h1>
+            <h1>{request?.kind === 'method' ? 'Continuing sign-in' : 'Details submitted'}</h1>
             <p>Otto will continue from the website’s response.</p>
-            <Button asChild>
-              <a href="/" onClick={returnToChat}>
-                Back to chat
-              </a>
-            </Button>
+            <BackToChat onClose={onClose} />
           </div>
         ) : request?.status === 'entering' ? (
           <div className="credential-complete">
@@ -331,11 +487,7 @@ function CredentialForm({ id }: { id: string }) {
                 {saving ? 'Requesting…' : 'Get a new Vault link'}
               </Button>
             )}
-            <Button variant="outline" asChild>
-              <a href="/" onClick={returnToChat}>
-                Back to chat
-              </a>
-            </Button>
+            <BackToChat onClose={onClose} />
           </div>
         ) : (
           <>
@@ -352,6 +504,22 @@ function CredentialForm({ id }: { id: string }) {
                 </p>
               </div>
             </header>
+            {request?.kind === 'method' && (
+              <div className="credential-accounts">
+                <h2>Choose how to sign in</h2>
+                {request.methods?.map((method) => (
+                  <Button
+                    key={method.id}
+                    variant="outline"
+                    disabled={saving}
+                    onClick={() => void useMethod(method.id)}
+                  >
+                    <span>{method.label}</span>
+                    <ArrowUpRight size={16} aria-hidden="true" />
+                  </Button>
+                ))}
+              </div>
+            )}
             {request && choosingSaved && (
               <div className="credential-accounts">
                 <h2>Choose a login</h2>
@@ -375,7 +543,22 @@ function CredentialForm({ id }: { id: string }) {
                 </Button>
               </div>
             )}
-            {request && !choosingSaved && (
+            {request && !choosingSaved && savedEntries.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="credential-method-back"
+                disabled={saving}
+                onClick={() => {
+                  setEnterNew(false);
+                  setRevealed(false);
+                }}
+              >
+                <ChevronLeft size={16} aria-hidden="true" />
+                Choose a saved login
+              </Button>
+            )}
+            {request && request.kind !== 'method' && !choosingSaved && (
               <form
                 className="form-stack"
                 autoComplete="off"
@@ -420,20 +603,29 @@ function CredentialForm({ id }: { id: string }) {
                           fields.find((field) => field.kind === 'password')?.label || 'Password'
                         }
                       >
-                        <Input
-                          name="password"
-                          type="password"
-                          autoComplete="current-password"
-                          autoFocus={Boolean(request.username)}
-                          required
-                          maxLength={8192}
-                        />
+                        <span className="credential-secret">
+                          <Input
+                            name="password"
+                            type={revealed ? 'text' : 'password'}
+                            autoComplete="current-password"
+                            autoFocus={Boolean(request.username)}
+                            required
+                            maxLength={8192}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label={revealed ? 'Hide password' : 'Show password'}
+                            aria-pressed={revealed}
+                            onClick={() => setRevealed((value) => !value)}
+                          >
+                            {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </Button>
+                        </span>
                       </Field>
                     )}
                   </>
-                )}
-                {request.kind === 'identifier' && (
-                  <p>Your username or email will be saved in Vault for this website.</p>
                 )}
                 <Button className="credential-submit" type="submit" disabled={saving}>
                   {saving
@@ -442,22 +634,12 @@ function CredentialForm({ id }: { id: string }) {
                       ? 'Continue'
                       : 'Save and continue'}
                 </Button>
-                {savedEntries.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    disabled={saving}
-                    onClick={() => setEnterNew(false)}
-                  >
-                    Choose a saved login
-                  </Button>
-                )}
               </form>
             )}
           </>
         )}
         {error && <Notice>{error}</Notice>}
       </div>
-    </main>
+    </PrivateFormFrame>
   );
 }

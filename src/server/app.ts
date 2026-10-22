@@ -64,7 +64,6 @@ export interface AppDependencies {
   >;
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
-  startOnboarding?: (name?: string) => Promise<unknown>;
   taskLedger?: () => Promise<import('../shared/contracts.ts').Task[]>;
   planningTasks?: () => boolean;
   messageCosts?: (
@@ -121,7 +120,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       );
       return { running: result.rows };
     });
-  const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",NOT u.background AS "showTyping",
+  const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",(NOT u.background OR u.source='user') AS "showTyping",
     CASE WHEN ${activeHandoffSql}
       THEN (SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id AND m.role='assistant' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS "handoffMessageId"`;
   async function messageTurns(threadId: string, ids: string[]): Promise<Turn[]> {
@@ -231,16 +230,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
     for (const id of [previousThreadId, ...browsers])
       void dependencies.computer?.discard(id).catch(() => {});
     return reset;
-  });
-  app.post('/api/onboarding/start', async (request) => {
-    const { name } = z
-      .object({ name: z.string().trim().max(100).optional() })
-      .strict()
-      .parse(request.body ?? {});
-    if (!dependencies.startOnboarding)
-      throw Object.assign(new Error('Setup is unavailable.'), { statusCode: 503 });
-    await dependencies.startOnboarding(name);
-    return { ok: true };
   });
   app.post('/api/messages', async (request) => {
     const input = z

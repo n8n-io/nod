@@ -15,6 +15,7 @@ export interface IntegrationAccessProvider {
     origin: string,
     challenge: string,
     signal?: AbortSignal,
+    native?: { returnPath: string },
   ): Promise<IntegrationAccessAttempt>;
   pollAccess(id: string, signal?: AbortSignal): Promise<IntegrationAccessProgress>;
   completeAccess(
@@ -102,8 +103,10 @@ export class IntegrationCatalogAccessDenied extends Error {
 export class IntegrationConnectionError extends Error {
   readonly statusCode: number;
   constructor(
-    readonly reason: 'authorization' | 'permission' | 'rate_limit' | 'timeout' | 'unavailable',
+    readonly reason:
+      'authorization' | 'permission' | 'rate_limit' | 'timeout' | 'unavailable' | 'invalid_request',
     readonly phase: 'session' | 'auth_config' | 'link',
+    readonly status?: number,
   ) {
     const access =
       phase === 'auth_config'
@@ -118,7 +121,9 @@ export class IntegrationConnectionError extends Error {
             ? 'Composio is receiving too many requests. Wait a moment, then try connecting again.'
             : reason === 'timeout'
               ? 'Composio took too long to respond. Try connecting again.'
-              : 'Composio could not complete the connection. Try connecting again shortly.',
+              : reason === 'invalid_request'
+                ? `Composio rejected this request (HTTP ${status}). Try connecting again, and if it keeps failing, check this app's setup in your Composio project.`
+                : 'Composio could not complete the connection. Try connecting again shortly.',
     );
     this.statusCode =
       reason === 'authorization' || reason === 'permission'
@@ -177,7 +182,7 @@ export interface IntegrationProvider {
   id: string;
   configured: boolean;
   configurationId?: string;
-  setApiKey?(apiKey?: string): void;
+  setApiKey?(apiKey?: string, authConfigs?: Partial<Record<IntegrationService, string>>): void;
   verifyApiKey?(apiKey: string): Promise<boolean>;
   supportedServices?: readonly IntegrationService[];
   listServices?(): Promise<IntegrationServiceInfo[]>;

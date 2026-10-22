@@ -14,7 +14,6 @@ import {
 import type { ModelConnection, ModelProvider, ModelsResponse } from '../../shared/models';
 import { modelProviderNames, modelSource } from '../../shared/models';
 import { agentModels } from '../../shared/model-defaults';
-import { BrandMark } from './brand';
 import { analyticsForCurrentSession } from '../lib/analytics';
 import { localServerAddress, modelSelection, useModelSignIn, useModels } from '../hooks/use-models';
 import {
@@ -391,13 +390,11 @@ export function ModelSettings({
 }
 
 export function ModelPicker({
-  setup = false,
   manageConnections = true,
-  surface = 'chat',
+  surface = 'settings',
 }: {
-  setup?: boolean;
   manageConnections?: boolean;
-  surface?: 'chat' | 'settings' | 'onboarding';
+  surface?: 'settings' | 'onboarding';
 }) {
   const models = useModels();
   const [open, setOpen] = useState(false);
@@ -443,27 +440,27 @@ export function ModelPicker({
     } else capture('otto_ui_error', { area: 'models', action: 'save' });
   }
   return (
-    <div className={`model-picker${setup ? ' model-picker-setup' : ''}`}>
+    <div className="model-picker">
       <Button
         type="button"
-        variant={setup ? 'default' : 'ghost'}
-        size={setup ? 'default' : 'sm'}
+        variant="ghost"
+        size="sm"
         className="model-picker-trigger"
         onClick={() => {
           setSearch('');
           canChoose ? setOpen(true) : setManage(true);
         }}
         aria-label={
-          model && !setup
+          model
             ? `${canChoose ? 'Choose model' : 'Manage model connections'}: ${model.name}, ${connection!.label}`
             : canChoose
               ? 'Choose a model'
               : 'Connect a model'
         }
-        title={model && !setup ? `${model.name} · ${connection!.label}` : undefined}
+        title={model ? `${model.name} · ${connection!.label}` : undefined}
         disabled={models.loading}
       >
-        {model && !setup ? (
+        {model ? (
           <>
             <span className="model-picker-name">{model.name}</span>
             <ChevronDown size={16} />
@@ -475,7 +472,7 @@ export function ModelPicker({
           </>
         )}
       </Button>
-      {model && !setup && connection?.status === 'reconnect' && (
+      {model && connection?.status === 'reconnect' && (
         <span className="model-needs-reconnect">Reconnect in Models</span>
       )}
       <Dialog open={open} onOpenChange={setOpen}>
@@ -544,21 +541,6 @@ export function ModelPicker({
           <ModelSettings />
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-export function ModelSetup() {
-  const { data } = useModels();
-  const available = data?.connections.some(
-    (connection) => connection.status === 'connected' && connection.models.length > 0,
-  );
-  return (
-    <div className="welcome model-setup">
-      <BrandMark />
-      <h2>{available ? 'Choose your model' : 'Connect your model'}</h2>
-      <p>{available ? 'All your models, in one place.' : 'Use your ChatGPT plan or an API key.'}</p>
-      <ModelPicker setup />
     </div>
   );
 }

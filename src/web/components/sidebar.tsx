@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { LayoutGrid, Moon, Settings, Sun } from 'lucide-react';
 import { BrandMark } from './brand';
+import { desktopSettingsAvailable } from '../lib/desktop';
 import { AccountMenuItems, type AccountControls } from './account-menu';
 import { currentTheme, setTheme, subscribeTheme } from '../lib/theme';
 import {
@@ -55,6 +56,7 @@ export function Sidebar({
   const themeLabel = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
   const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const desktop = desktopSettingsAvailable();
   const navigate = useRef(onNavigate);
   navigate.current = onNavigate;
   const toggles = useRef({ onToggle, account });
@@ -86,6 +88,7 @@ export function Sidebar({
     return () => window.removeEventListener('resize', resize);
   }, []);
   useEffect(() => {
+    if (!desktop) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let focusFrame: number | undefined;
     const clear = () => {
@@ -108,7 +111,12 @@ export function Sidebar({
         clear();
         return;
       }
-      if (event.key === (mac ? 'Meta' : 'Control')) {
+      if (
+        event.key === (mac ? 'Meta' : 'Control') &&
+        !event.altKey &&
+        !event.shiftKey &&
+        !(mac ? event.ctrlKey : event.metaKey)
+      ) {
         if (!event.repeat && !timer)
           timer = setTimeout(() => {
             if (!isEditingTarget(document.activeElement)) setHints(true);
@@ -116,19 +124,13 @@ export function Sidebar({
         return;
       }
       clear();
-      const action = navigationShortcut(event);
+      const action = navigationShortcut(event, mac);
       if (!action) return;
-      if (action.type === 'memory' && !toggles.current.account) return;
       event.preventDefault();
       event.stopPropagation();
       if (action.type === 'sidebar') {
         if (window.innerWidth <= 640) setMobileMenuOpen((open) => !open);
         else toggles.current.onToggle();
-        return;
-      }
-      if (action.type === 'memory') {
-        setMobileMenuOpen(false);
-        toggles.current.account?.onSettings('Memory');
         return;
       }
       navigate.current(action.path);
@@ -162,7 +164,7 @@ export function Sidebar({
       document.removeEventListener('focusin', focus);
       document.removeEventListener('visibilitychange', clear);
     };
-  }, [mac]);
+  }, [mac, desktop]);
   return (
     <aside className={`sidebar ${hints ? 'show-shortcuts' : ''}`} aria-label="Sidebar">
       <div className="sidebar-header">
@@ -203,7 +205,7 @@ export function Sidebar({
         >
           {sidebarItems.map((item) => {
             const Icon = item.icon;
-            const label = item.key ? shortcutLabel(item.key, mac) : undefined;
+            const label = desktop ? shortcutLabel(item.key, mac) : undefined;
             return (
               <li key={item.path}>
                 <a
@@ -211,9 +213,7 @@ export function Sidebar({
                   aria-label={item.path === '/' ? chatLabel : item.label}
                   aria-current={path === item.path ? 'page' : undefined}
                   aria-keyshortcuts={
-                    item.key
-                      ? `Meta+${item.key.toUpperCase()} Control+${item.key.toUpperCase()}`
-                      : undefined
+                    desktop ? `${mac ? 'Meta' : 'Control'}+${item.key}` : undefined
                   }
                   title={label ? `${item.label} (${label})` : item.label}
                   className={`nav-link ${path === item.path ? 'nav-link-active' : ''} ${item.path === '/' && unreadBadge ? 'has-chat-unread' : ''}`}
@@ -235,9 +235,9 @@ export function Sidebar({
                     {item.label}
                   </span>{' '}
                   {item.path === '/' && unreadBadge}
-                  {item.key && (
+                  {desktop && (
                     <kbd className="nav-shortcut" aria-hidden="true">
-                      {item.key.toUpperCase()}
+                      {shortcutLabel(item.key, mac)}
                     </kbd>
                   )}
                 </a>
@@ -358,16 +358,22 @@ export function Sidebar({
         {account && (
           <button
             type="button"
-            className="nav-link"
+            className={`nav-link ${path.startsWith('/settings') ? 'nav-link-active' : ''}`}
             aria-label="Settings"
-            aria-keyshortcuts="Meta+, Control+,"
-            title="Settings"
+            aria-current={path.startsWith('/settings') ? 'page' : undefined}
+            aria-keyshortcuts={desktop ? `${mac ? 'Meta' : 'Control'}+,` : undefined}
+            title={desktop ? `Settings (${shortcutLabel(',', mac)})` : 'Settings'}
             onClick={(event) => account.onSettings('General', event.currentTarget)}
           >
             <Settings size={24} aria-hidden="true" />
             <span className="nav-label" data-analytics-public>
               Settings
             </span>
+            {desktop && (
+              <kbd className="nav-shortcut" aria-hidden="true">
+                {shortcutLabel(',', mac)}
+              </kbd>
+            )}
           </button>
         )}
       </div>

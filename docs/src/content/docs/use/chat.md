@@ -9,14 +9,14 @@ Chat is where you give Otto work, answer its questions and get the results.
 
 Otto keeps one ongoing conversation with you. The desktop app, the web app, Telegram and WhatsApp all add to that same conversation, so Otto remembers what you said in any of them.
 
-Otto follows your conversation language, including questions, confirmations and connection instructions. You can request another language at any point. Asking for an email or document in a different language applies to that output; a short acknowledgement keeps the conversation's language. Region, date format and time zone are separate preferences.
+Otto follows your conversation language, including questions, confirmations and connection instructions. Only your own messages set it, never your email or other data, and before you've written anything, such as at the start of setup, Otto writes in English. You can request another language at any point. Asking for an email or document in a different language applies to that output; a short acknowledgement keeps the conversation's language. Region, date format and time zone are separate preferences.
 
 ## Send a message
 
 Type in the message box and press Enter. Press Shift+Enter for a new line.
 
-- **Attach files.** Select **Attach files**, paste an image or drop files on the box. Each file can be 90 MB or smaller. Otto gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
-- **Reply to a message.** Select **Reply** under a message to point Otto at it. Under each message you'll find its time, any reaction, and **Reply**, **Copy** and **React**. The controls stay light until you hover over, select or focus the message. On a long message they stay at the bottom of the window while you scroll.
+- **Attach files.** Select **Attach files**, paste an image or drop files on the box. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. Otto gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
+- **Reply to a message.** Hover over a message and select its arrow, or right-click inside the bubble, then select **Reply** or **Copy**. On touch screens, use the visible arrow. The time appears in the bottom-right corner of each bubble.
 
 ## Keep talking while Otto works
 
@@ -38,17 +38,21 @@ To stop Otto, select **Stop** next to the send button.
 
 The main Stop control ends active work, cancels queued messages and open questions, and closes all open tasks. To stop only one task, open its preview and select **Stop**. Your schedules stay configured. Stop can't undo something that already happened, such as an email that was already sent.
 
-Otto never repeats interrupted work on its own. If it restarts during a run, that run fails. When the model is available, Otto posts an interruption notice in the main chat or as a reply to the affected task. Saved tasks and waiting questions survive a restart.
+When a run stops on an error, Otto tells you what failed, in the main chat or as a reply to the affected task, with the error's own details, such as low credits or a rejected key with your model provider. Its next turn knows what went wrong. If Otto restarts during a run, that run fails and Otto posts an interruption notice. Otto never repeats failed or interrupted work on its own. Saved tasks and waiting questions survive a restart.
 
 If Otto may have sent or changed something, verify the result yourself or ask Otto to inspect it before continuing. Don't make a new attempt while the result is unclear.
 
 ## Choose the model
 
-The model picker above the message box shows the model Otto uses. Select it to choose another model from your connected providers. See [Models](/connect/models/).
+Open the **Settings** page, then **Models** to choose the model Otto uses from your connected providers. See [Models](/connect/models/).
+
+## Desktop shortcuts
+
+In the desktop app, hold Command on a Mac or Ctrl on Windows and Linux to show shortcut hints. Use that key with 1–5 for Chat, Tasks, Apps, Channels and Trust; B expands or collapses the sidebar, and comma opens Settings. Web browsers keep their own shortcuts.
 
 ## React to messages
 
-To react to one of Otto's replies, double-click it to add 👍, or select **React** under it and pick an emoji. Your reaction appears under the reply, next to its time. Select it to remove it. Otto takes a reaction as feedback on that reply, never as an answer to a question or an approval.
+To react to one of Otto's replies, hover over the bubble and select its reaction icon. Pick a quick reaction, or choose **More emoji** to search and scroll through the full picker. On touch screens, the reaction icon is always visible. Your reaction appears at the bottom of the bubble. Select it to remove it. Otto takes a reaction as feedback on that reply, never as an answer to a question or an approval.
 
 Otto sometimes reacts to your messages too, such as ✅ when you say yes to something it offered or ❤️ when you thank it. It reacts only now and then, and a reaction never replaces its reply.
 
@@ -69,6 +73,8 @@ Otto answers each request in the app you sent it from. A message from Telegram g
 ## Send feedback
 
 Select **Send feedback** at the top of the chat, choose **Bug or issue**, **Idea** or **Other**, and describe what happened. Feedback goes to the Otto team at n8n.
+
+After first-time setup, a short invitation points to **Send feedback**. Dismiss it with its close button or press Escape while the invitation or feedback button is focused; it stays dismissed on that device.
 
 By default it includes a diagnostic report of your recent chat, actions and their results. Select **Review** to see the report, or clear **Include diagnostic report** before you send.
 

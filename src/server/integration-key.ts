@@ -1,12 +1,13 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import type { Pool } from 'pg';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { IntegrationProvider } from '../ports/integrations.ts';
+import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { IntegrationKeyStatus, IntegrationManagedAccess } from '../shared/integrations.ts';
 import { pool } from './db.ts';
 import { transaction } from './transaction.ts';
-import { IntegrationError } from './integrations.ts';
+import { initializeIntegrationSchema, IntegrationError } from './integrations.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
 
 class IntegrationKeyError extends Error {}
@@ -14,7 +15,13 @@ class IntegrationKeyError extends Error {}
 const invalidKey = 'That key didn’t work. Copy it again from Composio and paste it here.';
 const keyInput = z.object({ key: z.string().trim().min(8).max(16384) }).strict();
 
+export interface LegacyIntegration {
+  apiKey: string;
+  authConfigs: Partial<Record<IntegrationService, string>>;
+}
+
 export function createIntegrationKeyService(options: {
+  database?: Pool;
   ownerId: string;
   keyStore: CredentialKeyStore;
   provider: IntegrationProvider;
@@ -25,6 +32,7 @@ export function createIntegrationKeyService(options: {
   };
 }) {
   const { ownerId, provider, fixed } = options;
+  const database = options.database ?? pool;
   let vault: Awaited<ReturnType<typeof createAppGrantVault>>;
   let own = fixed === 'own';
   let suffix: string | null = null;
@@ -33,18 +41,18 @@ export function createIntegrationKeyService(options: {
   const observers = new Set<(values: string[]) => void>();
   async function savedId() {
     return (
-      await pool.query<{ vault_id: string }>(
+      await database.query<{ vault_id: string | null }>(
         'SELECT vault_id FROM integration_keys WHERE owner_id=$1',
         [ownerId],
       )
     ).rows[0]?.vault_id;
   }
-  function use(key?: string) {
+  function use(key?: string, authConfigs?: LegacyIntegration['authConfigs']) {
     if (key && !secrets.includes(key)) {
       secrets.push(key);
       for (const observer of observers) observer([key]);
     }
-    provider.setApiKey!(key);
+    provider.setApiKey!(key, authConfigs);
     own = Boolean(key);
     suffix = key?.slice(-4) ?? null;
   }
@@ -80,22 +88,37 @@ export function createIntegrationKeyService(options: {
   async function save(key: string) {
     const id = (await savedId()) ?? randomUUID();
     await transaction(async (client) => {
+      const previous = (
+        await client.query<{ auth_config_vault_id: string | null }>(
+          'SELECT auth_config_vault_id FROM integration_keys WHERE owner_id=$1',
+          [ownerId],
+        )
+      ).rows[0]?.auth_config_vault_id;
       await vault.put(id, key, client);
       await client.query(
-        'INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,$2) ON CONFLICT DO NOTHING',
+        'INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,$2) ON CONFLICT(owner_id) DO UPDATE SET vault_id=EXCLUDED.vault_id,auth_config_vault_id=NULL',
         [ownerId, id],
       );
-    }, pool);
-    use(key);
+      if (previous) await vault.remove(previous, client);
+    }, database);
+    use(key, {});
   }
   async function remove() {
-    const id = await savedId();
-    if (id)
-      await transaction(async (client) => {
-        await client.query('DELETE FROM integration_keys WHERE owner_id=$1', [ownerId]);
-        await vault.remove(id, client);
-      }, pool);
-    use();
+    await transaction(async (client) => {
+      const previous = (
+        await client.query<{ vault_id: string | null; auth_config_vault_id: string | null }>(
+          'SELECT vault_id,auth_config_vault_id FROM integration_keys WHERE owner_id=$1 FOR UPDATE',
+          [ownerId],
+        )
+      ).rows[0];
+      await client.query(
+        'INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,NULL) ON CONFLICT(owner_id) DO UPDATE SET vault_id=NULL,auth_config_vault_id=NULL',
+        [ownerId],
+      );
+      if (previous?.auth_config_vault_id) await vault.remove(previous.auth_config_vault_id, client);
+      if (previous?.vault_id) await vault.remove(previous.vault_id, client);
+    }, database);
+    use(undefined, {});
   }
   return {
     get mode() {
@@ -103,16 +126,98 @@ export function createIntegrationKeyService(options: {
     },
     async initialize() {
       if (fixed) return;
-      vault = await createAppGrantVault(pool, { ownerId, keyStore: options.keyStore });
-      await pool.query(
-        'CREATE TABLE IF NOT EXISTS integration_keys(owner_id text PRIMARY KEY, vault_id uuid NOT NULL)',
+      vault = await createAppGrantVault(database, { ownerId, keyStore: options.keyStore });
+      await database.query(
+        'CREATE TABLE IF NOT EXISTS integration_keys(owner_id text PRIMARY KEY, vault_id uuid); ALTER TABLE integration_keys ALTER COLUMN vault_id DROP NOT NULL; ALTER TABLE integration_keys ADD COLUMN IF NOT EXISTS auth_config_vault_id uuid',
       );
       const id = await savedId();
       if (!id) return;
       own = true;
       try {
-        use((await vault.read(id)).value);
+        const configId = (
+          await database.query<{ auth_config_vault_id: string | null }>(
+            'SELECT auth_config_vault_id FROM integration_keys WHERE owner_id=$1',
+            [ownerId],
+          )
+        ).rows[0]?.auth_config_vault_id;
+        const configuration = configId ? JSON.parse((await vault.read(configId)).value) : undefined;
+        use((await vault.read(id)).value, configuration);
       } catch {}
+    },
+    async importLegacy(input: LegacyIntegration) {
+      if (fixed || !options.keyStore.configured) return false;
+      const parsed = z
+        .object({
+          apiKey: z.string().min(1).max(16384),
+          authConfigs: z.record(
+            z.string().regex(/^[a-z][a-z0-9_]{0,79}$/),
+            z.string().min(1).max(16384),
+          ),
+        })
+        .strict()
+        .parse(input);
+      await initializeIntegrationSchema(database);
+      const imported = await transaction(async (client) => {
+        await client.query(
+          'LOCK TABLE integration_keys, app_connections IN SHARE ROW EXCLUSIVE MODE',
+        );
+        const existing = (
+          await client.query<{ vault_id: string | null; auth_config_vault_id: string | null }>(
+            'SELECT vault_id,auth_config_vault_id FROM integration_keys WHERE owner_id=$1',
+            [ownerId],
+          )
+        ).rows[0];
+        if (existing) {
+          if (!existing.vault_id) return false;
+          try {
+            if ((await vault.read(existing.vault_id, client)).value !== parsed.apiKey) return false;
+            const configs = existing.auth_config_vault_id
+              ? JSON.parse((await vault.read(existing.auth_config_vault_id, client)).value)
+              : {};
+            return (
+              JSON.stringify(Object.entries(configs).sort()) ===
+              JSON.stringify(Object.entries(parsed.authConfigs).sort())
+            );
+          } catch {
+            return false;
+          }
+        }
+        const configurationId = createHash('sha256')
+          .update(`direct:${parsed.apiKey}`)
+          .digest('hex');
+        const bindings = await client.query(
+          'SELECT 1 FROM app_connections WHERE owner_id=$1 AND configuration_id IS NOT NULL AND configuration_id<>$2 LIMIT 1',
+          [ownerId, configurationId],
+        );
+        if (bindings.rowCount) {
+          await client.query('INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,NULL)', [
+            ownerId,
+          ]);
+          return false;
+        }
+        if (options.managed) {
+          const access = await options.managed.status().catch(() => undefined);
+          if (!access || access.state === 'unavailable') return false;
+          if (access.state !== 'sign_in_required') {
+            await client.query('INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,NULL)', [
+              ownerId,
+            ]);
+            return false;
+          }
+        }
+        const id = randomUUID();
+        const configuration = Object.keys(parsed.authConfigs).length ? randomUUID() : null;
+        await vault.put(id, parsed.apiKey, client);
+        if (configuration)
+          await vault.put(configuration, JSON.stringify(parsed.authConfigs), client);
+        await client.query(
+          'INSERT INTO integration_keys(owner_id,vault_id,auth_config_vault_id) VALUES($1,$2,$3)',
+          [ownerId, id, configuration],
+        );
+        return true;
+      }, database);
+      if (imported) await this.initialize();
+      return imported;
     },
     onSecrets(observer: (values: string[]) => void) {
       observers.add(observer);
@@ -186,5 +291,80 @@ export function createIntegrationKeyService(options: {
         routes.delete('/api/integrations/key', () => change());
       });
     },
+  };
+}
+
+export async function receiveLegacyIntegration(options: {
+  ownerId: string;
+  parent: {
+    on(event: 'message', listener: (event: { data: unknown }) => void): unknown;
+    removeListener(event: 'message', listener: (event: { data: unknown }) => void): unknown;
+    postMessage(message: unknown): void;
+  };
+  timeout?: number;
+}) {
+  const nonce = randomUUID();
+  const envelope = z
+    .object({
+      type: z.literal('otto-legacy-integration'),
+      ownerId: z.literal(options.ownerId),
+      nonce: z.literal(nonce),
+      receipt: z.string().regex(/^[a-f0-9]{64}$/),
+      apiKey: z.string().min(1).max(16384),
+      authConfigs: z.record(
+        z.string().regex(/^[a-z][a-z0-9_]{0,79}$/),
+        z.string().min(1).max(16384),
+      ),
+    })
+    .strict();
+  const message = await new Promise<z.infer<typeof envelope>>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      options.parent.removeListener('message', receive);
+      reject(new Error('Otto could not restore its saved app connection.'));
+    }, options.timeout ?? 30000);
+    function receive(event: { data: unknown }) {
+      const parsed = envelope.safeParse(event.data);
+      if (!parsed.success) return;
+      clearTimeout(timer);
+      options.parent.removeListener('message', receive);
+      resolve(parsed.data);
+    }
+    options.parent.on('message', receive);
+    options.parent.postMessage({
+      type: 'otto-legacy-integration-request',
+      ownerId: options.ownerId,
+      nonce,
+    });
+  });
+  return {
+    input: { apiKey: message.apiKey, authConfigs: message.authConfigs },
+    acknowledge: () =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          options.parent.removeListener('message', receive);
+          resolve();
+        }, options.timeout ?? 30000);
+        function receive(event: { data: unknown }) {
+          const result = event.data as Record<string, unknown> | null;
+          if (
+            (result?.type !== 'otto-legacy-integration-cleaned' &&
+              result?.type !== 'otto-legacy-integration-cleanup-deferred') ||
+            result.ownerId !== options.ownerId ||
+            result.nonce !== nonce ||
+            result.receipt !== message.receipt
+          )
+            return;
+          clearTimeout(timer);
+          options.parent.removeListener('message', receive);
+          resolve();
+        }
+        options.parent.on('message', receive);
+        options.parent.postMessage({
+          type: 'otto-legacy-integration-ack',
+          ownerId: options.ownerId,
+          nonce,
+          receipt: message.receipt,
+        });
+      }),
   };
 }

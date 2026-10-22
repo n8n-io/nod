@@ -1,11 +1,11 @@
 import { ListChecks, MessageCircle, PlugZap, Radio, ShieldCheck } from 'lucide-react';
 
 export const sidebarItems = [
-  { path: '/', label: 'Chat', key: 'j', icon: MessageCircle },
-  { path: '/tasks', label: 'Tasks', key: 'g', icon: ListChecks },
-  { path: '/apps', label: 'Apps', key: 'e', icon: PlugZap },
-  { path: '/channels', label: 'Channels', key: 'd', icon: Radio },
-  { path: '/trust', label: 'Trust', key: 'i', icon: ShieldCheck },
+  { path: '/', label: 'Chat', key: '1', icon: MessageCircle },
+  { path: '/tasks', label: 'Tasks', key: '2', icon: ListChecks },
+  { path: '/apps', label: 'Apps', key: '3', icon: PlugZap },
+  { path: '/channels', label: 'Channels', key: '4', icon: Radio },
+  { path: '/trust', label: 'Trust', key: '5', icon: ShieldCheck },
 ] as const;
 
 export function isEditingTarget(target: EventTarget | null): boolean {
@@ -25,9 +25,10 @@ export function navigationShortcut(
     KeyboardEvent,
     'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey' | 'key' | 'repeat' | 'isComposing'
   >,
+  mac = /Mac|iPhone|iPad/.test(navigator.platform),
 ) {
   if (
-    (!event.metaKey && !event.ctrlKey) ||
+    !(mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) ||
     event.shiftKey ||
     event.altKey ||
     event.repeat ||
@@ -36,7 +37,6 @@ export function navigationShortcut(
     return null;
   const key = event.key.toLowerCase();
   if (key === 'b') return { type: 'sidebar' } as const;
-  if (key === 'y') return { type: 'memory' } as const;
   const item = sidebarItems.find((entry) => entry.key === key);
   return item ? ({ type: 'navigate', path: item.path } as const) : null;
 }

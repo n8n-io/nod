@@ -226,11 +226,24 @@ test(
           );
           await computer.close('attachment');
           await computer.act('popup', { action: 'open', url: `${fixture.origin}/session` });
-          await computer.act('popup', { action: 'click', selector: '#popup' });
+          const beforePopup = fixture.authenticatedDownloads();
+          try {
+            await computer.act('popup', { action: 'click', selector: '#popup' });
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              !(error.cause instanceof BrowserActionError) ||
+              error.cause.code !== 'browser_observation_failed'
+            )
+              throw error;
+            assert.ok((await computer.screenshot('popup'))?.length);
+            assert.equal(computer.screenStatus!('popup').state, 'live');
+          }
           assert.deepEqual(
             (await computer.download!('popup', { name: 'popup.pdf' })).bytes,
             browserDownloadPdf,
           );
+          assert.equal(fixture.authenticatedDownloads(), beforePopup + 1);
           await assert.rejects(computer.download!('unrelated-task', {}));
           await assert.rejects(computer.download!('popup', { url: 'file:///etc/passwd' }));
           assert.equal(fixture.unauthenticatedDownloads(), 1);
@@ -324,6 +337,16 @@ test(
         PRIMARY KEY(owner_id,object_key)
       )`);
       await Promise.all([first.initialize(), second.initialize()]);
+      const borrowed = await f.database.connect();
+      try {
+        await borrowed.query('BEGIN');
+        await borrowed.query("SET LOCAL lock_timeout='2s'");
+        await createPostgresObjectStore({ database: borrowed, ownerId: 'owner-one' }).initialize();
+        assert.equal((await borrowed.query('SHOW lock_timeout')).rows[0].lock_timeout, '2s');
+      } finally {
+        await borrowed.query('ROLLBACK');
+        borrowed.release();
+      }
       const large = Buffer.alloc(20 * 1024 * 1024, 7);
       const artifact = `artifacts/${randomUUID()}`;
       await first.write(artifact, large, { expectedVersion: null });

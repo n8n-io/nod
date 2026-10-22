@@ -2,8 +2,10 @@ import { win32 } from 'node:path';
 
 export function windowsInstallCommand({ directory, appPath, pid, systemRoot = 'C:\\Windows' }) {
   const script = [
+    "$ErrorActionPreference = 'Stop'",
     'Wait-Process -Id ([int]$env:OTTO_UPDATE_PID) -Timeout 300 -ErrorAction SilentlyContinue',
-    `Start-Process -FilePath (Join-Path $env:OTTO_UPDATE_DIRECTORY 'Otto-Setup-x64.exe') -ArgumentList ('/S /D=' + $env:OTTO_UPDATE_TARGET) -Wait`,
+    `$installer = Start-Process -FilePath (Join-Path $env:OTTO_UPDATE_DIRECTORY 'Otto-Setup-x64.exe') -ArgumentList ('/S /D=' + $env:OTTO_UPDATE_TARGET) -Wait -PassThru`,
+    'if ($installer.ExitCode -ne 0) { exit $installer.ExitCode }',
     "Start-Process -FilePath (Join-Path $env:OTTO_UPDATE_TARGET 'Otto.exe')",
   ].join('\n');
   return {

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 import Fastify from 'fastify';
-import type { AccountStore, StoredAccount } from '../src/server/account-store.ts';
+import type { AccountStore } from '../src/server/account-store.ts';
+import type { AccountSettings } from '../src/shared/account.ts';
 import { createAccountSession } from '../src/server/account.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
 import { randomUUID, randomBytes } from 'node:crypto';
@@ -24,7 +25,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
-import { createAnalytics, type Analytics } from '../src/server/analytics.ts';
+import { createAnalytics, type Analytics, type CaptureAnalytics } from '../src/server/analytics.ts';
 import { createLedger } from '../src/server/ledger.ts';
 import { createModelTraces } from '../src/server/traces.ts';
 import type { ModelTrace } from '../src/ports/traces.ts';
@@ -90,19 +91,18 @@ test('queued and cached link previews cannot cross an owner change', async (t) =
 describe('account routes', () => {
   const origin = 'http://localhost:4399';
   async function fixture(
-    start?: (ownerId: string) => Promise<void>,
     analytics?: Analytics,
     onTraces?: (enabled: boolean) => void,
     key?: string,
+    onboardingReady?: () => Promise<boolean>,
   ) {
-    let record: StoredAccount = {
+    let record: AccountSettings = {
       theme: 'system',
       onboardingCompleted: false,
-      displayName: null,
       usageData: false,
       traces: false,
     };
-    const calls = { writes: 0, started: [] as (string | undefined)[] };
+    const calls = { writes: 0, started: 0 };
     const accounts: AccountStore = {
       async readConsent() {
         return { enabled: record.usageData, revision: '0' };
@@ -116,7 +116,6 @@ describe('account routes', () => {
         record = {
           theme: input.theme ?? saved.theme,
           onboardingCompleted: input.onboardingCompleted ?? saved.onboardingCompleted,
-          displayName: saved.displayName,
           usageData: input.usageData ?? saved.usageData,
           traces: input.traces ?? saved.traces,
         };
@@ -137,16 +136,50 @@ describe('account routes', () => {
       origin,
       localUser: { id: 'local-owner', name: 'You', email: null, avatarUrl: null },
       developerIds: new Set(['local-owner']),
-      async start(owner, name) {
-        calls.started.push(name);
-        await start?.(owner);
+      async start() {
+        calls.started++;
       },
       traces: onTraces !== undefined,
       onTraces,
+      onboardingReady,
     }).register(app);
     await app.ready();
     return { app, calls, record: () => record };
   }
+
+  test('first completion requires setup readiness without rechecking a completed profile', async (t) => {
+    let ready = false;
+    let failed = false;
+    let checked = 0;
+    const f = await fixture(undefined, undefined, undefined, async () => {
+      checked++;
+      if (failed) throw new Error('Synthetic provider outage');
+      return ready;
+    });
+    t.after(() => f.app.close());
+    const complete = () =>
+      f.app.inject({
+        method: 'PATCH',
+        url: '/api/account',
+        headers: { origin },
+        payload: { onboardingCompleted: true },
+      });
+    assert.equal((await complete()).statusCode, 409);
+    assert.equal(f.record().onboardingCompleted, false);
+    assert.equal(f.calls.writes, 0);
+    assert.equal(f.calls.started, 0);
+    failed = true;
+    assert.equal((await complete()).statusCode, 503);
+    assert.equal(f.record().onboardingCompleted, false);
+    failed = false;
+    ready = true;
+    assert.equal((await complete()).statusCode, 200);
+    assert.equal(f.record().onboardingCompleted, true);
+    const checks = checked;
+    ready = false;
+    assert.equal((await complete()).statusCode, 200);
+    assert.equal(checked, checks);
+  });
 
   test('usage data stays off until the owner opts in and the environment switch always wins', async (t) => {
     for (const available of [true, false]) {
@@ -160,7 +193,7 @@ describe('account routes', () => {
         dataRoot: '.',
         installationId,
       });
-      const f = await fixture(undefined, analytics);
+      const f = await fixture(analytics);
       t.after(() => f.app.close());
       const request = (payload?: object) =>
         f.app.inject({
@@ -177,7 +210,7 @@ describe('account routes', () => {
         [false, null],
       );
       await request({ onboardingCompleted: true });
-      assert.deepEqual(f.calls.started, [undefined]);
+      assert.equal(f.calls.started, 1);
       analytics.capture('local-owner', { event: 'otto_conversation_reset' });
       assert.equal(captured.length, 0);
       const opted = await request({ usageData: true });
@@ -213,7 +246,7 @@ describe('account routes', () => {
       secrets: ['fixture-model-key-8c41f2'],
       profile: async () => ({ names: ['Marta Vidal'], region: 'ES' }),
     });
-    const f = await fixture(undefined, undefined, (enabled) => traces.configure({ enabled }));
+    const f = await fixture(undefined, (enabled) => traces.configure({ enabled }));
     t.after(() => f.app.close());
     const request = (payload?: object) =>
       f.app.inject({
@@ -365,7 +398,7 @@ describe('account routes', () => {
     });
     assert.equal(prepared.statusCode, 200);
     assert.equal(f.calls.writes, 0);
-    assert.deepEqual(f.calls.started, []);
+    assert.equal(f.calls.started, 0);
   });
 });
 
@@ -1025,7 +1058,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       await root.query(`DROP SCHEMA ${schema} CASCADE`);
       await root.end();
     });
-    return { create, database, backend };
+    return { create, database, backend, keyStore };
   }
 
   function subscriptionCredential(expires = Date.now() + 3600000) {
@@ -1069,6 +1102,352 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       };
     };
   }
+
+  test('model connections verify credential storage before opening sign-in or calling a provider', async (t) => {
+    const f = await fixture(t);
+    const { createEnvironmentKeyStore } = await import('../src/providers/environment/key-store.ts');
+    const invalidKey = 'a'.repeat(64);
+    Object.assign(f.keyStore, createEnvironmentKeyStore(invalidKey));
+    const calls = { signIn: 0, authorize: 0, catalog: 0 };
+    let rejectSignIn = false;
+    const signIn = stubSignIn(async () => {
+      if (rejectSignIn) throw new Error('Synthetic sign-in failure');
+      return subscriptionCredential();
+    });
+    const owner = await f.create('fixture-owner', {
+      ...f.backend,
+      signIn(input) {
+        calls.signIn++;
+        return signIn(input);
+      },
+      authorize(input) {
+        calls.authorize++;
+        return f.backend.authorize(input);
+      },
+      catalog(provider, method) {
+        calls.catalog++;
+        return f.backend.catalog(provider, method);
+      },
+    });
+    const app = Fastify();
+    const captured: Parameters<CaptureAnalytics>[0][] = [];
+    owner.register(app, (event) => captured.push(event));
+    t.after(() => app.close());
+    for (const [url, payload] of [
+      ['/api/models/oauth', { provider: 'openai' }],
+      ['/api/models/oauth', { provider: 'openrouter' }],
+      ['/api/models/keys', { provider: 'openai', key: 'fixture-provider-key' }],
+      ['/api/models/endpoints', { url: 'http://localhost:11434/v1' }],
+    ] as const) {
+      const response = await app.inject({ method: 'POST', url, payload });
+      assert.equal(response.statusCode, 400);
+      assert.ok(!response.body.includes(invalidKey));
+      assert.deepEqual(calls, { signIn: 0, authorize: 0, catalog: 0 });
+    }
+    const failures = [
+      { provider: 'openai', method: 'subscription' },
+      { provider: 'openrouter', method: 'oauth' },
+      { provider: 'openai', method: 'api_key' },
+      { provider: 'compatible', method: 'api_key' },
+    ].map((properties) => ({
+      event: 'otto_model_connection_changed',
+      properties: { ...properties, status: 'failed' },
+    }));
+    assert.deepEqual(captured, failures);
+    assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 0);
+    assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 0);
+    Object.assign(f.keyStore, createEnvironmentKeyStore(Buffer.alloc(32, 77).toString('base64')));
+    const started = await app.inject({
+      method: 'POST',
+      url: '/api/models/oauth',
+      payload: { provider: 'openai' },
+    });
+    assert.equal(started.statusCode, 200);
+    const { attempt } = started.json();
+    const completed = await app.inject({
+      method: 'POST',
+      url: '/api/models/oauth/complete',
+      payload: {
+        url: `http://127.0.0.1:1455/auth/callback?state=${attempt}&code=fixture`,
+      },
+    });
+    assert.equal(completed.statusCode, 200, completed.body);
+    assert.deepEqual(owner.signInStatus(attempt), { status: 'connected' });
+    assert.deepEqual(calls, { signIn: 1, authorize: 0, catalog: 1 });
+    assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 1);
+    assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 1);
+    assert.equal((await (await owner.resolve()).read())?.type, 'oauth');
+    assert.ok(!JSON.stringify(owner.view()).includes('fixture-access'));
+    assert.deepEqual(captured, [
+      ...failures,
+      {
+        event: 'otto_model_connection_changed',
+        properties: { provider: 'openai', method: 'subscription', status: 'connected' },
+      },
+    ]);
+    rejectSignIn = true;
+    const next = await owner.start('openai');
+    await assert.rejects(
+      owner.complete(
+        new URL(`http://127.0.0.1:1455/auth/callback?state=${next.attempt}&code=fixture`),
+      ),
+    );
+    assert.deepEqual(captured.slice(failures.length + 1), [failures[0]]);
+    assert.deepEqual(calls, { signIn: 2, authorize: 0, catalog: 1 });
+  });
+
+  test('model storage preflight preserves database failures without exposing their cause', async (t) => {
+    const f = await fixture(t);
+    const { checkedKeyStore } = await import('../src/server/vault.ts');
+    const { createEnvironmentKeyStore } = await import('../src/providers/environment/key-store.ts');
+    const database = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `${f.database.options.options} -c lock_timeout=50ms`,
+      max: 1,
+    });
+    t.after(() => database.end());
+    let providerCalls = 0;
+    const owner = await f.create('fixture-owner', {
+      ...f.backend,
+      async signIn() {
+        providerCalls++;
+        throw new Error('Unexpected provider call');
+      },
+      async catalog() {
+        providerCalls++;
+        throw new Error('Unexpected provider call');
+      },
+    });
+    Object.assign(
+      f.keyStore,
+      checkedKeyStore(database, createEnvironmentKeyStore(Buffer.alloc(32, 77).toString('base64'))),
+    );
+    const logs: string[] = [];
+    const app = Fastify({ logger: { stream: { write: (value: string) => logs.push(value) } } });
+    const captured: Parameters<CaptureAnalytics>[0][] = [];
+    owner.register(app, (event) => captured.push(event));
+    t.after(() => app.close());
+    const blocker = await f.database.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('LOCK TABLE otto_locks IN ACCESS EXCLUSIVE MODE');
+      await assert.rejects(owner.start('openai'), (error: Error) => {
+        assert.ok(error.cause instanceof pg.DatabaseError);
+        assert.equal(error.cause.code, '55P03');
+        assert.ok(!error.message.includes('OTTO_VAULT_KEY'));
+        assert.ok(!Object.keys(error).includes('cause'));
+        return true;
+      });
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/models/keys',
+        payload: { provider: 'openai', key: 'fixture-provider-key' },
+      });
+      assert.equal(response.statusCode, 400);
+      assert.deepEqual(Object.keys(response.json()), ['error']);
+      assert.ok(!response.body.includes('OTTO_VAULT_KEY'));
+      assert.ok(!response.body.includes('55P03'));
+    } finally {
+      await blocker.query('ROLLBACK');
+      blocker.release();
+    }
+    const privateValue = 'fixture-private-storage-secret';
+    const cause = new Error(`Storage connection failed: ${privateValue}`);
+    f.keyStore.getKey = async () => {
+      throw cause;
+    };
+    await assert.rejects(owner.addKey('openai', 'fixture-provider-key'), (error: Error) => {
+      assert.equal(error.cause, cause);
+      assert.ok(!JSON.stringify(error).includes(privateValue));
+      return true;
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/models/oauth',
+      payload: { provider: 'openai' },
+    });
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(Object.keys(response.json()), ['error']);
+    assert.ok(!response.body.includes(privateValue));
+    assert.ok(!logs.join('').includes(privateValue));
+    assert.ok(!logs.join('').includes('55P03'));
+    assert.deepEqual(
+      captured,
+      ['subscription', 'api_key', 'api_key', 'subscription'].map((method) => ({
+        event: 'otto_model_connection_changed',
+        properties: { provider: 'openai', method, status: 'failed' },
+      })),
+    );
+    assert.equal(providerCalls, 0);
+    assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 0);
+    assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 0);
+  });
+
+  test('model store batches owned credentials and keeps transient key failures distinct from unavailable grants', async (t) => {
+    const f = await fixture(t);
+    const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    const owner = await f.create('fixture-owner');
+    const ids = await Promise.all(
+      ['one', 'two', 'three'].map((name) => owner.addKey('openai', `fixture-${name}`)),
+    );
+    const other = await f.create('fixture-other');
+    const foreign = await other.addKey('openai', 'fixture-foreign');
+    const originalKey = f.keyStore.getKey;
+    let unlocks = 0;
+    f.keyStore.getKey = async () => {
+      unlocks++;
+      return originalKey();
+    };
+    const store = createDatabaseModelStore({
+      database: f.database,
+      ownerId: 'fixture-owner',
+      keyStore: f.keyStore,
+    });
+    await store.initialize();
+    const state = await store.read();
+    assert.equal(unlocks, 1);
+    assert.deepEqual(new Set(state.connections.map((row) => row.id)), new Set(ids));
+    assert.ok(state.connections.every((row) => row.credential?.type === 'api_key'));
+    unlocks = 0;
+    await store.change(() => {});
+    assert.equal(unlocks, 1);
+    const snapshot = async () => ({
+      connections: (await f.database.query('SELECT * FROM model_connections ORDER BY id')).rows,
+      settings: (await f.database.query('SELECT * FROM model_settings ORDER BY owner_id')).rows,
+      grants: (await f.database.query('SELECT * FROM vault_app_grants ORDER BY id')).rows,
+    });
+    const before = await snapshot();
+    f.keyStore.getKey = async () => {
+      throw new Error('Synthetic temporarily locked key store');
+    };
+    const initialization = await f.create('fixture-owner').then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    assert.deepEqual(await snapshot(), before);
+    assert.ok(initialization instanceof Error);
+    assert.match(initialization.message, /temporarily locked key store/);
+    await assert.rejects((await owner.resolve()).read(), /temporarily locked key store/);
+    assert.deepEqual(await snapshot(), before);
+    f.keyStore.getKey = originalKey;
+    const recovered = await f.create('fixture-owner');
+    assert.ok(recovered.view().connections.every((row) => row.status === 'connected'));
+    assert.deepEqual(recovered.view().selection, owner.view().selection);
+    assert.deepEqual(await (await recovered.resolve()).read(), {
+      type: 'api_key',
+      key: 'fixture-one',
+    });
+    assert.deepEqual(await snapshot(), before);
+    f.keyStore.getKey = async () => {
+      unlocks++;
+      return originalKey();
+    };
+    await f.database.query('UPDATE vault_app_grants SET expires_at=now() WHERE id=$1', [ids[0]]);
+    await f.database.query(
+      'UPDATE vault_app_grants SET ciphertext=(SELECT ciphertext FROM vault_app_grants WHERE id=$2) WHERE id=$1',
+      [ids[1], foreign],
+    );
+    unlocks = 0;
+    const unavailable = await store.read();
+    assert.equal(unlocks, 1);
+    assert.equal(unavailable.connections.find((row) => row.id === ids[0])?.credential, undefined);
+    assert.equal(unavailable.connections.find((row) => row.id === ids[1])?.credential, undefined);
+    assert.equal(
+      unavailable.connections.find((row) => row.id === ids[2])?.credential?.type,
+      'api_key',
+    );
+    assert.ok(!JSON.stringify(unavailable).includes('fixture-foreign'));
+    const missing = await f.create('fixture-owner');
+    assert.equal(missing.view().connections.find((row) => row.id === ids[0])?.status, 'reconnect');
+    assert.equal(missing.view().connections.find((row) => row.id === ids[1])?.status, 'reconnect');
+    assert.equal(missing.view().connections.find((row) => row.id === ids[2])?.status, 'connected');
+    f.keyStore.getKey = async () => {
+      throw new Error('Synthetic locked key store');
+    };
+    await assert.rejects(store.read(), /locked key store/);
+  });
+
+  test('catalog refresh releases the owner lock and rejects changed or removed model credentials', async (t) => {
+    for (const change of ['selection', 'credential', 'reconnect', 'remove'] as const) {
+      await t.test(change, async (t) => {
+        const f = await fixture(t);
+        const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+        let release!: () => void;
+        let entered!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const started = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        let waiting = false;
+        const owner = await f.create('fixture-owner', {
+          ...f.backend,
+          async catalog(...args: Parameters<typeof f.backend.catalog>) {
+            const models = await f.backend.catalog(args[0], args[1], args[2]);
+            if (waiting) {
+              entered();
+              await gate;
+            }
+            return models;
+          },
+        });
+        const id = await owner.addKey('openai', 'fixture-original-key');
+        const otherId = await owner.addKey('openai', 'fixture-second-key');
+        const store = createDatabaseModelStore({
+          database: f.database,
+          ownerId: 'fixture-owner',
+          keyStore: f.keyStore,
+        });
+        await store.initialize();
+        waiting = true;
+        const refreshing = owner.refreshCatalog(id);
+        const outcome = refreshing.then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        await started;
+        const client = await f.database.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query('SELECT key FROM otto_locks WHERE key=$1 FOR UPDATE NOWAIT', [
+            'models:fixture-owner',
+          ]);
+          await client.query('ROLLBACK');
+          if (change === 'selection') {
+            const model = owner.view().connections.find((row) => row.id === otherId)!.models[0];
+            await owner.select({
+              connectionId: otherId,
+              modelId: model.id,
+              effort: model.efforts[0],
+            });
+          } else if (change === 'remove') await owner.remove(id);
+          else
+            await store.change((state) => {
+              const row = state.connections.find((item) => item.id === id)!;
+              if (change === 'credential')
+                row.credential = { type: 'api_key', key: 'fixture-new-key' };
+              else row.status = 'reconnect';
+            });
+          const before = await store.read();
+          release();
+          const error = await outcome;
+          if (change === 'selection') {
+            assert.equal(error, undefined);
+            assert.equal(owner.view().selection?.connectionId, otherId);
+          } else {
+            assert.ok(error instanceof Error);
+            assert.deepEqual(await store.read(), before);
+          }
+        } finally {
+          await client.query('ROLLBACK');
+          client.release();
+          release();
+          await outcome;
+        }
+      });
+    }
+  });
 
   test('saved keys stay encrypted and owner-scoped; a removed connection cannot supply a later turn', async (t) => {
     const f = await fixture(t);

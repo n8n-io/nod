@@ -29,7 +29,9 @@ function chat(message: Message) {
       role: 'system',
       content: [
         text(message.content),
-        ...Object.values(message.sections ?? {}).filter((section) => section !== null),
+        ...Object.entries(message.sections ?? {}).flatMap(([name, section]) =>
+          name === 'addendum' || section === null ? [] : [section],
+        ),
       ]
         .filter(Boolean)
         .join('\n\n'),
@@ -60,9 +62,10 @@ function chat(message: Message) {
 export function piModelTrace(
   call: PiModelCall,
   metadata: Record<string, string>,
-  omitted?: string,
+  ownerContext?: string,
 ): ModelTrace {
   const { message } = call;
+  const header = ownerContext?.split('\n', 1)[0];
   const usage = piUsageMetrics(message.usage);
   const cacheReadTokens = usage.cacheReadTokens ?? 0;
   const cacheWriteTokens = usage.cacheWriteTokens ?? 0;
@@ -80,8 +83,8 @@ export function piModelTrace(
         : []),
       ...call.context.messages.map(chat),
     ].map((message) =>
-      omitted && message.role === 'system' && typeof message.content === 'string'
-        ? { ...message, content: message.content.replaceAll(omitted, '[owner context omitted]') }
+      header && message.role === 'user' && message.content.startsWith(header)
+        ? { ...message, content: '[owner context omitted]' }
         : message,
     ),
     tools: (call.context.tools ?? []).map((tool) => tool.name),

@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
@@ -46,7 +46,6 @@ function isFinalAnswer(signature: string | undefined) {
 
 function resources(
   systemPrompt: string,
-  systemContext: string | undefined,
   extensions: ReturnType<ResourceLoader['getExtensions']>,
 ): ResourceLoader {
   return {
@@ -57,7 +56,7 @@ function resources(
     getAgentsFiles: () => ({ agentsFiles: [] }),
     getSystemPrompt: () => systemPrompt,
     getSystemPromptSource: () => undefined,
-    getAppendSystemPrompt: () => (systemContext ? [systemContext] : []),
+    getAppendSystemPrompt: () => [],
     getAppendSystemPromptSources: () => [],
     extendResources: () => {},
     reload: async () => {},
@@ -166,6 +165,55 @@ function configureWebAccess(root: string) {
 
 type ModelUsage = { input?: number; output?: number; cost?: { total?: number } };
 
+const promptCacheSecret = randomBytes(32);
+
+function threadPromptCache(threadId: string) {
+  const key = createHmac('sha256', promptCacheSecret).update(threadId).digest('base64url');
+  return (pi: ExtensionAPI) => {
+    pi.on('before_provider_request', ({ payload }) => {
+      const request = payload as { prompt_cache_key?: unknown } | null;
+      if (request?.prompt_cache_key) return { ...request, prompt_cache_key: key };
+    });
+  };
+}
+
+const ownerContextType = 'otto-owner-context';
+
+function isOwnerContext(message: { role: string }) {
+  return (
+    message.role === 'custom' &&
+    (message as { customType?: string }).customType === ownerContextType
+  );
+}
+
+function ownerContextCopies(ownerContext: string | undefined) {
+  return (pi: ExtensionAPI) => {
+    pi.on('context', ({ messages }) => {
+      if (!ownerContext || messages.some(isOwnerContext)) return;
+      return {
+        messages: [
+          ...messages,
+          {
+            role: 'custom' as const,
+            customType: ownerContextType,
+            content: ownerContext,
+            display: false,
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    });
+    pi.on('session_before_compact', ({ preparation }) => {
+      preparation.messagesToSummarize = preparation.messagesToSummarize.filter(
+        (message) => !isOwnerContext(message),
+      );
+      preparation.turnPrefixMessages = preparation.turnPrefixMessages.filter(
+        (message) => !isOwnerContext(message),
+      );
+    });
+  };
+}
+
 function recentImages(pi: ExtensionAPI) {
   pi.on('context', ({ messages }) => {
     const total = messages.reduce(
@@ -265,7 +313,7 @@ export function createPiAgent(options: {
                         run_id: input.runId,
                         ...(input.parentRunId ? { parent_run_id: input.parentRunId } : {}),
                       },
-                      input.systemContext,
+                      input.ownerContext,
                     ),
                   );
               }),
@@ -358,6 +406,8 @@ export function createPiAgent(options: {
           createCodemodeExtension(),
           ...(deferred ? [createToolSearchExtension()] : []),
           recentImages,
+          threadPromptCache(input.threadId),
+          ownerContextCopies(input.ownerContext),
         ],
         noExtensions: true,
         noSkills: true,
@@ -463,7 +513,7 @@ export function createPiAgent(options: {
         ],
         customTools: tools,
         noTools: 'builtin',
-        resourceLoader: resources(systemPrompt, input.systemContext, extensions),
+        resourceLoader: resources(systemPrompt, extensions),
         sessionManager: manager,
         settingsManager: SettingsManager.inMemory({
           compaction: {
@@ -570,7 +620,11 @@ export function createPiAgent(options: {
         if (event.type === 'message_end' && event.message.role === 'assistant') {
           const usage = observeUsage(event.message);
           if (usage) input.onEvent(usage);
-          if (event.message.stopReason === 'error') input.onEvent({ type: 'error' });
+          if (event.message.stopReason === 'error')
+            input.onEvent({
+              type: 'error',
+              message: event.message.errorMessage?.trim() || 'The provider gave no reason.',
+            });
           if (event.message.stopReason === 'stop') {
             const blocks = event.message.content.filter((item) => item.type === 'text');
             const finalBlocks = blocks.filter((item) => isFinalAnswer(item.textSignature));
@@ -601,6 +655,13 @@ export function createPiAgent(options: {
         resumed,
         readsImages: model.input.includes('image'),
         async prompt(text, images) {
+          const owner = input.ownerContext;
+          const copy = manager.buildSessionContext().messages.findLast(isOwnerContext);
+          if (owner && (copy as { content?: unknown } | undefined)?.content !== owner)
+            await session.sendCustomMessage(
+              { customType: ownerContextType, content: owner, display: false },
+              { deliverAs: 'nextTurn' },
+            );
           await session.prompt(text, { images, expandPromptTemplates: false });
         },
         async abort() {

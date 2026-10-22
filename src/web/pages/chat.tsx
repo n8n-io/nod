@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, Check, LoaderCircle, MessageSquarePlus, Trash2, User } from 'lucide-react';
+import { ArrowDown, Check, LoaderCircle, Trash2, User } from 'lucide-react';
 import type {
   AppState,
   Artifact,
@@ -18,8 +18,10 @@ import { TaskCard } from './tasks';
 import { MessageBubble } from '../components/message';
 import { conversationFiles } from '../components/attachment-card';
 import { ArtifactWorkspace } from '../components/artifact-drawer';
+import { PrivateEntryWorkspace } from '../components/private-entry';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
+import { FeedbackLauncher } from '../components/feedback-discovery';
 import {
   Button,
   Dialog,
@@ -29,7 +31,6 @@ import {
   Notice,
   Skeleton,
 } from '../components/ui';
-import { ModelPicker, ModelSetup } from '../components/models';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
@@ -47,7 +48,6 @@ import {
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
 import { OttoGlyph, Rise } from '../components/motion';
-import { SidebarToggle } from '../components/sidebar-toggle';
 
 function verificationFailure(
   status: SubmitMessageResponse['verificationStatus'],
@@ -175,6 +175,8 @@ export function Chat({
   requestedMessage,
   onRequestHandled,
   onFeedback,
+  onDismissFeedbackDiscovery,
+  onModels,
 }: {
   ownerId: string;
   state: AppState;
@@ -188,12 +190,23 @@ export function Chat({
   requestedMessage?: { id: string; text: string };
   onRequestHandled?(id: string): void;
   onFeedback?(): void;
+  onDismissFeedbackDiscovery?(): void;
+  onModels?(trigger: HTMLElement): void;
 }) {
   const dateFormat = useDateFormat();
   const { data: connections } = usePageData<Connection[]>('/api/apps');
   const { data: trust, refresh: refreshTrust } = usePageData<TrustView>('/api/trust');
   const trustRefreshKey = state.turns.map((turn) => `${turn.id}:${turn.status}`).join(',');
   const spendingPaused = trust?.limit?.reached === true;
+  const modelSetup = (
+    <div className="welcome model-setup">
+      <BrandMark />
+      <h2>Choose a model to start chatting</h2>
+      <Button variant="outline" onClick={(event) => onModels?.(event.currentTarget)}>
+        Open settings
+      </Button>
+    </div>
+  );
   useEffect(() => {
     void refreshTrust();
     if (!spendingPaused) return;
@@ -817,291 +830,292 @@ export function Chat({
         </Button>
       )}
       {onFeedback && (
-        <Button
-          id="feedback-launcher"
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="chat-report-button"
-          onClick={onFeedback}
-        >
-          <MessageSquarePlus size={16} aria-hidden="true" />
-          Send feedback
-        </Button>
+        <FeedbackLauncher
+          onFeedback={onFeedback}
+          onDismissDiscovery={visible ? onDismissFeedbackDiscovery : undefined}
+        />
       )}
     </>
   );
   return (
-    <ArtifactWorkspace className="chat-page" files={files}>
-      {desktopSettingsAvailable() ? (
-        <>
-          <h1 className="sr-only">Chat</h1>
-          {toolbarActions && createPortal(chatActions, toolbarActions)}
-        </>
-      ) : (
-        <header className="chat-report-action">
-          <SidebarToggle />
-          <h1 className="chat-title">Chat</h1>
-          {chatActions}
-        </header>
-      )}
-      <ChatTurnRail
-        messages={allMessages}
-        activeId={activeTurn}
-        visibleIds={visibleTurns}
-        onJump={(id) => {
-          const target = Array.from(
-            scroll.current?.querySelectorAll<HTMLElement>('.message-user') ?? [],
-          ).find((element) => element.dataset.messageId === id);
-          if (!target) return;
-          stickToBottom.current = false;
-          returning.current = 0;
-          setActiveTurn(id);
-          target.scrollIntoView({ block: 'start', behavior: scrollBehavior() });
-        }}
-      />
-      <div
-        className="conversation-scroll"
-        ref={scroll}
-        onScroll={() => {
-          updateActiveTurn();
-          updateAway();
-        }}
-        onWheel={cancelReturn}
-        onTouchStart={cancelReturn}
-        onPointerDown={cancelReturn}
-        onKeyDown={cancelReturn}
-      >
-        <div className="conversation-column">
-          {loadingHistory ? (
-            <div className="history-skeleton" role="status" aria-label="Loading earlier messages">
-              <Skeleton className="ghost-bubble" style={{ width: 'min(240px, 50%)' }} />
-              <div className="history-skeleton-reply">
-                <div className="assistant-mark">
-                  <BrandMark small />
-                </div>
-                <div className="skeleton-lines">
-                  <Skeleton style={{ width: 'min(420px, 70%)' }} />
-                  <Skeleton style={{ width: 'min(360px, 60%)' }} />
-                  <Skeleton style={{ width: 'min(260px, 45%)' }} />
-                </div>
-              </div>
-              <Skeleton className="ghost-bubble" style={{ width: 'min(180px, 36%)' }} />
-            </div>
-          ) : (
-            persistedMessages.length > 0 &&
-            hasEarlier && (
-              <div className="history-control">
-                <Button variant="ghost" size="sm" onClick={() => void history()}>
-                  Load earlier messages
-                </Button>
-              </div>
-            )
-          )}
-          {visibleMessages.length === 0 &&
-            !welcoming &&
-            !resetting &&
-            !working &&
-            !sending &&
-            (state.configuration.llmReady ? <Welcome /> : <ModelSetup />)}
-          <div
-            className="messages"
-            role="log"
-            aria-label="Conversation"
-            aria-live="polite"
-            aria-relevant="additions"
-          >
-            {visibleMessages.map((message, index) => (
-              <Fragment key={message.streamId ?? message.id}>
-                {(!index ||
-                  !isSameDay(
-                    visibleMessages[index - 1].createdAt,
-                    message.createdAt,
-                    dateFormat,
-                  )) && (
-                  <div className="day-divider">
-                    <span>{formatDayLabel(message.createdAt, dateFormat)}</span>
-                  </div>
-                )}
-                {message.suggestions ? (
-                  <TaskCards
-                    id={message.id}
-                    suggestions={message.suggestions}
-                    status={(task) =>
-                      taskStatus(
-                        task,
-                        allMessages.findIndex((item) => item.id === message.id),
-                      )
-                    }
-                    disabled={
-                      !state.configuration.llmReady || resetting || welcoming || spendingPaused
-                    }
-                    onStart={(task, position) => {
-                      captureAnalytics('otto_task_card_started', {
-                        ...(task.kind
-                          ? { kind: task.kind === 'ongoing' ? 'ongoing' : 'immediate' }
-                          : {}),
-                        position,
-                      });
-                      void send(task.title, [], null, 'task_card');
-                    }}
-                  />
-                ) : state.tasks?.some((task) => task.messageId === message.id) ? (
-                  state.tasks
-                    ?.filter((task) => task.messageId === message.id)
-                    .map((task) => (
-                      <TaskCard
-                        key={task.id}
-                        task={task}
-                        onReply={() => {
-                          const target =
-                            allMessages.find((item) => item.id === task.questionMessageId) ??
-                            message;
-                          taskReply.current = target.id;
-                          setReplyTo(target);
-                          composer.current?.focus();
-                        }}
-                      />
-                    ))
-                ) : (
-                  <MessageBubble
-                    message={message}
-                    handoffPaused={spendingPaused}
-                    connectedAppIds={connectedAppIds}
-                    streaming={streamIds.has(message.streamId ?? '')}
-                    grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
-                    handoff={
-                      message.role === 'assistant' &&
-                      !sending &&
-                      state.turns.some((turn) => turn.handoffMessageId === message.id)
-                    }
-                    onReply={
-                      message.turnId || persistedIds.has(message.id)
-                        ? () => {
-                            taskReply.current = null;
-                            setReplyTo(message);
-                            composer.current?.focus();
-                          }
-                        : undefined
-                    }
-                  />
-                )}
-              </Fragment>
-            ))}
-            {planning ? (
-              <div className="thinking task-planning" role="status">
-                <div className="assistant-mark" aria-hidden="true">
-                  <OttoGlyph size={24} mode="thinking" />
-                </div>
-                <span className="task-bubble">
-                  Pulling together a few ideas from what you told me…
-                </span>
-              </div>
-            ) : (
-              (sending || resetting || working || welcoming) &&
-              streamEntries.length === 0 && (
-                <div
-                  className="thinking"
-                  role="status"
-                  aria-label={
-                    resetting ? 'Starting setup' : sending ? 'Sending message' : 'Otto is typing'
-                  }
-                >
+    <PrivateEntryWorkspace key={ownerId} active={visible}>
+      <ArtifactWorkspace className="chat-page" files={files}>
+        {desktopSettingsAvailable() ? (
+          <>
+            <h1 className="sr-only">Chat</h1>
+            {toolbarActions && createPortal(chatActions, toolbarActions)}
+          </>
+        ) : (
+          <header className="chat-report-action">
+            <h1 className="chat-title">Chat</h1>
+            {chatActions}
+          </header>
+        )}
+        <ChatTurnRail
+          messages={allMessages}
+          activeId={activeTurn}
+          visibleIds={visibleTurns}
+          onJump={(id) => {
+            const target = Array.from(
+              scroll.current?.querySelectorAll<HTMLElement>('.message-user') ?? [],
+            ).find((element) => element.dataset.messageId === id);
+            if (!target) return;
+            stickToBottom.current = false;
+            returning.current = 0;
+            setActiveTurn(id);
+            target.scrollIntoView({ block: 'start', behavior: scrollBehavior() });
+          }}
+        />
+        <div
+          className="conversation-scroll"
+          ref={scroll}
+          onScroll={() => {
+            updateActiveTurn();
+            updateAway();
+          }}
+          onWheel={cancelReturn}
+          onTouchStart={cancelReturn}
+          onPointerDown={cancelReturn}
+          onKeyDown={cancelReturn}
+        >
+          <div className="conversation-column">
+            {loadingHistory ? (
+              <div className="history-skeleton" role="status" aria-label="Loading earlier messages">
+                <Skeleton className="ghost-bubble" style={{ width: 'min(240px, 50%)' }} />
+                <div className="history-skeleton-reply">
                   <div className="assistant-mark">
                     <BrandMark small />
                   </div>
-                  <span className="thinking-dots" aria-hidden="true">
-                    <i />
-                    <i />
-                    <i />
-                  </span>
+                  <div className="skeleton-lines">
+                    <Skeleton style={{ width: 'min(420px, 70%)' }} />
+                    <Skeleton style={{ width: 'min(360px, 60%)' }} />
+                    <Skeleton style={{ width: 'min(260px, 45%)' }} />
+                  </div>
+                </div>
+                <Skeleton className="ghost-bubble" style={{ width: 'min(180px, 36%)' }} />
+              </div>
+            ) : (
+              persistedMessages.length > 0 &&
+              hasEarlier && (
+                <div className="history-control">
+                  <Button variant="ghost" size="sm" onClick={() => void history()}>
+                    Load earlier messages
+                  </Button>
                 </div>
               )
             )}
+            {visibleMessages.length === 0 &&
+              !welcoming &&
+              !resetting &&
+              !working &&
+              !sending &&
+              (state.configuration.llmReady ? <Welcome /> : modelSetup)}
+            <div
+              className="messages"
+              role="log"
+              aria-label="Conversation"
+              aria-live="polite"
+              aria-relevant="additions"
+            >
+              {visibleMessages.map((message, index) => (
+                <Fragment key={message.streamId ?? message.id}>
+                  {(!index ||
+                    !isSameDay(
+                      visibleMessages[index - 1].createdAt,
+                      message.createdAt,
+                      dateFormat,
+                    )) && (
+                    <div className="day-divider">
+                      <span>{formatDayLabel(message.createdAt, dateFormat)}</span>
+                    </div>
+                  )}
+                  {message.suggestions ? (
+                    <TaskCards
+                      id={message.id}
+                      suggestions={message.suggestions}
+                      status={(task) =>
+                        taskStatus(
+                          task,
+                          allMessages.findIndex((item) => item.id === message.id),
+                        )
+                      }
+                      disabled={
+                        !state.configuration.llmReady || resetting || welcoming || spendingPaused
+                      }
+                      onStart={(task, position) => {
+                        captureAnalytics('otto_task_card_started', {
+                          ...(task.kind
+                            ? { kind: task.kind === 'ongoing' ? 'ongoing' : 'immediate' }
+                            : {}),
+                          position,
+                        });
+                        void send(task.title, [], null, 'task_card');
+                      }}
+                    />
+                  ) : state.tasks?.some((task) => task.messageId === message.id) ? (
+                    state.tasks
+                      ?.filter((task) => task.messageId === message.id)
+                      .map((task) => (
+                        <TaskCard
+                          key={task.id}
+                          task={task}
+                          onReply={() => {
+                            const target =
+                              allMessages.find((item) => item.id === task.questionMessageId) ??
+                              message;
+                            taskReply.current = target.id;
+                            setReplyTo(target);
+                            composer.current?.focus();
+                          }}
+                        />
+                      ))
+                  ) : (
+                    <MessageBubble
+                      message={message}
+                      handoffPaused={spendingPaused}
+                      connectedAppIds={connectedAppIds}
+                      streaming={streamIds.has(message.streamId ?? '')}
+                      grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
+                      handoff={
+                        message.role === 'assistant' &&
+                        !sending &&
+                        state.turns.some((turn) => turn.handoffMessageId === message.id)
+                      }
+                      onReply={
+                        message.turnId || persistedIds.has(message.id)
+                          ? () => {
+                              taskReply.current = null;
+                              setReplyTo(message);
+                              composer.current?.focus();
+                            }
+                          : undefined
+                      }
+                    />
+                  )}
+                </Fragment>
+              ))}
+              {planning ? (
+                <div className="thinking task-planning" role="status">
+                  <div className="assistant-mark" aria-hidden="true">
+                    <OttoGlyph size={24} mode="thinking" />
+                  </div>
+                  <span className="task-bubble">
+                    Pulling together a few ideas from what you told me…
+                  </span>
+                </div>
+              ) : (
+                (sending || resetting || working || welcoming) &&
+                streamEntries.length === 0 && (
+                  <div
+                    className="thinking"
+                    role="status"
+                    aria-label={
+                      resetting ? 'Starting setup' : sending ? 'Sending message' : 'Otto is typing'
+                    }
+                  >
+                    <div className="assistant-mark">
+                      <BrandMark small />
+                    </div>
+                    <span className="thinking-dots" aria-hidden="true">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                  </div>
+                )
+              )}
+            </div>
+            <div ref={bottom} />
           </div>
-          <div ref={bottom} />
         </div>
-      </div>
-      <div className="chat-bottom conversation-column">
-        {away?.shown && (
-          <Button
-            className={`jump-latest${unseen ? ' has-unseen' : ''}`}
-            variant="outline"
-            size="sm"
-            aria-label={
-              unseen
-                ? `Back to latest, ${unseen} new ${unseen === 1 ? 'reply' : 'replies'}`
-                : 'Back to latest'
-            }
-            onClick={() => {
-              stickToBottom.current = true;
-              returning.current = Date.now() + 1000;
-              setAway(null);
-              bottom.current?.scrollIntoView({ block: 'end', behavior: scrollBehavior() });
-            }}
-          >
-            <ArrowDown size={16} />
-            {unseen
-              ? `${unseen > 99 ? '99+' : unseen} new ${unseen === 1 ? 'reply' : 'replies'}`
-              : 'Back to latest'}
-          </Button>
-        )}
-        {away?.shown && <div className="jump-latest-fade" aria-hidden="true" />}
-        {error && <Notice>{error}</Notice>}
-        {connectionNotice && (
-          <Notice kind={connectionNotice.kind} onDismiss={() => setConnectionNotice(null)}>
-            {connectionNotice.text}
-          </Notice>
-        )}
-        {spendingPaused && (
-          <Notice kind="info">
-            Chat is paused because you reached your spending limit.{' '}
-            <a href="/trust">Raise the limit in Trust</a> to resume.
-          </Notice>
-        )}
-        <div hidden={!state.configuration.llmReady && !working && !sending}>
-          <ModelPicker />
-          <Composer
-            key={threadId}
-            ref={composer}
-            ready={state.configuration.llmReady && !resetting && !welcoming && !spendingPaused}
-            text={text}
-            setText={setText}
-            replyTo={replyTo}
-            clearReply={() => {
-              taskReply.current = null;
-              setReplyTo(null);
-            }}
-            onSend={send}
-            onStop={
-              working ||
-              state.tasks?.some((task) => ['queued', 'working', 'needs_you'].includes(task.status))
-                ? () => void stop()
-                : undefined
-            }
-            stopping={stopping}
-          />
-        </div>
-        {!state.configuration.llmReady && !working && !sending && visibleMessages.length > 0 && (
-          <ModelSetup />
-        )}
-      </div>
-      <Dialog open={resetTarget !== null} onOpenChange={(open) => !open && setResetTarget(null)}>
-        <DialogContent>
-          <DialogTitle>Clear messages?</DialogTitle>
-          <DialogDescription>
-            This starts an empty chat and stops its running tasks.
-          </DialogDescription>
-          <div className="dialog-actions">
-            <Button variant="outline" disabled={resetting} onClick={() => setResetTarget(null)}>
-              Cancel
+        <div className="chat-bottom conversation-column">
+          {away?.shown && (
+            <Button
+              className={`jump-latest${unseen ? ' has-unseen' : ''}`}
+              variant="outline"
+              size="sm"
+              aria-label={
+                unseen
+                  ? `Back to latest, ${unseen} new ${unseen === 1 ? 'reply' : 'replies'}`
+                  : 'Back to latest'
+              }
+              onClick={() => {
+                stickToBottom.current = true;
+                returning.current = Date.now() + 1000;
+                setAway(null);
+                bottom.current?.scrollIntoView({ block: 'end', behavior: scrollBehavior() });
+              }}
+            >
+              <ArrowDown size={16} />
+              {unseen
+                ? `${unseen > 99 ? '99+' : unseen} new ${unseen === 1 ? 'reply' : 'replies'}`
+                : 'Back to latest'}
             </Button>
-            <Button variant="destructive" disabled={resetting} onClick={() => void clearMessages()}>
-              {resetting ? 'Clearing…' : 'Clear messages'}
-            </Button>
+          )}
+          {away?.shown && <div className="jump-latest-fade" aria-hidden="true" />}
+          {error && <Notice>{error}</Notice>}
+          {connectionNotice && (
+            <Notice kind={connectionNotice.kind} onDismiss={() => setConnectionNotice(null)}>
+              {connectionNotice.text}
+            </Notice>
+          )}
+          {spendingPaused && (
+            <Notice kind="info">
+              Chat is paused because you reached your spending limit.{' '}
+              <a href="/trust">Raise the limit in Trust</a> to resume.
+            </Notice>
+          )}
+          <div hidden={!state.configuration.llmReady && !working && !sending}>
+            <Composer
+              key={threadId}
+              ref={composer}
+              ready={state.configuration.llmReady && !resetting && !welcoming && !spendingPaused}
+              text={text}
+              setText={setText}
+              replyTo={replyTo}
+              clearReply={() => {
+                taskReply.current = null;
+                setReplyTo(null);
+              }}
+              onSend={send}
+              onStop={
+                working ||
+                state.tasks?.some((task) =>
+                  ['queued', 'working', 'needs_you'].includes(task.status),
+                )
+                  ? () => void stop()
+                  : undefined
+              }
+              stopping={stopping}
+            />
           </div>
-        </DialogContent>
-      </Dialog>
-    </ArtifactWorkspace>
+          {!state.configuration.llmReady &&
+            !working &&
+            !sending &&
+            visibleMessages.length > 0 &&
+            modelSetup}
+        </div>
+        <Dialog open={resetTarget !== null} onOpenChange={(open) => !open && setResetTarget(null)}>
+          <DialogContent>
+            <DialogTitle>Clear messages?</DialogTitle>
+            <DialogDescription>
+              This starts an empty chat and stops its running tasks.
+            </DialogDescription>
+            <div className="dialog-actions">
+              <Button variant="outline" disabled={resetting} onClick={() => setResetTarget(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={resetting}
+                onClick={() => void clearMessages()}
+              >
+                {resetting ? 'Clearing…' : 'Clear messages'}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </ArtifactWorkspace>
+    </PrivateEntryWorkspace>
   );
 }

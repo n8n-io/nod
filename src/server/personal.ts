@@ -159,15 +159,6 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       if (!memory) throw new Error('Memory is unavailable.');
       return memory.read(args);
     }
-    if (action === 'memory_learn') {
-      if (!memory) throw new Error('Memory is unavailable.');
-      const result = await memory.learn(args, {
-        sourceMessageId: provenance?.sourceMessageId ?? null,
-        turnId: z.uuid().parse(provenance?.turnId),
-      });
-      remembered('save', 'agent');
-      return result;
-    }
     if (action === 'memory_control') {
       if (!memory) throw new Error('Memory is unavailable.');
       const result = await memory.control(args);

@@ -38,13 +38,17 @@ export function AccountMenuItems({
       <button
         type="button"
         role={menu ? 'menuitem' : undefined}
-        aria-keyshortcuts={shortcuts ? 'Meta+, Control+,' : undefined}
+        aria-keyshortcuts={
+          shortcuts && desktop
+            ? `${/Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta' : 'Control'}+,`
+            : undefined
+        }
         data-analytics-public
         onClick={(event) => openSettings('General', event.currentTarget)}
       >
         <Settings size={16} aria-hidden="true" />
         Settings
-        {shortcuts && (
+        {shortcuts && desktop && (
           <kbd className="account-settings-shortcut">
             {/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘,' : 'Ctrl+,'}
           </kbd>

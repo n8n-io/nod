@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
-import { cp, readFile } from 'node:fs/promises';
-import { basename, join, relative, resolve } from 'node:path';
+import { cp, readFile, readlink } from 'node:fs/promises';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
 export function copyBundleSource(source, target, filter = () => true) {
   const root = resolve(source);
@@ -15,6 +15,39 @@ export function copyBundleSource(source, target, filter = () => true) {
   });
 }
 
+async function packageJson(directory) {
+  const metadata = await readFile(join(directory, 'package.json'), 'utf8').catch((error) => {
+    if (['ENOENT', 'ENOTDIR'].includes(error.code)) return null;
+    throw error;
+  });
+  return metadata && JSON.parse(metadata);
+}
+
+async function productionPackages(root) {
+  const packages = new Set();
+  const visit = async (from, name) => {
+    for (let directory = from; ; directory = dirname(directory)) {
+      const candidate = join(directory, 'node_modules', name);
+      const item = await packageJson(candidate);
+      if (item) {
+        if (packages.has(candidate)) return;
+        packages.add(candidate);
+        for (const dependency of Object.keys({
+          ...item.dependencies,
+          ...item.optionalDependencies,
+          ...item.peerDependencies,
+        }))
+          await visit(candidate, dependency);
+        return;
+      }
+      if (directory === root) return;
+    }
+  };
+  for (const name of Object.keys((await packageJson(root))?.dependencies ?? {}))
+    await visit(root, name);
+  return packages;
+}
+
 export async function copyEngineDependencies({
   root,
   target,
@@ -25,18 +58,24 @@ export async function copyEngineDependencies({
     !values ||
     (!values.includes(`!${actual}`) &&
       (!values.some((value) => !value.startsWith('!')) || values.includes(actual)));
+  const packages = await productionPackages(resolve(root));
   await copyBundleSource(join(root, 'node_modules'), join(target, 'node_modules'), async (path) => {
     const normalized = path.replaceAll('\\', '/');
-    if (/\/node_modules\/(?:\.bin\/)?lefthook(?:-[^/]+)?$/.test(normalized)) return false;
-    if (/\/node_modules\/(?:@[^/]+\/)?[^/]+$/.test(normalized)) {
-      const metadata = await readFile(join(path, 'package.json'), 'utf8').catch((error) => {
-        if (['ENOENT', 'ENOTDIR'].includes(error.code)) return null;
-        throw error;
-      });
-      if (metadata) {
-        const item = JSON.parse(metadata);
-        if (!supports(item.os, platform) || !supports(item.cpu, arch)) return false;
-      }
+    const name = basename(path);
+    const parent = basename(dirname(path));
+    if (parent === '.bin') {
+      const link = await readlink(path).catch(() => undefined);
+      const destination = link && resolve(dirname(path), link);
+      return !destination || [...packages].some((item) => destination.startsWith(`${item}${sep}`));
+    }
+    if (
+      parent === 'node_modules'
+        ? !name.startsWith('.') && !name.startsWith('@')
+        : parent.startsWith('@') && basename(dirname(dirname(path))) === 'node_modules'
+    ) {
+      if (!packages.has(path)) return false;
+      const item = await packageJson(path);
+      if (item && (!supports(item.os, platform) || !supports(item.cpu, arch))) return false;
     }
     const browserBinary = normalized.match(/\/agent-browser\/bin\/agent-browser-([^/]+)$/);
     if (browserBinary)

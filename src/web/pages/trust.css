@@ -2,9 +2,6 @@
   display: grid;
   gap: 32px;
 }
-.trust-sentence {
-  max-width: 720px;
-}
 .trust-value {
   padding: 0;
   border: 0;

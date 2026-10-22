@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
-import { access, chmod, cp, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { access, chmod, cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
-import { createGzip } from 'node:zlib';
+import { availableParallelism } from 'node:os';
+import { constants as zlib, createZstdCompress } from 'node:zlib';
 import { buildLima } from './build-lima.mjs';
 import { runtimeInputs, runtimePlatform } from './runtime-inputs.mjs';
 
@@ -16,7 +17,7 @@ const assets = resolve(
 const imagesOnly = process.argv.includes('--images-only');
 const hostOnly = process.argv.includes('--host-only');
 const prebuiltImages = process.argv.includes('--prebuilt-images');
-const imageCompressionLevel = 6;
+const imageCompressionLevel = 15;
 const platform = runtimePlatform();
 const nodeArchitecture = platform.endsWith('-x64') ? 'x64' : 'arm64';
 const architecture = nodeArchitecture === 'x64' ? 'amd64' : 'arm64';
@@ -142,7 +143,7 @@ if (hostOnly) {
       !imageDefinitions.some(
         (expected) => expected.name === item.name && expected.tag === item.reference,
       ) ||
-      item.file !== `images/${item.name}.tar.gz` ||
+      item.file !== `images/${item.name}.tar.zst` ||
       !/^sha256:[a-f0-9]{64}$/.test(item.id) ||
       (await hash(join(assets, item.file))) !== item.sha256
     )
@@ -186,10 +187,10 @@ if (hostOnly) {
         ['--import', 'tsx', 'desktop/scripts/check-browser-image.mjs', item.tag],
         { stdio: 'inherit' },
       );
-    const file = `images/${item.name}.tar.gz`;
+    const file = `images/${item.name}.tar.zst`;
     const target = join(assets, file);
     const stamp = `${target}.id`;
-    const stampValue = `${inspection.Id}:gzip${imageCompressionLevel}`;
+    const stampValue = `${inspection.Id}:zstd${imageCompressionLevel}`;
     let existing = '';
     try {
       existing = (await readFile(stamp, 'utf8')).trim();
@@ -208,7 +209,12 @@ if (hostOnly) {
       await Promise.all([
         pipeline(
           child.stdout,
-          createGzip({ level: imageCompressionLevel }),
+          createZstdCompress({
+            params: {
+              [zlib.ZSTD_c_compressionLevel]: imageCompressionLevel,
+              [zlib.ZSTD_c_nbWorkers]: availableParallelism(),
+            },
+          }),
           createWriteStream(`${target}.tmp`),
         ),
         exited,
@@ -216,7 +222,7 @@ if (hostOnly) {
       await rename(`${target}.tmp`, target);
       await writeFile(stamp, stampValue);
     }
-    const archiveManifest = JSON.parse(await run('tar', ['-xOzf', target, 'manifest.json']));
+    const archiveManifest = JSON.parse(await run('tar', ['-xOf', target, 'manifest.json']));
     const archiveImage = archiveManifest.find((entry) => entry.RepoTags?.includes(item.tag));
     const configurationHash = basename(archiveImage?.Config || '').replace(/\.json$/, '');
     if (!/^[a-f0-9]{64}$/.test(configurationHash))
@@ -264,6 +270,12 @@ if (!imagesOnly) {
   await chmod(join(assets, 'docker-host/docker/docker'), 0o755);
   dockerGuest = await download('Docker guest 28.5.1', downloads.dockerGuest, 'docker-guest.tar.gz');
   guest = await download(`Ubuntu 24.04 ${nodeArchitecture}`, downloads.guest, 'guest.img');
+  await rm(join(assets, 'guest-packages'), { recursive: true, force: true });
+  await mkdir(join(assets, 'guest-packages'));
+  for (const item of downloads.guestPackages) {
+    const file = basename(new URL(item.url).pathname);
+    await cp(await download(file, item, file), join(assets, 'guest-packages', file));
+  }
 
   const sourceArchive = await download(
     'Lima source',
@@ -294,6 +306,7 @@ if (!imagesOnly) {
       `- Docker Engine ${buildLock.dockerVersion}: https://github.com/moby/moby/tree/v${buildLock.dockerVersion}. License and notices: docker-engine/LICENSE, docker-engine/NOTICE.`,
       `- Lima ${buildLock.limaVersion}: ${buildLock.limaSource.url}. License: ../lima/share/doc/lima/LICENSE.`,
       `- Ubuntu guest image: ${downloads.guest.url}. Package copyright and license files remain inside the guest at /usr/share/doc.`,
+      `- Ubuntu iptables packages: ${downloads.guestPackages.map((item) => item.url).join(', ')}. Copyright and license files are inside each package at /usr/share/doc.`,
       ...images.map(
         (image) =>
           `- ${image.name} container: ${image.reference}, ${image.id}. Package notices remain inside the image.`,

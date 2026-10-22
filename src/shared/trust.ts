@@ -8,7 +8,6 @@ export interface TrustEntry {
   channel: string;
   error: string | null;
   costUsd: number | null;
-  unpriced: boolean;
   actions: string[];
 }
 

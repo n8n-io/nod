@@ -163,6 +163,17 @@ export interface Computer {
   ): Promise<{ document: string; destinations: Partial<Record<keyof CardFields, string>> }>;
   checkoutImage(threadId: string): Promise<Uint8Array>;
   currentPage(threadId: string, step?: BrowserAction): Promise<BrowserPage>;
+  signInMethods?(
+    threadId: string,
+    origin: string,
+    methods: { label: string; selector: string }[],
+    signal?: AbortSignal,
+  ): Promise<{ document: string; methods: { id: string; label: string; page: BrowserPage }[] }>;
+  selectSignInMethod?(
+    threadId: string,
+    input: { origin: string; document: string; methodId: string },
+    signal?: AbortSignal,
+  ): Promise<void>;
   hold(threadId: string, held: boolean): Promise<void>;
   close(threadId: string): Promise<void>;
   clear(threadId: string): Promise<void>;

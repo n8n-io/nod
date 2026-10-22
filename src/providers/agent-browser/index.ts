@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
@@ -24,9 +25,10 @@ import { threadIdentity } from '../../ports/thread-identity.ts';
 import { runProcess, serviceEnvironment } from '../process.ts';
 import { createBrowserProxy, browserUrl } from './network.ts';
 import { credentialFields } from './credentials.ts';
-import { openDevtools } from './devtools.ts';
+import { openDevtools, type BoundSignInControl } from './devtools.ts';
 import {
   createScreenStore,
+  daemonDeadline,
   existingDaemonCommand,
   DaemonCommandError,
   DaemonTransportError,
@@ -52,6 +54,7 @@ interface BrowserState {
   refs: Map<string, BrowserControl>;
   typed?: { value: string; origin: string; field: number; fresh: boolean };
   pageSize?: [number, number];
+  signInMethods?: { document: string; origin: string; controls: Map<string, BoundSignInControl> };
   privateDocument?: string;
   sealedDocument?: string;
   uploads: Set<string>;
@@ -79,10 +82,15 @@ const streamFrame = z.object({
   type: z.literal('frame'),
   seq: z.number().int(),
   data: z.string().max(4 * 1024 * 1024),
-  metadata: z.object({ deviceWidth: z.number().positive(), deviceHeight: z.number().positive() }),
+  metadata: z.object({
+    deviceWidth: z.number().positive(),
+    deviceHeight: z.number().positive(),
+    pageScaleFactor: z.number().positive().default(1),
+  }),
 });
 
 const holdMs = 30 * 60_000;
+const snapshotChars = 40_000;
 
 const withoutPasskeys = `(() => {
   const container = window.CredentialsContainer && CredentialsContainer.prototype;
@@ -423,16 +431,58 @@ export function createAgentBrowserComputer(options: {
   const referenceOf = (value: string | undefined) =>
     /^@?(?:ref=)?(e\d+)$/.exec(value?.trim() ?? '')?.[1];
 
+  async function shutDown(state: BrowserState) {
+    try {
+      await command(state, { action: 'close' }, { timeoutMs: 5000 });
+    } catch {
+      await kill(state);
+    }
+  }
+
+  async function kill(state: BrowserState) {
+    const socket = state.socket ?? (await daemonSocket(state).catch(() => undefined));
+    const pidFile = socket?.replace(/\.sock$/, '.pid');
+    const host = `${hostname()}-`;
+    const profile = profilePath(state);
+    const lock = await readlink(resolve(profile, 'SingletonLock')).catch(() => '');
+    const owned = async (pid: number, file: string, marker: string) =>
+      Number.isInteger(pid) &&
+      pid > 1 &&
+      pid !== process.pid &&
+      (process.platform !== 'linux' ||
+        (await readFile(`/proc/${pid}/${file}`, 'utf8').catch(() => '')).includes(marker));
+    const chrome = lock.startsWith(host) ? Number(lock.slice(host.length)) : 0;
+    const daemon = Number(pidFile ? await readFile(pidFile, 'utf8').catch(() => '') : '');
+    const targets = [
+      ...((await owned(chrome, 'cmdline', `--user-data-dir=${profile}\0`)) ? [chrome] : []),
+      ...((await owned(daemon, 'environ', `AGENT_BROWSER_SESSION=${browserSessionId(state.id)}\0`))
+        ? [daemon]
+        : []),
+    ];
+    const signal = (pid: number, value: NodeJS.Signals | 0) => {
+      try {
+        process.kill(pid, value);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (const pid of targets) {
+      signal(-pid, 'SIGKILL');
+      signal(pid, 'SIGKILL');
+    }
+    for (let waited = 0; waited < 5000 && targets.some((pid) => signal(pid, 0)); waited += 50)
+      await delay(50);
+    await Promise.all([socket, pidFile].map((path) => path && rm(path, { force: true })));
+    delete state.socket;
+  }
+
   async function closeInterruptedBrowser(state: BrowserState) {
     state.closing = true;
-    try {
-      await command(state, { action: 'close' });
-      state.started = false;
-      state.closed = true;
-      await saveState(state);
-    } catch {
-      throw new Error('The browser could not stop safely. Open the URL again to retry.');
-    }
+    await shutDown(state);
+    state.started = false;
+    state.closed = true;
+    await saveState(state);
   }
 
   async function drainInterruptedCommand<T>(
@@ -528,7 +578,7 @@ export function createAgentBrowserComputer(options: {
             ...(timeZone && { TZ: timeZone }),
           },
           signal: options.signal,
-          timeoutMs: options.timeoutMs,
+          timeoutMs: options.timeoutMs ?? daemonDeadline(request) + 30_000,
         },
       ),
     );
@@ -776,8 +826,9 @@ export function createAgentBrowserComputer(options: {
           ).slice(0, 300),
         });
     const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
+    const end = Math.min(page.length, offset + snapshotChars);
     return {
-      text: `Page (${offset}-${page.length} of ${page.length} characters):\n${page.slice(offset)}`,
+      text: `Page (${offset}-${end} of ${page.length} characters${end < page.length ? `; snapshot with offset ${end} continues` : ''}):\n${page.slice(offset, end)}`,
       url: redactBrowserUrl(url, state.secrets),
     };
   }
@@ -1695,6 +1746,114 @@ export function createAgentBrowserComputer(options: {
     });
   }
 
+  async function signInMethods(
+    id: string,
+    origin: string,
+    methods: { label: string; selector: string }[],
+    signal?: AbortSignal,
+  ) {
+    signal?.throwIfAborted();
+    if (browserUrl(origin).origin !== origin || !methods.length || methods.length > 10)
+      throw new BrowserActionError('browser_target_changed');
+    const state = await recoverBrowser(id);
+    if (!state?.started || state.saved.navigationFailed)
+      throw new BrowserActionError('browser_target_changed');
+    return serialize(state, async () => {
+      state.signInMethods = undefined;
+      signal?.throwIfAborted();
+      if (state.injecting || (await privateDocumentOpen(state, signal)))
+        throw new BrowserLockedError();
+      if (originOf(await currentUrl(state, signal)) !== origin)
+        throw new BrowserActionError('browser_target_changed');
+      const devtools = await inspector(state, signal);
+      try {
+        const document = await checkout(state, devtools);
+        const controls = new Map<string, BoundSignInControl>();
+        const observed: { id: string; label: string; page: BrowserPage }[] = [];
+        for (const method of methods) {
+          signal?.throwIfAborted();
+          const target = selector(method.selector);
+          if (referenceOf(target))
+            throw new BrowserActionError(
+              'browser_target_changed',
+              'Sign-in method choices need concrete CSS selectors. Inspect the current page and use a selector for each visible control.',
+            );
+          const control = await devtools.signInControl({ selector: target });
+          if (
+            control.origin !== origin ||
+            [...controls.values()].some(
+              (previous) => previous.backendNodeId === control.backendNodeId,
+            )
+          )
+            throw new BrowserActionError('browser_target_changed');
+          const methodId = randomUUID();
+          controls.set(methodId, control);
+          const page: BrowserPage = {
+            origin,
+            url: redactBrowserUrl(control.url, state.secrets),
+            controls: control.controls.map((item) => ({
+              role: item.role,
+              name: redactBrowserText(item.name, state.secrets).slice(0, 300),
+            })),
+            ...(control.submits
+              ? {
+                  submits: {
+                    method: control.submits.method,
+                    to: redactBrowserUrl(control.submits.to, state.secrets),
+                  },
+                }
+              : {}),
+          };
+          observed.push({ id: methodId, label: page.controls![0]!.name, page });
+        }
+        if ((await devtools.document()) !== document)
+          throw new BrowserActionError('browser_target_changed');
+        state.signInMethods = { document, origin, controls };
+        return { document, methods: observed };
+      } finally {
+        devtools.close();
+      }
+    });
+  }
+
+  async function selectSignInMethod(
+    id: string,
+    input: { origin: string; document: string; methodId: string },
+    signal?: AbortSignal,
+  ) {
+    signal?.throwIfAborted();
+    const state = browsers.get(threadIdentity(id));
+    if (!state?.started) throw new BrowserActionError('browser_target_changed');
+    await serialize(state, async () => {
+      signal?.throwIfAborted();
+      const batch = state.signInMethods;
+      state.signInMethods = undefined;
+      const control = batch?.controls.get(input.methodId);
+      if (
+        !batch ||
+        !control ||
+        batch.origin !== input.origin ||
+        batch.document !== input.document ||
+        state.saved.navigationFailed
+      )
+        throw new BrowserActionError('browser_target_changed');
+      if (state.injecting || (await privateDocumentOpen(state, signal)))
+        throw new BrowserLockedError();
+      const devtools = await inspector(state, signal);
+      try {
+        if (
+          (await checkout(state, devtools)) !== batch.document ||
+          originOf(await currentUrl(state, signal)) !== batch.origin
+        )
+          throw new BrowserActionError('browser_target_changed');
+        signal?.throwIfAborted();
+        await devtools.selectSignInControl(control);
+      } finally {
+        devtools.close();
+      }
+    });
+  }
+
   async function hold(id: string, held: boolean): Promise<void> {
     const state = browsers.get(threadIdentity(id));
     if (!state?.started) return;
@@ -1850,7 +2009,10 @@ export function createAgentBrowserComputer(options: {
           await new Promise<void>((resolve) => (wake = resolve));
           continue;
         }
-        state.pageSize = [frame.metadata.deviceWidth, frame.metadata.deviceHeight];
+        state.pageSize = [
+          frame.metadata.deviceWidth / frame.metadata.pageScaleFactor,
+          frame.metadata.deviceHeight / frame.metadata.pageScaleFactor,
+        ];
         if (!state.injecting && !(await privateDocumentOpen(state, signal)))
           yield Buffer.from(frame.data, 'base64');
         if (socket.readyState === WebSocket.OPEN)
@@ -1891,7 +2053,7 @@ export function createAgentBrowserComputer(options: {
       if (state.started && !state.closed && !state.injecting)
         await captureScreen(state).catch(() => {});
       state.closed = true;
-      if (state.started || state.saved.navigationFailed) await command(state, { action: 'close' });
+      if (state.started || state.saved.navigationFailed) await shutDown(state);
       state.started = false;
       await state.proxy?.dispose();
       await saveState(state);
@@ -2019,6 +2181,8 @@ export function createAgentBrowserComputer(options: {
     cardDestinations: tracked(cardDestinations),
     checkoutImage: tracked(checkoutImage),
     currentPage: tracked(currentPage),
+    signInMethods: tracked(signInMethods),
+    selectSignInMethod: tracked(selectSignInMethod),
     hold: tracked(hold),
     close: tracked(closeBrowser),
     clear: tracked(clear),

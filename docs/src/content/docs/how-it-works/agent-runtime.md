@@ -122,6 +122,14 @@ The prompt has three layers, built in [`src/runtime/prompt.ts`](https://github.c
 
 The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `video-links`. Pi's own tool guidelines are appended to the static prompt, because Otto's custom prompt would otherwise drop them.
 
+The owner context is a message of its own, never part of the system prompt, so a memory change leaves the system prompt and the conversation before it untouched:
+
+- A session gets the full current owner context with its first turn, and again with the first turn after it changes. The newest copy replaces earlier ones.
+- Earlier copies stay where they are, so the cached conversation after them stays valid.
+- Compaction summaries leave the owner context out. A session that compacts it away gets it again with its next request.
+
+Providers that take a prompt cache key, such as OpenAI, get the same one from every session of a thread: a keyed hash of the thread ID that changes when Otto restarts. When a session's system prompt and tools match a recent request from the same thread, as they do for back-to-back background runs even after memory changes, the provider reads them from its cache and bills them at its cheaper cache-read rate. The code is in [`src/providers/pi/index.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/pi/index.ts).
+
 ## Message cadence
 
 A chat turn posts its opening line, then only what the model writes between tool calls after the user has heard nothing for a while, then its final reply. The window is 30 seconds in Otto web and 3 minutes in chat apps. A task's first message is its acknowledgement, so the task posts only its questions, files, deliberate `send_message` updates and result. The rule lives in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts); the prompt asks for what each message should contain.

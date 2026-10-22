@@ -78,6 +78,7 @@ import { createPublicLinkPreviewProvider } from '../providers/public-web/link-pr
 import { createAgentRuntime } from '../runtime/index.ts';
 import { coreSkills } from '../runtime/prompt.ts';
 import { createApp } from './app.ts';
+import { credentialRequestKey } from './access.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
 import { learnWritingStyle } from './writing-style.ts';
 import { createChatVerification } from './chat-verification.ts';
@@ -88,17 +89,18 @@ import { createTrust } from './trust.ts';
 import { localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
-import { createChannelSettings } from './channel-settings.ts';
+import { createChannelSettings, initializeChannelSettings } from './channel-settings.ts';
 import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
 import { createAccountStore } from './account-store.ts';
 import { createModelTraces, type ModelTraceGate } from './traces.ts';
 import { runtimeAccount } from './account-profile.ts';
 import { createAccountSession } from './account.ts';
+import { connectedGmail } from '../shared/onboarding.ts';
 import { createPostgresObjectStore } from './object-storage.ts';
 import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
 import { createPool, initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
-import { createIntegrations } from './integrations.ts';
+import { createIntegrations, initializeIntegrationSchema } from './integrations.ts';
 import { createErrorRedactor } from './redaction.ts';
 import { createLedger, limitsInput } from './ledger.ts';
 import { usageFileName, usagePdf } from './usage-report.ts';
@@ -137,7 +139,6 @@ import { createVaultAccess } from './vault-access.ts';
 import { createPayments } from './payments.ts';
 import { createBrowserConnections } from './browser-connections.ts';
 import { cachedIcons, createLinkPreviews } from './link-previews.ts';
-
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
   initialize?(): Promise<void>;
@@ -170,6 +171,10 @@ export interface ApplicationAdapters {
 
 export function createDefaultAdapters(
   env: Record<string, string | undefined> = process.env,
+  legacyIntegration?: {
+    input: import('./integration-key.ts').LegacyIntegration;
+    acknowledge(): Promise<void>;
+  },
 ): ApplicationAdapters {
   const defaultFeedbackUrl = 'https://internal.users.n8n.cloud/webhook/otto/feedback';
   const feedbackUrl = env.OTTO_FEEDBACK_URL ?? defaultFeedbackUrl;
@@ -325,6 +330,12 @@ export function createDefaultAdapters(
       await models.initialize();
       await integrationProxy?.initialize();
       await integrationKey.initialize();
+      if (
+        desktopMode &&
+        legacyIntegration &&
+        (await integrationKey.importLegacy(legacyIntegration.input))
+      )
+        await legacyIntegration.acknowledge();
     },
     models,
     agent: createPiAgent({
@@ -376,7 +387,7 @@ export function createDefaultAdapters(
 
 export async function createApplication(
   adapters: ApplicationAdapters,
-  options: { workers?: boolean; channels?: boolean } = {},
+  options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> } = {},
 ) {
   try {
     return await initializeApplication(adapters, options);
@@ -393,7 +404,7 @@ export async function createApplication(
 
 async function initializeApplication(
   adapters: ApplicationAdapters,
-  options: { workers?: boolean; channels?: boolean },
+  options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> },
 ) {
   const analytics = await createAnalytics({
     provider: adapters.analytics,
@@ -421,6 +432,29 @@ async function initializeApplication(
   const websiteVisited = createWebsiteVisits(analytics, ownerId);
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
+  const closing = new AbortController();
+  if (options.runtimeReady) await consumers.pause();
+  const runtimeReady =
+    options.runtimeReady?.then(() => {
+      if (!closing.signal.aborted) return consumers.resume();
+    }) ?? Promise.resolve();
+  void runtimeReady.catch(() => {});
+  async function prepareRuntime(signal: AbortSignal) {
+    const lifetime = AbortSignal.any([signal, closing.signal]);
+    lifetime.throwIfAborted();
+    let aborted: () => void;
+    try {
+      await Promise.race([
+        runtimeReady,
+        new Promise<never>((_, reject) => {
+          aborted = () => reject(lifetime.reason);
+          lifetime.addEventListener('abort', aborted, { once: true });
+        }),
+      ]);
+    } finally {
+      lifetime.removeEventListener('abort', aborted!);
+    }
+  }
   const privacyNotice = await loadPrivacyNoticeFile(process.env.OTTO_PRIVACY_NOTICE_FILE);
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   await initializeDatabase();
@@ -681,10 +715,27 @@ async function initializeApplication(
     analytics: captureAnalytics,
     refresh,
     keyStore: adapters.keyStore,
+    requestKey: Buffer.from(await credentialRequestKey(dataRoot), 'base64url'),
     resume: resumeAfterCredentials,
     retry: retryCredentials,
     inject: computer.injectCredentials,
     page: computer.currentPage,
+    signInMethods: computer.signInMethods,
+    selectSignInMethod: computer.selectSignInMethod,
+    checkMethods: async (turn, methods) => {
+      for (const { selector, page } of methods) {
+        const step = { action: 'click' as const, selector };
+        const verdict = await trust.check(
+          turn,
+          'OTTO_browser',
+          browserStepArgs({ step, page, typed: [], subagent: false }),
+        );
+        if (verdict.confirm)
+          throw new Error(
+            'This control needs the normal browser confirmation before it can run. Choose only sign-in methods covered by the owner’s request.',
+          );
+      }
+    },
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
     icon,
     onOwnerUse: (entry, client) => vaultAccess.ownerUse(entry, client),
@@ -863,6 +914,10 @@ async function initializeApplication(
       channels ? channels.react(messageId, reaction, signal) : 'absent',
   });
   const localAccounts = createAccountStore(pool);
+  const ownerNames = async () =>
+    (await integrations.list(ownerId, { refresh: false }))
+      .filter(connectedGmail)
+      .flatMap((connection) => (connection.accountName ? [connection.accountName] : []));
   await localAccounts.initialize();
   const onboardingSuggestions = createOnboardingSuggestions({
     ownerId,
@@ -895,7 +950,7 @@ async function initializeApplication(
         getPreferences(),
       ]);
       return {
-        names: account.displayName ? [account.displayName] : [],
+        names: await ownerNames(),
         region: preferences.locale
           ? new Intl.Locale(preferences.locale).maximize().region
           : undefined,
@@ -940,7 +995,7 @@ async function initializeApplication(
       name: null,
       givenName: null,
       email: null,
-      preferredName: (await localAccounts.read(ownerId)).displayName,
+      preferredName: (await ownerNames())[0] ?? null,
     });
   async function permitVault(
     turn: TurnRef,
@@ -976,7 +1031,6 @@ async function initializeApplication(
     analytics: captureAnalytics,
     present: (turn, input) => communication.present(turn.threadId, input),
     uses: vault.uses,
-    inOtto: trust.inOtto,
     page: (threadId) => computer.currentPage(threadId),
     destinations: (threadId, fields) => computer.cardDestinations(threadId, fields),
     capture: (threadId) => computer.checkoutImage(threadId),
@@ -1192,10 +1246,14 @@ async function initializeApplication(
           );
         }
         await admit?.(false);
-        if (action === 'memory_learn')
-          return withTurnLock(turn.turnId, () =>
-            personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
+        if (action === 'memory_learn') {
+          const origin = await turnOrigin(turn.turnId);
+          if (!origin || !['user', 'task'].includes(origin.source))
+            throw new Error('Only work the owner started, in chat or a task, can save to memory.');
+          return learning.remember(args, provenance.sourceMessageId, (write) =>
+            withTurnLock(turn.turnId, write),
           );
+        }
         if (action === 'usage_get') return ledger.read();
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
@@ -1205,6 +1263,17 @@ async function initializeApplication(
         return result;
       },
       requestCredential: async (turn, input) => {
+        if (input.kind === 'method') {
+          const origin = credentialOrigin(input.origin);
+          const access = await permitVault(turn, { origin, kind: 'sign_in' });
+          if ('question' in access) return { [appConfirmation]: access.question };
+          return vault.request(turn, ownerId, {
+            origin,
+            label: input.label,
+            kind: 'method',
+            methods: input.methods,
+          });
+        }
         const { savedLoginId, ...request } = input;
         if (savedLoginId !== undefined && request.kind === 'otp')
           throw new Error('Saved logins cannot supply verification codes.');
@@ -1310,8 +1379,9 @@ async function initializeApplication(
       },
     });
   }
-  const welcome = async (name?: string) => {
-    if (adapters.model.configured) await onboardingSuggestions.complete(name);
+  const welcome = async () => {
+    if (adapters.model.configured)
+      await onboardingSuggestions.complete((await ownerNames().catch(() => []))[0]);
   };
   const app = await createApp({
     analytics: captureAnalytics,
@@ -1320,7 +1390,6 @@ async function initializeApplication(
     artifacts,
     submitMessage: userMessages.submit,
     verification: chatVerification,
-    startOnboarding: welcome,
     taskLedger: tasks.read,
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,
@@ -1376,7 +1445,11 @@ async function initializeApplication(
     origin: publicOrigin,
     localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
     developerIds: desktopMode ? new Set() : new Set([ownerId]),
-    start: (_owner, name) => welcome(name),
+    start: welcome,
+    prepare: prepareRuntime,
+    onboardingReady: async () =>
+      adapters.model.configured &&
+      (await integrations.list(ownerId, { refresh: false })).some(connectedGmail),
     traces: adapters.traces?.available ?? false,
     onTraces: (enabled) => adapters.traces?.configure({ enabled }),
   }).register(app);
@@ -1395,8 +1468,10 @@ async function initializeApplication(
   integrations.registerRoutes(app);
   personal.registerRoutes(app);
   createOnboardingInterview({
+    ownerId,
+    pool,
+    keyStore: adapters.keyStore,
     curator: onboardingCurator,
-    memory,
     brief: onboardingSuggestions.currentBrief,
   }).registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
@@ -1510,6 +1585,7 @@ async function initializeApplication(
   await onboardingSuggestions.initialize();
   let closingConsumers: Promise<void> | undefined;
   app.addHook('preClose', async () => {
+    closing.abort();
     admission.close();
     closingConsumers = consumers.close();
     void closingConsumers.catch(() => {});

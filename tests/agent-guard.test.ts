@@ -628,8 +628,45 @@ test(
   },
 );
 
+test(
+  'stopping ends the turn at once even when a tool never settles',
+  { timeout: 5_000 },
+  async () => {
+    const controller = new AbortController();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const pending = fixture(
+      async (tools) => {
+        const opening = call(tools, 'browser', { action: 'open', url: 'https://example.com' });
+        await started;
+        controller.abort();
+        await assert.rejects(opening, /cancelled/i);
+      },
+      { signal: controller.signal },
+      {
+        computer: fakeComputer({
+          act: () => {
+            entered();
+            return new Promise(() => {});
+          },
+        }),
+      },
+    );
+    await assert.rejects(pending, /aborted|cancelled/i);
+  },
+);
+
 test('secure credential pause prevents subsequent tools in the same execution segment', async () => {
   for (const input of [
+    {
+      origin: 'https://example.com',
+      label: 'Example',
+      kind: 'identifier' as const,
+      usernameSelector: '@username',
+      submitSelector: '@submit',
+    },
     {
       origin: 'https://example.com',
       label: 'Example',
@@ -645,10 +682,50 @@ test('secure credential pause prevents subsequent tools in the same execution se
       submitSelector: '@submit',
       emailCode: true,
     },
+    {
+      origin: 'https://example.com',
+      label: 'Example',
+      kind: 'method' as const,
+      methods: [{ label: 'Continue with Identity', selector: '#identity' }],
+    },
   ]) {
     let managed = false;
+    const requested: unknown[] = [];
     const result = await fixture(
       async (tools) => {
+        for (const invalid of [
+          { kind: 'method' },
+          { kind: 'method', methods: [] },
+          { kind: 'method', methods: [{ label: 'Continue with Identity' }] },
+          { kind: 'method', methods: [{ label: 'Continue with Identity', selector: '' }] },
+          {
+            kind: 'method',
+            methods: [{ label: 'Continue with Identity', selector: 'a'.repeat(2049) }],
+          },
+          {
+            kind: 'method',
+            methods: [{ label: 'Continue with Identity', selector: '#identity', extra: true }],
+          },
+          {
+            kind: 'method',
+            savedLoginId: '11111111-1111-4111-8111-111111111111',
+            methods: [{ label: 'Continue with Identity', selector: '#identity' }],
+          },
+          {
+            kind: 'password',
+            methods: [{ label: 'Continue with Identity', selector: '#identity' }],
+          },
+        ])
+          await assert.rejects(
+            call(tools, 'sign_in', {
+              origin: 'https://example.com',
+              label: 'Example',
+              message: 'Example needs this sign-in step.',
+              action: 'Open secure step',
+              ...invalid,
+            }),
+          );
+        assert.deepEqual(requested, []);
         await call(tools, 'sign_in', {
           ...input,
           message: 'Example needs this sign-in step.',
@@ -662,6 +739,10 @@ test('secure credential pause prevents subsequent tools in the same execution se
         );
       },
       {
+        requestCredential: async (request) => {
+          requested.push(request);
+          return { url: '/credentials/fixture' };
+        },
         manage: async () => {
           managed = true;
           return {};
@@ -671,5 +752,6 @@ test('secure credential pause prevents subsequent tools in the same execution se
     assert.equal(result.result.status, 'waiting_credentials');
     assert.equal(result.aborted, true);
     assert.equal(managed, false);
+    assert.deepEqual(requested, [input]);
   }
 });

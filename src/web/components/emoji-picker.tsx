@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Plus } from 'lucide-react';
+import { Flag, Gamepad2, Heart, Leaf, Lightbulb, Plane, Plus, Smile, Utensils } from 'lucide-react';
 import { reactionEmoji } from '../../shared/emoji';
 import { reactionName } from '../lib/reactions';
 import { Loading } from './ui';
@@ -10,6 +10,16 @@ const commonReactions = ['👍', '❤️', '😂', '🎉', '😮', '🙏'];
 const EmojiCatalog = lazy(async () => {
   const { default: Picker, Categories, EmojiStyle, Theme } = await import('emoji-picker-react');
   const EmojiPicker = (Picker as typeof Picker & { default?: typeof Picker }).default ?? Picker;
+  const categoryIcons = {
+    [Categories.SMILEYS_PEOPLE]: <Smile size={18} aria-hidden="true" />,
+    [Categories.ANIMALS_NATURE]: <Leaf size={18} aria-hidden="true" />,
+    [Categories.FOOD_DRINK]: <Utensils size={18} aria-hidden="true" />,
+    [Categories.TRAVEL_PLACES]: <Plane size={18} aria-hidden="true" />,
+    [Categories.ACTIVITIES]: <Gamepad2 size={18} aria-hidden="true" />,
+    [Categories.OBJECTS]: <Lightbulb size={18} aria-hidden="true" />,
+    [Categories.SYMBOLS]: <Heart size={18} aria-hidden="true" />,
+    [Categories.FLAGS]: <Flag size={18} aria-hidden="true" />,
+  };
   return {
     default: function Catalog({ onSelect }: { onSelect(emoji: string, name: string): void }) {
       const theme = useSyncExternalStore(subscribeTheme, currentTheme, () => 'light');
@@ -18,7 +28,8 @@ const EmojiCatalog = lazy(async () => {
           emojiStyle={EmojiStyle.NATIVE}
           theme={theme === 'dark' ? Theme.DARK : Theme.LIGHT}
           width="100%"
-          height={360}
+          height="100%"
+          categoryIcons={categoryIcons}
           autoFocusSearch
           searchPlaceholder="Search emoji"
           previewConfig={{ showPreview: false }}
@@ -57,7 +68,10 @@ export default function ReactionPicker({
   const initial = Math.max(0, commonReactions.indexOf(reactionEmoji(selected ?? '')));
   const [active, setActive] = useState(initial);
   useEffect(() => {
-    if (!expanded) strip.current?.querySelector<HTMLButtonElement>('[tabindex="0"]')?.focus();
+    if (!expanded)
+      strip.current
+        ?.querySelector<HTMLButtonElement>('[tabindex="0"]')
+        ?.focus({ preventScroll: true });
   }, [expanded]);
   if (expanded)
     return (
@@ -82,7 +96,7 @@ export default function ReactionPicker({
               ? buttons.length - 1
               : (active + (event.key === 'ArrowLeft' ? -1 : 1) + buttons.length) % buttons.length;
         setActive(next);
-        buttons[next]?.focus();
+        buttons[next]?.focus({ preventScroll: true });
       }}
     >
       {commonReactions.map((emoji, index) => (
@@ -108,7 +122,7 @@ export default function ReactionPicker({
         onFocus={() => setActive(commonReactions.length)}
         onClick={onExpand}
       >
-        <Plus size={24} aria-hidden="true" />
+        <Plus size={19} aria-hidden="true" />
       </button>
     </div>
   );

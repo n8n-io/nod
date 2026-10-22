@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { constants } from 'node:fs';
-import { mkdir, mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { connect, createServer, type Socket } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -29,6 +29,7 @@ import {
 } from '../src/providers/agent-browser/screens.ts';
 import { runProcess } from '../src/providers/process.ts';
 import { containerBrowserOptions } from '../src/providers/container-browser/config.ts';
+import { openDevtools } from '../src/providers/agent-browser/devtools.ts';
 import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
 import {
   browserNamespace,
@@ -1194,59 +1195,74 @@ test('discarding a thread closes its browser and deletes only its throwaway data
   }
 });
 
-async function wedgedBrowser() {
+test('a browser that will not close is killed with its process groups so the next open starts fresh', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-drain-failure-'));
   const fixture = stagedLoginBrowser();
   const commands: string[] = [];
-  let failClose = true;
+  let failOpen = true;
+  const sockets = join(directory, 'fixture-sockets');
+  const profile = join(directory, 'runtime', 'profiles', 'fixture');
+  const daemon = spawn('sh', ['-c', 'sleep 60 & echo $!; wait'], {
+    detached: true,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    env: { ...process.env, AGENT_BROWSER_SESSION: browserSessionId('fixture') },
+  });
+  const display = Number(String((await once(daemon.stdout, 'data'))[0]).trim());
+  const chrome = spawn(
+    process.execPath,
+    ['-e', 'setInterval(() => {}, 1000)', `--user-data-dir=${profile}`],
+    { detached: true, stdio: 'ignore' },
+  );
+  const alive = async (pid: number) => {
+    for (let waited = 0; waited < 2000; waited += 50) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return false;
+      }
+      await delay(50);
+    }
+    return true;
+  };
   const computer = createBrowserFixture({
     dataRoot: directory,
     run: async (executable, args, input) => {
       const action = args[args.indexOf('--idle-timeout') + 2];
       commands.push(action);
-      if (action === 'open' && failClose)
+      if (action === 'open' && failOpen) {
+        failOpen = false;
         throw new Error('Runtime command exceeded its time limit.');
-      if (action === 'close' && failClose) throw new Error('Synthetic close unavailable.');
+      }
+      if (action === 'close') throw new Error('Synthetic close unavailable.');
       return fixture.run(executable, args, input);
     },
   });
-  await assert.rejects(
-    computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' }),
-    /could not stop safely/,
-  );
-  return {
-    computer,
-    commands,
-    repair: () => {
-      failClose = false;
-    },
-    async cleanup() {
-      failClose = false;
-      await computer.dispose();
-      await rm(directory, { recursive: true, force: true });
-    },
-  };
-}
-
-test('failed interruption cleanup blocks actions until the next open retries the close', async () => {
-  const wedged = await wedgedBrowser();
-  const { computer, commands } = wedged;
   try {
-    await assert.rejects(computer.act('fixture', { action: 'snapshot' }), /expired/);
-    const count = commands.length;
+    await mkdir(sockets, { recursive: true });
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(sockets, `${browserSessionId('fixture')}.pid`), String(daemon.pid));
+    await symlink(`${hostname()}-${chrome.pid}`, join(profile, 'SingletonLock'));
     await assert.rejects(
       computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' }),
-      /Synthetic close unavailable/,
+      /time limit/,
     );
-    assert.equal(commands.slice(count).at(-1), 'close');
-    wedged.repair();
+    assert.ok(commands.includes('close'));
+    assert.equal(await alive(daemon.pid!), false);
+    assert.equal(await alive(display), false);
+    assert.equal(await alive(chrome.pid!), false);
+    await assert.rejects(computer.act('fixture', { action: 'snapshot' }), /expired/);
     const reopened = await computer.act('fixture', {
       action: 'open',
       url: 'https://1.1.1.1/login',
     });
     assert.equal(reopened.url, 'https://1.1.1.1/login');
   } finally {
-    await wedged.cleanup();
+    for (const pid of [daemon.pid, display, chrome.pid])
+      try {
+        process.kill(pid!, 'SIGKILL');
+      } catch {}
+    await computer.dispose().catch(() => {});
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -2249,6 +2265,200 @@ test(
 );
 
 test(
+  'a native page that freezes its renderer is killed at the deadline and the browser reopens',
+  {
+    skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',
+    timeout: 60_000,
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-frozen-native-'));
+    const server = createHttpServer((request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        request.url === '/frozen'
+          ? '<p>Bidding history</p><script>setTimeout(() => { for (;;) {} }, 300)</script>'
+          : '<p>Bidding open</p>',
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const computer = createAgentBrowserComputer({
+      ...containerBrowserOptions(directory),
+      privateNetwork: true,
+      daemonCommand: (path, command, signal, timeoutMs) =>
+        existingDaemonCommand(path, command, signal, timeoutMs ?? 3_000),
+    });
+    const session = `AGENT_BROWSER_SESSION=${browserSessionId('frozen')}\0`;
+    const browsers = async () => {
+      const found: string[] = [];
+      for (const pid of await readdir('/proc')) {
+        if (!/^\d+$/.test(pid)) continue;
+        const environ = await readFile(`/proc/${pid}/environ`, 'utf8').catch(() => '');
+        const args = await readFile(`/proc/${pid}/cmdline`, 'utf8').catch(() => '');
+        if (environ.includes(session) || args.includes(`--user-data-dir=${directory}/`))
+          found.push(args.split('\0')[0]!);
+      }
+      return found;
+    };
+    try {
+      await computer.act('frozen', { action: 'open', url: `${origin}/frozen` });
+      assert.ok((await browsers()).length);
+      await delay(1_000);
+      const started = Date.now();
+      await assert.rejects(computer.act('frozen', { action: 'snapshot' }));
+      assert.ok(Date.now() - started < 20_000);
+      assert.deepEqual(await browsers(), []);
+      await computer.act('frozen', { action: 'open', url: origin });
+      assert.match((await computer.act('frozen', { action: 'snapshot' })).text, /Bidding open/);
+    } finally {
+      await computer.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'native handoff clicks stay aligned through page zoom, panning and viewport changes',
+  { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+  async () => {
+    const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+    const context = createCanvas(1, 1).getContext('2d');
+    const directory = await mkdtemp(join(tmpdir(), 'otto-pointer-native-'));
+    const server = createHttpServer((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<style>html,body{margin:0;width:100%;height:100%;overflow:hidden}button{position:fixed;left:10%;top:10%;width:10%;height:10%}</style>
+        <button id="target">Target</button><output></output><script>
+        document.addEventListener('mousedown',event=>window.lastPointer={target:event.target.id,x:event.clientX,y:event.clientY});
+        let frame=0;function paint(){document.querySelector('output').textContent=String(frame++);requestAnimationFrame(paint)}paint();
+        </script>`,
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    let socketPath = '';
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
+      headless: true,
+      daemonCommand: async (path, command, signal, timeoutMs) => {
+        socketPath = path;
+        return existingDaemonCommand(path, command, signal, timeoutMs);
+      },
+    });
+    let inspector: WebSocket | undefined;
+    try {
+      await computer.act('pointer', { action: 'open', url: `http://127.0.0.1:${address.port}` });
+      const connection = await existingDaemonCommand(socketPath, { action: 'cdp_url' });
+      const tabs = await existingDaemonCommand(socketPath, { action: 'tab_list' });
+      const tab = (tabs.tabs as Array<{ active: boolean; targetId: string }>).find(
+        (tab) => tab.active,
+      )!;
+      inspector = new WebSocket(String(connection.cdpUrl));
+      await once(inspector, 'open');
+      let sequence = 0;
+      const send = (method: string, params: Record<string, unknown>, sessionId?: string) =>
+        new Promise<Record<string, unknown>>((resolve, reject) => {
+          const id = ++sequence;
+          const receive = (event: MessageEvent) => {
+            const message = JSON.parse(String(event.data));
+            if (message.id !== id) return;
+            inspector!.removeEventListener('message', receive);
+            if (message.error) reject(new Error(message.error.message));
+            else resolve(message.result);
+          };
+          inspector!.addEventListener('message', receive);
+          inspector!.send(
+            JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }),
+          );
+        });
+      const { sessionId } = await send('Target.attachToTarget', {
+        targetId: tab.targetId,
+        flatten: true,
+      });
+      const page = (method: string, params: Record<string, unknown>) =>
+        send(method, params, String(sessionId));
+      for (const [index, sample] of [
+        { width: 1440, height: 900, dpr: 1, zoom: 1, pan: false },
+        { width: 1440, height: 900, dpr: 2, zoom: 1, pan: false },
+        { width: 1440, height: 900, dpr: 1, zoom: 2, pan: false },
+        { width: 1440, height: 900, dpr: 1, zoom: 2, pan: true },
+        { width: 800, height: 1200, dpr: 1, zoom: 1, pan: false },
+      ].entries()) {
+        const color = [1, 2, 4].map((bit) => ((index + 1) & bit ? 255 : 0));
+        await existingDaemonCommand(socketPath, {
+          action: 'viewport',
+          width: sample.width,
+          height: sample.height,
+          deviceScaleFactor: sample.dpr,
+        });
+        await page('Emulation.setPageScaleFactor', { pageScaleFactor: sample.zoom });
+        if (sample.pan)
+          await page('Input.synthesizeScrollGesture', {
+            x: 400,
+            y: 300,
+            xDistance: -60,
+            yDistance: -60,
+            gestureSourceType: 'touch',
+          });
+        const expected = await existingDaemonCommand(socketPath, {
+          action: 'evaluate',
+          script: `(() => {document.documentElement.style.backgroundColor='rgb(${color.join(',')})';const r=document.querySelector('#target').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,width:visualViewport.width,height:visualViewport.height,left:visualViewport.offsetLeft,top:visualViewport.offsetTop}})()`,
+        });
+        const point = expected.result as {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          left: number;
+          top: number;
+        };
+        const controller = new AbortController();
+        const frames = computer.view!('pointer', controller.signal)[Symbol.asyncIterator]();
+        try {
+          for (;;) {
+            const frame = await frames.next();
+            assert.equal(frame.done, false);
+            const image = await loadImage(frame.value!);
+            context.drawImage(image, 1 - image.width, 1 - image.height);
+            const pixel = context.getImageData(0, 0, 1, 1).data;
+            if (color.every((channel, index) => channel === (pixel[index]! > 127 ? 255 : 0))) break;
+          }
+          const position = {
+            x: (point.x - point.left) / point.width,
+            y: (point.y - point.top) / point.height,
+          };
+          await computer.control!('pointer', { type: 'mouse', event: 'down', ...position });
+          await computer.control!('pointer', { type: 'mouse', event: 'up', ...position });
+          const observed = await existingDaemonCommand(socketPath, {
+            action: 'evaluate',
+            script: 'window.lastPointer',
+          });
+          assert.deepEqual(
+            observed.result,
+            { target: 'target', x: point.x, y: point.y },
+            JSON.stringify(sample),
+          );
+        } finally {
+          controller.abort();
+          await frames.return?.();
+        }
+      }
+    } finally {
+      inspector?.close();
+      await computer.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'native visual browser actions solve a canvas interaction inside nested cross-origin frames',
   { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
   async () => {
@@ -2778,6 +2988,326 @@ test('redaction masks secure links, common token strings and secret assignments 
   );
 });
 
+test('Telegram chat cards require paired owned metadata and preserve ordinary links', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://otto.fixture.invalid',
+        pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'Event', 'MouseEvent', 'MutationObserver']) globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const requests = [];
+      fetch = (url, options) => new Promise((resolve) => requests.push({url, options, resolve}));
+      const { createElement: h, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { MessageText } = await import('./src/web/components/message.tsx');
+      const { setRequestAccount } = await import('./src/web/lib/api.ts');
+      setRequestAccount('synthetic-owner');
+      const root = createRoot(document.getElementById('root'));
+      let key = 0;
+      const owned = 'https://t.me/otto_owned_bot';
+      const paired = { ready: true, channels: [{provider:'telegram', enabled:true, accountHandle:'@otto_owned_bot', allowedUserId:'123', mode:'polling'}] };
+      const render = async (text, replace = true) => {
+        if (replace) key++;
+        await act(async () => root.render(h('div', {key}, ...(Array.isArray(text) ? text : [text]).map((text, index) => h(MessageText, {key:index, text})))));
+      };
+      const respond = async (request, data, status=200) => {
+        assert.equal(request.url, '/api/channel-settings');
+        await act(async () => request.resolve(new Response(JSON.stringify(data), {status, headers:{'content-type':'application/json'}})));
+      };
+      await render('[Ordinary](https://example.com)');
+      assert.equal(requests.length, 0);
+      const links = [owned, 'https://t.me/another_bot', owned+'?start=synthetic-pairing', owned+'#fragment', owned+'/', 'http://t.me/otto_owned_bot', 'https://t.me:443/otto_owned_bot', 'https://t.me.evil.invalid/otto_owned_bot'];
+      await render(links.map((href,i) => '[Link '+i+']('+href+')').join('\n\n'));
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].options.headers.get('X-Otto-Account'), 'synthetic-owner');
+      assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      await respond(requests[0], paired);
+      const card = document.querySelector('[data-setup="telegram"]');
+      assert.ok(card);
+      assert.equal(document.querySelectorAll('[data-setup="telegram"]').length, 1);
+      assert.equal(card.getAttribute('href'), owned);
+      assert.equal(card.getAttribute('target'), '_blank');
+      assert.equal(card.getAttribute('rel'), 'noopener noreferrer');
+      assert.equal(card.getAttribute('referrerpolicy'), 'no-referrer');
+      assert.deepEqual([...document.querySelectorAll('a')].map(a => a.getAttribute('href')), links);
+      for (const type of ['click','contextmenu']) {
+        const event = new MouseEvent(type, {bubbles:true,cancelable:true,ctrlKey:true});
+        card.addEventListener(type, e => {assert.equal(e.defaultPrevented, false);e.preventDefault();}, {once:true});
+        card.dispatchEvent(event);
+      }
+      card.focus();
+      const beforeRefresh = requests.length;
+      await act(async () => window.dispatchEvent(new Event('focus')));
+      assert.equal(requests.length, beforeRefresh + 1);
+      assert.equal(document.querySelector('[data-setup="telegram"]'), card);
+      assert.equal(document.activeElement, card);
+      await respond(requests.at(-1), {ready:true,channels:[]});
+      assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      for (const override of [{enabled:false},{allowedUserId:undefined},{webhookStatus:'registration_pending'},{pairingExpiresAt:'2099-01-01T00:00:00Z'},{accountHandle:'@another_bot'}]) {
+        await render('[Open]('+owned+')');
+        await respond(requests.at(-1), {ready:true,channels:[{...paired.channels[0],...override}]});
+        assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      }
+      await render('[Open]('+owned+')');
+      await respond(requests.at(-1), {error:'unavailable'}, 503);
+      assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      const beforeShared = requests.length;
+      await render(Array(3).fill('[Open]('+owned+')'));
+      assert.equal(requests.length, beforeShared + 1);
+      await respond(requests.at(-1), paired);
+      const cards = [...document.querySelectorAll('[data-setup="telegram"]')];
+      assert.equal(cards.length, 3);
+      await render(Array(4).fill('[Open]('+owned+')'), false);
+      assert.equal(requests.length, beforeShared + 1);
+      assert.equal(document.querySelectorAll('[data-setup="telegram"]').length, 4);
+      await act(async () => window.dispatchEvent(new Event('focus')));
+      assert.equal(requests.length, beforeShared + 2);
+      const replaced = requests.at(-1);
+      await act(async () => window.dispatchEvent(new Event('popstate')));
+      assert.equal(requests.length, beforeShared + 3);
+      assert.equal(replaced.options.signal.aborted, true);
+      assert.deepEqual([...document.querySelectorAll('[data-setup="telegram"]')].slice(0,3), cards);
+      await respond(replaced, {ready:true,channels:[]});
+      assert.equal(document.querySelectorAll('[data-setup="telegram"]').length, 4);
+      await respond(requests.at(-1), {error:'unavailable'}, 503);
+      assert.equal(document.querySelectorAll('[data-setup="telegram"]').length, 4);
+      await act(async () => window.dispatchEvent(new Event('focus')));
+      const old = requests.at(-1);
+      setRequestAccount('second-synthetic-owner');
+      await render('[Open]('+owned+')');
+      const current = requests.at(-1);
+      assert.equal(old.options.signal.aborted, true);
+      assert.equal(current.options.headers.get('X-Otto-Account'), 'second-synthetic-owner');
+      await respond(old, paired);
+      assert.equal(document.querySelector('[data-setup="telegram"]'), null);
+      await respond(current, {ready:true,channels:[]});
+      await act(async () => window.dispatchEvent(new Event('popstate')));
+      const unfinished = requests.at(-1);
+      await act(async () => root.unmount());
+      assert.equal(unfinished.options.signal.aborted, true);
+      const count = requests.length;
+      window.dispatchEvent(new Event('focus'));
+      window.dispatchEvent(new Event('popstate'));
+      assert.equal(requests.length, count);
+      dom.window.close();
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('composer uploads preserve retry bytes, cancellation, previews and failed-send recovery', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://otto.fixture.invalid',
+        pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of [
+        'Node',
+        'Element',
+        'HTMLElement',
+        'HTMLInputElement',
+        'HTMLButtonElement',
+        'MutationObserver',
+        'Event',
+        'KeyboardEvent',
+        'CustomEvent',
+        'DOMParser',
+      ])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      const rect = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      HTMLElement.prototype.getBoundingClientRect = () => rect;
+      HTMLElement.prototype.getClientRects = () => [];
+      dom.window.Range.prototype.getBoundingClientRect = () => rect;
+      dom.window.Range.prototype.getClientRects = () => [];
+      const created = [],
+        revoked = [],
+        requests = [],
+        opened = [],
+        sends = [];
+      URL.createObjectURL = (file) => {
+        const url = 'blob:synthetic-' + created.length;
+        created.push({ file, url });
+        return url;
+      };
+      URL.revokeObjectURL = (url) => revoked.push(url);
+      fetch = (url, options) =>
+        new Promise((resolve, reject) => {
+          assert.equal(url, '/api/uploads');
+          assert.equal(options.headers.get('X-Otto-Account'), 'synthetic-owner');
+          const request = { url, options, resolve, reject };
+          requests.push(request);
+          options.signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true },
+          );
+        });
+      const { createElement, useState, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Composer } = await import('./src/web/components/composer.tsx');
+      const { ArtifactDrawerContext } = await import('./src/web/components/artifact-context.tsx');
+      const { setRequestAccount } = await import('./src/web/lib/api.ts');
+      setRequestAccount('synthetic-owner');
+      let drafts = [],
+        result = { sent: false, restoreText: true };
+      const setDrafts = (value) => {
+        drafts = value;
+      };
+      function Fixture() {
+        const [text, setText] = useState('Synthetic review request');
+        return createElement(
+          ArtifactDrawerContext.Provider,
+          { value: { selectedId: null, open: (...args) => opened.push(args), setDrafts } },
+          createElement(Composer, {
+            ready: true,
+            text,
+            setText,
+            replyTo: null,
+            clearReply() {},
+            onSend: async (text, attachments) => {
+              sends.push({ text, attachments });
+              return result;
+            },
+          }),
+        );
+      }
+      const root = createRoot(document.getElementById('root'));
+      const settle = async (check) => {
+        for (let i = 0; i < 100 && !check(); i++)
+          await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          });
+        assert.ok(check(), 'Expected operation to settle');
+      };
+      const click = async (label) => {
+        const button = document.querySelector('[aria-label="' + label + '"]');
+        assert.ok(button, label);
+        await act(async () => button.click());
+      };
+      const choose = async (files) => {
+        const input = document.querySelector('input[type="file"]');
+        Object.defineProperty(input, 'files', { configurable: true, value: files });
+        await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+      };
+      const submit = async () => {
+        await act(async () =>
+          document
+            .querySelector('form')
+            .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+        );
+      };
+      const artifact = {
+        id: '00000000-0000-4000-8000-000000000001',
+        name: 'Review.txt',
+        mimeType: 'text/plain',
+        size: 21,
+        url: '/api/artifacts/00000000-0000-4000-8000-000000000001',
+      };
+      let closed = false;
+      try {
+        await act(async () => root.render(createElement(Fixture)));
+        await settle(() => document.querySelector('[contenteditable]'));
+        const first = new File(['Synthetic review file'], 'Review.txt', { type: 'text/plain' });
+        const second = new File(['Queued file'], 'Queued.txt', { type: 'text/plain' });
+        await choose([first, second]);
+        await settle(() => requests.length === 1);
+        assert.equal(drafts.length, 2);
+        assert.equal(drafts[0].downloadUrl, undefined);
+        assert.ok(document.querySelector('[aria-label="Send message"]').disabled);
+        await click('Open Review.txt');
+        assert.equal(opened[0][2], 'drafts');
+        assert.equal(opened[0][0], drafts[0].id);
+        await click('Remove Queued.txt');
+        assert.equal(revoked.filter((url) => url === created[1].url).length, 1);
+        await act(async () =>
+          requests[0].resolve(Response.json({ error: 'Synthetic upload failure' }, { status: 503 })),
+        );
+        await settle(() => document.querySelector('[aria-label="Retry uploading Review.txt"]'));
+        assert.equal(drafts.length, 1);
+        assert.equal(drafts[0].url, created[0].url);
+        assert.equal(requests.length, 1);
+        await submit();
+        assert.equal(sends.length, 0);
+        await click('Retry uploading Review.txt');
+        await settle(() => requests.length === 2);
+        assert.equal(created.length, 2);
+        for (const request of requests) {
+          const file = request.options.body.get('file');
+          assert.equal(file.name, first.name);
+          assert.equal(file.type, first.type);
+          assert.equal(await file.text(), await first.text());
+        }
+        await act(async () => requests[1].resolve(Response.json(artifact)));
+        await settle(() => drafts[0]?.downloadUrl === artifact.url);
+        assert.equal(document.querySelector('[aria-label="Send message"]').disabled, false);
+        await submit();
+        await settle(
+          () =>
+            drafts.length === 1 &&
+            document.querySelector('[contenteditable]').textContent.includes('Synthetic review request'),
+        );
+        assert.deepEqual(sends[0].attachments, [artifact]);
+        assert.equal(revoked.includes(created[0].url), false);
+        result = { sent: true };
+        await submit();
+        await settle(() => drafts.length === 0);
+        assert.deepEqual(sends[1], sends[0]);
+        assert.equal(revoked.filter((url) => url === created[0].url).length, 1);
+        const unsafe = [
+          new File(['<h1>fixture</h1>'], 'Page.html', { type: 'text/html' }),
+          new File(['<svg/>'], 'Icon.svg', { type: 'image/svg+xml' }),
+          new File(['<fixture/>'], 'Data.xml', { type: 'application/xml' }),
+        ];
+        await choose(unsafe);
+        await settle(() => requests.length === 3);
+        assert.equal(created.length, 2);
+        assert.equal(drafts.length, 0);
+        for (const file of [...unsafe].reverse()) await click('Remove ' + file.name);
+        await settle(() => requests[2].options.signal.aborted);
+        assert.equal(requests.length, 3);
+        const finalFiles = [
+          new File(['Active'], 'Active.txt', { type: 'text/plain' }),
+          new File(['Waiting'], 'Waiting.txt', { type: 'text/plain' }),
+        ];
+        await choose(finalFiles);
+        await settle(() => requests.length === 4);
+        await act(async () => root.unmount());
+        closed = true;
+        assert.equal(requests[3].options.signal.aborted, true);
+        assert.equal(requests.length, 4);
+        assert.equal(drafts.length, 0);
+        assert.deepEqual([...new Set(revoked)].sort(), created.map((item) => item.url).sort());
+        for (const item of created) assert.equal(revoked.filter((url) => url === item.url).length, 1);
+
+      } finally {
+        if (!closed) await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
 test('automatic feedback captures exclude remote handoffs and unsent editable content without changing the page', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 15_000,
@@ -2850,6 +3380,57 @@ test('automatic feedback captures exclude remote handoffs and unsent editable co
         assert.equal(await captureFeedbackScreenshot(), null);
         assert.equal(native, captures);
       } finally {
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
+test('browser handoff retains pointer input while the next frame is loading', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost', pretendToBeVisual: true });
+      Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const writes = [];
+      let frames;
+      globalThis.fetch = async (path, options = {}) => {
+        if (path.startsWith('/api/browser-handoff/stream')) return new Response(new ReadableStream({ start(controller) { frames = controller; } }));
+        writes.push([path, JSON.parse(options.body)]);
+        return Response.json({ ok: true });
+      };
+      const { act, createElement } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { BrowserHandoff } = await import('./src/web/components/browser-handoff.tsx');
+      const root = createRoot(document.querySelector('#root'));
+      const frame = new Uint8Array([0, 0, 0, 4, 255, 216, 255, 217]);
+      try {
+        await act(async () => root.render(createElement(BrowserHandoff, { turnId: 'synthetic-turn' })));
+        await act(async () => frames.enqueue(frame));
+        const image = document.querySelector('.browser-handoff-screen img');
+        let loaded = true;
+        Object.defineProperties(image, {
+          naturalWidth: { get: () => loaded ? 1280 : 0 },
+          naturalHeight: { get: () => loaded ? 800 : 0 },
+        });
+        image.getBoundingClientRect = () => ({ left: 10, top: 20, width: 640, height: 400 });
+        await act(async () => image.dispatchEvent(new dom.window.Event('load')));
+        const displayed = image.src;
+        loaded = false;
+        await act(async () => frames.enqueue(frame));
+        assert.notEqual(image.src, displayed);
+        assert.equal(image.naturalWidth, 0);
+        for (const type of ['mousedown', 'mouseup']) await act(async () => image.dispatchEvent(new dom.window.MouseEvent(type, { bubbles: true, clientX: 330, clientY: 220, button: 0 })));
+        assert.deepEqual(writes, [
+          ['/api/browser-handoff', { turnId: 'synthetic-turn', inputs: [{ type: 'mouse', event: 'down', x: 0.5, y: 0.5, button: 'left' }] }],
+          ['/api/browser-handoff', { turnId: 'synthetic-turn', inputs: [{ type: 'mouse', event: 'up', x: 0.5, y: 0.5, button: 'left' }] }],
+        ]);
+      } finally {
+        await act(async () => root.unmount());
         dom.window.close();
       }
     `,
@@ -4096,6 +4677,320 @@ test(
       assert.deepEqual(sent, []);
     } finally {
       await computer.dispose();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'native sign-in methods bind observed controls and refuse changed or repeated selections',
+  { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 90_000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-method-native-'));
+    const received: string[] = [];
+    const cancelling = new AbortController();
+    const cancelled = deferred();
+    let cancelledMethod: string | undefined;
+    const changes: Record<string, string> = {
+      replaced: 'primary.replaceWith(primary.cloneNode(true))',
+      renamed: "primary.textContent = 'Delete account'",
+      accessibleName: "primary.setAttribute('aria-label', 'Delete account')",
+      destination: "primary.form.action = '/other'",
+      disabled: 'primary.disabled = true',
+      hidden: "primary.style.display = 'none'",
+      base: "document.querySelector('base').href = '/other/'",
+      covered:
+        "const cover=document.createElement('button');cover.style.cssText='position:fixed;inset:0;z-index:1000';cover.textContent='Cover';cover.onclick=()=>fetch('/covered',{method:'POST'});document.body.append(cover)",
+      changedOnPress: "primary.addEventListener('mousedown',()=>primary.form.action='/other')",
+      removedOnRelease: "primary.addEventListener('mouseup',()=>primary.remove())",
+    };
+    const server = createHttpServer(async (request, response) => {
+      if (request.url === '/pressed') {
+        cancelling.abort();
+        await cancelled.promise;
+        response.end();
+        return;
+      }
+      if (request.method === 'POST') {
+        received.push(request.url!);
+        response.writeHead(303, { location: '/done' });
+        response.end();
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      if (request.url === '/done') {
+        response.end('<h1>Selected</h1>');
+        return;
+      }
+      if (
+        ['/framed', '/foreign', '/duplicate', '/scaled-half', '/scaled-double'].includes(
+          request.url!,
+        )
+      ) {
+        const scaled = request.url!.startsWith('/scaled-');
+        const source =
+          request.url === '/foreign' || scaled
+            ? `http://localhost:${(server.address() as { port: number }).port}/${scaled ? 'scaled-inner' : 'inner'}`
+            : '/inner';
+        const transform = scaled
+          ? `transform:scale(${request.url === '/scaled-half' ? 0.5 : 2});transform-origin:top left;`
+          : '';
+        response.end(
+          `
+          ${request.url === '/duplicate' ? '<button id="primary">Continue with Example</button>' : ''}
+          <iframe title="Sign in" src="${source}" style="width:700px;height:400px;margin:70px 100px;border:12px solid;${transform}"></iframe><button id="reload-frame" onclick="document.querySelector('iframe').contentWindow.location.reload()">Reload frame</button>`,
+        );
+        return;
+      }
+      if (request.url === '/cancel') {
+        response.end(
+          '<form action="/selected" method="post"><button id="primary" onmousedown="const xhr=new XMLHttpRequest();xhr.open(\'POST\',\'/pressed\',false);xhr.send()">Continue with Example</button></form><button id="ordinary" onclick="if(event.isTrusted)fetch(\'/ordinary\',{method:\'POST\'})">Continue browsing</button>',
+        );
+        return;
+      }
+      const change = changes[request.url!.slice(1)] ?? '';
+      const primary =
+        request.url === '/image'
+          ? '<input id="primary" type="image" onclick="if(!event.isTrusted)event.preventDefault()" alt="Continue with Example" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22240%22 height=%2240%22%3E%3Crect width=%22240%22 height=%2240%22 fill=%22gray%22/%3E%3C/svg%3E">'
+          : '<button id="primary" onclick="if(!event.isTrusted)event.preventDefault()"><span>Continue with Example</span></button>';
+      response.end(
+        `
+        ${request.url === '/scaled-inner' ? '<script>addEventListener("pointermove",()=>{const xhr=new XMLHttpRequest();xhr.open("POST","/moved",false);xhr.send()},{once:true})</script>' : ''}
+        <base href="/"><form action="selected" method="post">${primary}<button id="alternate" formaction="/alternate">Use another account</button></form><a id="link" href="linked">Continue with Link</a><button id="change" onclick="${change}">Change control</button>`,
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const origin = `http://127.0.0.1:${address.port}`;
+    let socketPath = '';
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
+      headless: true,
+      daemonCommand: async (path, command, signal, timeoutMs) => {
+        socketPath = path;
+        return existingDaemonCommand(path, command, signal, timeoutMs);
+      },
+    });
+    const selectMethod = computer.selectSignInMethod!;
+    computer.selectSignInMethod = async (id, input, signal) => {
+      if (input.methodId === cancelledMethod)
+        signal?.addEventListener('abort', () => cancelled.resolve(), { once: true });
+      return selectMethod(id, input, signal);
+    };
+    const worker = await harness({ computer });
+    const client = worker.client(directory, { timeoutMs: 30_000 });
+    const act = (input: BrowserAction) => client.act('fixture', input);
+    const choices = [
+      { label: 'Misleading label', selector: '#primary span' },
+      { label: 'Another misleading label', selector: '#alternate' },
+    ];
+    try {
+      await act({ action: 'open', url: origin });
+      await assert.rejects(
+        client.signInMethods!('fixture', origin, [
+          { label: 'First', selector: '#primary' },
+          { label: 'Second', selector: '#primary span' },
+        ]),
+      );
+      const bound = await client.signInMethods!('fixture', origin, choices);
+      assert.deepEqual(
+        bound.methods.map(({ label }) => label),
+        ['Continue with Example', 'Use another account'],
+      );
+      assert.deepEqual(bound.methods[0]!.page.submits, {
+        method: 'POST',
+        to: origin + '/selected',
+      });
+      assert.deepEqual(bound.methods[1]!.page.submits, {
+        method: 'POST',
+        to: origin + '/alternate',
+      });
+      const selection = { origin, document: bound.document, methodId: bound.methods[0]!.id };
+      await assert.rejects(client.selectSignInMethod!('other', selection));
+      await client.selectSignInMethod!('fixture', selection);
+      await act({ action: 'wait', url: '**/done' });
+      assert.deepEqual(received, ['/selected']);
+      await assert.rejects(client.selectSignInMethod!('fixture', selection));
+      await assert.rejects(
+        client.selectSignInMethod!('fixture', { ...selection, methodId: bound.methods[1]!.id }),
+      );
+      for (const change of [...Object.keys(changes), 'navigation', 'origin', 'closed']) {
+        await act({ action: 'open', url: origin + '/' + change });
+        const stale = await client.signInMethods!('fixture', origin, choices);
+        if (change === 'navigation') await act({ action: 'reload' });
+        else if (change === 'closed') await client.close('fixture');
+        else if (change !== 'origin') await act({ action: 'click', selector: '#change' });
+        await assert.rejects(
+          client.selectSignInMethod!('fixture', {
+            origin: change === 'origin' ? 'https://another.example' : origin,
+            document: stale.document,
+            methodId: stale.methods[0]!.id,
+          }),
+        );
+        assert.deepEqual(received, ['/selected']);
+      }
+      await act({ action: 'open', url: origin + '/base' });
+      const linked = await client.signInMethods!('fixture', origin, [
+        { label: 'Ignored', selector: '#link' },
+      ]);
+      await act({ action: 'click', selector: '#change' });
+      await assert.rejects(
+        client.selectSignInMethod!('fixture', {
+          origin,
+          document: linked.document,
+          methodId: linked.methods[0]!.id,
+        }),
+      );
+      assert.deepEqual(received, ['/selected']);
+      await act({ action: 'open', url: origin });
+      const snapshot = (await act({ action: 'snapshot' })).text;
+      const ref = /button "Continue with Example"[^\n]*ref=(e\d+)/.exec(snapshot)?.[1];
+      assert.ok(ref);
+      await assert.rejects(
+        client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: '@' + ref }]),
+        /concrete CSS selectors/,
+      );
+      await assert.rejects(
+        client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: 'button' }]),
+      );
+      await act({ action: 'open', url: origin + '/duplicate' });
+      await assert.rejects(
+        client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: '#primary' }]),
+      );
+      for (const path of ['/framed', '/foreign']) {
+        await act({ action: 'open', url: origin + path });
+        const inspect = () =>
+          client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: '#primary' }]);
+        if (path === '/foreign') {
+          await assert.rejects(inspect());
+          continue;
+        }
+        const framed = await inspect();
+        assert.equal(framed.methods[0]!.label, 'Continue with Example');
+        await act({ action: 'click', selector: '#reload-frame' });
+        await assert.rejects(
+          client.selectSignInMethod!('fixture', {
+            origin,
+            document: framed.document,
+            methodId: framed.methods[0]!.id,
+          }),
+        );
+        const refreshed = await inspect();
+        assert.equal(refreshed.document, framed.document);
+        await client.selectSignInMethod!('fixture', {
+          origin,
+          document: refreshed.document,
+          methodId: refreshed.methods[0]!.id,
+        });
+        const deadline = Date.now() + 5000;
+        while (received.length < 2 && Date.now() < deadline) await delay(10);
+        assert.deepEqual(received, ['/selected', '/selected']);
+      }
+      const controller = new AbortController();
+      controller.abort();
+      await assert.rejects(client.selectSignInMethod!('fixture', selection, controller.signal));
+      assert.deepEqual(received, ['/selected', '/selected']);
+      await act({ action: 'open', url: origin + '/image' });
+      const image = await client.signInMethods!('fixture', origin, [
+        { label: 'Ignored', selector: '#primary' },
+      ]);
+      assert.equal(image.methods[0]!.label, 'Continue with Example');
+      assert.deepEqual(image.methods[0]!.page.submits, {
+        method: 'POST',
+        to: origin + '/selected',
+      });
+      await client.selectSignInMethod!('fixture', {
+        origin,
+        document: image.document,
+        methodId: image.methods[0]!.id,
+      });
+      await act({ action: 'wait', url: '**/done' });
+      assert.deepEqual(received, ['/selected', '/selected', '/selected']);
+      await assert.rejects(
+        client.selectSignInMethod!('fixture', {
+          origin,
+          document: image.document,
+          methodId: image.methods[0]!.id,
+        }),
+      );
+
+      for (const [index, path] of ['/framed', '/foreign'].entries()) {
+        await act({ action: 'open', url: origin + path });
+        const connection = await existingDaemonCommand(socketPath, { action: 'cdp_url' });
+        const tabs = await existingDaemonCommand(socketPath, { action: 'tab_list' });
+        const tab = (tabs.tabs as { active: boolean; targetId: string }[]).find(
+          (value) => value.active,
+        )!;
+        let inspector = await openDevtools(String(connection.cdpUrl), tab.targetId);
+        try {
+          const bound = await inspector.signInControl({ pixel: { x: 150, y: 100 } });
+          assert.equal(
+            bound.origin,
+            path === '/foreign' ? `http://localhost:${address.port}` : origin,
+          );
+          assert.equal(bound.targetFrameId === bound.frameId, path === '/foreign');
+          assert.notEqual(bound.loaderId, await inspector.document());
+          if (path === '/framed') {
+            await act({ action: 'click', selector: '#reload-frame' });
+            await assert.rejects(inspector.selectSignInControl(bound));
+          }
+          inspector.close();
+          inspector = await openDevtools(String(connection.cdpUrl), tab.targetId);
+          const current = await inspector.signInControl({ pixel: { x: 150, y: 100 } });
+          inspector.close();
+          inspector = await openDevtools(String(connection.cdpUrl), tab.targetId);
+          await inspector.selectSignInControl(current);
+          const deadline = Date.now() + 5000;
+          while (received.length < 4 + index && Date.now() < deadline) await delay(10);
+          assert.deepEqual(received, Array(4 + index).fill('/selected'));
+          await assert.rejects(inspector.selectSignInControl(current));
+        } finally {
+          inspector.close();
+        }
+      }
+      for (const path of ['/scaled-half', '/scaled-double']) {
+        await act({ action: 'open', url: origin + path });
+        const connection = await existingDaemonCommand(socketPath, { action: 'cdp_url' });
+        const tabs = await existingDaemonCommand(socketPath, { action: 'tab_list' });
+        const tab = (tabs.tabs as { active: boolean; targetId: string }[]).find(
+          (value) => value.active,
+        )!;
+        const inspector = await openDevtools(String(connection.cdpUrl), tab.targetId);
+        try {
+          const bound = await inspector.signInControl({ selector: '#primary' });
+          await assert.rejects(inspector.selectSignInControl(bound));
+          assert.deepEqual(received, Array(5).fill('/selected'));
+        } finally {
+          inspector.close();
+        }
+      }
+      await act({ action: 'open', url: origin + '/cancel' });
+      const interrupted = await client.signInMethods!('fixture', origin, [
+        { label: 'Ignored', selector: '#primary' },
+      ]);
+      cancelledMethod = interrupted.methods[0]!.id;
+      const interruptedSelection = {
+        origin,
+        document: interrupted.document,
+        methodId: cancelledMethod,
+      };
+      await assert.rejects(
+        client.selectSignInMethod!('fixture', interruptedSelection, cancelling.signal),
+      );
+      assert.equal(cancelling.signal.aborted, true);
+      assert.deepEqual(received, Array(5).fill('/selected'));
+      await assert.rejects(client.selectSignInMethod!('fixture', interruptedSelection));
+      await act({ action: 'click', selector: '#ordinary' });
+      const deadline = Date.now() + 5000;
+      while (received.length < 6 && Date.now() < deadline) await delay(10);
+      assert.deepEqual(received, [...Array(5).fill('/selected'), '/ordinary']);
+    } finally {
+      await worker.close();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(directory, { recursive: true, force: true });

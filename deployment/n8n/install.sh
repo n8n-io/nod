@@ -205,4 +205,5 @@ mv "$temporary/Otto.app" "$target" || fail 'The new Otto app could not be instal
 installed=true
 printf '\nOtto %s is installed at %s\n' "$version" "$target"
 printf 'Your keys, conversations and workspace are kept. Updates are available inside Otto.\n'
-printf 'Open Otto from Applications.\n'
+printf 'Opening Otto…\n'
+open "$target" || fail 'Otto is installed, but could not open. Open Otto from Applications.'

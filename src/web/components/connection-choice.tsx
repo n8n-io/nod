@@ -90,7 +90,7 @@ export function useConnectionChoice(
         .filter(
           (app) =>
             app.connectionId &&
-            app.status === 'connected' &&
+            (app.status === 'connected' || app.disconnectPending) &&
             !app.direct &&
             !app.accessPaths?.length,
         )
@@ -671,7 +671,7 @@ export function ConnectionChoice({
                         ? 'Try another Google account or use your own Composio key.'
                         : status.managed?.state === 'revoked'
                           ? 'Continue with your Google account.'
-                          : 'Google verifies your account so you can use Otto’s app connections.'}
+                          : 'Verify your Google account to connect apps.'}
                     </p>
                   )}
                 </div>

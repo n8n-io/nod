@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type HTMLAttributes,
@@ -7,8 +8,8 @@ import {
   type SelectHTMLAttributes,
 } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { OttoGlyph, prefersReducedMotion, Rise } from '../../components/motion';
-import { Button } from '../../components/ui';
+import { OttoGlyph, prefersReducedMotion } from '../../components/motion';
+import { Button, Switch } from '../../components/ui';
 import { cn } from '../../lib/utils';
 
 export type RevealStep = { wait?: number; typing?: number };
@@ -64,6 +65,47 @@ export function useReveal(
 
 export function Bubble({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('ob-bubble', className)} {...props} />;
+}
+
+export function PreferenceBubble({
+  children,
+  label,
+  checked,
+  saving,
+  disabled,
+  error,
+  onChange,
+}: {
+  children: ReactNode;
+  label: string;
+  checked: boolean;
+  saving: boolean;
+  disabled?: boolean;
+  error: string;
+  onChange(value: boolean): void;
+}) {
+  const id = useId();
+  return (
+    <Bubble onClick={(event) => event.stopPropagation()}>
+      <p id={`${id}-reason`}>{children}</p>
+      <div className="ob-preference-toggle">
+        <Switch
+          id={id}
+          checked={checked}
+          disabled={disabled}
+          aria-busy={saving}
+          aria-describedby={`${id}-reason`}
+          onCheckedChange={onChange}
+        />
+        <label htmlFor={id}>{label}</label>
+      </div>
+      {error && (
+        <p className="ob-preference-error" role="alert">
+          {error}
+        </p>
+      )}
+    </Bubble>
+  );
 }
 
 export function UserBubble({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
@@ -133,23 +175,47 @@ export function Messages({
   typing = false,
   avatar,
   className,
+  conversation = false,
 }: {
   items: ReactNode[];
   revealed?: number;
   typing?: boolean;
   avatar?: ReactNode;
   className?: string;
+  conversation?: boolean;
 }) {
   return (
-    <OttoRow thinking={typing} avatar={avatar} className={className}>
-      {items.map((item, index) => (
-        <Grow key={index} open={index < revealed}>
-          {item}
+    <OttoRow
+      thinking={typing}
+      avatar={avatar}
+      className={cn(!conversation && 'ob-intro', className)}
+    >
+      {items.map((item, index) =>
+        conversation ? (
+          <Grow key={index} open={index < revealed}>
+            {item}
+          </Grow>
+        ) : (
+          <div key={index} className="ob-message">
+            <div
+              className="ob-message-content"
+              data-show={index < revealed}
+              aria-hidden={index >= revealed}
+              inert={index >= revealed}
+            >
+              {item}
+            </div>
+            {typing && index === revealed && <Typing />}
+          </div>
+        ),
+      )}
+      {conversation ? (
+        <Grow open={typing} animate={false}>
+          <Typing />
         </Grow>
-      ))}
-      <Grow open={typing} animate={false}>
-        <Typing />
-      </Grow>
+      ) : (
+        typing && !items.length && <Typing />
+      )}
     </OttoRow>
   );
 }
@@ -176,7 +242,7 @@ export function Footer({
   busy?: boolean;
 }) {
   return (
-    <Rise show={show} className="ob-footer" data-analytics-public>
+    <div className="ob-footer" data-analytics-public>
       {onBack && (
         <Button variant="ghost" onClick={onBack} disabled={busy}>
           {backLabel}
@@ -184,15 +250,15 @@ export function Footer({
       )}
       <div className="ob-footer-end">
         {onSkip && (
-          <Button variant="ghost" onClick={onSkip} disabled={busy}>
+          <Button variant="ghost" onClick={onSkip} disabled={!show || busy}>
             {skipLabel}
           </Button>
         )}
-        <Button className="ob-next" onClick={onNext} disabled={nextDisabled || busy}>
+        <Button className="ob-next" onClick={onNext} disabled={!show || nextDisabled || busy}>
           {nextLabel}
         </Button>
       </div>
-    </Rise>
+    </div>
   );
 }
 

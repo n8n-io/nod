@@ -57,13 +57,15 @@ macOS can ask again after Otto is re-signed. Approve it in the macOS dialog. Nev
 
 ### Not enough free space to install the runtime
 
-On a Mac, the message says how much free space Otto needs and how much more to free. Otto needs room for the extracted runtime plus 512 MiB, and for the archive while it downloads. Free that space, then retry. Your conversations and settings are kept.
+On a Mac, the message says how much free space Otto needs and how much more to free. Otto needs room for the extracted runtime plus 512 MiB. Free that space, then retry. Your conversations and settings are kept.
 
 On Windows, the message reads "Otto needs more free disk space to prepare its private computer." Allow at least 20 GB, then select **Try again**.
 
 ### Setup fails or stops partway
 
-Retry first. Don't delete the profile, VM, database or runtime cache to fix it. If it still fails, [send feedback](#send-feedback-with-a-diagnostic-report). If the chat can't open, send the setup error you see instead.
+Retry first. Don't delete the profile, VM, database or runtime cache by hand to fix it. If it still fails, [send feedback](#send-feedback-with-a-diagnostic-report). If the chat can't open, send the setup error you see instead.
+
+To start over, select **Remove all data…** in the **Otto** menu, then open Otto again. It deletes your profile and private computer. See [Remove Otto](/get-started/install-desktop/#remove-otto) for what it keeps.
 
 ### Windows says WSL is missing
 

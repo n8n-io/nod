@@ -49,7 +49,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   const [returning, setReturning] = useState(false);
   const [closed, setClosed] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [naturalWidth, setNaturalWidth] = useState(0);
+  const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
   const [frame, setFrame] = useState('');
   const unavailable = failures >= 3;
 
@@ -114,10 +114,10 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   function point(event: React.MouseEvent<HTMLImageElement>) {
     const element = event.currentTarget;
     const box = element.getBoundingClientRect();
-    if (!box.width || !box.height || !element.naturalWidth || !element.naturalHeight) return null;
-    const scale = Math.min(box.width / element.naturalWidth, box.height / element.naturalHeight);
-    const width = element.naturalWidth * scale;
-    const height = element.naturalHeight * scale;
+    if (!box.width || !box.height || !naturalSize.width || !naturalSize.height) return null;
+    const scale = Math.min(box.width / naturalSize.width, box.height / naturalSize.height);
+    const width = naturalSize.width * scale;
+    const height = naturalSize.height * scale;
     const x = (event.clientX - box.left - (box.width - width) / 2) / width;
     const y = (event.clientY - box.top - (box.height - height) / 2) / height;
     return x < 0 || x > 1 || y < 0 || y > 1 ? null : { x, y };
@@ -358,8 +358,8 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
       aria-modal={expanded || undefined}
       aria-label={expanded ? "Otto's browser" : undefined}
       style={
-        expanded && naturalWidth
-          ? { width: `min(${naturalWidth + 2}px, calc(100vw - 48px))` }
+        expanded && naturalSize.width
+          ? { width: `min(${naturalSize.width + 2}px, calc(100vw - 48px))` }
           : undefined
       }
     >
@@ -392,7 +392,10 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
               setLive(true);
               setShown(true);
               setFailures(0);
-              setNaturalWidth(event.currentTarget.naturalWidth);
+              const { naturalWidth: width, naturalHeight: height } = event.currentTarget;
+              setNaturalSize((size) =>
+                size.width === width && size.height === height ? size : { width, height },
+              );
               imageLoad.current.resolve();
             }}
             onError={(event) => {

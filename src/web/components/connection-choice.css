@@ -110,7 +110,7 @@
 }
 .connection-key .input[type='password'],
 .connection-mono {
-  font-family: var(--font-mono);
+  font-family: inherit;
 }
 .connection-saved {
   display: flex;
@@ -179,7 +179,6 @@
   min-width: 0;
 }
 .connection-onboarding .connection-onboarding-reason {
-  max-width: 46ch;
   margin-top: 8px;
   color: var(--muted-foreground);
   font-size: 15px;

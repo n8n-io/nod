@@ -359,6 +359,7 @@ export async function createBrowserConnections(
         "UPDATE browser_connections SET state='disconnecting' WHERE id=$1 AND owner_id=$2",
         [id, options.ownerId],
       );
+      if (row.browser_id) await browser.hold(row.browser_id, false);
       await browser.deleteProfile(row.profile_id);
       const removed = await pool.query(
         'DELETE FROM browser_connections WHERE id=$1 AND owner_id=$2',

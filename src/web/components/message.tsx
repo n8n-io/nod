@@ -1,13 +1,13 @@
-import { lazy, memo, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, Check, CornerUpLeft, SmilePlus, X } from 'lucide-react';
+import { ChevronDown, Copy, Check, CornerUpLeft, SmilePlus } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import type { Message } from '../../shared/contracts';
 import { reactionEmoji } from '../../shared/emoji';
-import { Button, Checkbox, Loading, Notice } from './ui';
+import { Checkbox, Loading, Notice } from './ui';
 import { BrandMark } from './brand';
 import { errorMessage, post } from '../lib/api';
 import {
@@ -25,6 +25,7 @@ import { rehypeLocalLinks } from '../lib/markdown';
 import { nextReaction, reactionName } from '../lib/reactions';
 import { MessageLinkPreviews } from './link-previews';
 import { SetupActions } from './setup-link';
+import { TelegramChatLink, useTelegramChatUrl } from './telegram-chat-link';
 import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
@@ -61,6 +62,7 @@ export const MessageText = memo(function MessageText({
   handoffTurnId?: string;
 }) {
   const content = useRef<HTMLDivElement>(null);
+  const telegramUrl = useTelegramChatUrl(text);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
   const actions = messageSetupLinks(text, origin);
   const connected = (href: string) =>
@@ -77,6 +79,7 @@ export const MessageText = memo(function MessageText({
             a: ({ href, children, node }) => {
               const link = safeMessageLink(href ?? '', origin);
               if (!link) return <span>{children}</span>;
+              if (href === telegramUrl) return <TelegramChatLink href={telegramUrl} />;
               const linkText = messageLinkText(node?.children ?? []);
               const setup = setupLink(link, linkText);
               if (setup && actions.some((action) => action.href === setup.href))
@@ -126,18 +129,14 @@ export const MessageText = memo(function MessageText({
           <BrowserHandoff key={handoffTurnId} turnId={handoffTurnId} paused={handoffPaused} />
         )}
       </div>
-      {previews && <MessageLinkPreviews content={content} text={text} />}
+      {previews && <MessageLinkPreviews key={telegramUrl} content={content} text={text} />}
     </>
   );
 });
 
-function ReactionGlyph({ value }: { value: string }) {
-  return (
-    <span className="reaction-emoji" aria-hidden="true">
-      {reactionEmoji(value)}
-    </span>
-  );
-}
+type MessagePanel =
+  | { kind: 'menu'; point?: { x: number; y: number }; method: 'button' | 'context_menu' }
+  | { kind: 'reactions'; expanded: boolean };
 
 export function MessageBubble({
   message,
@@ -161,18 +160,15 @@ export function MessageBubble({
   const [copied, setCopied] = useState(false);
   const [reaction, setReaction] = useState(message.reaction ?? null);
   const [reacting, setReacting] = useState(false);
-  const [pickingReaction, setPickingReaction] = useState(false);
-  const [pickerExpanded, setPickerExpanded] = useState(false);
-  const [pickerPosition, setPickerPosition] = useState({ left: 8, top: 8, width: 340 });
   const [selectedName, setSelectedName] = useState('');
   const [selected, setSelected] = useState(false);
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const copyTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [panel, setPanel] = useState<MessagePanel | null>(null);
+  const [position, setPosition] = useState({ left: 8, top: 8, width: 180, maxHeight: 360 });
   const articleElement = useRef<HTMLElement>(null);
-  const menuElement = useRef<HTMLDivElement>(null);
-  const menuTrigger = useRef<HTMLElement | null>(null);
-  const pickerTrigger = useRef<HTMLElement | null>(null);
-  const pickerElement = useRef<HTMLDivElement>(null);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  const pickerTrigger = useRef<HTMLButtonElement>(null);
+  const panelElement = useRef<HTMLDivElement>(null);
+  const copyTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const agentReaction =
     message.role === 'user'
       ? reactionEmoji(message.reactions?.find((item) => item.actor === 'assistant')?.reaction ?? '')
@@ -203,27 +199,83 @@ export function MessageBubble({
     document.addEventListener('pointerdown', outside);
     return () => document.removeEventListener('pointerdown', outside);
   }, [selected]);
+  useLayoutEffect(() => {
+    if (!panel || !panelElement.current) return;
+    const element = panelElement.current;
+    const place = () => {
+      const trigger = panel.kind === 'menu' ? menuTrigger.current : pickerTrigger.current;
+      if (!trigger) return;
+      const bounds = trigger.getBoundingClientRect();
+      let next;
+      if (panel.kind === 'menu') {
+        const point = panel.point ?? { x: bounds.left, y: bounds.bottom };
+        next = {
+          left: Math.max(0, Math.min(point.x, window.innerWidth - element.offsetWidth)),
+          top: Math.max(0, Math.min(point.y, window.innerHeight - element.offsetHeight)),
+          width: Math.min(180, window.innerWidth),
+          maxHeight: window.innerHeight,
+        };
+      } else {
+        const width = Math.min(panel.expanded ? 328 : 312, window.innerWidth - 16);
+        const below = window.innerHeight - bounds.bottom - 12;
+        const above = bounds.top - 12;
+        const desired = panel.expanded ? 360 : element.offsetHeight;
+        const down = below >= desired || below >= above;
+        const maxHeight = Math.max(0, Math.min(360, down ? below : above));
+        const height = Math.min(desired, maxHeight);
+        next = {
+          left: Math.max(8, Math.min(bounds.right - width, window.innerWidth - width - 8)),
+          top: Math.max(
+            8,
+            Math.min(
+              down ? bounds.bottom + 4 : bounds.top - height - 4,
+              window.innerHeight - height - 8,
+            ),
+          ),
+          width,
+          maxHeight,
+        };
+      }
+      setPosition((current) =>
+        current.left === next.left &&
+        current.top === next.top &&
+        current.width === next.width &&
+        current.maxHeight === next.maxHeight
+          ? current
+          : next,
+      );
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [panel]);
   useEffect(() => {
-    if (!menu) return;
-    const close = (event: PointerEvent) => {
-      if (!menuElement.current?.contains(event.target as Node)) setMenu(null);
+    if (!panel) return;
+    const trigger = panel.kind === 'menu' ? menuTrigger.current : pickerTrigger.current;
+    const outside = (event: PointerEvent) => {
+      if (panelElement.current?.contains(event.target as Node)) return;
+      if (event.button === 0 && trigger?.contains(event.target as Node)) return;
+      setPanel(null);
     };
     const focusChanged = (event: FocusEvent) => {
-      if (!menuElement.current?.contains(event.target as Node)) setMenu(null);
+      if (
+        !panelElement.current?.contains(event.target as Node) &&
+        !trigger?.contains(event.target as Node)
+      )
+        setPanel(null);
     };
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Tab') {
-        setMenu(null);
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setPanel(null);
+        trigger?.focus({ preventScroll: true });
         return;
       }
-      if (event.key === 'Escape') {
-        setMenu(null);
-        menuTrigger.current?.focus();
-      }
-      if (!menuElement.current?.contains(event.target as Node)) return;
+      if (panel.kind !== 'menu' || !panelElement.current?.contains(event.target as Node)) return;
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
       const items = Array.from(
-        menuElement.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [],
+        panelElement.current.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
       );
       if (!items.length) return;
       event.preventDefault();
@@ -234,53 +286,29 @@ export function MessageBubble({
           : event.key === 'End'
             ? items.length - 1
             : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
-      items[next]?.focus();
-    };
-    menuElement.current?.querySelector<HTMLButtonElement>('button')?.focus();
-    document.addEventListener('pointerdown', close);
-    document.addEventListener('focusin', focusChanged);
-    document.addEventListener('keydown', keydown);
-    return () => {
-      document.removeEventListener('pointerdown', close);
-      document.removeEventListener('focusin', focusChanged);
-      document.removeEventListener('keydown', keydown);
-    };
-  }, [menu]);
-  useEffect(() => {
-    if (!pickingReaction) return;
-    if (!pickerElement.current?.contains(document.activeElement)) pickerElement.current?.focus();
-    const outside = (event: PointerEvent) => {
-      if (
-        !pickerElement.current?.contains(event.target as Node) &&
-        !pickerTrigger.current?.contains(event.target as Node)
-      )
-        setPickingReaction(false);
-    };
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      setPickingReaction(false);
-      pickerTrigger.current?.focus();
+      items[next]?.focus({ preventScroll: true });
     };
     const moved = (event: Event) => {
-      if (!(event.target instanceof Node) || !pickerElement.current?.contains(event.target))
-        setPickingReaction(false);
+      if (!(event.target instanceof Node) || !panelElement.current?.contains(event.target))
+        setPanel(null);
     };
+    if (panel.kind === 'menu')
+      panelElement.current
+        ?.querySelector<HTMLButtonElement>('button')
+        ?.focus({ preventScroll: true });
     document.addEventListener('pointerdown', outside);
+    document.addEventListener('focusin', focusChanged);
     document.addEventListener('keydown', keydown);
     document.addEventListener('scroll', moved, true);
     window.addEventListener('resize', moved);
     return () => {
       document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('focusin', focusChanged);
       document.removeEventListener('keydown', keydown);
       document.removeEventListener('scroll', moved, true);
       window.removeEventListener('resize', moved);
     };
-  }, [pickingReaction]);
-  function closePicker() {
-    setPickingReaction(false);
-    pickerTrigger.current?.focus();
-  }
+  }, [panel?.kind]);
   async function leave(value: string, method: ReactionAnalytics['method']) {
     if (reacting || leaving) return;
     setLeaving(true);
@@ -298,12 +326,12 @@ export function MessageBubble({
     name = reactionName(value),
     delay = 0,
   ) {
-    if (reacting) return;
+    if (reacting || message.role !== 'assistant' || streaming) return;
     const capture = analyticsForCurrentSession();
     const next = nextReaction(reaction, value);
     setReacting(true);
-    setMenu(null);
-    if (pickingReaction) closePicker();
+    setPanel(null);
+    if (panel?.kind === 'reactions') pickerTrigger.current?.focus({ preventScroll: true });
     setError('');
     try {
       if (delay) await new Promise((done) => setTimeout(done, delay));
@@ -322,33 +350,9 @@ export function MessageBubble({
       setReacting(false);
     }
   }
-  function openPicker(trigger: HTMLElement, expanded = false) {
-    pickerTrigger.current = trigger;
-    const rect = trigger.getBoundingClientRect();
-    const bounds = trigger.closest('.messages')?.getBoundingClientRect();
-    const content = trigger
-      .closest('.message')
-      ?.querySelector('.message-body')
-      ?.getBoundingClientRect();
-    const minLeft = Math.max(8, (bounds?.left ?? 0) + 8);
-    const maxRight = Math.min(window.innerWidth - 8, bounds?.right || window.innerWidth - 8);
-    const width = Math.min(expanded ? 340 : 286, maxRight - minLeft);
-    const height = Math.min(expanded ? 412 : 48, window.innerHeight - 16);
-    setPickerPosition({
-      width,
-      left: Math.max(minLeft, Math.min(content?.left || rect.left, maxRight - width)),
-      top:
-        window.innerHeight - rect.bottom >= height + 14
-          ? rect.bottom + 6
-          : Math.max(8, rect.top - height - 6),
-    });
-    setMenu(null);
-    setPickerExpanded(expanded);
-    setPickingReaction(true);
-  }
   async function copy(method: 'button' | 'context_menu') {
     captureAnalytics('otto_message_action', { action: 'copy', role: message.role, method });
-    setMenu(null);
+    setPanel(null);
     try {
       await navigator.clipboard.writeText(message.text);
       setCopied(true);
@@ -360,36 +364,24 @@ export function MessageBubble({
   }
   function reply(method: 'button' | 'context_menu') {
     captureAnalytics('otto_message_action', { action: 'reply', role: message.role, method });
-    setMenu(null);
+    setPanel(null);
     onReply?.();
-  }
-  function openMenu(x: number, y: number, trigger: HTMLElement) {
-    menuTrigger.current = trigger;
-    setMenu({
-      x: Math.max(8, Math.min(x, window.innerWidth - 212)),
-      y: Math.max(8, Math.min(y, window.innerHeight - 230)),
-    });
   }
   return (
     <article
       ref={articleElement}
-      className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${selected ? ' message-selected' : ''}`}
+      className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${selected ? ' message-selected' : ''}${panel ? ' message-panel-open' : ''}`}
       aria-label={streaming ? 'Otto is responding' : message.role === 'user' ? 'You' : 'Otto'}
       data-message-id={streaming ? undefined : message.id}
       onPointerUp={(event) => {
         if (!['touch', 'pen'].includes(event.pointerType)) return;
-        if ((event.target as HTMLElement).closest('a,button,audio,video,input')) return;
+        if ((event.target as HTMLElement).closest('a,button,audio,video,input,textarea,select'))
+          return;
         setSelected(true);
-        event.currentTarget.focus();
+        event.currentTarget.focus({ preventScroll: true });
       }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setSelected(false);
-      }}
-      onContextMenu={(event) => {
-        if (streaming) return;
-        if ((event.target as HTMLElement).closest('a,audio,video')) return;
-        event.preventDefault();
-        openMenu(event.clientX, event.clientY, event.currentTarget);
       }}
       tabIndex={-1}
     >
@@ -400,21 +392,28 @@ export function MessageBubble({
       )}
       <div className="message-content">
         <div className="message-row">
-          <div
-            className="message-bubble"
-            onDoubleClick={
-              message.role === 'assistant' && !streaming
-                ? (event) => {
-                    if ((event.target as HTMLElement).closest('a,button,audio,video,input')) return;
-                    window.getSelection()?.removeAllRanges();
-                    void (reaction && reactionEmoji(reaction) === '👍'
-                      ? leave(reaction, 'double_click')
-                      : react('👍', 'double_click'));
-                  }
-                : undefined
-            }
-          >
-            <div className="message-body">
+          <div className={`message-bubble${!streaming && shownReaction ? ' has-reaction' : ''}`}>
+            <div
+              className="message-body"
+              onContextMenu={(event) => {
+                if (
+                  streaming ||
+                  (event.target as HTMLElement).closest(
+                    'a,button,audio,video,input,textarea,select,[contenteditable="true"],[role="button"]',
+                  )
+                )
+                  return;
+                event.preventDefault();
+                setPanel({
+                  kind: 'menu',
+                  method: 'context_menu',
+                  point:
+                    event.clientX || event.clientY
+                      ? { x: event.clientX, y: event.clientY }
+                      : undefined,
+                });
+              }}
+            >
               {message.replyTo &&
                 !(message.role === 'assistant' && message.replyTo.role === 'assistant') && (
                   <blockquote className="message-reply-quote">
@@ -437,174 +436,143 @@ export function MessageBubble({
               {message.role === 'assistant' && message.attachments.length > 0 && (
                 <MessageAttachments attachments={message.attachments} />
               )}
-            </div>
-          </div>
-          {!streaming && (
-            <div className="message-tools">
-              {reaction ? (
-                <button
-                  key={reaction}
-                  type="button"
-                  className={reactionClass}
-                  disabled={reacting}
-                  onClick={() => void leave(reaction, 'pin')}
-                  aria-label={`Remove your ${selectedName || reactionName(reaction)} reaction`}
-                  title={`Your reaction: ${selectedName || reactionName(reaction)}. Click to remove`}
+              {!streaming && (
+                <time
+                  className="message-time"
+                  dateTime={message.createdAt}
+                  title={formatFullDateTime(message.createdAt, dateFormat)}
                 >
-                  {reactionEmoji(reaction)}
-                </button>
-              ) : (
-                agentReaction && (
-                  <span
-                    key={agentReaction}
-                    className={reactionClass}
-                    role="img"
-                    aria-label={`Otto reacted: ${reactionName(agentReaction)}`}
-                    title={`Otto reacted: ${reactionName(agentReaction)}`}
-                  >
-                    {agentReaction}
-                  </span>
-                )
+                  {formatTime(message.createdAt, dateFormat)}
+                </time>
               )}
-              <time
-                className="message-time"
-                dateTime={message.createdAt}
-                title={formatFullDateTime(message.createdAt, dateFormat)}
-              >
-                {formatTime(message.createdAt, dateFormat)}
-              </time>
-              <div className="message-actions" aria-label="Message actions">
-                {onReply && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label="Reply to message"
-                    title="Reply"
-                    onClick={() => reply('button')}
-                  >
-                    <CornerUpLeft size={16} />
-                  </Button>
-                )}
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={copied ? 'Message copied' : 'Copy message'}
-                  title="Copy"
-                  onClick={() => void copy('button')}
-                >
-                  {copied ? <Check size={16} /> : <Copy size={16} />}
-                </Button>
+            </div>
+            {!streaming && (
+              <>
                 {message.role === 'assistant' && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
+                  <button
+                    type="button"
+                    className="message-trigger message-react-trigger"
+                    ref={pickerTrigger}
                     aria-label="React to message"
                     title="React"
                     aria-haspopup="dialog"
-                    aria-expanded={pickingReaction}
-                    onClick={(event) =>
-                      pickingReaction ? closePicker() : openPicker(event.currentTarget)
+                    aria-expanded={panel?.kind === 'reactions'}
+                    disabled={reacting}
+                    onClick={() =>
+                      setPanel(
+                        panel?.kind === 'reactions' ? null : { kind: 'reactions', expanded: false },
+                      )
                     }
                   >
-                    <SmilePlus size={16} />
-                  </Button>
+                    <SmilePlus size={17} aria-hidden="true" />
+                  </button>
                 )}
-              </div>
-            </div>
-          )}
+                <button
+                  type="button"
+                  className="message-trigger message-menu-trigger"
+                  ref={menuTrigger}
+                  aria-label="Message actions"
+                  title="Message actions"
+                  aria-haspopup="menu"
+                  aria-expanded={panel?.kind === 'menu'}
+                  onClick={(event) =>
+                    setPanel(
+                      panel?.kind === 'menu'
+                        ? null
+                        : {
+                            kind: 'menu',
+                            method: 'button',
+                            point: event.detail
+                              ? { x: event.clientX, y: event.clientY }
+                              : undefined,
+                          },
+                    )
+                  }
+                >
+                  <ChevronDown size={16} aria-hidden="true" />
+                </button>
+                {reaction && message.role === 'assistant' ? (
+                  <button
+                    key={reaction}
+                    type="button"
+                    className={reactionClass}
+                    disabled={reacting}
+                    onClick={() => void leave(reaction, 'pin')}
+                    aria-label={`Remove your ${selectedName || reactionName(reaction)} reaction`}
+                    title={`Your reaction: ${selectedName || reactionName(reaction)}. Click to remove`}
+                  >
+                    <span aria-hidden="true">{reactionEmoji(reaction)}</span>
+                  </button>
+                ) : (
+                  agentReaction && (
+                    <span
+                      key={agentReaction}
+                      className={reactionClass}
+                      role="img"
+                      aria-label={`Otto reacted: ${reactionName(agentReaction)}`}
+                      title={`Otto reacted: ${reactionName(agentReaction)}`}
+                    >
+                      {agentReaction}
+                    </span>
+                  )
+                )}
+              </>
+            )}
+          </div>
         </div>
         {error && <Notice>{error}</Notice>}
-      </div>
-      {menu &&
-        createPortal(
-          <div
-            className="chat-message-menu menu"
-            ref={menuElement}
-            role="menu"
-            aria-label="Message actions"
-            style={{ left: menu.x, top: menu.y }}
-          >
-            {message.role === 'assistant' && (
-              <div className="message-reaction-options" role="group" aria-label="Reactions">
-                {['👍', '❤️', '😂', '🎉', '😮', '🙏'].map((value) => (
-                  <button
-                    key={value}
-                    role="menuitemradio"
-                    aria-checked={Boolean(reaction && reactionEmoji(reaction) === value)}
-                    aria-label={reactionName(value)}
-                    disabled={reacting}
-                    onClick={() => void react(value, 'menu')}
-                  >
-                    <ReactionGlyph value={value} />
-                  </button>
-                ))}
-              </div>
-            )}
-            {message.role === 'assistant' && (
-              <button
-                role="menuitem"
-                onClick={() => openPicker(menuTrigger.current ?? document.body, true)}
-              >
-                <SmilePlus size={16} />
-                More emoji
-              </button>
-            )}
-            {onReply && (
-              <button role="menuitem" onClick={() => reply('context_menu')}>
-                <CornerUpLeft size={16} />
-                Reply
-              </button>
-            )}
-            <button role="menuitem" onClick={() => void copy('context_menu')}>
-              <Copy size={16} />
-              Copy
-            </button>
-          </div>,
-          document.body,
+        {copied && (
+          <span className="sr-only" role="status">
+            Message copied
+          </span>
         )}
-      {pickingReaction &&
+      </div>
+      {panel &&
         createPortal(
-          <div
-            className={`chat-emoji-popover${pickerExpanded ? '' : ' is-compact'}`}
-            role="dialog"
-            aria-label="Choose a reaction"
-            aria-modal="false"
-            tabIndex={-1}
-            ref={pickerElement}
-            style={pickerPosition}
-            onBlur={(event) => {
-              if (
-                event.relatedTarget &&
-                !event.currentTarget.contains(event.relatedTarget) &&
-                event.relatedTarget !== pickerTrigger.current
-              )
-                setPickingReaction(false);
-            }}
-          >
-            {pickerExpanded && (
-              <div className="chat-emoji-heading">
-                <strong>Add a reaction</strong>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Close emoji picker"
-                  onClick={closePicker}
-                >
-                  <X size={16} />
-                </Button>
-              </div>
-            )}
-            <Suspense fallback={<Loading label="Loading emoji…" />}>
-              <ReactionPicker
-                expanded={pickerExpanded}
-                selected={reaction}
-                onExpand={() => openPicker(pickerTrigger.current ?? document.body, true)}
-                onSelect={(emoji, name) =>
-                  void react(emoji, pickerExpanded ? 'picker' : 'quick', name)
-                }
-              />
-            </Suspense>
-          </div>,
+          panel.kind === 'menu' ? (
+            <div
+              className="chat-message-menu menu"
+              ref={panelElement}
+              role="menu"
+              aria-label="Message actions"
+              style={position}
+            >
+              {onReply && (
+                <button type="button" role="menuitem" onClick={() => reply(panel.method)}>
+                  <CornerUpLeft size={16} aria-hidden="true" />
+                  Reply
+                </button>
+              )}
+              <button type="button" role="menuitem" onClick={() => void copy(panel.method)}>
+                {copied ? (
+                  <Check size={16} aria-hidden="true" />
+                ) : (
+                  <Copy size={16} aria-hidden="true" />
+                )}
+                Copy
+              </button>
+            </div>
+          ) : (
+            <div
+              className={`chat-emoji-popover${panel.expanded ? '' : ' is-compact'}`}
+              role="dialog"
+              aria-label="Choose a reaction"
+              aria-modal="false"
+              ref={panelElement}
+              style={{ ...position, height: panel.expanded ? position.maxHeight : undefined }}
+            >
+              <Suspense fallback={<Loading label="Loading emoji…" />}>
+                <ReactionPicker
+                  expanded={panel.expanded}
+                  selected={reaction}
+                  onExpand={() => setPanel({ kind: 'reactions', expanded: true })}
+                  onSelect={(emoji, name) =>
+                    void react(emoji, panel.expanded ? 'picker' : 'quick', name)
+                  }
+                />
+              </Suspense>
+            </div>
+          ),
           document.body,
         )}
     </article>

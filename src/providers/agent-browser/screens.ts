@@ -119,11 +119,16 @@ function interceptedClick(command: Record<string, unknown>, error: unknown): boo
   );
 }
 
+export function daemonDeadline(command: Record<string, unknown>) {
+  const operation = Number(command.timeout);
+  return Math.max(60_000, (Number.isFinite(operation) ? operation : 0) + 30_000);
+}
+
 export function existingDaemonCommand(
   path: string,
   command: Record<string, unknown>,
   signal?: AbortSignal,
-  timeoutMs?: number,
+  timeoutMs = daemonDeadline(command),
   maxBytes = browserRequestBytes,
 ): Promise<Record<string, unknown>> {
   signal?.throwIfAborted();
@@ -132,7 +137,6 @@ export function existingDaemonCommand(
     socket.setEncoding('utf8');
     let received = '';
     let settled = false;
-    let deadline: ReturnType<typeof setTimeout> | undefined;
     const stop = (error?: Error, data?: Record<string, unknown>) => {
       if (settled) return;
       settled = true;
@@ -144,8 +148,7 @@ export function existingDaemonCommand(
     };
     const abort = () => stop(new DaemonTransportError('aborted'));
     signal?.addEventListener('abort', abort, { once: true });
-    if (timeoutMs !== undefined)
-      deadline = setTimeout(() => stop(new DaemonTransportError('timeout')), timeoutMs);
+    const deadline = setTimeout(() => stop(new DaemonTransportError('timeout')), timeoutMs);
     socket.once('error', (error: NodeJS.ErrnoException) =>
       command.action === 'close' && ['ENOENT', 'ECONNREFUSED'].includes(error.code ?? '')
         ? stop(undefined, {})

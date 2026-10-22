@@ -78,6 +78,8 @@ export function useChannelSettings({ watchTelegram }: { watchTelegram: boolean }
 
   function accept(channel: ChannelSetupSummary) {
     request.current?.abort();
+    setLoadError('');
+    setLoading(false);
     const others = <T extends { provider: string }>(items: T[]) =>
       items.filter((item) => item.provider !== channel.provider);
     setSettings((current) =>

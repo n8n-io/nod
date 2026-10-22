@@ -7,6 +7,7 @@ export interface MemoryCurator {
     request: {
       task:
         | 'reflect'
+        | 'remember'
         | 'review'
         | 'access'
         | 'interview'

@@ -98,7 +98,7 @@ All the models from your connections appear in one searchable list. Choosing a m
 
 | To                     | Do this                                                                      |
 | ---------------------- | ---------------------------------------------------------------------------- |
-| Switch model           | Select the model name above the message box, then pick a model.              |
+| Switch model           | Open **Settings → Models**, then pick a model.                               |
 | Update a model list    | In **Models**, select the refresh button next to the connection.             |
 | Fix an expired sign-in | Select **Reconnect** on a ChatGPT or OpenRouter sign-in connection.          |
 | Remove a connection    | Select the remove button next to it. If it was selected, choose a new model. |
@@ -170,6 +170,7 @@ flowchart LR
 ```
 
 - Otto encrypts saved keys and sign-ins with the Vault key. The Mac keeps that key in Keychain, and the Windows app protects it with Windows DPAPI. Other source installs need `OTTO_VAULT_KEY`.
+- Otto checks credential storage before starting a connection. If storage is unavailable, check the Vault configuration, permissions and database connection, then try again.
 - Keys from `.env` stay in server memory and aren't copied into the database.
 - Your browser doesn't store the key, and Otto removes it from provider errors.
 

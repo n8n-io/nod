@@ -6,18 +6,6 @@
   font-display: swap;
 }
 :root {
-  color-scheme: light;
-  --canvas: #fafafa;
-  --sidebar: #f1f1f1;
-  --surface: #ffffff;
-  --text: #191919;
-  --muted: #676767;
-  --line: #e0e0e0;
-  --control: #676767;
-  --accent: #87003c;
-  --selection: #ffe8ec;
-  --pink: #ff91ac;
-  --error: #b42142;
   font:
     14px/1.5 'Geist',
     -apple-system,
@@ -27,217 +15,53 @@
   font-synthesis: none;
   font-feature-settings: 'liga' 1;
   -webkit-font-smoothing: antialiased;
-  color: var(--text);
+  color: var(--foreground);
   background: var(--canvas);
-}
-:root[data-theme='dark'] {
-  color-scheme: dark;
-  --canvas: #191919;
-  --sidebar: #242424;
-  --surface: #242424;
-  --text: #fafafa;
-  --muted: #bfbfbf;
-  --line: #353535;
-  --control: #868686;
-  --accent: #ff91ac;
-  --selection: #5a0026;
-  --error: #ff9db3;
 }
 * {
   box-sizing: border-box;
 }
 body {
   margin: 0;
-  height: 100vh;
-  overflow: hidden;
-}
-button,
-input,
-select {
-  font: inherit;
-}
-button,
-select {
-  cursor: pointer;
-}
-button {
-  color: inherit;
-}
-button:disabled,
-input:disabled,
-select:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-[hidden] {
-  display: none !important;
-}
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.switch {
-  position: relative;
-  flex-shrink: 0;
-  cursor: pointer;
-}
-.switch input {
-  appearance: none;
-  display: block;
-  width: 40px;
-  height: 24px;
-  background: var(--control);
-  margin: 0;
-  border-radius: 20px;
-  cursor: pointer;
-}
-.switch input:checked {
-  background: var(--accent);
-}
-.switch span {
-  pointer-events: none;
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  left: 4px;
-  top: 4px;
-  transition: transform 120ms;
-}
-.switch input:checked + span {
-  transform: translateX(16px);
-}
-
-main {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  padding: 52px 32px 24px;
 }
 .titlebar {
   position: fixed;
   inset: 0 0 auto;
   height: 52px;
-}
-.titlebar,
-header {
   -webkit-app-region: drag;
   user-select: none;
 }
-.brand {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font-size: 24px;
-  font-weight: 500;
-  letter-spacing: -0.8px;
-  margin-bottom: 26px;
-}
-.brand svg {
-  width: 32px;
-  height: 32px;
-}
-h1,
-p {
-  margin: 0;
-}
-h1 {
-  font-size: 24px;
-  letter-spacing: -0.7px;
-  line-height: 1.25;
-}
-header > p {
-  color: var(--muted);
-  margin-top: 12px;
-  line-height: 1.6;
-}
-.content {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-  padding-top: 22px;
-}
-.setting-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  min-height: 48px;
-  gap: 16px;
-}
-.setting-row > label {
-  font-weight: 500;
-}
-.hint {
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.6;
-}
-form > .hint {
-  margin-top: 12px;
-}
-.error {
-  color: var(--error);
-  margin-top: 12px;
-}
-footer {
-  flex-shrink: 0;
-  padding-top: 20px;
-}
-footer .hint {
-  margin-bottom: 12px;
-}
 button {
-  border-radius: 8px;
-  padding: 8px 16px;
+  font: inherit;
+  cursor: pointer;
+}
+.recovery-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 20px;
+  color: inherit;
+  background: var(--control);
+  font: inherit;
   font-weight: 500;
+  cursor: pointer;
 }
-.primary {
-  background: var(--pink);
-  border: 1px solid var(--pink);
-  color: #191919;
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
-.secondary {
-  background: var(--surface);
-  border: 1px solid var(--control);
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 .recovery-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 8px;
-  margin-top: 20px;
 }
-.progress-track {
-  height: 4px;
-  border-radius: 4px;
-  background: var(--line);
-  overflow: hidden;
-  margin: 26px 0 12px;
-}
-.progress-value {
-  height: 100%;
-  width: 30%;
-  background: var(--pink);
-  border-radius: inherit;
-  animation: progress 1.6s ease-in-out infinite;
-}
-.progress-value.determinate {
-  animation: none;
-}
-@keyframes progress {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(340%);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  #progress-value {
-    animation: none;
-    width: 40%;
-  }
+
+.ob-native-error {
+  padding: 16px 24px;
+  color: var(--error);
+  text-align: center;
 }

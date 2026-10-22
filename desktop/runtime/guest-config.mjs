@@ -27,14 +27,23 @@ export function guestConfiguration({
     ],
     provision: [
       {
-        mode: 'system',
+        mode: 'dependency',
+        skipDefaultDependencyResolution: true,
         script: `#!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 if ! command -v iptables >/dev/null; then
-  apt-get -o Acquire::Retries=3 update
-  apt-get -o Acquire::Retries=3 install -y --no-install-recommends iptables
+  apt-get install -y --no-install-recommends /opt/otto-assets/guest-packages/*.deb || {
+    apt-get -o Acquire::Retries=3 update
+    apt-get -o Acquire::Retries=3 install -y --no-install-recommends iptables
+  }
 fi
+`,
+      },
+      {
+        mode: 'system',
+        script: `#!/bin/bash
+set -euo pipefail
 tar -xzf /opt/otto-assets/docker-guest.tar.gz --strip-components=1 -C /usr/local/bin
 mkdir -p /etc/docker
 cat > /etc/docker/daemon.json <<'JSON'

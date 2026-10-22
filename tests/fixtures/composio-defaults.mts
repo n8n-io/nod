@@ -814,10 +814,14 @@ try {
         managed: managedStatus(),
         suffix: null,
       });
-      assert.equal(
-        (await pool.query('SELECT 1 FROM integration_keys WHERE owner_id=$1', [recoveringOwner]))
-          .rowCount,
-        0,
+      assert.deepEqual(
+        (
+          await pool.query(
+            'SELECT vault_id,auth_config_vault_id FROM integration_keys WHERE owner_id=$1',
+            [recoveringOwner],
+          )
+        ).rows,
+        [{ vault_id: null, auth_config_vault_id: null }],
       );
       assert.equal(calls.length, before);
       await unsealed.close();
@@ -874,7 +878,10 @@ try {
         suffix: null,
       });
       assert.equal(provider.configurationId, state.configurationId);
-      assert.deepEqual((await pool.query('SELECT * FROM integration_keys')).rows, []);
+      assert.deepEqual(
+        (await pool.query('SELECT * FROM integration_keys WHERE owner_id=$1', [ownerId])).rows,
+        [{ owner_id: ownerId, vault_id: null, auth_config_vault_id: null }],
+      );
       assert.deepEqual((await pool.query('SELECT * FROM vault_app_grants')).rows, []);
       assert.ok(deleted('/api/v3.1/connected_accounts/ca_own', 'project-a'));
       assert.ok(deleted('/api/v3.1/trigger_instances/manage/own-trigger', 'project-a'));

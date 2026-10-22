@@ -29,6 +29,19 @@ const controls = z
   .array(z.object({ role: z.string().max(100), name: z.string().max(300) }).strict())
   .max(3);
 
+const pageSchema = z
+  .object({
+    origin: z.string().max(2048),
+    url: z.string().max(8192),
+    controls: controls.optional(),
+    submits: z
+      .union([z.object({ method: z.string(), to: z.string() }).strict(), z.literal('unknown')])
+      .optional(),
+    dropTarget: controls.optional(),
+    dialog: z.string().max(8192).optional(),
+  })
+  .strict();
+
 export function createBridgeComputer(options: {
   namespace: string;
   launch(input: BrowserCall): CommandProcess;
@@ -417,28 +430,36 @@ export function createBridgeComputer(options: {
       return { bytes, name: result.name, mimeType: result.mimeType };
     },
     currentPage: async (id, step) =>
+      pageSchema.parse(
+        await call({
+          method: 'currentPage',
+          threadId: threadIdentity(id),
+          ...(step ? { input: step } : {}),
+        }),
+      ),
+    signInMethods: async (id, origin, methods, signal) =>
       z
         .object({
-          origin: z.string().max(2048),
-          url: z.string().max(8192),
-          controls: controls.optional(),
-          submits: z
-            .union([
-              z.object({ method: z.string(), to: z.string() }).strict(),
-              z.literal('unknown'),
-            ])
-            .optional(),
-          dropTarget: controls.optional(),
-          dialog: z.string().max(8192).optional(),
+          document: z.string().min(1).max(200),
+          methods: z
+            .array(
+              z
+                .object({ id: z.uuid(), label: z.string().min(1).max(300), page: pageSchema })
+                .strict(),
+            )
+            .min(1)
+            .max(10),
         })
         .strict()
         .parse(
-          await call({
-            method: 'currentPage',
-            threadId: threadIdentity(id),
-            ...(step ? { input: step } : {}),
-          }),
+          await call(
+            { method: 'signInMethods', threadId: threadIdentity(id), origin, methods },
+            signal,
+          ),
         ),
+    selectSignInMethod: async (id, input, signal) => {
+      await call({ method: 'selectSignInMethod', threadId: threadIdentity(id), input }, signal);
+    },
     fillCard: async (input) => {
       await call({
         method: 'fillCard',

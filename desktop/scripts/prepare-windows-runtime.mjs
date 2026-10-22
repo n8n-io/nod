@@ -29,7 +29,7 @@ if (images.platform !== 'linux-x64' || images.images.length !== 3)
   throw new Error('Build the Windows x64 workload images first.');
 for (const image of images.images)
   if (
-    image.file !== `images/${image.name}.tar.gz` ||
+    image.file !== `images/${image.name}.tar.zst` ||
     (await assetHash(join(assets, image.file))) !== image.sha256
   )
     throw new Error('A Windows workload image failed its integrity check.');
