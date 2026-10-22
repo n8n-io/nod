@@ -88,9 +88,9 @@ export async function loadIntegrationIdentity(options: {
   dataRoot: string;
   ownerId: string;
   keyStore: CredentialKeyStore;
-  checkpoint?: IntegrationIdentityCheckpoint;
+  checkpoint: IntegrationIdentityCheckpoint;
 }) {
-  const expected = await options.checkpoint?.read();
+  const expected = await options.checkpoint.read();
   const name = createHash('sha256').update(options.ownerId).digest('hex');
   if (expected !== undefined) {
     if (!/^[A-Za-z0-9_-]{43}$/.test(expected))
@@ -171,7 +171,7 @@ export async function loadIntegrationIdentity(options: {
     if ((await readProtected(markerPath))?.toString() !== publicKey)
       throw new Error('nod’s saved app identity changed. Restore its app data to reconnect.');
     await persist(directory, dataRoot);
-    await options.checkpoint?.commit(publicKey);
+    await options.checkpoint.commit(publicKey);
     return {
       key,
       publicKey,

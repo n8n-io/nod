@@ -79,6 +79,10 @@ import { connectedGmail } from '../src/shared/onboarding.ts';
 import { fileBytes } from '../src/shared/files.ts';
 import { fakeComputer, fakeExecution, fakeWorkspace } from './runtime-fixtures.ts';
 
+const fixtureIdentityCheckpoint = {
+  read: async () => undefined,
+  commit: async () => {},
+};
 const installationKey = randomBytes(32);
 const installationKeyStore = {
   id: 'fixture',
@@ -165,6 +169,7 @@ test('installation identity persistence failures withhold signatures and preserv
         dataRoot,
         ownerId: 'synthetic-owner',
         keyStore: installationKeyStore,
+        checkpoint: fixtureIdentityCheckpoint,
         url: 'https://proxy.example.test',
         request: (async (_input, init) => {
           calls.push(new Headers(init?.headers).get('x-nod-public-key')!);
@@ -239,6 +244,7 @@ test('encrypted installation identities stay bound to their owner and fail witho
         dataRoot,
         ownerId: 'encrypted-fixture',
         keyStore: installationKeyStore,
+        checkpoint: fixtureIdentityCheckpoint,
         request: (async () =>
           assert.fail('Identity initialization must not make a request.')) as typeof fetch,
       };
@@ -311,6 +317,7 @@ test('a locked vault never creates a replacement installation identity', async (
   const proxy = createComposioProxy({
     dataRoot,
     ownerId: 'locked-fixture',
+    checkpoint: fixtureIdentityCheckpoint,
     keyStore: {
       ...installationKeyStore,
       getKey: async () => {
@@ -407,7 +414,7 @@ test(
       const replacement = createComposioProxy({
         ...saved,
         dataRoot: replacementRoot,
-        checkpoint: undefined,
+        checkpoint: fixtureIdentityCheckpoint,
       });
       await replacement.initialize();
       assert.notEqual(replacement.userId, proxy.userId);
@@ -505,14 +512,16 @@ test(
       async () => {
         await initializeIntegrationSchema(pool);
         await pool.query(
-          "INSERT INTO app_connections(owner_id,slug,provider_id,account_id) VALUES ('lost-checkpoint','gmail','composio','synthetic-account'), ('other-provider','fixture','fixture','synthetic-other')",
+          "INSERT INTO app_connections(owner_id,slug,provider_id,account_id,pending_account_id) VALUES ('lost-checkpoint','gmail','composio','synthetic-account',NULL), ('pending-checkpoint','gmail','composio',NULL,'synthetic-pending'), ('abandoned-setup','gmail','composio',NULL,NULL), ('other-provider','fixture','fixture','synthetic-other',NULL)",
         );
-        const saved = options('lost-checkpoint');
-        const proxy = createComposioProxy(saved);
-        await assert.rejects(proxy.initialize(), /identity is missing/);
-        assert.throws(() => proxy.userId);
-        await assert.rejects(stat(saved.dataRoot), { code: 'ENOENT' });
-        for (const owner of ['new-owner', 'other-provider']) {
+        for (const owner of ['lost-checkpoint', 'pending-checkpoint']) {
+          const saved = options(owner);
+          const proxy = createComposioProxy(saved);
+          await assert.rejects(proxy.initialize(), /identity is missing/);
+          assert.throws(() => proxy.userId);
+          await assert.rejects(stat(saved.dataRoot), { code: 'ENOENT' });
+        }
+        for (const owner of ['new-owner', 'other-provider', 'abandoned-setup']) {
           const fresh = createComposioProxy(options(owner));
           await fresh.initialize();
           assert.match(fresh.userId, /^nod_[a-f0-9]{64}$/);
@@ -709,6 +718,7 @@ test('managed integration requests bind SDK calls to a private persisted install
     dataRoot: root,
     ownerId: 'fixture-owner',
     keyStore: installationKeyStore,
+    checkpoint: fixtureIdentityCheckpoint,
     url: 'https://proxy.example.test',
     request,
     browser: eagerConnectionBrowser(),
@@ -1105,6 +1115,7 @@ test('shared enrollment lets one caller abort without sending its action or canc
     dataRoot: root,
     ownerId: 'enrollment-owner',
     keyStore: installationKeyStore,
+    checkpoint: fixtureIdentityCheckpoint,
     url: 'https://proxy.example.test',
     request: async (input, init) => {
       const request = new Request(input, init);
@@ -1497,6 +1508,7 @@ test('managed authorization bounds streamed response bytes before parsing and ca
       let total = 0;
       const proxy = createComposioProxy({
         keyStore: installationKeyStore,
+        checkpoint: fixtureIdentityCheckpoint,
         dataRoot: root,
         ownerId: 'response-limit-owner',
         url: 'https://proxy.example.test',
@@ -7513,6 +7525,7 @@ test('managed uploads retain the selected account across separate operation sess
   const uploads: Array<Record<string, unknown>> = [];
   const proxy = createComposioProxy({
     keyStore: installationKeyStore,
+    checkpoint: fixtureIdentityCheckpoint,
     dataRoot: root,
     ownerId: 'owner',
     url: 'https://proxy.example.test',

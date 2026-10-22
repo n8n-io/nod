@@ -88,6 +88,17 @@ app.whenReady().then(async () => {
   const identity = await loadIntegrationIdentity({
     dataRoot: fixture.integrationRoot, ownerId: owner,
     keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.from(environment.NOD_VAULT_KEY, 'base64') },
+    checkpoint: {
+      read: async () => {
+        try { return readFileSync(fixture.checkpointFile, 'utf8'); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+      },
+      commit: async (publicKey) => {
+        try { writeFileSync(fixture.checkpointFile, publicKey, { mode: 0o600, flag: 'wx' }); }
+        catch (error) { if (error.code !== 'EEXIST') throw error; }
+        if (readFileSync(fixture.checkpointFile, 'utf8') !== publicKey) throw new Error('Fixture identity checkpoint changed.');
+      },
+    },
   });
   const identityBytes = readFileSync(fixture.identityFile);
   const markerBytes = readFileSync(fixture.markerFile);
@@ -100,6 +111,7 @@ app.whenReady().then(async () => {
     owner,
     identityHash: createHash('sha256').update(identityBytes).digest('hex'),
     markerHash: createHash('sha256').update(markerBytes).digest('hex'),
+    checkpointHash: createHash('sha256').update(readFileSync(fixture.checkpointFile)).digest('hex'),
     publicKey: identity.publicKey,
     managedOwner: identity.userId,
     identityProof: sign(null, Buffer.from(fixture.challenge + ':' + app.getVersion()), identity.key).toString('base64url'),
@@ -267,6 +279,7 @@ async function main() {
         ownerFile: join(integrationRoot, 'profile.json'),
         identityFile: join(identityDirectory, `${sha256(owner)}.encrypted`),
         markerFile: join(identityDirectory, `${sha256(owner)}.public`),
+        checkpointFile: join(integrationRoot, 'identity-checkpoint'),
         challenge: randomBytes(32).toString('base64url'),
         application: join(root, `NodFixture-${kind}.app`),
         archive: join(root, `${kind}.zip`),
@@ -486,6 +499,7 @@ async function main() {
               event.owner === JSON.parse(ownerBefore).ownerId &&
               event.identityHash === initialIdentity.identityHash &&
               event.markerHash === initialIdentity.markerHash &&
+              event.checkpointHash === initialIdentity.checkpointHash &&
               event.publicKey === initialIdentity.publicKey &&
               event.managedOwner ===
                 `nod_${sha256(Buffer.from(initialIdentity.publicKey, 'base64url'))}` &&
@@ -500,6 +514,7 @@ async function main() {
           (await readFile(fixture.ownerFile)).equals(ownerBefore) &&
           sha256(await readFile(fixture.identityFile)) === initialIdentity.identityHash &&
           sha256(await readFile(fixture.markerFile)) === initialIdentity.markerHash &&
+          sha256(await readFile(fixture.checkpointFile)) === initialIdentity.checkpointHash &&
           ((await stat(fixture.identityFile)).mode & 0o777) === 0o600 &&
           ((await stat(fixture.markerFile)).mode & 0o777) === 0o600 &&
           ((await stat(dirname(fixture.identityFile))).mode & 0o777) === 0o700,

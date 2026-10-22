@@ -23,7 +23,7 @@ export function createComposioProxy(options: {
   dataRoot: string;
   ownerId: string;
   keyStore: CredentialKeyStore;
-  checkpoint?: IntegrationIdentityCheckpoint;
+  checkpoint: IntegrationIdentityCheckpoint;
   browser?: IntegrationConnectionBrowser;
   url?: string;
   request?: typeof fetch;

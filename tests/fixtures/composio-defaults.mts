@@ -127,6 +127,8 @@ const { createDefaultAdapters } = await import('../../src/server/composition.ts'
 const { createComposioProxy } = await import('../../src/providers/composio/proxy.ts');
 const { createComposioProvider } = await import('../../src/providers/composio/integrations.ts');
 const { pool } = await import('../../src/server/db.ts');
+const { createIntegrationIdentityCheckpoint } =
+  await import('../../src/server/integration-identity.ts');
 const { ownerId } = await import('../../src/server/config.ts');
 const adapters = createDefaultAdapters(process.env);
 adapters.models!.initialize = async () => {};
@@ -150,6 +152,7 @@ try {
   const foreignProxy = createComposioProxy({
     dataRoot: root,
     ownerId: 'foreign-fixture-owner',
+    checkpoint: createIntegrationIdentityCheckpoint(pool, 'foreign-fixture-owner'),
     keyStore: adapters.keyStore,
   });
   await foreignProxy.initialize();

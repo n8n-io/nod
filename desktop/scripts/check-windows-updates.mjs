@@ -150,6 +150,17 @@ app.whenReady().then(async () => {
   const identity = await loadIntegrationIdentity({
     dataRoot: profile, ownerId: owner,
     keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.from(key) },
+    checkpoint: {
+      read: async () => {
+        try { return await readFile(join(profile, 'identity-checkpoint'), 'utf8'); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+      },
+      commit: async (publicKey) => {
+        try { await writeFile(join(profile, 'identity-checkpoint'), publicKey, { mode: 0o600, flag: 'wx' }); }
+        catch (error) { if (error.code !== 'EEXIST') throw error; }
+        if (await readFile(join(profile, 'identity-checkpoint'), 'utf8') !== publicKey) throw new Error('Fixture identity checkpoint changed.');
+      },
+    },
   });
   const binding = ['synthetic-owner', 'synthetic-model'];
   const secret = 'synthetic-saved-provider-credential';
@@ -159,7 +170,7 @@ app.whenReady().then(async () => {
   assert.equal(saved.onboardingCompleted, true);
   assert.equal(saved.onboardingPreferenceStep, 'complete');
   const files = {};
-  for (const name of ['settings.json', 'profile.json', 'vault', 'integration-identity/' + hash(owner) + '.encrypted', 'integration-identity/' + hash(owner) + '.public']) files[name] = hash(await readFile(join(profile, name)));
+  for (const name of ['settings.json', 'profile.json', 'vault', 'identity-checkpoint', 'integration-identity/' + hash(owner) + '.encrypted', 'integration-identity/' + hash(owner) + '.public']) files[name] = hash(await readFile(join(profile, name)));
   await record('ready', { files, keyHash: hash(key), preferences: saved, publicKey: identity.publicKey, managedOwner: identity.userId,
     identityProof: sign(null, Buffer.from(${JSON.stringify(challenge)} + ':' + app.getVersion()), identity.key).toString('base64url') });
   if (app.getVersion() === '1.0.1') { await record('stopped'); app.exit(0); }

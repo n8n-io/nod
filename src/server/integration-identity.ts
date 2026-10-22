@@ -35,7 +35,7 @@ export function createIntegrationIdentityCheckpoint(
         table.rows[0]?.present &&
         (
           await pool.query(
-            "SELECT 1 FROM app_connections WHERE owner_id=$1 AND provider_id='composio' LIMIT 1",
+            "SELECT 1 FROM app_connections WHERE owner_id=$1 AND provider_id='composio' AND (account_id IS NOT NULL OR pending_account_id IS NOT NULL) LIMIT 1",
             [ownerId],
           )
         ).rowCount
