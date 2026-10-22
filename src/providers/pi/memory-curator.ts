@@ -14,15 +14,13 @@ import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 
 function json(text: string) {
-  const parse = (body: string) => {
-    const start = body.indexOf('{');
-    try {
-      return start < 0 ? null : JSON.parse(body.slice(start, body.lastIndexOf('}') + 1));
-    } catch {
-      return null;
-    }
-  };
-  return parse(text) ?? parse(/```(?:json)?\s*([\s\S]*)```/.exec(text)?.[1] ?? '');
+  const body = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1] ?? text;
+  const start = body.indexOf('{');
+  try {
+    return start < 0 ? null : JSON.parse(body.slice(start, body.lastIndexOf('}') + 1));
+  } catch {
+    return null;
+  }
 }
 
 export function createPiMemoryCurator(options: {

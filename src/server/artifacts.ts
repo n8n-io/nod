@@ -155,13 +155,9 @@ export function createArtifactService(options: {
     const actual = posix.resolve(base, path);
     if (!actual.startsWith(base + '/'))
       throw new Error('Only files inside this workspace can be published.');
-    const file = posix.basename(actual);
-    const suffix = /\.(?:n8n\.json|tar\.gz)$/i.exec(file)?.[0] ?? extname(file);
     return storeArtifact(
       Buffer.from(await read(threadId, posix.relative(base, actual), fileBytes, 'publication')),
-      name && !name.toLowerCase().endsWith(suffix.toLowerCase())
-        ? `${name}${suffix}`
-        : name || file,
+      name || posix.basename(actual),
       mimeTypes[extname(actual).toLowerCase()] || 'application/octet-stream',
       threadId,
       database,

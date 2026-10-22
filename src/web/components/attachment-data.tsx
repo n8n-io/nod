@@ -1,6 +1,4 @@
 import {
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -29,15 +27,7 @@ import { SlidesView } from './attachment-slides';
 import { Button, Skeleton } from './ui';
 
 export type DataKind =
-  | 'markdown'
-  | 'text'
-  | 'csv'
-  | 'spreadsheet'
-  | 'html'
-  | 'document'
-  | 'presentation'
-  | 'archive'
-  | 'n8n-workflow';
+  'markdown' | 'text' | 'csv' | 'spreadsheet' | 'html' | 'document' | 'presentation' | 'archive';
 type Sheet = { name: string; rows: string[][]; header: boolean; total: number; columns: number };
 
 const previewRows = 202;
@@ -52,9 +42,7 @@ const limits: Record<DataKind, number> = {
   document: 25_000_000,
   presentation: 60_000_000,
   archive: 100_000_000,
-  'n8n-workflow': 4_000_000,
 };
-const WorkflowCanvas = lazy(() => import('./n8n-canvas'));
 const numberLike = /^[-+(]?[$€£¥]?\s?\d[\d,.\s]*%?\)?(?:\s?[$€£¥]|\s?[A-Z]{3})?$/;
 
 export function PreviewUnavailable({
@@ -632,16 +620,6 @@ export default function AttachmentData({
         <FileText size={32} aria-hidden="true" />
         This file is empty.
       </div>
-    );
-  if (kind === 'n8n-workflow' && mode === 'preview')
-    return (
-      <Suspense fallback={<PreviewLoading />}>
-        <WorkflowCanvas
-          text={source}
-          onDetail={onDetail}
-          fallback={<PreviewUnavailable item={item} />}
-        />
-      </Suspense>
     );
   if (mode === 'code' || kind === 'text')
     return (

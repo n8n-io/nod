@@ -63,9 +63,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/nod/
 | `share_file`                                                        | Attaches a workspace file to nod's next reply or question, or sends it alone when a turn finishes or fails without one.                      |
 | `create_audio`                                                      | Turns text into speech and sends it to you.                                                                                                  |
 | `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                          |
-| `mcp__<server>__<tool>`                                             | One tool for each tool of a connected MCP server, such as `mcp__n8n__validate_workflow`. Each call runs like `apps`, after the trust check.  |
-| `tool_search`                                                       | Finds connected MCP server tools by meaning and loads the matches for the next model call.                                                   |
-| `codemode`                                                          | Runs a model-written script that calls workspace, web and connected MCP server tools.                                                        |
+| `codemode`                                                          | Runs a model-written script that calls workspace and web tools.                                                                              |
 
 The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its connections go only to public addresses, checked when each connection opens, IP addresses included. nod drops any proxy, whether the model names it or the settings file sets it. Its settings live in `NOD_DATA_ROOT/pi/web-search.json`.
 
@@ -84,7 +82,7 @@ flowchart TD
 
 - **Cancellation:** a stopped or finished turn can't start a call. Server callbacks also check `withTurnLock` before they run.
 - **Observations:** the guard reports each call to an optional observer. Only the capability evals and the voice eval script set one; the capability evals redact typed text and memory arguments.
-- **App actions:** `apps` and every connected MCP server tool also pass the server's [trust check](/trust/approvals/).
+- **App actions:** `apps` also passes the server's [trust check](/trust/approvals/).
 
 `apps` and `manage_personal_context` calls run in parallel with each other and with subagents. The trust check covers app actions, changes to schedules, notification settings and spending limits, and forgetting a note or turning memory on, off or clearing it, and those checks run in parallel too. Other `manage_personal_context` operations, such as saving a note and reads, have no trust check and count as decided as soon as they reach the server.
 
@@ -94,16 +92,9 @@ A call acts only once every `apps` or `manage_personal_context` call issued befo
 
 Pi's `codemode` tool runs model-written JavaScript in a QuickJS sandbox with no network, files or timers.
 
-- Scripts can call the workspace and `pi-web-access` tools and the tools of connected MCP servers, in parallel, plus Pi's image and classifier models. That model spend goes to the usage ledger.
-- Every other nod tool is `model-only`, so scripts can't reach Composio apps, the browser, credentials, messages or shared files.
-- A connected MCP server tool called from a script passes the same guard, order and trust check as a direct call. If the check asks you first, the script stops and the question goes to chat.
+- Scripts can call only the workspace and `pi-web-access` tools, in parallel, plus Pi's image and classifier models. That model spend goes to the usage ledger.
+- Every nod tool is `model-only`, so scripts can't reach apps, the browser, credentials, messages or shared files.
 - Calls inside a script stay raw so the script can parse them. Codemode's output is wrapped when it returns.
-
-## Connected MCP server tools
-
-Each tool of a connected MCP server becomes its own Pi tool, named `mcp__<server>__<tool>`, with the server's own description and input schema. These tools are deferred: the model loads the ones it needs with `tool_search` or calls them from codemode, so a server with dozens of tools doesn't fill every request. Each server's own guide to its tools reaches Pi inside an `untrusted_tool_result` block, as data that never grants permission.
-
-nod keeps one MCP connection per account and address for a minute after its last call, caches each server's tool list for ten minutes and waits up to ten minutes for one call.
 
 ## Untrusted results
 

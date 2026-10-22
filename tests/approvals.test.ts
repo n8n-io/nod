@@ -1896,9 +1896,6 @@ test(
           read,
         );
         assert.equal(published.name, 'report.html');
-        await writeFile(join(workspace, 'alert.n8n.json'), '{"nodes":[],"connections":{}}');
-        const workflow = await artifacts.publishArtifact(id, 'alert.n8n.json', 'Rain alert', read);
-        assert.equal(workflow.name, 'Rain alert.n8n.json');
         const response = await request('GET', published.url);
         assert.equal(response.statusCode, 200);
         await db.pool.query('UPDATE artifacts SET owner_id=$2 WHERE id=$1', [

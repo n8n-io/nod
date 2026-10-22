@@ -9,17 +9,7 @@ import {
 import { publicUrl } from '../agent-browser/network.ts';
 import { safeRemoteFetch } from './remote.ts';
 
-async function publicSignIn(link: string) {
-  const destination = await publicUrl(link);
-  if (destination.url.protocol !== 'https:')
-    throw new Error('The service sign-in link must use HTTPS.');
-  return destination.url.href;
-}
-
-export function createDiscoveredOAuth(
-  fetchFn: FetchLike = safeRemoteFetch,
-  signInLink: (link: string) => Promise<string> = publicSignIn,
-): DiscoveredOAuth {
+export function createDiscoveredOAuth(fetchFn: FetchLike = safeRemoteFetch): DiscoveredOAuth {
   async function run(
     endpoint: string,
     saved: DiscoveredOAuthState,
@@ -91,7 +81,10 @@ export function createDiscoveredOAuth(
       const result = await run(endpoint, saved, { state }, AbortSignal.timeout(30_000));
       if (result.result !== 'REDIRECT' || !result.url)
         throw new Error('The service did not provide a sign-in link.');
-      return { url: await signInLink(result.url), saved };
+      const destination = await publicUrl(result.url);
+      if (destination.url.protocol !== 'https:')
+        throw new Error('The service sign-in link must use HTTPS.');
+      return { url: destination.url.href, saved };
     },
     async finish(endpoint, saved, code) {
       const result = await run(endpoint, saved, { code }, AbortSignal.timeout(30_000));

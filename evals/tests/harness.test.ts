@@ -2153,7 +2153,7 @@ test('fake remote MCP servers sign in and answer through nod’s own MCP client'
     const headers = { Authorization: `Bearer ${saved.tokens!.access_token}` };
     await assert.rejects(transport.listTools(endpoint, { Authorization: 'Bearer nope' }));
     assert.deepEqual(
-      (await transport.listTools(endpoint, headers)).tools.map((tool) => tool.name),
+      (await transport.listTools(endpoint, headers)).map((tool) => tool.name),
       ['save_note'],
     );
     const result = (await transport.callTool(endpoint, headers, 'save_note', { text: 'hi' })) as {
