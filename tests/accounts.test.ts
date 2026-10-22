@@ -710,8 +710,8 @@ describe('analytics privacy', () => {
           report?.({
             ...usage,
             id: randomUUID(),
-            provider: 'openai-codex',
-            model: 'gpt-5.1-codex',
+            provider: 'openai',
+            model: 'gpt-6-sol',
             durationMs: 0,
             costUsd: null,
             estimateUsd: 0.5,
@@ -749,7 +749,7 @@ describe('analytics privacy', () => {
         {
           ...shared,
           provider: 'openai',
-          model: 'gpt-5.1-codex',
+          model: 'gpt-6-sol',
           input_tokens: 0,
           output_tokens: 0,
           cost_usd: 0.5,
@@ -1066,6 +1066,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       refresh: 'fixture-refresh',
       expires,
       accountId: 'fixture-account',
+      clientId: 'fixture-client',
+      idToken: 'fixture-id-token',
     };
   }
 
@@ -1596,6 +1598,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
           refresh: 'fixture-old-refresh',
           expires: 0,
           accountId: 'fixture-account',
+          clientId: 'fixture-client',
+          idToken: 'fixture-id-token',
         };
       },
       async refresh(value: import('../src/ports/models.ts').ModelCredential) {
@@ -1832,12 +1836,23 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(owner.signInStatus(afterExpiry.attempt).status, 'failed');
   });
 
-  test('reconnect cannot replace the ChatGPT account behind an existing connection', async (t) => {
+  test('reconnect signs in with the saved account and a stable host, and a refused reconnect keeps the connection', async (t) => {
     const f = await fixture(t);
+    const { ModelAuthError } = await import('../src/ports/models.ts');
+    const inputs: Parameters<import('../src/ports/models.ts').ModelBackend['signIn']>[0][] = [];
     let accountId = 'fixture-original-account';
     const backend = {
       ...f.backend,
-      signIn: stubSignIn(async () => ({ ...subscriptionCredential(), accountId })),
+      signIn(input: Parameters<import('../src/ports/models.ts').ModelBackend['signIn']>[0]) {
+        inputs.push(input);
+        return stubSignIn(async () => {
+          if (input.previous?.type === 'oauth' && input.previous.accountId !== accountId)
+            throw new ModelAuthError(
+              'That’s a different ChatGPT account. Add it as a new connection instead.',
+            );
+          return { ...subscriptionCredential(), accountId };
+        })(input);
+      },
       catalog: (
         provider: Parameters<typeof f.backend.catalog>[0],
         method: Parameters<typeof f.backend.catalog>[1],
@@ -1855,14 +1870,29 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       await f.database.query('SELECT ciphertext FROM vault_app_grants WHERE id=$1', [id])
     ).rows[0].ciphertext;
     accountId = 'fixture-different-account';
-    const reconnect = await owner.start('openai', id);
+    const restarted = await f.create('fixture-owner', backend);
+    const reconnect = await restarted.start('openai', id);
     await assert.rejects(
-      owner.complete(
+      restarted.complete(
         new URL(`http://127.0.0.1:1455/auth/callback?state=${reconnect.attempt}&code=fixture`),
       ),
+      /different ChatGPT account/,
     );
-    assert.deepEqual(owner.view().selection, selection);
-    assert.equal(owner.view().connections[0].status, 'connected');
+    assert.equal(inputs[0].previous, undefined);
+    assert.equal(
+      (inputs[1].previous as { accountId: string }).accountId,
+      'fixture-original-account',
+    );
+    assert.match(
+      inputs[0].hostId,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    assert.equal(inputs[1].hostId, inputs[0].hostId);
+    const other = await f.create('fixture-other', backend);
+    await other.start('openai');
+    assert.notEqual(inputs[2].hostId, inputs[0].hostId);
+    assert.deepEqual(restarted.view().selection, selection);
+    assert.equal(restarted.view().connections[0].status, 'connected');
     assert.equal(
       ((await access.read()) as { accountId: string }).accountId,
       'fixture-original-account',
@@ -1872,11 +1902,12 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         .ciphertext,
       before,
     );
-    const added = await owner.start('openai');
-    await owner.complete(
+    const added = await restarted.start('openai');
+    await restarted.complete(
       new URL(`http://127.0.0.1:1455/auth/callback?state=${added.attempt}&code=fixture`),
     );
-    assert.equal(owner.view().connections.length, 2);
-    assert.deepEqual(owner.view().selection, selection);
+    assert.equal(inputs.at(-1)!.previous, undefined);
+    assert.equal(restarted.view().connections.length, 2);
+    assert.deepEqual(restarted.view().selection, selection);
   });
 });

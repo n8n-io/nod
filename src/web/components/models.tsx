@@ -115,7 +115,7 @@ export function ModelSettings({
                     <h4>{modelProviderNames[provider]}</h4>
                     <p>
                       {provider === 'openai'
-                        ? 'API key or ChatGPT plan'
+                        ? 'API key or ChatGPT Plus or Pro'
                         : provider === 'anthropic'
                           ? 'API key for Claude models'
                           : provider === 'openrouter'
@@ -135,7 +135,7 @@ export function ModelSettings({
                       onClick={() => void connect(provider as 'openai' | 'openrouter')}
                     >
                       <span className={`model-provider-logo ${provider}`} aria-hidden="true" />
-                      {provider === 'openai' ? 'Connect ChatGPT' : 'Connect account'}
+                      {provider === 'openai' ? 'Continue with ChatGPT' : 'Connect account'}
                     </Button>
                   )}
                   <Button

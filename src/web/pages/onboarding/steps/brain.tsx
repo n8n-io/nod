@@ -31,7 +31,7 @@ const providers: Record<
 > = {
   openai: {
     sub: 'ChatGPT plan or API key',
-    oauth: 'Sign in with ChatGPT',
+    oauth: 'Continue with ChatGPT',
     note: 'Uses your ChatGPT Plus or Pro plan. No API key needed.',
     placeholder: 'sk-…',
     hint: 'platform.openai.com/api-keys',
