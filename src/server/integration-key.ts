@@ -58,7 +58,7 @@ export function createIntegrationKeyService(options: {
   }
   async function status(): Promise<IntegrationKeyStatus> {
     return {
-      mode: own ? 'own' : 'otto',
+      mode: own ? 'own' : 'nod',
       switchable: !fixed && (options.keyStore.configured || own || Boolean(options.managed)),
       keyWritable: !fixed && options.keyStore.configured,
       suffix,
@@ -73,9 +73,9 @@ export function createIntegrationKeyService(options: {
   }
   async function verify(key: string) {
     if (!options.keyStore.configured)
-      throw new IntegrationKeyError('Configure OTTO_VAULT_KEY before saving a key.');
+      throw new IntegrationKeyError('Configure NOD_VAULT_KEY before saving a key.');
     await options.keyStore.getKey().catch(() => {
-      throw new IntegrationKeyError('Otto couldn’t open its key store, so nothing changed.');
+      throw new IntegrationKeyError('nod couldn’t open its key store, so nothing changed.');
     });
     let valid: boolean;
     try {
@@ -122,7 +122,7 @@ export function createIntegrationKeyService(options: {
   }
   return {
     get mode() {
-      return own ? 'own' : 'otto';
+      return own ? 'own' : 'nod';
     },
     async initialize() {
       if (fixed) return;
@@ -242,7 +242,7 @@ export function createIntegrationKeyService(options: {
           if (key !== undefined) await verify(key);
           else if (!options.managed || (await options.managed.status()).state !== 'enabled')
             throw new IntegrationKeyError(
-              'Sign in with an approved Google account before switching to Otto’s connection.',
+              'Sign in with an approved Google account before switching to nod’s connection.',
             );
           let detached = false;
           await integrations.changeProvider(
@@ -254,7 +254,7 @@ export function createIntegrationKeyService(options: {
                   detached = access.state === 'revoked' || access.state === 'sign_in_required';
                   if (!detached && access.state !== 'enabled')
                     throw new IntegrationKeyError(
-                      'Otto couldn’t check your managed connection, so nothing changed. Try again.',
+                      'nod couldn’t check your managed connection, so nothing changed. Try again.',
                     );
                   return detached;
                 }
@@ -306,7 +306,7 @@ export async function receiveLegacyIntegration(options: {
   const nonce = randomUUID();
   const envelope = z
     .object({
-      type: z.literal('otto-legacy-integration'),
+      type: z.literal('nod-legacy-integration'),
       ownerId: z.literal(options.ownerId),
       nonce: z.literal(nonce),
       receipt: z.string().regex(/^[a-f0-9]{64}$/),
@@ -320,7 +320,7 @@ export async function receiveLegacyIntegration(options: {
   const message = await new Promise<z.infer<typeof envelope>>((resolve, reject) => {
     const timer = setTimeout(() => {
       options.parent.removeListener('message', receive);
-      reject(new Error('Otto could not restore its saved app connection.'));
+      reject(new Error('nod could not restore its saved app connection.'));
     }, options.timeout ?? 30000);
     function receive(event: { data: unknown }) {
       const parsed = envelope.safeParse(event.data);
@@ -331,7 +331,7 @@ export async function receiveLegacyIntegration(options: {
     }
     options.parent.on('message', receive);
     options.parent.postMessage({
-      type: 'otto-legacy-integration-request',
+      type: 'nod-legacy-integration-request',
       ownerId: options.ownerId,
       nonce,
     });
@@ -347,8 +347,8 @@ export async function receiveLegacyIntegration(options: {
         function receive(event: { data: unknown }) {
           const result = event.data as Record<string, unknown> | null;
           if (
-            (result?.type !== 'otto-legacy-integration-cleaned' &&
-              result?.type !== 'otto-legacy-integration-cleanup-deferred') ||
+            (result?.type !== 'nod-legacy-integration-cleaned' &&
+              result?.type !== 'nod-legacy-integration-cleanup-deferred') ||
             result.ownerId !== options.ownerId ||
             result.nonce !== nonce ||
             result.receipt !== message.receipt
@@ -360,7 +360,7 @@ export async function receiveLegacyIntegration(options: {
         }
         options.parent.on('message', receive);
         options.parent.postMessage({
-          type: 'otto-legacy-integration-ack',
+          type: 'nod-legacy-integration-ack',
           ownerId: options.ownerId,
           nonce,
           receipt: message.receipt,

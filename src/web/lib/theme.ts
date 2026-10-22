@@ -9,8 +9,8 @@ import {
 export type Theme = 'light' | 'dark';
 export type ThemePreference = Theme | 'system';
 
-const storageKey = 'otto.theme';
-const changeEvent = 'otto:theme';
+const storageKey = 'nod.theme';
+const changeEvent = 'nod:theme';
 let chosenTheme: Theme | undefined;
 let accountTheme: ThemePreference | undefined;
 let desktopTheme: Theme | undefined;

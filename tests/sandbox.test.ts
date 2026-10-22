@@ -42,7 +42,7 @@ import { createMacComputer, sandboxProfile } from '../src/providers/macos/owner-
 import { prepareLocalDirectories } from '../scripts/local-database.ts';
 
 test('local startup protects data through its private root and preserves workspace mount traversal', async () => {
-  const parent = await mkdtemp(join(tmpdir(), 'otto-local-directories-'));
+  const parent = await mkdtemp(join(tmpdir(), 'nod-local-directories-'));
   const root = join(parent, 'data');
   const workspace = join(root, 'workspaces');
   const unrelated = join(parent, 'unrelated');
@@ -170,7 +170,7 @@ test('runtime subprocesses do not inherit provider keys and stop at bounds', asy
 
 if (process.platform !== 'win32') {
   test('Mac helper startup failures settle every request and allow a clean restart', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-helper-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-helper-'));
     const helper = join(root, 'helper');
     const started = join(root, 'started');
     const computer = createMacComputer({ dataRoot: root, helper });
@@ -212,7 +212,7 @@ if (process.platform !== 'win32') {
   });
 
   test('cancelling a Mac helper request stops its pending outside action', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-helper-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-helper-'));
     const helper = join(root, 'helper.cjs');
     const started = join(root, 'started');
     const effect = join(root, 'effect');
@@ -237,7 +237,7 @@ if (process.platform !== 'win32') {
   });
 
   test('Mac helper deadlines stop hung work and reject empty screenshots', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-helper-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-helper-'));
     const helper = join(root, 'helper.cjs');
     const effect = join(root, 'effect');
     const computer = createMacComputer({ dataRoot: root, helper, helperTimeoutMs: 150 });
@@ -262,7 +262,7 @@ if (process.platform !== 'win32') {
   });
 
   test('Mac helper permission failures reach the caller without losing other helper errors', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-helper-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-helper-'));
     const helper = join(root, 'helper.cjs');
     const computer = createMacComputer({ dataRoot: root, helper });
     try {
@@ -288,9 +288,9 @@ if (process.platform !== 'win32') {
 
 if (process.platform === 'darwin') {
   test('native Mac helper observes apps it opens without another request waking its run loop', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-native-launch-'));
-    const name = `Otto Launch Fixture ${randomUUID()}`;
-    const bundleId = `org.example.otto-launch-fixture.${randomUUID()}`;
+    const root = await mkdtemp(join(tmpdir(), 'nod-native-launch-'));
+    const name = `nod Launch Fixture ${randomUUID()}`;
+    const bundleId = `org.example.nod-launch-fixture.${randomUUID()}`;
     const app = join(homedir(), 'Applications', `${name}.app`);
     const helper = join(root, 'helper');
     const source = join(root, 'fixture.swift');
@@ -348,7 +348,7 @@ application.run()
   });
 
   test('owner shell cannot connect to accessibility, input or screen capture services', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-ui-services-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-ui-services-'));
     const source = join(root, 'probe.c');
     const program = join(root, 'probe');
     const computer = createMacComputer({ dataRoot: join(root, 'data') });
@@ -387,7 +387,7 @@ int main(int argc, char **argv) {
         'com.apple.replayd',
         'com.apple.ScreenCaptureKit',
       ]) {
-        const service = `${prefix}.otto-fixture.${randomUUID()}`;
+        const service = `${prefix}.nod-fixture.${randomUUID()}`;
         const server = spawn(program, ['serve', service]);
         try {
           const [ready] = await once(server.stdout, 'data', {
@@ -412,7 +412,7 @@ int main(int argc, char **argv) {
   });
 
   test('owner shell cannot read or overwrite browser sessions and account stores through aliases', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-owner-home-'));
+    const root = await mkdtemp(join(tmpdir(), 'nod-owner-home-'));
     try {
       const home = await realpath(root);
       const paths = [
@@ -469,9 +469,90 @@ int main(int argc, char **argv) {
     }
   });
 
-  test("commands on the owner's computer get no keys and cannot reach Otto's data or other apps", async () => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-computer-'));
-    const install = await mkdtemp(join(tmpdir(), 'otto-install-'));
+  test('owner shell protects the whole app bundle and separately configured helper', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'nod-app-isolation-'));
+    const application = join(root, 'Synthetic.app');
+    const engine = join(application, 'Contents/Resources/engine');
+    const main = join(application, 'Contents/Resources/app/main/main.mjs');
+    const preload = join(application, 'Contents/Resources/app/preload/index.cjs');
+    const executable = join(application, 'Contents/MacOS/nod');
+    const nested = join(application, 'Contents/Frameworks/nod Helper.app/Contents/MacOS/helper');
+    const bundled = join(engine, 'desktop/computer-use/.build/nod-computer-use');
+    const helper = join(root, 'standalone/helper');
+    const source = join(root, 'source');
+    const sourceFile = join(source, 'main.ts');
+    const alias = join(root, 'linked-engine');
+    const linkedMain = join(root, 'Linked.APP/Contents/Resources/app/main.mjs');
+    const linkedHelper = join(root, 'Linked.APP/Contents/MacOS/helper');
+    const ordinary = join(root, 'Synthetic.app-backup/document.txt');
+    const targets = [main, preload, executable, nested, bundled, helper];
+    try {
+      for (const file of [...targets, ordinary, sourceFile, linkedMain]) {
+        await mkdir(join(file, '..'), { recursive: true });
+        await writeFile(file, 'original synthetic code');
+      }
+      await mkdir(join(linkedHelper, '..'), { recursive: true });
+      await symlink(helper, linkedHelper);
+      await symlink(engine, alias);
+      for (const scenario of [
+        { name: 'engine through a symlink', denyRead: [alias], helper, targets },
+        { name: 'nested Electron executable', denyRead: [nested], helper, targets },
+        {
+          name: 'configured helper inside the app',
+          denyRead: [source],
+          helper: bundled,
+          targets: targets.filter((file) => file !== helper),
+        },
+        {
+          name: 'helper symlink leaving its app',
+          denyRead: [source],
+          helper: linkedHelper,
+          targets: [linkedMain, linkedHelper, helper, sourceFile],
+        },
+      ])
+        await t.test(scenario.name, async () => {
+          for (const file of targets) await writeFile(file, 'original synthetic code');
+          const computer = createMacComputer({ dataRoot: join(root, 'data'), ...scenario });
+          const signal = AbortSignal.timeout(10_000);
+          const run = (command: string) => computer.shell(command, { signal });
+          try {
+            for (const file of scenario.targets) {
+              const result = await run(`printf changed > '${file}'`);
+              assert.notEqual(
+                result.exitCode,
+                0,
+                `Protected write succeeded: ${file.slice(root.length)}; content=${await readFile(file, 'utf8')}`,
+              );
+              assert.equal(await readFile(file, 'utf8'), 'original synthetic code');
+              const read = await run(`cat '${file}'`);
+              assert.notEqual(read.exitCode, 0);
+              assert.doesNotMatch(read.output, /original synthetic code/);
+            }
+            assert.equal((await run(`printf allowed > '${ordinary}'`)).exitCode, 0);
+            assert.equal((await run(`cat '${ordinary}'`)).output, 'allowed');
+            assert.equal((await run(`mv '${ordinary}' '${ordinary}.moved'`)).exitCode, 0);
+            assert.equal((await run(`mv '${ordinary}.moved' '${ordinary}'`)).exitCode, 0);
+            assert.notEqual(
+              (await run(`ln '${scenario.targets[0]}' '${root}/external-hardlink'`)).exitCode,
+              0,
+            );
+            assert.notEqual((await run(`mv '${root}' '${root}-moved'`)).exitCode, 0);
+            assert.equal((await lstat(root)).isDirectory(), true);
+            const document = join(root, 'unrelated-document.txt');
+            assert.equal((await run(`printf allowed > '${document}'`)).exitCode, 0);
+            assert.equal(await readFile(document, 'utf8'), 'allowed');
+          } finally {
+            computer.dispose();
+          }
+        });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("commands on the owner's computer get no keys and cannot reach nod's data or other apps", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nod-computer-'));
+    const install = await mkdtemp(join(tmpdir(), 'nod-install-'));
     const previous = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = 'test-secret-not-for-child';
     const computer = createMacComputer({ dataRoot: root, denyRead: [install] });
@@ -488,10 +569,10 @@ int main(int argc, char **argv) {
       assert.notEqual(env.exitCode, 0);
       assert.doesNotMatch(env.output, /fixture-env-key/);
       assert.equal((await run('echo hi | grep -c hi')).output.trim(), '1');
-      assert.notEqual((await run("open -a '/nonexistent/otto-fixture.app'")).exitCode, 0);
+      assert.notEqual((await run("open -a '/nonexistent/nod-fixture.app'")).exitCode, 0);
       assert.notEqual((await run('osascript -e "return 1"')).exitCode, 0);
-      assert.notEqual((await run('launchctl submit -l otto.fixture -- /bin/true')).exitCode, 0);
-      assert.notEqual((await run('touch ~/Library/LaunchAgents/otto-fixture.plist')).exitCode, 0);
+      assert.notEqual((await run('launchctl submit -l nod.fixture -- /bin/true')).exitCode, 0);
+      assert.notEqual((await run('touch ~/Library/LaunchAgents/nod-fixture.plist')).exitCode, 0);
       await assert.rejects(computer.shell('sleep 5', { signal, timeoutMs: 50 }), /stopped/);
     } finally {
       await rm(install, { recursive: true, force: true });
@@ -514,7 +595,7 @@ async function execute(session: WorkspaceSession, command: string) {
 }
 
 async function local(programPrefix = '') {
-  const directory = await mkdtemp('/tmp/otto-command-');
+  const directory = await mkdtemp('/tmp/nod-command-');
   const launch: WorkspaceCommandLauncher = (_command, args, options) =>
     spawn('python3', ['-u', '-c', programPrefix + args.at(-1)!], {
       ...options,
@@ -525,7 +606,7 @@ async function local(programPrefix = '') {
     directory,
     run: (args: string[], options: Partial<Parameters<typeof runWorkspaceCommand>[0]> = {}) =>
       runWorkspaceCommand({
-        container: 'otto-workspace-fixture',
+        container: 'nod-workspace-fixture',
         threadId: 'fixture',
         args,
         spawn: launch,
@@ -651,7 +732,7 @@ test(
 );
 
 test('connected CLIs run only their sealed install with a clean environment', async () => {
-  const root = await mkdtemp('/tmp/otto-connected-');
+  const root = await mkdtemp('/tmp/nod-connected-');
   const home = join(root, 'home');
   const node = join(root, 'node');
   const stolen = join(root, 'stolen');
@@ -671,7 +752,7 @@ test('connected CLIs run only their sealed install with a clean environment', as
       `open(${JSON.stringify(stolen)},'w').write('python')`,
     );
     const cli = { id: randomUUID(), command: 'fixturecli', source: { npm: 'fixturecli' } };
-    const prefix = join(home, `otto-cli-${cli.id}`);
+    const prefix = join(home, `nod-cli-${cli.id}`);
     await mkdir(join(prefix, 'bin'), { recursive: true });
     await writeFile(join(prefix, 'bin', 'fixturecli'), '#!/bin/sh\nenv\necho "argv $*"\n', {
       mode: 0o755,
@@ -680,14 +761,14 @@ test('connected CLIs run only their sealed install with a clean environment', as
     const launches: string[][] = [];
     const run = (args: string[], selected?: typeof cli) =>
       runWorkspaceCommand({
-        container: 'otto-workspace-fixture',
+        container: 'nod-workspace-fixture',
         threadId: 'fixture',
         args,
         environment: { FIXTURE_TOKEN: 'synthetic-connected-token' },
         cli: selected,
         spawn: (_command, dockerArgs, options) => {
           launches.push(dockerArgs);
-          const argv = dockerArgs.slice(dockerArgs.indexOf('otto-workspace-fixture') + 1);
+          const argv = dockerArgs.slice(dockerArgs.indexOf('nod-workspace-fixture') + 1);
           return spawn(argv[0]!, argv.slice(1), {
             ...options,
             cwd: home,
@@ -735,7 +816,7 @@ test('connected CLIs run only their sealed install with a clean environment', as
     ]);
     assert.deepEqual(launches[0]!.slice(7, 9), ['/usr/bin/python3', '-I']);
     await assert.rejects(run(['fixturecli']), WorkspaceCommandError);
-    const other = join(home, `otto-cli-${randomUUID()}`);
+    const other = join(home, `nod-cli-${randomUUID()}`);
     await mkdir(other);
     const sharing = await run(['status'], cli);
     assert.equal(sharing.exitCode, 126);
@@ -760,7 +841,7 @@ test('connected CLIs run only their sealed install with a clean environment', as
 });
 
 test('a missing sealed install comes from its declared source and a failed install runs nothing', async () => {
-  const home = await mkdtemp('/tmp/otto-connected-');
+  const home = await mkdtemp('/tmp/nod-connected-');
   try {
     const launch: WorkspaceCommandLauncher = (_command, args, options) =>
       spawn('python3', args.slice(args.indexOf('-I')), { ...options, cwd: home, stdio: 'pipe' });
@@ -770,7 +851,7 @@ test('a missing sealed install comes from its declared source and a failed insta
       source: { url: 'https://127.0.0.1:9/fixturecli' },
     };
     const result = await runWorkspaceCommand({
-      container: 'otto-workspace-fixture',
+      container: 'nod-workspace-fixture',
       threadId: 'fixture',
       args: ['status'],
       environment: { FIXTURE_TOKEN: 'synthetic-connected-token' },
@@ -779,14 +860,14 @@ test('a missing sealed install comes from its declared source and a failed insta
     });
     assert.notEqual(result.exitCode, 0);
     assert.match(result.stderr.toString(), /Could not install fixturecli/);
-    assert.equal(existsSync(join(home, `otto-cli-${cli.id}`, '.installed')), false);
+    assert.equal(existsSync(join(home, `nod-cli-${cli.id}`, '.installed')), false);
   } finally {
     await rm(home, { recursive: true, force: true });
   }
 });
 
 test('sealed downloads install only the declared bytes and find the program in archives', async () => {
-  const root = await mkdtemp('/tmp/otto-cli-install-');
+  const root = await mkdtemp('/tmp/nod-cli-install-');
   try {
     const release = join(root, 'release');
     await mkdir(join(release, 'tool-1.0', 'bin'), { recursive: true });
@@ -903,7 +984,7 @@ test('an uncertain workspace operation cancels and drains commands already in fl
     return processes.at(-1)!;
   };
   const workspace = createDockerWorkspace({
-    container: 'otto-workspace-fixture',
+    container: 'nod-workspace-fixture',
     workspaceRoot: '/synthetic',
     spawn: launch,
   });
@@ -932,7 +1013,7 @@ test('an uncertain workspace operation cancels and drains commands already in fl
         throw new Error('Existing command was not cancelled.');
       }),
     ]);
-    await assert.rejects(execute(session, 'later'), /Restart Otto/);
+    await assert.rejects(execute(session, 'later'), /Restart nod/);
     assert.equal(processes.length, 2);
     assert.equal(failureSettled, false);
     acknowledge();
@@ -946,7 +1027,7 @@ test('an uncertain workspace operation cancels and drains commands already in fl
 
 test('workspace uploads transfer binary chunks atomically and reject symlink directories', async () => {
   const f = await local();
-  const outside = await mkdtemp('/tmp/otto-upload-outside-');
+  const outside = await mkdtemp('/tmp/nod-upload-outside-');
   let launches = 0;
   const workspace = createCommandWorkspace({
     workspaceRoot: f.directory,

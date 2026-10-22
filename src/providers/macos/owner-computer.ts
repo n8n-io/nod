@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { ComputerPermissionKind, MacApp, OwnerComputer } from '../../ports/owner-computer.ts';
 
@@ -8,8 +9,15 @@ const outputBytes = 256 * 1024;
 const defaultTimeoutMs = 10 * 60_000;
 
 export function sandboxProfile(denyRead: string[] = []) {
+  const parents = new Set<string>();
+  for (const path of denyRead)
+    for (let parent = dirname(path); parent !== dirname(parent); parent = dirname(parent))
+      parents.add(parent);
   const extra = denyRead
     .map((path) => `(deny file-read* file-write* (subpath "${path.replace(/(["\\])/g, '\\$1')}"))`)
+    .join('\n');
+  const fixed = [...parents]
+    .map((path) => `(deny file-write-unlink (literal "${path.replace(/(["\\])/g, '\\$1')}"))`)
     .join('\n');
   return `(version 1)
 (allow default)
@@ -17,6 +25,7 @@ export function sandboxProfile(denyRead: string[] = []) {
 (deny file-read* file-write* (subpath (param "DATA")))
 (deny file-read* file-write* (subpath (string-append (param "HOME") "/Library")) (regex (string-append "^" (param "HOME") "/\\\\.[^/]+($|/)")))
 ${extra}
+${fixed}
 (deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd") (global-name "com.apple.security.agent"))
 (deny mach-lookup (local-name-prefix "com.apple.axserver") (global-name-prefix "com.apple.axserver") (global-name-prefix "com.apple.windowserver") (global-name-prefix "com.apple.replayd") (global-name-prefix "com.apple.ScreenCaptureKit"))
 (deny lsopen)
@@ -66,7 +75,25 @@ export function createMacComputer(options: {
   helperTimeoutMs?: number;
 }): OwnerComputer {
   const home = homedir();
-  const profile = sandboxProfile((options.denyRead ?? []).map(realpath));
+  const protectedPaths = new Set(
+    [...(options.denyRead ?? []), ...(options.helper ? [options.helper] : [])].flatMap((path) => [
+      resolve(path),
+      realpath(resolve(path)),
+    ]),
+  );
+  for (const path of [...protectedPaths]) {
+    for (
+      let directory = dirname(path);
+      directory !== dirname(directory);
+      directory = dirname(directory)
+    ) {
+      if (directory.toLowerCase().endsWith('.app')) {
+        protectedPaths.add(directory);
+        protectedPaths.add(realpath(directory));
+      }
+    }
+  }
+  const profile = sandboxProfile([...protectedPaths]);
   const data = realpath(options.dataRoot);
   let helper: ChildProcessWithoutNullStreams | undefined;
   let nextId = 0;
@@ -93,12 +120,12 @@ export function createMacComputer(options: {
     if (helper) return helper;
     if (!options.helper || !existsSync(options.helper))
       throw new Error(
-        'Mac app control needs Otto Computer Use. For a source install, run pnpm run computer:build, or use the Otto desktop app. The shell action is still available.',
+        'Mac app control needs nod Computer Use. For a source install, run pnpm run computer:build, or use the nod desktop app. The shell action is still available.',
       );
     const child = spawn(options.helper, [], { stdio: ['pipe', 'pipe', 'pipe'], env: {} });
     helper = child;
     child.stderr.resume();
-    child.stdin.on('error', () => stop(child, new Error('Otto Computer Use is unavailable.')));
+    child.stdin.on('error', () => stop(child, new Error('nod Computer Use is unavailable.')));
     createInterface({ input: child.stdout }).on('line', (line) => {
       let message: { id?: number; ok?: boolean; result?: unknown; error?: string };
       try {
@@ -114,9 +141,9 @@ export function createMacComputer(options: {
         waiting.reject(new Error(permissionMessage(message.error ?? 'The Mac app step failed.')));
     });
     child.on('close', () =>
-      stop(child, new Error('Otto Computer Use stopped. Look again to check what completed.')),
+      stop(child, new Error('nod Computer Use stopped. Look again to check what completed.')),
     );
-    child.on('error', () => stop(child, new Error('Otto Computer Use is unavailable.')));
+    child.on('error', () => stop(child, new Error('nod Computer Use is unavailable.')));
     return child;
   }
 
@@ -136,10 +163,7 @@ export function createMacComputer(options: {
       };
       const timer = setTimeout(
         () =>
-          stop(
-            child,
-            new Error('Otto Computer Use timed out. Look again to check what completed.'),
-          ),
+          stop(child, new Error('nod Computer Use timed out. Look again to check what completed.')),
         timeoutMs,
       );
       signal?.addEventListener('abort', abort, { once: true });
@@ -259,21 +283,21 @@ export function createMacComputer(options: {
       const result = await call<{ app: MacApp; png: string }>({ op: 'screenshot', app }, signal);
       const png = Buffer.from(result.png, 'base64');
       if (!png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
-        throw new Error('Otto Computer Use did not return a PNG screenshot.');
+        throw new Error('nod Computer Use did not return a PNG screenshot.');
       return { app: result.app, png };
     },
     permissions: () => call<Record<ComputerPermissionKind, boolean>>({ op: 'status' }),
     requestPermission: (kind) =>
       call<Record<ComputerPermissionKind, boolean>>({ op: 'request', permission: kind }),
     dispose() {
-      if (helper) stop(helper, new Error('Otto Computer Use stopped.'));
+      if (helper) stop(helper, new Error('nod Computer Use stopped.'));
     },
   };
 }
 
 function permissionMessage(error: string) {
   if (error === 'accessibility_permission')
-    return 'Otto needs Accessibility permission to use Mac apps. Ask the owner to allow it in Settings, under Your computer.';
+    return 'nod needs Accessibility permission to use Mac apps. Ask the owner to allow it in Settings, under Your computer.';
   if (error === 'screen_permission')
     return 'macOS refused screen capture. Ask the owner to review Screen Recording permission in macOS Settings, then retry the screenshot.';
   return error;

@@ -187,7 +187,7 @@ export async function registerFeedback(
       throw fail('Attachments must total no more than 4 MB.', 413);
     const report: FeedbackFile | undefined = snapshot
       ? {
-          name: 'otto-diagnostic-report.json',
+          name: 'nod-diagnostic-report.json',
           mimeType: 'application/json',
           data: Buffer.from(snapshot.content).toString('base64'),
           sha256: hash(snapshot.content),
@@ -236,7 +236,7 @@ export async function registerFeedback(
       const delivered = await save(await options.delivery.submit(envelope));
       if (delivered.status === 'submitted' || delivered.status === 'partial')
         options.analytics?.({
-          event: 'otto_feedback_sent',
+          event: 'nod_feedback_sent',
           properties: {
             category: input.category,
             has_attachments: input.attachments.length > 0,

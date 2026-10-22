@@ -6,7 +6,7 @@ import { runProcess } from '../../src/providers/process.ts';
 import { integrationDatabaseUrl } from '../../scripts/local-database.ts';
 import { keyVariables, loadEnvironment, repository } from './stack.ts';
 
-const container = 'otto-evals-pg';
+const container = 'nod-evals-pg';
 const port = 54398;
 
 export interface Check {
@@ -19,7 +19,7 @@ export interface Check {
 const docker = (...args: string[]) => runProcess('docker', args);
 
 async function passwordFile(root: string) {
-  const path = join(homedir(), '.otto-evals', 'database-password');
+  const path = join(homedir(), '.nod-evals', 'database-password');
   const saved = async (file: string) => (await readFile(file, 'utf8').catch(() => '')).trim();
   const password = (await saved(path)) || (await saved(join(root, 'database-password')));
   if (password) {
@@ -63,7 +63,7 @@ export async function ensureDatabase(
 
 async function provisionDatabase(root: string, provision: boolean) {
   const { password } = await passwordFile(root);
-  const url = `postgres://otto:${password}@127.0.0.1:${port}/otto`;
+  const url = `postgres://nod:${password}@127.0.0.1:${port}/nod`;
   if (await reachable(url)) return { url, provisioned: true };
   if (!provision) throw new Error('No test database. Run: pnpm run eval:capability doctor --fix');
   const state = (
@@ -77,11 +77,11 @@ async function provisionDatabase(root: string, provision: boolean) {
       '--name',
       container,
       '-e',
-      'POSTGRES_USER=otto',
+      'POSTGRES_USER=nod',
       '-e',
       `POSTGRES_PASSWORD=${password}`,
       '-e',
-      'POSTGRES_DB=otto',
+      'POSTGRES_DB=nod',
       '-p',
       `127.0.0.1:${port}:5432`,
       'postgres:17-alpine',
@@ -128,13 +128,13 @@ export async function evalImages(environment: Record<string, string | undefined>
   };
   return {
     workspace: await build(
-      environment.OTTO_EVAL_WORKSPACE_IMAGE,
-      'otto-eval-workspace',
+      environment.NOD_EVAL_WORKSPACE_IMAGE,
+      'nod-eval-workspace',
       'Dockerfile.workspace',
     ),
     browser: await build(
-      environment.OTTO_EVAL_BROWSER_IMAGE,
-      'otto-eval-browser',
+      environment.NOD_EVAL_BROWSER_IMAGE,
+      'nod-eval-browser',
       'Dockerfile.browser',
       ['--target', 'eval'],
     ),
@@ -224,7 +224,7 @@ export async function cleanup(root: string) {
   const listed = await docker('ps', '-a', '--format', '{{.Names}}');
   const orphans = listed.stdout
     .split('\n')
-    .filter((name) => /^otto-(workspace|browser)-eval-[a-f0-9]+$/.test(name));
+    .filter((name) => /^nod-(workspace|browser)-eval-[a-f0-9]+$/.test(name));
   if (orphans.length) await docker('rm', '-f', ...orphans);
   let schemas = 0;
   const url = await loadEnvironment()

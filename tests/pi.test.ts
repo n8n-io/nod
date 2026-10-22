@@ -49,7 +49,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
   for (const kind of ['chat', 'background', 'task'] as const)
     await t.test(`${kind} session`, async () => {
       const background = kind !== 'chat';
-      const directory = await mkdtemp(join(tmpdir(), 'otto-pi-'));
+      const directory = await mkdtemp(join(tmpdir(), 'nod-pi-'));
       const id = 'test-' + randomUUID();
       const replies: string[] = [];
       const prompts: string[] = [];
@@ -215,7 +215,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
 });
 
 test('messages taken after a Pi turn reach the next request together and not after a question', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-pi-steer-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-steer-'));
   const requests: string[] = [];
   const replies: string[] = [];
   const batches = [
@@ -342,8 +342,8 @@ function recordingWorkspace() {
   };
 }
 
-test('Pi sessions use native tools on the sandbox workspace plus Otto tools', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-pi-native-'));
+test('Pi sessions use native tools on the sandbox workspace plus nod tools', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-native-'));
   const { workspace, scripts } = recordingWorkspace();
   const ran: string[] = [];
   let captured: Parameters<typeof createAgentSession>[0];
@@ -353,13 +353,13 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     reached.push(`${request.method} ${request.url}`);
     response.end('<html><body><p>Loopback service</p></body></html>');
   });
-  const settings = join(tmpdir(), 'otto-pi', 'web-search.json');
+  const settings = join(tmpdir(), 'nod-pi', 'web-search.json');
   const previous = await readFile(settings, 'utf8').catch(() => undefined);
   let agent: ReturnType<typeof createPiAgent> | undefined;
   try {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as { port: number }).port;
-    await mkdir(join(tmpdir(), 'otto-pi'), { recursive: true });
+    await mkdir(join(tmpdir(), 'nod-pi'), { recursive: true });
     await writeFile(
       settings,
       JSON.stringify({
@@ -488,12 +488,12 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
 });
 
 test('codemode scripts reach only workspace and web tools, each call through the turn guard', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-pi-codemode-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-codemode-'));
   const { workspace } = recordingWorkspace();
   const ran: string[] = [];
   const requests: string[] = [];
   const code =
-    "const [, , stored] = await Promise.allSettled([tools.ls({}), tools.find({ pattern: '*' }), tools.get_search_content({ responseId: 'synthetic-missing' })]); return JSON.stringify({ stored: String(stored.reason).includes('No stored results'), ottoTool: 'fixture_tool' in tools, apps: 'apps' in tools });";
+    "const [, , stored] = await Promise.allSettled([tools.ls({}), tools.find({ pattern: '*' }), tools.get_search_content({ responseId: 'synthetic-missing' })]); return JSON.stringify({ stored: String(stored.reason).includes('No stored results'), nodTool: 'fixture_tool' in tools, apps: 'apps' in tools });";
   const agent = createPiAgent({
     provider: 'openai',
     apiKey: 'fixture-key',
@@ -550,7 +550,7 @@ test('codemode scripts reach only workspace and web tools, each call through the
     });
     await session.prompt('Run the script', []);
     assert.deepEqual(ran.toSorted(), ['codemode', 'find', 'get_search_content', 'ls']);
-    assert.match(requests[1], /\{\\"stored\\":true,\\"ottoTool\\":false,\\"apps\\":false\}/);
+    assert.match(requests[1], /\{\\"stored\\":true,\\"nodTool\\":false,\\"apps\\":false\}/);
     await session.dispose();
   } finally {
     await agent.dispose();
@@ -561,7 +561,7 @@ test('codemode scripts reach only workspace and web tools, each call through the
 // Local Pi sessions: rebase, legacy credential scrubbing, dangling tool calls, restore.
 
 async function fixture() {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-local-pi-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-local-pi-'));
   return {
     directory,
     threadId: randomUUID(),
@@ -1022,7 +1022,7 @@ exit($? >> 8);
 `;
 
 async function hostSandbox(t: test.TestContext) {
-  const host = await mkdtemp(join(tmpdir(), 'otto-sandbox-'));
+  const host = await mkdtemp(join(tmpdir(), 'nod-sandbox-'));
   const bin = join(host, 'bin');
   const root = join(host, 'root');
   await mkdir(bin);
@@ -1032,7 +1032,7 @@ async function hostSandbox(t: test.TestContext) {
     await chmod(join(bin, 'timeout'), 0o755);
   }
   t.after(() => rm(host, { recursive: true, force: true }));
-  const prefix = `/otto-sandbox-${randomUUID()}`;
+  const prefix = `/nod-sandbox-${randomUUID()}`;
   const calls: string[] = [];
   const workspace: WorkspaceSession = {
     path: `${prefix}/workspace`,
@@ -1092,12 +1092,12 @@ test('bash output larger than Pi limits stays in the sandbox and never creates h
   assert.ok(Buffer.byteLength(output) < 60 * 1024);
   assert.match(output, /100000\n/);
   const path = output.match(/Full output: (\S+)\]/)?.[1];
-  assert.ok(path?.startsWith(`${prefix}/workspace/.otto/outputs/pi-bash-`));
+  assert.ok(path?.startsWith(`${prefix}/workspace/.nod/outputs/pi-bash-`));
   const saved = await readFile(path!.replace(prefix, root), 'utf8');
   assert.equal(saved.split('\n').length, 100001);
   const huge = await run('bash', { command: 'seq 1 400000' });
   const complete = huge.match(/Complete output \(\d+ bytes\): (\S+)\]/)?.[1];
-  assert.ok(complete?.startsWith(`${prefix}/workspace/.otto/outputs/bash-`));
+  assert.ok(complete?.startsWith(`${prefix}/workspace/.nod/outputs/bash-`));
   assert.equal(
     (await readFile(complete!.replace(prefix, root), 'utf8')).split('\n').length,
     400001,
@@ -1232,7 +1232,7 @@ function context(directory: string): RuntimeContext {
 }
 
 test('delegated subagents run in parallel, each in its own browser, and answer as untrusted data', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-delegate-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const opened = new Map<string, string>();
   const discarded: string[] = [];
@@ -1316,7 +1316,7 @@ test('delegated subagents run in parallel, each in its own browser, and answer a
 });
 
 test('a previous turn error reaches the next turn only as neutralised untrusted data', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-previous-failure-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-previous-failure-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   let prompt = '';
   const runtime = createAgentRuntime({
@@ -1350,7 +1350,7 @@ test('a previous turn error reaches the next turn only as neutralised untrusted 
 });
 
 test('a turn posts its opening line, an update after a quiet stretch and its final reply, never other narration', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-narration-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-narration-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const runtime = createAgentRuntime({
     agent: {
@@ -1439,7 +1439,7 @@ test('a turn posts its opening line, an update after a quiet stretch and its fin
 });
 
 test('a paused turn cannot start a subagent still preparing and failed children return errors', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-stop-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-delegate-stop-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   let opened = 0;
   let preparing = 0;
@@ -1515,7 +1515,7 @@ test('a paused turn cannot start a subagent still preparing and failed children 
 });
 
 test('runtime shutdown drains tasks and releases every capability after adapter failures', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-disposal-failure-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-disposal-failure-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   let entered!: () => void;
   const started = new Promise<void>((resolve) => {
@@ -1786,8 +1786,8 @@ test('decision routing uses the selected connection and never sends subscription
   });
   const { createDefaultAdapters } = await import('../src/server/composition.ts');
   const adapters = createDefaultAdapters({
-    OTTO_FEEDBACK_ENABLED: 'false',
-    OTTO_VAULT_KEY: Buffer.alloc(32, 7).toString('base64'),
+    NOD_FEEDBACK_ENABLED: 'false',
+    NOD_VAULT_KEY: Buffer.alloc(32, 7).toString('base64'),
   });
   const models = adapters.models!;
   let selected: {
@@ -1857,7 +1857,7 @@ test('decision routing uses the selected connection and never sends subscription
   ]);
   const overridden = createDefaultAdapters({
     TYPESAFE_API_KEY: 'fixture-explicit-jev-key',
-    OTTO_FEEDBACK_ENABLED: 'false',
+    NOD_FEEDBACK_ENABLED: 'false',
   });
   overridden.models!.resolve = async () => {
     throw new Error('The override must not read another connection.');
@@ -1880,7 +1880,7 @@ test('codemode heldout output preserves UTF-8 bytes and fails closed through the
     ).join('') + 'END-OF-HELDOUT-OUTPUT';
   for (const mode of ['success', 'guard-refused', 'transfer-cleanup-failed'] as const)
     await t.test(mode, { timeout: 20_000 }, async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'otto-codemode-holdout-'));
+      const directory = await mkdtemp(join(tmpdir(), 'nod-codemode-holdout-'));
       const sdkTemporary = join(directory, 'sdk-temporary');
       const workspacePath = join(directory, 'workspace');
       await mkdir(sdkTemporary);
@@ -1951,7 +1951,7 @@ test('codemode heldout output preserves UTF-8 bytes and fails closed through the
             const result = await run();
             recordedResults += 1;
             const path = (result.details as { fullOutputPath: string }).fullOutputPath;
-            assert.ok(path.startsWith(workspacePath + '/.otto/outputs/'));
+            assert.ok(path.startsWith(workspacePath + '/.nod/outputs/'));
             assert.equal(await readFile(path, 'utf8'), expected);
             assert.ok(!JSON.stringify(result).includes(sdkTemporary));
             assert.deepEqual(await spills(), []);
@@ -2008,7 +2008,7 @@ test('codemode heldout output preserves UTF-8 bytes and fails closed through the
     });
 });
 
-test('every Otto tool schema reaches a model provider as a root object with its properties', () => {
+test('every nod tool schema reaches a model provider as a root object with its properties', () => {
   for (const tool of Object.values(toolDefinitions)) {
     const schema = tool.parameters as { type?: string; anyOf?: unknown; properties?: object };
     assert.equal(schema.type, 'object', tool.name);
@@ -2629,7 +2629,7 @@ test('owner context stays out of the system prompt and compaction summaries and 
   const credential = { type: 'endpoint' as const, url: `http://127.0.0.1:${address.port}/v1` };
   const [definition] = await createPiModelBackend().catalog('compatible', 'api_key', credential);
   const recorded: import('../src/ports/traces.ts').ModelTrace[] = [];
-  const sessionRoot = await mkdtemp(join(tmpdir(), 'otto-pi-owner-'));
+  const sessionRoot = await mkdtemp(join(tmpdir(), 'nod-pi-owner-'));
   const agent = () =>
     createPiAgent({
       provider: 'compatible',
@@ -2719,7 +2719,7 @@ test('sessions of one thread share a prompt cache key that hides execution IDs',
   const agent = createPiAgent({
     provider: 'openai',
     apiKey: 'fixture-key',
-    sessionRoot: await mkdtemp(join(tmpdir(), 'otto-pi-cache-')),
+    sessionRoot: await mkdtemp(join(tmpdir(), 'nod-pi-cache-')),
     createSession: async (options) => {
       loaders.push(options!.resourceLoader);
       return createAgentSession(options);
@@ -2959,7 +2959,7 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
   const codex = (await backend.catalog('openai', 'subscription')).find(
     (item) => item.choice.id === 'gpt-6.1-sol',
   )!;
-  const directory = await mkdtemp(join(tmpdir(), 'otto-model-switch-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-model-switch-'));
   const requests: Array<{ provider: string; effort: string; history: string }> = [];
   let selected: import('../src/ports/models.ts').ModelAccess = {
     provider: 'openai',

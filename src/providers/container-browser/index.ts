@@ -25,9 +25,9 @@ export function createContainerBrowserComputer(options: {
   timeoutMs?: number;
   drainTimeoutMs?: number;
 }): Computer {
-  const container = options.container ?? 'otto-browser';
-  if (!/^otto-browser(?:-[a-zA-Z0-9_-]+)?$/.test(container))
-    throw new Error('BROWSER_CONTAINER must identify an Otto browser.');
+  const container = options.container ?? 'nod-browser';
+  if (!/^nod-browser(?:-[a-zA-Z0-9_-]+)?$/.test(container))
+    throw new Error('BROWSER_CONTAINER must identify a nod browser.');
   const launch = options.spawn ?? spawn;
   return createBridgeComputer({
     namespace: browserNamespace(options.dataRoot),

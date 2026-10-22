@@ -15,6 +15,6 @@ Check hotel room type, occupancy, bed type, check-in limits, location and cancel
 
 Build the itinerary from confirmed reservations and clearly marked proposals. Include the time zone, booking reference, important cutoff and source link for each commitment. Leave time for travel between places; do not fill every free hour.
 
-A request to research travel or prepare an itinerary is not a request to book. When the user asks you to book, choose within their constraints and book without asking them to confirm again; pay gets their approval for any payment. Read the final itinerary, traveller details, total and fare rules before you book. Completion needs the issued ticket or reservation reference. Keep payment, reservation and ticket issue as separate states. Otto has no phone-call tool; use supported online paths or prepare a clear handoff when a call is required.
+A request to research travel or prepare an itinerary is not a request to book. When the user asks you to book, choose within their constraints and book without asking them to confirm again; pay gets their approval for any payment. Read the final itinerary, traveller details, total and fare rules before you book. Completion needs the issued ticket or reservation reference. Keep payment, reservation and ticket issue as separate states. nod has no phone-call tool; use supported online paths or prepare a clear handoff when a call is required.
 
 For cancellations, disruptions, check-in or travel claims, read [references/existing-bookings.md](references/existing-bookings.md).

@@ -11,6 +11,17 @@ type DomNode = {
   shadowRoots?: DomNode[];
   contentDocument?: DomNode;
 };
+export type BoundSignInControl = {
+  backendNodeId: number;
+  frameId: string;
+  targetFrameId: string;
+  loaderId: string;
+  snapshot: string;
+  controls: { role: string; name: string }[];
+  origin: string;
+  url: string;
+  submits: { method: string; to: string } | null;
+};
 export type FocusedField = { origin: string; session: string; context: number };
 export type ControlQuery = {
   selector?: string;
@@ -19,21 +30,30 @@ export type ControlQuery = {
   focused?: boolean;
 };
 
-const active = `(() => { if (!document.hasFocus()) return null; let node = document.activeElement; for (;;) { const root = node && (node.shadowRoot ?? (globalThis.__ottoRoots ?? []).find(root => root.host === node)); if (!root?.activeElement) break; node = root.activeElement; } return node && !['IFRAME', 'FRAME', 'BODY', 'HTML'].includes(node.tagName) ? node : null; })()`;
-const focusScript = `(() => { const node = ${active}; globalThis.__ottoFocused = node; return node ? node.tagName : ''; })()`;
+const active = `(() => { if (!document.hasFocus()) return null; let node = document.activeElement; for (;;) { const root = node && (node.shadowRoot ?? (globalThis.__nodRoots ?? []).find(root => root.host === node)); if (!root?.activeElement) break; node = root.activeElement; } return node && !['IFRAME', 'FRAME', 'BODY', 'HTML'].includes(node.tagName) ? node : null; })()`;
+const focusScript = `(() => { const node = ${active}; globalThis.__nodFocused = node; return node ? node.tagName : ''; })()`;
 const submitsScript = `function (enter) { const node = this.nodeType === 1 ? this : this.parentElement; const control = enter ? node : (node?.closest('button, input') ?? node?.closest('label')?.control); const form = control?.form; const button = ['submit', 'image'].includes(control?.type); if (!form || !(button || (enter && control.tagName === 'INPUT'))) return null; const own = (name) => Object.getOwnPropertyDescriptor(HTMLFormElement.prototype, name).get.call(form); const submitter = button ? control : [...own('elements')].find((element) => ['submit', 'image'].includes(element.type)); const method = (submitter?.hasAttribute('formmethod') ? submitter.formMethod : own('method')) || 'get'; if (method === 'dialog') return null; return { method: method.toUpperCase(), to: submitter?.hasAttribute('formaction') ? submitter.formAction : own('action') }; }`;
+const signInControlSelector =
+  'button, a[href], input[type="submit"], input[type="button"], input[type="image"], [role="button"], [role="link"]';
+const signInSnapshot = `function () {
+  if (!this.isConnected || this.ownerDocument !== document || !this.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) || this.matches(':disabled') || this.closest('[inert], [aria-disabled="true"], [aria-hidden="true"]')) return null;
+  const rect = this.getBoundingClientRect();
+  if (!rect.width || !rect.height || this.outerHTML.length > 16384) return null;
+  const references = ['aria-labelledby', 'aria-describedby'].map(name => (this.getAttribute(name) ?? '').split(/\\s+/).map(id => document.getElementById(id)?.textContent ?? ''));
+  return JSON.stringify({ origin: location.origin, url: location.href, html: this.outerHTML, href: this instanceof HTMLAnchorElement ? this.href : null, references, submits: (${submitsScript}).call(this, false) });
+}`;
 const blurScript = `(() => { const node = document.activeElement; if (node && node !== document.body && typeof node.blur === 'function') node.blur(); return ''; })()`;
 const armScript = (privateValue: boolean) =>
-  `(() => { const node = ${active}; if (!node || node !== globalThis.__ottoFocused) return ''; globalThis.__ottoField = node; if (${privateValue}) (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); if (node.tagName !== 'SELECT') { if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); } return node.tagName; })()`;
+  `(() => { const node = ${active}; if (!node || node !== globalThis.__nodFocused) return ''; globalThis.__nodField = node; if (${privateValue}) (globalThis.__nodPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); if (node.tagName !== 'SELECT') { if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); } return node.tagName; })()`;
 const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot: boolean) =>
   `(() => {
-    globalThis.__ottoMaskObserver?.disconnect();
-    delete globalThis.__ottoMaskObserver;
-    const privateFields = [...(globalThis.__ottoPrivateFields ?? [])].filter(node => node.isConnected);
-    const types = globalThis.__ottoMaskedTypes ??= new Map();
+    globalThis.__nodMaskObserver?.disconnect();
+    delete globalThis.__nodMaskObserver;
+    const privateFields = [...(globalThis.__nodPrivateFields ?? [])].filter(node => node.isConnected);
+    const types = globalThis.__nodMaskedTypes ??= new Map();
     for (const [node, type] of types) if (type === null) node.removeAttribute('type'); else node.setAttribute('type', type);
     types.clear();
-    const styles = globalThis.__ottoMaskedStyles ??= new Map();
+    const styles = globalThis.__nodMaskedStyles ??= new Map();
     for (const [node, [hadStyle, properties]] of styles) {
       for (const [property, value, priority] of properties.slice().reverse()) {
         if (property === 'transition-property') getComputedStyle(node).opacity;
@@ -54,7 +74,7 @@ const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot
     const scan = ${allFields} || secrets.length;
     let roots = [];
     const apply = () => {
-    roots = [...new Set([document, ...(scan ? globalThis.__ottoRoots ?? [] : []), ...privateFields.map(node => node.getRootNode())])];
+    roots = [...new Set([document, ...(scan ? globalThis.__nodRoots ?? [] : []), ...privateFields.map(node => node.getRootNode())])];
     if (scan) for (let index = 0; index < roots.length; index++) for (const node of roots[index].querySelectorAll('*')) if (node.shadowRoot) roots.push(node.shadowRoot);
     const numbers = secrets.filter(secret => /^\\d{12,19}$/.test(secret));
     const matches = value => typeof value === 'string' && (secrets.some(secret => value.includes(secret)) || numbers.some(secret => value.replace(/\\D/g, '').includes(secret)));
@@ -78,7 +98,7 @@ const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot
       const watch = () => roots.forEach(root => observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true }));
       const observer = new MutationObserver(() => { observer.disconnect(); apply(); watch(); });
       watch();
-      globalThis.__ottoMaskObserver = observer;
+      globalThis.__nodMaskObserver = observer;
     }
     return '';
   })()`;
@@ -127,8 +147,10 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
   const sessions = new Set<string>();
   const following = new Set<Promise<unknown>>();
   const worlds = new Map<string, number>();
-  const send = (method: string, params: object = {}, sessionId?: string) =>
+  const bindings = new Map<string, (payload: string) => void>();
+  const send = (method: string, params: object = {}, sessionId?: string, cleanup = false) =>
     new Promise<Record<string, unknown>>((resolve, reject) => {
+      if (!cleanup) signal?.throwIfAborted();
       const id = ++next;
       const timer = setTimeout(() => {
         pending.delete(id);
@@ -165,6 +187,8 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       sessionId?: string;
       params?: {
         sessionId?: string;
+        name?: string;
+        payload?: string;
         targetInfo?: { type?: string };
       };
     };
@@ -173,6 +197,8 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       pending.delete(message.id!);
       if (message.error) waiter.reject(new Error(message.error.message ?? 'Inspector error.'));
       else waiter.resolve(message.result ?? {});
+    } else if (message.method === 'Runtime.bindingCalled' && message.params?.name) {
+      bindings.get(message.params.name)?.(message.params.payload ?? '');
     } else if (
       message.method === 'Target.attachedToTarget' &&
       message.params?.targetInfo?.type === 'iframe' &&
@@ -224,7 +250,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     if (known !== undefined) return known;
     const { executionContextId } = (await send(
       'Page.createIsolatedWorld',
-      { frameId, worldName: 'otto-private' },
+      { frameId, worldName: 'nod-private' },
       session,
     )) as { executionContextId: number };
     worlds.set(key, executionContextId);
@@ -273,8 +299,8 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
               'Runtime.evaluate',
               {
                 contextId: context,
-                expression: `globalThis.__ottoRoots = []; ${active}`,
-                objectGroup: 'otto-roots',
+                expression: `globalThis.__nodRoots = []; ${active}`,
+                objectGroup: 'nod-roots',
               },
               session,
             )) as { result?: { objectId?: string } };
@@ -292,7 +318,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
               (roots.get(frame.id) ?? []).map(async (backendNodeId) => {
                 const { object } = (await send(
                   'DOM.resolveNode',
-                  { backendNodeId, executionContextId: context, objectGroup: 'otto-roots' },
+                  { backendNodeId, executionContextId: context, objectGroup: 'nod-roots' },
                   session,
                 )) as { object: { objectId: string } };
                 return { objectId: object.objectId };
@@ -303,14 +329,14 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
                 'Runtime.callFunctionOn',
                 {
                   executionContextId: context,
-                  functionDeclaration: 'function(...roots) { globalThis.__ottoRoots = roots; }',
+                  functionDeclaration: 'function(...roots) { globalThis.__nodRoots = roots; }',
                   arguments: objects,
                 },
                 session,
               );
               if (exceptionDetails) throw new Error('The page check failed.');
             } else if (shadows === 'document')
-              await evaluate(session, context, 'globalThis.__ottoRoots = [];');
+              await evaluate(session, context, 'globalThis.__nodRoots = [];');
           }
           results.push({
             origin: frame.securityOrigin ?? '',
@@ -323,13 +349,13 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
           if (strict) throw error;
         }
       }
-      if (shadows) await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-roots' }, session);
+      if (shadows) await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-roots' }, session);
     }
     if (strict && !results.length) throw new Error('The browser inspector is unavailable.');
     return results;
   }
 
-  const locate = async (query: ControlQuery) => {
+  const locate = async (query: ControlQuery, hitTest = false) => {
     let backendNodeId: number | undefined;
     let session = page;
     const describe = async (params: Record<string, unknown>) =>
@@ -345,7 +371,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       const y = at(query.pixel?.y ?? query.point!.y * view.clientHeight, view.clientHeight);
       ({ backendNodeId } = (await send(
         'DOM.getNodeForLocation',
-        { x, y, ignorePointerEventsNone: true },
+        { x, y, ignorePointerEventsNone: !hitTest },
         page,
       )) as { backendNodeId?: number });
       const owner = backendNodeId
@@ -366,7 +392,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
             {
               x: Math.round(x - model.content[0]!),
               y: Math.round(y - model.content[1]!),
-              ignorePointerEventsNone: true,
+              ignorePointerEventsNone: !hitTest,
             },
             child,
           ).catch(() => undefined)) as { backendNodeId?: number } | undefined;
@@ -398,13 +424,13 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
           'Runtime.evaluate',
           {
             contextId: hit.context,
-            expression: 'globalThis.__ottoFocused',
-            objectGroup: 'otto-control',
+            expression: 'globalThis.__nodFocused',
+            objectGroup: 'nod-control',
           },
           session,
         )) as { result?: { objectId?: string } };
         if (result?.objectId) backendNodeId = await describe({ objectId: result.objectId });
-        await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, session);
+        await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-control' }, session);
       }
       const [main] = backendNodeId ? [] : await tree(page);
       if (main) {
@@ -415,12 +441,12 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
             contextId: await world(page, main.id),
             expression:
               '(() => { let node = document.activeElement; while (node?.shadowRoot?.activeElement) node = node.shadowRoot.activeElement; return node === document.body && !node.isContentEditable ? null : node; })()',
-            objectGroup: 'otto-control',
+            objectGroup: 'nod-control',
           },
           page,
         )) as { result?: { objectId?: string } };
         if (result?.objectId) backendNodeId = await describe({ objectId: result.objectId });
-        await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, page);
+        await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-control' }, page);
       }
     }
     return backendNodeId ? { backendNodeId, session } : undefined;
@@ -434,7 +460,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       {
         backendNodeId: found.backendNodeId,
         executionContextId: await world(found.session, frame.id),
-        objectGroup: 'otto-control',
+        objectGroup: 'nod-control',
       },
       found.session,
     )) as { object: { objectId: string } };
@@ -458,8 +484,100 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         ? { method: value.method, to: value.to }
         : null;
     } finally {
-      await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, found.session);
+      await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-control' }, found.session);
     }
+  };
+
+  const signInSelector = async (selector: string) => {
+    const seen = new Set<string>();
+    let found: { backendNodeId: number; session: string } | undefined;
+    for (const session of [...sessions].reverse()) {
+      for (const frame of await tree(session)) {
+        if (seen.has(frame.id)) continue;
+        seen.add(frame.id);
+        const { result, exceptionDetails } = (await send(
+          'Runtime.evaluate',
+          {
+            contextId: await world(session, frame.id),
+            expression: `(() => { const nodes = document.querySelectorAll(${JSON.stringify(selector)}); if (nodes.length > 1) throw new Error('Ambiguous sign-in control'); return nodes[0] ?? null; })()`,
+            objectGroup: 'nod-sign-in',
+          },
+          session,
+        )) as { result?: { objectId?: string }; exceptionDetails?: unknown };
+        if (exceptionDetails || (result?.objectId && found))
+          throw new Error('The sign-in selector must identify one control.');
+        if (result?.objectId) {
+          const { node } = (await send(
+            'DOM.describeNode',
+            { objectId: result.objectId },
+            session,
+          )) as {
+            node: { backendNodeId: number };
+          };
+          found = { backendNodeId: node.backendNodeId, session };
+        }
+        await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-sign-in' }, session);
+      }
+    }
+    return found;
+  };
+
+  const controlsFor = async (found: { backendNodeId: number; session: string }) => {
+    const { backendNodeId, session } = found;
+    const { nodes } = (await send(
+      'Accessibility.getPartialAXTree',
+      { backendNodeId, fetchRelatives: true },
+      session,
+    )) as {
+      nodes: Array<{
+        nodeId: string;
+        parentId?: string;
+        ignored?: boolean;
+        backendDOMNodeId?: number;
+        role?: { value?: unknown };
+        name?: { value?: unknown };
+      }>;
+    };
+    const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+    const controls: Array<{ role: string; name: string }> = [];
+    for (
+      let node = nodes.find((item) => item.backendDOMNodeId === backendNodeId);
+      node && controls.length < 3;
+      node = node.parentId ? byId.get(node.parentId) : undefined
+    ) {
+      const name = String(node.name?.value ?? '').trim();
+      if (!node.ignored && name) controls.push({ role: String(node.role?.value ?? ''), name });
+    }
+    return controls;
+  };
+
+  const resolveControl = async (backendNodeId: number, session: string, frameId: string) => {
+    const { object } = (await send(
+      'DOM.resolveNode',
+      {
+        backendNodeId,
+        executionContextId: await world(session, frameId),
+        objectGroup: 'nod-sign-in',
+      },
+      session,
+    )) as { object: { objectId?: string } };
+    if (!object.objectId) throw new Error('The sign-in control is no longer available.');
+    return object.objectId;
+  };
+
+  const controlSnapshot = async (objectId: string, session: string) => {
+    const { result, exceptionDetails } = (await send(
+      'Runtime.callFunctionOn',
+      {
+        objectId,
+        functionDeclaration: signInSnapshot,
+        returnByValue: true,
+      },
+      session,
+    )) as { result?: { value?: string | null }; exceptionDetails?: unknown };
+    if (exceptionDetails || !result?.value)
+      throw new Error('The sign-in control is no longer available.');
+    return result.value;
   };
 
   return {
@@ -492,7 +610,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         (await evaluate(
           page,
           await world(page, main.id),
-          mark ? '(globalThis.__ottoScripted = true)' : 'Boolean(globalThis.__ottoScripted)',
+          mark ? '(globalThis.__nodScripted = true)' : 'Boolean(globalThis.__nodScripted)',
         )) === true
       );
     },
@@ -508,7 +626,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     async holding() {
       return (
         await everyFrame(
-          `[...(globalThis.__ottoPrivateFields ?? [])].some(node => node.isConnected && (node.value || (node.isContentEditable && node.textContent)))`,
+          `[...(globalThis.__nodPrivateFields ?? [])].some(node => node.isConnected && (node.value || (node.isContentEditable && node.textContent)))`,
           undefined,
           true,
         )
@@ -529,7 +647,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         (await evaluate(
           field.session,
           field.context,
-          `(() => { const node = ${active}; if (!node || node !== globalThis.__ottoField || node.tagName === 'SELECT') return false; for (const character of ${JSON.stringify(text)}) if (!node.isConnected || ${active} !== node || !document.execCommand('insertText', false, character)) return false; return true; })()`,
+          `(() => { const node = ${active}; if (!node || node !== globalThis.__nodField || node.tagName === 'SELECT') return false; for (const character of ${JSON.stringify(text)}) if (!node.isConnected || ${active} !== node || !document.execCommand('insertText', false, character)) return false; return true; })()`,
         )) === true
       );
     },
@@ -538,7 +656,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         (await evaluate(
           field.session,
           field.context,
-          `(() => { const active = ${active}; const nodes = ${selector.startsWith('@') ? '[active]' : `Array.from(document.querySelectorAll(${JSON.stringify(selector)}))`}; if (!active || active !== globalThis.__ottoFocused || !nodes.includes(active) || !nodes.length || nodes.length > ${value.length}) return false; const values = nodes.length === 1 ? [${JSON.stringify(value)}] : Array.from(${JSON.stringify(value)}); if (nodes.length !== values.length) return false; for (let index = 0; index < nodes.length; index++) { const node = nodes[index]; (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); node.focus(); if (${active} !== node) return false; if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); for (const character of values[index]) { if (${active} !== node || !document.execCommand('insertText', false, character)) return false; } } return true; })()`,
+          `(() => { const active = ${active}; const nodes = ${selector.startsWith('@') ? '[active]' : `Array.from(document.querySelectorAll(${JSON.stringify(selector)}))`}; if (!active || active !== globalThis.__nodFocused || !nodes.includes(active) || !nodes.length || nodes.length > ${value.length}) return false; const values = nodes.length === 1 ? [${JSON.stringify(value)}] : Array.from(${JSON.stringify(value)}); if (nodes.length !== values.length) return false; for (let index = 0; index < nodes.length; index++) { const node = nodes[index]; (globalThis.__nodPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); node.focus(); if (${active} !== node) return false; if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); for (const character of values[index]) { if (${active} !== node || !document.execCommand('insertText', false, character)) return false; } } return true; })()`,
         )) === true
       );
     },
@@ -547,39 +665,241 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         (await evaluate(
           field.session,
           field.context,
-          `(() => { const node = ${active}; const choices = ${JSON.stringify(choices)}; if (!node || node !== globalThis.__ottoField || node.tagName !== 'SELECT') return false; const options = [...node.options]; const option = options.find((item) => choices.includes(item.value) || choices.includes(item.text.trim())) ?? options.find((item) => choices.some(choice => choice.toLocaleLowerCase() === item.value.toLocaleLowerCase() || choice.toLocaleLowerCase() === item.text.trim().toLocaleLowerCase())); if (!option) return false; node.value = option.value; node.dispatchEvent(new Event('input', { bubbles: true })); node.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`,
+          `(() => { const node = ${active}; const choices = ${JSON.stringify(choices)}; if (!node || node !== globalThis.__nodField || node.tagName !== 'SELECT') return false; const options = [...node.options]; const option = options.find((item) => choices.includes(item.value) || choices.includes(item.text.trim())) ?? options.find((item) => choices.some(choice => choice.toLocaleLowerCase() === item.value.toLocaleLowerCase() || choice.toLocaleLowerCase() === item.text.trim().toLocaleLowerCase())); if (!option) return false; node.value = option.value; node.dispatchEvent(new Event('input', { bubbles: true })); node.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`,
         )) === true
       );
     },
     async controls(query: ControlQuery) {
       const found = await locate(query);
-      if (!found) return [];
-      const { backendNodeId, session } = found;
-      const { nodes } = (await send(
-        'Accessibility.getPartialAXTree',
-        { backendNodeId, fetchRelatives: true },
-        session,
-      )) as {
-        nodes: Array<{
-          nodeId: string;
-          parentId?: string;
-          ignored?: boolean;
-          backendDOMNodeId?: number;
-          role?: { value?: unknown };
-          name?: { value?: unknown };
-        }>;
-      };
-      const byId = new Map(nodes.map((node) => [node.nodeId, node]));
-      const controls: Array<{ role: string; name: string }> = [];
-      for (
-        let node = nodes.find((item) => item.backendDOMNodeId === backendNodeId);
-        node && controls.length < 3;
-        node = node.parentId ? byId.get(node.parentId) : undefined
-      ) {
-        const name = String(node.name?.value ?? '').trim();
-        if (!node.ignored && name) controls.push({ role: String(node.role?.value ?? ''), name });
+      return found ? controlsFor(found) : [];
+    },
+    async signInControl(query: ControlQuery): Promise<BoundSignInControl> {
+      const found = query.selector ? await signInSelector(query.selector) : await locate(query);
+      if (!found) throw new Error('The sign-in control could not be found.');
+      try {
+        const frames = await tree(found.session);
+        let frame: FrameNode['frame'] | undefined;
+        let objectId: string | undefined;
+        for (const candidate of frames) {
+          const resolved = await resolveControl(found.backendNodeId, found.session, candidate.id);
+          const { result } = (await send(
+            'Runtime.callFunctionOn',
+            {
+              objectId: resolved,
+              functionDeclaration: 'function () { return this.ownerDocument === document; }',
+              returnByValue: true,
+            },
+            found.session,
+          )) as { result?: { value?: boolean } };
+          if (result?.value === true) {
+            frame = candidate;
+            objectId = resolved;
+            break;
+          }
+        }
+        if (!frame?.loaderId || !objectId)
+          throw new Error('The sign-in document is no longer available.');
+        const { result, exceptionDetails } = (await send(
+          'Runtime.callFunctionOn',
+          {
+            objectId,
+            functionDeclaration: `function () { return (this.nodeType === 1 ? this : this.parentElement)?.closest(${JSON.stringify(signInControlSelector)}); }`,
+            objectGroup: 'nod-sign-in',
+          },
+          found.session,
+        )) as { result?: { objectId?: string }; exceptionDetails?: unknown };
+        if (exceptionDetails || !result?.objectId)
+          throw new Error('The sign-in control is not available.');
+        const { node } = (await send(
+          'DOM.describeNode',
+          { objectId: result.objectId },
+          found.session,
+        )) as { node: { backendNodeId: number } };
+        const snapshot = await controlSnapshot(result.objectId, found.session);
+        const controls = await controlsFor({
+          backendNodeId: node.backendNodeId,
+          session: found.session,
+        });
+        if (
+          !controls[0]?.name ||
+          !['button', 'link'].includes(controls[0].role) ||
+          (await controlSnapshot(result.objectId, found.session)) !== snapshot
+        )
+          throw new Error('The sign-in control changed during inspection.');
+        const details = JSON.parse(snapshot) as {
+          origin: string;
+          url: string;
+          submits: { method: string; to: string } | null;
+        };
+        return {
+          backendNodeId: node.backendNodeId,
+          frameId: frame.id,
+          targetFrameId: frames[0]!.id,
+          loaderId: frame.loaderId,
+          snapshot,
+          controls,
+          origin: details.origin,
+          url: details.url,
+          submits: details.submits,
+        };
+      } finally {
+        await send('Runtime.releaseObjectGroup', { objectGroup: 'nod-sign-in' }, found.session);
       }
-      return controls;
+    },
+    async selectSignInControl(control: BoundSignInControl) {
+      let session: string | undefined;
+      for (const candidate of sessions) {
+        const frames = await tree(candidate);
+        if (
+          frames[0]?.id === control.targetFrameId &&
+          frames.some(
+            (frame) => frame.id === control.frameId && frame.loaderId === control.loaderId,
+          )
+        ) {
+          session = candidate;
+          break;
+        }
+      }
+      if (!session) throw new Error('The sign-in document changed.');
+      const name = `nodSignIn${crypto.randomUUID().replaceAll('-', '')}`;
+      let pressed = false;
+      let outcome: boolean | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let context: number | undefined;
+      try {
+        const objectId = await resolveControl(control.backendNodeId, session, control.frameId);
+        context = await world(session, control.frameId);
+        await send('DOM.scrollIntoViewIfNeeded', { backendNodeId: control.backendNodeId }, session);
+        const { quads } = (await send(
+          'DOM.getContentQuads',
+          { backendNodeId: control.backendNodeId },
+          session,
+        )) as { quads: number[][] };
+        const quad = quads.find((value) => value.length === 8 && value.every(Number.isFinite));
+        if (!quad) throw new Error('The sign-in control is no longer visible.');
+        const point = {
+          x: (quad[0]! + quad[2]! + quad[4]! + quad[6]!) / 4,
+          y: (quad[1]! + quad[3]! + quad[5]! + quad[7]!) / 4,
+        };
+        if (session !== page) {
+          const { backendNodeId } = (await send(
+            'DOM.getFrameOwner',
+            { frameId: control.targetFrameId },
+            page,
+          )) as { backendNodeId: number };
+          const { model } = (await send('DOM.getBoxModel', { backendNodeId }, page)) as {
+            model: { content: number[]; border: number[]; width: number; height: number };
+          };
+          const content = model.content;
+          if (
+            content[1] !== content[3] ||
+            content[0] !== content[6] ||
+            content[2] !== content[4] ||
+            content[5] !== content[7] ||
+            model.border[2]! - model.border[0]! !== model.width ||
+            model.border[5]! - model.border[1]! !== model.height
+          )
+            throw new Error('The sign-in frame could not be located safely.');
+          point.x += content[0]!;
+          point.y += content[1]!;
+        }
+        const check = async () => {
+          if (
+            (await controlSnapshot(objectId, session!)) !== control.snapshot ||
+            JSON.stringify(
+              await controlsFor({ backendNodeId: control.backendNodeId, session: session! }),
+            ) !== JSON.stringify(control.controls)
+          )
+            throw new Error('The sign-in control changed.');
+          const hit = await locate({ pixel: point }, true);
+          if (!hit || hit.session !== session) throw new Error('The sign-in control is covered.');
+          const hitId = await resolveControl(hit.backendNodeId, session!, control.frameId);
+          const { result, exceptionDetails } = (await send(
+            'Runtime.callFunctionOn',
+            {
+              objectId,
+              functionDeclaration: 'function (hit) { return this === hit || this.contains(hit); }',
+              arguments: [{ objectId: hitId }],
+              returnByValue: true,
+            },
+            session,
+          )) as { result?: { value?: boolean }; exceptionDetails?: unknown };
+          if (exceptionDetails || result?.value !== true)
+            throw new Error('The sign-in control is covered.');
+        };
+        await check();
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point }, page);
+        await check();
+        await send('Runtime.enable', {}, session);
+        await send('Runtime.addBinding', { name, executionContextId: context }, session);
+        const clicked = new Promise<boolean>((resolve) => {
+          bindings.set(name, (payload) => {
+            outcome = payload === 'accepted';
+            resolve(outcome);
+          });
+          timer = setTimeout(() => resolve(false), 5000);
+        });
+        await send(
+          'Runtime.callFunctionOn',
+          {
+            objectId,
+            functionDeclaration: `function (name, expected) {
+            const node = this;
+            const guard = event => {
+              const valid = event.isTrusted && event.composedPath().includes(node) && (${signInSnapshot}).call(node) === expected;
+              if (!valid) { event.preventDefault(); event.stopImmediatePropagation(); }
+              if (!valid || event.type === 'click') globalThis[name](valid ? 'accepted' : 'changed');
+            };
+            globalThis[name + 'Guard'] = guard;
+            for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) window.addEventListener(type, guard, true);
+          }`,
+            arguments: [{ value: name }, { value: control.snapshot }],
+          },
+          session,
+        );
+        pressed = true;
+        await send(
+          'Input.dispatchMouseEvent',
+          { type: 'mousePressed', ...point, button: 'left', buttons: 1, clickCount: 1 },
+          page,
+        );
+        if (outcome === false) throw new Error('The sign-in control changed.');
+        await check();
+        await send(
+          'Input.dispatchMouseEvent',
+          { type: 'mouseReleased', ...point, button: 'left', buttons: 0, clickCount: 1 },
+          page,
+        );
+        pressed = false;
+        if (!(await clicked)) throw new Error('The sign-in control did not receive the click.');
+      } finally {
+        if (pressed)
+          await send(
+            'Input.dispatchMouseEvent',
+            { type: 'mouseReleased', x: -1, y: -1, button: 'left', buttons: 0 },
+            page,
+            true,
+          ).catch(() => {});
+        clearTimeout(timer);
+        bindings.delete(name);
+        if (context !== undefined)
+          await send(
+            'Runtime.evaluate',
+            {
+              contextId: context,
+              expression: `(() => { const name = ${JSON.stringify(name)}; const guard = globalThis[name + 'Guard']; for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) window.removeEventListener(type, guard, true); delete globalThis[name + 'Guard']; })()`,
+            },
+            session,
+            true,
+          ).catch(() => {});
+        await send('Runtime.removeBinding', { name }, session, true).catch(() => {});
+        await send(
+          'Runtime.releaseObjectGroup',
+          { objectGroup: 'nod-sign-in' },
+          session,
+          true,
+        ).catch(() => {});
+      }
     },
     async submits(query: ControlQuery, enter: boolean) {
       const target = await locate(query);

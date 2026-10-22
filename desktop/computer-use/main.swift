@@ -187,7 +187,7 @@ func inspect(_ request: [String: Any]) throws -> [String: Any] {
     isFocused = true
   }
   guard text(current.element, kAXSubroleAttribute) != "AXSecureTextField" else {
-    throw Failure(message: "Otto cannot read or enter a private value through Mac app control.")
+    throw Failure(message: "nod cannot read or enter a private value through Mac app control.")
   }
   for (token, target) in targets where target.focused == isFocused && matches(target.state, current) {
     return ["label": target.label, "token": token]

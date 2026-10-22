@@ -48,7 +48,7 @@ export function createN8nTraces(options: {
     const response = await request(endpoint, {
       method: 'POST',
       redirect: 'error',
-      headers: { 'content-type': 'application/json', 'x-otto-traces-token': token },
+      headers: { 'content-type': 'application/json', 'x-nod-traces-token': token },
       body,
       signal: AbortSignal.any([AbortSignal.timeout(30_000), signal]),
     });

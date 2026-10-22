@@ -16,7 +16,7 @@ import { browserDownloadPdf, createBrowserDownloadFixture } from './browser-down
 import { fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 
-const native = process.env.OTTO_TEST_NATIVE_DOWNLOAD === 'true';
+const native = process.env.NOD_TEST_NATIVE_DOWNLOAD === 'true';
 const pdfHash = createHash('sha256').update(browserDownloadPdf).digest('hex');
 const telegram = {
   TELEGRAM_ENABLED: 'true',
@@ -30,8 +30,7 @@ test(
   { skip: !process.env.TEST_DATABASE_URL && !native, timeout: 150_000 },
   async (t) => {
     assert.ok(process.env.TEST_DATABASE_URL, 'A disposable test database is required.');
-    if (native)
-      assert.ok(process.env.OTTO_TEST_BROWSER_EXECUTABLE, 'A native browser is required.');
+    if (native) assert.ok(process.env.NOD_TEST_BROWSER_EXECUTABLE, 'A native browser is required.');
     const cleanup: Array<() => Promise<unknown>> = [];
     t.after(async () => {
       const failures: unknown[] = [];
@@ -47,7 +46,7 @@ test(
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
     const schema = `test_browser_delivery_${suffix}`;
     const bossSchema = `test_browser_delivery_boss_${suffix}`;
-    const dataRoot = await mkdtemp(join(tmpdir(), 'otto-browser-delivery-'));
+    const dataRoot = await mkdtemp(join(tmpdir(), 'nod-browser-delivery-'));
     cleanup.push(() => rm(dataRoot, { recursive: true, force: true }));
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     cleanup.push(() => admin.end());
@@ -60,7 +59,7 @@ test(
     process.env.DATABASE_URL = database.href;
     process.env.DATABASE_POOL_MAX = '4';
     process.env.PGBOSS_SCHEMA = bossSchema;
-    process.env.OTTO_DATA_ROOT = dataRoot;
+    process.env.NOD_DATA_ROOT = dataRoot;
     const db = await import('../src/server/db.ts');
     cleanup.push(() => db.pool.end());
     const threads = await import('../src/server/thread.ts');
@@ -224,7 +223,7 @@ test(
         );
         const computer = createAgentBrowserComputer({
           dataRoot: join(dataRoot, 'browser'),
-          browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+          browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
           privateNetwork: true,
           headless: true,
         });

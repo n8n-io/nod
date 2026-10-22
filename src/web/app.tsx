@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Chat } from './pages/chat';
 import { Trust } from './pages/trust';
@@ -14,7 +14,7 @@ import { ChatSkeleton } from './components/startup';
 import { SetupProgress } from './components/setup-progress';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
-import { SidebarToggleContext } from './components/sidebar-toggle';
+import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
 import { captureFeedbackScreenshot } from './lib/feedback-capture';
 import { sidebarItems } from './lib/navigation';
@@ -77,16 +77,24 @@ function useSavedDateFormat() {
   }, [data]);
 }
 
+function settingsPage(path: string) {
+  return ['/settings', '/settings/models', '/settings/apps', '/settings/memory'].includes(path);
+}
+
 function Workspace({
   path,
   session,
   account,
   onFeedback,
+  onDismissFeedbackDiscovery,
+  settings,
 }: {
   path: string;
   session: SessionResponse;
   account: AccountControls;
   onFeedback(): void;
+  onDismissFeedbackDiscovery?(): void;
+  settings: ReactNode;
 }) {
   const { state, streams, error, connected, refresh, resetConversation } = useAppState(
     session.user!.id,
@@ -94,7 +102,7 @@ function Workspace({
   const unread = useChatUnread(session.user!.id, state);
   useSavedDateFormat();
   useBrowserTimeZone();
-  const [collapsed, setCollapsed] = useState(() => readUiPreference('otto.sidebar') !== 'expanded');
+  const [collapsed, setCollapsed] = useState(() => readUiPreference('nod.sidebar') !== 'expanded');
   const [toolbarActions, setToolbarActions] = useState<HTMLDivElement | null>(null);
   const [pendingMessageFocus, setPendingMessageFocus] = useState<string>();
   const [notificationTarget, setNotificationTarget] = useState<{
@@ -114,7 +122,7 @@ function Workspace({
     navigate('/');
     if (notificationTarget)
       window.dispatchEvent(
-        new CustomEvent('otto:focus-message', {
+        new CustomEvent('nod:focus-message', {
           detail: { messageId: notificationTarget.messageId },
         }),
       );
@@ -127,14 +135,14 @@ function Workspace({
         navigate('/');
       }
     };
-    window.addEventListener('otto:focus-message', focusMessage);
-    return () => window.removeEventListener('otto:focus-message', focusMessage);
+    window.addEventListener('nod:focus-message', focusMessage);
+    return () => window.removeEventListener('nod:focus-message', focusMessage);
   }, [state]);
   const currentPath = path === '/you' ? '/' : path;
   const hasMessages = state ? state.messages.length > 0 : null;
   useEffect(() => {
     if (hasMessages !== null)
-      writeUiPreference('otto.chat-layout', hasMessages ? 'conversation' : 'welcome');
+      writeUiPreference('nod.chat-layout', hasMessages ? 'conversation' : 'welcome');
   }, [hasMessages]);
   const [entering, setEntering] = useState(true);
   useEffect(() => {
@@ -154,7 +162,7 @@ function Workspace({
     ]);
   }, []);
   useEffect(() => {
-    writeUiPreference('otto.sidebar', collapsed ? 'collapsed' : 'expanded');
+    writeUiPreference('nod.sidebar', collapsed ? 'collapsed' : 'expanded');
   }, [collapsed]);
   return (
     <div
@@ -178,56 +186,56 @@ function Workspace({
         onNavigate={navigate}
         account={account}
       />
-      <SidebarToggleContext.Provider
-        value={
-          desktopSettingsAvailable()
-            ? null
-            : { collapsed, toggle: () => setCollapsed((value) => !value) }
-        }
-      >
-        <div className="workspace-frame">
-          <div className="workspace-body">
-            <main id="workspace" className="main-workspace" tabIndex={-1}>
-              <div className="chat-route" hidden={currentPath !== '/'}>
-                {state ? (
-                  <Chat
-                    ownerId={session.user!.id}
-                    state={state}
-                    streams={streams}
-                    refresh={refresh}
-                    resetConversation={resetConversation}
-                    initialFocusMessageId={pendingMessageFocus}
-                    toolbarActions={currentPath === '/' ? toolbarActions : null}
-                    visible={currentPath === '/'}
-                    onReadLatest={unread.markRead}
-                    onFeedback={onFeedback}
-                    requestedMessage={chatRequests[0]}
-                    onRequestHandled={(id) =>
-                      setChatRequests((current) => current.filter((request) => request.id !== id))
-                    }
-                  />
-                ) : error ? (
-                  <div className="initial-loading">
-                    <Notice>{error}</Notice>
-                    <Button variant="outline" onClick={() => void refresh()}>
-                      Try again
-                    </Button>
-                  </div>
-                ) : (
-                  <ChatSkeleton />
-                )}
-              </div>
-              {currentPath === '/trust' && <Trust onAsk={askInChat} />}
-              {currentPath === '/apps' && (
-                <Apps
-                  configuration={state?.configuration}
-                  onAsk={askInChat}
-                  onManageConnection={(trigger) => account.onSettings('App connections', trigger)}
+      <div className="workspace-frame">
+        {!desktopSettingsAvailable() && (
+          <SidebarToggle collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)} />
+        )}
+        <div className="workspace-body">
+          <main id="workspace" className="main-workspace" tabIndex={-1}>
+            <div className="chat-route" hidden={currentPath !== '/'}>
+              {state ? (
+                <Chat
+                  ownerId={session.user!.id}
+                  state={state}
+                  streams={streams}
+                  refresh={refresh}
+                  resetConversation={resetConversation}
+                  initialFocusMessageId={pendingMessageFocus}
+                  toolbarActions={currentPath === '/' ? toolbarActions : null}
+                  visible={currentPath === '/'}
+                  onReadLatest={unread.markRead}
+                  onFeedback={onFeedback}
+                  onDismissFeedbackDiscovery={onDismissFeedbackDiscovery}
+                  onModels={(trigger) => account.onSettings('Models', trigger)}
+                  requestedMessage={chatRequests[0]}
+                  onRequestHandled={(id) =>
+                    setChatRequests((current) => current.filter((request) => request.id !== id))
+                  }
                 />
+              ) : error ? (
+                <div className="initial-loading">
+                  <Notice>{error}</Notice>
+                  <Button variant="outline" onClick={() => void refresh()}>
+                    Try again
+                  </Button>
+                </div>
+              ) : (
+                <ChatSkeleton />
               )}
-              {currentPath === '/channels' && <Channels />}
-              {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
-              {!sidebarItems.some((item) => item.path === currentPath) && (
+            </div>
+            {currentPath === '/trust' && <Trust onAsk={askInChat} />}
+            {currentPath === '/apps' && (
+              <Apps
+                configuration={state?.configuration}
+                onAsk={askInChat}
+                onManageConnection={(trigger) => account.onSettings('App connections', trigger)}
+              />
+            )}
+            {currentPath === '/channels' && <Channels />}
+            {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
+            {settings}
+            {!settingsPage(currentPath) &&
+              !sidebarItems.some((item) => item.path === currentPath) && (
                 <div className="empty-state">
                   <h1>This page isn’t here.</h1>
                   <Button variant="outline" onClick={() => navigate('/')}>
@@ -236,15 +244,14 @@ function Workspace({
                   </Button>
                 </div>
               )}
-              {state && (error || !connected) && (
-                <div className="connection-notice">
-                  <Notice kind={error ? 'error' : 'info'}>{error || 'Reconnecting…'}</Notice>
-                </div>
-              )}
-            </main>
-          </div>
+            {state && (error || !connected) && (
+              <div className="connection-notice">
+                <Notice kind={error ? 'error' : 'info'}>{error || 'Reconnecting…'}</Notice>
+              </div>
+            )}
+          </main>
         </div>
-      </SidebarToggleContext.Provider>
+      </div>
     </div>
   );
 }
@@ -263,12 +270,22 @@ function AuthenticatedApp({
   feedbackRequest: number;
   onFeedbackHandled(): void;
 }) {
+  const feedbackDiscoveryKey = `nod.feedback.discovery.${session.user!.id}` as const;
+  const firstOnboarding = useRef(!session.settings!.onboardingCompleted);
+  const [feedbackDiscovery, setFeedbackDiscovery] = useState(
+    () => readUiPreference(feedbackDiscoveryKey) === 'pending',
+  );
+  const dismissFeedbackDiscovery = () => {
+    writeUiPreference(feedbackDiscoveryKey, 'dismissed');
+    setFeedbackDiscovery(false);
+  };
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackScreenshot, setFeedbackScreenshot] = useState<File | null>(null);
   const feedbackCapture = useRef<Promise<File | null> | null>(null);
   const feedbackTrigger = useRef<HTMLElement | null>(null);
   const openFeedback = async () => {
     if (feedbackOpen || feedbackCapture.current) return;
+    dismissFeedbackDiscovery();
     feedbackTrigger.current =
       document.activeElement !== document.body ? (document.activeElement as HTMLElement) : null;
     const capture = captureFeedbackScreenshot().catch(() => null);
@@ -291,18 +308,26 @@ function AuthenticatedApp({
     openFeedback();
     onFeedbackHandled();
   }, [feedbackRequest, onFeedbackHandled]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpen = settingsPage(path);
+  const [finishingOnboarding, setFinishingOnboarding] = useState(false);
   const [settingsRequest, setSettingsRequest] = useState(0);
-  const [settingsTab, setSettingsTab] = useState<AccountTab>('General');
-  const settingsTrigger = useRef<HTMLElement | null>(null);
-  const lastPath = useRef('/');
-  const settingsPath = path === '/memory' ? 'Memory' : undefined;
-  if (!settingsPath) lastPath.current = path;
-  const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
+  const settingsTab: AccountTab =
+    path === '/settings/models'
+      ? 'Models'
+      : path === '/settings/apps'
+        ? 'App connections'
+        : path === '/settings/memory'
+          ? 'Memory'
+          : 'General';
+  const settingsPath = (tab: AccountTab) =>
+    tab === 'General'
+      ? '/settings'
+      : tab === 'App connections'
+        ? '/settings/apps'
+        : `/settings/${tab.toLowerCase()}`;
+  const openSettings = (tab: AccountTab, _trigger?: HTMLElement) => {
     setSettingsRequest((current) => current + 1);
-    settingsTrigger.current = trigger ?? (document.activeElement as HTMLElement);
-    setSettingsTab(tab);
-    setSettingsOpen(true);
+    navigate(settingsPath(tab));
   };
   useEffect(
     () =>
@@ -312,10 +337,9 @@ function AuthenticatedApp({
     [],
   );
   useEffect(() => {
-    if (!settingsPath || !session.settings!.onboardingCompleted) return;
-    window.history.replaceState(null, '', lastPath.current);
+    if (path !== '/memory' || !session.settings!.onboardingCompleted) return;
+    window.history.replaceState(null, '', '/settings/memory');
     window.dispatchEvent(new PopStateEvent('popstate'));
-    openSettings(settingsPath);
   }, [path, session.settings!.onboardingCompleted]);
   useEffect(() => {
     const openSettingsLink = (event: MouseEvent) => {
@@ -332,8 +356,11 @@ function AuthenticatedApp({
     return () => document.removeEventListener('click', openSettingsLink);
   }, []);
   useEffect(() => {
+    if (!desktopSettingsAvailable()) return;
     const shortcut = (event: KeyboardEvent) => {
-      const modifier = /Mac|iPhone|iPad/.test(navigator.platform) ? event.metaKey : event.ctrlKey;
+      const modifier = /Mac|iPhone|iPad/.test(navigator.platform)
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey;
       if (
         !modifier ||
         event.key !== ',' ||
@@ -368,7 +395,8 @@ function AuthenticatedApp({
   };
   const allowed = path !== '/browser' || session.capabilities.developer;
   const match = /^\/(vault|credentials|payments)\/([^/]+)\/?$/.exec(path);
-  const onboarding = !session.settings!.onboardingCompleted || replayingOnboarding(path);
+  const onboarding =
+    finishingOnboarding || !session.settings!.onboardingCompleted || replayingOnboarding(path);
   return (
     <>
       {!allowed ? (
@@ -393,19 +421,60 @@ function AuthenticatedApp({
           usageData={account.usageData}
           onUsageData={account.onUsageData}
           onComplete={async () => {
+            setFinishingOnboarding(true);
             if (!session.settings!.onboardingCompleted)
               await onAccountUpdate({ onboardingCompleted: true });
             if (desktopSettingsAvailable())
               await saveDesktopSettings({ onboardingCompleted: true });
+            if (firstOnboarding.current && readUiPreference(feedbackDiscoveryKey) !== 'dismissed') {
+              writeUiPreference(feedbackDiscoveryKey, 'pending');
+              setFeedbackDiscovery(true);
+            }
+            firstOnboarding.current = false;
+            setFinishingOnboarding(false);
             if (replayingOnboarding(path)) navigate('/');
           }}
         />
       ) : (
         <Workspace
-          path={lastPath.current}
+          path={path}
           session={session}
           account={account}
+          settings={
+            <AccountSettings
+              account={account}
+              open={settingsOpen}
+              initialTab={settingsTab}
+              openRequest={settingsRequest}
+              onOpenChange={(open) => {
+                if (!open) {
+                  navigate('/');
+                  window.requestAnimationFrame(() =>
+                    document
+                      .querySelector<HTMLElement>('.composer-editor[contenteditable="true"]')
+                      ?.focus(),
+                  );
+                }
+              }}
+              onTabChange={(tab, replace) => {
+                if (replace) {
+                  window.history.replaceState(null, '', settingsPath(tab));
+                  window.dispatchEvent(new PopStateEvent('popstate'));
+                } else navigate(settingsPath(tab));
+              }}
+              onReplayOnboarding={
+                import.meta.env?.DEV === true && !desktopSettingsAvailable()
+                  ? () => navigate('/onboarding?replay=1')
+                  : undefined
+              }
+            />
+          }
           onFeedback={openFeedback}
+          onDismissFeedbackDiscovery={
+            feedbackDiscovery && !feedbackOpen && !settingsOpen
+              ? dismissFeedbackDiscovery
+              : undefined
+          }
         />
       )}
       <FeedbackDialog
@@ -418,28 +487,6 @@ function AuthenticatedApp({
           feedbackTrigger.current?.isConnected
             ? feedbackTrigger.current
             : document.getElementById('feedback-launcher')
-        }
-      />
-      <AccountSettings
-        account={account}
-        open={settingsOpen}
-        initialTab={settingsTab}
-        openRequest={settingsRequest}
-        onOpenChange={setSettingsOpen}
-        onReplayOnboarding={
-          import.meta.env?.DEV === true && !desktopSettingsAvailable()
-            ? () => {
-                setSettingsOpen(false);
-                navigate('/onboarding?replay=1');
-              }
-            : undefined
-        }
-        returnFocus={() =>
-          settingsTrigger.current?.isConnected
-            ? settingsTrigger.current
-            : document.querySelector<HTMLElement>(
-                window.innerWidth <= 640 ? '.mobile-menu-trigger' : '[aria-label="Settings"]',
-              )
         }
       />
     </>
@@ -506,16 +553,16 @@ function AccountApp({
       <main className="empty-state">
         <p>
           {desktopSettingsAvailable()
-            ? 'Open Otto in the desktop app.'
-            : 'Open Otto from the link in your terminal.'}
+            ? 'Open nod in the desktop app.'
+            : 'Open nod from the link in your terminal.'}
         </p>
       </main>
     );
-  if (sessionState.loading) return <SetupProgress title="Opening Otto…" />;
+  if (sessionState.loading) return <SetupProgress title="Opening nod…" />;
   if (!session?.user || !session.settings)
     return (
       <main className="initial-loading">
-        <Notice>{sessionState.error || 'Otto could not be opened.'}</Notice>
+        <Notice>{sessionState.error || 'nod could not be opened.'}</Notice>
         <Button variant="outline" onClick={() => void sessionState.refresh()}>
           Try again
         </Button>

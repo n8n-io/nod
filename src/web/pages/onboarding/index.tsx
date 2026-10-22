@@ -1,11 +1,4 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ComponentType,
-  type ReactNode,
-} from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentType } from 'react';
 import type { AccountPreparationResponse, AccountUser } from '../../../shared/account';
 import type { ModelsResponse } from '../../../shared/models';
 import {
@@ -27,13 +20,12 @@ import { ComputerSetup } from './steps/computer';
 import { useBrowserTimeZone } from '../../hooks/use-browser-time-zone';
 import { api, errorMessage } from '../../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../../lib/analytics';
-import { clearStored, readStep, writeStep } from './storage';
+import { clearStored, prepareSuggestions, readStep, writeStep } from './storage';
 import { Welcome } from './steps/welcome';
 import { Brain } from './steps/brain';
 import { About } from './steps/about';
 import { Email } from './steps/email';
 import { Telegram } from './steps/telegram';
-import { OpenSource } from './steps/open-source';
 import { computerOnboardingSteps, desktopOnboardingSteps, OnboardingFrame } from './frame';
 
 export type StepProps = {
@@ -41,9 +33,7 @@ export type StepProps = {
   onNext(): void;
   onBack(): void;
   onSkip?(): void;
-  busy?: boolean;
-  preparing?: boolean;
-  notice?: ReactNode;
+  nextLabel?: string;
   usage?: { enabled: boolean; onChange(enabled: boolean): Promise<void> };
 };
 
@@ -53,8 +43,9 @@ const screens: Record<OnboardingStep, ComponentType<StepProps>> = {
   about: About,
   email: Email,
   telegram: Telegram,
-  open: OpenSource,
 };
+
+type SetupStep = OnboardingStep | 'preferences' | 'computer';
 
 export function Onboarding({
   user,
@@ -74,20 +65,26 @@ export function Onboarding({
   const [position, setPosition] = useState(() => {
     const url = new URL(window.location.href);
     const replay = url.searchParams.get('replay') === '1';
+    const nativePreferences =
+      desktop && url.searchParams.get('preferences') === 'required' && !replay;
     const welcomed = desktop && url.searchParams.get('welcome') === 'complete' && !replay;
     if (replay) {
       clearStored();
       url.searchParams.delete('replay');
     }
     if (welcomed) url.searchParams.delete('welcome');
-    if (replay || welcomed)
+    if (nativePreferences) url.searchParams.delete('preferences');
+    if (replay || welcomed || nativePreferences)
       window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-    const stored = readStep<{ owner: string; step: OnboardingStep; version?: number }>();
-    const step: OnboardingStep =
-      stored?.owner === user.id &&
-      stored.version === onboardingVersion &&
-      onboardingSteps.includes(stored.step) &&
-      stored.step !== 'welcome'
+    const stored = readStep<{ owner: string; step: SetupStep; version?: number }>();
+    const step: SetupStep = nativePreferences
+      ? 'preferences'
+      : stored?.owner === user.id &&
+          stored.version === onboardingVersion &&
+          (onboardingSteps.includes(stored.step as OnboardingStep) ||
+            stored.step === 'computer' ||
+            (desktop && stored.step === 'preferences')) &&
+          stored.step !== 'welcome'
         ? stored.step
         : welcomed
           ? 'brain'
@@ -96,12 +93,11 @@ export function Onboarding({
     return { step, arrived: 'forward' as StepProps['arrived'] };
   });
   const { step, arrived } = position;
-  const index = onboardingSteps.indexOf(step);
+  const index =
+    step === 'preferences' || step === 'computer'
+      ? onboardingSteps.length
+      : onboardingSteps.indexOf(step);
   const [preparation, setPreparation] = useState<'pending' | 'ready' | 'failed'>('pending');
-  const [finishing, setFinishing] = useState(false);
-  const [completionFailed, setCompletionFailed] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [preferencesReady, setPreferencesReady] = useState(!desktop);
   const [computerReady, setComputerReady] = useState(() => {
     const stored = readStep<{ owner: string; version?: number; computerReady?: boolean }>();
     return (
@@ -110,6 +106,9 @@ export function Onboarding({
       stored.computerReady === true
     );
   });
+  const [finishing, setFinishing] = useState(step === 'computer' && computerReady ? 1 : 0);
+  const [completionFailed, setCompletionFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [runtimeError, setRuntimeError] = useState('');
   const [error, setError] = useState('');
   const preparationRequest = useRef<AbortController | null>(null);
@@ -125,22 +124,23 @@ export function Onboarding({
   useEffect(() => {
     writeStep({ owner: user.id, step, version: onboardingVersion, computerReady });
     if (
-      (step !== 'open' || (preferencesReady && computerReady)) &&
+      step !== 'preferences' &&
+      step !== 'computer' &&
       (viewed.current?.owner !== user.id ||
         viewed.current.step !== step ||
         viewed.current.direction !== arrived)
     ) {
       viewed.current = { owner: user.id, step, direction: arrived };
-      captureAnalytics('otto_onboarding_step_viewed', {
-        step: step === 'open' ? 'open_source' : step,
+      captureAnalytics('nod_onboarding_step_viewed', {
+        step,
         direction: arrived,
       });
     }
-  }, [step, user.id, preferencesReady, computerReady]);
+  }, [step, user.id, computerReady]);
 
   useLayoutEffect(() => {
     if (main.current) main.current.scrollTop = 0;
-  }, [step, user.id, preferencesReady, computerReady]);
+  }, [step, user.id]);
 
   useEffect(() => {
     if (index <= onboardingSteps.indexOf('brain')) return;
@@ -166,25 +166,19 @@ export function Onboarding({
   }, [user.id]);
 
   useEffect(() => {
-    if (!finishing || preparation === 'pending') return;
-    if (preparation === 'failed') {
-      setFinishing(false);
-      return;
-    }
+    if (!finishing || preparation !== 'ready') return;
     const capture = analyticsForCurrentSession();
+    void prepareSuggestions(true);
     onComplete()
       .then(() => {
         clearStored();
       })
       .catch((cause) => {
-        capture('otto_ui_error', { area: 'onboarding', action: 'save' });
+        capture('nod_ui_error', { area: 'onboarding', action: 'save' });
         if (active.current) {
           setCompletionFailed(true);
           setError(errorMessage(cause));
         }
-      })
-      .finally(() => {
-        if (active.current) setFinishing(false);
       });
   }, [finishing, preparation]);
 
@@ -233,7 +227,7 @@ export function Onboarding({
     } catch {
       if (!request.signal.aborted) {
         setPreparation('failed');
-        capture('otto_ui_error', { area: 'onboarding', action: 'prepare' });
+        capture('nod_ui_error', { area: 'onboarding', action: 'prepare' });
       }
     } finally {
       if (preparationRequest.current === request) preparationRequest.current = null;
@@ -249,9 +243,9 @@ export function Onboarding({
       if (runtimeError) await retryDesktopRuntime();
       if (active.current) {
         setRuntimeError('');
-        if (completionFailed && step === 'open') {
+        if (completionFailed) {
           setCompletionFailed(false);
-          setFinishing(true);
+          setFinishing((attempt) => attempt + 1);
           if (preparation !== 'ready') void prepare();
         } else void prepare();
       }
@@ -277,23 +271,28 @@ export function Onboarding({
   }
 
   function skipped() {
-    if (step === 'telegram') captureAnalytics('otto_onboarding_step_skipped', { step });
+    if (step === 'telegram') captureAnalytics('nod_onboarding_step_skipped', { step });
   }
 
   function next() {
-    if (step !== 'open') return void go(1);
+    if (step !== 'telegram' && step !== 'preferences' && step !== 'computer') return void go(1);
+    if (desktop && step === 'telegram')
+      return setPosition({ step: 'preferences', arrived: 'forward' });
+    if (step !== 'computer' && !computerReady)
+      return setPosition({ step: 'computer', arrived: 'forward' });
     if (finishing) return;
     setError('');
     setCompletionFailed(false);
     if (preparation === 'failed') void prepare();
-    setFinishing(true);
+    setFinishing((attempt) => attempt + 1);
   }
 
   if (finishing) {
-    const failure = runtimeError || error;
+    const failure =
+      runtimeError || error || (preparation === 'failed' ? 'nod couldn’t finish setup.' : '');
     return (
       <SetupProgress
-        title={failure ? 'Setup needs another try.' : 'Finishing setting up your environment…'}
+        title={failure ? 'Setup needs another try.' : 'Finishing setup…'}
         description={failure ? 'Your progress is saved.' : undefined}
         error={failure || undefined}
       >
@@ -317,15 +316,17 @@ export function Onboarding({
     </div>
   );
 
-  if (desktop && step === 'open' && !preferencesReady)
-    return <DesktopPreferencesSetup notice={recovery} onReady={() => setPreferencesReady(true)} />;
+  if (step === 'preferences') return <DesktopPreferencesSetup notice={recovery} onReady={next} />;
 
-  if (step === 'open' && !computerReady)
+  if (step === 'computer')
     return (
       <ComputerSetup
         steps={desktop ? desktopOnboardingSteps : computerOnboardingSteps}
         notice={recovery || undefined}
-        onReady={() => setComputerReady(true)}
+        onReady={() => {
+          setComputerReady(true);
+          next();
+        }}
       />
     );
 
@@ -344,22 +345,7 @@ export function Onboarding({
           onNext={next}
           onBack={() => void go(-1)}
           onSkip={skipped}
-          busy={step === 'open' && finishing}
-          preparing={preparation !== 'ready'}
-          notice={
-            !desktop &&
-            step === 'open' &&
-            (preparation === 'failed' || !!error) && (
-              <Notice>
-                {error || 'Something went wrong while I was getting set up.'}{' '}
-                {(preparation === 'failed' || completionFailed) && (
-                  <Button variant="ghost" disabled={saving} onClick={() => void retry()}>
-                    Try again
-                  </Button>
-                )}
-              </Notice>
-            )
-          }
+          nextLabel={!desktop && step === 'telegram' ? 'Start chatting' : undefined}
           usage={
             step === 'welcome' && onUsageData
               ? { enabled: usageData, onChange: onUsageData }
@@ -368,7 +354,6 @@ export function Onboarding({
         />
       </div>
       {recovery}
-      {!desktop && step !== 'open' && error && <Notice>{error}</Notice>}
     </OnboardingFrame>
   );
 }

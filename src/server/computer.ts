@@ -47,6 +47,7 @@ const blockedNames = [
   'system settings',
   'system preferences',
   'otto',
+  'nod',
 ];
 
 export const computerInput = z.discriminatedUnion('action', [
@@ -78,7 +79,7 @@ export const computerInput = z.discriminatedUnion('action', [
 ]);
 
 async function unavailable(): Promise<never> {
-  throw new Error('Your computer is available only in Otto on a Mac.');
+  throw new Error('Your computer is available only in nod on a Mac.');
 }
 
 export function isBlockedApp(app: { name?: string; bundleId?: string }) {
@@ -87,7 +88,7 @@ export function isBlockedApp(app: { name?: string; bundleId?: string }) {
     (bundle !== undefined &&
       bundle !== '' &&
       (blockedApps.some((id) => id.toLowerCase() === bundle) ||
-        /^(io\.n8n\.otto|dev\.otto)/.test(bundle))) ||
+        /^(io\.n8n\.(otto|nod)|dev\.(otto|nod))/.test(bundle))) ||
     (app.name !== undefined && blockedNames.includes(app.name.trim().toLowerCase()))
   );
 }
@@ -170,7 +171,7 @@ export function createComputerPolicy(options: {
         permissions = await computer.permissions();
       } catch {
         throw Object.assign(
-          new Error('Otto could not check Mac permissions. Try again, or quit and reopen Otto.'),
+          new Error('nod could not check Mac permissions. Try again, or quit and reopen nod.'),
           { statusCode: 409 },
         );
       }
@@ -199,14 +200,14 @@ export function createComputerPolicy(options: {
   function refuse(app: { name?: string; bundleId?: string }) {
     if (isBlockedApp(app))
       throw new Error(
-        `Otto never uses ${app.name || app.bundleId} on the owner's computer. Use the shell action for commands, or ask the owner to do this step.`,
+        `nod never uses ${app.name || app.bundleId} on the owner's computer. Use the shell action for commands, or ask the owner to do this step.`,
       );
   }
 
   async function target(query: string, signal: AbortSignal, launch: boolean) {
     if (query.includes('/')) throw new Error('Name the Mac app, not a path.');
     refuse({ name: query, bundleId: query });
-    if (!computer.resolve) throw new Error('Mac app control needs the Otto desktop app.');
+    if (!computer.resolve) throw new Error('Mac app control needs the nod desktop app.');
     const running = await computer.resolve(query, signal);
     if (running) {
       refuse(running);
@@ -266,14 +267,14 @@ export function createComputerPolicy(options: {
       );
     const input = computerInput.parse(raw);
     if (input.action === 'shell') {
-      const verdict = await options.check(turn, 'OTTO_computer', input);
-      return request(turn, 'OTTO_computer', input, {
+      const verdict = await options.check(turn, 'NOD_computer', input);
+      return request(turn, 'NOD_computer', input, {
         ...provenance,
         signal,
         expectedRevision: revision,
         allowed: !verdict.confirm,
         run: () =>
-          execute('OTTO_computer', input, {
+          execute('NOD_computer', input, {
             turnId: turn.turnId,
             signal,
             expectedRevision: revision,
@@ -282,7 +283,7 @@ export function createComputerPolicy(options: {
       });
     }
     if (input.action === 'apps') {
-      if (!computer.apps) throw new Error('Mac app control needs the Otto desktop app.');
+      if (!computer.apps) throw new Error('Mac app control needs the nod desktop app.');
       await provenance.admit?.(false);
       return (await computer.apps(signal)).filter((app) => !isBlockedApp(app));
     }
@@ -313,7 +314,7 @@ export function createComputerPolicy(options: {
       if (step === 'set' && value === undefined) throw new Error('Pass value for set.');
       if (['press', 'focus', 'showMenu', 'raise', 'set'].includes(step) && !ref)
         throw new Error('Pass the ref from a fresh look.');
-      if (!computer.inspect) throw new Error('Mac app control needs the Otto desktop app.');
+      if (!computer.inspect) throw new Error('Mac app control needs the nod desktop app.');
       const target = await computer.inspect(app.bundleId, ref, signal);
       args = {
         ...args,
@@ -327,8 +328,8 @@ export function createComputerPolicy(options: {
       };
     }
     if (input.action === 'open' && running) args = { ...args, running: true };
-    const verdict = await options.check(turn, 'OTTO_computer', args);
-    const action = allowed ? 'OTTO_computer' : 'OTTO_computer_app';
+    const verdict = await options.check(turn, 'NOD_computer', args);
+    const action = allowed ? 'NOD_computer' : 'NOD_computer_app';
     return request(turn, action, args, {
       ...provenance,
       signal,
@@ -377,7 +378,7 @@ export function createComputerPolicy(options: {
         });
       if (args.action !== 'shell') {
         refuse(app);
-        if (action === 'OTTO_computer' && !(await permitted(app)))
+        if (action === 'NOD_computer' && !(await permitted(app)))
           throw Object.assign(new Error(`Access to ${app.name} was removed before this ran.`), {
             notRun: true,
           });
@@ -396,14 +397,14 @@ export function createComputerPolicy(options: {
       });
     }
     const rememberAllowed = () =>
-      action === 'OTTO_computer_app' && provenance?.turnId && provenance.rememberApp !== false
+      action === 'NOD_computer_app' && provenance?.turnId && provenance.rememberApp !== false
         ? remember(provenance.turnId, app, revision, signal)
         : Promise.resolve();
     if (args.action === 'open') {
       const opened = args.running ? app : await computer.open!(app.bundleId, signal);
       signal.throwIfAborted();
       refuse(opened);
-      if (action === 'OTTO_computer_app' && provenance?.turnId && provenance.rememberApp !== false)
+      if (action === 'NOD_computer_app' && provenance?.turnId && provenance.rememberApp !== false)
         await remember(provenance.turnId, opened, revision, signal);
       touch(opened.name);
       return { app: opened, next: 'Look at the app before acting in it.' };
@@ -416,7 +417,7 @@ export function createComputerPolicy(options: {
         return result;
       }
       await rememberAllowed();
-      return `The owner allowed Otto to use ${app.name}. ${args.action === 'look' ? 'Look' : 'Take the screenshot'} again to continue.`;
+      return `The owner allowed nod to use ${app.name}. ${args.action === 'look' ? 'Look' : 'Take the screenshot'} again to continue.`;
     }
     if (typeof args.targetToken !== 'string' || !args.targetToken)
       throw Object.assign(new Error(`${app.name} needs a fresh look before acting.`), {
@@ -461,7 +462,7 @@ export function createComputerPolicy(options: {
         .strict()
         .parse(req.body);
       if (!computer.appControlAvailable || !computer.requestPermission)
-        throw Object.assign(new Error('Mac app control needs the Otto desktop app.'), {
+        throw Object.assign(new Error('Mac app control needs the nod desktop app.'), {
           statusCode: 409,
         });
       await computer.requestPermission(permission);

@@ -40,7 +40,7 @@ The title matters beyond the check. Desktop release notes group merged changes b
 - **Explain why** the change is needed and how you tested it. Add screenshots or a short video for UI changes.
 - **Call out safety-sensitive changes.** Changes to approvals, the trust check, Vault, sign-in, the sandbox or owner isolation get a closer review and need tests.
 - **Keep secrets out.** No keys, credentials, real accounts or private content in code, tests, logs or screenshots.
-- **Follow the existing style.** Otto's code has no comments or JSDoc, and its docs use short, plain sentences.
+- **Follow the existing style.** nod's code has no comments or JSDoc, and its docs use short, plain sentences.
 
 The template's checklist asks you to confirm you've seen the code, run it and take responsibility for it. That applies whether you or a coding agent wrote it. See [Checks and tests](/contribute/checks-and-tests/) for what to run first.
 
@@ -55,7 +55,7 @@ flowchart LR
 ```
 
 - Workflows from first-time contributors start after a maintainer approves them.
-- A member of [@n8n-io/n8n-labs](https://github.com/n8n-io/otto/blob/main/.github/CODEOWNERS) reviews every change.
+- A member of [@n8n-io/n8n-labs](https://github.com/n8n-io/nod/blob/main/.github/CODEOWNERS) reviews every change.
 - Use a squash merge for a normal pull request. Merge commits are also allowed. Rebase merges are turned off.
 - Keep the pull request title as the commit title when you merge.
 
@@ -69,7 +69,7 @@ Merged changes reach desktop users in the next desktop release. A maintainer run
 
 ## Dependency updates
 
-[Dependabot](https://github.com/n8n-io/otto/blob/main/.github/dependabot.yml) checks for updates every Monday at 06:00 Europe/Lisbon. It covers npm packages in the app, the desktop app and the docs site, GitHub Actions, Dockerfiles and Compose images.
+[Dependabot](https://github.com/n8n-io/nod/blob/main/.github/dependabot.yml) checks for updates every Monday at 06:00 Europe/Lisbon. It covers npm packages in the app, the desktop app and the docs site, GitHub Actions, Dockerfiles and Compose images.
 
 | Rule       | What it does                                                                                                                                                                 |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -90,7 +90,7 @@ flowchart TD
 
 Major updates, pre-1.0 npm versions, npm prereleases and unclassified updates always wait for a person. So do GitHub Actions updates, because they change workflow files, which need a code owner's review. A passing CI run lowers the risk of an update, but it doesn't guarantee compatibility.
 
-The [merge workflow](https://github.com/n8n-io/otto/blob/main/.github/workflows/dependabot-auto-merge.yml) never checks out pull request code. It binds the approval and merge to one signed Dependabot commit and waits up to 60 minutes for checks. If checks fail or the commit changes, the pull request stays open. After you fix or rerun CI, rerun the merge workflow if needed.
+The [merge workflow](https://github.com/n8n-io/nod/blob/main/.github/workflows/dependabot-auto-merge.yml) never checks out pull request code. It binds the approval and merge to one signed Dependabot commit and waits up to 60 minutes for checks. If checks fail or the commit changes, the pull request stays open. After you fix or rerun CI, rerun the merge workflow if needed.
 
 GitHub doesn't trigger workflows from a merge made with `GITHUB_TOKEN`, so the workflow starts CI on `main` itself. That CI run then deploys as usual. If the dispatch fails, rerun CI on `main` by hand.
 
@@ -100,7 +100,7 @@ GitHub doesn't trigger workflows from a merge made with `GITHUB_TOKEN`, so the w
 - `Checks, tests and build`, `Secret scanning` and `Conventional PR title` are required on `main`, and the branch must be up to date.
 - `main` requires one approving review and a code owner's review.
 - GitHub Actions is allowed to approve pull requests. Its approval satisfies the one-review rule, but it isn't a code owner.
-- [CODEOWNERS](https://github.com/n8n-io/otto/blob/main/.github/CODEOWNERS) leaves npm manifests, lockfiles, Dockerfiles and `compose.yaml` without owners, so the workflow's approval can merge them.
+- [CODEOWNERS](https://github.com/n8n-io/nod/blob/main/.github/CODEOWNERS) leaves npm manifests, lockfiles, Dockerfiles and `compose.yaml` without owners, so the workflow's approval can merge them.
 - The `auto-merge` job itself isn't a required check, because it waits for the required checks.
 
 </details>
@@ -109,11 +109,11 @@ GitHub doesn't trigger workflows from a merge made with `GITHUB_TOKEN`, so the w
 Dependabot doesn't update Python packages installed inline in Dockerfiles, tools downloaded by pinned workflow commands, or the desktop runtime's custom build lock. Update those by hand.
 :::
 
-Known vulnerabilities that reach only the docs site and have no usable fix are listed in [`docs/osv-scanner.toml`](https://github.com/n8n-io/otto/blob/main/docs/osv-scanner.toml), each with its reason and a review date. OSV-Scanner and OpenSSF Scorecard skip them until that date.
+Known vulnerabilities that reach only the docs site and have no usable fix are listed in [`docs/osv-scanner.toml`](https://github.com/n8n-io/nod/blob/main/docs/osv-scanner.toml), each with its reason and a review date. OSV-Scanner and OpenSSF Scorecard skip them until that date.
 
 ## Related resources
 
-- [Contribute to Otto](/contribute/)
+- [Contribute to nod](/contribute/)
 - [Checks and tests](/contribute/checks-and-tests/)
 - [Desktop releases](/contribute/desktop-releases/)
 - [Write docs](/contribute/write-docs/)

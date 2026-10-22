@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-const repository = 'n8n-io/otto';
+const repository = 'n8n-io/nod';
 const hash = /^[a-f0-9]{64}$/;
 const sourceHash = /^[a-f0-9]{40}$/;
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -152,7 +152,7 @@ export function createUpdateSource({
       ![runtime?.fingerprint, runtime?.id, runtime?.archive?.sha256].every(
         (value) => typeof value === 'string' && hash.test(value),
       ) ||
-      runtime.archive.file !== `Otto-Runtime-${platform}-${runtime.id.slice(0, 12)}.tar.gz` ||
+      runtime.archive.file !== `nod-Runtime-${platform}-${runtime.id.slice(0, 12)}.tar.gz` ||
       !Number.isSafeInteger(runtime.archive.bytes) ||
       runtime.archive.bytes < 1
     )
@@ -160,7 +160,7 @@ export function createUpdateSource({
     if (
       runtime.platform !== platform ||
       (runtime.releaseTag !== undefined &&
-        !/^desktop-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtime.releaseTag))
+        !/^nod-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtime.releaseTag))
     )
       throw new Error('The desktop runtime target is incompatible.');
     return releaseAssetUrl(
@@ -178,7 +178,7 @@ export function createUpdateSource({
       signal,
       'application/json',
       week
-        ? { 'x-otto-week': week, 'x-otto-platform': platform, 'x-otto-version': currentVersion }
+        ? { 'x-nod-week': week, 'x-nod-platform': platform, 'x-nod-version': currentVersion }
         : {},
     );
     if (!Array.isArray(releases) || releases.length > (sourceUrl ? 500 : 100))
@@ -187,10 +187,10 @@ export function createUpdateSource({
       .filter(
         (release) =>
           release?.draft === false &&
-          /^desktop-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(release.tag_name) &&
-          compareVersions(release.tag_name.slice(9), currentVersion) > 0,
+          /^nod-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(release.tag_name) &&
+          compareVersions(release.tag_name.slice(5), currentVersion) > 0,
       )
-      .sort((a, b) => compareVersions(b.tag_name.slice(9), a.tag_name.slice(9)));
+      .sort((a, b) => compareVersions(b.tag_name.slice(5), a.tag_name.slice(5)));
     let failure;
     for (const listed of newer.slice(0, 3)) {
       try {
@@ -214,7 +214,7 @@ export function createUpdateSource({
     return {
       async runtimeDownloadUrl(runtime, signal) {
         if (
-          !/^desktop-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtime?.releaseTag) ||
+          !/^nod-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtime?.releaseTag) ||
           !hash.test(runtime.guest?.sha256) ||
           !Number.isSafeInteger(runtime.guest.bytes) ||
           runtime.guest.bytes < 1
@@ -222,20 +222,20 @@ export function createUpdateSource({
           throw new Error('The desktop runtime metadata is incompatible.');
         return releaseAssetUrl(
           runtime.releaseTag,
-          { ...runtime.guest, file: 'Otto-Runtime-win32-x64.tar.gz' },
+          { ...runtime.guest, file: 'nod-Runtime-win32-x64.tar.gz' },
           signal,
         );
       },
       latest: (currentVersion, signal) =>
         newest(currentVersion, signal, async (release) => {
-          const version = release.tag_name.slice(9);
+          const version = release.tag_name.slice(5);
           const manifest = await getAsset(release, 'release-win32-x64.json', signal);
           if (
             manifest.version !== version ||
             manifest.platform !== platform ||
             !sourceHash.test(manifest.source) ||
-            manifest.installer?.file !== 'Otto-Setup-x64.exe' ||
-            manifest.runtime?.file !== 'Otto-Runtime-win32-x64.tar.gz'
+            manifest.installer?.file !== 'nod-Setup-x64.exe' ||
+            manifest.runtime?.file !== 'nod-Runtime-win32-x64.tar.gz'
           )
             throw new Error('The desktop update metadata is incompatible.');
           const files = {};
@@ -263,7 +263,7 @@ export function createUpdateSource({
     latest: (currentVersion, signal) =>
       newest(currentVersion, signal, async (release) => {
         const manifest = await getAsset(release, metadataName('release'), signal);
-        const version = release.tag_name.slice(9);
+        const version = release.tag_name.slice(5);
         if (
           manifest.version !== version ||
           manifest.platform !== platform ||
@@ -271,7 +271,7 @@ export function createUpdateSource({
           !['self-signed', 'developer-id'].includes(manifest.signing?.mode) ||
           !hash.test(manifest.runtime?.fingerprint) ||
           !hash.test(manifest.runtime?.id) ||
-          manifest.update?.file !== `Otto-${arch}.zip` ||
+          manifest.update?.file !== `nod-${arch}.zip` ||
           !hash.test(manifest.update.sha256)
         )
           throw new Error('The desktop update metadata is incompatible.');
@@ -331,7 +331,7 @@ export function createDesktopUpdater({
       return ready;
     },
     check() {
-      if (disposed) return Promise.reject(new Error('Otto is closing.'));
+      if (disposed) return Promise.reject(new Error('nod is closing.'));
       if (ready) return Promise.resolve(ready);
       if (checking) return checking;
       checking = (async () => {
@@ -357,13 +357,13 @@ export function createDesktopUpdater({
             const failed = (error) => finish(error);
             const downloaded = (_event, _notes, name) =>
               finish(
-                name === `Otto ${candidate.version}`
+                name === `nod ${candidate.version}`
                   ? undefined
                   : new Error('The downloaded update does not match the selected version.'),
               );
             const unavailable = () =>
               finish(new Error('The selected desktop update is unavailable.'));
-            const aborted = () => finish(new Error('Otto is closing.'));
+            const aborted = () => finish(new Error('nod is closing.'));
             const timeout = setTimeout(
               () => finish(new Error('The desktop update download timed out.')),
               downloadTimeout,

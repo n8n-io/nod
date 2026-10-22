@@ -7,6 +7,7 @@ const routes = new Set([
   '/channels',
   '/tasks',
   '/trust',
+  '/settings',
   '/browser',
   '/credentials',
   '/payments',
@@ -14,11 +15,13 @@ const routes = new Set([
 
 export function analyticsRoute(value: string) {
   try {
-    const path = new URL(value, 'https://otto.invalid').pathname.replace(/\/$/, '') || '/';
+    const path = new URL(value, 'https://nod.invalid').pathname.replace(/\/$/, '') || '/';
     if (/^\/(?:vault|credentials)\/[^/]+$/.test(path)) return '/credentials';
     if (/^\/payments\/[^/]+$/.test(path)) return '/payments';
     if (path.startsWith('/browser-connect/')) return '/apps';
     if (path === '/you') return '/';
+    if (['/settings/models', '/settings/apps', '/settings/memory'].includes(path))
+      return '/settings';
     return routes.has(path) ? path : '/not-found';
   } catch {
     return '/not-found';
@@ -26,7 +29,7 @@ export function analyticsRoute(value: string) {
 }
 
 export function sanitizedAnalyticsUrl(value: string) {
-  return `https://otto.invalid${analyticsRoute(value)}`;
+  return `https://nod.invalid${analyticsRoute(value)}`;
 }
 
 const blocked = [

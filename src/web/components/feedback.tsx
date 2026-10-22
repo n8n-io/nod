@@ -102,7 +102,7 @@ function FeedbackDraftDialog({
   returnFocus,
   screenshot,
 }: FeedbackDialogProps) {
-  const storageKey = `otto.feedback.pending.${ownerId}`;
+  const storageKey = `nod.feedback.pending.${ownerId}`;
   const [pendingId, setPendingId] = useState(() => readPending(storageKey));
   const [kind, setKind] = useState<FeedbackSubmission['category']>('bug');
   const [feedback, setFeedback] = useState('');

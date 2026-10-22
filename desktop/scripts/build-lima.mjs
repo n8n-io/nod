@@ -12,7 +12,7 @@ export async function buildLima(sourceArchive, goArchive, cache, output) {
     throw new Error('Lima host builds require an Intel or Apple Silicon Mac.');
   const source = join(cache, `lima-source-${lock.limaVersion}-${process.arch}`);
   const compiler = join(cache, basename(goArchive, '.tar.gz'));
-  const stamp = join(source, '.otto-build.json');
+  const stamp = join(source, '.nod-build.json');
   const fingerprint = createHash('sha256')
     .update(JSON.stringify(lock))
     .update(await readFile(fileURLToPath(import.meta.url)))

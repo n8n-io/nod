@@ -54,8 +54,8 @@ export function createOtlpTelemetry(endpoint?: string): UsageTelemetry | undefin
           body: JSON.stringify({
             resourceSpans: [
               {
-                resource: { attributes: attribute('service.name', 'otto') },
-                scopeSpans: [{ scope: { name: 'otto.model' }, spans }],
+                resource: { attributes: attribute('service.name', 'nod') },
+                scopeSpans: [{ scope: { name: 'nod.model' }, spans }],
               },
             ],
           }),
@@ -92,10 +92,10 @@ export function createOtlpTelemetry(endpoint?: string): UsageTelemetry | undefin
           ...attribute('gen_ai.operation.name', 'chat'),
           ...attribute('gen_ai.provider.name', usage.provider),
           ...attribute('gen_ai.request.model', usage.model),
-          ...attribute('otto.category', usage.category),
-          ...attribute('otto.operation', usage.operation),
-          ...attribute('otto.status', usage.status),
-          ...attribute('otto.usage.pricing', usage.pricing),
+          ...attribute('nod.category', usage.category),
+          ...attribute('nod.operation', usage.operation),
+          ...attribute('nod.status', usage.status),
+          ...attribute('nod.usage.pricing', usage.pricing),
           ...attribute(
             'gen_ai.usage.input_tokens',
             usage.inputTokens === undefined &&
@@ -110,8 +110,8 @@ export function createOtlpTelemetry(endpoint?: string): UsageTelemetry | undefin
           ...attribute('gen_ai.usage.output_tokens', usage.outputTokens, true),
           ...attribute('gen_ai.usage.cache_read.input_tokens', usage.cacheReadTokens, true),
           ...attribute('gen_ai.usage.cache_creation.input_tokens', usage.cacheWriteTokens, true),
-          ...attribute('otto.usage.cost_usd', usage.costUsd ?? undefined),
-          ...attribute('otto.usage.estimated_cost_usd', usage.estimateUsd ?? undefined),
+          ...attribute('nod.usage.cost_usd', usage.costUsd ?? undefined),
+          ...attribute('nod.usage.estimated_cost_usd', usage.estimateUsd ?? undefined),
         ],
       });
     },

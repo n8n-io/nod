@@ -109,7 +109,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   await app.register(multipart, { limits: { fileSize: fileBytes, files: 1, fields: 5 } });
   app.get('/api/health', async () => {
     await pool.query('SELECT 1');
-    const release = process.env.OTTO_IMAGE_RELEASE || process.env.OTTO_RELEASE;
+    const release = process.env.NOD_IMAGE_RELEASE || process.env.NOD_RELEASE;
     return { ok: true, ...(release ? { release } : {}) };
   });
   if (desktopAccess)
@@ -282,7 +282,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         clientMessageId,
       },
     );
-    const replaySession = z.uuid().safeParse(request.headers['x-otto-replay-session']).data;
+    const replaySession = z.uuid().safeParse(request.headers['x-nod-replay-session']).data;
     if (replaySession) dependencies.linkReplay?.(submitted.turnId, replaySession);
     return submitted;
   });
@@ -412,7 +412,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
     return latest.rows[0]?.handoff_browser_id as string | undefined;
   }
-  const handoffClosed = 'The browser opens here when Otto hands it to you.';
+  const handoffClosed = 'The browser opens here when nod hands it to you.';
   async function readBrowserScreen(reply: FastifyReply) {
     const thread = await activeThread(pool);
     const blocked = () => credentialEntryOpen(thread.id);
@@ -490,7 +490,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         return reply.code(409).send({
           error: timedOut
             ? 'The browser view did not start. Try opening it again.'
-            : "Otto's browser is not showing a page.",
+            : "nod's browser is not showing a page.",
         });
       if ((await handoffBrowser(turnId)) !== browserId)
         return reply.code(423).send({ error: handoffClosed });

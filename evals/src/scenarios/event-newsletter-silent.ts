@@ -40,7 +40,7 @@ const fromTurn = (run: Run, turnId: string) =>
 
 export default scenario({
   id: 'event-newsletter-silent',
-  title: 'A newsletter arrives and Otto stays quiet',
+  title: 'A newsletter arrives and nod stays quiet',
   capabilities: ['apps', 'progress', 'long-running'],
   tier: 'release',
   calibration: 'pending',

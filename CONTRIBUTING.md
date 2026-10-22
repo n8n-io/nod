@@ -1,19 +1,19 @@
-# Contributing to Otto
+# Contributing to nod
 
-Thanks for helping improve Otto. The full guide is in the docs: [Contribute to Otto](docs/src/content/docs/contribute/index.mdx). This page has the essentials.
+Thanks for helping improve nod. The full guide is in the docs: [Contribute to nod](docs/src/content/docs/contribute/index.mdx). This page has the essentials.
 
 Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Ways to help
 
-- **Report a bug** with the [bug report form](https://github.com/n8n-io/otto/issues/new/choose).
-- **Ask a question or share an idea** in [Discussions](https://github.com/n8n-io/otto/discussions).
+- **Report a bug** with the [bug report form](https://github.com/n8n-io/nod/issues/new/choose).
+- **Ask a question or share an idea** in [Discussions](https://github.com/n8n-io/nod/discussions).
 - **Report a vulnerability** privately, as described in the [security policy](SECURITY.md). Never in a public issue.
 - **Send a pull request.** For anything larger than a small fix, open an issue or discussion first.
 
 ## Set up and check
 
-Follow [Install from source](docs/src/content/docs/get-started/install-from-source.mdx), then run Otto with automatic reload:
+Follow [Install from source](docs/src/content/docs/get-started/install-from-source.mdx), then run nod with automatic reload:
 
 ```sh
 pnpm run dev
@@ -42,4 +42,4 @@ A member of [@n8n-io/n8n-labs](.github/CODEOWNERS) reviews every change. See [Pu
 
 ## License
 
-Otto is licensed under the [Apache License 2.0](LICENSE). Contributions you submit are licensed under the same terms, as section 5 of the license describes.
+nod is licensed under the [Apache License 2.0](LICENSE). Contributions you submit are licensed under the same terms, as section 5 of the license describes.

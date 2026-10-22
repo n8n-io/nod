@@ -1,0 +1,165 @@
+.composer-attachments {
+  gap: 6px;
+  padding: 0 3px 11px;
+}
+
+.composer-file {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 36px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: var(--control-radius);
+  background: var(--surface-subtle);
+  color: var(--foreground);
+}
+
+.composer-file:hover,
+.composer-file:focus-within {
+  background: var(--hover);
+}
+
+.composer-file-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 4px 6px 8px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+}
+
+.composer-file-open:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.composer-file-open > svg {
+  flex: none;
+  color: var(--muted-foreground);
+}
+
+.composer-file-name {
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.composer-file-status {
+  flex: none;
+  margin-left: 2px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+}
+
+.composer-file-remove,
+.composer-file-retry {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 26px;
+  min-height: 26px;
+  margin-right: 3px;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--control-radius);
+  background: none;
+  color: var(--muted-foreground);
+}
+
+.composer-file-remove {
+  opacity: 0.3;
+}
+
+.composer-file:hover .composer-file-remove,
+.composer-file:focus-within .composer-file-remove {
+  opacity: 1;
+}
+
+.composer-file-remove:hover {
+  background: var(--surface-inset);
+  color: var(--foreground);
+}
+
+.composer-file-retry {
+  color: var(--error);
+  font-size: 11px;
+}
+
+.composer-file.is-failed {
+  border-color: var(--error);
+}
+
+.composer-file.is-failed .composer-file-status {
+  color: var(--error);
+}
+
+.composer-file-open:focus-visible,
+.composer-file-retry:focus-visible,
+.composer-file-remove:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.composer-file-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  overflow: hidden;
+  background: var(--surface-inset);
+  pointer-events: none;
+}
+
+.composer-file-progress > span {
+  display: block;
+  width: 35%;
+  height: 100%;
+  background: var(--primary);
+  animation: composer-file-upload 1.4s ease-in-out infinite;
+}
+
+.composer-file-progress.is-queued > span {
+  width: 100%;
+  opacity: 0.25;
+  animation: none;
+}
+
+@keyframes composer-file-upload {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(290%);
+  }
+}
+
+@media (hover: none) {
+  .composer-file-remove {
+    opacity: 0.65;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-file-progress > span {
+    width: 100%;
+    opacity: 0.5;
+    animation: none;
+  }
+}

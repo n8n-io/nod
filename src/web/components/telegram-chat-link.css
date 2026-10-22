@@ -1,0 +1,28 @@
+.message-text .telegram-chat-link {
+  display: inline-flex;
+  align-items: center;
+  width: min(100%, 320px);
+  min-height: 48px;
+  height: auto;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  font-size: var(--text-control);
+  text-decoration: none;
+  vertical-align: middle;
+}
+.telegram-chat-link .service-logo {
+  flex: none;
+  margin: 0;
+  border-radius: 0;
+}
+.telegram-chat-name {
+  flex: 1;
+  text-align: left;
+}
+.telegram-chat-open {
+  padding: 5px 14px;
+  border-radius: var(--radius-full);
+  background: var(--control);
+}

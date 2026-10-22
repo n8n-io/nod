@@ -62,8 +62,8 @@ export async function prepare(root: string) {
   const database = await ensureDatabase(root, environment, true);
   process.env.TEST_DATABASE_URL = database.url;
   const images = await evalImages(environment);
-  process.env.OTTO_EVAL_WORKSPACE_IMAGE = images.workspace;
-  process.env.OTTO_EVAL_BROWSER_IMAGE = images.browser;
+  process.env.NOD_EVAL_WORKSPACE_IMAGE = images.workspace;
+  process.env.NOD_EVAL_BROWSER_IMAGE = images.browser;
   return { ...environment, ...process.env } as Record<string, string | undefined>;
 }
 
@@ -119,7 +119,7 @@ async function attemptOnce(options: {
 }) {
   const { directory, model, judge, task } = options;
   const file = join(directory, 'attempts', `${task.item.id}.${task.attempt}.json`);
-  const specPath = join(tmpdir(), `otto-eval-${randomUUID()}.json`);
+  const specPath = join(tmpdir(), `nod-eval-${randomUUID()}.json`);
   await writeFile(
     specPath,
     JSON.stringify({ scenario: task.item.id, attempt: task.attempt, outFile: file, model, judge }),
@@ -180,7 +180,7 @@ async function attemptOnce(options: {
 
 async function checkHarness(model: string, judge: string) {
   const item = scenarios.find((entry) => entry.id === 'harness-canary')!;
-  const directory = join(tmpdir(), `otto-eval-canary-${randomUUID()}`);
+  const directory = join(tmpdir(), `nod-eval-canary-${randomUUID()}`);
   await mkdir(join(directory, 'attempts'), { recursive: true });
   await mkdir(join(directory, 'logs'), { recursive: true });
   let broken = '';
@@ -230,11 +230,11 @@ export async function runSuite(options: RunOptions) {
   if (options.ref) {
     if (options.ref.startsWith('-')) throw new Error('A git ref cannot start with a dash.');
     refCommit = git('rev-parse', '--verify', `${options.ref}^{commit}`);
-    source = join(tmpdir(), `otto-eval-ref-${refCommit.slice(0, 10)}-${randomUUID().slice(0, 6)}`);
+    source = join(tmpdir(), `nod-eval-ref-${refCommit.slice(0, 10)}-${randomUUID().slice(0, 6)}`);
     git('worktree', 'add', '--detach', source, refCommit);
     await symlink(join(repository, 'node_modules'), join(source, 'node_modules'));
-    process.env.OTTO_EVAL_SOURCE = source;
-  } else delete process.env.OTTO_EVAL_SOURCE;
+    process.env.NOD_EVAL_SOURCE = source;
+  } else delete process.env.NOD_EVAL_SOURCE;
   try {
     if (options.canary !== false && selected.some((item) => item.tier !== 'canary'))
       await checkHarness(model, judge);
@@ -257,8 +257,8 @@ export async function runSuite(options: RunOptions) {
       scenarioIds: selected.map((item) => item.id),
       k,
       provenance: {
-        workspaceImage: await digest(environment.OTTO_EVAL_WORKSPACE_IMAGE!),
-        browserImage: await digest(environment.OTTO_EVAL_BROWSER_IMAGE!),
+        workspaceImage: await digest(environment.NOD_EVAL_WORKSPACE_IMAGE!),
+        browserImage: await digest(environment.NOD_EVAL_BROWSER_IMAGE!),
         pi: pkg.dependencies['@earendil-works/pi-coding-agent'] ?? '',
         node: process.version,
       },

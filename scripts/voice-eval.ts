@@ -303,7 +303,7 @@ async function runScenario(
     nextCheck: '2026-10-14T09:00:00.000Z',
     question: null,
   }));
-  const directory = await mkdtemp(join(tmpdir(), 'otto-voice-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nod-voice-'));
   const threadId = randomUUID();
   const turnId = randomUUID();
   turns.set(turnId, scenario);
@@ -384,7 +384,7 @@ async function runScenario(
         violations.get(turnId)!.push(`connection:${action}`);
         return { status: 'rejected', message: 'This evaluation permits reads only.' };
       }
-      return { name: service, url: 'https://otto.example/connect' };
+      return { name: service, url: 'https://nod.example/connect' };
     },
     integration: async (action, input) => {
       await latency();
@@ -582,7 +582,7 @@ async function writeReport(labels: string[]) {
       return `<th>${escape(name)}<div class="meta">${state} · ${all.filter(Boolean).length}/${all.length} recorded checks pass · automatic pass at least once ${once}/${groups.length} · every planned attempt ${every}/${groups.length}</div></th>`;
     })
     .join('');
-  const html = `<!doctype html><meta charset="utf-8"><title>Otto voice eval</title><style>
+  const html = `<!doctype html><meta charset="utf-8"><title>nod voice eval</title><style>
 body{font:14px/1.45 system-ui,sans-serif;margin:24px;background:#f6f6f3;color:#1b1b1b}
 table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{border:1px solid #ddd;padding:10px;vertical-align:top;background:#fff;text-align:left}
 thead th{position:sticky;top:0;background:#fafafa}.title{font-weight:600}.prompt{margin:6px 0;font-family:ui-monospace,monospace;font-size:12px}
@@ -592,7 +592,7 @@ thead th{position:sticky;top:0;background:#fafafa}.title{font-weight:600}.prompt
 .chip{display:inline-block;font-size:11px;border-radius:4px;padding:1px 6px;margin:2px 3px 2px 0}.ok{background:#dff3e4;color:#1d6b35}.bad{background:#fbe1e1;color:#a02121}
 .err{color:#a02121}.silent{color:#999;font-style:italic;margin-top:6px}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px}details.tool{white-space:normal}
-</style><h1>Otto voice eval</h1><table><thead><tr><th style="width:22%">Scenario</th>${totals}</tr></thead><tbody>${rows}</tbody></table>`;
+</style><h1>nod voice eval</h1><table><thead><tr><th style="width:22%">Scenario</th>${totals}</tr></thead><tbody>${rows}</tbody></table>`;
   const path = join(outputDir, 'report.html');
   await writeFile(path, html);
   return path;
@@ -671,7 +671,7 @@ const runRecord = {
   runs,
 };
 await writeFile(recordPath, JSON.stringify(runRecord, null, 2), { flag: 'wx' });
-const sessionRoot = await mkdtemp(join(tmpdir(), 'otto-voice-sessions-'));
+const sessionRoot = await mkdtemp(join(tmpdir(), 'nod-voice-sessions-'));
 const agent = createPiAgent({ provider, model, apiKey, sessionRoot });
 const refused = (turnId: string, name: string) =>
   Boolean(turns.get(turnId)?.answer) && !answerTools.has(name);

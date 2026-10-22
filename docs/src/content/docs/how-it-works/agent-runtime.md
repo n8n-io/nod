@@ -1,6 +1,6 @@
 ---
 title: The agent runtime
-description: How Otto runs Pi sessions, which tools the model gets, how every tool call passes the turn guard, and how the prompt is built.
+description: How nod runs Pi sessions, which tools the model gets, how every tool call passes the turn guard, and how the prompt is built.
 sidebar:
   order: 3
 ---
@@ -11,7 +11,7 @@ The short version: `src/runtime` runs each turn in a Pi session. Every tool call
 
 ## Pi sessions
 
-Pi is the agent harness Otto runs on. It keeps the transcript, calls the model and runs tools. Otto's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/otto/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts) runs sessions in parallel. Each session runs one turn at a time:
+Pi is the agent harness nod runs on. It keeps the transcript, calls the model and runs tools. nod's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/nod/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/index.ts) runs sessions in parallel. Each session runs one turn at a time:
 
 - Conversation turns share the thread's saved session. The server hands it to one turn at a time.
 - Background sessions save their transcript too. A reply or secure form continues that session.
@@ -42,7 +42,7 @@ When a loaded session ends with tool calls that have no result, each call gets t
 
 ## Tools
 
-Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/tools.ts).
+Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/tools.ts).
 
 | Tool                                                                | What it does                                                                                                                                 |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -60,12 +60,12 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                                                                      |
 | `manage_personal_context`                                           | Schedules, notification preferences, memory, history and usage.                                                                              |
 | `task`                                                              | Starts saved task sessions, sends owner updates, reports progress and stops a task. It grants no permission.                                 |
-| `share_file`                                                        | Attaches a workspace file to Otto's next reply or question, or sends it alone when a turn finishes or fails without one.                     |
+| `share_file`                                                        | Attaches a workspace file to nod's next reply or question, or sends it alone when a turn finishes or fails without one.                      |
 | `create_audio`                                                      | Turns text into speech and sends it to you.                                                                                                  |
 | `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                          |
 | `codemode`                                                          | Runs a model-written script that calls workspace and web tools.                                                                              |
 
-The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its connections go only to public addresses, checked when each connection opens, IP addresses included. Otto drops any proxy, whether the model names it or the settings file sets it. Its settings live in `OTTO_DATA_ROOT/pi/web-search.json`.
+The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its connections go only to public addresses, checked when each connection opens, IP addresses included. nod drops any proxy, whether the model names it or the settings file sets it. Its settings live in `NOD_DATA_ROOT/pi/web-search.json`.
 
 ## The turn guard
 
@@ -93,7 +93,7 @@ A call acts only once every `apps` or `manage_personal_context` call issued befo
 Pi's `codemode` tool runs model-written JavaScript in a QuickJS sandbox with no network, files or timers.
 
 - Scripts can call only the workspace and `pi-web-access` tools, in parallel, plus Pi's image and classifier models. That model spend goes to the usage ledger.
-- Every Otto tool is `model-only`, so scripts can't reach apps, the browser, credentials, messages or shared files.
+- Every nod tool is `model-only`, so scripts can't reach apps, the browser, credentials, messages or shared files.
 - Calls inside a script stay raw so the script can parse them. Codemode's output is wrapped when it returns.
 
 ## Untrusted results
@@ -102,15 +102,15 @@ Results from apps, the browser, the web and codemode reach Pi inside one `untrus
 
 ## How the prompt is built
 
-The prompt has three layers, built in [`src/runtime/prompt.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/prompt.ts).
+The prompt has three layers, built in [`src/runtime/prompt.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/prompt.ts).
 
-| Layer         | Contains                                                                                                                         | Sent                       |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| Static prompt | Otto's personality and rules, the conversation and background rules, the core guides, the skill catalog and Pi's tool guidelines | Once per session           |
-| Owner context | Account details, date format, the memory index and the learned skill index                                                       | Again only when it changes |
-| Turn message  | Mode, time, channel, message ID, reply target, recent conversation and the instruction                                           | Every turn                 |
+| Layer         | Contains                                                                                                                        | Sent                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| Static prompt | nod's personality and rules, the conversation and background rules, the core guides, the skill catalog and Pi's tool guidelines | Once per session           |
+| Owner context | Account details, date format, the memory index and the learned skill index                                                      | Again only when it changes |
+| Turn message  | Mode, time, channel, message ID, reply target, recent conversation and the instruction                                          | Every turn                 |
 
-The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `video-links`. Pi's own tool guidelines are appended to the static prompt, because Otto's custom prompt would otherwise drop them.
+The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `video-links`. Pi's own tool guidelines are appended to the static prompt, because nod's custom prompt would otherwise drop them.
 
 The owner context is a message of its own, never part of the system prompt, so a memory change leaves the system prompt and the conversation before it untouched:
 
@@ -118,13 +118,13 @@ The owner context is a message of its own, never part of the system prompt, so a
 - Earlier copies stay where they are, so the cached conversation after them stays valid.
 - Compaction summaries leave the owner context out. A session that compacts it away gets it again with its next request.
 
-Providers that take a prompt cache key, such as OpenAI, get the same one from every session of a thread: a keyed hash of the thread ID that changes when Otto restarts. When a session's system prompt and tools match a recent request from the same thread, as they do for back-to-back background runs even after memory changes, the provider reads them from its cache and bills them at its cheaper cache-read rate. The code is in [`src/providers/pi/index.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/pi/index.ts).
+Providers that take a prompt cache key, such as OpenAI, get the same one from every session of a thread: a keyed hash of the thread ID that changes when nod restarts. When a session's system prompt and tools match a recent request from the same thread, as they do for back-to-back background runs even after memory changes, the provider reads them from its cache and bills them at its cheaper cache-read rate. The code is in [`src/providers/pi/index.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/index.ts).
 
 ## Message cadence
 
-A chat turn posts its opening line, then only what the model writes between tool calls after the user has heard nothing for a while, then its final reply. The window is 30 seconds in Otto web and 3 minutes in chat apps. A task's first message is its acknowledgement, so the task posts only its questions, files, deliberate `send_message` updates and result. The rule lives in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts); the prompt asks for what each message should contain.
+A chat turn posts its opening line, then only what the model writes between tool calls after the user has heard nothing for a while, then its final reply. The window is 30 seconds in nod web and 3 minutes in chat apps. A task's first message is its acknowledgement, so the task posts only its questions, files, deliberate `send_message` updates and result. The rule lives in [`src/runtime/index.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/index.ts); the prompt asks for what each message should contain.
 
-| Moment    | What Otto does                                                                                                 | Why                                                                                                                                                                                                                                                                                                                                                            |
+| Moment    | What nod does                                                                                                  | Why                                                                                                                                                                                                                                                                                                                                                            |
 | --------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Start     | One line on what it will do, only when the work takes more than a few seconds                                  | Unexplained waits feel longer ([Maister 1985](https://davidmaister.com/articles/5/52/index.html)); feedback matters past about 10 seconds ([Nielsen](https://www.nngroup.com/articles/response-times-3-important-limits/))                                                                                                                                     |
 | During    | One line at a change of step: what it found and what's next, without tool names, percentages or time estimates | Intermediate results beat silence on perceived speed and trust ([Kirmayr et al. 2026](https://arxiv.org/abs/2602.15569)); progress that slips makes waits worse ([Conrad et al. 2010](https://pmc.ncbi.nlm.nih.gov/articles/PMC2910434)); updates land best at breakpoints ([Iqbal and Bailey 2008](https://www.interruptions.net/literature/Iqbal-CHI08.pdf)) |
@@ -134,7 +134,7 @@ A chat turn posts its opening line, then only what the model writes between tool
 
 ## Compact command output
 
-Workspace images include a pinned [RTK](https://github.com/rtk-ai/rtk). Supported simple Bash commands are rewritten to RTK inside the workspace for compact Git, file, search, test and build output. Pipes, redirection, machine-output flags, bare `git log` and `find` stay raw. RTK's `find` skips hidden and ignored folders such as `.otto`, where Otto keeps its working files. Unsupported commands fall back before they run, and executed commands are never retried. `rtk proxy <command>` gives exact output. The rules are in [`src/providers/pi/sandbox.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/pi/sandbox.ts).
+Workspace images include a pinned [RTK](https://github.com/rtk-ai/rtk). Supported simple Bash commands are rewritten to RTK inside the workspace for compact Git, file, search, test and build output. Pipes, redirection, machine-output flags, bare `git log` and `find` stay raw. RTK's `find` skips hidden and ignored folders such as `.nod`, where nod keeps its working files. Unsupported commands fall back before they run, and executed commands are never retried. `rtk proxy <command>` gives exact output. The rules are in [`src/providers/pi/sandbox.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/sandbox.ts).
 
 ## Related resources
 

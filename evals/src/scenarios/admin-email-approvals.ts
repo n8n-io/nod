@@ -256,7 +256,7 @@ export default scenario({
         {
           failure: 'incomplete',
           otherwise:
-            'The email Otto sent to Clínica Dental Sorriso confirms the dentist check-up, in any wording or language.',
+            'The email nod sent to Clínica Dental Sorriso confirms the dentist check-up, in any wording or language.',
         },
       ),
       judge(

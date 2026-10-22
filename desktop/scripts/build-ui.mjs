@@ -21,7 +21,7 @@ export async function buildDesktopUI(output = join(root, 'dist', 'desktop-ui')) 
       assetsInlineLimit: 0,
       lib: {
         entry: join(root, 'desktop', 'ui', 'setup.tsx'),
-        name: 'OttoStartup',
+        name: 'NodStartup',
         formats: ['iife'],
         fileName: () => 'setup.js',
         cssFileName: 'setup',

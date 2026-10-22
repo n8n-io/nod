@@ -25,7 +25,7 @@ export type ChannelPresentation =
   | {
       kind: 'delivery';
       text: string;
-      attachments: 'none' | 'pending' | 'in_otto';
+      attachments: 'none' | 'pending' | 'in_nod';
       secureAction: boolean;
       files?: string[];
     }
@@ -36,7 +36,7 @@ export type ChannelPresentation =
       kind: 'command';
       command: 'memory' | 'usage' | 'tasks' | 'status' | 'stop';
       data: object;
-      attachments?: 'none' | 'pending' | 'in_otto';
+      attachments?: 'none' | 'pending' | 'in_nod';
     };
 
 interface ChannelOptions {
@@ -162,7 +162,7 @@ function channelText(text: string) {
   const privateUrl = (value: string) => {
     let url: URL;
     try {
-      url = new URL(value, 'https://otto.invalid');
+      url = new URL(value, 'https://nod.invalid');
     } catch {
       return false;
     }
@@ -226,11 +226,11 @@ export async function channelReply(
   const attachments = options.deliversAttachments
     ? 'pending'
     : options.hasAttachments || safe.artifact
-      ? 'in_otto'
+      ? 'in_nod'
       : 'none';
   const needsPresentation =
     safe.secureAction ||
-    attachments === 'in_otto' ||
+    attachments === 'in_nod' ||
     (attachments === 'pending' && Boolean(safe.text)) ||
     (!safe.text && attachments === 'none');
   return needsPresentation
@@ -848,7 +848,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
                 attachments: attachments
                   ? ('pending' as const)
                   : row.attachments?.length
-                    ? ('in_otto' as const)
+                    ? ('in_nod' as const)
                     : ('none' as const),
               }
             : row.presentation;
@@ -953,7 +953,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
                   {
                     kind: 'delivery',
                     text: '',
-                    attachments: 'in_otto',
+                    attachments: 'in_nod',
                     secureAction: false,
                     files: names.map((name) => channelText(name).text),
                   },

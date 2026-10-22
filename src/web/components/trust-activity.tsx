@@ -227,7 +227,7 @@ function TaskLimit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
           </button>
         ))}
       </div>
-      <small>Otto asks before a task spends more.</small>
+      <small>nod asks before a task spends more.</small>
       {error && <Notice>{error}</Notice>}
     </div>
   );
@@ -280,7 +280,7 @@ function StandingInstruction({ rule, onSaved }: { rule: string; onSaved(): void 
           </Button>
         )}
       </div>
-      <small>Otto reads and drafts on its own, and does only what this says.</small>
+      <small>nod reads and drafts on its own, and does only what this says.</small>
       {error && <Notice>{error}</Notice>}
     </form>
   );
@@ -345,7 +345,7 @@ function Sentence({
   return (
     <>
       <p className="statement-summary trust-sentence">
-        Otto spent{' '}
+        nod spent{' '}
         <Value text={money(month.spentUsd)} label={`Spending in ${name}`}>
           {() => <Month view={view} />}
         </Value>
@@ -383,7 +383,7 @@ function Sentence({
         <br />
         {done.length ? (
           <>
-            This week Otto{' '}
+            This week nod{' '}
             {done.map((part, index) => (
               <span key={index}>
                 {index ? (used.length > 1 ? ', ' : ' and ') : ''}
@@ -396,7 +396,7 @@ function Sentence({
           'Nothing yet this week.'
         )}
         <br />
-        On its own, Otto{' '}
+        On its own, nod{' '}
         <Value
           text={rule ? 'follows your instruction' : 'watches nothing'}
           label="Standing instruction"
@@ -513,7 +513,7 @@ function Statement({
     }
   }
   if (!rows.length && cutoff === -Infinity)
-    return <p className="statement-empty">What Otto does and spends will show up here.</p>;
+    return <p className="statement-empty">What nod does and spends will show up here.</p>;
   const days = new Map<string, typeof rows>();
   for (const row of rows) {
     const label = formatDayLabel(row.at, format);

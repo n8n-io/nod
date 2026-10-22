@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { OttoGlyph } from './motion';
+import { NodGlyph } from './motion';
 
 export function SetupProgress({
   title,
@@ -27,11 +27,7 @@ export function SetupProgress({
   return (
     <main className="setup-progress" ref={panel} tabIndex={-1} aria-label={title}>
       <div className="setup-progress-content">
-        <OttoGlyph
-          key={error ? 'error' : 'loading'}
-          size={80}
-          mode={error ? 'still' : 'thinking'}
-        />
+        <NodGlyph key={error ? 'error' : 'loading'} size={80} mode={error ? 'still' : 'thinking'} />
         <div
           className="setup-progress-message"
           data-analytics-private

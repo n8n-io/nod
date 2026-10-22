@@ -18,13 +18,18 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
-import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
+import {
+  accessCookie,
+  accessKey,
+  credentialRequestKey,
+  registerLocalAccess,
+} from '../src/server/access.ts';
 import { appConfirmation } from '../src/ports/agent.ts';
 import type { OwnerComputer } from '../src/ports/owner-computer.ts';
 import { createComputerPolicy } from '../src/server/computer.ts';
 import type { ApprovalDescription, ApprovalExecutionContext } from '../src/server/approvals.ts';
 test('localhost access requires the owner key and rejects foreign Host, Origin and cross-site requests', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-access-'));
+  const root = await mkdtemp(join(tmpdir(), 'nod-access-'));
   const app = Fastify();
   try {
     const key = await accessKey(root);
@@ -33,10 +38,45 @@ test('localhost access requires the owner key and rejects foreign Host, Origin a
     await chmod(join(root, 'access-key'), 0o644);
     assert.equal(await accessKey(root), key);
     assert.equal((await stat(join(root, 'access-key'))).mode & 0o777, 0o600);
+    const requestKeys = await Promise.all(
+      Array.from({ length: 4 }, () => credentialRequestKey(root)),
+    );
+    assert.equal(new Set(requestKeys).size, 1);
+    assert.equal(requestKeys[0] === key, false);
+    assert.equal((await stat(join(root, 'credential-request-key'))).mode & 0o777, 0o600);
     registerLocalAccess(app, 4310, { key });
     app.post('/api/fixture', async () => ({ ok: true }));
     app.get('/api/privacy', async () => ({ content: null }));
-    const cookie = `otto-access-4310=${key}`;
+    const settingsPages = ['/settings', '/settings/models', '/settings/apps', '/settings/memory'];
+    for (const path of settingsPages) app.get(path, async () => 'nod');
+    app.get('/api/settings', async () => ({ private: true }));
+    const navigation = {
+      host: 'localhost:4310',
+      'sec-fetch-site': 'cross-site',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-dest': 'document',
+    };
+    for (const path of settingsPages) {
+      assert.equal((await app.inject({ url: path, headers: navigation })).statusCode, 200);
+      assert.equal(
+        (await app.inject({ url: path, headers: { ...navigation, 'sec-fetch-mode': 'cors' } }))
+          .statusCode,
+        403,
+      );
+    }
+    for (const path of ['/settings/unknown', '/settings-typo'])
+      assert.equal((await app.inject({ url: path, headers: navigation })).statusCode, 403);
+    assert.equal((await app.inject({ url: '/api/settings', headers: navigation })).statusCode, 401);
+    assert.equal(
+      (
+        await app.inject({
+          url: '/api/settings',
+          headers: { ...navigation, cookie: `nod-access-4310=${key}` },
+        })
+      ).statusCode,
+      403,
+    );
+    const cookie = `nod-access-4310=${key}`;
     for (const headers of [
       { host: 'attacker.example:4310', cookie },
       { host: 'localhost:4311', cookie },
@@ -54,10 +94,11 @@ test('localhost access requires the owner key and rejects foreign Host, Origin a
       { host: 'localhost:4310', origin: 'http://localhost:4310' },
       {
         host: 'localhost:4310',
-        cookie: `otto-access-4310=${randomBytes(32).toString('base64url')}`,
+        cookie: `nod-access-4310=${randomBytes(32).toString('base64url')}`,
       },
-      { host: 'localhost:4310', cookie: `otto-access-4311=${key}` },
-      { host: 'localhost:4310', 'x-otto-desktop-token': key },
+      { host: 'localhost:4310', cookie: `nod-access-4311=${key}` },
+      { host: 'localhost:4310', cookie: `nod-access-4310=${requestKeys[0]}` },
+      { host: 'localhost:4310', 'x-nod-desktop-token': key },
     ])
       assert.equal(
         (await app.inject({ method: 'POST', url: '/api/fixture', headers })).statusCode,
@@ -156,7 +197,7 @@ test(
     await add('user', 'Responde em português de Portugal.', { days: 3 });
     await add(
       'user',
-      'Continua, por favor. https://otto.example/payments/private-payment /api/artifacts/private-artifact',
+      'Continua, por favor. https://nod.example/payments/private-payment /api/artifacts/private-artifact',
       { days: 2 },
     );
     await add('user', 'ok', { days: 1 });
@@ -262,7 +303,7 @@ test('communication blocks unsupported confirmations unless their frozen facts p
     captured.length = 0;
     await assert.rejects(
       communication.describe(proposal),
-      /^Error: Otto could not write an accurate confirmation for this action/,
+      /^Error: nod could not write an accurate confirmation for this action/,
     );
     assert.deepEqual(captured[1], {
       purpose: 'confirmation_review',
@@ -280,7 +321,7 @@ test(
   'approvals preserve explicit-request authority, execute confirmed snapshots once and fence owners',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 60_000 },
   async (t) => {
-    const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), 'otto-approvals-')));
+    const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), 'nod-approvals-')));
     const previousDirectory = process.cwd();
     process.chdir(fixtureRoot);
     t.after(async () => {
@@ -838,7 +879,7 @@ test(
       );
 
       await t.test(
-        'a first task the owner tapped is Otto wording and never counts as their request',
+        'a first task the owner tapped is nod wording and never counts as their request',
         async () => {
           const title = 'Reply about revision rounds';
           await begin('Check my inbox.');
@@ -954,7 +995,7 @@ test(
             turn: { threadId: string; turnId: string },
             args: Record<string, unknown>,
           ) => {
-            const id = await propose(turn, 'OTTO_vault_allow', args);
+            const id = await propose(turn, 'NOD_vault_allow', args);
             await finish(turn.turnId);
             await confirm(id, true);
             await execute(id);
@@ -970,7 +1011,7 @@ test(
           };
           const session = await access.authorize(group, target);
           assert.ok('details' in session);
-          assert.deepEqual(reviews.at(-1)?.action.name, 'OTTO_browser_session');
+          assert.deepEqual(reviews.at(-1)?.action.name, 'NOD_browser_session');
           const groupResumed = await confirmAccess(group, session.args);
           const afterGroup = reviews.length;
           assert.deepEqual(await access.authorize(groupResumed, target), {
@@ -1005,7 +1046,7 @@ test(
               })),
           );
           aligned = (input) =>
-            input.action?.name === 'OTTO_sign_in' &&
+            input.action?.name === 'NOD_sign_in' &&
             input.action.arguments.website === site &&
             input.userMessages?.at(-1)?.text === 'Download my bank statement now.';
           const requested = await begin('Download my bank statement now.');
@@ -1026,20 +1067,20 @@ test(
       );
 
       await t.test('payments from a chat app are approved outside it', async () => {
-        assert.equal(await trust.inOtto(await begin('Buy hinges at shop.example.test.')), true);
+        assert.equal(await trust.inNod(await begin('Buy hinges at shop.example.test.')), true);
         assert.equal(
-          await trust.inOtto(
+          await trust.inNod(
             await begin('Buy hinges at shop.example.test.', { channel: 'telegram:synthetic' }),
           ),
           false,
         );
         assert.equal(
-          await trust.inOtto(
+          await trust.inNod(
             await begin('Buy hinges at shop.example.test.', { channel: 'whatsapp:synthetic' }),
           ),
           false,
         );
-        assert.equal(await trust.inOtto(await begin('Synthetic event', { source: 'event' })), true);
+        assert.equal(await trust.inNod(await begin('Synthetic event', { source: 'event' })), true);
       });
 
       await t.test(
@@ -1150,6 +1191,7 @@ test(
             to: 'hotel@example.test',
           });
           assert.notEqual(freshApproval, oldApproval);
+          assert.equal((await stored(freshApproval)).source_message_id, update.messageId);
           assert.equal((await stored(oldApproval)).status, 'expired');
           await db.pool.query("UPDATE approvals SET status='expired' WHERE id=$1", [freshApproval]);
           await trust.check(continued, 'GMAIL_FETCH_EMAILS', {});
@@ -1278,7 +1320,7 @@ test(
               ).rows[0].id,
             );
             await tasks.inherit(relayed);
-            await trust.check(relayed, 'OTTO_browser', { website: 'https://dentist.example.test' });
+            await trust.check(relayed, 'NOD_browser', { website: 'https://dentist.example.test' });
             await finish(relayed.turnId, 'succeeded');
             return reviews.at(-1)!;
           };
@@ -1410,7 +1452,7 @@ test(
             ).rows[0].id,
           );
           await tasks.inherit(worker);
-          await trust.check(worker, 'OTTO_browser', { website: 'https://tables.example.test' });
+          await trust.check(worker, 'NOD_browser', { website: 'https://tables.example.test' });
           assert.deepEqual(
             reviews
               .at(-1)!
@@ -1464,7 +1506,7 @@ test(
             ).rows[0].id,
           );
           await tasks.inherit(worker);
-          await trust.check(worker, 'OTTO_browser', { website: 'https://tables.example.test' });
+          await trust.check(worker, 'NOD_browser', { website: 'https://tables.example.test' });
           const words = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
           assert.deepEqual(words.slice(-2), [request, 'Fixture town.']);
           assert.equal(words.includes('Book any fixture table right away.'), false);
@@ -1525,6 +1567,301 @@ test(
       );
 
       await t.test(
+        'a new foreground request after a waiting question owns its approval and replay identity',
+        async (t) => {
+          const before = calls.length;
+          const parent = await begin('Organize the synthetic fixture folder.');
+          const args = { action: 'shell', command: 'fixture-organize-files' };
+          const first = await propose(parent, 'NOD_computer', args);
+          const accepted = await confirm(first, true);
+          assert.ok(accepted && 'turnId' in accepted);
+          await execute(first);
+          const continuation = await running(accepted.turnId);
+          t.after(() => finish(parent.turnId, 'succeeded'));
+          t.after(() => finish(continuation.turnId, 'succeeded'));
+          assert.deepEqual(
+            await approvals.request(continuation, 'NOD_computer', args, {
+              allowed: true,
+              sourceMessageId: accepted.messageId,
+            }),
+            (await stored(first)).result,
+          );
+          assert.equal(calls.length, before + 1);
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','What should I do next?')",
+            [randomUUID(), ownerId, parent.threadId, continuation.turnId],
+          );
+          await db.pool.query(
+            "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=$1",
+            [continuation.turnId],
+          );
+          const next = await thread.submitUserMessage(
+            'Organize the synthetic fixture folder again.',
+          );
+          const current = await running(next.turnId);
+          t.after(() => finish(current.turnId, 'succeeded'));
+          assert.equal((await row(current.turnId)).parent_turn_id, continuation.turnId);
+          const asked = await approvals.request(current, 'NOD_computer', args, {
+            allowed: false,
+            sourceMessageId: next.messageId,
+          });
+          assert.ok(asked && typeof asked === 'object' && appConfirmation in asked);
+          const second = await proposal(current.turnId);
+          assert.equal(second.source_message_id, next.messageId);
+          assert.notEqual(second.id, first);
+          await assert.rejects(
+            approvals.request(current, 'NOD_computer', args, {
+              allowed: true,
+              sourceMessageId: next.messageId,
+            }),
+            /pending or uncertain/,
+          );
+          const confirmed = await confirm(second.id, true);
+          assert.ok(confirmed && 'turnId' in confirmed);
+          t.after(() => finish(confirmed.turnId, 'succeeded'));
+          await execute(second.id);
+          await execute(second.id);
+          assert.equal(calls.length, before + 2);
+          assert.equal(calls.at(-1)?.context.sourceMessageId, next.messageId);
+          assert.deepEqual(
+            await approvals.request(await running(confirmed.turnId), 'NOD_computer', args, {
+              allowed: true,
+              sourceMessageId: confirmed.messageId,
+            }),
+            (await stored(second.id)).result,
+          );
+          assert.equal(calls.length, before + 2);
+        },
+      );
+
+      await t.test(
+        'an owned background reply reaches the checker without unrelated chat authority',
+        async (t) => {
+          for (const source of ['event', 'schedule'] as const)
+            await t.test(source, async (t) => {
+              const instruction = 'Organize the synthetic fixture folder whenever it is ready.';
+              const parent = await begin('Synthetic background folder check.', { source });
+              t.after(() => finish(parent.turnId, 'cancelled'));
+              if (source === 'event') {
+                await db.pool.query(
+                  `INSERT INTO preferences(owner_id,notification_rule) VALUES($1,$2)
+                   ON CONFLICT(owner_id) DO UPDATE SET notification_rule=EXCLUDED.notification_rule`,
+                  [ownerId, instruction],
+                );
+                t.after(() =>
+                  db.pool.query("UPDATE preferences SET notification_rule='' WHERE owner_id=$1", [
+                    ownerId,
+                  ]),
+                );
+              } else {
+                await db.pool.query(
+                  `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction)
+                   VALUES($1,$2,$3,1,$4,'Synthetic folder check',$5,'2026-10-19T07:00:00Z','Europe/Madrid',$6)`,
+                  [randomUUID(), ownerId, randomUUID(), randomUUID(), parent.turnId, instruction],
+                );
+              }
+              const question = randomUUID();
+              await db.pool.query(
+                "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Which fixture folder should I organize?')",
+                [question, ownerId, parent.threadId, parent.turnId],
+              );
+              await db.pool.query(
+                "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=$1",
+                [parent.turnId],
+              );
+              const unrelated = await begin('Send the separate fixture report to another team.');
+              await finish(unrelated.turnId, 'succeeded');
+              const correction = 'Only inspect the fixture folder. Do not move any files.';
+              const reply = await messages.submit(correction, [], { replyToMessageId: question });
+              const current = await running(reply.turnId);
+              t.after(() => finish(current.turnId, 'cancelled'));
+              assert.equal((await row(current.turnId)).background, true);
+              assert.equal((await row(current.turnId)).parent_turn_id, parent.turnId);
+              await trust.check(current, 'NOD_computer', {
+                action: 'shell',
+                command: 'fixture-organize-files',
+              });
+              const checked = reviews.at(-1)!;
+              assert.equal(
+                checked[source === 'event' ? 'standingInstruction' : 'scheduledTaskInstruction'],
+                instruction,
+              );
+              assert.deepEqual(
+                checked.userMessages?.map((message: { text: string }) => message.text),
+                [correction],
+              );
+              const foreignThread = randomUUID();
+              await db.pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [
+                foreignThread,
+                `fixture-${foreignThread}`,
+              ]);
+              for (const [column, value] of [
+                ['owner_id', 'foreign'],
+                ['thread_id', foreignThread],
+                ['turn_id', parent.turnId],
+                ['role', 'assistant'],
+              ]) {
+                await db.pool.query(`UPDATE messages SET ${column}=$2 WHERE id=$1`, [
+                  reply.messageId,
+                  value,
+                ]);
+                try {
+                  await trust.check(current, 'NOD_computer', { action: 'shell' });
+                  assert.equal(reviews.at(-1)?.userMessages, undefined);
+                  await assert.rejects(
+                    approvals.request(
+                      current,
+                      'NOD_computer',
+                      { action: 'shell' },
+                      {
+                        sourceMessageId: reply.messageId,
+                        allowed: true,
+                      },
+                    ),
+                    /direct request/,
+                  );
+                } finally {
+                  await db.pool.query(
+                    "UPDATE messages SET owner_id=$2,thread_id=$3,turn_id=$4,role='user' WHERE id=$1",
+                    [reply.messageId, ownerId, current.threadId, current.turnId],
+                  );
+                }
+              }
+            });
+        },
+      );
+
+      await t.test(
+        'a new background owner request owns its approval while confirmation resumes reuse it',
+        async (t) => {
+          for (const source of ['event', 'schedule'] as const)
+            await t.test(source, async (t) => {
+              const before = calls.length;
+              const parent = await begin('Organize the synthetic fixture folder.', { source });
+              const args = { action: 'shell', command: `fixture-organize-${source}-files` };
+              const first = await propose(parent, 'NOD_computer', args);
+              const accepted = await confirm(first, true);
+              assert.ok(accepted && 'turnId' in accepted);
+              await execute(first);
+              const continuation = await running(accepted.turnId);
+              t.after(() => finish(parent.turnId, 'succeeded'));
+              t.after(() => finish(continuation.turnId, 'succeeded'));
+              assert.deepEqual(
+                await approvals.request(continuation, 'NOD_computer', args, {
+                  allowed: true,
+                  sourceMessageId: accepted.messageId,
+                }),
+                (await stored(first)).result,
+              );
+              assert.equal(calls.length, before + 1);
+              const question = randomUUID();
+              await db.pool.query(
+                "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','What should I do next?')",
+                [question, ownerId, parent.threadId, continuation.turnId],
+              );
+              await db.pool.query(
+                "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=$1",
+                [continuation.turnId],
+              );
+              const next = await messages.submit(
+                'Organize the synthetic fixture folder again.',
+                [],
+                {
+                  replyToMessageId: question,
+                },
+              );
+              const current = await running(next.turnId);
+              t.after(() => finish(current.turnId, 'succeeded'));
+              assert.equal((await row(current.turnId)).background, true);
+              assert.equal((await row(current.turnId)).parent_turn_id, continuation.turnId);
+              const asked = await approvals.request(current, 'NOD_computer', args, {
+                allowed: false,
+                sourceMessageId: next.messageId,
+              });
+              assert.ok(asked && typeof asked === 'object' && appConfirmation in asked);
+              const second = await proposal(current.turnId);
+              assert.equal(second.source_message_id, next.messageId);
+              assert.notEqual(second.id, first);
+              await assert.rejects(
+                approvals.request(current, 'NOD_computer', args, {
+                  allowed: true,
+                  sourceMessageId: next.messageId,
+                }),
+                /pending or uncertain/,
+              );
+              const confirmed = await confirm(second.id, true);
+              assert.ok(confirmed && 'turnId' in confirmed);
+              t.after(() => finish(confirmed.turnId, 'succeeded'));
+              await execute(second.id);
+              await execute(second.id);
+              assert.equal(calls.length, before + 2);
+              assert.equal(calls.at(-1)?.context.sourceMessageId, next.messageId);
+              assert.deepEqual(
+                await approvals.request(await running(confirmed.turnId), 'NOD_computer', args, {
+                  allowed: true,
+                  sourceMessageId: confirmed.messageId,
+                }),
+                (await stored(second.id)).result,
+              );
+              assert.equal(calls.length, before + 2);
+            });
+        },
+      );
+
+      await t.test(
+        'a current foreground source cannot borrow its waiting ancestor authority after ownership changes',
+        async (t) => {
+          const before = calls.length;
+          for (const mutation of [
+            "UPDATE messages SET owner_id='foreign' WHERE id=$1",
+            "UPDATE messages SET role='assistant' WHERE id=$1",
+            'UPDATE messages SET thread_id=$2 WHERE id=$1',
+            'UPDATE messages SET turn_id=$2 WHERE id=$1',
+          ]) {
+            const parent = await begin('Only inspect the synthetic fixture app.');
+            t.after(() => finish(parent.turnId, 'cancelled'));
+            await db.pool.query(
+              "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Which fixture app?')",
+              [randomUUID(), ownerId, parent.threadId, parent.turnId],
+            );
+            await db.pool.query(
+              "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=$1",
+              [parent.turnId],
+            );
+            const next = await thread.submitUserMessage('Organize the synthetic fixture folder.');
+            const current = await running(next.turnId);
+            t.after(() => finish(current.turnId, 'cancelled'));
+            assert.equal((await row(current.turnId)).parent_turn_id, parent.turnId);
+            const other = await begin('A separate synthetic request.');
+            t.after(() => finish(other.turnId, 'cancelled'));
+            let target = other.turnId;
+            if (mutation.includes('thread_id')) {
+              target = randomUUID();
+              await db.pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [
+                target,
+                `fixture-${target}`,
+              ]);
+            }
+            await db.pool.query(mutation, [
+              next.messageId,
+              ...(mutation.includes('$2') ? [target] : []),
+            ]);
+            await assert.rejects(
+              approvals.request(
+                current,
+                'NOD_computer',
+                { action: 'shell', command: 'fixture-organize-files' },
+                { sourceMessageId: next.messageId, allowed: false },
+              ),
+              /direct request/,
+            );
+            assert.equal(await proposal(current.turnId), undefined);
+            assert.equal(calls.length, before);
+          }
+        },
+      );
+
+      await t.test(
         'steering authority cannot come from foreign or synthetic messages',
         async () => {
           const args = { id: randomUUID() };
@@ -1551,7 +1888,7 @@ test(
               ...(mutation.includes('$2') ? [target] : []),
             ]);
             await assert.rejects(
-              approvals.request(turn, 'OTTO_schedule_cancel', args, { sourceMessageId }),
+              approvals.request(turn, 'NOD_schedule_cancel', args, { sourceMessageId }),
               /direct request/,
             );
             assert.equal(await proposal(turn.turnId), undefined);
@@ -1560,7 +1897,7 @@ test(
             const turn = await begin('Stop the regular check-ins.', { source });
             const sourceMessageId = await steer(turn.turnId, 'Stop the regular check-ins.');
             await assert.rejects(
-              approvals.request(turn, 'OTTO_schedule_cancel', args, { sourceMessageId }),
+              approvals.request(turn, 'NOD_schedule_cancel', args, { sourceMessageId }),
               /direct request/,
             );
             assert.equal(await proposal(turn.turnId), undefined);
@@ -1591,7 +1928,7 @@ test(
             ...(mutation.includes('$1') ? [turn.turnId] : []),
           ]);
           await assert.rejects(
-            approvals.request(turn, 'OTTO_schedule_create', args, { allowed: true }),
+            approvals.request(turn, 'NOD_schedule_create', args, { allowed: true }),
             /direct request|no longer active/,
           );
           assert.equal(await proposal(turn.turnId), undefined);
@@ -1606,13 +1943,13 @@ test(
             const before = calls.length;
             const origin = await begin('A useful change is ready.', { source: 'event' });
             const args = { notificationRule: 'Original preference.' };
-            const id = await propose(origin, 'OTTO_notification_preferences_update', args);
+            const id = await propose(origin, 'NOD_notification_preferences_update', args);
             await finish(origin.turnId);
             let unrelated: string | undefined;
             if (explicit)
               unrelated = await propose(
                 await begin('Another useful decision.', { source: 'event' }),
-                'OTTO_notification_preferences_update',
+                'NOD_notification_preferences_update',
                 { notificationRule: 'A separate proposal.' },
               );
             const revised = await messages.submit('Update my preferences to be shorter.', [], {
@@ -1629,7 +1966,7 @@ test(
             assert.equal(await confirm(id, true), undefined);
             const next = await propose(
               await running(revised.turnId),
-              'OTTO_notification_preferences_update',
+              'NOD_notification_preferences_update',
               {
                 notificationRule: 'Shorter preference.',
               },
@@ -1644,7 +1981,7 @@ test(
           }
           const before = calls.length;
           const origin = await begin('A useful change is ready.', { source: 'event' });
-          const id = await propose(origin, 'OTTO_notification_preferences_update', {
+          const id = await propose(origin, 'NOD_notification_preferences_update', {
             notificationRule: 'Original preference.',
           });
           const confirmationMessageId = (await stored(id)).confirmation_message_id;
@@ -1680,14 +2017,14 @@ test(
           ]);
           const before = calls.length;
           const results = await Promise.all(
-            turns.map((turn) => approvals.request(turn, 'OTTO_schedule_cancel', args)),
+            turns.map((turn) => approvals.request(turn, 'NOD_schedule_cancel', args)),
           );
           for (const result of results) assert.ok(result[appConfirmation]);
           assert.equal(results[0][appConfirmation], results[1][appConfirmation]);
           const records = (
             await db.pool.query(
               'SELECT * FROM approvals WHERE owner_id=$1 AND thread_id=$2 AND action=$3 AND args=$4::jsonb',
-              [ownerId, turns[0]!.threadId, 'OTTO_schedule_cancel', args],
+              [ownerId, turns[0]!.threadId, 'NOD_schedule_cancel', args],
             )
           ).rows;
           assert.equal(records.length, 1);
@@ -1699,11 +2036,11 @@ test(
             1,
           );
           const original = turns.find((turn) => turn.turnId === records[0].turn_id)!;
-          await assert.rejects(approvals.request(original, 'OTTO_schedule_cancel', args), {
+          await assert.rejects(approvals.request(original, 'NOD_schedule_cancel', args), {
             statusCode: 409,
           });
           const other = await begin('A different schedule needs a pause.', { source: 'event' });
-          await propose(other, 'OTTO_schedule_cancel', { id: randomUUID() });
+          await propose(other, 'NOD_schedule_cancel', { id: randomUUID() });
           assert.equal(await assistantMessages(other.turnId), 1);
           assert.equal(calls.length, before);
         },
@@ -1712,7 +2049,7 @@ test(
       await t.test(
         'a direct run uses its exact snapshot, records nothing, and an action asked in its request fences it',
         async () => {
-          const action = 'OTTO_notification_preferences_update';
+          const action = 'NOD_notification_preferences_update';
           const origin = await begin('Only notify me about urgent reports.');
           const args = { notificationRule: 'Original preference.' };
           const snapshot = structuredClone(args);
@@ -1772,9 +2109,9 @@ test(
             ref: 'e1',
             control: 'Button "Delete"',
           };
-          await propose(computerTurn, 'OTTO_computer_app', computerArgs);
+          await propose(computerTurn, 'NOD_computer_app', computerArgs);
           await assert.rejects(
-            approvals.request(computerTurn, 'OTTO_computer', computerArgs, { allowed: true }),
+            approvals.request(computerTurn, 'NOD_computer', computerArgs, { allowed: true }),
             /pending or uncertain/,
           );
           await thread.stopThread();
@@ -1788,7 +2125,7 @@ test(
             await thread.enqueueTurn('Synthetic unrelated continuation', { source: 'resume' }),
           );
           await assert.rejects(
-            approvals.request(generic, 'OTTO_notification_preferences_update', {}),
+            approvals.request(generic, 'NOD_notification_preferences_update', {}),
             /direct request/,
           );
           assert.equal(await proposal(generic.turnId), undefined);
@@ -1806,7 +2143,7 @@ test(
         'only a rendered status in the reply channel blocks a bare confirmation',
         async (t) => {
           const turn = await begin('Prepare the fixture notification.');
-          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+          const id = await propose(turn, 'NOD_notification_preferences_update', {
             notificationRule: 'Fixture rule',
           });
           const saved = await stored(id);
@@ -1863,7 +2200,7 @@ test(
             );
           });
           const args = { notificationRule: 'Synthetic original' };
-          await approvals.request(turn, 'OTTO_notification_preferences_update', args);
+          await approvals.request(turn, 'NOD_notification_preferences_update', args);
           const saved = await proposal(turn.turnId);
           args.notificationRule = 'Substituted after proposal';
           await finish(turn.turnId);
@@ -1936,7 +2273,7 @@ test(
       await t.test('artifacts are owned and published only from inside the workspace', async () => {
         const { threadId: id } = await newTurn('succeeded');
         const workspace = join(dataRoot, 'workspaces', id);
-        const privateDir = await mkdtemp(join(tmpdir(), 'otto-artifact-test-'));
+        const privateDir = await mkdtemp(join(tmpdir(), 'nod-artifact-test-'));
         directories.push(workspace, privateDir);
         await mkdir(workspace, { recursive: true });
         await writeFile(join(privateDir, 'private.txt'), 'private fixture');
@@ -1987,7 +2324,7 @@ test(
             notificationRule: 'Confirmed snapshot',
             nested: { text: 'original' },
           };
-          const id = await propose(turn, 'OTTO_notification_preferences_update', original);
+          const id = await propose(turn, 'NOD_notification_preferences_update', original);
           original.nested.text = 'changed after request';
           assert.equal((await stored(id)).args.nested.text, 'original');
           assert.equal(
@@ -2019,7 +2356,7 @@ test(
           const results = await Promise.all(Array.from({ length: 4 }, () => execute(id)));
           assert.equal(calls.length, before + 1);
           assert.deepEqual(calls.at(-1), {
-            action: 'OTTO_notification_preferences_update',
+            action: 'NOD_notification_preferences_update',
             args: {
               notificationRule: 'Confirmed snapshot',
               nested: { text: 'original' },
@@ -2042,11 +2379,11 @@ test(
           const first = await newTurn('running', 'Provenance fixture');
           const second = await newTurn('running', 'Provenance fixture');
           const [firstId, secondId] = await Promise.all([
-            propose(first, 'OTTO_notification_preferences_update', {
+            propose(first, 'NOD_notification_preferences_update', {
               notificationRule: 'First turn fact',
               sourceMessageId: second.messageId,
             }),
-            propose(second, 'OTTO_notification_preferences_update', {
+            propose(second, 'NOD_notification_preferences_update', {
               notificationRule: 'Second turn fact',
             }),
           ]);
@@ -2054,7 +2391,7 @@ test(
           await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [eventTurn]);
           const background = await propose(
             { threadId: first.threadId, turnId: eventTurn },
-            'OTTO_notification_preferences_update',
+            'NOD_notification_preferences_update',
             { notificationRule: 'No owned source' },
           );
           assert.equal((await stored(background)).source_message_id, null);
@@ -2089,7 +2426,7 @@ test(
           rejectPreflight = true;
           try {
             await assert.rejects(
-              approvals.request(turn, 'OTTO_notification_preferences_update', {
+              approvals.request(turn, 'NOD_notification_preferences_update', {
                 notificationRule: 'Synthetic preference',
               }),
               {
@@ -2104,7 +2441,7 @@ test(
           } finally {
             rejectPreflight = false;
           }
-          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+          const id = await propose(turn, 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           rejectPreflight = true;
@@ -2127,13 +2464,13 @@ test(
         'cancelled, wrong-channel and foreign confirmations cannot execute',
         async () => {
           const before = calls.length;
-          const cancelled = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+          const cancelled = await propose(await newTurn(), 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           await thread.stopThread();
           assert.equal(await confirm(cancelled, true), undefined);
           assert.notEqual((await stored(cancelled)).status, 'confirmed');
-          const foreign = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+          const foreign = await propose(await newTurn(), 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           await db.pool.query('UPDATE approvals SET owner_id=$2 WHERE id=$1', [
@@ -2143,7 +2480,7 @@ test(
           assert.equal(await confirm(foreign, true), undefined);
           const otherChannel = await propose(
             await newTurn(),
-            'OTTO_notification_preferences_update',
+            'NOD_notification_preferences_update',
             {
               notificationRule: 'Synthetic preference',
             },
@@ -2162,7 +2499,7 @@ test(
           replyAnswers[reply] = 'yes';
           const ask = async () => {
             const turn = await newTurn();
-            const id = await propose(turn, 'OTTO_notification_preferences_update', {
+            const id = await propose(turn, 'NOD_notification_preferences_update', {
               notificationRule: 'Read reply',
             });
             await finish(turn.turnId);
@@ -2231,7 +2568,7 @@ test(
       await t.test(
         'declining resumes once without executing and uncertain actions cannot replay',
         async () => {
-          const id = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+          const id = await propose(await newTurn(), 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           const before = calls.length;
@@ -2243,7 +2580,7 @@ test(
           assert.equal((await stored(id)).status, 'declined');
           assert.equal(await confirm(id, true), undefined);
           assert.equal(await execute(id), undefined);
-          const failed = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+          const failed = await propose(await newTurn(), 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           await confirm(failed, true);
@@ -2266,7 +2603,7 @@ test(
 
       await t.test('a failed decline enqueue rolls back both the decision and reply', async () => {
         const turn = await newTurn();
-        const id = await propose(turn, 'OTTO_notification_preferences_update', {
+        const id = await propose(turn, 'NOD_notification_preferences_update', {
           notificationRule: 'Synthetic preference',
         });
         const countMessages = async () =>
@@ -2292,7 +2629,7 @@ test(
       await t.test(
         'stopping after chat acceptance prevents the worker from executing',
         async () => {
-          const id = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+          const id = await propose(await newTurn(), 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           await confirm(id, true);
@@ -2309,7 +2646,7 @@ test(
         'stopping during confirmed execution records its result and a restart never retries it',
         async () => {
           const turn = await newTurn();
-          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+          const id = await propose(turn, 'NOD_notification_preferences_update', {
             notificationRule: 'Synthetic preference',
           });
           await confirm(id, true);
@@ -2348,7 +2685,7 @@ test(
           }
           const interrupted = await propose(
             await newTurn(),
-            'OTTO_notification_preferences_update',
+            'NOD_notification_preferences_update',
             {
               notificationRule: 'Synthetic preference',
             },
@@ -2735,7 +3072,7 @@ test(
     assert.equal(on.json().enabled, true);
     await assert.rejects(
       policy.execute(
-        'OTTO_computer',
+        'NOD_computer',
         { action: 'shell', command: 'fixture-expired' },
         { turnId: randomUUID() },
       ),
@@ -2757,7 +3094,7 @@ test(
 
     await run({ action: 'shell', command: 'rm -rf ~/Documents' });
     assert.deepEqual(requests.at(-1), {
-      action: 'OTTO_computer',
+      action: 'NOD_computer',
       args: { action: 'shell', command: 'rm -rf ~/Documents' },
       allowed: false,
     });
@@ -2768,6 +3105,12 @@ test(
     await assert.rejects(run({ action: 'look', app: 'a/b' }), /not a path/);
     await assert.rejects(run({ action: 'open', app: 'EvilTerm' }), /never uses/);
     for (const app of [
+      'nod',
+      'io.n8n.nod',
+      'dev.nod.review',
+      'Otto',
+      'io.n8n.otto',
+      'dev.otto.review',
       'Passwords',
       'com.apple.Passwords',
       'System Settings',
@@ -2779,9 +3122,9 @@ test(
     }
 
     await run({ action: 'look', app: 'Notes' });
-    assert.equal(requests.at(-1)?.action, 'OTTO_computer_app');
+    assert.equal(requests.at(-1)?.action, 'NOD_computer_app');
     await policy.execute(
-      'OTTO_computer_app',
+      'NOD_computer_app',
       { action: 'look', app: 'Notes', bundleId: 'fixture.Notes' },
       { turnId: turn.turnId },
     );
@@ -2802,7 +3145,7 @@ test(
     await run({ action: 'look', app: 'Mail' }, false);
     covered = false;
     await run({ action: 'look', app: 'Mail' }, false);
-    assert.equal(requests.at(-1)?.action, 'OTTO_computer_app');
+    assert.equal(requests.at(-1)?.action, 'NOD_computer_app');
     assert.equal((requests.at(-1)?.args as { app?: string }).app, 'Mail');
 
     await run({ action: 'act', app: 'Notes', step: 'press', ref: 'e1' });
@@ -2820,7 +3163,7 @@ test(
 
     await assert.rejects(
       policy.execute(
-        'OTTO_computer',
+        'NOD_computer',
         {
           action: 'act',
           app: 'Notes',
@@ -2862,7 +3205,7 @@ test(
         started();
       });
     const pending = policy.execute(
-      'OTTO_computer',
+      'NOD_computer',
       {
         action: 'act',
         app: 'Notes',
@@ -2893,7 +3236,7 @@ test(
     );
     await assert.rejects(
       policy.execute(
-        'OTTO_computer',
+        'NOD_computer',
         {
           action: 'act',
           app: 'Notes',
@@ -2915,13 +3258,13 @@ test(
     ).rows[0].revision;
 
     await policy.execute(
-      'OTTO_computer',
+      'NOD_computer',
       { action: 'shell', command: 'sleep 1' },
       { turnId: turn.turnId, expectedRevision: revision },
     );
     assert.equal(shellSignals.at(-1)?.aborted, false);
     await policy.execute(
-      'OTTO_computer',
+      'NOD_computer',
       { action: 'shell', command: 'fixture-resume' },
       { turnId: resume.turnId, expectedRevision: revision },
     );
@@ -2938,7 +3281,7 @@ test(
         started();
       });
     const shell = policy.execute(
-      'OTTO_computer',
+      'NOD_computer',
       { action: 'shell', command: 'fixture-wait' },
       { turnId: turn.turnId, expectedRevision: revision },
     );
@@ -2949,14 +3292,14 @@ test(
     await disabled;
     assert.equal(shellSignals.at(-1)?.aborted, true);
     await assert.rejects(
-      policy.execute('OTTO_computer', { action: 'shell', command: 'ls' }, { turnId: turn.turnId }),
+      policy.execute('NOD_computer', { action: 'shell', command: 'ls' }, { turnId: turn.turnId }),
       (error: Error & { notRun?: boolean }) => error.notRun === true,
     );
     await app.inject({ method: 'PATCH', url: '/api/computer', payload: { enabled: true } });
     controller.abort();
     await assert.rejects(
       policy.execute(
-        'OTTO_computer',
+        'NOD_computer',
         { action: 'shell', command: 'fixture-stopped' },
         { turnId: turn.turnId },
       ),

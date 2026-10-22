@@ -10,13 +10,13 @@ import { pageDataCache } from '../lib/page-data-cache';
 import { startIntegrationAccess, type IntegrationAccessAttempt } from '../lib/integration-access';
 import { cn } from '../lib/utils';
 import { GoogleMark } from './google-mark';
-import { OttoGlyph } from './motion';
+import { NodGlyph } from './motion';
 import { Button, Input } from './ui';
 
 type Mode = IntegrationKeyStatus['mode'];
 
 const modes: { id: Mode; name: string; sub: string }[] = [
-  { id: 'otto', name: 'Easy Connect', sub: 'Continue with Google.' },
+  { id: 'nod', name: 'Easy Connect', sub: 'Continue with Google.' },
   { id: 'own', name: 'My Composio key', sub: 'Use your own project.' },
 ];
 
@@ -30,7 +30,7 @@ const keyPermissions = [
 ];
 
 export const connectionRoutes: Record<Mode, string> = {
-  otto: 'App requests and results pass through n8n’s hosted connection service and Composio.',
+  nod: 'App requests and results pass through n8n’s hosted connection service and Composio.',
   own: 'App requests and results go through your own Composio project.',
 };
 
@@ -56,7 +56,7 @@ export function connectionStatusText(status: IntegrationKeyStatus) {
   if (!status.managed) return 'Your installation manages app connections.';
   if (status.managed.state === 'enabled') return status.managed.email ?? 'Google access enabled';
   if (status.managed.state === 'denied') return 'Easy Connect is not enabled for this email.';
-  if (status.managed.state === 'revoked') return 'Access for this Otto installation was removed.';
+  if (status.managed.state === 'revoked') return 'Access for this nod installation was removed.';
   if (status.managed.state === 'unavailable') return 'Easy Connect is unavailable right now.';
   return 'Sign in with Google to use Easy Connect.';
 }
@@ -140,7 +140,7 @@ export function useConnectionChoice(
       );
     } catch (cause) {
       failure = errorMessage(cause);
-      capture('otto_ui_error', { area, action: 'save' });
+      capture('nod_ui_error', { area, action: 'save' });
     }
     if (next) {
       pageDataCache.update('/api/apps', () => null);
@@ -162,8 +162,8 @@ export function useConnectionChoice(
       }
     });
     if (next?.mode === 'own') savedKey.current?.focus();
-    else if (next) tiles.current.otto?.focus();
-    else (keyField.current ?? tiles.current[value === undefined ? 'own' : 'otto'])?.focus();
+    else if (next) tiles.current.nod?.focus();
+    else (keyField.current ?? tiles.current[value === undefined ? 'own' : 'nod'])?.focus();
   }
 
   function pick(next: Mode) {
@@ -177,7 +177,7 @@ export function useConnectionChoice(
       setChoice(next === status.mode ? undefined : next);
     });
     if (area === 'onboarding')
-      (next === 'own' ? (keyField.current ?? savedKey.current) : tiles.current.otto)?.focus();
+      (next === 'own' ? (keyField.current ?? savedKey.current) : tiles.current.nod)?.focus();
     else keyField.current?.focus();
   }
 
@@ -322,14 +322,14 @@ export function ConnectionChoice({
     changing && (integrationAccessReady(status) || unknown || !!view.linked?.length);
   const detaching =
     changing &&
-    status.mode === 'otto' &&
+    status.mode === 'nod' &&
     mode === 'own' &&
     (status.managed?.state === 'revoked' || status.managed?.state === 'sign_in_required') &&
     (unknown || !!view.linked?.length);
   let warning = '';
   if (detaching)
     warning =
-      'Switching removes these connections from Otto. Permissions remain with their providers; remove them in provider settings if needed.';
+      'Switching removes these connections from nod. Permissions remain with their providers; remove them in provider settings if needed.';
   else if (changing)
     warning = unknown
       ? 'Switching disconnects apps connected the current way.'
@@ -351,7 +351,7 @@ export function ConnectionChoice({
               </span>
             </>
           ) : status.switchable ? (
-            'Otto can’t read your saved key. Save it again or choose Easy Connect.'
+            'nod can’t read your saved key. Save it again or choose Easy Connect.'
           ) : (
             'Using the Composio key configured for this installation.'
           )}
@@ -443,7 +443,7 @@ export function ConnectionChoice({
         </details>
         {!status.keyWritable && (
           <p className="connection-error">
-            Otto can’t open its secure key store. Your current setup hasn’t changed.
+            nod can’t open its secure key store. Your current setup hasn’t changed.
           </p>
         )}
         {warning && (
@@ -471,7 +471,7 @@ export function ConnectionChoice({
         ref={
           onboarding
             ? (node) => {
-                view.tiles.current.otto =
+                view.tiles.current.nod =
                   node?.querySelector<HTMLButtonElement>(
                     'button[data-connection-action]:not(:disabled)',
                   ) ?? node;
@@ -501,7 +501,7 @@ export function ConnectionChoice({
               <Check size={16} aria-hidden="true" />
               {area === 'onboarding'
                 ? 'Easy Connect is ready.'
-                : 'Access enabled for this Otto installation.'}
+                : 'Access enabled for this nod installation.'}
             </p>
             {changing && (
               <div className="connection-switch">
@@ -562,7 +562,7 @@ export function ConnectionChoice({
                 {status.managed.state === 'denied'
                   ? 'Easy Connect isn’t enabled for this email. You can use your own Composio key.'
                   : status.managed.state === 'revoked' && area !== 'onboarding'
-                    ? 'Access for this Otto installation was removed. Sign in again to check your access.'
+                    ? 'Access for this nod installation was removed. Sign in again to check your access.'
                     : status.managed.state === 'unavailable'
                       ? 'Easy Connect is unavailable right now. Try again or use your own Composio key.'
                       : 'Sign in with Google to continue.'}
@@ -616,7 +616,7 @@ export function ConnectionChoice({
   return (
     <div className={cn('connection-choice', onboarding && 'connection-onboarding', className)}>
       {status.switchable && !onboarding && (
-        <div className="connection-modes" role="group" aria-label="How Otto connects your apps">
+        <div className="connection-modes" role="group" aria-label="How nod connects your apps">
           {modes.map((item) => (
             <button
               key={item.id}
@@ -629,15 +629,15 @@ export function ConnectionChoice({
               disabled={locked}
               onClick={() => view.pick(item.id)}
             >
-              {item.id === 'otto' ? (
-                <OttoGlyph size={24} mode="still" />
+              {item.id === 'nod' ? (
+                <NodGlyph size={24} mode="still" />
               ) : (
                 <KeyRound size={24} aria-hidden="true" />
               )}
               <span className="connection-mode-text">
                 <span className="connection-mode-name">{item.name}</span>
                 <span className="connection-muted">
-                  {item.id === 'otto' && status.managed?.state === 'enabled'
+                  {item.id === 'nod' && status.managed?.state === 'enabled'
                     ? 'Signed in with Google.'
                     : item.sub}
                 </span>
@@ -650,10 +650,10 @@ export function ConnectionChoice({
         <p className="connection-muted">{connectionRoutes[mode]}</p>
       )}
       {onboarding ? (
-        mode === 'otto' ? (
+        mode === 'nod' ? (
           <>
             <div className="connection-onboarding-hero">
-              <OttoGlyph size={34} mode="still" />
+              <NodGlyph size={34} mode="still" />
               <div className="connection-onboarding-content">
                 <div>
                   <h2>
@@ -699,12 +699,12 @@ export function ConnectionChoice({
               <h2>My Composio key</h2>
               <button
                 ref={(node) => {
-                  view.tiles.current.otto = node;
+                  view.tiles.current.nod = node;
                 }}
                 type="button"
                 className="connection-link"
                 disabled={locked}
-                onClick={() => view.pick('otto')}
+                onClick={() => view.pick('nod')}
               >
                 Use Easy Connect
               </button>

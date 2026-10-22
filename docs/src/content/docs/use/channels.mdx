@@ -1,46 +1,46 @@
 ---
 title: Telegram and WhatsApp
-description: Chat with Otto from Telegram or WhatsApp, set up each channel, and finish private steps such as sign-in and payments in the Otto app.
+description: Chat with nod from Telegram or WhatsApp, set up each channel, and finish private steps such as sign-in and payments in the nod app.
 sidebar:
   order: 7
 ---
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-You can chat with Otto from Telegram or WhatsApp. It's the same conversation, memory and tasks as in the Otto app.
+You can chat with nod from Telegram or WhatsApp. It's the same conversation, memory and tasks as in the nod app.
 
-Otto replies in the app you wrote from. A message from Telegram gets its answer on Telegram, and a schedule you set up there sends its results there too. Everything also shows in the chat in the Otto app.
+nod replies in the app you wrote from. A message from Telegram gets its answer on Telegram, and a schedule you set up there sends its results there too. Everything also shows in the chat in the nod app.
 
-Otto uses your conversation language for pairing notices and private-step guidance. Its model writes the message; the server adds permitted file links and keeps private sign-in and payment links out of chat apps.
+nod uses your conversation language for pairing notices and private-step guidance. Its model writes the message; the server adds permitted file links and keeps private sign-in and payment links out of chat apps.
 
 ## Before you start
 
-|                      | Telegram                                  | WhatsApp                                                     |
-| -------------------- | ----------------------------------------- | ------------------------------------------------------------ |
-| You need             | A Telegram bot, made with BotFather       | A Meta app with the WhatsApp Cloud API and a business number |
-| Works on a laptop    | Yes. Otto checks for new messages itself. | Needs a public HTTPS address that reaches Otto               |
-| Who can message Otto | Only the Telegram account you pair        | Only the number you enter                                    |
-| Files from Otto      | Sent after the reply, up to 50 MB each    | Not sent. Open Otto to get them.                             |
-| When Otto can write  | Any time                                  | Only within 24 hours of your last message                    |
+|                     | Telegram                                 | WhatsApp                                                     |
+| ------------------- | ---------------------------------------- | ------------------------------------------------------------ |
+| You need            | A Telegram bot, made with BotFather      | A Meta app with the WhatsApp Cloud API and a business number |
+| Works on a laptop   | Yes. nod checks for new messages itself. | Needs a public HTTPS address that reaches nod                |
+| Who can message nod | Only the Telegram account you pair       | Only the number you enter                                    |
+| Files from nod      | Sent after the reply, up to 50 MB each   | Not sent. Open nod to get them.                              |
+| When nod can write  | Any time                                 | Only within 24 hours of your last message                    |
 
-Otto reads the text of your messages. To give Otto a file, attach it in the Otto app.
+nod reads the text of your messages. To give nod a file, attach it in the nod app.
 
-A long reply arrives as several messages. If a file doesn't arrive, open Otto to get it. When the model can't write a required notice, that channel message stays blocked and isn't retried automatically.
+A long reply arrives as several messages. If a file doesn't arrive, open nod to get it. When the model can't write a required notice, that channel message stays blocked and isn't retried automatically.
 
 ## Set up a channel
 
-Open **Channels** in the sidebar, then select **Connect** on Telegram or WhatsApp. Otto checks your details before it saves them, and keeps them encrypted, outside the chat.
+Open **Channels** in the sidebar, then select **Connect** on Telegram or WhatsApp. nod checks your details before it saves them, and keeps them encrypted, outside the chat.
 
 <Tabs syncKey="channel">
 <TabItem label="Telegram">
 
 <Steps>
 
-1. In **Create a bot**, scan the code or select **Open Telegram** to open [BotFather](https://t.me/BotFather). Send `/newbot`, choose a name, then a username ending in `bot`, such as `my_otto_bot`.
+1. In **Create a bot**, scan the code or select **Open Telegram** to open [BotFather](https://t.me/BotFather). Send `/newbot`, choose a name, then a username ending in `bot`, such as `my_nod_bot`.
 2. Select **I have my token**. Paste BotFather's reply, or just the token, into **BotFather message or token**. Select **Connect bot**.
 3. In **Open your bot**, scan the new code or select **Open Telegram**, then press **Start** in the bot's chat. This code works for 15 minutes.
-4. In **Confirm your account**, check your name, username, and numeric ID, then select **Confirm**. Only this account can message Otto.
-5. Select **Start conversation** and say hello. Otto must be running to reply.
+4. In **Confirm your account**, check your name, username, and numeric ID, then select **Confirm**. Only this account can message nod.
+5. Select **Start conversation** and say hello. nod must be running to reply.
 
 </Steps>
 
@@ -61,8 +61,8 @@ If the link doesn't work for you, select **Enter your user ID instead** and use 
 
 This connects a business number, not your personal WhatsApp inbox.
 
-:::caution[Keep Otto private]
-Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest of Otto. The desktop app doesn't provide a public address, so WhatsApp suits Otto running on a server.
+:::caution[Keep nod private]
+Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest of nod. The desktop app doesn't provide a public address, so WhatsApp suits nod running on a server.
 :::
 
 </TabItem>
@@ -71,59 +71,59 @@ Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest o
 <details>
 <summary>Configure channels in .env instead</summary>
 
-When you run Otto from source, you can set the `TELEGRAM_*` and `WHATSAPP_*` values listed in `.env.example` and restart. The **Channels** page is easier, because it checks your details and pairs your account.
+When you run nod from source, you can set the `TELEGRAM_*` and `WHATSAPP_*` values listed in `.env.example` and restart. The **Channels** page is easier, because it checks your details and pairs your account.
 
 </details>
 
-## Private steps happen in the Otto app
+## Private steps happen in the nod app
 
-Passwords, saved logins and payment approvals never go through a chat app. When a task started on Telegram or WhatsApp needs one, Otto asks you to open Otto. Finish the step there, and the task carries on and replies in the chat app.
+Passwords, saved logins and payment approvals never go through a chat app. When a task started on Telegram or WhatsApp needs one, nod asks you to open nod. Finish the step there, and the task carries on and replies in the chat app.
 
 ```mermaid
 sequenceDiagram
   actor You
   participant Chat as Telegram or WhatsApp
-  participant App as Otto app
-  participant Otto
+  participant App as nod app
+  participant nod
   You->>Chat: Book the table with my saved login
-  Chat->>Otto: Your request
-  Otto-->>Chat: Open Otto to continue securely
+  Chat->>nod: Your request
+  nod-->>Chat: Open nod to continue securely
   You->>App: Finish the private step
-  App->>Otto: Done
-  Otto-->>Chat: The result
+  App->>nod: Done
+  nod-->>Chat: The result
 ```
 
-If a website sends you a one-time sign-in code, you can reply with it in the chat where Otto asked. Otto uses it for that sign-in and keeps it out of its chat history. Card security codes work only in the Otto app. See [Vault](/trust/vault/) and [Payments](/trust/payments/).
+If a website sends you a one-time sign-in code, you can reply with it in the chat where nod asked. nod uses it for that sign-in and keeps it out of its chat history. Card security codes work only in the nod app. See [Vault](/trust/vault/) and [Payments](/trust/payments/).
 
-Taking over [Otto's browser](/use/browser/) also needs the Otto app, because chat apps can't show the page.
+Taking over [nod's browser](/use/browser/) also needs the nod app, because chat apps can't show the page.
 
 ## Reactions
 
-Reactions work both ways, as they do in the [Otto app](/use/chat/#react-to-messages).
+Reactions work both ways, as they do in the [nod app](/use/chat/#react-to-messages).
 
-- **Otto's reactions.** Otto sometimes reacts to your message with an emoji, such as ❤️ when you thank it or 🎉 for good news. A reaction comes on top of Otto's reply, never instead of it. On Telegram, Otto uses only Telegram's standard reactions.
-- **Your reactions.** React to any Otto message, and Otto takes it as feedback on that message. A reaction never answers a question or approves an action. Your reactions also show in the Otto app, including reactions to later parts of a long reply.
+- **nod's reactions.** nod sometimes reacts to your message with an emoji, such as ❤️ when you thank it or 🎉 for good news. A reaction comes on top of nod's reply, never instead of it. On Telegram, nod uses only Telegram's standard reactions.
+- **Your reactions.** React to any nod message, and nod takes it as feedback on that message. A reaction never answers a question or approves an action. Your reactions also show in the nod app, including reactions to later parts of a long reply.
 
-If a reaction send fails, its result can be unclear. Otto keeps the attempt and does not send it again. You can ask Otto to remove it. A failed removal keeps the previous reaction.
+If a reaction send fails, its result can be unclear. nod keeps the attempt and does not send it again. You can ask nod to remove it. A failed removal keeps the previous reaction.
 
-A Telegram bot that uses a webhook only passes your reactions on to Otto if Otto registered that webhook with reactions turned on. If Otto doesn't see your Telegram reactions, select **Connect bot** again in the channel settings. A bot that polls for messages, such as in the desktop app, needs nothing.
+A Telegram bot that uses a webhook only passes your reactions on to nod if nod registered that webhook with reactions turned on. If nod doesn't see your Telegram reactions, select **Connect bot** again in the channel settings. A bot that polls for messages, such as in the desktop app, needs nothing.
 
 ## Commands
 
 These commands prepare a report without starting a task. Your selected model writes the short summary in your conversation language, and that model call counts toward usage. The export is generated directly from your saved data.
 
-| Send      | To get                                                       |
-| --------- | ------------------------------------------------------------ |
-| `/usage`  | This month's spending and app actions, with a PDF statement  |
-| `/memory` | A short summary of what Otto remembers, with the full export |
+| Send      | To get                                                      |
+| --------- | ----------------------------------------------------------- |
+| `/usage`  | This month's spending and app actions, with a PDF statement |
+| `/memory` | A short summary of what nod remembers, with the full export |
 
-Telegram receives the PDF and the export as documents. On WhatsApp, open Otto to get them.
+Telegram receives the PDF and the export as documents. On WhatsApp, open nod to get them.
 
 Telegram also has task controls. `/tasks` lists open tasks, with one message per task. Reply to a task message with `/status` to see its goal, steps and state, or `/stop` to stop only that task. `/stop` without a reply stops all active work and closes open tasks. Progress, questions and results stay linked to the same task. See [Track tasks](/use/tasks/#telegram-without-a-task-page).
 
 ## Related resources
 
-- [Chat with Otto](/use/chat/)
+- [Chat with nod](/use/chat/)
 - [Spending and usage](/use/spending/)
 - [Memory](/use/memory/)
 - [Vault and saved logins](/trust/vault/)

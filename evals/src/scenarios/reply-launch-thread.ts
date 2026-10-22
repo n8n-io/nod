@@ -216,7 +216,7 @@ export default scenario({
           };
         },
         {
-          otherwise: `The reply Otto posted in the #launch thread about the launch date says the launch moves to the ${ordinal(world.days.moved)}, in any wording or date format.`,
+          otherwise: `The reply nod posted in the #launch thread about the launch date says the launch moves to the ${ordinal(world.days.moved)}, in any wording or date format.`,
         },
       ),
       check(

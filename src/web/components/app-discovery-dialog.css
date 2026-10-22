@@ -1,0 +1,47 @@
+.app-discovery-dialog {
+  width: min(500px, calc(100vw - 32px));
+}
+.app-discovery-dialog > h2:focus-visible {
+  outline: none;
+}
+.app-discovery-dialog form {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+}
+.app-discovery-dialog form > .button {
+  justify-self: end;
+  margin-top: 8px;
+}
+.app-discovery-dialog form > p {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.app-discovery-setup {
+  display: flex;
+  width: fit-content;
+  margin-bottom: 16px;
+}
+.app-discovery-path {
+  display: grid;
+  gap: 4px;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-control);
+}
+.app-discovery-path > span {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.app-discovery-path > strong {
+  font-weight: 500;
+}
+.app-discovery-methods {
+  font-size: var(--text-control);
+  color: var(--muted-foreground);
+}
+.app-discovery-methods summary {
+  cursor: pointer;
+}

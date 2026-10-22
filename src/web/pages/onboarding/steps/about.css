@@ -62,6 +62,9 @@
 .ob-composer > input::placeholder {
   color: var(--placeholder);
 }
+.ob-composer .composer-tools {
+  justify-content: flex-end;
+}
 .ob-about-error {
   color: var(--error);
   font-size: var(--text-control);

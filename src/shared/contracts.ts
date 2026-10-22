@@ -164,7 +164,8 @@ export interface CredentialRequest {
   turnId: string;
   origin: string;
   label: string;
-  kind: 'identifier' | 'password' | 'otp';
+  kind: 'identifier' | 'password' | 'otp' | 'method';
+  methods?: { id: string; label: string }[];
   fields?: { kind: 'identifier' | 'password' | 'otp'; selector: string; label: string }[];
   status: 'pending' | 'entering' | 'uncertain' | 'filled' | 'expired';
   savedEntries?: (VaultLoginEntry & { username: string })[];

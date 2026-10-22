@@ -56,7 +56,7 @@ export function FeedbackDiagnostics({
     if (!report) return null;
     try {
       const parsed = record(JSON.parse(report.content));
-      return parsed?.format === 'otto-feedback-report-v1' ? parsed : null;
+      return parsed?.format === 'nod-feedback-report-v1' ? parsed : null;
     } catch {
       return null;
     }
@@ -134,7 +134,7 @@ export function FeedbackDiagnostics({
                           {message.role === 'user'
                             ? 'You'
                             : message.role === 'assistant'
-                              ? 'Otto'
+                              ? 'nod'
                               : label(message.role, 'Message')}
                         </strong>
                         <p>

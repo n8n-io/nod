@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$root = $env:OTTO_PROFILE_PATH
+$root = $env:NOD_PROFILE_PATH
 $owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 $acl = New-Object System.Security.AccessControl.DirectorySecurity
 $acl.SetOwner($owner)

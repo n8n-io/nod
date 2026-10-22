@@ -3,7 +3,7 @@ import '../styles/waitlist.css';
 
 const endpoint = 'https://internal.users.n8n.cloud/webhook/otto/waitlist';
 const description =
-  "Otto is a personal assistant that does real-world work for you. It's open source, runs on the AI model you pick and checks with you before anything high-stakes. Join the waitlist for early access.";
+  "nod is a personal assistant that does real-world work for you. It's open source, runs on the AI model you pick and checks with you before anything high-stakes. Join the waitlist for early access.";
 const favicon = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}favicon.svg`;
 ---
 
@@ -12,10 +12,10 @@ const favicon = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}favicon.svg`;
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Otto · Join the waitlist</title>
+    <title>nod · Join the waitlist</title>
     <meta name="description" content={description} />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Otto · Join the waitlist" />
+    <meta property="og:title" content="nod · Join the waitlist" />
     <meta property="og:description" content={description} />
     <meta name="twitter:card" content="summary" />
     <meta name="theme-color" content="#fafafa" />
@@ -27,22 +27,22 @@ const favicon = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}favicon.svg`;
   <header class="top">
     <span class="brand">
       <svg class="glyph" viewBox="0 0 32 32" aria-hidden="true"><circle class="ring" cx="16" cy="16" r="10"></circle><circle class="dot" cx="25" cy="6" r="4"></circle></svg>
-      otto
+      nod
       <span class="labs">n8n Labs</span>
     </span>
   </header>
 
   <main class="chat">
-    <div class="pane" id="pane" tabindex="0" aria-label="A conversation with Otto">
+    <div class="pane" id="pane" tabindex="0" aria-label="A conversation with nod">
     <div class="log" id="log">
-      <div class="row otto">
+      <div class="row nod">
         <button class="avatar" id="avatar" type="button" aria-label="Replay the conversation">
           <svg class="glyph" viewBox="0 0 32 32" aria-hidden="true"><circle class="ring" cx="16" cy="16" r="10"></circle><g class="orbit"><circle class="dot" cx="25" cy="6" r="4"></circle></g></svg>
         </button>
         <div class="stack">
           <div class="reveal" data-step><div>
             <div class="bubble hello">
-              <h1><span class="wave" aria-hidden="true">👋</span>Hey, I'm Otto.</h1>
+              <h1><span class="wave" aria-hidden="true">👋</span>Hey, I'm nod.</h1>
               <p>A personal assistant that does <strong>real-world work</strong> for you.</p>
             </div>
           </div></div>
@@ -53,7 +53,7 @@ const favicon = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}favicon.svg`;
       <div class="row me"><div class="stack">
         <div class="reveal" data-step><div><p class="bubble me">What kind of work?</p></div></div>
       </div></div>
-      <div class="row otto">
+      <div class="row nod">
         <span class="avatar" aria-hidden="true"><svg class="glyph" viewBox="0 0 32 32"><circle class="ring" cx="16" cy="16" r="10"></circle><g class="orbit"><circle class="dot" cx="25" cy="6" r="4"></circle></g></svg></span>
         <div class="stack">
           <div class="reveal" data-step><div>
@@ -66,9 +66,9 @@ const favicon = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}favicon.svg`;
         </div>
       </div>
       <div class="row me"><div class="stack">
-        <div class="reveal" data-step><div class="reacted"><p class="bubble me">But how can I trust you with my accounts?<span class="react" role="img" aria-label="Otto reacted with a check mark">✅</span></p></div></div>
+        <div class="reveal" data-step><div class="reacted"><p class="bubble me">But how can I trust you with my accounts?<span class="react" role="img" aria-label="nod reacted with a check mark">✅</span></p></div></div>
       </div></div>
-      <div class="row otto">
+      <div class="row nod">
         <span class="avatar" aria-hidden="true"><svg class="glyph" viewBox="0 0 32 32"><circle class="ring" cx="16" cy="16" r="10"></circle><g class="orbit"><circle class="dot" cx="25" cy="6" r="4"></circle></g></svg></span>
         <div class="stack">
           <div class="reveal" data-step><div>
@@ -83,7 +83,7 @@ const favicon = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}favicon.svg`;
       <div class="row me"><div class="stack">
         <div class="reveal" data-step><div><p class="bubble me">How do I try you?</p></div></div>
       </div></div>
-      <div class="row otto">
+      <div class="row nod">
         <span class="avatar" aria-hidden="true"><svg class="glyph" viewBox="0 0 32 32"><circle class="ring" cx="16" cy="16" r="10"></circle><g class="orbit"><circle class="dot" cx="25" cy="6" r="4"></circle></g></svg></span>
         <div class="stack">
           <div class="reveal" data-step><div>
@@ -97,7 +97,7 @@ const favicon = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}favicon.svg`;
         <div class="reveal pending" id="me-say"><div><p class="bubble me" id="me-email"></p></div></div>
       </div></div>
 
-      <div class="row otto" id="reply-row" hidden>
+      <div class="row nod" id="reply-row" hidden>
         <span class="avatar" aria-hidden="true"><svg class="glyph" id="reply-glyph" viewBox="0 0 32 32"><circle class="ring" cx="16" cy="16" r="10"></circle><g class="orbit"><circle class="dot" cx="25" cy="6" r="4"></circle></g></svg></span>
         <div class="stack">
           <div class="reveal pending" data-reply><div><p class="bubble">Got it. <strong>Check your inbox</strong> to confirm your spot.</p></div></div>
@@ -119,9 +119,9 @@ const favicon = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}favicon.svg`;
           <svg id="go-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
         </button>
       </form>
-      <label class="consent" id="consent-row"><input type="checkbox" id="consent" name="consent" required><span id="consent-text">I consent to n8n GmbH emailing me about early access to Otto and about its other products, features and events. I can withdraw this consent at any time with effect for the future via the unsubscribe link in every email or at privacy@n8n.io. You can find additional information in our <a href="https://n8n.io/legal/privacy/" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
+      <label class="consent" id="consent-row"><input type="checkbox" id="consent" name="consent" required><span id="consent-text">I consent to n8n GmbH emailing me about early access to nod and about its other products, features and events. I can withdraw this consent at any time with effect for the future via the unsubscribe link in every email or at privacy@n8n.io. You can find additional information in our <a href="https://n8n.io/legal/privacy/" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
       <p class="error" id="error" role="alert" hidden></p>
-      <p class="fine">Otto is an n8n Labs experiment and may or may not become a product. <a href="https://n8n.io/legal/privacy/" target="_blank" rel="noopener">Privacy policy</a> · <a href="https://n8n.io/imprint/" target="_blank" rel="noopener">Imprint</a></p>
+      <p class="fine">nod is an n8n Labs experiment and may or may not become a product. <a href="https://n8n.io/legal/privacy/" target="_blank" rel="noopener">Privacy policy</a> · <a href="https://n8n.io/imprint/" target="_blank" rel="noopener">Imprint</a></p>
     </div>
   </main>
 </div>
@@ -162,9 +162,9 @@ const favicon = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}favicon.svg`;
   };
 
   const spotlight = (row) => {
-    document.querySelectorAll('#log .row.otto').forEach((r) => r.classList.toggle('past', r !== row));
+    document.querySelectorAll('#log .row.nod').forEach((r) => r.classList.toggle('past', r !== row));
   };
-  const latest = () => [...document.querySelectorAll('#log .row.otto')].filter((r) => !r.hidden && !r.classList.contains('later')).pop();
+  const latest = () => [...document.querySelectorAll('#log .row.nod')].filter((r) => !r.hidden && !r.classList.contains('later')).pop();
 
   const settle = () => {
     if (!playing) return;

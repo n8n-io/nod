@@ -132,10 +132,30 @@ export async function turnOrigin(turnId: string) {
             ]),
           ]
         : [];
+    const replyTurns = chain.filter((turn) => turn.source === 'user' && turn.message_id);
+    const replies =
+      origin.source !== 'user' && replyTurns.length
+        ? (
+            await client.query<{ text: string; created_at: Date }>(
+              `SELECT m.text,m.created_at FROM messages m
+               JOIN unnest($3::uuid[],$4::uuid[]) AS replies(message_id,turn_id)
+                 ON m.id=replies.message_id AND m.turn_id=replies.turn_id
+               WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.role='user'
+               ORDER BY m.created_at,m.id`,
+              [
+                ownerId,
+                current.thread_id,
+                replyTurns.map((turn) => turn.message_id),
+                replyTurns.map((turn) => turn.id),
+              ],
+            )
+          ).rows.map((row) => ({ at: row.created_at.toISOString(), text: row.text }))
+        : [];
     return {
       taskId: current.task_id,
       source: origin.source,
       messageIds: said,
+      replies,
       channel: current.channel,
       scheduleInstruction: run?.authority_instruction ?? undefined,
       ...(run
@@ -172,19 +192,19 @@ export async function createApprovals(
   ) => {
     if (!['user', 'schedule', 'event', 'resume', 'task'].includes(source)) return;
     analytics?.({
-      event: 'otto_confirmation_changed',
+      event: 'nod_confirmation_changed',
       properties: {
         status,
         action_kind:
-          action === 'OTTO_browser'
+          action === 'NOD_browser'
             ? 'browser'
-            : action === 'OTTO_computer' || action === 'OTTO_computer_app'
+            : action === 'NOD_computer' || action === 'NOD_computer_app'
               ? 'computer'
-              : action === 'OTTO_vault_allow'
+              : action === 'NOD_vault_allow'
                 ? 'sign_in'
-                : action.startsWith('OTTO_memory_')
+                : action.startsWith('NOD_memory_')
                   ? 'memory'
-                  : action.startsWith('OTTO_')
+                  : action.startsWith('NOD_')
                     ? 'settings'
                     : 'app',
         source: source as TurnSource,
@@ -207,7 +227,7 @@ export async function createApprovals(
     CREATE INDEX IF NOT EXISTS approvals_turn ON approvals(turn_id);
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
     CREATE INDEX IF NOT EXISTS approvals_confirmation_message ON approvals(confirmation_message_id);
-    CREATE INDEX IF NOT EXISTS approvals_memory_save ON approvals(owner_id,source_message_id) WHERE action='OTTO_memory_save';
+    CREATE INDEX IF NOT EXISTS approvals_memory_save ON approvals(owner_id,source_message_id) WHERE action='NOD_memory_save';
     UPDATE approvals SET status='uncertain' WHERE status='executing';
   `);
 
@@ -233,8 +253,8 @@ export async function createApprovals(
     turn = { ...turn };
     const allowed = options.allowed === true;
     const actions =
-      action === 'OTTO_computer' || action === 'OTTO_computer_app'
-        ? ['OTTO_computer', 'OTTO_computer_app']
+      action === 'NOD_computer' || action === 'NOD_computer_app'
+        ? ['NOD_computer', 'NOD_computer_app']
         : [action];
     const expectedRevision = options.expectedRevision;
     options.signal?.throwIfAborted();
@@ -258,29 +278,41 @@ export async function createApprovals(
           ).rows[0];
         if (!steering) throw new Error('This action needs a direct request from the user.');
       }
-      const background = !steering && ['event', 'schedule'].includes(origin.source);
+      const authorTurn = chain.find((turn) => turn.source === 'user');
+      const background = !steering && !authorTurn && ['event', 'schedule'].includes(origin.source);
       let authorMessageId: string | null;
       if (steering) {
         authorMessageId = steering.id;
+      } else if (authorTurn) {
+        const author = authorTurn.message_id
+          ? (
+              await client.query<{ id: string; text: string }>(
+                "SELECT id,text FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND turn_id=$4 AND role='user'",
+                [authorTurn.message_id, ownerId, authorTurn.thread_id, authorTurn.id],
+              )
+            ).rows[0]
+          : undefined;
+        if (!author) throw new Error('This action needs a direct request from the user.');
+        authorMessageId = author.id;
       } else if (origin.source === 'event') {
         authorMessageId = null;
       } else if (origin.source === 'schedule') {
         const grant = await scheduleAuthority(client, origin.id);
         authorMessageId = grant?.authority_source_message_id ?? null;
       } else {
-        const author =
-          origin.source === 'user' && origin.message_id
-            ? (
-                await client.query<{ id: string; text: string }>(
-                  "SELECT id,text FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND role='user'",
-                  [origin.message_id, ownerId, origin.thread_id],
-                )
-              ).rows[0]
-            : undefined;
-        if (!author) throw new Error('This action needs a direct request from the user.');
-        authorMessageId = author.id;
+        throw new Error('This action needs a direct request from the user.');
       }
       if (background) await lockKey(client, `approvals:${ownerId}:${turn.threadId}`);
+      const obsolete = await client.query<{ action: string }>(
+        `UPDATE approvals a SET status='expired'
+         WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.turn_id=ANY($3::uuid[])
+           AND a.action=ANY($4::text[]) AND a.args=$5::jsonb AND a.status='pending'
+           AND NOT EXISTS(SELECT 1 FROM turns u WHERE u.id=a.turn_id AND u.owner_id=a.owner_id AND u.status IN ('running','waiting'))
+         RETURNING a.action`,
+        [ownerId, turn.threadId, chain.map((item) => item.id), actions, snapshot],
+      );
+      for (const expired of obsolete.rows)
+        afterCommit(client, () => changed('expired', expired.action, current.source));
       let previous = (
         background
           ? await client.query(

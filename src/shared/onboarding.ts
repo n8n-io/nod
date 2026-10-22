@@ -1,6 +1,6 @@
 import type { Connection } from './contracts.ts';
 
-export const onboardingSteps = ['welcome', 'brain', 'email', 'about', 'telegram', 'open'] as const;
+export const onboardingSteps = ['welcome', 'brain', 'email', 'about', 'telegram'] as const;
 export const onboardingVersion = 2;
 export type OnboardingStep = (typeof onboardingSteps)[number];
 export function connectedGmail(connection: Connection) {
@@ -13,7 +13,7 @@ export function connectedGmail(connection: Connection) {
 }
 export const interviewQuestions = 3;
 export const interviewAnswerChars = 1200;
-export type InterviewMessage = { from: 'otto' | 'owner'; text: string };
+export type InterviewMessage = { from: 'nod' | 'owner'; text: string };
 export type InterviewResponse = { messages: string[]; done: boolean };
 export type OnboardingInterview = {
   generation: string;

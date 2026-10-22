@@ -41,7 +41,7 @@ export function saveArtifactDownload(event, item, { origin, directory, onError }
   };
   try {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    staging = mkdtempSync(join(directory, '.otto-download-'));
+    staging = mkdtempSync(join(directory, '.nod-download-'));
     path = join(staging, 'download');
     item.setSavePath(path);
   } catch {

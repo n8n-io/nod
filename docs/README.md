@@ -1,10 +1,10 @@
-# Otto docs
+# nod docs
 
-The source of the Otto documentation site, built with [Astro Starlight](https://starlight.astro.build). When a pull request or a push to `main` changes the site, the **Docs** workflow builds it, checks every internal link, and attaches the built site to the run as the `otto-docs` artifact.
+The source of the nod documentation site, built with [Astro Starlight](https://starlight.astro.build). When a pull request or a push to `main` changes the site, the **Docs** workflow builds it, checks every internal link, and attaches the built site to the run as the `nod-docs` artifact.
 
 ```sh
 pnpm --dir docs install --frozen-lockfile
-pnpm --dir docs dev     # http://localhost:4321/otto/
+pnpm --dir docs dev     # http://localhost:4321/nod/
 pnpm --dir docs build   # fails on a broken link
 ```
 
@@ -12,8 +12,9 @@ pnpm --dir docs build   # fails on a broken link
 | -------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `src/content/docs/`        | Every page. The folder and file name make the URL.                                                     |
 | `src/assets/`              | Logos and screenshots, with synthetic data only.                                                       |
-| `src/styles/otto.css`      | The Otto theme, from the n8n brand palette.                                                            |
+| `src/styles/theme.css`     | The nod theme, from the n8n brand palette.                                                             |
 | `src/pages/waitlist.astro` | The waitlist page at `/waitlist/`. Sign-ups go to the Otto Waitlist workflow on n8n, then Customer.io. |
+| `public/_redirects`        | Redirects from renamed pages, so shared links keep working.                                            |
 | `astro.config.mjs`         | Sidebar sections, plugins and the site address.                                                        |
 | `research/`                | Hash evidence the secret-scanning self-test reads.                                                     |
 

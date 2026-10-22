@@ -33,7 +33,7 @@ export function ComputerSetup({
 
   useEffect(() => {
     if (status?.available)
-      captureAnalytics('otto_onboarding_step_viewed', { step: 'computer', direction: 'forward' });
+      captureAnalytics('nod_onboarding_step_viewed', { step: 'computer', direction: 'forward' });
   }, [status?.available]);
 
   const missing = status?.appControlAvailable
@@ -53,7 +53,7 @@ export function ComputerSetup({
     <OnboardingFrame step="computer" steps={steps}>
       <section
         className="ob-step ob-computer"
-        aria-label="Let Otto help on your Mac"
+        aria-label="Let nod help on your Mac"
         data-analytics-public
       >
         {status?.available ? (

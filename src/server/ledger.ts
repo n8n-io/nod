@@ -62,7 +62,7 @@ function modelUsed(usage: ProviderUsageEvent): Parameters<CaptureAnalytics>[0] {
   const estimated = cost(usage.estimateUsd);
   const spent = charged ?? estimated;
   return {
-    event: 'otto_model_used',
+    event: 'nod_model_used',
     properties: {
       ...analyticsModel(usage.provider, usage.model),
       purpose: usage.category,

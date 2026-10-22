@@ -91,7 +91,7 @@ for case in cases:
     filename = scenario_id + ".pdf"
     document = canvas.Canvas(str(root / filename), pagesize=A4, invariant=1)
     document.setTitle(case["lab"] + " - " + case["report"])
-    document.setAuthor(case["lab"] if version == 2 else "Otto synthetic acceptance fixture")
+    document.setAuthor(case["lab"] if version == 2 else "nod synthetic acceptance fixture")
     document.setFillColor(colors.HexColor("#263746"))
     document.setFont("Helvetica-Bold", 20)
     document.drawString(48, 783, case["lab"])

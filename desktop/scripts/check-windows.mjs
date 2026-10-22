@@ -12,24 +12,24 @@ import { windowsEnvironment } from '../runtime/windows.mjs';
 assert.equal(process.platform, 'win32');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const output = join(root, 'dist/windows');
-const installation = await mkdtemp(join(tmpdir(), 'otto-installed-preview-'));
-const foreign = await mkdtemp(join(tmpdir(), 'otto-foreign-folder-'));
-const alone = await mkdtemp(join(tmpdir(), 'otto-installer-alone-'));
+const installation = await mkdtemp(join(tmpdir(), 'nod-installed-preview-'));
+const foreign = await mkdtemp(join(tmpdir(), 'nod-foreign-folder-'));
+const alone = await mkdtemp(join(tmpdir(), 'nod-installer-alone-'));
 const receipt = { installed: false, engine: false, wsl: false };
 const environment = { ...windowsEnvironment(), ELECTRON_RUN_AS_NODE: '1' };
 try {
   console.log('Checking that installation preserves other files.');
   await writeFile(join(foreign, 'keep.txt'), 'synthetic user file');
   await assert.rejects(
-    run(join(output, 'Otto-Setup-x64.exe'), ['/S', `/D=${foreign}`], { timeout: 60_000 }),
-    { message: /^Otto-Setup-x64\.exe failed \([12]\)\.$/ },
+    run(join(output, 'nod-Setup-x64.exe'), ['/S', `/D=${foreign}`], { timeout: 60_000 }),
+    { message: /^nod-Setup-x64\.exe failed \([12]\)\.$/ },
   );
   assert.deepEqual(await readdir(foreign), ['keep.txt']);
   assert.equal(await readFile(join(foreign, 'keep.txt'), 'utf8'), 'synthetic user file');
   console.log('Installing the Windows preview without its runtime file.');
-  await copyFile(join(output, 'Otto-Setup-x64.exe'), join(alone, 'Otto-Setup-x64.exe'));
-  await run(join(alone, 'Otto-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
-  const application = join(installation, 'Otto.exe');
+  await copyFile(join(output, 'nod-Setup-x64.exe'), join(alone, 'nod-Setup-x64.exe'));
+  await run(join(alone, 'nod-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
+  const application = join(installation, 'nod.exe');
   const engine = join(installation, 'resources/engine');
   const archive = join(engine, 'windows-runtime/guest.tar.gz');
   await assert.rejects(stat(archive), { code: 'ENOENT' });
@@ -71,7 +71,7 @@ if (process.env.WORKSPACE_CONTAINER) {
       const moved = await workspaceOutputs(async () => ({ content: [{ type: 'text', text: reported }], details: { fullOutputPath: reported }, structuredContent: { full_output_path: reported } }), workspace);
       assert.equal(moved.content[0].text, moved.details.fullOutputPath);
       assert.equal(moved.structuredContent.full_output_path, moved.details.fullOutputPath);
-      assert.match(moved.details.fullOutputPath, /^\\/workspace\\/synthetic-Windows_check\\/\\.otto\\/outputs\\//);
+      assert.match(moved.details.fullOutputPath, /^\\/workspace\\/synthetic-Windows_check\\/\\.nod\\/outputs\\//);
       assert.equal((await provider.readArtifact(id, moved.details.fullOutputPath, 1024)).toString('utf8'), bytes);
       await assert.rejects(access(file), { code: 'ENOENT' });
     }
@@ -79,7 +79,7 @@ if (process.env.WORKSPACE_CONTAINER) {
     await provider.dispose();
   }
   const { createContainerBrowserComputer } = await import('./src/providers/container-browser/index.ts');
-  const browser = createContainerBrowserComputer({ dataRoot: process.env.OTTO_DATA_ROOT, container: process.env.BROWSER_CONTAINER });
+  const browser = createContainerBrowserComputer({ dataRoot: process.env.NOD_DATA_ROOT, container: process.env.BROWSER_CONTAINER });
   try {
     const page = await browser.act(id, { action: 'open', url: 'https://example.com' }, AbortSignal.timeout(60_000));
     assert.equal(new URL(page.url).hostname, 'example.com');
@@ -94,12 +94,12 @@ if (process.env.WORKSPACE_CONTAINER) {
   const port = listener.address().port;
   await new Promise((accept) => listener.close(accept));
   const token = randomBytes(32).toString('base64url');
-  Object.assign(process.env, { NODE_ENV: 'production', PORT: String(port), OTTO_DESKTOP: 'true', OTTO_DESKTOP_OWNER_ID: '60000000-0000-4000-8000-000000000001', OTTO_DESKTOP_AUTH_TOKEN: token, OTTO_VAULT_KEY: randomBytes(32).toString('base64'), OTTO_WEB_ROOT: resolve('dist/web'), OTTO_ANALYTICS_ENABLED: 'false' });
+  Object.assign(process.env, { NODE_ENV: 'production', PORT: String(port), NOD_DESKTOP: 'true', NOD_DESKTOP_OWNER_ID: '60000000-0000-4000-8000-000000000001', NOD_DESKTOP_AUTH_TOKEN: token, NOD_VAULT_KEY: randomBytes(32).toString('base64'), NOD_WEB_ROOT: resolve('dist/web'), NOD_ANALYTICS_ENABLED: 'false' });
   const { default: pg } = await import('pg');
   const database = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await database.connect();
   try {
-    if (!process.env.OTTO_WINDOWS_REOPEN) {
+    if (!process.env.NOD_WINDOWS_REOPEN) {
       await database.query('CREATE TABLE windows_check (value integer NOT NULL)');
       await database.query('INSERT INTO windows_check VALUES (42)');
     }
@@ -111,7 +111,7 @@ if (process.env.WORKSPACE_CONTAINER) {
   const origin = 'http://127.0.0.1:' + port;
   const denied = await fetch(origin + '/api/configuration');
   assert.equal(denied.status, 401);
-  const headers = { 'x-otto-desktop-token': token };
+  const headers = { 'x-nod-desktop-token': token };
   const response = await fetch(origin + '/api/configuration', { headers });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).llmReady, false);
@@ -148,10 +148,10 @@ if (process.env.WORKSPACE_CONTAINER) {
           resourcesPath: engine,
           onStatus: (value) => value.phase === 'downloading' || console.log(value.message),
           resolveDownloadUrl: async () =>
-            'https://runtime.example.invalid/Otto-Runtime-win32-x64.tar.gz',
+            'https://runtime.example.invalid/nod-Runtime-win32-x64.tar.gz',
           fetch: async () =>
             new Response(
-              Readable.toWeb(createReadStream(join(output, 'Otto-Runtime-win32-x64.tar.gz'))),
+              Readable.toWeb(createReadStream(join(output, 'nod-Runtime-win32-x64.tar.gz'))),
             ),
         },
         () => {},
@@ -199,7 +199,7 @@ if (process.env.WORKSPACE_CONTAINER) {
       assert.match(
         await run(application, [smoke], {
           cwd: engine,
-          env: { ...environment, ...prepared.env, OTTO_WINDOWS_REOPEN: '1' },
+          env: { ...environment, ...prepared.env, NOD_WINDOWS_REOPEN: '1' },
           timeout: 300_000,
         }),
         /Windows application and browser verified\./,
@@ -211,12 +211,12 @@ if (process.env.WORKSPACE_CONTAINER) {
       const saved = await readFile(join(profile, 'desktop-runtime/state.json'), 'utf8')
         .then((value) => JSON.parse(value))
         .catch(() => null);
-      if (saved?.distribution && /^Otto-[a-f0-9]{12}$/.test(saved.distribution))
+      if (saved?.distribution && /^nod-[a-f0-9]{12}$/.test(saved.distribution))
         await run(wsl, ['--unregister', saved.distribution]);
     }
   }
   console.log('Checking that an update installs its runtime file.');
-  await run(join(output, 'Otto-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
+  await run(join(output, 'nod-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
   const { guest } = JSON.parse(
     await readFile(join(engine, 'windows-runtime/manifest.json'), 'utf8'),
   );

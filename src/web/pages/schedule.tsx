@@ -9,7 +9,7 @@ import { useDateFormat } from '../lib/date-format';
 import { DeletePlan } from '../components/delete-plan';
 import { MessageText } from '../components/message';
 import {
-  AskOtto,
+  AskNod,
   PauseSwitch,
   PlanDetails,
   ScheduleTiming,
@@ -66,11 +66,11 @@ export function ScheduleRow({
               variant="ghost"
               size="sm"
               aria-expanded={asking}
-              aria-label={`Ask Otto about ${schedule.title}`}
+              aria-label={`Ask nod about ${schedule.title}`}
               onClick={() => setAsking(!asking)}
             >
               <Sparkles size={16} aria-hidden="true" />
-              Ask Otto
+              Ask nod
             </Button>
             <DeletePlan id={schedule.id} title={schedule.title} />
           </>
@@ -90,7 +90,7 @@ export function ScheduleRow({
         />
       </PlanDetails>
       {asking && (
-        <AskOtto
+        <AskNod
           subject={{ title: schedule.title }}
           onAsk={onAsk}
           onClose={() => setAsking(false)}

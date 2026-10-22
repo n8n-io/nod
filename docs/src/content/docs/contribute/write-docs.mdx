@@ -1,6 +1,6 @@
 ---
 title: Write docs
-description: Run the Otto docs locally, write pages in the house style and use the components and diagrams the site supports.
+description: Run the nod docs locally, write pages in the house style and use the components and diagrams the site supports.
 sidebar:
   order: 8
 ---
@@ -17,9 +17,9 @@ import {
   Tabs,
 } from '@astrojs/starlight/components';
 
-This page explains how to run the Otto docs on your computer, how to write a page that reads like the rest of the site, and which components and diagrams you can use.
+This page explains how to run the nod docs on your computer, how to write a page that reads like the rest of the site, and which components and diagrams you can use.
 
-The short version: write for a busy person who has never seen Otto's code. Lead with the answer. Use short sentences, "you", and a diagram whenever something moves between parts.
+The short version: write for a busy person who has never seen nod's code. Lead with the answer. Use short sentences, "you", and a diagram whenever something moves between parts.
 
 ## Run the docs locally
 
@@ -39,7 +39,7 @@ The docs are an [Astro Starlight](https://starlight.astro.build) site in the `do
    pnpm --dir docs dev
    ```
 
-3. Open `http://localhost:4321/otto/` in your browser.
+3. Open `http://localhost:4321/nod/` in your browser.
 
 4. Before you open a pull request, build the site. The build fails on a broken link or a missing heading anchor.
 
@@ -49,7 +49,7 @@ The docs are an [Astro Starlight](https://starlight.astro.build) site in the `do
 
 </Steps>
 
-On every pull request that changes `docs/`, the **Docs** workflow builds the site, checks every internal link, and attaches the built site to the run as the `otto-docs` artifact.
+On every pull request that changes `docs/`, the **Docs** workflow builds the site, checks every internal link, and attaches the built site to the run as the `nod-docs` artifact.
 
 ## Where pages live
 
@@ -68,7 +68,7 @@ On every pull request that changes `docs/`, the **Docs** workflow builds the sit
       - deploy/
       - contribute/
     - assets/ images and screenshots
-    - styles/otto.css the Otto theme
+    - styles/nod.css the nod theme
 
 </FileTree>
 
@@ -107,29 +107,29 @@ A diagram, then two or three short paragraphs.
 
 ## Write like the rest of the docs
 
-Otto's docs follow the [n8n docs style](https://docs.n8n.io/contribute/contribution-guide-for-n8n-docs/style-guide-for-n8n-docs), which builds on the Microsoft Writing Style Guide.
+nod's docs follow the [n8n docs style](https://docs.n8n.io/contribute/contribution-guide-for-n8n-docs/style-guide-for-n8n-docs), which builds on the Microsoft Writing Style Guide.
 
 ### Plain language
 
-| Avoid                                         | Use instead            |
-| --------------------------------------------- | ---------------------- |
-| utilize, leverage                             | use                    |
-| in order to                                   | to                     |
-| functionality, capabilities                   | features, what it does |
-| It's important to note that X                 | X                      |
-| Otto provides a powerful, seamless way to ... | Otto lets you ...      |
-| The owner                                     | you                    |
-| Pi, the agent, the LLM (in user pages)        | Otto, or the model     |
+| Avoid                                        | Use instead            |
+| -------------------------------------------- | ---------------------- |
+| utilize, leverage                            | use                    |
+| in order to                                  | to                     |
+| functionality, capabilities                  | features, what it does |
+| It's important to note that X                | X                      |
+| nod provides a powerful, seamless way to ... | nod lets you ...       |
+| The owner                                    | you                    |
+| Pi, the agent, the LLM (in user pages)       | nod, or the model      |
 
 - **Lead with the answer.** Put one sentence under the title that says what the page lets you do.
 - **Keep sentences short.** One idea each, under 25 words. Split anything held together by a semicolon.
 - **Cut filler and marketing.** No "simply", "powerful", "robust" or "seamless". Say what happens.
-- **Be exact.** Write "for 90 days", not "for a while". Write "Otto asks you", not "Otto may ask".
-- **Lead with the action.** "To stop Otto, select **Stop**", not "There is a button that stops Otto".
+- **Be exact.** Write "for 90 days", not "for a while". Write "nod asks you", not "nod may ask".
+- **Lead with the action.** "To stop nod, select **Stop**", not "There is a button that stops nod".
 
 ### Voice and person
 
-- Talk to the reader as "you". Name Otto in the third person: "Otto asks", not "we ask".
+- Talk to the reader as "you". Name nod in the third person: "nod asks", not "we ask".
 - Use active voice: "The server checks the action", not "The action is checked".
 - Use contractions: "don't", "can't", "you'll".
 - Use "they" for an unknown person.
@@ -152,13 +152,13 @@ Otto's docs follow the [n8n docs style](https://docs.n8n.io/contribute/contribut
 
 ## Link to other pages
 
-Write internal links as site paths that start and end with `/`, without the `/otto` prefix. The build adds the prefix and checks that every page and heading exists.
+Write internal links as site paths that start and end with `/`, without the `/nod` prefix. The build adds the prefix and checks that every page and heading exists.
 
 ```md
 See [Approve one payment](/trust/payments/#approve-one-payment).
 ```
 
-Link to source files with full GitHub URLs, such as [`src/server/trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts). Link at the first useful mention only.
+Link to source files with full GitHub URLs, such as [`src/server/trust.ts`](https://github.com/n8n-io/nod/blob/main/src/server/trust.ts). Link at the first useful mention only.
 
 ## Components
 
@@ -214,10 +214,10 @@ Use tabs when the same task differs by platform or setup.
 
 <Tabs syncKey="platform">
   <TabItem label="macOS" icon="apple">
-    Otto keeps the Vault key in the macOS Keychain.
+    nod keeps the Vault key in the macOS Keychain.
   </TabItem>
   <TabItem label="Linux" icon="linux">
-    Set `OTTO_VAULT_KEY` in `.env` before the first start.
+    Set `NOD_VAULT_KEY` in `.env` before the first start.
   </TabItem>
 </Tabs>
 
@@ -236,7 +236,7 @@ Use cards for a short grid of ideas, and link cards to send readers onward.
   </Card>
 </CardGrid>
 
-<LinkCard title="Trust and Vault" href="/trust/" description="How Otto keeps you in control." />
+<LinkCard title="Trust and Vault" href="/trust/" description="How nod keeps you in control." />
 
 ### Badges
 
@@ -252,14 +252,14 @@ Give a code block a `title` when it's a file or a terminal. Mark lines to draw a
 
 ```sh title=".env" {2} ins={3}
 PORT=4310
-OTTO_VAULT_KEY=<your-key>
+NOD_VAULT_KEY=<your-key>
 COMPOSIO_API_KEY=<your-key>
 ```
 
 ````md
 ```sh title=".env" {2} ins={3}
 PORT=4310
-OTTO_VAULT_KEY=<your-key>
+NOD_VAULT_KEY=<your-key>
 COMPOSIO_API_KEY=<your-key>
 ```
 ````
@@ -316,15 +316,15 @@ Use a sequence diagram when the order of messages matters.
 ```mermaid
 sequenceDiagram
   actor You
-  participant Otto
+  participant nod
   participant Server
   participant Site as Website
-  You->>Otto: Read the report with my saved login
-  Otto->>Server: Use this account on this website
+  You->>nod: Read the report with my saved login
+  nod->>Server: Use this account on this website
   Server->>Server: Check task, account and website
   Server->>Site: Fill in and submit privately
-  Site-->>Otto: Page after sign-in, secrets masked
-  Otto-->>You: Here is the report
+  Site-->>nod: Page after sign-in, secrets masked
+  nod-->>You: Here is the report
 ```
 
 ### State diagram
@@ -352,6 +352,6 @@ stateDiagram-v2
 
 ## Related resources
 
-- [Contribute to Otto](/contribute/)
+- [Contribute to nod](/contribute/)
 - [Checks and tests](/contribute/checks-and-tests/)
 - [Pull requests and releases](/contribute/pull-requests/)

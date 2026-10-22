@@ -1,0 +1,116 @@
+.private-entry-workspace {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.private-entry-chat {
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+}
+.private-entry-panel {
+  position: relative;
+  z-index: 22;
+  flex: 0 0 clamp(360px, 36%, 440px);
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  scrollbar-gutter: stable;
+}
+.private-entry-panel:focus {
+  outline: none;
+}
+.private-entry-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 12px 0;
+}
+.private-entry-panel .credential-embedded {
+  padding: 24px;
+}
+.credential-embedded .credential-card {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.credential-embedded .credential-card h1 {
+  font-size: 24px;
+}
+.credential-method-back {
+  margin: 0 0 16px -8px;
+}
+.credential-secret {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.credential-secret .input {
+  width: 100%;
+  padding-right: 46px;
+}
+.credential-secret > .button {
+  position: absolute;
+  right: 4px;
+}
+.credential-payment {
+  display: grid;
+  gap: 20px;
+}
+.credential-payment p {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  line-height: 1.65;
+}
+.private-entry-workspace.is-narrow .private-entry-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 23;
+  width: 100%;
+  border-left: 0;
+}
+.private-entry-workspace.is-narrow .credential-embedded {
+  width: min(440px, 100%);
+  margin-inline: auto;
+  padding: 24px 20px 40px;
+}
+
+:root[data-desktop='true'] .private-entry-toolbar {
+  height: var(--desktop-titlebar-height);
+  padding: 9px 12px 0;
+  -webkit-app-region: drag;
+}
+:root[data-desktop='true'] .private-entry-toolbar button {
+  -webkit-app-region: no-drag;
+}
+:root[data-desktop='true']
+  .app-shell:has(.chat-route:not([hidden]) .private-entry-panel)
+  .desktop-toolbar {
+  right: calc(var(--private-entry-space, 0px) + var(--artifact-drawer-space, 0px));
+}
+:root[data-desktop='true']
+  .app-shell:has(.private-entry-workspace.is-narrow .private-entry-panel)
+  .desktop-toolbar {
+  visibility: hidden;
+}
+
+.private-entry-card {
+  padding: 12px 24px 32px;
+}
+.private-entry-card .vault-hero {
+  padding-top: 24px;
+}
+.private-entry-card .vault-hero-title {
+  font-size: 24px;
+}
+.private-entry-card .credential-complete {
+  padding-top: 24px;
+}

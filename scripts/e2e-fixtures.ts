@@ -22,7 +22,7 @@ import { runProcess } from '../src/providers/process.ts';
 import { fixtureChannelCredentials } from './e2e-channels.ts';
 
 const fixtureOrigin = 'https://example.com';
-export const fixturePrefix = '/__otto_e2e__/';
+export const fixturePrefix = '/__nod_e2e__/';
 export const fixtureLogin = fixtureOrigin + fixturePrefix + 'login';
 export const fixtureHotel = fixtureOrigin + fixturePrefix + 'hotel';
 export const fixtureFlight = fixtureOrigin + fixturePrefix + 'flight';
@@ -941,7 +941,7 @@ export function createIntegrationFixture(
       },
     ];
   }
-  const prefix = 'https://otto-consent.example/__otto_e2e__/';
+  const prefix = 'https://nod-consent.example/__nod_e2e__/';
   const provider: IntegrationProvider = {
     id: 'synthetic-apps',
     configured: true,
@@ -960,7 +960,7 @@ export function createIntegrationFixture(
         if (!account?.active || account.ownerId !== ownerId)
           throw new Error('Connect the selected synthetic account first.');
         if (action === 'GOOGLEDRIVE_DOWNLOAD_FILE') {
-          if (account.service !== 'googledrive' || args.fileId !== 'otto-e2e-spending-csv-2026-09')
+          if (account.service !== 'googledrive' || args.fileId !== 'nod-e2e-spending-csv-2026-09')
             throw new Error('The synthetic CSV file was not found in this account.');
           audit('fixture_integration_download', { action, accountId });
           return {
@@ -1293,11 +1293,11 @@ export function createIntegrationFixture(
                 !query || 'september spending export.csv'.includes(query)
                   ? [
                       {
-                        id: 'otto-e2e-spending-csv-2026-09',
+                        id: 'nod-e2e-spending-csv-2026-09',
                         name: 'September spending export.csv',
                         mimeType: 'text/csv',
                         webViewLink:
-                          'https://drive.google.com/file/d/otto-e2e-spending-csv-2026-09/view',
+                          'https://drive.google.com/file/d/nod-e2e-spending-csv-2026-09/view',
                       },
                     ]
                   : [],
@@ -1311,10 +1311,10 @@ export function createIntegrationFixture(
                 !query || 'september spending test'.includes(query)
                   ? [
                       {
-                        id: 'otto-e2e-spending-2026-09',
+                        id: 'nod-e2e-spending-2026-09',
                         name: 'September spending test',
                         webViewLink:
-                          'https://docs.google.com/spreadsheets/d/otto-e2e-spending-2026-09/edit',
+                          'https://docs.google.com/spreadsheets/d/nod-e2e-spending-2026-09/edit',
                       },
                     ]
                   : [],
@@ -1325,7 +1325,7 @@ export function createIntegrationFixture(
             action === 'GOOGLESHEETS_GET_SPREADSHEET_INFO' ||
             action === 'GOOGLESHEETS_BATCH_GET'
           ) {
-            const id = 'otto-e2e-spending-2026-09';
+            const id = 'nod-e2e-spending-2026-09';
             let matched = args.spreadsheet_id === id;
             if (!matched && typeof args.spreadsheet_id === 'string') {
               try {
@@ -1541,7 +1541,7 @@ export function createIntegrationFixture(
         return reply.type('text/html').send(
           html(
             `Connect synthetic ${names[account.service]}`,
-            `<p>This is synthetic app consent, not a real provider sign-in. It exposes only synthetic records to this isolated Otto instance.</p><p>Account: ${accountEmail(account)}</p><form id="fixture-consent" method="post"><input type="hidden" name="consent" value="connect"><button type="submit">Connect synthetic account</button></form><p id="consent-error" role="alert" hidden>Could not connect the synthetic account. Try again.</p><script>
+            `<p>This is synthetic app consent, not a real provider sign-in. It exposes only synthetic records to this isolated nod instance.</p><p>Account: ${accountEmail(account)}</p><form id="fixture-consent" method="post"><input type="hidden" name="consent" value="connect"><button type="submit">Connect synthetic account</button></form><p id="consent-error" role="alert" hidden>Could not connect the synthetic account. Try again.</p><script>
 const consentForm = document.getElementById('fixture-consent');
 const consentButton = consentForm.querySelector('button');
 const consentError = document.getElementById('consent-error');
@@ -1612,7 +1612,7 @@ export function registerOperatorPage(
       .type('text/html')
       .send(
         html(
-          'Otto acceptance controls',
+          'nod acceptance controls',
           `<form id="operator-access"><label for="operator-token">Operator token</label><input id="operator-token" type="password" autocomplete="off" required><button type="submit">Open controls</button></form><p id="operator-result" role="status"></p><div id="operator-controls"></div><pre id="operator-events" hidden></pre><script>
       (() => {
         const access = document.getElementById('operator-access');
@@ -1680,13 +1680,13 @@ export function registerOperatorPage(
 export function operatorPage(scenario?: { id: string; accountEmail: string }) {
   if (scenario)
     return html(
-      'Otto isolated document evaluation',
-      `<h2>${scenario.id}</h2><p>Connect Gmail and Google Calendar through <a href="/apps">Apps</a>. Both synthetic accounts use ${scenario.accountEmail}. Consent occurs only on this local app.</p><p>The selected inbox contains one report with its PDF attachment. Calendar reads return the selected scenario's records. Use a fresh harness for every attempt and keep the evaluation key outside the agent workspace.</p><p>Time zone: Europe/Lisbon. No real mailbox, calendar or recipient is connected. Reminders created by the agent run through Otto's normal scheduler.</p><p><a href="/">Open Otto</a></p><button type="button" data-operator="status">Timing events and source hashes</button><button type="button" data-operator="evidence">Stored results and schedules</button>`,
+      'nod isolated document evaluation',
+      `<h2>${scenario.id}</h2><p>Connect Gmail and Google Calendar through <a href="/apps">Apps</a>. Both synthetic accounts use ${scenario.accountEmail}. Consent occurs only on this local app.</p><p>The selected inbox contains one report with its PDF attachment. Calendar reads return the selected scenario's records. Use a fresh harness for every attempt and keep the evaluation key outside the agent workspace.</p><p>Time zone: Europe/Lisbon. No real mailbox, calendar or recipient is connected. Reminders created by the agent run through nod's normal scheduler.</p><p><a href="/">Open nod</a></p><button type="button" data-operator="status">Timing events and source hashes</button><button type="button" data-operator="evidence">Stored results and schedules</button>`,
     );
-  const signupOperator = `<h2>Trial signup evaluation</h2><p>Connect synthetic Gmail as ${fixtureCredentials.username} before starting. Each attempt needs a fresh acceptance harness. The trial details have editable defaults.</p><p>Base recipient: ${fixtureSignup.base.recipient}. Holdout recipient: ${fixtureSignup.alternate.recipient}.</p><p>After Otto asks you to complete human verification, release the matching case here. Then click Verify I am human in Otto's handed-off browser and click Done to return control.</p><button type="button" data-operator="base">Release base case</button><button type="button" data-operator="alternate">Release holdout case</button>`;
+  const signupOperator = `<h2>Trial signup evaluation</h2><p>Connect synthetic Gmail as ${fixtureCredentials.username} before starting. Each attempt needs a fresh acceptance harness. The trial details have editable defaults.</p><p>Base recipient: ${fixtureSignup.base.recipient}. Holdout recipient: ${fixtureSignup.alternate.recipient}.</p><p>After nod asks you to complete human verification, release the matching case here. Then click Verify I am human in nod's handed-off browser and click Done to return control.</p><button type="button" data-operator="base">Release base case</button><button type="button" data-operator="alternate">Release holdout case</button>`;
   return html(
-    'Otto isolated acceptance environment',
+    'nod isolated acceptance environment',
     signupOperator +
-      `<p><a href="/">Open Otto</a></p><button type="button" data-operator="status">Timing events</button><p>The assistant and browser are real. Google and Slack accounts, files, channel setup and the Northstar site are synthetic. No external messages are delivered.</p><h2>Secure sign-in fixture</h2><p>Give the assistant this URL: <code>${fixtureLogin}</code></p><p>Enter these synthetic values only in the Vault form, never in chat:</p><dl><dt>Email</dt><dd>${fixtureCredentials.username}</dd><dt>Password</dt><dd>${fixtureCredentials.password}</dd><dt>One-time code</dt><dd>${fixtureCredentials.code}</dd></dl><p>Slow page for acknowledgement checks: <code>${fixtureOrigin + fixturePrefix}slow</code></p><p>The fixture URL works only in the assistant's isolated browser. The user's normal browser should use this localhost page and the Vault.</p><h2>Channels UI fixture</h2><p>Open <a href="/channels">Channels</a> and enter these fixed synthetic values in its setup forms. Both channels start disconnected. No provider is contacted and incoming or outgoing messages are disabled, including after setup.</p><h3>Telegram</h3><dl><dt>Bot token</dt><dd>${fixtureChannelCredentials.telegram.botToken}</dd></dl><p>Leave the callback blank. The saved account is labelled Synthetic Telegram bot (UI only). It stays at Waiting for Start because incoming messages are disabled.</p><h3>WhatsApp</h3><dl><dt>Business phone number ID</dt><dd>${fixtureChannelCredentials.whatsapp.phoneNumberId}</dd><dt>Your WhatsApp number</dt><dd>${fixtureChannelCredentials.whatsapp.allowedNumber}</dd><dt>Business access token</dt><dd>${fixtureChannelCredentials.whatsapp.accessToken}</dd><dt>Meta app secret</dt><dd>${fixtureChannelCredentials.whatsapp.appSecret}</dd><dt>Webhook verification token</dt><dd>${fixtureChannelCredentials.whatsapp.verifyToken}</dd></dl><p>Check the policy box for this synthetic setup and leave the callback blank. The saved account remains at Finish delivery setup; no callback is registered.</p>`,
+      `<p><a href="/">Open nod</a></p><button type="button" data-operator="status">Timing events</button><p>The assistant and browser are real. Google and Slack accounts, files, channel setup and the Northstar site are synthetic. No external messages are delivered.</p><h2>Secure sign-in fixture</h2><p>Give the assistant this URL: <code>${fixtureLogin}</code></p><p>Enter these synthetic values only in the Vault form, never in chat:</p><dl><dt>Email</dt><dd>${fixtureCredentials.username}</dd><dt>Password</dt><dd>${fixtureCredentials.password}</dd><dt>One-time code</dt><dd>${fixtureCredentials.code}</dd></dl><p>Slow page for acknowledgement checks: <code>${fixtureOrigin + fixturePrefix}slow</code></p><p>The fixture URL works only in the assistant's isolated browser. The user's normal browser should use this localhost page and the Vault.</p><h2>Channels UI fixture</h2><p>Open <a href="/channels">Channels</a> and enter these fixed synthetic values in its setup forms. Both channels start disconnected. No provider is contacted and incoming or outgoing messages are disabled, including after setup.</p><h3>Telegram</h3><dl><dt>Bot token</dt><dd>${fixtureChannelCredentials.telegram.botToken}</dd></dl><p>Leave the callback blank. The saved account is labelled Synthetic Telegram bot (UI only). It stays at Waiting for Start because incoming messages are disabled.</p><h3>WhatsApp</h3><dl><dt>Business phone number ID</dt><dd>${fixtureChannelCredentials.whatsapp.phoneNumberId}</dd><dt>Your WhatsApp number</dt><dd>${fixtureChannelCredentials.whatsapp.allowedNumber}</dd><dt>Business access token</dt><dd>${fixtureChannelCredentials.whatsapp.accessToken}</dd><dt>Meta app secret</dt><dd>${fixtureChannelCredentials.whatsapp.appSecret}</dd><dt>Webhook verification token</dt><dd>${fixtureChannelCredentials.whatsapp.verifyToken}</dd></dl><p>Check the policy box for this synthetic setup and leave the callback blank. The saved account remains at Finish delivery setup; no callback is registered.</p>`,
   );
 }

@@ -102,9 +102,9 @@ export function TelegramSetup({
             <p data-analytics-private>
               Only{' '}
               {telegramIdentity(setup!.allowedUserId!, setup?.pairedUser, setup?.pairedUsername)}{' '}
-              can message Otto.
+              can message nod.
             </p>
-            <p>Keep Otto running to receive messages.</p>
+            <p>Keep nod running to receive messages.</p>
           </div>
         </div>
       ) : (
@@ -135,7 +135,7 @@ export function TelegramSetup({
                       </TelegramLink>
                       <p>
                         Send <code>/newbot</code>. Choose a name, then a username ending in{' '}
-                        <code>bot</code>, such as <code>my_otto_bot</code>.
+                        <code>bot</code>, such as <code>my_nod_bot</code>.
                       </p>
                       <Button
                         size="sm"
@@ -228,7 +228,7 @@ export function TelegramSetup({
                     <div className="telegram-setup-content">
                       {state.needsDelivery ? (
                         <>
-                          <p>Your bot is saved, but Otto could not start receiving messages.</p>
+                          <p>Your bot is saved, but nod could not start receiving messages.</p>
                           <Button
                             size="sm"
                             data-telegram-primary
@@ -259,7 +259,7 @@ export function TelegramSetup({
                           </p>
                           <Field
                             label="Your Telegram user ID"
-                            hint="Only this ID will be able to message Otto."
+                            hint="Only this ID will be able to message nod."
                           >
                             <Input
                               inputMode="numeric"
@@ -340,7 +340,7 @@ export function TelegramSetup({
                       <p className="telegram-setup-identity" role="status" data-analytics-private>
                         {telegramIdentity(candidate.id, candidate.name, candidate.username)}
                       </p>
-                      <p>Only this account will be able to message Otto.</p>
+                      <p>Only this account will be able to message nod.</p>
                       <div className="telegram-setup-actions">
                         <Button
                           size="sm"

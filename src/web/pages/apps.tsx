@@ -1,5 +1,5 @@
 import { PageTitle } from '../components/page-title';
-import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import * as Popover from '@radix-ui/react-popover';
 import {
@@ -16,6 +16,7 @@ import type { AppSetupStatus, Configuration, Connection } from '../../shared/con
 import { SetupNotice } from '../components/setup-notice';
 import { ServiceLogo } from '../components/service-logo';
 import { AppConnectionDialog, type AppSignIn } from '../components/app-connection-dialog';
+import { AppDiscoveryDialog } from '../components/app-discovery-dialog';
 import { connectionStatusText, integrationAccessReady } from '../components/connection-choice';
 import type { IntegrationKeyStatus } from '../../shared/integrations';
 import { api, ApiError, errorMessage } from '../lib/api';
@@ -43,31 +44,6 @@ import {
   SearchField,
 } from '../components/ui';
 
-type Discovery = {
-  name: string;
-  oauthStatus?: 'pending' | 'connected' | 'cancelled' | 'failed' | null;
-  authorizationUrl?: string;
-  callbackUrl?: string;
-  setupUrl?: string;
-  setupText?: string;
-  paths: Array<{
-    kind: string;
-    endpoint?: string;
-    command?: string;
-    auth: string;
-    env?: string[];
-    source?: { npm?: string; pypi?: string; url?: string; sha256?: string };
-    testPath?: string;
-    scope?: string;
-    clientIdRequired?: boolean;
-  }>;
-};
-
-function discoverySettings(discovery: Discovery | null | undefined) {
-  const names = discovery?.paths.find((path) => path.kind === 'cli')?.env;
-  return names && names.length > 1 ? names : undefined;
-}
-
 function accountLabel(account: Connection) {
   const identity = connectionIdentity(account);
   return account.slug === 'notion' && identity.secondary
@@ -89,18 +65,6 @@ function categoryLabel(value: string) {
     /\b(ai|api|crm|erp|hr|it|llm|mcp|pdf|seo|sms|sql|ui|url|ux)\b/gi,
     (word) => word.toUpperCase(),
   );
-}
-
-function readCheckUrl(path: { endpoint: string; testPath?: string }) {
-  if (!path.testPath) return null;
-  try {
-    return new URL(
-      path.testPath.replace(/^\/+/, ''),
-      path.endpoint.endsWith('/') ? path.endpoint : `${path.endpoint}/`,
-    ).href;
-  } catch {
-    return null;
-  }
 }
 
 function AppDescription({ name, description }: { name: string; description?: string }) {
@@ -313,14 +277,14 @@ export function Apps({
   const connectionSetup = usePageData<IntegrationKeyStatus>('/api/integrations/key');
   const tabsId = useId();
   const [view, setView] = useState<'all' | 'connected'>('all');
-  useEffect(() => captureAnalytics('otto_tab_viewed', { page: 'apps', tab: view }), []);
+  useEffect(() => captureAnalytics('nod_tab_viewed', { page: 'apps', tab: view }), []);
   const selectView = (next: typeof view) => {
-    if (next !== view) captureAnalytics('otto_tab_viewed', { page: 'apps', tab: next });
+    if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'apps', tab: next });
     setView(next);
   };
   useEffect(() => {
     if (loadError || (catalogError && catalogStatus !== 403))
-      captureAnalytics('otto_ui_error', { area: 'apps', action: 'load' });
+      captureAnalytics('nod_ui_error', { area: 'apps', action: 'load' });
   }, [loadError, catalogError, catalogStatus]);
   const [query, setQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -337,12 +301,6 @@ export function Apps({
   const [disconnectAccount, setDisconnectAccount] = useState<Connection | null>(null);
   const [disconnectError, setDisconnectError] = useState('');
   const discoveryId = new URLSearchParams(window.location.search).get('connect');
-  const [discovery, setDiscovery] = useState<Discovery | null>(null);
-  const [discoveryError, setDiscoveryError] = useState('');
-  const [discoveryLoadError, setDiscoveryLoadError] = useState('');
-  const [savingDiscovery, setSavingDiscovery] = useState(false);
-  const [discoverySignIn, setDiscoverySignIn] = useState<{ id: string; url: string } | null>(null);
-  const [discoveryVersion, setDiscoveryVersion] = useState(0);
   const page = useRef<HTMLDivElement>(null);
   const catalogEnd = useRef<HTMLDivElement>(null);
   const appSearch = useRef<HTMLInputElement>(null);
@@ -351,9 +309,7 @@ export function Apps({
   const manageKeyboard = useRef(false);
   const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const dialogService = useRef('');
-  const discoveryTitle = useRef<HTMLHeadingElement>(null);
   const actionRequest = useRef<AbortController | null>(null);
-  const discoveryRequest = useRef<AbortController | null>(null);
   const locked = Boolean(busy);
   const groups = connectionGroups(connections ?? [], catalog ?? []);
   const managed = groups.find((group) => group.key === manageService);
@@ -526,7 +482,7 @@ export function Apps({
       });
     }, 10 * 60_000);
     const channel =
-      typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('otto.apps');
+      typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('nod.apps');
     if (channel)
       channel.onmessage = (
         event: MessageEvent<{ service?: string; attempt?: string; connection?: string } | null>,
@@ -559,132 +515,6 @@ export function Apps({
       channel?.close();
     };
   }, [signIn?.url, signIn?.service, signIn?.attempt, refresh]);
-  useEffect(() => {
-    if (!discoveryId) return;
-    let timer: number | undefined;
-    let checks = 0;
-    async function check() {
-      window.clearTimeout(timer);
-      discoveryRequest.current?.abort();
-      if (actionRequest.current) return;
-      const request = new AbortController();
-      discoveryRequest.current = request;
-      try {
-        const value = await api<Discovery>(
-          `/api/apps/discovery/${encodeURIComponent(discoveryId!)}`,
-          { signal: request.signal },
-        );
-        if (request.signal.aborted) return;
-        setDiscovery(value);
-        setDiscoveryLoadError('');
-        if (value.oauthStatus === 'connected') {
-          const url = new URL(window.location.href);
-          if (url.searchParams.get('connect') !== discoveryId) return;
-          url.searchParams.delete('connect');
-          window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-          setDiscovery(null);
-          setDiscoverySignIn(null);
-          void refresh();
-          return;
-        }
-        setDiscoverySignIn(
-          value.authorizationUrl
-            ? {
-                id: discoveryId!,
-                url: connectionUrl(value.authorizationUrl, window.location.origin),
-              }
-            : null,
-        );
-        if (value.oauthStatus === 'cancelled' || value.oauthStatus === 'failed')
-          setDiscoveryError(
-            value.oauthStatus === 'cancelled'
-              ? 'Connection cancelled. Try again.'
-              : 'The app could not connect. Try again.',
-          );
-        if (value.oauthStatus === 'pending' && checks++ < 12)
-          timer = window.setTimeout(() => void check(), 5000);
-      } catch (cause) {
-        if (request.signal.aborted) return;
-        if (cause instanceof ApiError && cause.status === 404) {
-          setDiscovery(null);
-          setDiscoverySignIn(null);
-        }
-        setDiscoveryLoadError(errorMessage(cause));
-      }
-    }
-    function focus() {
-      checks = 0;
-      void check();
-    }
-    focus();
-    window.addEventListener('focus', focus);
-    return () => {
-      window.clearTimeout(timer);
-      discoveryRequest.current?.abort();
-      window.removeEventListener('focus', focus);
-    };
-  }, [discoveryId, discoveryVersion, refresh]);
-  async function saveDiscovery(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!discoveryId || savingDiscovery) return;
-    const form = event.currentTarget;
-    const values = new FormData(form);
-    const names = discoverySettings(discovery);
-    setSavingDiscovery(true);
-    setDiscoveryError('');
-    try {
-      await api(`/api/apps/discovery/${encodeURIComponent(discoveryId)}/complete`, {
-        method: 'POST',
-        body: JSON.stringify({
-          accountName: values.get('accountName'),
-          token: names
-            ? Object.fromEntries(names.map((name) => [name, values.get(`setting:${name}`)]))
-            : values.get('token'),
-        }),
-      });
-      form.reset();
-      window.location.assign('/');
-    } catch (cause) {
-      for (const input of form.querySelectorAll('input[type="password"]'))
-        if (input instanceof HTMLInputElement) input.value = '';
-      setDiscoveryError(errorMessage(cause));
-      setSavingDiscovery(false);
-    }
-  }
-  async function authorizeDiscovery(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!discoveryId || savingDiscovery || actionRequest.current) return;
-    const clientId =
-      event.currentTarget.querySelector<HTMLInputElement>('[name="clientId"]')?.value;
-    const request = new AbortController();
-    actionRequest.current = request;
-    discoveryRequest.current?.abort();
-    setSavingDiscovery(true);
-    setDiscoveryError('');
-    try {
-      const result = await api<{ url: string }>(
-        `/api/apps/discovery/${encodeURIComponent(discoveryId)}/authorize`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ ...(clientId ? { clientId } : {}) }),
-          signal: request.signal,
-        },
-      );
-      if (request.signal.aborted) return;
-      const url = connectionUrl(result.url, window.location.origin);
-      setDiscoverySignIn({ id: discoveryId, url });
-      await openConnection(url);
-    } catch (cause) {
-      if (request.signal.aborted) return;
-      setDiscoveryError(errorMessage(cause));
-    } finally {
-      if (actionRequest.current === request) actionRequest.current = null;
-      if (!request.signal.aborted) {
-        setSavingDiscovery(false);
-        setDiscoveryVersion((value) => value + 1);
-      }
-    }
-  }
   async function connect(connection: Connection, entry: 'apps' | 'manage', addAccount = false) {
     if (actionRequest.current || locked) return;
     const capture = analyticsForCurrentSession();
@@ -693,22 +523,22 @@ export function Apps({
       !connection.accessPaths?.length &&
       !integrationAccessReady(connectionSetup.data)
     ) {
-      capture('otto_app_connect_clicked', { entry, result: 'needs_access_setup' });
+      capture('nod_app_connect_clicked', { entry, result: 'needs_access_setup' });
       onManageConnection(
         document.activeElement instanceof HTMLElement ? document.activeElement : undefined,
       );
       return;
     }
-    capture('otto_app_connect_clicked', { entry, result: 'opened' });
+    capture('nod_app_connect_clicked', { entry, result: 'opened' });
     const request = new AbortController();
     const external = desktopLinksAvailable();
     const popup = external
       ? null
-      : window.open('', 'otto-connect-app', 'popup,width=520,height=720');
+      : window.open('', 'nod-connect-app', 'popup,width=520,height=720');
     try {
       if (popup) {
         popup.opener = null;
-        popup.document.title = 'Connect to Otto';
+        popup.document.title = 'Connect to nod';
         popup.document.body.textContent = 'Preparing secure sign-in…';
       }
     } catch {}
@@ -761,11 +591,6 @@ export function Apps({
         popup?.close();
         window.history.pushState(null, '', `${proposal.pathname}${proposal.search}`);
         setManageService(null);
-        setDiscovery(null);
-        setDiscoveryError('');
-        setDiscoveryLoadError('');
-        setDiscoverySignIn(null);
-        setDiscoveryVersion((value) => value + 1);
         setSignIn(undefined);
         setBusy('');
         return;
@@ -804,7 +629,7 @@ export function Apps({
       setSignIn(undefined);
       setConnectErrorService(connection.slug.replace(/_mcp$/, ''));
       setError(errorMessage(cause));
-      capture('otto_ui_error', { area: 'apps', action: 'connect' });
+      capture('nod_ui_error', { area: 'apps', action: 'connect' });
       setBusy('');
     } finally {
       if (actionRequest.current === request) actionRequest.current = null;
@@ -837,7 +662,7 @@ export function Apps({
     } catch (cause) {
       if (request.signal.aborted) return;
       setDisconnectError(errorMessage(cause));
-      capture('otto_ui_error', { area: 'apps', action: 'disconnect' });
+      capture('nod_ui_error', { area: 'apps', action: 'disconnect' });
       void refresh();
     } finally {
       if (actionRequest.current === request) actionRequest.current = null;
@@ -926,7 +751,7 @@ export function Apps({
       <header className="page-heading secondary-heading">
         <div>
           <PageTitle path="/apps" />
-          <p>Your tools, connected to Otto.</p>
+          <p>Your tools, connected to nod.</p>
         </div>
       </header>
       {configuration && <SetupNotice configuration={configuration} />}
@@ -1183,7 +1008,7 @@ export function Apps({
                   {hasFilters
                     ? 'Try a different search or clear your filters.'
                     : view === 'connected'
-                      ? 'Connect your first app to use it with Otto.'
+                      ? 'Connect your first app to use it with nod.'
                       : 'Reload the catalog to check for available apps.'}
                 </p>
                 <Button
@@ -1233,7 +1058,7 @@ export function Apps({
                     )
                   }
                 >
-                  Ask Otto in chat
+                  Ask nod in chat
                 </Button>
               </div>
             )}
@@ -1290,7 +1115,7 @@ export function Apps({
               <DialogTitle ref={manageTitle} tabIndex={-1}>
                 {managed?.service.name} accounts
               </DialogTitle>
-              <DialogDescription>Choose which accounts Otto can use.</DialogDescription>
+              <DialogDescription>Choose which accounts nod can use.</DialogDescription>
             </div>
           </div>
           {manageError && <Notice onDismiss={() => setError('')}>{manageError}</Notice>}
@@ -1335,139 +1160,14 @@ export function Apps({
           </div>
         </DialogContent>
       </Dialog>
-      <Dialog
-        open={Boolean(discoveryId)}
-        onOpenChange={(open) => {
-          if (!open && !savingDiscovery) window.location.assign('/apps');
-        }}
-      >
-        <DialogContent
-          className="app-discovery-dialog"
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            discoveryTitle.current?.focus();
-          }}
-        >
-          <DialogTitle ref={discoveryTitle} tabIndex={-1}>
-            Connect {discovery?.name ?? 'app'}
-          </DialogTitle>
-          <DialogDescription>
-            {discovery?.paths.some((path) => path.kind === 'cli')
-              ? 'Add your account securely. CLI tokens are saved without a setup check.'
-              : 'Add your account securely. Otto will check access before it saves the connection.'}
-          </DialogDescription>
-          {discovery?.setupText && <p>{discovery.setupText}</p>}
-          {discovery?.setupUrl && (
-            <Button asChild variant="outline" size="sm" className="app-discovery-setup">
-              <a href={discovery.setupUrl} target="_blank" rel="noopener noreferrer">
-                Open setup page
-                <ExternalLink size={16} aria-hidden="true" />
-              </a>
-            </Button>
-          )}
-          {discovery?.paths.map((path) => (
-            <div
-              className="app-discovery-path"
-              key={`${path.kind}:${path.endpoint ?? path.command}`}
-            >
-              <strong>{path.kind.toUpperCase()}</strong>
-              <span>
-                {path.source?.npm
-                  ? `npm ${path.source.npm}`
-                  : path.source?.pypi
-                    ? `PyPI ${path.source.pypi}`
-                    : (path.source?.url ?? path.endpoint ?? path.command)}
-              </span>
-            </div>
-          ))}
-          {discovery?.paths.some((path) => path.testPath || path.kind === 'cli' || path.scope) && (
-            <details className="app-discovery-methods">
-              <summary>Connection details</summary>
-              {discovery.paths.map((path) => (
-                <div
-                  className="app-discovery-path"
-                  key={`${path.kind}:${path.endpoint ?? path.command}`}
-                >
-                  {path.kind === 'http' && path.testPath && (
-                    <span>
-                      Read check: GET{' '}
-                      {readCheckUrl({ endpoint: path.endpoint ?? '', testPath: path.testPath }) ??
-                        'unavailable'}
-                    </span>
-                  )}
-                  {path.kind === 'cli' && (
-                    <span>CLI: {path.command} (not checked during setup)</span>
-                  )}
-                  {path.source?.sha256 && <span>SHA-256: {path.source.sha256}</span>}
-                  {path.scope && <span>Requested access: {path.scope}</span>}
-                </div>
-              ))}
-            </details>
-          )}
-          {(discoveryError || discoveryLoadError) && (
-            <Notice>{discoveryError || discoveryLoadError}</Notice>
-          )}
-          {discovery?.paths[0]?.auth === 'oauth' ? (
-            <form onSubmit={(event) => void authorizeDiscovery(event)} autoComplete="off">
-              {discovery.paths[0]?.clientIdRequired && (
-                <Field label="Client ID">
-                  <Input
-                    name="clientId"
-                    required
-                    maxLength={500}
-                    autoComplete="off"
-                    disabled={savingDiscovery || discoverySignIn?.id === discoveryId}
-                  />
-                </Field>
-              )}
-              {discovery.callbackUrl && <p>Set the app callback URL to {discovery.callbackUrl}.</p>}
-              <Button type="submit" disabled={savingDiscovery}>
-                {savingDiscovery
-                  ? 'Opening sign-in…'
-                  : discoverySignIn?.id === discoveryId
-                    ? 'Continue sign-in'
-                    : `Continue to ${discovery.name}`}
-              </Button>
-            </form>
-          ) : discovery ? (
-            <form onSubmit={(event) => void saveDiscovery(event)} autoComplete="off">
-              <Field label="Account name">
-                <Input name="accountName" required maxLength={200} autoComplete="off" />
-              </Field>
-              {(discoverySettings(discovery) ?? ['token']).map((name) => (
-                <Field key={name} label={name === 'token' ? 'Access token' : name}>
-                  <Input
-                    name={name === 'token' ? 'token' : `setting:${name}`}
-                    type="password"
-                    required
-                    minLength={8}
-                    maxLength={8192}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </Field>
-              ))}
-              <Button
-                type="submit"
-                disabled={
-                  savingDiscovery ||
-                  discovery.paths.some(
-                    (path) =>
-                      path.kind === 'http' &&
-                      !readCheckUrl({ endpoint: path.endpoint ?? '', testPath: path.testPath }),
-                  )
-                }
-              >
-                {savingDiscovery
-                  ? discovery.paths.some((path) => path.kind === 'cli')
-                    ? 'Saving…'
-                    : 'Checking…'
-                  : 'Connect account'}
-              </Button>
-            </form>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+      {discoveryId && (
+        <AppDiscoveryDialog
+          key={discoveryId}
+          id={discoveryId}
+          onClose={() => window.location.assign('/apps')}
+          onConnected={() => window.location.assign('/apps')}
+        />
+      )}
       <Dialog
         open={Boolean(disconnectAccount)}
         onOpenChange={(open) => {
@@ -1496,7 +1196,7 @@ export function Apps({
           </DialogTitle>
           <DialogDescription>
             {disconnectAccount && accountLabel(disconnectAccount)}
-            <span>Otto will lose access to this account. You can connect it again later.</span>
+            <span>nod will lose access to this account. You can connect it again later.</span>
           </DialogDescription>
           {disconnectError && <Notice>{disconnectError}</Notice>}
           <div className="app-disconnect-actions">

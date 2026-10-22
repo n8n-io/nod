@@ -121,7 +121,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       )
         throw new Error();
     } catch (error) {
-      if (error.code !== 'ENOENT') throw new Error('Otto could not open its saved settings.');
+      if (error.code !== 'ENOENT') throw new Error('nod could not open its saved settings.');
     }
     current = value ?? {
       version: 1,
@@ -138,7 +138,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
   }
   const keyStoreMessage =
     platform === 'darwin'
-      ? 'Unlock your Mac keychain, then quit and reopen Otto.'
+      ? 'Unlock your Mac keychain, then quit and reopen nod.'
       : 'Unlock your system key store, then try again.';
   async function available() {
     if (
@@ -190,7 +190,11 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       ...(value.welcome ? { welcome: { ...value.welcome } } : {}),
       onboardingPreferenceStep: value.onboardingCompleted
         ? 'complete'
-        : (value.onboardingPreferenceStep ?? 'notifications'),
+        : !value.notifications
+          ? 'notifications'
+          : value.onboardingPreferenceStep === 'complete' && !value.launchAtLogin
+            ? 'launchAtLogin'
+            : (value.onboardingPreferenceStep ?? 'notifications'),
     };
   }
   return {
@@ -256,13 +260,22 @@ export function createSettingsStore(path, encryption, platform = process.platfor
             input[answered] === previous[answered];
           if (
             !repeated &&
-            (step === 'complete' ||
-              input.onboardingPreferenceStep !== next ||
-              typeof input[step] !== 'boolean')
+            (step === 'complete' || input.onboardingPreferenceStep !== next || input[step] !== true)
           )
             throw new Error('Choose your desktop preference before continuing.');
+          if (
+            !value.notifications ||
+            (input.onboardingPreferenceStep === 'complete' && !value.launchAtLogin)
+          )
+            throw new Error('Turn on notifications and Open at login to continue.');
           value.onboardingPreferenceStep = input.onboardingPreferenceStep;
         }
+        if (
+          value.onboardingCompleted &&
+          !previous.onboardingCompleted &&
+          (!value.notifications || !value.launchAtLogin)
+        )
+          throw new Error('Turn on notifications and Open at login to finish setup.');
         if (value.onboardingCompleted) delete value.welcome;
         await write(value);
         return redacted(value);
@@ -287,7 +300,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         if (!value.secrets.composioApiKey) return;
         const apiKey = await reveal(value.secrets.composioApiKey);
         if (!apiKey.trim() || apiKey.length > 16384)
-          throw new Error('Otto could not open its saved app connection.');
+          throw new Error('nod could not open its saved app connection.');
         const names = {
           COMPOSIO_GMAIL_AUTH_CONFIG_ID: 'gmail',
           COMPOSIO_CALENDAR_AUTH_CONFIG_ID: 'googlecalendar',
@@ -303,7 +316,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           try {
             configuration = JSON.parse(encoded);
           } catch {
-            throw new Error('Otto could not open its saved app connection.');
+            throw new Error('nod could not open its saved app connection.');
           }
         }
         if (
@@ -315,7 +328,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
               !Object.hasOwn(names, name) || typeof id !== 'string' || id.length > 16384,
           )
         )
-          throw new Error('Otto could not open its saved app connection.');
+          throw new Error('nod could not open its saved app connection.');
         return {
           receipt: createHash('sha256')
             .update(
@@ -370,7 +383,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
               vaultKey: await protect(randomBytes(32).toString('base64')),
             },
           });
-        return { OTTO_VAULT_KEY: await reveal(current.secrets.vaultKey) };
+        return { NOD_VAULT_KEY: await reveal(current.secrets.vaultKey) };
       });
     },
   };

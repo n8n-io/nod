@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Globe2, KeyRound, Link2, MonitorSmartphone } from 'lucide-react';
-import type { AppSetupStatus } from '../../shared/contracts';
-import { api } from '../lib/api';
+import type { AppSetupStatus, CredentialRequest } from '../../shared/contracts';
+import { api, ApiError } from '../lib/api';
 import { captureAnalytics } from '../lib/analytics';
 import type { SetupKind } from '../lib/message-links';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
+import { AppDiscoveryDialog } from './app-discovery-dialog';
 import { ServiceLogo } from './service-logo';
 import { Notice } from './ui';
+import { usePrivateEntry } from './private-entry';
 
 const icons = { vault: KeyRound, website: Globe2, app: Link2, browser: MonitorSmartphone };
-const vaultLink = /^\/(?:vault|credentials)\/[A-Za-z0-9_-]+\/?$/;
+const vaultLink = /^\/(?:vault|credentials)\/([A-Za-z0-9_-]+)\/?$/;
+const paymentLink = /^\/payments\/([a-f0-9-]{36})\/?$/i;
 const appLink = /^\/apps\?connect=([a-f0-9-]{36})$/i;
 
 async function readAppLinks(links: string[], signal: AbortSignal, pairingUrl?: string) {
@@ -83,6 +86,79 @@ function useAppLinks(hrefs: string[]) {
   return { completed, apps, complete };
 }
 
+function usePrivateLinks(hrefs: string[]) {
+  const [completed, setCompleted] = useState<Set<string>>(new Set());
+  const key = JSON.stringify(hrefs);
+  useEffect(() => {
+    const links = (JSON.parse(key) as string[]).filter(
+      (href) => vaultLink.test(href) || paymentLink.test(href),
+    );
+    if (!links.length) return;
+    const controller = new AbortController();
+    const settled = new Set<string>();
+    const deadline = Date.now() + 10 * 60_000;
+    let checking = false;
+    const check = async () => {
+      if (checking || document.visibilityState !== 'visible') return;
+      checking = true;
+      try {
+        await Promise.allSettled(
+          links
+            .filter((href) => !settled.has(href))
+            .map(async (href) => {
+              try {
+                const token = vaultLink.exec(href)?.[1];
+                const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
+                const status = token
+                  ? (
+                      await api<Pick<CredentialRequest, 'status'>>(
+                        `/api/credential-requests/${token}/status`,
+                        { signal, cache: 'no-store' },
+                      )
+                    ).status
+                  : (
+                      await api<{ status: string }>(
+                        `/api/payment-requests/${paymentLink.exec(href)![1]}/status`,
+                        { signal, cache: 'no-store' },
+                      )
+                    ).status;
+                if (controller.signal.aborted) return;
+                if (['filled', 'submitted', 'uncertain', 'expired'].includes(status))
+                  settled.add(href);
+                if (status === 'filled' || status === 'submitted')
+                  setCompleted((current) => new Set([...current, href]));
+              } catch (error) {
+                if (
+                  !controller.signal.aborted &&
+                  error instanceof ApiError &&
+                  [404, 410].includes(error.status)
+                )
+                  settled.add(href);
+              }
+            }),
+        );
+      } finally {
+        checking = false;
+        if (settled.size === links.length) window.clearInterval(timer);
+      }
+    };
+    const timer = window.setInterval(() => {
+      if (Date.now() >= deadline) window.clearInterval(timer);
+      else void check();
+    }, 5000);
+    void check();
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [key]);
+  return completed;
+}
+
 function SetupAction({
   href,
   setup,
@@ -97,22 +173,25 @@ function SetupAction({
   onConnect(href: string, trigger: HTMLButtonElement): void;
 }) {
   const Icon = icons[setup];
+  const entry = usePrivateEntry();
   if (setup === 'app')
     return (
       <button
         type="button"
         data-setup={setup}
+        className="setup-app-card"
         onClick={(event) => {
-          captureAnalytics('otto_setup_link_clicked', { setup });
+          captureAnalytics('nod_setup_link_clicked', { setup });
           onConnect(href, event.currentTarget);
         }}
       >
         {app ? (
-          <ServiceLogo slug={app.slug} logoUrl={app.logoUrl} size={18} />
+          <ServiceLogo slug={app.slug} logoUrl={app.logoUrl} size={28} />
         ) : (
-          <Icon size={18} aria-hidden="true" />
+          <Icon size={28} aria-hidden="true" />
         )}
-        <span>{app ? `Connect ${app.name}` : label}</span>
+        <span className="setup-app-name">{app?.name ?? label.replace(/^Connect\s+/i, '')}</span>
+        <span className="setup-app-action">Connect</span>
       </button>
     );
   return (
@@ -126,7 +205,19 @@ function SetupAction({
           : 'noopener noreferrer'
       }
       referrerPolicy="no-referrer"
-      onClick={() => captureAnalytics('otto_setup_link_clicked', { setup })}
+      onClick={(event) => {
+        captureAnalytics('nod_setup_link_clicked', { setup });
+        if (
+          setup === 'vault' &&
+          !event.button &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.shiftKey &&
+          !event.altKey &&
+          entry?.open(href, event.currentTarget)
+        )
+          event.preventDefault();
+      }}
       title={href.startsWith('https://') ? new URL(href).host : undefined}
     >
       <Icon size={16} aria-hidden="true" />
@@ -143,7 +234,11 @@ export function SetupActions({
   const { completed, apps, complete } = useAppLinks(
     actions.filter((action) => action.setup === 'app').map((action) => action.href),
   );
+  const privateCompleted = usePrivateLinks(
+    actions.filter((action) => action.setup === 'vault').map((action) => action.href),
+  );
   const [signIn, setSignIn] = useState<AppSignIn>();
+  const [discoveryHref, setDiscoveryHref] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState('');
   const [accessRenewed, setAccessRenewed] = useState(false);
@@ -157,6 +252,7 @@ export function SetupActions({
     request.current = null;
     window.clearTimeout(timer.current);
     setSignIn(undefined);
+    setDiscoveryHref(null);
     setOpening(false);
     setError('');
   }
@@ -174,9 +270,9 @@ export function SetupActions({
   async function connect(href: string) {
     const navigate = appLink.test(href);
     if (!navigate && request.current) return;
-    captureAnalytics('otto_app_connect_clicked', { entry: 'chat', result: 'opened' });
+    captureAnalytics('nod_app_connect_clicked', { entry: 'chat', result: 'opened' });
     if (navigate) {
-      window.location.assign(href);
+      setDiscoveryHref(href);
       return;
     }
     const controller = new AbortController();
@@ -198,7 +294,7 @@ export function SetupActions({
     try {
       if (popup) {
         popup.opener = null;
-        popup.document.title = 'Connect to Otto';
+        popup.document.title = 'Connect to nod';
         popup.document.body.textContent = 'Preparing secure sign-in…';
       }
     } catch {}
@@ -233,7 +329,7 @@ export function SetupActions({
         }
         const app = result.apps.get(href);
         if (!app) {
-          fail('This sign-in link is no longer available. Ask Otto to connect again.');
+          fail('This sign-in link is no longer available. Ask nod to connect again.');
           return;
         }
         setSignIn((value) =>
@@ -252,7 +348,7 @@ export function SetupActions({
         if (!current()) return;
       }
       if (Date.now() >= deadline) {
-        fail('The sign-in link expired. Ask Otto to connect again.');
+        fail('The sign-in link expired. Ask nod to connect again.');
         return;
       }
       timer.current = window.setTimeout(() => void check(), 5000);
@@ -304,11 +400,13 @@ export function SetupActions({
     } catch {
       popup?.close();
       if (!current()) return;
-      fail('This sign-in link could not be opened. Ask Otto to connect again.');
+      fail('This sign-in link could not be opened. Ask nod to connect again.');
     }
   }
-  const pending = actions.filter((action) => !completed.has(action.href));
-  if (!pending.length && !signIn && !accessRenewed) return null;
+  const pending = actions.filter(
+    (action) => !completed.has(action.href) && !privateCompleted.has(action.href),
+  );
+  if (!pending.length && !signIn && !discoveryHref && !accessRenewed) return null;
   return (
     <>
       {accessRenewed && (
@@ -330,6 +428,18 @@ export function SetupActions({
             />
           ))}
         </div>
+      )}
+      {discoveryHref && (
+        <AppDiscoveryDialog
+          key={discoveryHref}
+          id={appLink.exec(discoveryHref)![1]}
+          onClose={() => setDiscoveryHref(null)}
+          onConnected={() => {
+            complete(discoveryHref);
+            setDiscoveryHref(null);
+          }}
+          returnFocus={() => trigger.current}
+        />
       )}
       <AppConnectionDialog
         signIn={signIn}

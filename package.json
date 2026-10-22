@@ -1,5 +1,5 @@
 {
-  "name": "otto",
+  "name": "nod",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -16,7 +16,7 @@
     "desktop:windows:prepare": "node desktop/scripts/prepare-windows-runtime.mjs",
     "desktop:windows:build": "node desktop/scripts/build-windows.mjs",
     "desktop:test": "pnpm --dir desktop test",
-    "computer:build": "mkdir -p desktop/computer-use/.build && swiftc -O -o desktop/computer-use/.build/otto-computer-use desktop/computer-use/main.swift",
+    "computer:build": "mkdir -p desktop/computer-use/.build && swiftc -O -o desktop/computer-use/.build/nod-computer-use desktop/computer-use/main.swift",
     "build": "tsc --noEmit && vite build && node desktop/scripts/build-ui.mjs",
     "check": "pnpm run lint && pnpm run format:check",
     "lint": "tsc --noEmit && node scripts/check-architecture.mjs",

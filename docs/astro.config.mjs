@@ -7,7 +7,7 @@ import starlightLinksValidator from 'starlight-links-validator';
 import starlightLlmsTxt from 'starlight-llms-txt';
 
 const site = process.env.DOCS_SITE || 'https://n8n-io.github.io';
-const base = process.env.DOCS_BASE ?? '/otto';
+const base = process.env.DOCS_BASE ?? '/nod';
 const prefix = base.replace(/\/$/, '');
 const withBase = (url) =>
   prefix && url.startsWith('/') && !url.startsWith('//') && !url.startsWith(`${prefix}/`)
@@ -25,7 +25,7 @@ function jsxLinks(node, ctx) {
 }
 
 const baseLinks = defineMdastPlugin({
-  name: 'otto-base-links',
+  name: 'nod-base-links',
   link(node, ctx) {
     const url = withBase(node.url);
     if (url !== node.url) ctx.replaceNode(node, { ...node, url });
@@ -35,14 +35,14 @@ const baseLinks = defineMdastPlugin({
 });
 
 const scrollTables = defineHastPlugin({
-  name: 'otto-scroll-tables',
+  name: 'nod-scroll-tables',
   element: {
     filter: ['table'],
     visit(node, ctx) {
       ctx.wrapNode(node, {
         type: 'element',
         tagName: 'div',
-        properties: { className: ['otto-table'] },
+        properties: { className: ['nod-table'] },
         children: [],
       });
     },
@@ -87,31 +87,31 @@ export default defineConfig({
       },
     }),
     starlight({
-      title: 'Otto',
+      title: 'nod',
       description:
-        'Otto is a personal assistant with its own computer. Learn how to install it, use it, and how it keeps your accounts and actions under your control.',
-      logo: { light: './src/assets/otto-light.svg', dark: './src/assets/otto-dark.svg' },
+        'nod is a personal assistant with its own computer. Learn how to install it, use it, and how it keeps your accounts and actions under your control.',
+      logo: { light: './src/assets/nod-light.svg', dark: './src/assets/nod-dark.svg' },
       favicon: '/favicon.svg',
-      social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/n8n-io/otto' }],
-      editLink: { baseUrl: 'https://github.com/n8n-io/otto/edit/main/docs/' },
+      social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/n8n-io/nod' }],
+      editLink: { baseUrl: 'https://github.com/n8n-io/nod/edit/main/docs/' },
       lastUpdated: true,
-      customCss: ['./src/styles/otto.css'],
+      customCss: ['./src/styles/theme.css'],
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       sidebar: [
         section('Get started', 'get-started'),
-        section('Use Otto', 'use'),
+        section('Use nod', 'use'),
         section('Trust and Vault', 'trust'),
         section('Connect', 'connect'),
-        section('How Otto works', 'how-it-works'),
+        section('How nod works', 'how-it-works'),
         section('Deploy and operate', 'deploy'),
         section('Contribute', 'contribute'),
       ],
       plugins: [
         starlightLinksValidator(),
         starlightLlmsTxt({
-          projectName: 'Otto',
+          projectName: 'nod',
           description:
-            'Otto is a personal assistant you use through one chat. It has its own Linux workspace and browser, uses your connected apps, and keeps your accounts and actions under your control.',
+            'nod is a personal assistant you use through one chat. It has its own Linux workspace and browser, uses your connected apps, and keeps your accounts and actions under your control.',
         }),
       ],
     }),

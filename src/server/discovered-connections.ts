@@ -232,10 +232,10 @@ export async function createDiscoveredConnections(
   }
   function track(
     row: Pick<ProposalRow, 'paths'>,
-    status: Extract<AnalyticsEvent, { event: 'otto_connection_changed' }>['properties']['status'],
+    status: Extract<AnalyticsEvent, { event: 'nod_connection_changed' }>['properties']['status'],
     failureReason?: Extract<
       AnalyticsEvent,
-      { event: 'otto_connection_changed' }
+      { event: 'nod_connection_changed' }
     >['properties']['failure_reason'],
   ) {
     for (const path of row.paths)
@@ -836,7 +836,7 @@ export async function createDiscoveredConnections(
       ...(row.reconnect_required ? { connectionId: row.id } : {}),
       paths: row.paths.map((path) => {
         if (path.kind === 'cli') {
-          if (!path.source || !path.env) throw error('Ask Otto to set up this CLI again.', 409);
+          if (!path.source || !path.env) throw error('Ask nod to set up this CLI again.', 409);
           return {
             kind: path.kind,
             command: path.command,

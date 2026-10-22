@@ -179,14 +179,14 @@ export function YourComputer() {
         </p>
       )}
       {status && !status.available ? (
-        <p className="computer-note">Otto can use your computer only on a Mac.</p>
+        <p className="computer-note">nod can use your computer only on a Mac.</p>
       ) : (
         status && (
           <>
             <div className="computer-switch">
               <label htmlFor={`${id}-switch`}>
                 <Laptop size={16} aria-hidden="true" />
-                Let Otto use your computer
+                Let nod use your computer
               </label>
               <Switch
                 id={`${id}-switch`}
@@ -197,7 +197,7 @@ export function YourComputer() {
               />
             </div>
             <p id={`${id}-note`} className="computer-note">
-              Otto asks before it acts unless your request covers it. What Otto reads or sees on
+              nod asks before it acts unless your request covers it. What nod reads or sees on
               screen is sent to your selected model.
             </p>
             {status.appControlAvailable ? (
@@ -209,7 +209,7 @@ export function YourComputer() {
               </p>
             )}
             {(status.appControlAvailable || status.apps.length > 0) && (
-              <h5>Mac apps Otto may use</h5>
+              <h5>Mac apps nod may use</h5>
             )}
             {status.apps.length ? (
               <ul className="computer-apps">
@@ -239,7 +239,7 @@ export function YourComputer() {
               </ul>
             ) : status.appControlAvailable ? (
               <p className="computer-note">
-                None yet. Otto asks before using an app your request doesn't cover.
+                None yet. nod asks before using an app your request doesn't cover.
               </p>
             ) : null}
           </>

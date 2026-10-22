@@ -3,9 +3,15 @@ import { createRoot } from 'react-dom/client';
 import { App } from './app';
 import { desktopRendererReady } from './lib/desktop';
 import { initializeTheme } from './lib/theme';
+import { initializeFocusVisibility } from './lib/focus';
 import { captureAnalytics, configureAnalytics } from './lib/analytics-client';
 import { claimAccess, sessionStore } from './lib/session';
 import './styles.css';
+import './components/message-actions.css';
+import './components/telegram-chat-link.css';
+import './components/private-entry.css';
+import './components/app-discovery-dialog.css';
+import './components/composer.css';
 import './pages/chat.css';
 import './theme.css';
 import './pages/secondary-pages.css';
@@ -48,7 +54,7 @@ class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }
   }
   componentDidCatch() {
     desktopRendererReady();
-    captureAnalytics('otto_ui_error', { area: 'application', action: 'render' });
+    captureAnalytics('nod_ui_error', { area: 'application', action: 'render' });
   }
   render() {
     if (this.state.failed)
@@ -60,7 +66,7 @@ class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }
             className="button button-primary button-default"
             onClick={() => window.location.reload()}
           >
-            Reload Otto
+            Reload nod
           </button>
         </main>
       );
@@ -69,6 +75,7 @@ class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }
 }
 
 initializeTheme();
+initializeFocusVisibility();
 sessionStore.subscribe(() => {
   const { session } = sessionStore.getSnapshot();
   configureAnalytics(

@@ -50,24 +50,30 @@
   font-size: var(--text-control);
   line-height: 1.5;
 }
-.account-settings.dialog-content {
-  width: min(1040px, calc(100vw - 48px));
-  padding: 0;
-  overflow: hidden;
-  border-radius: 24px;
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
-.account-settings .dialog-close {
-  top: 18px;
-  right: 18px;
-  width: 36px;
-  height: 36px;
+.settings-page[hidden] {
+  display: none;
+}
+.settings-page > .page-title-row {
+  flex: none;
+  min-height: 80px;
+  padding: 24px max(var(--page-inline), var(--sidebar-toggle-space, 0px));
+}
+.settings-page > .page-title-row h1:focus {
+  outline: none;
 }
 .account-settings-layout {
   display: grid;
   grid-template-columns: 200px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
-  height: 680px;
-  max-height: calc(90dvh - 2px);
+  flex: 1;
+  min-height: 0;
 }
 .account-settings-layout > nav {
   display: flex;
@@ -126,7 +132,7 @@
 }
 .account-settings-header {
   flex-shrink: 0;
-  padding: 24px 64px 12px 32px;
+  padding: 24px 32px 12px;
 }
 .account-settings-body {
   flex: 1;
@@ -304,28 +310,8 @@
   margin-top: 16px;
 }
 @media (max-width: 640px) {
-  .account-settings.dialog-content {
-    inset: 0;
-    width: 100%;
-    height: 100dvh;
-    max-height: none;
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
-      env(safe-area-inset-left);
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
-    transform: none;
-  }
-  .account-settings .dialog-close {
-    top: calc(12px + env(safe-area-inset-top));
-    right: calc(12px + env(safe-area-inset-right));
-    width: 44px;
-    height: 44px;
-  }
   .account-settings-layout {
     grid-template-columns: 58px minmax(0, 1fr);
-    height: 100%;
-    max-height: none;
   }
   .account-settings-layout > nav {
     padding: 16px 8px;
@@ -340,7 +326,7 @@
     display: none;
   }
   .account-settings-header {
-    padding: 24px 64px 8px 16px;
+    padding: 24px 16px 8px;
   }
   .account-settings-body {
     padding: 12px 16px 24px;

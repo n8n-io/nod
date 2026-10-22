@@ -11,17 +11,17 @@ const statuses: Array<{ status: MemoryStatus; label: string; meaning: string }> 
   {
     status: 'stated',
     label: 'Confirmed',
-    meaning: 'You said it, wrote it or confirmed it. Otto uses it.',
+    meaning: 'You said it, wrote it or confirmed it. nod uses it.',
   },
   {
     status: 'observed',
     label: 'Learned',
-    meaning: 'Otto heard it in two or more of your messages. Otto uses it.',
+    meaning: 'nod heard it in two or more of your messages. nod uses it.',
   },
   {
     status: 'tentative',
     label: 'Mentioned once',
-    meaning: 'Otto heard it once. It is a guess until you confirm it or say it again.',
+    meaning: 'nod heard it once. It is a guess until you confirm it or say it again.',
   },
 ];
 const reasons: Record<MemoryArchived['reason'], string> = {
@@ -34,7 +34,7 @@ const reasons: Record<MemoryArchived['reason'], string> = {
   contradicted: 'Contradicted',
 };
 const channels: Record<string, string> = {
-  web: 'Otto web',
+  web: 'nod web',
   telegram: 'Telegram',
   whatsapp: 'WhatsApp',
 };
@@ -63,7 +63,7 @@ function note(entry: MemoryNote) {
 }
 
 export function memoryFileName(exported: Date) {
-  return `otto-memory-${day(exported.toISOString())}.md`;
+  return `nod-memory-${day(exported.toISOString())}.md`;
 }
 
 export function memoryMarkdown(view: MemoryView, exported: Date) {
@@ -77,9 +77,9 @@ export function memoryMarkdown(view: MemoryView, exported: Date) {
     return [`## ${label}\n\n${groups.join('\n\n')}`];
   });
   return `${[
-    '# What Otto remembers about you',
+    '# What nod remembers about you',
     `Exported on ${day(exported.toISOString())}.`,
-    'Otto keeps short notes about you so it does not have to ask twice. Each note has a status:',
+    'nod keeps short notes about you so it does not have to ask twice. Each note has a status:',
     [
       ...statuses.map(({ label, meaning }) => `- **${label}**: ${meaning}`),
       '- **Let go**: Replaced, expired or not mentioned for 60 days. Kept so you can bring it back.',
@@ -98,7 +98,7 @@ export function memoryMarkdown(view: MemoryView, exported: Date) {
       : []),
     ...(view.skills.length
       ? [
-          `## Skills Otto learned\n\nHow Otto did a task, written by Otto so it can follow the same steps next time.\n\n${view.skills
+          `## Skills nod learned\n\nHow nod did a task, written by nod so it can follow the same steps next time.\n\n${view.skills
             .map(
               (skill) =>
                 `### ${text(skill.name)}\n\n${text(skill.description)} Updated on ${day(skill.updated)}.\n\n${skill.body

@@ -1,0 +1,112 @@
+{
+  "beforeRevision": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
+  "afterRevision": "4b5bee4ab7a47d51f7a7226010a8edb80c492983",
+  "beforeSourceObject": "26661470b3ed1212991453e904d63be4167f8747",
+  "afterSourceObject": "41e6995e1ad2faf4054d26056551a796a1c27d72",
+  "capture": {
+    "capturedAt": "2026-10-21T20:36:30.441Z",
+    "harness": "capture-browser-pointer.mjs",
+    "harnessSha256": "27104d3c4f2b481aab009dbb8291e62c14d6b5a4c3e869c95b562bc161f5a5b8",
+    "scope": "Native Chromium providers from frozen Git source snapshots. Identical synthetic page, viewport, zoom, marker readiness, input and marker removal on both sides. No live account, model or external website.",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "marker": {
+      "rgb": [255, 0, 255],
+      "removedBeforeScreenshot": true
+    },
+    "harnessRevision": "5aa801d3d38d9e03a88bb47ab808aab5b6acf28b"
+  },
+  "before": {
+    "name": "before",
+    "sourceRevision": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
+    "sourceObject": "26661470b3ed1212991453e904d63be4167f8747",
+    "readiness": "Wait for the decoded JPEG bottom-right pixel to contain the post-zoom magenta background marker.",
+    "decodedFrames": 2,
+    "markerPixel": [255, 0, 254, 255],
+    "restoredBackground": {
+      "body": "rgb(250, 250, 250)",
+      "html": "rgb(250, 250, 250)"
+    },
+    "zoom": 2,
+    "input": {
+      "x": 0.3,
+      "y": 0.3
+    },
+    "expected": {
+      "x": 216,
+      "y": 135
+    },
+    "observed": {
+      "target": "",
+      "x": 432,
+      "y": 270
+    },
+    "screenshot": "browser-screenshots/pointer-before.png",
+    "screenshotSha256": "4a86d2985cac7f7ff2f5d23ed44f2de0f22c4c9e45cbb07a26912fefad556089"
+  },
+  "after": {
+    "name": "after",
+    "sourceRevision": "4b5bee4ab7a47d51f7a7226010a8edb80c492983",
+    "sourceObject": "41e6995e1ad2faf4054d26056551a796a1c27d72",
+    "readiness": "Wait for the decoded JPEG bottom-right pixel to contain the post-zoom magenta background marker.",
+    "decodedFrames": 2,
+    "markerPixel": [255, 0, 254, 255],
+    "restoredBackground": {
+      "body": "rgb(250, 250, 250)",
+      "html": "rgb(250, 250, 250)"
+    },
+    "zoom": 2,
+    "input": {
+      "x": 0.3,
+      "y": 0.3
+    },
+    "expected": {
+      "x": 216,
+      "y": 135
+    },
+    "observed": {
+      "target": "target",
+      "x": 216,
+      "y": 135
+    },
+    "screenshot": "browser-screenshots/pointer-after.png",
+    "screenshotSha256": "0d01e664c91c5223c2eb97f1ef56515cd095c743636aa0e770377b2d52ebb910"
+  },
+  "baselineIdentity": {
+    "providerPath": "src/providers/agent-browser/index.ts",
+    "originalRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
+    "originalSourceObject": "26661470b3ed1212991453e904d63be4167f8747",
+    "matchedRevision": "e79bf5d2fcfcadb093102c31f1e240b44cd210ce",
+    "matchedSourceObject": "26661470b3ed1212991453e904d63be4167f8747",
+    "identicalProviderObject": true,
+    "note": "The new before image was captured from the reachable branch base e79bf5d2. The original 21456f70 image retains its original provenance and readiness procedure."
+  },
+  "originalBefore": {
+    "name": "before",
+    "zoom": 2,
+    "input": {
+      "x": 0.3,
+      "y": 0.3
+    },
+    "expected": {
+      "x": 216,
+      "y": 135
+    },
+    "observed": {
+      "target": "",
+      "x": 432,
+      "y": 270
+    },
+    "sourceRevision": "21456f70cf47a49b30fffdef1681678c263f433c",
+    "readiness": "Original harness read the first two stream frames without a decoded-marker check. Preserved as historical evidence; superseded by the matched-harness comparison.",
+    "screenshot": "browser-screenshots/pointer-before-original.png",
+    "screenshotSha256": "20508ab6885cef9faa9468c0fb7578b3a7fafd62628c8b722884070d7f895aab"
+  },
+  "reproductionHarness": {
+    "file": "capture-browser-pointer.mjs",
+    "sha256": "8550199937cc59b67c151755dc19a98f1c7311e8f929caa40369313f8c3a871c",
+    "scope": "Current reproduction script adds bounded CDP failure cleanup and descriptive marker EOF/timeout errors. Existing comparison PNGs retain the original capture revision and harness hash."
+  }
+}
