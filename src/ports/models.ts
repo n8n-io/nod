@@ -9,6 +9,8 @@ export type ModelCredential =
       refresh: string;
       expires: number;
       accountId: string;
+      clientId: string;
+      idToken: string;
       email?: string;
     };
 
@@ -16,8 +18,9 @@ export class ModelAuthError extends Error {
   constructor(
     message: string,
     readonly requiresReconnect = false,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
   }
 }
 
@@ -35,7 +38,7 @@ export interface ModelAccess {
 }
 
 export interface ModelBackend {
-  signIn(input: { signal: AbortSignal }): Promise<{
+  signIn(input: { signal: AbortSignal; hostId: string; previous?: ModelCredential }): Promise<{
     url: string;
     state: string;
     result: Promise<ModelCredential>;

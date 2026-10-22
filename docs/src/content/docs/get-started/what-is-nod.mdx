@@ -44,7 +44,7 @@ flowchart LR
 | Schedules      | "Every Friday at 5 pm, send me a recap of what we finished this week."         |
 | On the go      | Message nod on Telegram: "Did the supplier reply yet?"                         |
 
-nod checks with you before it sends, posts or deletes anything you didn't ask for. Background work that nod starts on its own only reads and drafts, unless you've told it what to do on its own. See [Trust and Vault](/trust/) for how that works.
+nod is designed to check with you before it sends, posts or deletes anything you didn't ask for. The nod server runs that check before every such action, but an AI model makes the call, so it can be wrong. Background work that nod starts on its own only reads and drafts, unless you've told it what to do on its own. See [Trust and Vault](/trust/) for how that works.
 
 ## Where nod runs
 
@@ -55,7 +55,7 @@ nod checks with you before it sends, posts or deletes anything you didn't ask fo
 | You need | Nothing else installed                           | Node.js, pnpm, Docker and Git              |
 | Updates  | Automatic on Apple silicon Macs                  | `git pull` and restart                     |
 
-Both need a model connection: an API key from OpenAI, Anthropic or OpenRouter, a ChatGPT plan or a local model. [App connections](/connect/apps/) offer Google sign-in for the managed service or your own Composio key.
+Both need a model connection: an API key from OpenAI, Anthropic or OpenRouter, a ChatGPT Plus or Pro plan or a local model. [App connections](/connect/apps/) offer Google sign-in for the managed service or your own Composio key.
 
 ## What nod isn't
 

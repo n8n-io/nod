@@ -11,7 +11,9 @@ import { Bubble, Footer, Messages, useReveal } from '../motion';
 const sequence = [{ typing: 450 }, { wait: 300, typing: 550 }, { wait: 200 }, { wait: 300 }];
 
 export function Telegram({ arrived, onNext, onBack, onSkip, nextLabel }: StepProps) {
-  const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
+  const { revealed, typing, done, skip } = useReveal(sequence, {
+    enabled: arrived === 'forward',
+  });
   const {
     data,
     settings,
@@ -66,7 +68,7 @@ export function Telegram({ arrived, onNext, onBack, onSkip, nextLabel }: StepPro
   }
 
   return (
-    <section className="ob-step ob-telegram">
+    <section className="ob-step ob-telegram" onClick={done ? undefined : skip}>
       <div data-analytics-public>
         <Messages
           revealed={revealed}

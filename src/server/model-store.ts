@@ -21,6 +21,7 @@ export interface ModelState {
   connections: ModelRecord[];
   selection: ModelSelection | null;
   selectionSet: boolean;
+  hostId: string;
 }
 
 export interface ModelStore {
@@ -55,15 +56,17 @@ export function createDatabaseModelStore(options: {
       } catch {}
     }
     const settings = (
-      await client.query<{ selection: ModelSelection | null; selection_set: boolean }>(
-        'SELECT selection,selection_set FROM model_settings WHERE owner_id=$1',
-        [ownerId],
-      )
+      await client.query<{
+        selection: ModelSelection | null;
+        selection_set: boolean;
+        host_id: string;
+      }>('SELECT selection,selection_set,host_id FROM model_settings WHERE owner_id=$1', [ownerId])
     ).rows[0];
     return {
       connections,
       selection: settings?.selection ?? null,
       selectionSet: settings?.selection_set ?? false,
+      hostId: settings.host_id,
     };
   }
   return {
@@ -75,7 +78,7 @@ export function createDatabaseModelStore(options: {
           status text NOT NULL DEFAULT 'connected',models jsonb NOT NULL,managed boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now()
         ); CREATE INDEX IF NOT EXISTS model_connections_owner ON model_connections(owner_id);
         CREATE TABLE IF NOT EXISTS model_settings(owner_id text PRIMARY KEY,selection jsonb,selection_set boolean NOT NULL DEFAULT false);
-        ALTER TABLE model_settings DROP COLUMN IF EXISTS host_id;`);
+        ALTER TABLE model_settings ADD COLUMN IF NOT EXISTS host_id uuid NOT NULL DEFAULT gen_random_uuid();`);
       await database.query(
         'INSERT INTO model_settings(owner_id) VALUES($1) ON CONFLICT DO NOTHING',
         [ownerId],

@@ -41,7 +41,9 @@ function connectionMessage(result?: string) {
 }
 
 export function Email({ arrived, onNext, onBack }: StepProps) {
-  const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
+  const { revealed, typing, done, skip } = useReveal(sequence, {
+    enabled: arrived === 'forward',
+  });
   const configuration = usePageData<Configuration>('/api/configuration');
   const apps = usePageData<Connection[]>('/api/apps');
   const refreshApps = apps.refresh;
@@ -457,7 +459,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     );
 
   return (
-    <section className="ob-step ob-email" data-analytics-public>
+    <section className="ob-step ob-email" data-analytics-public onClick={done ? undefined : skip}>
       <Messages
         revealed={revealed}
         typing={typing}

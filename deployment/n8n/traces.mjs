@@ -5,7 +5,7 @@ export const tracesWorkflow = {
   langsmithUrl: 'https://eu.api.smith.langchain.com/runs',
   langsmithWorkspaceId: 'df8b0b69-354e-412c-bfbd-8f8f9e06fdb0',
   langsmithProjectId: 'e809fc78-6fbd-4140-a0f4-b1e5b9515586',
-  credentialName: 'Otto LangSmith traces',
+  credentialName: 'nod LangSmith traces',
   webhookCredentialName: 'nod traces webhook',
   tokenHeader: 'x-nod-traces-token',
   perMinute: 600,

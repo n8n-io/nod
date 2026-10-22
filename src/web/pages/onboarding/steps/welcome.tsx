@@ -38,8 +38,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
   useEffect(() => {
     const press = (event: KeyboardEvent) => {
       if (event.key !== 'Enter' || event.target !== document.body || event.repeat) return;
-      if (!done) skip();
-      else if (saving === null) onNext();
+      if (done && saving === null) onNext();
     };
     window.addEventListener('keydown', press);
     return () => window.removeEventListener('keydown', press);
@@ -80,7 +79,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
             }
           : {
               transform: 'translate(0, 0) scale(1)',
-              transition: 'transform 760ms var(--ease-travel)',
+              transition: 'transform 500ms var(--ease-travel)',
             };
   return (
     <section
@@ -130,22 +129,24 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
             I can really help.
           </Bubble>,
           <Bubble>
-            I <strong>check with you before I send, post or delete</strong> anything you didn’t ask
-            for.
+            I’m <strong>built to check with you before I send, post or delete</strong> anything you
+            didn’t ask for.
           </Bubble>,
           ...(usage
             ? [
                 <PreferenceBubble
                   label="Share usage data"
+                  link={
+                    <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
+                      What’s shared
+                    </a>
+                  }
                   checked={enabled}
                   saving={saving !== null}
                   error={error}
                   onChange={(value) => void change(value)}
                 >
-                  Help us make nod better by sharing how you use it. Never your messages.{' '}
-                  <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
-                    What’s shared
-                  </a>
+                  Help us make nod better by sharing how you use it. Never your messages.
                 </PreferenceBubble>,
               ]
             : []),

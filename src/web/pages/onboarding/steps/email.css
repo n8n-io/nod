@@ -112,7 +112,7 @@
   color: var(--success);
   font-size: var(--text-control);
   font-weight: 500;
-  animation: ob-step-in 260ms ease-out;
+  animation: ob-step-in 240ms var(--ease-enter);
 }
 .ob-email-notes {
   display: grid;

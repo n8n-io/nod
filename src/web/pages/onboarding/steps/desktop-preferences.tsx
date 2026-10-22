@@ -150,7 +150,7 @@ function DesktopPreferenceQuestion({
   error: string;
   choose(enabled: boolean, advance?: boolean): Promise<void>;
 }) {
-  const { revealed, typing } = useReveal(sequence);
+  const { revealed, typing, done, skip } = useReveal(sequence);
   const question = useRef<HTMLElement>(null);
   const notifications = step === 'notifications';
 
@@ -165,6 +165,7 @@ function DesktopPreferenceQuestion({
       ref={question}
       tabIndex={-1}
       data-analytics-public
+      onClick={done ? undefined : skip}
     >
       <Messages
         revealed={revealed}

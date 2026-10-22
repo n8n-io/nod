@@ -72,8 +72,8 @@
   border-radius: var(--radius-full);
   background: var(--input);
   transition:
-    width 280ms ease,
-    background 280ms ease;
+    width 220ms var(--ease-enter),
+    background 220ms ease;
 }
 .ob-dots > span[data-state='done'],
 .ob-dots > span[data-state='current'] {
@@ -127,11 +127,15 @@
   color: var(--text-secondary);
   font-size: var(--text-control);
 }
-.ob-preference-toggle > label {
+.ob-preference-toggle label {
   cursor: pointer;
 }
-.ob-preference-toggle > .switch:disabled + label {
+.ob-preference-toggle > .switch:disabled + span > label {
   cursor: default;
+}
+.ob .ob-preference-toggle a,
+.ob .ob-preference-toggle a:hover {
+  color: inherit;
 }
 .ob-preference-error {
   margin-top: 4px;
@@ -167,43 +171,54 @@
   position: relative;
 }
 .ob-message-content {
-  transition: opacity 260ms ease-out;
+  position: relative;
+  transform-origin: top left;
+  transition:
+    opacity 200ms var(--ease-enter),
+    transform 280ms var(--ease-reveal);
 }
 .ob-message-content[data-show='false'] {
   visibility: hidden;
   opacity: 0;
+  transform: scale(0.96);
 }
 .ob-message > .ob-typing {
   position: absolute;
   top: 0;
   left: 0;
+  pointer-events: none;
 }
 .ob-grow {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 400ms var(--ease-reveal);
+  transition: grid-template-rows 280ms var(--ease-reveal);
 }
 .ob-grow[data-open='true'] {
   grid-template-rows: 1fr;
-}
-.ob-grow[data-animate='false'] {
-  transition: none;
 }
 .ob-grow > div {
   min-height: 0;
   overflow: hidden;
 }
+.ob-grow[data-open='true'] > div {
+  position: relative;
+  z-index: 1;
+  overflow: visible;
+}
 .ob-grow > div > .ob-bubble {
   opacity: 0;
-  transform: scale(0.9);
+  transform: scale(0.96);
   transform-origin: bottom left;
   transition:
-    opacity 260ms ease-out,
-    transform 400ms var(--ease-reveal);
+    opacity 200ms var(--ease-enter),
+    transform 280ms var(--ease-reveal);
 }
 .ob-grow[data-open='true'] > div > .ob-bubble {
   opacity: 1;
   transform: none;
+}
+.ob-grow[data-open='false'] > div > .ob-bubble {
+  transition-duration: 120ms;
 }
 .ob-grow[data-open='true'] ~ .ob-grow > div > .ob-bubble {
   margin-top: 4px;
@@ -228,6 +243,7 @@
   gap: 4px;
   height: 40px;
   padding: 8px 16px;
+  transition: opacity 120ms ease-out;
 }
 .ob-typing > span {
   width: 8px;
@@ -242,10 +258,21 @@
 .ob-typing > span:nth-child(3) {
   animation-delay: 0.3s;
 }
+.ob-typing[data-on='false'] {
+  opacity: 0;
+}
+.ob-typing[data-on='false'] > span {
+  animation-play-state: paused;
+}
+@starting-style {
+  .ob-typing {
+    opacity: 0;
+  }
+}
 .ob-rise {
   transition:
-    opacity 320ms ease-out var(--rise-delay, 0ms),
-    transform 440ms var(--ease-reveal) var(--rise-delay, 0ms);
+    opacity 220ms var(--ease-enter) var(--rise-delay, 0ms),
+    transform 300ms var(--ease-reveal) var(--rise-delay, 0ms);
 }
 .ob-rise[data-show='false'] {
   opacity: 0;
@@ -351,7 +378,14 @@
   .ob *::before,
   .ob *::after {
     animation: none !important;
-    transition: none !important;
+    transition-property: opacity, color, background-color !important;
+    transition-duration: 150ms !important;
+    transition-delay: 0ms !important;
+  }
+  .ob .ob-rise[data-show='false'],
+  .ob .ob-message-content[data-show='false'],
+  .ob .ob-grow > div > .ob-bubble {
+    transform: none;
   }
 }
 

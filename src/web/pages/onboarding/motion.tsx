@@ -50,16 +50,26 @@ export function useReveal(
     });
     return () => timers.forEach(clearTimeout);
   }, [enabled, run, signature]);
+  const done = state.revealed >= total;
+  const skip = () => {
+    pending.current.forEach(clearTimeout);
+    setState((current) => ({ ...current, revealed: total, typing: false }));
+  };
+  useEffect(() => {
+    if (done) return;
+    const press = (event: KeyboardEvent) => {
+      if (event.key === 'Enter' && event.target === document.body && !event.repeat) skip();
+    };
+    window.addEventListener('keydown', press);
+    return () => window.removeEventListener('keydown', press);
+  }, [done]);
   return {
     revealed: state.revealed,
     typing: state.typing,
-    done: state.revealed >= total,
+    done,
     played: state.played,
     replay: () => setRun((value) => value + 1),
-    skip: () => {
-      pending.current.forEach(clearTimeout);
-      setState((current) => ({ ...current, revealed: total, typing: false }));
-    },
+    skip,
   };
 }
 
@@ -70,6 +80,7 @@ export function Bubble({ className, ...props }: HTMLAttributes<HTMLDivElement>) 
 export function PreferenceBubble({
   children,
   label,
+  link,
   checked,
   saving,
   disabled,
@@ -78,6 +89,7 @@ export function PreferenceBubble({
 }: {
   children: ReactNode;
   label: string;
+  link?: ReactNode;
   checked: boolean;
   saving: boolean;
   disabled?: boolean;
@@ -97,7 +109,10 @@ export function PreferenceBubble({
           aria-describedby={`${id}-reason`}
           onCheckedChange={onChange}
         />
-        <label htmlFor={id}>{label}</label>
+        <span>
+          <label htmlFor={id}>{label}</label>
+          {link && <> · {link}</>}
+        </span>
       </div>
       {error && (
         <p className="ob-preference-error" role="alert">
@@ -114,9 +129,15 @@ export function UserBubble({ className, ...props }: HTMLAttributes<HTMLDivElemen
   );
 }
 
-function Typing() {
+function Typing({ on = true }: { on?: boolean }) {
   return (
-    <div className="ob-bubble ob-typing" role="status" aria-label="nod is typing">
+    <div
+      className="ob-bubble ob-typing"
+      data-on={on}
+      role={on ? 'status' : undefined}
+      aria-label={on ? 'nod is typing' : undefined}
+      aria-hidden={!on}
+    >
       <span />
       <span />
       <span />
@@ -124,23 +145,9 @@ function Typing() {
   );
 }
 
-export function Grow({
-  open,
-  animate = true,
-  children,
-}: {
-  open: boolean;
-  animate?: boolean;
-  children: ReactNode;
-}) {
+export function Grow({ open, children }: { open: boolean; children: ReactNode }) {
   return (
-    <div
-      className="ob-grow"
-      data-open={open}
-      data-animate={animate}
-      aria-hidden={!open}
-      inert={!open}
-    >
+    <div className="ob-grow" data-open={open} aria-hidden={!open} inert={!open}>
       <div>{children}</div>
     </div>
   );
@@ -205,12 +212,12 @@ export function Messages({
             >
               {item}
             </div>
-            {typing && index === revealed && <Typing />}
+            <Typing on={typing && index === revealed} />
           </div>
         ),
       )}
       {conversation ? (
-        <Grow open={typing} animate={false}>
+        <Grow open={typing}>
           <Typing />
         </Grow>
       ) : (
