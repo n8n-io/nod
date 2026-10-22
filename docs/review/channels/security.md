@@ -42,6 +42,8 @@ Further source checks found a waveform decode limit that trusted browser duratio
 
 These follow-up reviews do not extend the frozen audit ledger or prove codec compatibility or live delivery. Browser checks use a real synthetic Ogg file. Incoming contacts use the existing media byte limit, without an extra card-count limit. Unsupported or large contact previews keep the original downloadable file.
 
+A later independent source review checked the OpenRouter transcription path, key selection, request targets and usage records. It found a misplaced readiness getter, which was moved to the speech wrapper. A fixture checks speech setup changes without an app restart. The final source review found no remaining issue in this change. OpenRouter sign-in supplies an inference key; ChatGPT subscription credentials remain excluded. Keys are read for each request. Both speech services use fixed addresses and refuse redirects. A failed request does not switch services. This review does not verify live API behavior or billing.
+
 ## Finite load and failure checks
 
 The channel fixtures send 64 concurrent copies of one message and 32 replays after restart. They check one saved file and one submitted turn. They also send 32 duplicate deliveries of one foreign message, hold four distinct uploads, refuse a fifth, release capacity and accept its explicit retry. Other checks exceed UTF-8 key-batch and actual media-stream byte limits, fail a file save after bytes are written, cancel a late stream, lose a send response and fail key deletion.

@@ -7,9 +7,13 @@ export class TranscriptionLengthError extends Error {}
 export class SpeechSetupError extends Error {}
 
 export function createSpeech(provider: SpeechProvider) {
-  function available(signal?: AbortSignal) {
+  function available(signal?: AbortSignal, transcribing = false) {
     signal?.throwIfAborted();
-    if (!provider.configured)
+    if (
+      !(transcribing
+        ? (provider.transcriptionConfigured ?? provider.configured)
+        : provider.configured)
+    )
       throw Object.assign(new SpeechSetupError('Speech is not configured.'), { statusCode: 503 });
   }
   return {
@@ -18,7 +22,7 @@ export function createSpeech(provider: SpeechProvider) {
       signal?: AbortSignal,
       report?: (usage: ProviderUsageEvent) => void,
     ) {
-      available(signal);
+      available(signal, true);
       if (!provider.transcribe) throw new Error('Voice transcription is not configured.');
       if (
         !audio.bytes.length ||

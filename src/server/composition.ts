@@ -68,6 +68,7 @@ import {
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
+import { createOpenRouterTranscriptionProvider } from '../providers/openrouter/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService, endpointAddress } from './models.ts';
 import { createIntegrationBrowser } from './integration-browser.ts';
@@ -239,6 +240,22 @@ export function createDefaultAdapters(
     },
     changed: refresh,
   });
+  const openAISpeech = createOpenAISpeechProvider({
+    apiKey: env.OPENAI_API_KEY || (() => models.apiKey('openai')),
+    configured: () => Boolean(env.OPENAI_API_KEY) || models.hasApiKey('openai'),
+    speechModel: env.TTS_MODEL,
+    transcriptionModel: env.STT_MODEL,
+    voice: env.TTS_VOICE,
+  });
+  const openRouterTranscription = createOpenRouterTranscriptionProvider({
+    apiKey: () =>
+      env.OPENROUTER_API_KEY
+        ? Promise.resolve(env.OPENROUTER_API_KEY)
+        : models.apiKey('openrouter'),
+    configured: () => Boolean(env.OPENROUTER_API_KEY) || models.hasApiKey('openrouter'),
+    model:
+      env.STT_MODEL && (env.STT_MODEL.includes('/') ? env.STT_MODEL : `openai/${env.STT_MODEL}`),
+  });
   const traces = createModelTraces(
     createN8nTraces({
       url: env.NOD_TRACES_URL ?? 'https://internal.users.n8n.cloud/webhook/nod/traces',
@@ -311,13 +328,19 @@ export function createDefaultAdapters(
       container: env.WORKSPACE_CONTAINER || 'nod-workspace',
       workspaceRoot: join(dataRoot, 'workspaces'),
     }),
-    speech: createOpenAISpeechProvider({
-      apiKey: env.OPENAI_API_KEY || (() => models.apiKey('openai')),
-      configured: () => Boolean(env.OPENAI_API_KEY) || models.hasApiKey('openai'),
-      speechModel: env.TTS_MODEL,
-      transcriptionModel: env.STT_MODEL,
-      voice: env.TTS_VOICE,
-    }),
+    speech: {
+      ...openAISpeech,
+      get configured() {
+        return openAISpeech.configured;
+      },
+      get transcriptionConfigured() {
+        return openAISpeech.configured || openRouterTranscription.configured;
+      },
+      transcribe: (audio, signal, report) =>
+        openAISpeech.configured
+          ? openAISpeech.transcribe!(audio, signal, report)
+          : openRouterTranscription.transcribe(audio, signal, report),
+    },
     integrations,
     integrationBrowser,
     keyStore,

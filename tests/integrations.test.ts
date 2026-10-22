@@ -7617,7 +7617,8 @@ test(
       let speechReady = false;
       const speech = speechLedger.speech({
         id: 'fixture',
-        get configured() {
+        configured: false,
+        get transcriptionConfigured() {
           return speechReady;
         },
         async synthesize() {

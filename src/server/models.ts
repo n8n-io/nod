@@ -159,7 +159,10 @@ export function createModelService(options: {
   }
   function apiKeyConnection(provider: ModelProvider) {
     const candidates = rows.filter(
-      (row) => row.provider === provider && row.method === 'api_key' && row.status === 'connected',
+      (row) =>
+        row.provider === provider &&
+        (row.method === 'api_key' || (provider === 'openrouter' && row.method === 'oauth')) &&
+        row.status === 'connected',
     );
     return (
       candidates.find((row) => row.id === selection?.connectionId) ??

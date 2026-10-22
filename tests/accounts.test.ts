@@ -1929,7 +1929,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       async exchange() {
         exchanging();
         await exchangeGate;
-        return backend.exchange();
+        exchanges++;
+        return { type: 'api_key' as const, key: 'fixture-openrouter-key' };
       },
     });
     const slowApp = Fastify();
@@ -1947,6 +1948,13 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       [200, 200],
     );
     assert.equal(exchanges, exchangesBefore + 1);
+    assert.equal(slow.hasApiKey('openrouter'), true);
+    assert.equal(await slow.apiKey('openrouter'), 'fixture-openrouter-key');
+    assert.equal(slow.hasApiKey('openai'), false);
+    const routerId = slow.view().connections[0].id;
+    await slow.remove(routerId);
+    assert.equal(slow.hasApiKey('openrouter'), false);
+    assert.equal(await slow.apiKey('openrouter'), undefined);
     const failed = await f.create('fixture-failed', {
       ...backend,
       exchange: async () => {

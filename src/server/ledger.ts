@@ -288,6 +288,9 @@ export function createLedger({
       get configured() {
         return base.configured;
       },
+      get transcriptionConfigured() {
+        return base.transcriptionConfigured;
+      },
       async synthesize(text, signal, onUsage) {
         if (await limitReached()) throw new Error(spendingLimitReached);
         try {

@@ -383,7 +383,9 @@ export function ModelSettings({
             Provider conditions
           </a>
         </p>
-        <p className="model-footnote">Voice needs an OpenAI API key in server settings.</p>
+        <p className="model-footnote">
+          Voice input uses an OpenAI or OpenRouter API key. Voice replies need OpenAI.
+        </p>
       </details>
     </div>
   );

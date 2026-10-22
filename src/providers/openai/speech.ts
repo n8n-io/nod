@@ -1,27 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SpeechProvider } from '../../ports/speech.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
-
-async function readResponse(response: Response, limit: number) {
-  if (!response.ok || !response.body) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error('Speech request failed.');
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const part = await reader.read();
-      if (part.done) return Buffer.concat(chunks);
-      size += part.value.length;
-      if (size > limit) throw new Error('The speech response is too large.');
-      chunks.push(part.value);
-    }
-  } finally {
-    await reader.cancel().catch(() => {});
-  }
-}
+import { readSpeechResponse } from '../speech.ts';
 
 export function createOpenAISpeechProvider(options: {
   apiKey?: string | (() => Promise<string | undefined>);
@@ -87,11 +67,12 @@ export function createOpenAISpeechProvider(options: {
         );
         const response = await request('https://api.openai.com/v1/audio/transcriptions', {
           method: 'POST',
+          redirect: 'error',
           headers: await headers(),
           body,
           signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]),
         });
-        const result = JSON.parse((await readResponse(response, 1024 * 1024)).toString()) as {
+        const result = JSON.parse((await readSpeechResponse(response, 1024 * 1024)).toString()) as {
           text?: unknown;
           usage?: {
             type?: string;
@@ -144,6 +125,7 @@ export function createOpenAISpeechProvider(options: {
       return measured(model, 'synthesize', signal, report, async (usage) => {
         const response = await request('https://api.openai.com/v1/audio/speech', {
           method: 'POST',
+          redirect: 'error',
           signal: AbortSignal.any([AbortSignal.timeout(600_000), ...(signal ? [signal] : [])]),
           headers: { ...(await headers()), 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -153,7 +135,7 @@ export function createOpenAISpeechProvider(options: {
             response_format: 'opus',
           }),
         });
-        const bytes = await readResponse(response, 50 * 1024 * 1024);
+        const bytes = await readSpeechResponse(response, 50 * 1024 * 1024);
         if (model === 'tts-1' || model === 'tts-1-hd') {
           usage.costUsd = (Array.from(text).length * (model === 'tts-1' ? 15 : 30)) / 1e6;
           usage.pricing = 'sdk_estimate';

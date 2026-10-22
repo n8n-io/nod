@@ -181,6 +181,72 @@ test(
       WHATSAPP_POLICY_CONFIRMED: 'true',
       WHATSAPP_ALLOWED_NUMBER: '34600000000',
     });
+    const audio = {
+      bytes: Buffer.from('Synthetic speech'),
+      mimeType: 'audio/ogg',
+      name: 'voice.ogg',
+    };
+    const { createSpeech } = await import('../src/server/speech.ts');
+    let speechFails = false;
+    const requests: Array<{ url: string; key: string | null; model: string | null }> = [];
+    const speechRequest = t.mock.method(
+      globalThis,
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        assert.ok(init?.body instanceof FormData);
+        assert.equal(init.redirect, 'error');
+        requests.push({
+          url: String(input),
+          key: new Headers(init.headers).get('authorization'),
+          model: init.body.get('model') as string,
+        });
+        if (speechFails) throw new Error('Synthetic provider failure.');
+        return Response.json({ text: 'Synthetic transcription' });
+      },
+    );
+    try {
+      for (const [environment, provider, model] of [
+        [{ OPENROUTER_API_KEY: 'fixture-router' }, 'openrouter', 'openai/gpt-transcribe'],
+        [
+          { OPENROUTER_API_KEY: 'fixture-router', STT_MODEL: 'gpt-transcribe' },
+          'openrouter',
+          'openai/gpt-transcribe',
+        ],
+        [
+          { OPENROUTER_API_KEY: 'fixture-router', STT_MODEL: 'qwen/qwen3-asr-1.7b' },
+          'openrouter',
+          'qwen/qwen3-asr-1.7b',
+        ],
+        [{ OPENAI_API_KEY: 'fixture-openai' }, 'openai', 'gpt-transcribe'],
+        [
+          { OPENAI_API_KEY: 'fixture-openai', OPENROUTER_API_KEY: 'fixture-router' },
+          'openai',
+          'gpt-transcribe',
+        ],
+      ] as const) {
+        const adapters = createDefaultAdapters(environment);
+        const speech = createSpeech(adapters.speech);
+        speechFails = false;
+        assert.equal(await speech.transcribe(audio), 'Synthetic transcription');
+        assert.deepEqual(requests.at(-1), {
+          url:
+            provider === 'openai'
+              ? 'https://api.openai.com/v1/audio/transcriptions'
+              : 'https://openrouter.ai/api/v1/audio/transcriptions',
+          key: provider === 'openai' ? 'Bearer fixture-openai' : 'Bearer fixture-router',
+          model,
+        });
+        const beforeFailure = requests.length;
+        speechFails = true;
+        await assert.rejects(speech.transcribe(audio));
+        assert.equal(requests.length, beforeFailure + 1);
+        if (provider === 'openrouter') await assert.rejects(speech.synthesize('Synthetic reply'));
+        await adapters.models!.close();
+      }
+      await assert.rejects(createSpeech(defaults.speech).transcribe(audio));
+    } finally {
+      speechRequest.mock.restore();
+    }
     for (const mode of [undefined, 'cloud']) {
       const cloud = await defaults.messagingSetup!.create({
         WHATSAPP_ENABLED: 'true',

@@ -6,6 +6,7 @@ export interface GeneratedAudio {
 export interface SpeechProvider {
   id: string;
   configured: boolean;
+  transcriptionConfigured?: boolean;
   synthesize(
     text: string,
     signal?: AbortSignal,

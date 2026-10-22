@@ -21,6 +21,7 @@ import { createChannelSessionStore } from '../src/server/channel-session.ts';
 import { createChannelMedia } from '../src/server/channel-media.ts';
 import { createSpeech } from '../src/server/speech.ts';
 import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
+import { createOpenRouterTranscriptionProvider } from '../src/providers/openrouter/speech.ts';
 import { createArtifactService } from '../src/server/artifacts.ts';
 import { mkdtemp, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -947,6 +948,7 @@ test('speech uses a bounded transcription request and generates Ogg voice output
     apiKey: async () => key,
     configured: () => Boolean(key),
     fetch: async (input, init) => {
+      assert.equal(init?.redirect, 'error');
       assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
       if (String(input).endsWith('/transcriptions')) {
         assert.ok(init?.body instanceof FormData);
@@ -1015,6 +1017,94 @@ test('speech uses a bounded transcription request and generates Ogg voice output
   await assert.rejects(failed.transcribe!({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }));
   await assert.rejects(failed.synthesize('Synthetic provider error'));
   assert.equal(cancelled, 2);
+});
+
+test('OpenRouter transcribes with its own current key, bounds responses, and reports cost without content', async () => {
+  const audio = { bytes: Buffer.from('Synthetic voice'), mimeType: 'audio/ogg', name: 'voice.ogg' };
+  let key: string | undefined;
+  let calls = 0;
+  let failure: 'status' | 'size' | 'abort' | undefined;
+  let cancelled = 0;
+  const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  const controller = new AbortController();
+  const provider = createOpenRouterTranscriptionProvider({
+    apiKey: async () => key,
+    configured: () => Boolean(key),
+    model: 'qwen/qwen3-asr-1.7b',
+    fetch: async (url, init) => {
+      calls++;
+      assert.equal(String(url), 'https://openrouter.ai/api/v1/audio/transcriptions');
+      assert.equal(init?.redirect, 'error');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      assert.ok(init?.body instanceof FormData);
+      assert.equal(init.body.get('model'), 'qwen/qwen3-asr-1.7b');
+      assert.equal(init.body.get('response_format'), 'json');
+      const file = init.body.get('file');
+      assert.ok(file instanceof File);
+      assert.deepEqual(Buffer.from(await file.arrayBuffer()), audio.bytes);
+      if (failure === 'abort') {
+        controller.abort();
+        init.signal!.throwIfAborted();
+      }
+      if (failure)
+        return new Response(
+          new ReadableStream({
+            start(stream) {
+              if (failure === 'size') stream.enqueue(Buffer.alloc(1024 * 1024 + 1));
+            },
+            cancel() {
+              cancelled++;
+            },
+          }),
+          { status: failure === 'status' ? 503 : 200 },
+        );
+      return Response.json({
+        text: 'Synthetic transcript.',
+        usage: { cost: 0.001, input_tokens: 30, output_tokens: 5 },
+      });
+    },
+  });
+  const service = createSpeech({
+    id: 'fixture',
+    configured: false,
+    get transcriptionConfigured() {
+      return provider.configured;
+    },
+    transcribe: (audio, signal) => provider.transcribe(audio, signal, (event) => usage.push(event)),
+    synthesize: async () => {
+      throw new Error('No speech output in this fixture.');
+    },
+  });
+  await assert.rejects(service.transcribe(audio));
+  assert.equal(calls, 0);
+  key = 'fixture-openrouter-first';
+  assert.equal(await service.transcribe(audio), 'Synthetic transcript.');
+  await assert.rejects(service.synthesize('Synthetic reply'));
+  assert.equal(calls, 1);
+  assert.equal(usage[0].provider, 'openrouter');
+  assert.equal(usage[0].model, 'qwen/qwen3-asr-1.7b');
+  assert.equal(usage[0].costUsd, 0.001);
+  assert.equal(usage[0].pricing, 'reported');
+  assert.equal(usage[0].inputTokens, 30);
+  assert.equal(usage[0].outputTokens, 5);
+  key = 'fixture-openrouter-rotated';
+  await service.transcribe(audio);
+  key = undefined;
+  await assert.rejects(service.transcribe(audio));
+  assert.equal(calls, 2);
+  key = 'fixture-openrouter-rotated';
+  for (failure of ['status', 'size', 'abort'] as const)
+    await assert.rejects(service.transcribe(audio, controller.signal));
+  assert.equal(calls, 5);
+  assert.equal(cancelled, 2);
+  assert.deepEqual(
+    usage.map((event) => event.status),
+    ['succeeded', 'succeeded', 'failed', 'failed', 'cancelled'],
+  );
+  assert.doesNotMatch(
+    JSON.stringify(usage),
+    /fixture-openrouter|Synthetic voice|Synthetic transcript/,
+  );
 });
 
 test(
