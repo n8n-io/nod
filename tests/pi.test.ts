@@ -12,6 +12,7 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import {
   createAgentSession,
   SessionManager,
+  ModelRuntime,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
@@ -3234,6 +3235,95 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('image analysis passes image blocks to Pi and does not retry a failed charged request', async () => {
+  const image = {
+    type: 'image' as const,
+    data: Buffer.from('synthetic pixels').toString('base64'),
+    mimeType: 'image/png',
+  };
+  let calls = 0;
+  let failed = false;
+  const runtime = {
+    setRuntimeApiKey: async () => {},
+    getModel: () => ({ provider: 'anthropic', id: 'claude-haiku-4-5' }),
+    completeSimple: async (_model: unknown, context: { messages: Array<{ content: unknown }> }) => {
+      calls++;
+      assert.deepEqual(context.messages[0].content, [
+        { type: 'text', text: '{"request":"Read the label"}' },
+        image,
+      ]);
+      const reply = fauxAssistantMessage('{"description":"Synthetic label"}');
+      if (failed) reply.stopReason = 'error';
+      return reply;
+    },
+  };
+  const curator = createPiMemoryCurator({
+    provider: 'anthropic',
+    model: 'claude-haiku-4-5',
+    apiKey: 'fixture',
+    runtime: runtime as never,
+  });
+  const request = {
+    task: 'vision' as const,
+    instructions: 'Read images',
+    input: { request: 'Read the label' },
+    images: [image],
+  };
+  assert.deepEqual(await curator.curate(request), { description: 'Synthetic label' });
+  failed = true;
+  await assert.rejects(curator.curate(request), /image model is unavailable/);
+  assert.equal(calls, 2);
+});
+
+test('subscription image analysis retains an API-price estimate for the task check-in', async (t) => {
+  t.mock.method(ModelRuntime, 'create', async () => ({
+    registerProvider() {},
+    refresh: async () => {},
+    streamSimple() {},
+    getModel: () => ({ provider: 'openai', id: 'fixture-vision' }),
+    completeSimple: async () => ({
+      ...fauxAssistantMessage('{"description":"Synthetic label"}'),
+      usage: {
+        input: 10,
+        output: 5,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 15,
+        cost: { input: 0.2, output: 0.1, cacheRead: 0, cacheWrite: 0, total: 0.3 },
+      },
+    }),
+  }));
+  const curator = createPiMemoryCurator({
+    provider: 'openai',
+    configured: () => true,
+    resolve: async () => ({
+      provider: 'openai',
+      method: 'subscription',
+      effort: 'off',
+      definition: {
+        choice: {
+          id: 'fixture-vision',
+          name: 'Fixture',
+          images: true,
+          efforts: ['off'],
+          contextWindow: 32_000,
+        },
+        spec: { provider: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1' },
+      },
+      read: async () => chatgptFixtureCredential(),
+    }),
+  });
+  const usage: Array<Partial<ProviderUsageEvent>> = [];
+  await curator.curate(
+    { task: 'vision', instructions: 'Read images', input: {} },
+    undefined,
+    (value) => usage.push(value),
+  );
+  assert.equal(usage.length, 1);
+  assert.equal(usage[0].costUsd, null);
+  assert.equal(usage[0].estimateUsd, 0.3);
 });
 
 test('the memory model reply is read whole when a skill body holds its own code block', async () => {

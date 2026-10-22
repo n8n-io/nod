@@ -189,7 +189,11 @@ export function telegramAttachments(
         { ...message, sticker: undefined, photo: [sticker.thumbnail] },
         token,
         request,
-      ).map((file) => ({ ...file, name: 'sticker-preview.jpg', source: 'sticker' as const })),
+      ).map((file) => ({
+        ...file,
+        name: 'sticker-preview.jpg',
+        source: 'sticker-preview' as const,
+      })),
     );
   return attachments;
 }

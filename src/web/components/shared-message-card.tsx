@@ -98,11 +98,18 @@ export function SharedMessageCard({
             <div>
               <strong>{contact.name}</strong>
               {contact.organization && <span>{contact.organization}</span>}
+              {contact.title && <span>{contact.title}</span>}
               {contact.phones.map((phone, index) => (
                 <span key={index}>{phone}</span>
               ))}
               {contact.emails.map((email, index) => (
                 <span key={index}>{email}</span>
+              ))}
+              {contact.addresses.map((address, index) => (
+                <span key={index}>{address}</span>
+              ))}
+              {contact.urls.map((url, index) => (
+                <span key={index}>{url}</span>
               ))}
             </div>
           </div>

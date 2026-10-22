@@ -1,9 +1,11 @@
 import { Play } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import type { Artifact } from '../../shared/contracts';
 import { ownedArtifactUrl } from '../lib/attachment-url';
 import { attachmentKind, previewableImage, vectorImage } from '../lib/attachment-kind';
 import { FileGlyph } from './attachment-glyph';
 import { useArtifactDrawer } from './artifact-context';
+import { StickerPlayer } from './sticker-player';
 export { ownedArtifactUrl } from '../lib/attachment-url';
 
 export interface ImagePreview {
@@ -53,6 +55,8 @@ export function artifactImage(artifact: Artifact): ImagePreview | null {
 
 export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
   const kind = attachmentKind(image.mimeType ?? 'image/png', image.name);
+  if (kind === 'sticker') return <StickerPlayer item={image} />;
+  if (kind === 'video' && image.source === 'sticker') return <StickerVideo item={image} />;
   if (kind === 'image')
     return (
       <img
@@ -84,6 +88,47 @@ export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
       <FileGlyph name={image.name} mimeType={image.mimeType ?? ''} size={24} />
       <span className="attachment-document-name">{image.name}</span>
     </span>
+  );
+}
+
+function StickerVideo({ item }: { item: ImagePreview }) {
+  const video = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const element = video.current;
+    if (!element) return;
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let visible = false;
+    const update = () => {
+      if (visible && !motion.matches && !document.hidden) void element.play().catch(() => {});
+      else element.pause();
+    };
+    const observer = new IntersectionObserver((entries) => {
+      visible = entries.some((entry) => entry.isIntersecting);
+      update();
+    });
+    observer.observe(element);
+    motion.addEventListener('change', update);
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      observer.disconnect();
+      motion.removeEventListener('change', update);
+      document.removeEventListener('visibilitychange', update);
+      element.pause();
+      element.removeAttribute('src');
+      element.load();
+    };
+  }, [item.url]);
+  return (
+    <video
+      ref={video}
+      src={item.url}
+      preload="metadata"
+      muted
+      loop
+      playsInline
+      tabIndex={-1}
+      aria-hidden="true"
+    />
   );
 }
 

@@ -1,4 +1,5 @@
 import type { ProviderUsageEvent } from './provider-usage.ts';
+import type { AgentImage } from './agent.ts';
 
 export interface MemoryCurator {
   id: string;
@@ -15,9 +16,11 @@ export interface MemoryCurator {
         | 'skill'
         | 'plan'
         | 'brief'
-        | 'analytics';
+        | 'analytics'
+        | 'vision';
       instructions: string;
       input: object;
+      images?: AgentImage[];
     },
     signal?: AbortSignal,
     report?: (

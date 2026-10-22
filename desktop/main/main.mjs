@@ -423,6 +423,26 @@ async function openExternal(value) {
   }
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password)
     throw new Error('This link is unavailable.');
+  const bot = /^\/([A-Za-z0-9_]{1,64})$/.exec(url.pathname)?.[1];
+  const start = url.searchParams.get('start');
+  if (
+    url.protocol === 'https:' &&
+    url.hostname === 't.me' &&
+    !url.port &&
+    !url.hash &&
+    bot &&
+    start &&
+    /^[A-Za-z0-9_-]{32}$/.test(start) &&
+    [...url.searchParams].length === 1
+  ) {
+    const native = new URL('tg://resolve');
+    native.searchParams.set('domain', bot);
+    native.searchParams.set('start', start);
+    try {
+      await shell.openExternal(native.href);
+      return;
+    } catch {}
+  }
   await shell.openExternal(url.href);
 }
 

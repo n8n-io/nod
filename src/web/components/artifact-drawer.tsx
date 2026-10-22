@@ -36,6 +36,7 @@ import AttachmentData, { PreviewUnavailable } from './attachment-data';
 import PdfPreview from './attachment-pdf';
 import { Button } from './ui';
 import { SharedMessageCard } from './shared-message-card';
+import { StickerPlayer } from './sticker-player';
 
 const minimumWidth = 360;
 const minimumChat = 360;
@@ -258,6 +259,12 @@ const ArtifactView = memo(function ArtifactView({
       </div>
     );
   if (!kind) return <PreviewUnavailable item={item} message="No preview for this file type" />;
+  if (kind === 'sticker')
+    return (
+      <div className="artifact-stage is-sticker">
+        <StickerPlayer item={item} onError={fail} />
+      </div>
+    );
   if (kind === 'image' && mode === 'code' && ownedArtifactUrl(item.url))
     return <AttachmentData item={item} kind="text" mode="code" stage={stage} onDetail={onDetail} />;
   if (kind === 'image') return <ImageView item={item} onDetail={onDetail} onError={fail} />;

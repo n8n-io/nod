@@ -16,7 +16,7 @@ import type {
   ModelSelection,
   ModelsResponse,
 } from '../shared/models.ts';
-import { modelSource } from '../shared/models.ts';
+import { lightestEffort, modelSource } from '../shared/models.ts';
 import { signInPage } from '../shared/sign-in-page.ts';
 import { agentModels, memoryModels } from '../shared/model-defaults.ts';
 import { createDatabaseModelStore, type ModelRecord, type ModelState } from './model-store.ts';
@@ -168,6 +168,22 @@ export function createModelService(options: {
       candidates.find((row) => row.id === selection?.connectionId) ??
       (candidates.length === 1 ? candidates[0] : undefined)
     );
+  }
+  function imageModel() {
+    const connected = rows.filter((row) => row.status === 'connected');
+    const selected = connected.find((row) => row.id === selection?.connectionId);
+    for (const row of [
+      ...(selected ? [selected] : []),
+      ...connected.filter((row) => row !== selected),
+    ]) {
+      const models = row.models.filter((model) => model.choice.images);
+      const definition =
+        (row === selected && models.find((model) => model.choice.id === selection?.modelId)) ||
+        models.find((model) => model.choice.id === memoryModels[row.provider]) ||
+        models.find((model) => model.choice.id === agentModels[row.provider]) ||
+        models[0];
+      if (definition) return { row, definition };
+    }
   }
   async function read(id: string) {
     const result = await store.change(async (state) => {
@@ -661,6 +677,21 @@ export function createModelService(options: {
       const row = apiKeyConnection(provider);
       const value = row && (await read(row.id));
       return value?.type === 'api_key' ? value.key : undefined;
+    },
+    hasImageModel() {
+      return Boolean(imageModel());
+    },
+    async resolveImage(): Promise<ModelAccess> {
+      const candidate = imageModel();
+      if (!candidate) throw new ConnectionError('Connect a model that accepts images in Models.');
+      const { row, definition } = candidate;
+      return {
+        provider: row.provider,
+        method: row.method,
+        definition,
+        effort: lightestEffort(definition.choice.efforts),
+        read: () => read(row.id),
+      };
     },
     async resolve(auxiliary = false): Promise<ModelAccess> {
       const selected = selection && { ...selection };

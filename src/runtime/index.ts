@@ -21,6 +21,7 @@ import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { firstInstruction, ownerContext, steeredInstruction, systemPrompt } from './prompt.ts';
+import { untrustedBlock } from '../shared/untrusted.ts';
 import { currentUserTime } from './time-context.ts';
 import { connectedTools, nodTools } from './tools.ts';
 import type { Turn } from './turn.ts';
@@ -115,6 +116,12 @@ export function createAgentRuntime(dependencies: {
   redactError?(text: string): string;
   observe?(turnId: string, event: RuntimeObservation): void;
   pageVisited?(url: string, subagent: boolean): void;
+  analyzeImages?(
+    images: AgentImage[],
+    request: string,
+    signal: AbortSignal,
+    execution: ExecutionScope & { onEvent(event: AgentEvent): void },
+  ): Promise<string | undefined>;
 }) {
   const { agent, computer, skills } = dependencies;
   const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
@@ -578,9 +585,11 @@ export function createAgentRuntime(dependencies: {
       const root = resolve(context.workspacePath);
       const inline = async (
         attachments: RuntimeContext['attachments'],
+        request: string,
         budget = { left: imageBudget },
       ) => {
         const images: AgentImage[] = [];
+        const paths: string[] = [];
         const omitted = new Set<string>();
         for (const attachment of attachments) {
           if (!imageTypes.has(attachment.mimeType)) continue;
@@ -589,7 +598,7 @@ export function createAgentRuntime(dependencies: {
           const limit = Math.min(imageBytes, budget.left);
           try {
             const bytes =
-              session?.readsImages !== false && limit > 0
+              (session?.readsImages !== false || dependencies.analyzeImages) && limit > 0
                 ? Buffer.from(
                     await dependencies.workspace.readArtifact(
                       threadId,
@@ -603,6 +612,7 @@ export function createAgentRuntime(dependencies: {
             if (!bytes || bytes.length > limit) omitted.add(attachment.path);
             else {
               budget.left -= bytes.length;
+              paths.push(attachment.path);
               images.push({
                 type: 'image',
                 data: bytes.toString('base64'),
@@ -613,6 +623,33 @@ export function createAgentRuntime(dependencies: {
             signal.throwIfAborted();
             omitted.add(attachment.path);
           }
+        }
+        if (session?.readsImages === false) {
+          let description: string | undefined;
+          if (images.length && dependencies.analyzeImages && !overBudget()) {
+            try {
+              description = await untilAborted(
+                dependencies.analyzeImages(images, request, signal, {
+                  ...execution,
+                  onEvent: countUsage,
+                }),
+                signal,
+              );
+            } catch {
+              signal.throwIfAborted();
+            }
+          }
+          for (const path of paths) omitted.add(path);
+          return {
+            images: [],
+            omitted,
+            analysis: description
+              ? untrustedBlock(
+                  'image analysis',
+                  JSON.stringify({ files: paths.map((path) => relative(root, path)), description }),
+                )
+              : undefined,
+          };
         }
         return { images, omitted };
       };
@@ -636,13 +673,23 @@ export function createAgentRuntime(dependencies: {
           (async () => {
             const budget = { left: imageBudget };
             const messages = [];
-            for (const message of await takeMessages()) {
-              const { images, omitted } = await inline(message.attachments, budget);
-              messages.push({ text: instruct(steeredInstruction(message, omitted)), images });
-            }
-            if (messages.length) {
+            const incoming = await takeMessages();
+            if (incoming.length) {
               checkInSpent = checkInStrikes = 0;
               replyOwed = true;
+            }
+            for (const message of incoming) {
+              const { images, omitted, analysis } = await inline(
+                message.attachments,
+                message.text,
+                budget,
+              );
+              messages.push({
+                text: instruct(steeredInstruction(message, omitted, analysis)),
+                images,
+              });
+            }
+            if (messages.length) {
               pendingReplies = pendingReplies.then(() =>
                 context.emit('steered', '', { execution }).catch(() => {}),
               );
@@ -712,8 +759,11 @@ export function createAgentRuntime(dependencies: {
       session = await opening;
       signal.throwIfAborted();
       const resumed = session.resumed;
-      const { images, omitted } = await inline(context.attachments);
-      await session!.prompt(instruct(firstInstruction(context, resumed, omitted)), images);
+      const { images, omitted, analysis } = await inline(context.attachments, context.prompt);
+      await session!.prompt(
+        instruct(firstInstruction(context, resumed, omitted, analysis)),
+        images,
+      );
       await pendingReplies;
       signal.throwIfAborted();
       if (checkInStopped && status === 'succeeded')

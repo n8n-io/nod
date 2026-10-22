@@ -95,7 +95,9 @@ export function createLedger({
   telemetry?: UsageTelemetry;
 }) {
   const activeTurn = new AsyncLocalStorage<string>();
-  const activeExecution = new AsyncLocalStorage<AgentSessionOptions>();
+  const activeExecution = new AsyncLocalStorage<
+    ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>
+  >();
   async function initialize() {
     await pool.query(`CREATE TABLE IF NOT EXISTS model_usage (
       id text PRIMARY KEY, owner_id text NOT NULL, turn_id uuid REFERENCES turns(id) ON DELETE SET NULL,
@@ -230,13 +232,15 @@ export function createLedger({
             const usage: ProviderUsageEvent = {
               provider: value.provider ?? 'model',
               category:
-                request.task === 'review' || request.task === 'access'
-                  ? 'review'
-                  : request.task === 'plan'
-                    ? 'tasks'
-                    : request.task === 'analytics'
-                      ? 'analytics'
-                      : 'memory',
+                request.task === 'vision'
+                  ? 'agent'
+                  : request.task === 'review' || request.task === 'access'
+                    ? 'review'
+                    : request.task === 'plan'
+                      ? 'tasks'
+                      : request.task === 'analytics'
+                        ? 'analytics'
+                        : 'memory',
               operation: request.task,
               status: 'succeeded',
               durationMs: 0,
@@ -543,6 +547,10 @@ export function createLedger({
     setLimits,
     messageCosts,
     withTurn: <T>(turnId: string, run: () => T) => activeTurn.run(turnId, run),
+    withExecution: <T>(
+      execution: ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>,
+      run: () => T,
+    ) => activeExecution.run(execution, run),
     read,
     report,
     registerRoutes,

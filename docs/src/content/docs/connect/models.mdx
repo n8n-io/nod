@@ -186,3 +186,7 @@ flowchart LR
 - [Configuration](/deploy/configuration/)
 - [Spending](/use/spending/)
 - [Your data and privacy](/trust/privacy/)
+
+## Images with a text model
+
+If your selected model cannot read images, nod uses an image model from a connected service to describe them. It checks your selected connection first, then your other connected services. The image model receives your current request and the images. Your selected chat model receives its description and stays selected. This image request uses that service's credentials and counts toward your spending limits. See [Files and voice messages](/use/channels/#files-and-voice-messages).

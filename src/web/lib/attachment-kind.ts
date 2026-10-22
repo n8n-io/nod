@@ -1,5 +1,6 @@
 export type AttachmentKind =
   | 'image'
+  | 'sticker'
   | 'audio'
   | 'video'
   | 'pdf'
@@ -14,6 +15,7 @@ export type AttachmentKind =
   | 'text';
 
 const extensionKinds: Record<string, AttachmentKind> = {
+  tgs: 'sticker',
   pdf: 'pdf',
   md: 'markdown',
   markdown: 'markdown',
@@ -58,6 +60,7 @@ const extensionKinds: Record<string, AttachmentKind> = {
 };
 
 function kindFromType(type: string): AttachmentKind | null {
+  if (type === 'application/x-tgsticker') return 'sticker';
   if (/^image\/(?:png|jpeg|webp|gif|avif|bmp|svg\+xml)$/.test(type)) return 'image';
   if (/^audio\/(?:mpeg|wav|x-wav|webm|ogg|mp4|aac|flac|x-m4a)$/.test(type)) return 'audio';
   if (/^video\/(?:mp4|webm|ogg|quicktime)$/.test(type)) return 'video';

@@ -150,7 +150,7 @@ const messageSchema = z
           mimeType: z.string().min(1).max(200),
           size: z.number().int().nonnegative(),
           voice: z.boolean().optional(),
-          source: z.enum(['sticker', 'location', 'contact']).optional(),
+          source: z.enum(['sticker', 'sticker-preview', 'location', 'contact']).optional(),
           read: z.custom<MessagingAttachment['read']>((value) => typeof value === 'function'),
         }),
       )

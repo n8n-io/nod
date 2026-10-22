@@ -44,6 +44,12 @@ These follow-up reviews do not extend the frozen audit ledger or prove codec com
 
 A later independent source review checked the OpenRouter transcription path, key selection, request targets and usage records. It found a misplaced readiness getter, which was moved to the speech wrapper. A fixture checks speech setup changes without an app restart. The final source review found no remaining issue in this change. OpenRouter sign-in supplies an inference key; ChatGPT subscription credentials remain excluded. Keys are read for each request. Both speech services use fixed addresses and refuse redirects. A failed request does not switch services. This review does not verify live API behavior or billing.
 
+Further independent source reviews checked image-model selection, image usage, TGS playback and vCard decoding. Vision requests now make one attempt, retain subscription price estimates and record the current turn, run and session. The description is untrusted data and has no host file paths. It does not change the owner's chat model or approve an action.
+
+TGS playback uses the pinned expression-free light canvas player in an opaque iframe. Its policy blocks network requests. The decoder bounds compressed bytes, decompressed bytes, dimensions, frames, structure, composition references, parent chains and generated shape work. It refuses expression data, unsupported modifiers, completion flags, slots, external assets, masks and mattes. The work estimate includes repeated references, styles and intermediate modifier output. Complex files keep the original download. Synthetic cases cover the reported expansion paths. The final source check found no missed bound in those paths; it was not a general audit of Lottie.
+
+Contact parsing collects folded line chunks and joins each logical value once. A fixture checks 100,000 folded lines, quoted-printable names and vCard 2.1, 3.0 and 4.0. Contact website values remain plain text. These reviews do not change the frozen audit records.
+
 ## Finite load and failure checks
 
 The channel fixtures send 64 concurrent copies of one message and 32 replays after restart. They check one saved file and one submitted turn. They also send 32 duplicate deliveries of one foreign message, hold four distinct uploads, refuse a fifth, release capacity and accept its explicit retry. Other checks exceed UTF-8 key-batch and actual media-stream byte limits, fail a file save after bytes are written, cancel a late stream, lose a send response and fail key deletion.
@@ -52,6 +58,6 @@ These are finite synthetic regression checks. They do not measure live provider 
 
 ## Remaining live work
 
-The owner chose to keep live verification pending. [The manual checklist](README.md#manual-live-check) covers both WhatsApp modes, Telegram pairing, task replies, files, voice, restart, network loss, stop and disconnect. Keep account details and real QR data in the private setup UI.
+The owner confirmed incoming Telegram photo handling in the isolated test app. The full live checklist remains open. [The manual checklist](README.md#manual-live-check) covers both WhatsApp modes, Telegram pairing, task replies, files, voice, restart, network loss, stop and disconnect. Keep account details and real QR data in the private setup UI.
 
 The unofficial WhatsApp protocol can change. This review cannot establish future compatibility, account restrictions, real provider retention or acceptance of each media format. The setup demo uses synthetic API responses and proves only its stated UI checks.

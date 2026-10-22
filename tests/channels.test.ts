@@ -35,6 +35,181 @@ import { runProcess } from '../src/providers/process.ts';
 import { loadAudioWaveform } from '../src/web/lib/audio-waveform.ts';
 import { contactCards } from '../src/shared/channel-content.ts';
 import { contactAttachment } from '../src/providers/chat-sdk/content.ts';
+import { gzipSync } from 'node:zlib';
+import { decodeSticker } from '../src/web/lib/sticker.ts';
+
+test('TGS previews decode vector animation and refuse expansion, expression and external asset input', async () => {
+  const animation = { v: '5.7.4', w: 512, h: 512, fr: 60, ip: 0, op: 180, layers: [], assets: [] };
+  const decode = (value: unknown, signal = new AbortController().signal) =>
+    decodeSticker(gzipSync(JSON.stringify(value)), signal);
+  assert.deepEqual(await decode(animation), animation);
+  for (const change of [
+    { w: 100_000 },
+    { op: 181 },
+    { fr: 0 },
+    { fonts: {} },
+    { slots: { S: { p: { k: Array.from({ length: 1000 }, () => 1) } } } },
+    { __complete: true },
+    { layers: [{ ty: 4, tt: 1, tp: 2 }] },
+    { layers: [{ ty: 0, refId: 'large', w: 1e9, h: 1e9 }], assets: [{ id: 'large', layers: [] }] },
+    { layers: [{ ty: 0, completed: true, layers: [{ ind: 1 }, { ind: 1 }] }] },
+    {
+      layers: [
+        {
+          ty: 4,
+          shapes: [
+            {
+              ty: 'sh',
+              ks: {
+                a: 0,
+                k: {
+                  c: true,
+                  v: [
+                    [0, 0],
+                    [0, 0],
+                  ],
+                  i: [
+                    [0, 0],
+                    [0, 0],
+                  ],
+                  o: [
+                    [0, 0],
+                    [0, 0],
+                  ],
+                },
+              },
+            },
+            ...Array.from({ length: 40 }, () => ({ ty: 'rd', r: { a: 0, k: 10 } })),
+          ],
+        },
+      ],
+    },
+    {
+      layers: [
+        {
+          ty: 4,
+          shapes: [
+            ...Array.from({ length: 400 }, () => ({
+              ty: 'el',
+              p: { a: 0, k: [0, 0] },
+              s: { a: 0, k: [20, 20] },
+            })),
+            ...Array.from({ length: 400 }, () => ({ ty: 'fl', c: { a: 0, k: [1, 0, 0, 1] } })),
+          ],
+        },
+      ],
+    },
+    { assets: [{ id: 'image', p: 'https://example.test/private', u: '' }] },
+    { layers: [{ ks: { x: 'while(true){}' } }] },
+    { layers: [{ ty: 4, shapes: [{ ty: 'rp', c: { a: 0, k: 1e12 } }] }] },
+    { layers: [{ ty: 4, shapes: [{ ty: 'zz', r: { a: 0, k: 1e12 } }] }] },
+    { layers: [{ ty: 4, shapes: [{ ty: 'sr', pt: { a: 0, k: 1e12 } }] }] },
+    { layers: [{ ty: 4, shapes: [{ ty: 'gf', g: { p: 1e12, k: { a: 0, k: [] } } }] }] },
+    { layers: [{ ty: 4, shapes: [{ ty: 'gf', g: { p: '1000000000', k: { a: 0, k: [] } } }] }] },
+    { layers: [{ ty: 4, ks: { p: { k: { 0: 1, length: 1e9 } } } }] },
+    {
+      layers: [{ ty: 0, refId: 'loop' }],
+      assets: [{ id: 'loop', layers: [{ ty: 0, refId: 'loop' }] }],
+    },
+    { layers: [{ ty: 0, refId: 'missing' }] },
+    {
+      layers: [
+        { ty: 4, ind: 1, parent: 2 },
+        { ty: 4, ind: 2, parent: 1 },
+      ],
+    },
+    { layers: [{ ty: 4, ind: '1', parent: 1 }] },
+    {
+      layers: [
+        { ty: 4, ind: 1 },
+        { ty: 4, ind: 1 },
+      ],
+    },
+    { layers: [JSON.parse('{"__proto__":{"p":"private"}}')] },
+    { layers: Array.from({ length: 100_001 }, () => 0) },
+    { data: 'x'.repeat(4_000_001) },
+  ])
+    await assert.rejects(decode({ ...animation, ...change }));
+  const nested = {
+    ...animation,
+    layers: [{ ty: 0, refId: 'shape' }],
+    assets: [{ id: 'shape', layers: [{ ty: 4, shapes: [{ ty: 'el' }] }] }],
+  };
+  assert.deepEqual(await decode(nested), nested);
+  await assert.rejects(
+    decode({
+      ...animation,
+      layers: [{ ty: 0, refId: 'level0' }],
+      assets: Array.from({ length: 20 }, (_, index) => ({
+        id: `level${index}`,
+        layers:
+          index === 19
+            ? [{ ty: 4, shapes: [{ ty: 'el' }] }]
+            : Array.from({ length: 2 }, () => ({ ty: 0, refId: `level${index + 1}` })),
+      })),
+    }),
+  );
+  await assert.rejects(decodeSticker(new Uint8Array([1, 2, 3]), new AbortController().signal));
+  await assert.rejects(
+    decodeSticker(
+      gzipSync(
+        '{"w":512,"h":512,"fr":60,"ip":0,"op":180,"layers":[{"ty":4,"ks":{"p":{"k":[1e400,0]}}}]}',
+      ),
+      new AbortController().signal,
+    ),
+  );
+  const stopped = new AbortController();
+  stopped.abort();
+  await assert.rejects(decode(animation, stopped.signal), { name: 'AbortError' });
+});
+
+test('contact previews read vCard 2.1, 3.0 and 4.0 without treating field values as markup or links', () => {
+  const text = [
+    'BEGIN:VCARD',
+    'VERSION:2.1',
+    'FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:Synthetic =C3=\r\n =85ngstr=C3=B6m',
+    'TEL;CELL:+34600000000',
+    'END:VCARD',
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    'N:Doe\\;Smith;Alex;;Dr.;',
+    'ORG:Synthetic\\;Co;Research',
+    'TITLE:Engineer',
+    'ADR:;;Example\\; Street;City;;;Country',
+    'item1.EMAIL:fixture@example.test',
+    'URL:javascript:alert(1)',
+    'END:VCARD',
+    'BEGIN:VCARD',
+    'VERSION:4.0',
+    'FN:Synthetic <Contact>',
+    'TEL;VALUE=uri:tel:+34600000001',
+    'EMAIL:mailto:other@example.test',
+    'END:VCARD',
+  ].join('\r\n');
+  const cards = contactCards(text);
+  assert.equal(cards.length, 3);
+  assert.equal(cards[0].name, 'Synthetic Ångström');
+  assert.equal(cards[1].name, 'Dr. Alex Doe;Smith');
+  assert.equal(cards[1].organization, 'Synthetic;Co · Research');
+  assert.equal(cards[1].title, 'Engineer');
+  assert.deepEqual(cards[1].addresses, ['Example; Street, City, Country']);
+  assert.deepEqual(cards[1].urls, ['javascript:alert(1)']);
+  assert.equal(cards[2].name, 'Synthetic <Contact>');
+  assert.deepEqual(cards[2].phones, ['+34600000001']);
+  assert.deepEqual(cards[2].emails, ['other@example.test']);
+  const start = performance.now();
+  assert.equal(
+    contactCards(
+      'BEGIN:VCARD\r\nX-BAD' + '\r\n A'.repeat(100_000) + '\r\nFN:Synthetic\r\nEND:VCARD',
+    )[0].name,
+    'Synthetic',
+  );
+  assert.ok(performance.now() - start < 5000);
+  assert.deepEqual(
+    contactCards('BEGIN:VCARD\r\nFN:First\r\nBEGIN:VCARD\r\nFN:Second\r\nEND:VCARD'),
+    [],
+  );
+});
 
 test('audio waveform reads refuse foreign URLs, oversized streams, redirects and cancelled work', async (t) => {
   const ids = Array.from({ length: 5 }, () => randomUUID());
@@ -926,7 +1101,7 @@ test('Telegram media keeps native replies and checks the sender before any downl
     animated.messages![0].attachments!.map((file) => [file.mimeType, file.source]),
     [
       ['application/x-tgsticker', 'sticker'],
-      ['image/jpeg', 'sticker'],
+      ['image/jpeg', 'sticker-preview'],
     ],
   );
   filePath = 'photos/fixture.jpg';

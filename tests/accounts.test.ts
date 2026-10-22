@@ -1309,6 +1309,59 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     };
   }
 
+  test('image fallback uses owned connected models without changing the chat selection and reads current credentials', async (t) => {
+    const f = await fixture(t);
+    const backend = {
+      ...f.backend,
+      catalog: async (
+        provider: import('../src/shared/models.ts').ModelProvider,
+        method: import('../src/shared/models.ts').ModelMethod,
+        credential?: import('../src/ports/models.ts').ModelCredential,
+      ) => {
+        const definitions = await f.backend.catalog('openai', method, credential);
+        return definitions.map((definition) => ({
+          ...definition,
+          choice: {
+            ...definition.choice,
+            images: credential?.type === 'api_key' && credential.key === 'fixture-vision',
+          },
+        }));
+      },
+    };
+    const owner = await f.create('fixture-images', backend);
+    const other = await f.create('fixture-images-other', backend);
+    await other.addKey('openai', 'fixture-vision');
+    const textId = await owner.addKey('openai', 'fixture-text');
+    const selection = owner.view().selection!;
+    assert.equal(owner.hasImageModel(), false);
+    await assert.rejects(owner.resolveImage(), /Connect a model that accepts images/);
+    const visionId = await owner.addKey('openai', 'fixture-vision');
+    await owner.select({ ...selection, connectionId: textId });
+    assert.equal(owner.hasImageModel(), true);
+    const access = await owner.resolveImage();
+    assert.equal(access.definition.choice.images, true);
+    assert.deepEqual(await access.read(), { type: 'api_key', key: 'fixture-vision' });
+    assert.deepEqual(owner.view().selection, { ...selection, connectionId: textId });
+    const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    const store = createDatabaseModelStore({
+      database: f.database,
+      ownerId: 'fixture-images',
+      keyStore: f.keyStore,
+    });
+    await store.initialize();
+    await store.change((state) => {
+      state.connections.find((row) => row.id === visionId)!.credential = {
+        type: 'api_key',
+        key: 'fixture-updated',
+      };
+    });
+    assert.deepEqual(await access.read(), { type: 'api_key', key: 'fixture-updated' });
+    await owner.remove(visionId);
+    assert.equal(await access.read(), undefined);
+    assert.equal(owner.hasImageModel(), false);
+    assert.equal((await owner.resolve()).definition.choice.images, false);
+  });
+
   test('model connections verify credential storage before opening sign-in or calling a provider', async (t) => {
     const f = await fixture(t);
     const { createEnvironmentKeyStore } = await import('../src/providers/environment/key-store.ts');

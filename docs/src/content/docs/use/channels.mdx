@@ -38,7 +38,7 @@ Open **Channels** in the sidebar, then select **Connect** on Telegram or WhatsAp
 
 1. In **Create a bot**, scan the code or select **Open Telegram** to open [BotFather](https://t.me/BotFather). Send `/newbot`, choose a name, then a username ending in `bot`, such as `my_nod_bot`.
 2. Select **I have my token**. Paste BotFather's reply, or just the token, into **BotFather message or token**. Select **Connect bot**.
-3. In **Open your bot**, scan the new code or select **Open Telegram**, then press **Start** in the bot's chat. This code works for 15 minutes.
+3. In **Open your bot**, scan the new code or select **Open Telegram**, then press **Start** in the bot's chat. This code works for 15 minutes. On desktop, nod opens the Telegram app when it is available. If **Start** does not connect, select **Copy pairing command** and paste the command in your bot's chat. Keep that command private.
 4. In **Confirm your account**, check your name, username, and numeric ID, then select **Confirm**. Only this account can message nod.
 5. Select **Start conversation** and say hello. nod must be running to reply.
 
@@ -90,21 +90,21 @@ When you run nod from source, you can set the `TELEGRAM_*` and `WHATSAPP_*` valu
 
 In nod chat, audio has an inline player with a waveform, play and pause, seek, elapsed time and playback speed. The waveform is processed locally for Ogg Opus voice notes. Before decoding, nod checks the stream, packet duration and page checksums. Long or unsupported audio can still play without a waveform.
 
-A sticker is a conversation message, not a request to review a file. Static stickers appear without a file-card background. Animated formats keep their original file. Telegram also supplies a visual preview when its message includes a thumbnail. A sticker sent as a reply stays linked to that message.
+A sticker is a conversation message, not a request to review a file. Static and animated WebP stickers, Telegram TGS animations and WebM video stickers play inline. Animations pause outside the visible chat or when the app is hidden. The reduced-motion setting stops automatic playback. TGS playback uses a local canvas in a sandbox with no network access. Invalid or oversized animations keep their original download. Telegram's thumbnail can still help the model read a sticker; it does not appear as a second message card. A sticker sent as a reply stays linked to that message.
 
 A file message sent before model setup gets a setup notice without a media download or transcription. If a chat model is connected but speech is not set up, nod asks for an OpenAI or OpenRouter API key in **Settings → Models**.
 
 With Telegram or the WhatsApp QR connection, send an image, document, video or audio file with your message. Captions stay with the file. Reply directly to a task message or its file to continue that task. A reply to a pending question goes to the session that asked it.
 
-You can send a photo or file without a caption. nod uses its content and the conversation to respond, and can ask what you want when that is unclear. It does not add a request to review the file. Image understanding needs a model that supports image input. PNG, JPEG and WebP images can reach the model directly within the runtime's [image limits](/how-it-works/agent-runtime/#keeping-the-context-small). Other files remain in the workspace for file tools.
+You can send a photo or file without a caption. nod uses its content and the conversation to respond, and can ask what you want when that is unclear. It does not add a request to review the file. PNG, JPEG and WebP images reach the selected model directly when it accepts images, within the runtime's [image limits](/how-it-works/agent-runtime/#keeping-the-context-small). If that model cannot read images, nod looks for an image model in its connected service, then in your other connected services. That model receives the images and your current request. It sends a description to the selected chat model. The chat selection stays the same. If no image model is available, the files stay in the workspace and nod can explain the missing capability. Other files remain in the workspace for file tools.
 
 Shared locations show their coordinates and place details in a map card. Select **View map** to load the map from [OpenStreetMap](https://www.openstreetmap.org). No map request runs before that click. A live-location share is a snapshot; nod does not track later movements.
 
-Shared contacts show a contact card. The original vCard stays available to download, including extra contacts and fields that the card preview does not show. A shared location or contact is data, not permission to contact a person or change an app.
+Shared contacts show a contact card with the name, organization, title, phone numbers, email addresses, postal addresses and website text when present. The preview reads vCard 2.1, 3.0 and 4.0, including folded fields and quoted-printable names. Website fields do not open automatically. The original vCard stays available to download, including extra contacts and fields that the card preview does not show. A shared location or contact is data, not permission to contact a person or change an app.
 
 A `.vcf` reply can arrive as a native contact. Telegram supports one native card with a vCard of at most 2048 bytes; larger or grouped cards arrive as a file. A valid `location.json` reply can arrive as a native location. The [Telegram API](https://core.telegram.org/bots/api#sendcontact) defines its native contact limit.
 
-A message usually has one file. An animated Telegram sticker can include its original file and an image preview. Album files arrive as separate messages and are not combined. The shared intake has a safety cap of ten files and 50 MB, and current adapters attach at most an original sticker and its preview. Telegram's hosted file API limits each incoming file to 20 MB. A voice message has a 25 MB limit. nod checks the sender before it downloads a file. Files belong to your shared conversation workspace.
+A message usually has one file. An animated Telegram sticker can include its original file and a model-only image preview. Album files arrive as separate messages and are not combined. The shared intake has a safety cap of ten files and 50 MB, and current adapters attach at most an original sticker and its preview. TGS previews accept Telegram's 64 KiB compressed limit, at most 4 MB after decompression, and a bounded vector structure. Telegram's hosted file API limits each incoming file to 20 MB. A voice message has a 25 MB limit. nod checks the sender before it downloads a file. Files belong to your shared conversation workspace.
 
 nod prepares at most four file messages at a time. If the channel is busy, send the message again after the current files finish. A caption and its transcript must fit within 100,000 characters. A failed save removes files that have no saved record.
 

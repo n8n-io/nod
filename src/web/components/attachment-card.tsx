@@ -169,10 +169,26 @@ function messageFiles(attachments: Artifact[]) {
   const owned = attachments
     .filter((artifact) => ownedArtifactUrl(artifact.url))
     .map((artifact): ImagePreview => ({ ...artifact, downloadUrl: artifact.url }));
-  const visual = owned.filter((item) =>
-    ['image', 'video'].includes(attachmentKind(item.mimeType ?? '', item.name) ?? ''),
+  const animated = owned.some(
+    (item) =>
+      item.source === 'sticker' &&
+      ['sticker', 'video'].includes(attachmentKind(item.mimeType ?? '', item.name) ?? ''),
   );
-  return { visual, rest: owned.filter((item) => !visual.includes(item)) };
+  const preview = (item: ImagePreview) =>
+    animated &&
+    (item.source === 'sticker-preview' ||
+      (item.source === 'sticker' &&
+        item.name === 'sticker-preview.jpg' &&
+        item.mimeType === 'image/jpeg'));
+  const visual = owned.filter(
+    (item) =>
+      !preview(item) &&
+      ['image', 'video', 'sticker'].includes(attachmentKind(item.mimeType ?? '', item.name) ?? ''),
+  );
+  return {
+    visual,
+    rest: owned.filter((item) => !preview(item) && !visual.includes(item)),
+  };
 }
 
 export function conversationFiles(messages: Pick<Message, 'attachments'>[]) {

@@ -7547,6 +7547,54 @@ test(
         4,
       );
       assert.equal(Math.round((await ledger.messageCosts([chat]))[chat].costUsd! * 100) / 100, 0.9);
+      const imageIds = [randomUUID(), randomUUID()];
+      const imageEvents: AgentEvent[] = [];
+      for (const id of imageIds)
+        await ledger.withExecution(
+          {
+            threadId,
+            sessionId,
+            turnId: chat,
+            runId: chat,
+            browserId: sessionId,
+            onEvent: (event) => imageEvents.push(event),
+          },
+          () =>
+            ledger
+              .curator({
+                id: 'fixture-vision',
+                configured: true,
+                curate: async (_request, _signal, report) => {
+                  report?.({ id, provider: 'openrouter', model: 'fixture-vision', costUsd: 0.03 });
+                  return { description: 'Synthetic label' };
+                },
+              })
+              .curate({ task: 'vision', instructions: 'Synthetic image input', input: {} }),
+        );
+      assert.equal(imageEvents.length, 2);
+      assert.ok(
+        imageEvents.every(
+          (event) =>
+            event.type === 'provider_usage' &&
+            event.usage.category === 'agent' &&
+            event.usage.operation === 'vision',
+        ),
+      );
+      const imageRows = (
+        await pool.query(
+          'SELECT turn_id,run_id,session_id,browser_id FROM model_usage WHERE owner_id=$1 AND id=ANY($2::text[])',
+          ['owner', imageIds],
+        )
+      ).rows;
+      assert.deepEqual(
+        imageRows,
+        imageIds.map(() => ({
+          turn_id: chat,
+          run_id: chat,
+          session_id: sessionId,
+          browser_id: sessionId,
+        })),
+      );
       assert.equal(
         (await pool.query("SELECT count(*)::int AS n FROM model_usage WHERE details ? 'costUsd'"))
           .rows[0].n,

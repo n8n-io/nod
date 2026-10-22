@@ -63,6 +63,10 @@ nod creates a random cryptographic identity for each installation and encrypts i
 
 You authorize each app, such as Gmail, with its provider. The Composio project key stays on the connection service. Your model keys stay encrypted on your installation. Provider keys never enter a prompt, nod's workspace or its browser.
 
+When the selected chat model cannot read an attached image, nod can send the image and your current request to an image model on another connected service. It first checks the selected connection, then the other connected connections. It keeps your chat selection. The selected chat model receives the image description as untrusted data. No image request is sent if no connected image model is available.
+
+Telegram TGS stickers are decoded and played locally in a sandbox with no network access. Static and video stickers use local artifact files. Contact previews do not fetch websites. A shared map loads from OpenStreetMap only after you select **View map**.
+
 Incoming voice messages go to OpenAI when its API key is available, or to OpenRouter and the provider it routes to when only an OpenRouter key is available. This can differ from your chat provider. nod selects one service before sending the audio and does not switch services after a failed request. Text for a voice reply goes to OpenAI. Playback and waveform processing run in your browser without a model. The audio and transcript follow the same owned file and message rules as other channel content. See [Files and voice messages](/use/channels/#files-and-voice-messages).
 
 The WhatsApp QR connection links nod as a device on the account you select. nod stores its device credentials and Signal keys encrypted on your installation. The QR code stays in the private setup panel. Session recordings exclude that panel. Disconnect removes the saved device keys. Group messages and other chats do not enter the nod conversation.

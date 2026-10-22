@@ -69,6 +69,7 @@ import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createOpenRouterTranscriptionProvider } from '../providers/openrouter/speech.ts';
+import { createImageAnalysis } from './images.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService, endpointAddress } from './models.ts';
 import { createIntegrationBrowser } from './integration-browser.ts';
@@ -159,6 +160,7 @@ export interface ApplicationAdapters {
   integrations: IntegrationProvider;
   keyStore: CredentialKeyStore;
   memoryCurator?: MemoryCurator;
+  imageCurator?: MemoryCurator;
   analyticsCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   decisions?: DecisionModel;
@@ -345,6 +347,14 @@ export function createDefaultAdapters(
     integrationBrowser,
     keyStore,
     memoryCurator: modelCurator,
+    imageCurator: createPiMemoryCurator({
+      get provider() {
+        return models.current.provider;
+      },
+      configured: () => models.hasImageModel(),
+      resolve: () => models.resolveImage(),
+      traces,
+    }),
     analyticsCurator: selectedCurator,
     onboardingCurator: selectedCurator,
     decisions,
@@ -557,8 +567,14 @@ async function initializeApplication(
     coreSkills,
   );
   const fetches = new Map<string, string[]>();
+  const analyzeImages =
+    adapters.imageCurator && createImageAnalysis(ledger.curator(adapters.imageCurator));
   const runtime = createAgentRuntime({
     agent: ledger.agent(adapters.agent),
+    analyzeImages:
+      analyzeImages &&
+      ((images, request, signal, execution) =>
+        ledger.withExecution(execution, () => analyzeImages(images, request, signal))),
     skills: skillLibrary,
     computer,
     workspace,

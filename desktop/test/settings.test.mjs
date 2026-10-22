@@ -347,6 +347,7 @@ async function runningDesktop(
     argv = [],
     prompt = () => assert.fail('No restart prompt is needed.'),
     reveal = () => assert.fail('No file should be revealed.'),
+    openExternal,
   } = {},
 ) {
   const storage = storedProfile
@@ -427,7 +428,13 @@ async function runningDesktop(
     session: { fromPartition: () => appSession },
     dialog: { showMessageBox: async (options) => prompt(options) },
     Menu: { getApplicationMenu: () => ({ getMenuItemById: () => updateMenu }) },
-    shell: { showItemInFolder: reveal, openExternal: async (url) => externalURLs.push(url) },
+    shell: {
+      showItemInFolder: reveal,
+      openExternal: async (url) => {
+        externalURLs.push(url);
+        await openExternal?.(url);
+      },
+    },
     URL,
     dirname,
     isAbsolute,
@@ -2189,6 +2196,39 @@ test('native artifact saving requires an owned main frame on the current trusted
   const retired = artifactDownload();
   f.saveEngineDownload(event, retired, sender, frame);
   assert.equal(retired.savedPath, undefined);
+});
+
+test('Telegram pairing opens the native app with the exact nonce and falls back to HTTPS', async (t) => {
+  let rejectNative = false;
+  const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+    openExternal: async (url) => {
+      if (rejectNative && url.startsWith('tg:')) throw new Error('No Telegram app.');
+    },
+  });
+  f.showEngine();
+  const sender = f.windows.at(-1).webContents;
+  const event = { sender, senderFrame: sender.mainFrame };
+  const invoke = (url) => f.handlers.get('nod:external')(event, url);
+  const nonce = 'Abcd1234_-'.repeat(3) + 'AB';
+  const url = `https://t.me/fixture_bot?start=${nonce}`;
+  await invoke(url);
+  const native = `tg://resolve?domain=fixture_bot&start=${nonce}`;
+  assert.deepEqual(f.externalURLs, [native]);
+  rejectNative = true;
+  await invoke(url);
+  assert.deepEqual(f.externalURLs.slice(-2), [native, url]);
+  for (const value of [
+    url + '&extra=yes',
+    url + '&start=' + nonce,
+    url + '#fragment',
+    url.replace('t.me', 'example.test'),
+    url.replace(nonce, 'short'),
+    url.replace('https:', 'http:'),
+  ]) {
+    await invoke(value);
+    assert.equal(f.externalURLs.at(-1), value);
+  }
+  await assert.rejects(invoke(native), /unavailable/);
 });
 
 test('native settings reject foreign windows, subframes, AI credentials, and web onboarding writes', async (t) => {
