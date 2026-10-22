@@ -318,11 +318,11 @@ function recentNativeObservations(messages: ContextEvent['messages']) {
       ],
     });
   }
-  const cut = observations.size - 2;
-  let seen = 0;
+  const boundary = messages.findLastIndex((message) => message.role === 'user');
+  const retained = new Set([...observations.keys()].filter((index) => index >= boundary).slice(-2));
   return messages.map((message, index) => {
     const replacement = observations.get(index);
-    return replacement && seen++ < cut ? replacement : message;
+    return replacement && !retained.has(index) ? replacement : message;
   });
 }
 

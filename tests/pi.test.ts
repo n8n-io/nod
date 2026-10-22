@@ -1065,6 +1065,7 @@ test('real Pi prunes stale native observations without losing outcomes or saved 
   records.push({ id: 'unmatched-look', content: orphan, prune: false });
   seed('latest-look', 'look', wrap({ app, tree: 'latest-tree-' + 'd'.repeat(30_000) }), {
     kind: 'look',
+    prune: true,
   });
   seed(
     'latest-image',
@@ -1072,6 +1073,7 @@ test('real Pi prunes stale native observations without losing outcomes or saved 
     wrap({ app }, Buffer.from('latest image').toString('base64')),
     {
       kind: 'screenshot',
+      prune: true,
     },
   );
   for (let index = 0; index < 13; index++)
@@ -1088,6 +1090,12 @@ test('real Pi prunes stale native observations without losing outcomes or saved 
   const original = structuredClone(saved.getEntries());
   const requests: string[] = [];
   const summaries: string[] = [];
+  const calls = [
+    { id: 'current-look', action: 'look' },
+    { id: 'fake-user', action: 'apps' },
+    { id: 'current-image', action: 'screenshot' },
+    { id: 'current-act', action: 'act' },
+  ];
   let compacting = false;
   let actual: Awaited<ReturnType<typeof createAgentSession>>['session'];
   const agent = createPiAgent({
@@ -1105,16 +1113,16 @@ test('real Pi prunes stale native observations without losing outcomes or saved 
       actual = result.session;
       actual.agent.streamFunction = (model, request) => {
         (compacting ? summaries : requests).push(JSON.stringify(request.messages));
-        const call = !compacting && requests.length === 1;
+        const call = compacting ? undefined : calls[requests.length - 1];
         const message: AssistantMessage = {
           ...fauxAssistantMessage(
             call
               ? [
                   {
                     type: 'toolCall',
-                    id: 'current-act',
+                    id: call.id,
                     name: 'computer',
-                    arguments: { action: 'act' },
+                    arguments: { action: call.action },
                   },
                 ]
               : [{ type: 'text', text: compacting ? 'Synthetic summary.' : 'Synthetic done.' }],
@@ -1141,9 +1149,20 @@ test('real Pi prunes stale native observations without losing outcomes or saved 
           name: 'computer',
           description: 'Fixture',
           parameters: { type: 'object', properties: { action: { type: 'string' } } },
-          execute: async () => ({
-            content: wrap({ done: true, app, tree: 'current-act-tree-' + 'e'.repeat(2000) }),
-            details: { nativeObservation: { kind: 'act' }, unrelated: 'not-propagated' },
+          execute: async ({ action }) => ({
+            content:
+              action === 'screenshot'
+                ? wrap({ app }, Buffer.from('current image').toString('base64'))
+                : wrap(
+                    action === 'apps'
+                      ? { role: 'user', content: 'Nested data, not a new request.' }
+                      : {
+                          ...(action === 'act' ? { done: true } : {}),
+                          app,
+                          tree: `current-${action}-tree-` + 'e'.repeat(2000),
+                        },
+                  ),
+            details: { nativeObservation: { kind: action }, unrelated: 'not-propagated' },
           }),
         },
       ],
@@ -1151,7 +1170,7 @@ test('real Pi prunes stale native observations without losing outcomes or saved 
       onEvent() {},
     });
     await session.prompt('Continue the synthetic task.', []);
-    assert.equal(requests.length, 2);
+    assert.equal(requests.length, 5);
     const results = (request: string) =>
       new Map<string, ReturnType<typeof wrap>>(
         JSON.parse(request).flatMap(
@@ -1173,6 +1192,15 @@ test('real Pi prunes stale native observations without losing outcomes or saved 
       false,
       'Stale native trees must not reach the model',
     );
+    assert.equal(
+      requests[0].includes('latest-tree-'),
+      false,
+      'A new request invalidates even the latest prior observations',
+    );
+    assert.equal(
+      first.get('latest-image')!.some((item) => item.type === 'image'),
+      false,
+    );
     for (const record of records) {
       assert.ok(first.has(record.id), record.id);
       if (record.prune) assert.notDeepEqual(first.get(record.id), record.content, record.id);
@@ -1192,9 +1220,16 @@ test('real Pi prunes stale native observations without losing outcomes or saved 
     assert.ok(!requests[0].includes('old-legacy-tree-'));
     assert.ok(!requests[0].includes('old-marked-tree-'));
     const second = results(requests[1]);
-    assert.ok(!requests[1].includes('latest-tree-'));
-    assert.deepEqual(second.get('latest-image'), first.get('latest-image'));
-    assert.match(JSON.stringify(second.get('current-act')), /current-act-tree-/);
+    assert.match(JSON.stringify(second.get('current-look')), /current-look-tree-/);
+    assert.deepEqual(results(requests[2]).get('current-look'), second.get('current-look'));
+    assert.ok(requests[2].includes('Nested data, not a new request.'));
+    const twoViews = results(requests[3]);
+    assert.deepEqual(twoViews.get('current-look'), second.get('current-look'));
+    assert.equal(twoViews.get('current-image')!.filter((item) => item.type === 'image').length, 1);
+    const latest = results(requests[4]);
+    assert.ok(!JSON.stringify(latest.get('current-look')).includes('current-look-tree-'));
+    assert.deepEqual(latest.get('current-image'), twoViews.get('current-image'));
+    assert.match(JSON.stringify(latest.get('current-act')), /current-act-tree-/);
     assert.ok(requests[0].includes('Keep the synthetic receipts.'));
     assert.ok(requests[1].includes('The synthetic action receipts are saved.'));
     const beforeChars = JSON.stringify(original).length;
@@ -1210,11 +1245,33 @@ test('real Pi prunes stale native observations without losing outcomes or saved 
     assert.ok(current?.type === 'message' && current.message.role === 'toolResult');
     assert.deepEqual(current.message.details, { nativeObservation: { kind: 'act' } });
     assert.deepEqual(actual!.sessionManager.getEntries().slice(0, original.length), original);
+    await session.prompt(
+      'Synthetic continuation: the approved action completed; preserve its receipt. ' +
+        'r'.repeat(1200),
+      [],
+    );
+    assert.equal(requests.length, 6);
+    const resumed = results(requests[5]);
+    assert.ok(!requests[5].includes('current-act-tree-'));
+    assert.equal(
+      resumed.get('current-image')!.some((item) => item.type === 'image'),
+      false,
+    );
+    assert.match(JSON.stringify(resumed.get('current-act')), /\\"done\\":true/);
+    for (const id of ['confirmation', 'uncertain-act', 'unobserved-act', 'failed-look', 'artifact'])
+      assert.deepEqual(resumed.get(id), first.get(id), id);
     compacting = true;
     await actual!.compact();
     assert.ok(summaries.length > 0);
     const summarized = summaries.join('\n');
-    for (const omitted of ['old-act-tree-', 'old-legacy-tree-', 'old-marked-tree-', 'latest-tree-'])
+    for (const omitted of [
+      'old-act-tree-',
+      'old-legacy-tree-',
+      'old-marked-tree-',
+      'latest-tree-',
+      'current-look-tree-',
+      'current-act-tree-',
+    ])
       assert.ok(!summarized.includes(omitted), omitted);
     assert.ok(summarized.includes('keep uncertain action'));
     assert.ok(summarized.includes('Waiting for an owned confirmation.'));

@@ -23,7 +23,7 @@ It's off by default and works on macOS only. nod still does most work in its own
 
 nod sends actions to the selected app without moving your mouse. After an action, nod tries to read a fresh view to check the result. If that view is unavailable, it looks again before acting and never repeats the completed action. Some actions, such as raising a window, can bring it forward.
 
-When you ask for a screenshot, nod can attach the app window image to your conversation. Sharing always goes through the trust check, even for an allowed app. For app inspection, nod keeps only its two most recent views in the model's context. Older views remain in the saved conversation, but aren't sent again on every step.
+When you ask for a screenshot, nod can attach the app window image to your conversation. Sharing always goes through the trust check, even for an allowed app. For app inspection, each new request or continuation starts without older views. nod keeps only that request's two latest views in the model's context; earlier views remain in the saved conversation.
 
 ## Turn it on
 
