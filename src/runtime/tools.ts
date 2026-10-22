@@ -885,20 +885,10 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     ...(context.computer
       ? [
           bind(toolDefinitions.computer, async (p) => {
-            if (p.action === 'share_screenshot' && !context.publishScreenshot)
-              throw new Error('Screenshot publishing is unavailable.');
-            const request =
-              p.action === 'share_screenshot' ? { action: 'screenshot', app: p.app } : p;
-            const result = await confirm(await context.computer!(request));
+            const result = await confirm(await context.computer!(p));
             signal.throwIfAborted();
             if (result && typeof result === 'object' && 'png' in result) {
               const { png, ...rest } = result as { png: string };
-              if (p.action === 'share_screenshot')
-                return context.publishScreenshot!(
-                  Buffer.from(png, 'base64'),
-                  p.name,
-                  'computer_screenshot',
-                );
               return {
                 content: [
                   { type: 'text', text: JSON.stringify(rest) },

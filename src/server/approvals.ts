@@ -136,10 +136,25 @@ export async function turnOrigin(turnId: string) {
     const replies =
       origin.source !== 'user' && replyTurns.length
         ? (
-            await client.query<{ text: string; created_at: Date }>(
-              `SELECT m.text,m.created_at FROM messages m
+            await client.query<{
+              text: string;
+              created_at: Date;
+              assistant_message: string | null;
+            }>(
+              `SELECT m.text,m.created_at,answered.text AS assistant_message FROM messages m
                JOIN unnest($3::uuid[],$4::uuid[]) AS replies(message_id,turn_id)
                  ON m.id=replies.message_id AND m.turn_id=replies.turn_id
+               JOIN turns current ON current.id=m.turn_id AND current.owner_id=m.owner_id
+                 AND current.thread_id=m.thread_id
+               LEFT JOIN LATERAL (
+                 SELECT a.text FROM messages a JOIN turns parent ON parent.id=a.turn_id
+                   AND parent.owner_id=a.owner_id AND parent.thread_id=a.thread_id
+                 WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.role='assistant' AND a.text<>''
+                   AND a.turn_id=ANY($5::uuid[]) AND (a.created_at,a.id)<(m.created_at,m.id)
+                   AND (a.id=m.reply_to_message_id OR (m.reply_to_message_id IS NULL
+                     AND parent.channel=current.channel))
+                 ORDER BY a.created_at DESC,a.id DESC LIMIT 1
+               ) answered ON true
                WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.role='user'
                ORDER BY m.created_at,m.id`,
               [
@@ -147,9 +162,14 @@ export async function turnOrigin(turnId: string) {
                 current.thread_id,
                 replyTurns.map((turn) => turn.message_id),
                 replyTurns.map((turn) => turn.id),
+                chain.map((turn) => turn.id),
               ],
             )
-          ).rows.map((row) => ({ at: row.created_at.toISOString(), text: row.text }))
+          ).rows.map((row) => ({
+            at: row.created_at.toISOString(),
+            text: row.text,
+            ...(row.assistant_message ? { assistantMessage: row.assistant_message } : {}),
+          }))
         : [];
     return {
       taskId: current.task_id,

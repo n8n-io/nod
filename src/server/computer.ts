@@ -64,6 +64,16 @@ export const computerInput = z.discriminatedUnion('action', [
   z.object({ action: z.literal('screenshot'), app: z.string().min(1).max(200) }).strict(),
   z
     .object({
+      action: z.literal('share_screenshot'),
+      app: z.string().min(1).max(200),
+      name: z
+        .string()
+        .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/)
+        .optional(),
+    })
+    .strict(),
+  z
+    .object({
       action: z.literal('act'),
       app: z.string().min(1).max(200),
       step: z.enum(['press', 'set', 'focus', 'showMenu', 'raise', 'type', 'key']),
@@ -101,6 +111,12 @@ export function createComputerPolicy(options: {
   request: Request;
   lock(turnId: string, write: () => Promise<void>): Promise<void>;
   signalFor(turnId: string): AbortSignal | undefined;
+  publishScreenshot?(
+    turn: TurnRef,
+    bytes: Uint8Array,
+    name: string | undefined,
+    signal: AbortSignal,
+  ): Promise<unknown>;
   using?(apps: string[]): void;
 }) {
   const { pool, ownerId, request } = options;
@@ -312,7 +328,12 @@ export function createComputerPolicy(options: {
         signal.throwIfAborted();
         return { app, running: true, next: 'Look at the app before acting in it.' };
       }
-    } else if (allowed && input.action !== 'act' && input.action !== 'open') {
+    } else if (
+      allowed &&
+      input.action !== 'act' &&
+      input.action !== 'open' &&
+      input.action !== 'share_screenshot'
+    ) {
       await provenance.admit?.(false);
       signal.throwIfAborted();
       return observe(input.action, app, signal);
@@ -321,6 +342,9 @@ export function createComputerPolicy(options: {
       action: input.action,
       app: app.name,
       bundleId: app.bundleId,
+      ...(input.action === 'share_screenshot' && input.name !== undefined
+        ? { name: input.name }
+        : {}),
     };
     if (input.action === 'act') {
       const { step, ref, value, text, key } = input;
@@ -343,7 +367,10 @@ export function createComputerPolicy(options: {
       };
     }
     if (input.action === 'open' && running) args = { ...args, running: true };
-    const verdict = await options.check(turn, 'NOD_computer', args);
+    const verdict =
+      allowed && input.action === 'share_screenshot'
+        ? { confirm: false as const }
+        : await options.check(turn, 'NOD_computer', args);
     const action = allowed ? 'NOD_computer' : 'NOD_computer_app';
     return request(turn, action, args, {
       ...provenance,
@@ -352,6 +379,7 @@ export function createComputerPolicy(options: {
       allowed: !verdict.confirm,
       run: () =>
         execute(action, args, {
+          threadId: turn.threadId,
           turnId: turn.turnId,
           signal,
           expectedRevision: revision,
@@ -366,6 +394,7 @@ export function createComputerPolicy(options: {
     action: string,
     args: Record<string, unknown>,
     provenance?: {
+      threadId?: string;
       turnId?: string;
       signal?: AbortSignal;
       expectedRevision?: number;
@@ -416,6 +445,22 @@ export function createComputerPolicy(options: {
       action === 'NOD_computer_app' && provenance?.turnId && provenance.rememberApp !== false
         ? remember(provenance.turnId, app, revision, signal)
         : Promise.resolve();
+    if (args.action === 'share_screenshot') {
+      if (!options.publishScreenshot || !provenance.threadId)
+        throw Object.assign(new Error('Screenshot publishing is unavailable.'), { notRun: true });
+      touch(app.name);
+      const shot = await computer.screenshot!(app.bundleId, signal);
+      signal.throwIfAborted();
+      const result = await options.publishScreenshot(
+        { threadId: provenance.threadId, turnId: provenance.turnId },
+        shot.png,
+        typeof args.name === 'string' ? args.name : undefined,
+        signal,
+      );
+      signal.throwIfAborted();
+      await rememberAllowed();
+      return result;
+    }
     if (args.action === 'open') {
       const opened = args.running ? app : await computer.open!(app.bundleId, signal);
       signal.throwIfAborted();

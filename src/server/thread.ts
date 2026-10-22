@@ -309,6 +309,43 @@ export async function reply(
   refresh();
 }
 
+export async function publishScreenshot(
+  turn: TurnRef,
+  bytes: Uint8Array,
+  name?: string,
+  source: Artifact['source'] = 'browser_screenshot',
+  artifacts: ArtifactService = localArtifacts,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
+  const fileName =
+    name && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/.test(name) ? name : 'screenshot.png';
+  const artifact = await withTurnLock(turn.turnId, async (client) => {
+    signal?.throwIfAborted();
+    const current = await client.query('SELECT thread_id FROM turns WHERE id=$1 AND owner_id=$2', [
+      turn.turnId,
+      ownerId,
+    ]);
+    if (current.rows[0]?.thread_id !== turn.threadId) throw turnStopped();
+    const artifact = {
+      ...(await artifacts.storeArtifact(
+        Buffer.from(bytes),
+        fileName,
+        'image/png',
+        turn.threadId,
+        client,
+      )),
+      source,
+    };
+    signal?.throwIfAborted();
+    await insertAssistantMessage(client, turn, '', [artifact]);
+    signal?.throwIfAborted();
+    return artifact;
+  });
+  refresh();
+  return artifact;
+}
+
 function validateSource(sourceId?: string, channel?: string) {
   if (sourceId !== undefined && (!sourceId.trim() || sourceId.length > 500))
     throw new Error('Invalid turn source identity.');
@@ -1443,11 +1480,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             maxBytes,
           ),
         ),
-      publishScreenshot: (bytes, name, source = 'browser_screenshot') => {
-        const fileName =
-          name && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/.test(name) ? name : 'screenshot.png';
-        return attach(bytes, fileName, 'image/png', '', true, source);
-      },
+      publishScreenshot: fenced((bytes, name, source = 'browser_screenshot') =>
+        publishScreenshot(ref, bytes, name, source, artifacts, signal),
+      ),
       publishBrowserFile: attachFile,
     });
     if (!['succeeded', 'waiting_credentials', 'waiting_user'].includes(result.status))

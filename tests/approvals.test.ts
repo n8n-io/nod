@@ -1690,6 +1690,10 @@ test(
                 checked.userMessages?.map((message: { text: string }) => message.text),
                 [correction],
               );
+              assert.equal(
+                checked.userMessages[0].assistantMessage,
+                'Which fixture folder should I organize?',
+              );
               const foreignThread = randomUUID();
               await db.pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [
                 foreignThread,
@@ -1727,7 +1731,287 @@ test(
                   );
                 }
               }
+              const nextQuestion = randomUUID();
+              const proposalText = 'May I rename draft.txt to final.txt in the synthetic folder?';
+              await db.pool.query(
+                "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant',$5)",
+                [nextQuestion, ownerId, current.threadId, current.turnId, proposalText],
+              );
+              await db.pool.query(
+                "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','May I send the unrelated report?')",
+                [randomUUID(), ownerId, unrelated.threadId, unrelated.turnId],
+              );
+              await db.pool.query(
+                "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=$1",
+                [current.turnId],
+              );
+              const yes = await messages.submit('Yes.', [], { replyToMessageId: nextQuestion });
+              const latest = await running(yes.turnId);
+              t.after(() => finish(latest.turnId, 'cancelled'));
+              const action = { action: 'shell', command: 'fixture-send-unrelated-report' };
+              await trust.check(latest, 'NOD_computer', action);
+              assert.deepEqual(
+                reviews
+                  .at(-1)!
+                  .userMessages.map(({ text, assistantMessage }: Record<string, string>) => ({
+                    text,
+                    assistantMessage,
+                  })),
+                [
+                  { text: correction, assistantMessage: 'Which fixture folder should I organize?' },
+                  { text: 'Yes.', assistantMessage: proposalText },
+                ],
+              );
+              assert.deepEqual(reviews.at(-1)!.action, { name: 'NOD_computer', arguments: action });
+              for (const [column, value] of [
+                ['owner_id', 'foreign'],
+                ['thread_id', foreignThread],
+                ['turn_id', unrelated.turnId],
+                ['role', 'user'],
+              ]) {
+                await db.pool.query(`UPDATE messages SET ${column}=$2 WHERE id=$1`, [
+                  nextQuestion,
+                  value,
+                ]);
+                try {
+                  await trust.check(latest, 'NOD_computer', action);
+                  assert.equal(reviews.at(-1)!.userMessages.at(-1).assistantMessage, undefined);
+                  assert.deepEqual(
+                    reviews.at(-1)!.userMessages.map(({ text }: { text: string }) => text),
+                    [correction, 'Yes.'],
+                  );
+                } finally {
+                  await db.pool.query(
+                    "UPDATE messages SET owner_id=$2,thread_id=$3,turn_id=$4,role='assistant' WHERE id=$1",
+                    [nextQuestion, ownerId, current.threadId, current.turnId],
+                  );
+                }
+              }
             });
+        },
+      );
+
+      await t.test(
+        'an approved native screenshot share captures and delivers exactly once',
+        async (t) => {
+          const { nodTools } = await import('../src/runtime/tools.ts');
+          const { fakeComputer } = await import('./runtime-fixtures.ts');
+          const turn = await begin('Share a screenshot of the synthetic calculator.');
+          t.after(() => finish(turn.turnId, 'cancelled'));
+          const nativeApp = { name: 'Synthetic Calculator', bundleId: 'fixture.screenshot' };
+          const png = Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=',
+            'base64',
+          );
+          let captures = 0;
+          let interruptPublication = false;
+          const controller = new AbortController();
+          const policy = createComputerPolicy({
+            pool: db.pool,
+            ownerId,
+            computer: {
+              shell: async () => assert.fail('This fixture does not run commands.'),
+              resolve: async () => nativeApp,
+              screenshot: async () => {
+                captures++;
+                return { app: nativeApp, png };
+              },
+              dispose() {},
+            },
+            check: async () => ({ confirm: true, reason: 'unrequested' }),
+            request: (turn, action, args, options) =>
+              approvals.request(turn, action, args, options),
+            lock: (id, write) => thread.withTurnLock(id, write),
+            signalFor: () => controller.signal,
+            publishScreenshot: async (turn, bytes, name, signal) => {
+              const artifact = await thread.publishScreenshot(
+                turn,
+                bytes,
+                name,
+                'computer_screenshot',
+                artifacts.localArtifacts,
+                signal,
+              );
+              if (interruptPublication) {
+                await finish(turn.turnId, 'cancelled');
+                controller.abort(new Error('Synthetic interruption after screenshot delivery.'));
+              }
+              return artifact;
+            },
+          });
+          await db.pool.query('UPDATE computer_settings SET enabled=true WHERE owner_id=$1', [
+            ownerId,
+          ]);
+          const tool = nodTools({
+            context: {
+              ...turn,
+              sessionId: turn.threadId,
+              prompt: 'Share the synthetic calculator screenshot.',
+              history: [],
+              workspacePath: fixtureRoot,
+              signal: controller.signal,
+              attachments: [],
+              emit: async () => {},
+              reply: async () => {},
+              delta() {},
+              publish: async () => assert.fail('This fixture does not publish files.'),
+              publishScreenshot: (bytes, name) =>
+                thread.publishScreenshot(turn, bytes, name, 'computer_screenshot'),
+              requestCredential: async () => assert.fail('No credential use in this fixture.'),
+              integration: async () => assert.fail('No connected app use in this fixture.'),
+              manage: async () => assert.fail('No settings changes in this fixture.'),
+              computer: (args, admit) => policy.run(turn, args, { admit }, controller.signal),
+            },
+            computer: fakeComputer(),
+            execution: {
+              ...turn,
+              sessionId: turn.threadId,
+              browserId: turn.threadId,
+              runId: randomUUID(),
+            },
+            reply: async () => {},
+            pause: async () => {},
+            confirm: async (result) => result,
+            visited() {},
+          }).find((tool) => tool.name === 'computer')!;
+          const result = await tool.execute({
+            action: 'share_screenshot',
+            app: nativeApp.name,
+            name: 'calculation.png',
+          });
+          assert.ok(result && typeof result === 'object' && appConfirmation in result);
+          assert.equal(captures, 0);
+          const pending = await proposal(turn.turnId);
+          assert.deepEqual(pending.args, {
+            action: 'share_screenshot',
+            app: nativeApp.name,
+            bundleId: nativeApp.bundleId,
+            name: 'calculation.png',
+          });
+          const accepted = await confirm(pending.id, true);
+          assert.ok(accepted && 'turnId' in accepted);
+          t.after(() => finish(accepted.turnId, 'cancelled'));
+          executionResult = () => {
+            const call = calls.at(-1)!;
+            return policy.execute(call.action, call.args, call.context);
+          };
+          try {
+            await execute(pending.id, controller.signal);
+            const delivered = (
+              await db.pool.query('SELECT attachments FROM messages WHERE turn_id=$1', [
+                accepted.turnId,
+              ])
+            ).rows.flatMap((row) => row.attachments);
+            assert.equal(delivered.length, 1);
+            assert.equal(delivered[0].name, 'calculation.png');
+            assert.equal(delivered[0].source, 'computer_screenshot');
+            assert.deepEqual(await artifacts.localArtifacts.readArtifact(delivered[0].id), png);
+            assert.equal(captures, 1);
+            assert.equal(await execute(pending.id, controller.signal), undefined);
+            assert.equal(captures, 1);
+            assert.deepEqual(
+              await policy.run(
+                await running(accepted.turnId),
+                {
+                  action: 'share_screenshot',
+                  app: nativeApp.name,
+                  name: 'calculation.png',
+                },
+                { sourceMessageId: accepted.messageId },
+                controller.signal,
+              ),
+              (await stored(pending.id)).result,
+            );
+            assert.equal(captures, 1);
+            const live = await running(accepted.turnId);
+            await assert.rejects(
+              thread.publishScreenshot({ ...live, threadId: randomUUID() }, png),
+            );
+            const cancelled = new AbortController();
+            const storedBefore = (
+              await db.pool.query('SELECT count(*)::int AS count FROM artifacts')
+            ).rows[0].count;
+            await assert.rejects(
+              thread.publishScreenshot(
+                live,
+                png,
+                'cancelled.png',
+                'computer_screenshot',
+                {
+                  ...artifacts.localArtifacts,
+                  storeArtifact: async (...args) => {
+                    const artifact = await artifacts.localArtifacts.storeArtifact(...args);
+                    cancelled.abort(new Error('Synthetic publication cancelled.'));
+                    return artifact;
+                  },
+                },
+                cancelled.signal,
+              ),
+              /Synthetic publication cancelled/,
+            );
+            assert.equal(
+              (await db.pool.query('SELECT count(*)::int AS count FROM artifacts')).rows[0].count,
+              storedBefore,
+            );
+            assert.equal(
+              (
+                await db.pool.query('SELECT attachments FROM messages WHERE turn_id=$1', [
+                  accepted.turnId,
+                ])
+              ).rows.flatMap((row) => row.attachments).length,
+              1,
+            );
+            await db.pool.query('DELETE FROM computer_apps WHERE owner_id=$1 AND bundle_id=$2', [
+              ownerId,
+              nativeApp.bundleId,
+            ]);
+            for (const outcome of ['declined', 'interrupted'] as const) {
+              const next = await begin('Share another synthetic calculator screenshot.');
+              t.after(() => finish(next.turnId, 'cancelled'));
+              const input = {
+                action: 'share_screenshot',
+                app: nativeApp.name,
+                name: `${outcome}.png`,
+              };
+              await policy.run(next, input, {}, controller.signal);
+              const asked = await proposal(next.turnId);
+              const resumed = await confirm(asked.id, outcome === 'interrupted');
+              assert.ok(resumed && 'turnId' in resumed);
+              t.after(() => finish(resumed.turnId, 'cancelled'));
+              if (outcome === 'declined') {
+                assert.equal(await execute(asked.id), undefined);
+                assert.equal(captures, 1);
+              } else {
+                interruptPublication = true;
+                await assert.rejects(
+                  execute(asked.id, controller.signal),
+                  /Synthetic interruption/,
+                );
+                assert.equal((await stored(asked.id)).status, 'uncertain');
+                assert.equal(captures, 2);
+                const delivered = (
+                  await db.pool.query('SELECT attachments FROM messages WHERE turn_id=$1', [
+                    resumed.turnId,
+                  ])
+                ).rows.flatMap((row) => row.attachments);
+                assert.equal(delivered.length, 1);
+                assert.equal(delivered[0].name, 'interrupted.png');
+                await assert.rejects(execute(asked.id), /no longer active/);
+                await assert.rejects(
+                  policy.run(
+                    await running(resumed.turnId),
+                    input,
+                    { sourceMessageId: resumed.messageId },
+                    new AbortController().signal,
+                  ),
+                  /pending or uncertain/,
+                );
+                assert.equal(captures, 2);
+              }
+            }
+          } finally {
+            executionResult = undefined;
+          }
         },
       );
 

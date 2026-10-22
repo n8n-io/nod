@@ -119,6 +119,7 @@ import {
   createUserMessageService,
   enqueueTurn,
   initializeThreads,
+  publishScreenshot,
   reactToAssistantMessage,
   resumeAfterConnection,
   resumeAfterCredentials,
@@ -1046,6 +1047,15 @@ async function initializeApplication(
     request: (turn, action, args, options) => approvals.request(turn, action, args, options),
     lock: (turnId, write) => withTurnLock(turnId, write),
     signalFor: turnSignal,
+    publishScreenshot: async (turn, bytes, name, signal) =>
+      publishScreenshot(
+        { ...turn, taskMessageId: (await tasks.context(turn))?.messageId },
+        bytes,
+        name,
+        'computer_screenshot',
+        artifacts,
+        signal,
+      ),
     using: (apps) => parentPort?.postMessage({ type: 'nod-computer', apps }),
   });
   await computerPolicy.initialize();

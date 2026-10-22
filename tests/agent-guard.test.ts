@@ -144,24 +144,23 @@ test('computer actions share the turn admission gate with connected apps', async
   }
 });
 
-test('computer screenshots are delivered only when requested and after capture succeeds', async () => {
+test('computer screenshots retain share intent and keep observations as images', async () => {
   const png = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=',
     'base64',
   );
-  for (const mode of ['observe', 'share', 'confirm', 'cancel', 'unavailable'] as const) {
+  for (const mode of ['observe', 'share', 'confirm', 'cancel'] as const) {
     const controller = new AbortController();
-    const captured: string[] = [];
-    const delivered: Uint8Array[] = [];
+    const calls: Record<string, unknown>[] = [];
+    const input = {
+      action: mode === 'observe' ? 'screenshot' : 'share_screenshot',
+      app: 'Synthetic Calculator',
+      ...(mode === 'observe' ? {} : { name: 'calculation.png' }),
+    };
     const running = fixture(
       async (tools) => {
-        const action = mode === 'observe' ? 'screenshot' : 'share_screenshot';
-        const pending = call(tools, 'computer', {
-          action,
-          app: 'Synthetic Calculator',
-          ...(action === 'share_screenshot' ? { name: 'calculation.png' } : {}),
-        });
-        if (mode === 'cancel' || mode === 'unavailable') await assert.rejects(pending);
+        const pending = call(tools, 'computer', input);
+        if (mode === 'cancel') await assert.rejects(pending);
         else {
           const result = await pending;
           if (mode === 'observe') assert.ok(result.content.some((part) => part.type === 'image'));
@@ -174,36 +173,28 @@ test('computer screenshots are delivered only when requested and after capture s
       {
         signal: controller.signal,
         computer: async (args, admit) => {
-          assert.deepEqual(args, { action: 'screenshot', app: 'Synthetic Calculator' });
+          calls.push(args);
           await admit?.(mode === 'confirm');
           if (mode === 'confirm') return { [appConfirmation]: 'Allow the synthetic capture?' };
-          captured.push(String(args.action));
           if (mode === 'cancel') controller.abort(new Error('Capture cancelled.'));
-          return { app: { name: 'Synthetic Calculator' }, png: png.toString('base64') };
+          if (mode === 'observe')
+            return { app: { name: 'Synthetic Calculator' }, png: png.toString('base64') };
+          return {
+            id: randomUUID(),
+            name: 'calculation.png',
+            mimeType: 'image/png',
+            size: png.length,
+            url: '/api/artifacts/synthetic-calculation',
+            source: 'computer_screenshot',
+          };
         },
-        ...(mode === 'unavailable'
-          ? {}
-          : {
-              publishScreenshot: async (bytes, name, source) => {
-                assert.equal(source, 'computer_screenshot');
-                delivered.push(bytes);
-                return {
-                  id: randomUUID(),
-                  name: name!,
-                  mimeType: 'image/png',
-                  size: bytes.byteLength,
-                  url: '/api/files/synthetic-calculation',
-                  source,
-                };
-              },
-            }),
+        publishScreenshot: async () =>
+          assert.fail('Native shares publish through their approved policy action.'),
       },
     );
     if (mode === 'cancel') await assert.rejects(running, /Capture cancelled/);
     else await running;
-    assert.equal(delivered.length, mode === 'share' ? 1 : 0, mode);
-    if (mode === 'share') assert.deepEqual(Buffer.from(delivered[0]!), png);
-    if (mode === 'unavailable' || mode === 'confirm') assert.deepEqual(captured, [], mode);
+    assert.deepEqual(calls, [input]);
   }
 });
 
