@@ -258,10 +258,7 @@ export function Logins({ onAsk }: { onAsk?(text: string): void }) {
     >
       {!pageMode && (
         <header className="page-heading secondary-heading">
-          <div>
-            <PageTitle path="/logins" />
-            <p>The model never sees your passwords or card numbers.</p>
-          </div>
+          <PageTitle path="/logins" />
           <div className="secondary-heading-actions">
             <Popover.Root open={menu} onOpenChange={setMenu}>
               <Popover.Trigger asChild>
