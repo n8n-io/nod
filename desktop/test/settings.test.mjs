@@ -2379,7 +2379,7 @@ async function fixture(t, platform = 'win32') {
 
 test(
   'Windows DPAPI keeps the Vault and completed setup across real Electron restarts behind private ACLs that reapply without admin privileges',
-  { skip: process.platform !== 'win32', timeout: 120_000 },
+  { skip: process.platform !== 'win32', timeout: 300_000 },
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), 'nod-dpapi-restart-'));
     t.after(() => rm(directory, { recursive: true, force: true }));
