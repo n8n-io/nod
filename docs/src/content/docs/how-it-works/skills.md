@@ -48,8 +48,6 @@ The library has 26 task guides in [`src/runtime/skills`](https://github.com/n8n-
 
 Seven guides have a reference for one specific case: recurring meetings, data imports, government forms, catalog synchronization, corpus research, purchase claims and existing travel bookings.
 
-The `n8n` guide also bundles n8n's [official skills](https://github.com/n8n-io/skills) (Apache-2.0) in its `official` folder. Otto reads the ones a task needs, such as node configuration, testing or n8n Agents.
-
 ## How the model reads a guide
 
 The `skills` tool has these actions:

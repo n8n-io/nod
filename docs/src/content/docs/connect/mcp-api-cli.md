@@ -25,7 +25,7 @@ If n8n doesn't answer, turn on MCP access in n8n under **Settings**, **Instance-
 
 The address can be on your computer or your local network, such as a self-hosted n8n. Only an address you enter or confirm yourself can be local, never one the model proposes. Otto sends that connection's requests and its token only to that address. `localhost` and `127.0.0.1` count as the same address when the port matches, because n8n can name itself either way.
 
-Otto loads n8n's tools only when a task needs them, follows n8n's own guide for its tools and uses the [n8n task guide](/how-it-works/skills/), which bundles n8n's [official skills](https://github.com/n8n-io/skills). It writes workflow code to a file in its workspace, checks it with n8n, then creates and tests the workflow with sample data before it reports back. A test doesn't run the steps that send or write to another service, so Otto checks the data each of those steps would have sent. Each n8n action goes through the [trust check](/trust/approvals/), like every app action. See [Build with n8n](/use/n8n/) for what to ask.
+Otto loads n8n's tools only when a task needs them and follows n8n's own guide for its tools, plus a short [n8n task guide](/how-it-works/skills/). It writes workflow code to a file in its workspace, checks it with n8n, then creates and tests the workflow with sample data before it reports back. A test doesn't run the steps that send or write to another service, so Otto checks the data each of those steps would have sent. Each n8n action goes through the [trust check](/trust/approvals/), like every app action. See [Build with n8n](/use/n8n/) for what to ask.
 
 ## Connect another service
 

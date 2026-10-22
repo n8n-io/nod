@@ -5,4 +5,3 @@ node_modules
 dist
 pnpm-lock.yaml
 scripts/fixtures/*.md
-src/runtime/skills/n8n/official

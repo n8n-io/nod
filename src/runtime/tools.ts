@@ -504,7 +504,6 @@ export interface OttoTool<P extends TSchema = TSchema> {
   name: string;
   description: string;
   parameters: P;
-  callable?: boolean;
   execute(params: Static<P>): Promise<unknown>;
 }
 
@@ -677,27 +676,24 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     return { output: verdict.result };
   };
   return [
-    {
-      ...bind(toolDefinitions.skills, async (p) => {
-        if (p.action === 'list') return skills?.catalog ?? [];
-        if (p.action === 'read') {
-          if (skills?.catalog.some((skill) => skill.name === p.name))
-            return skills.read(p.name, p.file);
-          if (p.file) throw new Error('A learned skill has no reference files.');
-          return untrustedBlock(
-            'learned skill',
-            JSON.stringify(await context.manage('skill_read', { name: p.name })),
-          );
-        }
-        if (turn.execution.parentRunId)
-          throw new Error(
-            'A subagent cannot save skills. Include what you learned in your answer to the parent agent.',
-          );
-        const { action, ...args } = p;
-        return context.manage(`skill_${action}`, { action, ...args });
-      }),
-      callable: true,
-    },
+    bind(toolDefinitions.skills, async (p) => {
+      if (p.action === 'list') return skills?.catalog ?? [];
+      if (p.action === 'read') {
+        if (skills?.catalog.some((skill) => skill.name === p.name))
+          return skills.read(p.name, p.file);
+        if (p.file) throw new Error('A learned skill has no reference files.');
+        return untrustedBlock(
+          'learned skill',
+          JSON.stringify(await context.manage('skill_read', { name: p.name })),
+        );
+      }
+      if (turn.execution.parentRunId)
+        throw new Error(
+          'A subagent cannot save skills. Include what you learned in your answer to the parent agent.',
+        );
+      const { action, ...args } = p;
+      return context.manage(`skill_${action}`, { action, ...args });
+    }),
     bind(
       toolDefinitions.send_message,
       async (p) =>

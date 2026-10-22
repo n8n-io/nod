@@ -217,7 +217,6 @@ export interface AgentToolMetadata {
   description: string;
   parameters: Record<string, unknown>;
   deferred?: { namespace: string; description: string; instructions?: string };
-  callable?: boolean;
 }
 export interface AgentTool extends AgentToolMetadata {
   parallel?: boolean;

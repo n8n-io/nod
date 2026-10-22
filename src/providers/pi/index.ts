@@ -385,7 +385,7 @@ export function createPiAgent(options: {
                     : {}),
                 },
               }
-            : { exposure: tool.callable ? ('direct' as const) : ('model-only' as const) }),
+            : { exposure: 'model-only' as const }),
           executionMode: tool.parallel ? 'parallel' : 'sequential',
           execute: async (id, args) => {
             return {

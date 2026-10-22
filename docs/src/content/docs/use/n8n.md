@@ -26,10 +26,9 @@ Otto asks first only when a choice changes what it builds, such as where the res
 
 ## How Otto builds and tests
 
-1. Otto reads n8n's [official skills](https://github.com/n8n-io/skills) for the work, then the node definitions from your n8n.
+1. Otto follows n8n's own guide for its MCP tools and reads the node definitions from your n8n.
 2. It writes the workflow as code in its workspace, checks it with n8n and creates it in your n8n.
-3. It writes test scenarios first, one for each path that matters, then runs them all in one go with sample data.
-4. A test never runs the steps that send or write to another service. Otto checks what each of those steps would have sent instead, and fixes what is empty or wrong.
+3. It tests the workflow with sample data. A test never runs the steps that send or write to another service, so Otto checks what each of those steps would have sent instead.
 
 The reply shows the workflow as a canvas you can open in the side panel, with **Open in n8n** to jump to the editor. Otto says which paths it tested and which it could not, and what you still need to do, such as adding credentials.
 
