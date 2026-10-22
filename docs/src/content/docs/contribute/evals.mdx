@@ -279,7 +279,8 @@ flowchart LR
 - Each case gets a fresh Otto and a fresh n8n member with its own MCP token and the case's credentials, so cases can't see each other's work.
 - The first message starts with `In n8n: `, because Otto is a general assistant and n8n's assistant runs inside n8n. n8n's own simulated user, with its own prompts and model, answers every later question and confirmation.
 - n8n's verifier runs the workflow against mocked services for each execution scenario. n8n's expectations judge grades outcome and process expectations from Otto's transcript, the workflow and any n8n Agent Otto built.
-- A case where Otto built nothing fails all its checks. Seeded and attachment cases are skipped for now, and scenarios of an n8n Agent are marked incomplete, since n8n's verifier only runs them inside its own assistant.
+- A case where Otto built nothing fails all its checks. Seeded cases restore their workflows, Agents and earlier turns first. Cases that need seeded data tables, memory compaction or a later attachment are skipped, and scenarios of an n8n Agent are marked incomplete, since n8n's verifier only runs them inside its own assistant.
+- A run broken by the harness itself, or one where n8n stayed unresponsive for about a minute, isn't scored. `--resume` builds it again. Only a time limit or an agent that stops making progress counts against the agent.
 
 It needs a local n8n from the image and eval-harness commit you compare against, a checkout of n8n for its harness, and the suite export with `cases/` and `dataset.json`:
 
@@ -289,6 +290,16 @@ pnpm run eval:capability n8nbench --data ~/n8n-suite --n8n-source ~/n8n/packages
 ```
 
 `--split dev` and `--split holdout` divide the cases by a fixed hash: tune Otto on `dev` and report `holdout` and `all`. `--baseline <run.json>` compares with an n8n Instance AI run from LangTracer. Results go to `.local/capability-evals/<label>/` with `summary.json`.
+
+| Option                     | Use                                                                                                                                 |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `--n8n-url a,b`            | Spread the cases over several n8n instances. Each run keeps the instance it was built on, so `--resume` grades it there             |
+| `--agent claude-code`      | Run Claude Code on the same MCP server instead of Otto. Add `--claude-plugin <dir>` to load a plugin, such as n8n's official skills |
+| `--before-verify <cmd>`    | Run a command between building and grading, for example to restart n8n without the build-time execution timeout                     |
+| `--verify-concurrency <n>` | How many scenarios n8n's verifier runs at once                                                                                      |
+| `--no-verify`              | Build only; grade later with `--resume`                                                                                             |
+
+Give each parallel run its own n8n instance and its own test database: many Otto stacks on one PostgreSQL contend for its lock table.
 
 ## Run evals in CI
 
