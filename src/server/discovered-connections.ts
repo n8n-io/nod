@@ -696,11 +696,18 @@ export async function createDiscoveredConnections(
             headers(path, token),
             'GET',
           );
-          if (response.status < 200 || response.status >= 300) throw new Error();
+          if (response.status < 200 || response.status >= 300)
+            throw Object.assign(new Error(), { status: response.status });
         }
-      } catch {
+      } catch (cause) {
         track(pending, 'failed', 'verification_failed');
-        throw error(`The ${path.kind.toUpperCase()} access path could not be verified.`, 409);
+        const status = [Object(cause).status, Object(cause).code].find(
+          (value) => Number.isInteger(value) && value >= 400 && value < 600,
+        );
+        throw error(
+          `The ${path.kind.toUpperCase()} access path could not be verified${status ? `: the service answered ${status}` : ''}.`,
+          409,
+        );
       }
     }
     try {
