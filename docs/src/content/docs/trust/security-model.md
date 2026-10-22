@@ -39,7 +39,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 
 - Only your messages, a schedule's instruction, your standing instruction and your approvals carry authority. Pages, emails, files and tool results can't create permission.
 - App actions beyond reads and drafts need a review match against your request or your yes. See [Approvals](/trust/approvals/).
-- On [your computer](/use/your-computer/), every command, app launch and app action needs a review match or your yes. Looking at or capturing a Mac app that isn't already allowed also needs that check. Native app control refuses known terminal and scripting apps, Passwords, Keychain Access, System Settings, nod itself and known macOS security-prompt apps. This uses a list of bundle IDs and names; unlisted apps may not be blocked.
+- On [your computer](/use/your-computer/), every command, app launch, app action and screenshot share needs a review match or your yes. Looking at or capturing a Mac app that isn't already allowed also needs that check. Native app control refuses known terminal and scripting apps, Passwords, Keychain Access, System Settings, nod itself and known macOS security-prompt apps. This uses a list of bundle IDs and names; unlisted apps may not be blocked.
 - A confirmation is bound to the exact action and arguments, and runs once.
 - Background work nod starts itself reads and drafts, and does only what your [standing instruction](/trust/approvals/#standing-instructions) asks. Anything else waits for your yes, and a payment always needs your approval.
 

@@ -319,6 +319,255 @@ if (process.platform !== 'win32') {
 }
 
 if (process.platform === 'darwin') {
+  test('owner shell stops descendants that attempt to leave its process group', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'nod-shell-stop-'));
+    const executable = join(root, 'descendant');
+    const source = join(root, 'descendant.c');
+    const computer = createMacComputer({ dataRoot: join(root, 'data') });
+    try {
+      await writeFile(
+        source,
+        `#include <errno.h>
+#include <spawn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern char **environ;
+void mark(const char *root, const char *name, int value) {
+  char path[4096];
+  snprintf(path, sizeof(path), "%s/%s", root, name);
+  FILE *file = fopen(path, "w");
+  if (!file) _exit(90);
+  fprintf(file, "%d", value);
+  fclose(file);
+}
+void delayed(const char *root, int result) {
+  alarm(5);
+  mark(root, "ready", result);
+  usleep(1200000);
+  mark(root, "late", 1);
+  _exit(0);
+}
+int main(int argc, char **argv) {
+  if (argc != 3) return 91;
+  alarm(5);
+  if (!strcmp(argv[1], "child")) delayed(argv[2], 0);
+  pid_t child;
+  if (!strcmp(argv[1], "background")) {
+    int ready[2];
+    if (pipe(ready) != 0) return 93;
+    child = fork();
+    if (child == 0) {
+      close(ready[0]);
+      close(0); close(1); close(2);
+      mark(argv[2], "ready", 0);
+      write(ready[1], "!", 1);
+      close(ready[1]);
+      usleep(1200000);
+      mark(argv[2], "late", 1);
+      _exit(0);
+    }
+    close(ready[1]);
+    char value;
+    return read(ready[0], &value, 1) == 1 ? 0 : 94;
+  }
+  if (!strncmp(argv[1], "spawn-", 6)) {
+    posix_spawnattr_t attributes;
+    posix_spawnattr_init(&attributes);
+    posix_spawnattr_setflags(&attributes, !strcmp(argv[1], "spawn-session")
+      ? POSIX_SPAWN_SETSID : POSIX_SPAWN_SETPGROUP);
+    posix_spawnattr_setpgroup(&attributes, 0);
+    char *args[] = {argv[0], "child", argv[2], NULL};
+    int result = posix_spawn(&child, argv[0], NULL, &attributes, args, environ);
+    posix_spawnattr_destroy(&attributes);
+    if (result != 0) {
+      child = fork();
+      if (child == 0) delayed(argv[2], result);
+    }
+  } else {
+    child = fork();
+    if (child == 0) {
+      int result = !strcmp(argv[1], "session") ? setsid() : setpgid(0, 0);
+      delayed(argv[2], result < 0 ? errno : 0);
+    }
+  }
+  if (child < 0) return 92;
+  waitpid(child, NULL, 0);
+  return 0;
+}
+`,
+      );
+      const built = await runProcess('/usr/bin/clang', ['-O2', '-o', executable, source], {
+        timeoutMs: 30_000,
+      });
+      assert.equal(built.exitCode, 0, built.stderr);
+      for (const mode of ['session', 'group', 'spawn-session', 'spawn-group']) {
+        for (const ending of ['stop', 'timeout']) {
+          await t.test(`${mode}: ${ending}`, async () => {
+            const directory = join(root, `${mode}-${ending}`);
+            await mkdir(directory);
+            const controller = new AbortController();
+            const started = Date.now();
+            const result = computer.shell(`'${executable}' '${mode}' '${directory}'`, {
+              signal: controller.signal,
+              timeoutMs: ending === 'timeout' ? 500 : 5_000,
+            });
+            const rejected = assert.rejects(result, ending === 'stop' ? /cancelled/ : /stopped/);
+            try {
+              const deadline = Date.now() + 3_000;
+              while (!existsSync(join(directory, 'ready')) && Date.now() < deadline)
+                await delay(10);
+              assert.equal(existsSync(join(directory, 'ready')), true, 'descendant started');
+              if (ending === 'stop') controller.abort();
+              await rejected;
+              await delay(Math.max(0, started + 1_600 - Date.now()));
+              assert.equal(existsSync(join(directory, 'late')), false, 'no writes after Stop');
+              assert.notEqual(await readFile(join(directory, 'ready'), 'utf8'), '0');
+            } finally {
+              controller.abort();
+              await rejected;
+            }
+          });
+        }
+      }
+      await t.test('normal completion', async () => {
+        const directory = join(root, 'background');
+        await mkdir(directory);
+        const result = await computer.shell(`'${executable}' background '${directory}'`, {
+          signal: new AbortController().signal,
+        });
+        assert.equal(result.exitCode, 0, result.output);
+        assert.equal(existsSync(join(directory, 'ready')), true);
+        await delay(1_600);
+        assert.equal(
+          existsSync(join(directory, 'late')),
+          false,
+          'no background writes after completion',
+        );
+      });
+      const signal = new AbortController().signal;
+      const command = `printf test > '${join(root, 'plain')}'; cat '${join(root, 'plain')}' | tr a-z A-Z`;
+      assert.deepEqual(await computer.shell(command, { signal }), { exitCode: 0, output: 'TEST' });
+    } finally {
+      computer.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('owner shell treats home regex characters literally', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nod-home-regex-'));
+    try {
+      const home = join(await realpath(root), 'home[one]+(two)');
+      await mkdir(home);
+      const visible = join(home, 'document.txt');
+      const hidden = join(home, '.fixture');
+      await writeFile(visible, 'synthetic visible marker');
+      await writeFile(hidden, 'synthetic hidden marker');
+      const run = (command: string) =>
+        spawnSync(
+          '/usr/bin/sandbox-exec',
+          [
+            '-p',
+            sandboxProfile(),
+            '-D',
+            `DATA=${join(home, 'data')}`,
+            '-D',
+            `HOME=${home}`,
+            '/bin/zsh',
+            '-f',
+            '-c',
+            command,
+          ],
+          { encoding: 'utf8' },
+        );
+      assert.equal(run(`cat '${visible}'`).stdout, 'synthetic visible marker');
+      const read = run(`cat '${hidden}'`);
+      assert.notEqual(read.status, 0);
+      assert.doesNotMatch(read.stdout, /synthetic hidden marker/);
+      assert.notEqual(run(`printf changed > '${hidden}'`).status, 0);
+      assert.equal(await readFile(hidden, 'utf8'), 'synthetic hidden marker');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('native Mac look preserves controls after labeled layout containers', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nod-ax-tree-'));
+    try {
+      const source = await readFile(
+        new URL('../desktop/computer-use/main.swift', import.meta.url),
+        'utf8',
+      );
+      const look = source.slice(source.indexOf('func look('), source.indexOf('func observed('));
+      const fixture = join(root, 'tree.swift');
+      const executable = join(root, 'tree');
+      await writeFile(
+        fixture,
+        `import Foundation
+typealias CFString = String
+let kCFBooleanTrue = true
+let kAXChildrenAttribute = "children"
+let kAXWindowsAttribute = "windows"
+let kAXMenuBarAttribute = "menu"
+let kAXRoleAttribute = "role"
+struct Failure: Error { let message: String }
+final class AXUIElement {
+  let role: String
+  let label: String
+  let children: [AXUIElement]
+  init(_ role: String, _ label: String, _ children: [AXUIElement] = []) {
+    self.role = role; self.label = label; self.children = children
+  }
+}
+struct Application { let processIdentifier: Int = 1 }
+let root = AXUIElement("AXApplication", "fixture", [AXUIElement("AXWindow", "fixture",
+  (1...1200).map { AXUIElement("AXGroup", "labeled container \\($0)", [AXUIElement("AXButton", "button \\($0)")]) }
+)])
+var refs: [String: AXUIElement] = [:]
+var targets: [String: AXUIElement] = [:]
+var observedApp: Application?
+var observedFocus: AXUIElement?
+func AXIsProcessTrusted() -> Bool { true }
+func AXUIElementCreateApplication(_ pid: Int) -> AXUIElement { root }
+func AXUIElementSetAttributeValue(_ element: AXUIElement, _ attribute: String, _ value: Bool) {}
+func app(_ query: String) throws -> Application { Application() }
+func describe(_ app: Application) -> [String: Any] { [:] }
+func focused(_ element: AXUIElement) throws -> AXUIElement { element }
+func state(_ element: AXUIElement, _ root: AXUIElement) throws -> AXUIElement { element }
+func text(_ element: AXUIElement, _ attribute: String) -> String? { attribute == kAXRoleAttribute ? element.role : nil }
+func attr(_ element: AXUIElement, _ attribute: String) -> Any? {
+  [kAXChildrenAttribute, kAXWindowsAttribute].contains(attribute) ? element.children : nil
+}
+func axElement(_ element: AXUIElement, _ attribute: String) -> AXUIElement? { nil }
+func description(_ element: AXUIElement) -> String {
+  element.role.replacingOccurrences(of: "AX", with: "") + " \\"" + element.label + "\\""
+}
+${look}
+let result = try look("fixture")
+guard result["truncated"] as? Bool == false,
+  refs.count == 1201,
+  refs.values.filter({ $0.role == "AXButton" }).count == 1200,
+  (result["tree"] as! String).contains("button 1200") else {
+  print("Lost controls: \\(refs.count) refs, \\(refs.values.filter { $0.role == "AXButton" }.count) buttons")
+  exit(1)
+}
+print("labeled containers preserve controls")
+`,
+      );
+      const built = await runProcess('/usr/bin/swiftc', ['-O', '-o', executable, fixture], {
+        timeoutMs: 30_000,
+      });
+      assert.equal(built.exitCode, 0, built.stderr);
+      const result = await runProcess(executable, [], { timeoutMs: 10_000 });
+      assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+      assert.equal(result.stdout.trim(), 'labeled containers preserve controls');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('Mac shortcut keys resolve layout characters without posting keyboard events', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nod-keyboard-layout-'));
     try {

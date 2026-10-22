@@ -198,6 +198,41 @@ test('computer screenshots retain share intent and keep observations as images',
   }
 });
 
+test('computer screenshot names are validated before dispatch', async () => {
+  const calls: Record<string, unknown>[] = [];
+  await fixture(
+    async (tools) => {
+      for (const name of ['my shot.png', '../capture.png', 'capture.jpg', '']) {
+        await assert.rejects(
+          call(tools, 'computer', {
+            action: 'share_screenshot',
+            app: 'Synthetic Calculator',
+            name,
+          }),
+        );
+      }
+      assert.deepEqual(calls, []);
+      for (const name of [undefined, 'calculation-1.png']) {
+        await call(tools, 'computer', {
+          action: 'share_screenshot',
+          app: 'Synthetic Calculator',
+          ...(name === undefined ? {} : { name }),
+        });
+      }
+    },
+    {
+      computer: async (args) => {
+        calls.push(args);
+        return {};
+      },
+    },
+  );
+  assert.deepEqual(calls, [
+    { action: 'share_screenshot', app: 'Synthetic Calculator' },
+    { action: 'share_screenshot', app: 'Synthetic Calculator', name: 'calculation-1.png' },
+  ]);
+});
+
 test('mail that grants account access stays out of app tool results and workspace files', async () => {
   const secrets = [
     '318742',

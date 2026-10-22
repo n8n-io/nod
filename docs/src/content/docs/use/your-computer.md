@@ -22,7 +22,7 @@ It's off by default and works on macOS only. nod still does most work in its own
 
 nod sends actions to the selected app without moving your mouse. Some actions, such as raising a window, can bring it forward.
 
-When you ask for a screenshot, nod can attach the app window image to your conversation. Screenshots it takes only to inspect an app stay in the model's context.
+When you ask for a screenshot, nod can attach the app window image to your conversation. Sharing always goes through the trust check, even for an allowed app. Screenshots it takes only to inspect an app stay in the model's context.
 
 ## Turn it on
 
@@ -82,6 +82,7 @@ Turning off **Let nod use your computer** stops computer work in progress. Remov
 - The sandbox profile is a deny list, not an allow list. It blocks the known escapes (nod's keys and data, the Keychain, Docker and VM sockets, other processes' arguments, Launch Services, launchd and cron), but a deny list can still miss a new route.
 - A source install can run commands. To use Mac apps too, build the helper with `pnpm run computer:build` before starting nod.
 - A command you approve runs as you. It can change or delete any file the profile doesn't block.
+- Commands must finish within the tool call. Background services and some programs that launch other commands are unsupported. Remaining child processes stop when the command ends.
 - The shell can't access `~/.Trash`. nod asks you to move unwanted files to Trash yourself.
 - Native app screenshots aren't masked. Content visible in the selected app can reach your model, including sensitive information.
 

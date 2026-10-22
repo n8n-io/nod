@@ -1792,6 +1792,58 @@ test(
       );
 
       await t.test(
+        'remembered Mac app access does not authorize screenshot publication',
+        async (t) => {
+          const turn = await begin('Read the synthetic notes without sharing an image.');
+          t.after(() => finish(turn.turnId, 'cancelled'));
+          const nativeApp = { name: 'Synthetic Notes', bundleId: 'fixture.share-trust' };
+          let captures = 0;
+          let publications = 0;
+          const checks: Record<string, unknown>[] = [];
+          const signal = new AbortController().signal;
+          const policy = createComputerPolicy({
+            pool: db.pool,
+            ownerId,
+            computer: {
+              shell: async () => assert.fail('This fixture does not run commands.'),
+              resolve: async () => nativeApp,
+              screenshot: async () => {
+                captures++;
+                return { app: nativeApp, png: Buffer.from('synthetic screenshot bytes') };
+              },
+              dispose() {},
+            },
+            check: async (_turn, _action, args) => {
+              checks.push(args);
+              return { confirm: true, reason: 'unrequested' };
+            },
+            request: (turn, action, args, options) =>
+              approvals.request(turn, action, args, options),
+            lock: (id, write) => thread.withTurnLock(id, write),
+            signalFor: () => signal,
+            publishScreenshot: async () => {
+              publications++;
+              return { delivered: true };
+            },
+          });
+          await db.pool.query('UPDATE computer_settings SET enabled=true WHERE owner_id=$1', [
+            ownerId,
+          ]);
+          await db.pool.query(
+            'INSERT INTO computer_apps(owner_id,bundle_id,name) VALUES($1,$2,$3)',
+            [ownerId, nativeApp.bundleId, nativeApp.name],
+          );
+          const input = { action: 'share_screenshot', app: nativeApp.name, name: 'notes.png' };
+          const result = await policy.run(turn, input, {}, signal);
+          assert.deepEqual(checks, [{ ...input, bundleId: nativeApp.bundleId }]);
+          assert.ok(result && typeof result === 'object' && appConfirmation in result);
+          assert.equal(captures, 0);
+          assert.equal(publications, 0);
+          assert.equal((await proposal(turn.turnId)).action, 'NOD_computer');
+        },
+      );
+
+      await t.test(
         'an approved native screenshot share captures and delivers exactly once',
         async (t) => {
           const { nodTools } = await import('../src/runtime/tools.ts');
@@ -1928,6 +1980,7 @@ test(
               thread.publishScreenshot({ ...live, threadId: randomUUID() }, png),
             );
             const cancelled = new AbortController();
+            let cancelledArtifactId: string | undefined;
             const storedBefore = (
               await db.pool.query('SELECT count(*)::int AS count FROM artifacts')
             ).rows[0].count;
@@ -1941,6 +1994,7 @@ test(
                   ...artifacts.localArtifacts,
                   storeArtifact: async (...args) => {
                     const artifact = await artifacts.localArtifacts.storeArtifact(...args);
+                    cancelledArtifactId = artifact.id;
                     cancelled.abort(new Error('Synthetic publication cancelled.'));
                     return artifact;
                   },
@@ -1953,6 +2007,11 @@ test(
               (await db.pool.query('SELECT count(*)::int AS count FROM artifacts')).rows[0].count,
               storedBefore,
             );
+            assert.ok(cancelledArtifactId);
+            await assert.rejects(stat(join(dataRoot, 'artifacts', cancelledArtifactId)), {
+              code: 'ENOENT',
+            });
+            assert.deepEqual(await artifacts.localArtifacts.readArtifact(delivered[0].id), png);
             assert.equal(
               (
                 await db.pool.query('SELECT attachments FROM messages WHERE turn_id=$1', [
@@ -1996,6 +2055,7 @@ test(
                 ).rows.flatMap((row) => row.attachments);
                 assert.equal(delivered.length, 1);
                 assert.equal(delivered[0].name, 'interrupted.png');
+                assert.deepEqual(await artifacts.localArtifacts.readArtifact(delivered[0].id), png);
                 await assert.rejects(execute(asked.id), /no longer active/);
                 await assert.rejects(
                   policy.run(
@@ -2011,6 +2071,57 @@ test(
             }
           } finally {
             executionResult = undefined;
+          }
+        },
+      );
+
+      await t.test(
+        'screenshot cleanup preserves committed or uncertain files and the original failure',
+        async (t) => {
+          for (const receipt of ['commit', 'rollback'] as const) {
+            const turn = await begin('Store synthetic screenshot bytes.');
+            t.after(() => finish(turn.turnId, 'cancelled'));
+            const failure = new Error(`Synthetic ${receipt} receipt lost.`);
+            const rollbackFailure = new Error('Synthetic rollback transport failure.');
+            const png = Buffer.from('synthetic screenshot bytes');
+            let artifactId: string | undefined;
+            const database = {
+              connect: async () => {
+                const client = await db.pool.connect();
+                return {
+                  query: async (sql: string, values?: unknown[]) => {
+                    const result = await client.query(sql, values);
+                    if (sql === 'COMMIT' && receipt === 'commit') throw failure;
+                    if (sql === 'ROLLBACK' && receipt === 'rollback') throw rollbackFailure;
+                    return result;
+                  },
+                  release: () => client.release(),
+                } as pg.PoolClient;
+              },
+            } as pg.Pool;
+            await assert.rejects(
+              transaction(async (client) => {
+                const artifact = await artifacts.localArtifacts.storeArtifact(
+                  png,
+                  'uncertain.png',
+                  'image/png',
+                  turn.threadId,
+                  client,
+                );
+                artifactId = artifact.id;
+                if (receipt === 'rollback') throw failure;
+                return artifact;
+              }, database),
+              (error) => error === failure,
+            );
+            assert.ok(artifactId);
+            assert.equal((await stat(join(dataRoot, 'artifacts', artifactId))).size, png.length);
+            assert.equal(
+              (await db.pool.query('SELECT id FROM artifacts WHERE id=$1', [artifactId])).rowCount,
+              receipt === 'commit' ? 1 : 0,
+            );
+            if (receipt === 'commit')
+              assert.deepEqual(await artifacts.localArtifacts.readArtifact(artifactId), png);
           }
         },
       );

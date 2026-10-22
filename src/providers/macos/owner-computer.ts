@@ -29,15 +29,16 @@ export function sandboxProfile(denyRead: string[] = []) {
     .join('\n');
   return `(version 1)
 (allow default)
+(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid SYS_posix_spawn))
 (deny process-info* (target others))
 (deny file-read* file-write* (subpath (param "DATA")))
-(deny file-read* file-write* (subpath (string-append (param "HOME") "/Library")) (regex (string-append "^" (param "HOME") "/\\\\.[^/]+($|/)")))
+(deny file-read* file-write* (subpath (string-append (param "HOME") "/Library")) (regex (string-append "^" (regex-quote (param "HOME")) "/\\\\.[^/]+($|/)")))
 ${extra}
 ${fixed}
 (deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd") (global-name "com.apple.security.agent"))
 (deny mach-lookup (local-name-prefix "com.apple.axserver") (global-name-prefix "com.apple.axserver") (global-name-prefix "com.apple.windowserver") (global-name-prefix "com.apple.replayd") (global-name-prefix "com.apple.ScreenCaptureKit"))
 (deny lsopen)
-(deny file-write* (subpath (string-append (param "HOME") "/Library/LaunchAgents")) (subpath "/Library/LaunchAgents") (subpath "/Library/LaunchDaemons") (subpath (string-append (param "HOME") "/Library/Application Support/com.apple.backgroundtaskmanagementagent")) (regex (string-append "^" (param "HOME") "/\\\\.(zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile|bash_login|zlogout)$")))
+(deny file-write* (subpath (string-append (param "HOME") "/Library/LaunchAgents")) (subpath "/Library/LaunchAgents") (subpath "/Library/LaunchDaemons") (subpath (string-append (param "HOME") "/Library/Application Support/com.apple.backgroundtaskmanagementagent")) (regex (string-append "^" (regex-quote (param "HOME")) "/\\\\.(zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile|bash_login|zlogout)$")))
 (deny appleevent-send)
 (deny process-exec (literal "/usr/bin/open") (literal "/usr/bin/osascript") (literal "/usr/bin/automator") (literal "/usr/bin/shortcuts") (literal "/usr/bin/security") (literal "/bin/launchctl") (literal "/usr/bin/crontab") (literal "/usr/bin/at"))
 `;
@@ -240,17 +241,22 @@ export function createMacComputer(options: {
         );
         const output = capture();
         let stopped: string | undefined;
+        const kill = () => {
+          if (!child.pid) return;
+          try {
+            process.kill(-child.pid, 'SIGKILL');
+          } catch {}
+        };
         const stop = (reason: string) => {
           stopped = reason;
-          try {
-            process.kill(-child.pid!, 'SIGKILL');
-          } catch {}
+          kill();
         };
         const timer = setTimeout(() => stop('timeout'), timeoutMs);
         const abort = () => stop('aborted');
         signal.addEventListener('abort', abort, { once: true });
         child.stdout.on('data', output.push);
         child.stderr.on('data', output.push);
+        child.once('exit', kill);
         child.on('error', () => reject(new Error('The shell on your computer is unavailable.')));
         child.on('close', (code) => {
           clearTimeout(timer);

@@ -508,7 +508,9 @@ export const toolDefinitions = {
         {
           action: Type.Literal('share_screenshot'),
           app: Type.String({ minLength: 1 }),
-          name: Type.Optional(Type.String({ maxLength: 84 })),
+          name: Type.Optional(
+            Type.String({ pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\\.png$', maxLength: 84 }),
+          ),
         },
         { additionalProperties: false },
       ),

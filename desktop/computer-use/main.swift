@@ -138,8 +138,9 @@ func look(_ query: String) throws -> [String: Any] {
     visited += 1
     guard let saved = try? state(element, root) else { return }
     let line = description(element)
+    let role = (text(element, kAXRoleAttribute) ?? "unknown").replacingOccurrences(of: "AX", with: "")
     let children = (attr(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
-    if !["Group", "unknown", "SplitGroup", "ScrollArea", "Layout"].contains(line) {
+    if !["Group", "unknown", "SplitGroup", "ScrollArea", "Layout"].contains(role) {
       count += 1
       let ref = "e\(count)"
       refs[ref] = saved

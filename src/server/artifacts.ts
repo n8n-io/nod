@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { mkdir, open, rm, writeFile } from 'node:fs/promises';
 import { basename, extname, join, posix } from 'node:path';
 import { pool } from './db.ts';
+import { afterRollback } from './transaction.ts';
 import { dataRoot, ownerId } from './config.ts';
 import type { Artifact } from '../shared/contracts.ts';
 import { fileBytes, fileName } from '../shared/files.ts';
@@ -130,6 +131,13 @@ export function createArtifactService(options: {
         'INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
         [id, options.ownerId, threadId || null, safeName, mimeType, bytes.length, location(id)],
       );
+      afterRollback(database, async () => {
+        const stored = await database.query(
+          'SELECT id FROM artifacts WHERE id=$1 AND owner_id=$2',
+          [id, options.ownerId],
+        );
+        if (stored.rowCount === 0) await rm(location(id), { force: true });
+      });
       return artifactView(result.rows[0]);
     } catch (error) {
       await rm(location(id), { force: true }).catch(() => {});

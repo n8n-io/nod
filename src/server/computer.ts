@@ -367,10 +367,7 @@ export function createComputerPolicy(options: {
       };
     }
     if (input.action === 'open' && running) args = { ...args, running: true };
-    const verdict =
-      allowed && input.action === 'share_screenshot'
-        ? { confirm: false as const }
-        : await options.check(turn, 'NOD_computer', args);
+    const verdict = await options.check(turn, 'NOD_computer', args);
     const action = allowed ? 'NOD_computer' : 'NOD_computer_app';
     return request(turn, action, args, {
       ...provenance,
