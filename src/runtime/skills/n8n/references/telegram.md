@@ -28,9 +28,11 @@ for start, kinds in flow.get('connections', {}).items():
                 if start in at and link['node'] in at:
                     (x1, y1), (x2, y2) = at[start], at[link['node']]
                     main = kind == 'main'
-                    ax.annotate('', xy=(x2 - w / 2, y2) if main else (x2, y2 - h / 2), xytext=(x1 + w / 2, y1) if main else (x1, y1 + h / 2),
+                    side = 1 if x2 >= x1 else -1
+                    bend = 0.5 if side < 0 else 0 if abs(y1 - y2) < 5 else (0.2 if y2 < y1 else -0.2)
+                    ax.annotate('', xy=(x2 - side * w / 2, y2) if main else (x2, y2 - h / 2), xytext=(x1 + side * w / 2, y1) if main else (x1, y1 + h / 2),
                                 arrowprops=dict(arrowstyle='-|>', color='#8d8d8d', lw=1.1, ls='-' if main else (0, (3, 3)),
-                                                connectionstyle=f'arc3,rad={0 if abs(y1 - y2) < 5 or not main else (0.2 if y2 < y1 else -0.2)}'))
+                                                connectionstyle=f'arc3,rad={bend if main else 0}'))
 for name, n in nodes.items():
     x, y = at[name]
     trigger = 'trigger' in n['type'].lower() or n['type'].endswith('.webhook')

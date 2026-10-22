@@ -28,7 +28,7 @@ Otto asks first only when a choice changes what it builds, such as where the res
 
 1. Otto follows n8n's own guide for its MCP tools and reads the node definitions from your n8n.
 2. It writes the workflow as code in its workspace, checks it with n8n and creates it in your n8n.
-3. It tests the workflow with sample data. A test never runs the steps that send or write to another service, so Otto checks what each of those steps would have sent instead.
+3. It tests the workflow with sample data. n8n replaces the steps that call another service, such as Slack or an HTTP request, with that sample data, and runs the rest, so Otto checks what each replaced step would have sent. A test or run you didn't ask for goes through the [trust check](/trust/approvals/) first.
 
 The reply shows the workflow as a canvas you can open in the side panel, with **Open in n8n** to jump to the editor. On Telegram, which can't show the canvas, Otto sends a picture of the workflow instead. Otto says which paths it tested and which it could not, and what you still need to do, such as adding credentials.
 

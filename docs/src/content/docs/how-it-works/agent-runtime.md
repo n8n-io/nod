@@ -95,7 +95,7 @@ A call acts only once every `apps` or `manage_personal_context` call issued befo
 Pi's `codemode` tool runs model-written JavaScript in a QuickJS sandbox with no network, files or timers.
 
 - Scripts can call the workspace and `pi-web-access` tools and the tools of connected MCP servers, in parallel, plus Pi's image and classifier models. That model spend goes to the usage ledger.
-- Every Otto tool is `model-only`, so scripts can't reach Composio apps, the browser, credentials, messages or shared files.
+- Every other Otto tool is `model-only`, so scripts can't reach Composio apps, the browser, credentials, messages or shared files.
 - A connected MCP server tool called from a script passes the same guard, order and trust check as a direct call. If the check asks you first, the script stops and the question goes to chat.
 - Calls inside a script stay raw so the script can parse them. Codemode's output is wrapped when it returns.
 

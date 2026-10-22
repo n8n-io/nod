@@ -572,8 +572,9 @@ export function connectedTools(
       ...(server.instructions ? { instructions: server.instructions } : {}),
     };
     return server.tools.flatMap((tool) => {
-      const name = `mcp__${namespace}__${mcpPart(tool.name)}`.slice(0, 64);
-      if (names.has(name)) return [];
+      const base = `mcp__${namespace}__${mcpPart(tool.name)}`.slice(0, 60);
+      let name = base;
+      for (let count = 2; names.has(name); count++) name = `${base}_${count}`;
       names.add(name);
       return [
         {
