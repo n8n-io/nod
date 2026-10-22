@@ -43,6 +43,15 @@ test('TGS previews decode vector animation and refuse expansion, expression and 
   const decode = (value: unknown, signal = new AbortController().signal) =>
     decodeSticker(gzipSync(JSON.stringify(value)), signal);
   assert.deepEqual(await decode(animation), animation);
+  const emptyMetadata = {
+    ...animation,
+    fonts: { list: [] },
+    chars: [],
+    segments: [],
+    slots: {},
+    layers: [{ ty: 4, ef: [], masksProperties: [], shapes: [] }],
+  };
+  assert.deepEqual(await decode(emptyMetadata), emptyMetadata);
   for (const change of [
     { w: 100_000 },
     { op: 181 },

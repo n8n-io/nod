@@ -44,10 +44,13 @@ export async function decodeSticker(bytes: Uint8Array, signal: AbortSignal) {
     animation.fr > 60 ||
     animation.op <= animation.ip ||
     animation.op - animation.ip > animation.fr * 3 ||
-    animation.fonts ||
-    animation.chars ||
-    animation.segments ||
-    animation.slots
+    (animation.fonts && !(Array.isArray(animation.fonts.list) && !animation.fonts.list.length)) ||
+    (animation.chars && !(Array.isArray(animation.chars) && !animation.chars.length)) ||
+    (animation.segments && !(Array.isArray(animation.segments) && !animation.segments.length)) ||
+    (animation.slots &&
+      (typeof animation.slots !== 'object' ||
+        Array.isArray(animation.slots) ||
+        Object.keys(animation.slots).length > 0))
   )
     throw new Error('Sticker preview unavailable.');
   const pending: Array<{ value: unknown; depth: number }> = [{ value: animation, depth: 0 }];
@@ -63,8 +66,9 @@ export async function decodeSticker(bytes: Uint8Array, signal: AbortSignal) {
         !['gr', 'tr', 'sh', 'el', 'rc', 'fl', 'st', 'gf', 'tm', 'rd'].includes(record.ty)) ||
       (typeof record.ty === 'number' && ![0, 3, 4].includes(record.ty)) ||
       (typeof record.ty === 'number' && Object.hasOwn(record, 'layers')) ||
-      record.ef ||
-      record.masksProperties ||
+      (record.ef && (!Array.isArray(record.ef) || record.ef.length > 0)) ||
+      (record.masksProperties &&
+        (!Array.isArray(record.masksProperties) || record.masksProperties.length > 0)) ||
       record.ddd === 1
     )
       throw new Error('Sticker preview unavailable.');
