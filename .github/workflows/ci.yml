@@ -171,6 +171,7 @@ jobs:
           --volume "$PWD/scripts:/app/scripts:ro"
           --volume "$PWD/public:/app/public:ro"
           --volume "$PWD/desktop/main:/app/desktop/main:ro"
+          --volume "$PWD/desktop/preload:/app/desktop/preload:ro"
           --volume "$PWD/desktop/ui:/app/desktop/ui:ro"
           --volume "$PWD/tsconfig.json:/app/tsconfig.json:ro"
           --volume "$PWD/dist/web:/app/dist/web:ro"
