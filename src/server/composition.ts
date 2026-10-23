@@ -1031,14 +1031,34 @@ async function initializeApplication(
         : undefined,
     };
   };
+  let feedbackProfileRead: ReturnType<typeof ownerProfile> | undefined;
+  let feedbackRedaction:
+    | {
+        profile: Awaited<ReturnType<typeof ownerProfile>>;
+        redact: ReturnType<typeof createFeedbackRedactor>;
+      }
+    | undefined;
+  const feedbackSecrets = [ownerId, ...secrets];
   diagnostics.log = await createFeedbackLog({
     dataRoot,
     ownerId,
     sanitize: async (value) => {
-      const redact = createFeedbackRedactor({
-        secrets: [...secrets, ownerId],
-        profile: await ownerProfile(),
-      });
+      const profile = await (feedbackProfileRead ??= ownerProfile().finally(() => {
+        feedbackProfileRead = undefined;
+      }));
+      for (let index = feedbackSecrets.length - 1; index < secrets.length; index++)
+        feedbackSecrets.push(secrets[index]);
+      if (
+        !feedbackRedaction ||
+        feedbackRedaction.profile.region !== profile.region ||
+        feedbackRedaction.profile.names.length !== profile.names.length ||
+        feedbackRedaction.profile.names.some((name, index) => name !== profile.names[index])
+      )
+        feedbackRedaction = {
+          profile,
+          redact: createFeedbackRedactor({ secrets: feedbackSecrets, profile }),
+        };
+      const { redact } = feedbackRedaction;
       if (!redact.isReady()) throw new Error('Diagnostic redaction unavailable.');
       return redact.value(value);
     },

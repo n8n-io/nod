@@ -103,13 +103,14 @@ export function createFeedbackRedactor(options: { secrets: string[]; profile: Pe
       marker + (stack ? (value.match(/:\d+:\d+[),;]*$/)?.[0] ?? '') : '');
     return safe
       .replace(/\bdata:[^\s"'<>]+/gi, '[binary omitted]')
-      .replace(/\b(?:https?|wss?|ftp|file):\/\/[^\s<>"']+/gi, (value) => location(value, '[url]'))
-      .replace(/\b(?:https?|wss?|ftp|file)%3a(?:%2f){2}[^\s<>"']+/gi, (value) =>
+      .replace(/(["'])(?:https?|wss?|ftp|file):\/\/[^\r\n]*?\1/gi, '[url]')
+      .replace(/\b(?:https?|wss?|ftp|file):\/\/[^\r\n]+/gi, (value) => location(value, '[url]'))
+      .replace(/\b(?:https?|wss?|ftp|file)%3a(?:%2f){2}[^\r\n]+/gi, (value) =>
         location(value, '[url]'),
       )
       .replace(/(["'])(?:[A-Za-z]:[\\/]|~?\/)[^\r\n]*?\1/g, '[path]')
       .replace(
-        /(?:[A-Za-z]:\\|(?:~\/|\/(?:Users|home)\/[^/\r\n]+\/|\/(?:root|private|var|tmp|Volumes|mnt|workspace|app|data)\/))[^\s<>"']*/g,
+        /(?:[A-Za-z]:[\\/]|(?:~\/|\/(?:Users|home)\/[^/\r\n]+\/|\/(?:root|private|var|tmp|Volumes|mnt|workspace|app|data)\/))[^\r\n]*/g,
         (value) => location(value, '[path]'),
       )
       .replace(

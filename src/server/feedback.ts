@@ -176,7 +176,7 @@ export async function registerFeedback(
     const content = await options.buildReport(
       parseFeedbackActivity(input.activity).map((row) => ({ ...row, source: 'app' })),
       input.errors ?? [],
-      input.errorsAvailable !== false,
+      input.errorsAvailable ?? input.errors !== undefined,
     );
     if (Buffer.byteLength(content) > feedbackLimits.reportBytes)
       throw fail('The diagnostic report is too large.', 413);

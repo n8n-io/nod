@@ -451,14 +451,15 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     truncated: logCoverage.truncated || logCoverage.dropped > 0,
   };
   lists.clientErrors = [];
-  if (redact && options.errorsAvailable !== false)
+  const errorsAvailable = options.errorsAvailable ?? options.errors !== undefined;
+  if (redact && errorsAvailable)
     lists.clientErrors = (options.errors ?? []).slice(-10).map((error) => ({
       event: 'client_error',
       ageMs: amount(error.ageMs),
       data: redact!.value({ type: error.type, message: error.message, stack: error.stack }),
     }));
   sections.clientErrors = {
-    status: !redact || options.errorsAvailable === false ? 'unavailable' : 'collected',
+    status: !redact || !errorsAvailable ? 'unavailable' : 'collected',
     scope: 'recent',
     rows: lists.clientErrors.length,
     truncated: false,

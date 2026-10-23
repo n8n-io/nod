@@ -3947,8 +3947,8 @@ test(
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await feedbackFixture(t);
-    const first = await f.open(randomUUID(), async (activity: unknown) =>
-      JSON.stringify({ activity }),
+    const first = await f.open(randomUUID(), async (activity, errors, errorsAvailable) =>
+      JSON.stringify({ activity, errors, errorsAvailable }),
     );
     const second = await f.open();
     const snapshot = (
@@ -3982,7 +3982,26 @@ test(
           properties: { area: 'chat', action: 'send' },
         },
       ],
+      errors: [],
+      errorsAvailable: false,
     });
+    for (const payload of [
+      { errors: [] },
+      { errors: [], errorsAvailable: false },
+      { errors: [{ type: 'error', message: 'Synthetic client error', ageMs: 1000 }] },
+    ]) {
+      const response = await first.app.inject({
+        method: 'POST',
+        url: '/api/feedback/report',
+        payload,
+      });
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(JSON.parse(response.json().content), {
+        activity: [],
+        errors: payload.errors,
+        errorsAvailable: payload.errorsAvailable ?? true,
+      });
+    }
     const input = f.submission({
       reportId: snapshot.id,
       appVersion: 'Private version canary',
@@ -4342,6 +4361,17 @@ test(
     assert.match(report.logs[2].data.error.message, /Gmail fetch failed with HTTP 503/);
     assert.equal(report.clientErrors.length, 1);
     assert.match(report.clientErrors[0].data.message, /Could not open account/);
+    for (const input of [
+      { errors: undefined, errorsAvailable: undefined },
+      { errors: options.errors, errorsAvailable: false },
+    ]) {
+      const unavailable = JSON.parse(await buildFeedbackReport({ ...options, ...input }));
+      assert.equal(unavailable.coverage.sections.clientErrors.status, 'unavailable');
+      assert.deepEqual(unavailable.clientErrors, []);
+    }
+    const emptyErrors = JSON.parse(await buildFeedbackReport({ ...options, errors: [] }));
+    assert.equal(emptyErrors.coverage.sections.clientErrors.status, 'collected');
+    assert.deepEqual(emptyErrors.clientErrors, []);
     assert.equal(report.modelUsage[0].inputTokens, 123);
     assert.equal(report.modelUsage[0].modelFamily, 'gpt');
     assert.equal(report.modelUsage[0].durationMs, 4321);
