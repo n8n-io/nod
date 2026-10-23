@@ -113,10 +113,7 @@ export function modelSelection(source: ModelConnection, modelId: string): ModelS
 }
 
 export function recommendedModel(source: ModelConnection) {
-  return (
-    (source.method === 'subscription' && source.models.find((model) => model.id === 'gpt-6-sol')) ||
-    defaultModel(source.provider, source.models)
-  );
+  return defaultModel(source.provider, source.models, source.method);
 }
 
 export function useModelSignIn(

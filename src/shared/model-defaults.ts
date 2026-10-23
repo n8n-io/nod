@@ -1,4 +1,4 @@
-import type { ModelChoice, ModelEffort, ModelProvider } from './models.ts';
+import type { ModelChoice, ModelEffort, ModelMethod, ModelProvider } from './models.ts';
 
 export const agentModels: Partial<Record<ModelProvider, string>> = {
   'ant-ling': 'Ling-3.1-flash',
@@ -53,17 +53,13 @@ export const memoryModels: Partial<Record<ModelProvider, string>> = {
   radius: 'cheap',
 };
 
-export function defaultModel(provider: ModelProvider, models: ModelChoice[]) {
+export function defaultModel(provider: ModelProvider, models: ModelChoice[], method?: ModelMethod) {
   if (provider === 'amazon-bedrock' && models.length > 1) return undefined;
-  const preferred = models.find((model) => model.id === agentModels[provider]);
+  const preferred =
+    (method === 'subscription' && models.find((model) => model.id === 'gpt-6-sol')) ||
+    models.find((model) => model.id === agentModels[provider]);
   if (preferred || provider === 'google') return preferred;
-  return models.toSorted(
-    (a, b) =>
-      Number(b.images) - Number(a.images) ||
-      Number(b.efforts.some((effort) => effort !== 'off')) -
-        Number(a.efforts.some((effort) => effort !== 'off')) ||
-      b.contextWindow - a.contextWindow,
-  )[0];
+  return models[0];
 }
 
 export function defaultEffort(provider: ModelProvider, model: ModelChoice): ModelEffort {

@@ -1547,8 +1547,17 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     };
     const fallback = await f.create('fixture-fallback-default', fallbackBackend);
     await fallback.addKey('deepseek', 'fixture-fallback-key');
-    assert.equal(fallback.view().selection?.modelId, 'fixture-capable');
-    assert.equal(fallback.view().selection?.effort, 'high');
+    assert.equal(fallback.view().selection?.modelId, 'fixture-small');
+    assert.equal(fallback.view().selection?.effort, 'off');
+    const subscription = await f.create('fixture-subscription-default', {
+      ...backend,
+      signIn: stubSignIn(async () => subscriptionCredential()),
+    });
+    const signIn = await subscription.start('openai');
+    await subscription.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${signIn.attempt}&code=fixture`),
+    );
+    assert.equal(subscription.view().selection?.modelId, 'gpt-6-sol');
     const count = google.view().connections.length;
     for (const settings of [
       {},

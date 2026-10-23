@@ -32,7 +32,7 @@ Other providers include Ant Ling, Baseten, Cerebras, DeepSeek, Fireworks AI, Gro
 
 When an account model list is available, nod loads it. For services with only a bundled catalog, nod says **Key saved** and checks access on first use. Neither a catalog nor a saved key proves that your account has credit or permission to run every listed model.
 
-You can change the initial choice. nod preserves a working choice when you add another connection. If a preferred model is missing, nod prefers a model that supports images and reasoning from the same connection. Bedrock keeps its explicit model choice because profiles can change where requests are processed.
+You can change the initial choice. nod preserves a working choice when you add another connection. It uses the recommended model when available, otherwise the first supported model in that connection's catalog. For Google Gemini, you must choose a model if Gemini 3.8 Flash is unavailable. When Bedrock offers several models or profiles, you must also choose because profiles can change where requests are processed.
 
 :::note[Google free access]
 Create a Gemini API key with your Google account in AI Studio. Gemini 3.8 Flash has a [free tier](https://ai.google.dev/gemini-api/docs/pricing), subject to project quotas and availability; Gemini 4 Argon needs paid API access. The free tier has different data-use terms, so review Google's terms before sending private material.

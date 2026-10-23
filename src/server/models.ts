@@ -482,8 +482,7 @@ export function createModelService(options: {
       managed && options.bootstrap?.provider === provider ? options.bootstrap.model : undefined;
     const preferred = configuredModel
       ? choices.find((model) => model.id === configuredModel)
-      : (method === 'subscription' && choices.find((model) => model.id === 'gpt-6-sol')) ||
-        defaultModel(provider, choices);
+      : defaultModel(provider, choices, method);
     if (
       preferred &&
       status === 'connected' &&
