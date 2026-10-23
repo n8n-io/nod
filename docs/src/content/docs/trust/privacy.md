@@ -97,6 +97,8 @@ Before a trace leaves your computer, nod removes known secrets, your name, email
 
 The feedback dialog shows who receives your submission. The default is the nod team at n8n; an operator can set a different HTTPS collector. To help the team investigate, you can tick **Include diagnostic report** to add your recent chat, actions and their results. It's off by default. Select **Review** to read the report first. Before you see it, nod removes known secret values and the personal details it removes from [conversation traces](/trust/conversation-traces/#what-nod-removes-first), such as your name, email addresses, phone numbers and card numbers. Removal is automatic and can miss details written in other forms, such as another person's name in a sentence. From the desktop app, feedback also includes the app version and your platform. Feedback is a separate, deliberate submission and does not turn on usage analytics.
 
+If nod can't read the history or prepare its privacy checks, it leaves conversation and action details out of the report. The dialog tells you before you send. You can still send that limited report, or continue without a report if preparation fails.
+
 Operators can disable submission and status checks with `NOD_FEEDBACK_ENABLED=false`. See the [configuration reference](/deploy/configuration/#analytics-and-feedback) for custom collectors and operation without either upstream collector.
 
 ## What memory learns from

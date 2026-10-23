@@ -66,6 +66,7 @@ export function FeedbackDiagnostics({
   const actions = rows(data?.trace).reverse();
   const activityCount = actions.length + turns.length;
   const coverage = record(data?.coverage);
+  const contentOmitted = coverage?.contentOmitted === true;
 
   return (
     <section className="feedback-diagnostics" aria-label="Diagnostic report">
@@ -90,9 +91,14 @@ export function FeedbackDiagnostics({
           </Button>
         )}
       </div>
-      <p className="feedback-diagnostics-disclosure">
+      <p
+        className="feedback-diagnostics-disclosure"
+        role={included && contentOmitted ? 'status' : undefined}
+      >
         {included
-          ? 'Includes recent chat, actions and their results with your feedback.'
+          ? contentOmitted
+            ? 'Conversation and action details are unavailable. You can still send this report.'
+            : 'Includes recent chat, actions and their results with your feedback.'
           : 'Optional context to help investigate your feedback.'}
       </p>
       {included && error && (
@@ -106,6 +112,15 @@ export function FeedbackDiagnostics({
             onClick={onRefresh}
           >
             Try again
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={frozen}
+            onClick={onToggleIncluded}
+          >
+            Continue without report
           </Button>
         </div>
       )}
@@ -138,7 +153,11 @@ export function FeedbackDiagnostics({
                               : label(message.role, 'Message')}
                         </strong>
                         <p>
-                          {typeof message.text === 'string' ? message.text : 'No text recorded.'}
+                          {typeof message.text === 'string'
+                            ? message.text
+                            : contentOmitted
+                              ? 'Message text unavailable.'
+                              : 'No text recorded.'}
                         </p>
                       </article>
                     ))

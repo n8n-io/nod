@@ -147,6 +147,8 @@ On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/nod/instal
 | It still fails        | Open **Send feedback** in Chat, tick **Include diagnostic report**, review it and send. If Chat can't open, send the visible setup error.                                    |
 | Starting over         | Select **Remove all data…** in the **nod** menu. It deletes the profile and private computer, keeps the runtime, and quits.                                                  |
 
+If recent history can't be read or scrubbed, the report omits conversation and action details. You can review and send that limited report. If the report itself can't be prepared, select **Continue without report**, then **Send feedback**. Your text and selected attachments stay in the draft.
+
 :::danger[Don't delete the profile to recover]
 Never delete the profile, VM, database or runtime cache as a routine recovery step. A downgrade or full backup-and-restore isn't supported. Testers should never send API keys, passwords or the settings file.
 :::

@@ -7,6 +7,7 @@ import {
   type PersonalProfile,
 } from './personal-data.ts';
 import { feedbackLimits } from '../shared/feedback.ts';
+import { logFailure } from './failure-log.ts';
 
 type RecordValue = Record<string, unknown>;
 
@@ -39,21 +40,35 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
       values,
     ),
   ]);
-  const entries = (await options.sessionEntries?.(thread.id)) ?? [];
+  const [session, profile] = await Promise.allSettled([
+    Promise.resolve().then(() => options.sessionEntries?.(thread.id) ?? []),
+    Promise.resolve().then(() => options.profile()),
+  ]);
+  if (session.status === 'rejected') logFailure('feedback_session_unavailable', session.reason);
+  if (profile.status === 'rejected') logFailure('feedback_profile_unavailable', profile.reason);
+  const contentOmitted = session.status === 'rejected' || profile.status === 'rejected';
+  const entries = session.status === 'fulfilled' ? session.value : [];
   const secret = createRedactor([...(options.secrets ?? []), ...savedCredentialValues(entries)], {
     string: 4000,
     payload: 12_000,
     minimumSecretLength: 1,
   });
-  const personal = createPersonalDataRedactor(await options.profile());
-  const redact = (row: unknown) =>
+  const personal =
+    profile.status === 'fulfilled' ? createPersonalDataRedactor(profile.value) : undefined;
+  const redact = (row: RecordValue) =>
     Object.fromEntries(
-      Object.entries(secret(row) as RecordValue).map(([key, value]) => [
+      Object.entries(
+        secret(
+          Object.fromEntries(
+            Object.entries(row).filter(([key]) => !contentOmitted || !contentFields.has(key)),
+          ),
+        ) as RecordValue,
+      ).map(([key, value]) => [
         key,
-        contentFields.has(key) ? withoutPersonalFields(value, personal) : value,
+        personal && contentFields.has(key) ? withoutPersonalFields(value, personal) : value,
       ]),
     );
-  const toolTrace = savedToolTrace(entries, Date.now());
+  const toolTrace = contentOmitted ? [] : savedToolTrace(entries, Date.now());
   const report = {
     format: 'nod-feedback-report-v1',
     generatedAt: new Date().toISOString(),
@@ -62,7 +77,8 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     model: options.model,
     coverage: {
       hours: 24,
-      toolTraceSource: 'saved-session',
+      toolTraceSource: contentOmitted ? 'unavailable' : 'saved-session',
+      contentOmitted,
       truncated: false,
     },
     messages: messages.rows.map(redact),
