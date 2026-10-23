@@ -3171,12 +3171,15 @@ test('engine preload exposes no credential reveal and withholds privileged IPC e
   listeners.get('nod:status')({ sender: 'privileged-synthetic-ipc' }, status);
   assert.deepEqual(received, [status]);
   listeners.get('nod:navigate')({ sender: 'privileged-synthetic-ipc' }, '/settings/models');
+  let navigationCalls = 0;
   const stop = bridge.onNavigate((...values) => {
+    navigationCalls++;
     received = values;
   });
   assert.deepEqual(received, ['/settings/models']);
   stop();
   listeners.get('nod:navigate')({ sender: 'privileged-synthetic-ipc' }, '/trust');
+  assert.equal(navigationCalls, 1);
   bridge.onNavigate((...values) => {
     received = values;
   });
