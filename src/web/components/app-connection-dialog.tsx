@@ -2,16 +2,18 @@ import { useRef, type ComponentProps } from 'react';
 import { ExternalLink } from './icons';
 import { NodGlyph } from './motion';
 import { ServiceLogo } from './service-logo';
-import { Button, Dialog, DialogContent, DialogDescription, DialogTitle, Notice } from './ui';
+import { Button, Dialog, DialogContent, DialogDescription, DialogTitle } from './ui';
 
 export type AppSignIn = {
   service: string;
   name: string;
   logoUrl?: string;
+  accountLabel?: string;
   url?: string;
   opened: boolean;
   reopened?: boolean;
   pairingConfirmed?: boolean;
+  outcome?: 'connected' | 'cancelled' | 'failed' | 'unavailable';
 };
 
 export function AppConnectionDialog({
@@ -20,6 +22,7 @@ export function AppConnectionDialog({
   error,
   onClose,
   onOpened,
+  onRetry,
   onCloseAutoFocus,
 }: {
   signIn?: AppSignIn;
@@ -27,9 +30,42 @@ export function AppConnectionDialog({
   error?: string;
   onClose(): void;
   onOpened(): void;
+  onRetry?(): void;
   onCloseAutoFocus?: ComponentProps<typeof DialogContent>['onCloseAutoFocus'];
 }) {
   const title = useRef<HTMLHeadingElement>(null);
+  const outcome = signIn?.outcome ?? (error ? 'failed' : undefined);
+  const connected = outcome === 'connected';
+  const recovery = Boolean(outcome && !connected);
+  const canOpen = !outcome && signIn?.url && !signIn.opened && !signIn.pairingConfirmed && !opening;
+  const heading = connected
+    ? `${signIn?.name} is connected`
+    : outcome === 'unavailable'
+      ? 'Use a new sign-in link'
+      : outcome === 'cancelled'
+        ? 'Sign-in cancelled'
+        : outcome === 'failed'
+          ? 'Sign-in didn’t finish'
+          : `Connect ${signIn?.name}`;
+  const description =
+    error ||
+    (connected
+      ? 'You can continue in nod.'
+      : outcome === 'unavailable'
+        ? onRetry
+          ? 'This sign-in is no longer active. Try again to open a new window.'
+          : 'This link is no longer available. Ask nod for a new sign-in link.'
+        : outcome === 'cancelled'
+          ? 'You can try again when you’re ready to connect this account.'
+          : outcome === 'failed'
+            ? onRetry
+              ? 'Sign-in couldn’t be confirmed. Try again with a new window.'
+              : 'Ask nod for a new sign-in link to try again.'
+            : signIn?.reopened && !onRetry
+              ? 'Sign-in is already open in your browser. If you closed it, ask nod for a new sign-in link.'
+              : opening || !signIn?.url
+                ? 'Your browser will open when sign-in is ready.'
+                : 'Review what nod can access in your browser.');
   return (
     <Dialog open={Boolean(signIn)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
@@ -43,15 +79,16 @@ export function AppConnectionDialog({
       >
         {signIn && (
           <>
-            <div className="app-connect-heading">
+            <div
+              className="app-connect-heading"
+              role={recovery ? 'alert' : undefined}
+              aria-live={connected ? 'polite' : undefined}
+            >
               <div className="app-connect-flow" aria-hidden="true">
                 <span className="app-connect-logo">
-                  <NodGlyph size={40} mode={!error && opening ? 'thinking' : 'still'} />
+                  <NodGlyph size={40} mode={!outcome && opening ? 'thinking' : 'still'} />
                 </span>
-                <span
-                  className="app-connect-route"
-                  data-pending={(!opening && !error) || undefined}
-                >
+                <span className="app-connect-route" data-pending={!outcome || undefined}>
                   <span />
                   <span />
                   <span />
@@ -61,40 +98,51 @@ export function AppConnectionDialog({
                 </span>
               </div>
               <DialogTitle ref={title} tabIndex={-1}>
-                Connect {signIn.name}
+                {heading}
               </DialogTitle>
-              <DialogDescription>
-                {error
-                  ? 'Sign-in could not continue.'
-                  : !signIn.url
-                    ? 'Your browser will open when sign-in is ready.'
-                    : 'Sign in in your browser and review what nod can access.'}
-              </DialogDescription>
-            </div>
-            {error ? (
-              <Notice kind="error">{error}</Notice>
-            ) : (
-              <>
-                <p className="app-connect-waiting" role="status">
-                  {signIn.pairingConfirmed
-                    ? 'Waiting for you to finish signing in.'
-                    : signIn.reopened
-                      ? 'Sign-in is already open in your browser. If you closed it, ask nod for a new sign-in link.'
-                      : signIn.url
-                        ? 'Finish signing in in your browser.'
-                        : 'Preparing secure sign-in…'}
+              {(signIn.accountLabel || recovery) && (
+                <p className="app-connect-account" data-analytics-private>
+                  {recovery ? `${signIn.name}${signIn.accountLabel ? ' · ' : ''}` : ''}
+                  {signIn.accountLabel}
                 </p>
-                {signIn.url && !signIn.opened && !opening && !signIn.pairingConfirmed && (
-                  <div className="app-connect-actions">
-                    <Button variant="outline" asChild>
+              )}
+              <DialogDescription>{description}</DialogDescription>
+            </div>
+            {!outcome && (
+              <p className="app-connect-waiting" role="status">
+                {opening || !signIn.url
+                  ? 'Preparing sign-in…'
+                  : signIn.opened || signIn.pairingConfirmed
+                    ? 'Waiting for sign-in'
+                    : 'Ready to open sign-in'}
+              </p>
+            )}
+            <div className="app-connect-actions">
+              {connected ? (
+                <Button className="app-connect-done" onClick={onClose}>
+                  Done
+                </Button>
+              ) : (
+                <>
+                  <Button variant="ghost" onClick={onClose}>
+                    {recovery ? 'Not now' : 'Close'}
+                  </Button>
+                  {recovery && onRetry ? (
+                    <Button onClick={onRetry}>Try again</Button>
+                  ) : canOpen ? (
+                    <Button asChild>
                       <a href={signIn.url} target="_blank" rel="noreferrer" onClick={onOpened}>
                         Open sign-in window <ExternalLink size={16} aria-hidden="true" />
                       </a>
                     </Button>
-                  </div>
-                )}
-              </>
-            )}
+                  ) : !outcome && onRetry && !opening ? (
+                    <Button variant="outline" onClick={onRetry}>
+                      Start again
+                    </Button>
+                  ) : null}
+                </>
+              )}
+            </div>
           </>
         )}
       </DialogContent>

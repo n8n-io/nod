@@ -82,6 +82,12 @@
   margin: 0;
   line-height: 1.6;
 }
+.app-connect-account {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
 .app-connect-waiting {
   margin: 24px 0 16px;
   color: var(--muted-foreground);
@@ -90,4 +96,10 @@
 .app-connect-actions {
   display: flex;
   justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+.app-connect-actions .button {
+  min-height: 44px;
 }

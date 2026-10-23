@@ -3363,7 +3363,7 @@ test('Composio inbox threads read the latest message from someone else and skip 
     assert.deepEqual(request.parameters, [{ in: 'query', name: 'format', value: 'full' }]);
 });
 
-test('OAuth completion pages clear callback state and close only successful consent', async (t) => {
+test('OAuth completion pages clear callback state and offer fixed return targets', async (t) => {
   const { readFile } = await import('node:fs/promises');
   const { JSDOM } = await import('jsdom');
   const html = await readFile(new URL('../public/connected.html', import.meta.url), 'utf8');
@@ -3383,51 +3383,73 @@ test('OAuth completion pages clear callback state and close only successful cons
         ['Gmail', null],
         ['<svg onload="alert(1)">', null],
       ] as const) {
-        const messages: unknown[] = [];
-        const operations: string[] = [];
-        let dispose = () => {};
-        const query = new URLSearchParams({ connection: outcome, service, attempt });
-        const dom = new JSDOM(html, {
-          url: `http://127.0.0.1:4310/connected.html?${query}`,
-          runScripts: 'dangerously',
-          beforeParse(window) {
-            dispose = window.close.bind(window);
-            Reflect.set(
-              window,
-              'BroadcastChannel',
-              class {
-                constructor(name: string) {
-                  assert.equal(name, 'nod.apps');
-                  assert.equal(window.location.search, '');
-                }
-                postMessage(message: unknown) {
-                  messages.push(JSON.parse(JSON.stringify(message)));
-                  operations.push('message');
-                }
-                close() {
-                  operations.push('channel-close');
-                }
-              },
-            );
-            window.close = () => {
-              assert.equal(window.location.search, '');
-              operations.push('window-close');
-            };
-          },
-        });
-        assert.deepEqual(messages, [{ connection: outcome, service: expected, attempt }]);
-        assert.deepEqual(operations, [
-          'message',
-          'channel-close',
-          ...(outcome === 'connected' || outcome === 'continued' ? ['window-close'] : []),
-        ]);
-        assert.equal(dom.window.document.querySelector('[onload]'), null);
-        dispose();
+        for (const desktop of service === 'gmail'
+          ? [undefined, '1', '0', 'true', '01', 'https://foreign.example/redirect']
+          : [undefined]) {
+          const messages: unknown[] = [];
+          const operations: string[] = [];
+          let dispose = () => {};
+          const query = new URLSearchParams({
+            connection: outcome,
+            service,
+            attempt,
+            returnTo: 'https://foreign.example/redirect',
+            target: 'javascript:alert(1)',
+            redirect: '//foreign.example/redirect',
+          });
+          if (desktop !== undefined) query.set('desktop', desktop);
+          const dom = new JSDOM(html, {
+            url: `http://127.0.0.1:4310/connected.html?${query}`,
+            runScripts: 'dangerously',
+            beforeParse(window) {
+              dispose = window.close.bind(window);
+              Reflect.set(
+                window,
+                'BroadcastChannel',
+                class {
+                  constructor(name: string) {
+                    assert.equal(name, 'nod.apps');
+                    assert.equal(window.location.search, '');
+                  }
+                  postMessage(message: unknown) {
+                    messages.push(JSON.parse(JSON.stringify(message)));
+                    operations.push('message');
+                  }
+                  close() {
+                    operations.push('channel-close');
+                  }
+                },
+              );
+              window.close = () => {
+                assert.equal(window.location.search, '');
+                operations.push('window-close');
+              };
+            },
+          });
+          assert.deepEqual(messages, [{ connection: outcome, service: expected, attempt }]);
+          assert.deepEqual(operations, [
+            'message',
+            'channel-close',
+            ...(outcome === 'connected' || outcome === 'continued' ? ['window-close'] : []),
+          ]);
+          assert.equal(dom.window.document.querySelector('[onload]'), null);
+          const returnLink = dom.window.document.querySelector('main a');
+          assert.ok(returnLink, 'Completion must expose a way back to the app');
+          assert.equal(
+            returnLink.getAttribute('href'),
+            desktop === '1' ? 'nod://open/apps' : '/apps',
+          );
+          const beforeClick = operations.length;
+          returnLink.addEventListener('click', (event) => event.preventDefault(), { once: true });
+          (returnLink as HTMLElement).click();
+          assert.deepEqual(operations.slice(beforeClick), desktop === '1' ? [] : ['window-close']);
+          dispose();
+        }
       }
     });
 });
 
-test('Apps settles unavailable consent and retries the same account without accepting stale completion', () => {
+test('Apps keeps connection recovery in place and preserves retry intent across stale results', () => {
   const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeout: 25_000,
     encoding: 'utf8',
@@ -3441,10 +3463,13 @@ globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.windo
 globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
 globalThis.location=window.location;
 globalThis.ResizeObserver=class{observe(){}disconnect(){}};
-globalThis.BroadcastChannel=class{close(){}};
+const channels=new Set();
+globalThis.BroadcastChannel=class{constructor(){channels.add(this);}close(){channels.delete(this);}};
 HTMLElement.prototype.scrollIntoView=function(){};
 window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
-window.open=()=>({closed:false,opener:null,document:{body:{}},location:{},close(){}});
+let popupBlocked=false;
+let restartBlocked=false;
+window.open=()=>popupBlocked?null:({closed:false,opener:null,document:{body:{}},location:{},close(){}});
 const {createElement,act}=await import('react');
 const {createRoot}=await import('react-dom/client');
 const {Apps}=await import('./src/web/pages/apps.tsx');
@@ -3465,12 +3490,13 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
   if(path==='/api/apps/catalog')return Response.json([]);
   if(path==='/api/apps/gmail/connect'){
     requests.push(body);
+    if(restartBlocked&&body.restartAttempt)return Response.json({error:'Sign-in is finishing.'},{status:409});
     return Response.json({url:'https://connect.composio.dev/link/synthetic-'+requests.length,attempt:String(requests.length).repeat(43)});
   }
   if(path==='/api/apps/setup-status'){
     polls++;
     if(hold){hold=false;return new Promise(resolve=>{release=()=>resolve(Response.json({completed:body.hashes,apps:[]}));});}
-    return Response.json({completed:completed?body.hashes:[],apps:body.hashes.map(hash=>({hash,slug:'gmail',name:'Gmail',available,pairingConfirmed:true}))});
+    return Response.json({completed:completed?body.hashes:[],apps:body.hashes.map(hash=>({hash,slug:'gmail',name:'Gmail',available,pairingConfirmed:false}))});
   }
   throw new Error('Unexpected fixture request '+path);
 };
@@ -3478,49 +3504,138 @@ const settle=(ms=15)=>act(async()=>{await new Promise(resolve=>setTimeout(resolv
 const waitFor=async(condition,message)=>{for(let i=0;i<100&&!condition();i++)await settle();assert.ok(condition(),message);};
 const button=name=>[...document.querySelectorAll('button')].find(item=>(item.getAttribute('aria-label')??item.textContent.trim())===name);
 const click=async(name)=>{await waitFor(()=>button(name)&&!button(name).disabled,'Expected enabled '+name);await act(async()=>button(name).click());await settle();};
-const waiting=()=>document.querySelector('[role="dialog"] [role="status"]');
+const dialog=()=>document.querySelector('[role="dialog"]');
+const waiting=()=>button('Start again');
+const consentLink=()=>document.querySelector('a[href^="https://connect.composio.dev/link/"]');
+const terminalFocus=async()=>{const before=polls;await act(async()=>window.dispatchEvent(new Event('focus')));await settle();assert.equal(polls,before,'Terminal consent must stop polling');};
+const broadcast=async(connection,attempt)=>{await act(async()=>{for(const channel of [...channels])channel.onmessage?.({data:{connection,service:'gmail',attempt}});});await settle();};
 const reconnect='Reconnect work@example.test to Gmail';
 const focus=async()=>{const before=polls;await act(async()=>window.dispatchEvent(new Event('focus')));await waitFor(()=>polls>before,'Focus must check the pending attempt');await settle();};
 const root=createRoot(document.getElementById('root'));
 await act(async()=>root.render(createElement(Apps,{onAsk(){assert.fail('No agent task should start');}})));
 await click('Manage Gmail accounts');
 await click(reconnect);
-await waitFor(waiting,'Consent must remain open while active');
+await waitFor(waiting,'Consent must expose an explicit restart while active');
+const firstDialog=dialog();
+assert.equal(consentLink(),null,'A handed-off one-time consent link must not be offered again');
 await focus();
-assert.ok(waiting(),'Available consent must remain open');
+assert.ok(waiting(),'Available consent must remain pending');
 available=undefined;
 await focus();
 assert.ok(waiting(),'Legacy pending metadata must remain usable');
 assert.equal(requests.length,1,'Polling must not restart authorization');
 available=false;
 await focus();
-await waitFor(()=>!waiting(),'Unavailable consent must stop waiting immediately');
+await waitFor(()=>button('Try again'),'Unavailable consent must expose direct recovery');
+assert.equal(dialog(),firstDialog,'Unavailable consent must keep recovery in the same dialog');
+assert.equal(waiting(),undefined,'Unavailable consent must stop pending immediately');
 assert.ok(document.querySelector('[role="alert"]'),'Unavailable consent must expose recovery');
 assert.equal(requests.length,1,'Unavailable consent must not automatically retry');
+await terminalFocus();
 available=true;
-await click(reconnect);
-await waitFor(waiting,'An explicit retry must open a new attempt');
+await click('Try again');
+await waitFor(waiting,'An explicit retry must start a new attempt');
+assert.equal(dialog(),firstDialog,'Retry must keep the current dialog open');
 assert.equal(document.querySelector('[role="alert"]'),null,'Retry must clear the previous failure');
 assert.deepEqual(requests,[{returnTo:'window',connectionId},{returnTo:'window',connectionId}]);
+await broadcast('connected',String(requests.length).repeat(43));
+assert.ok(waiting(),'A callback alone cannot confirm a connection before server verification');
 completed=true;
 await focus();
-await waitFor(()=>!waiting(),'Confirmed consent must stop waiting');
+await waitFor(()=>button('Done')&&!waiting(),'Confirmed consent must expose completion');
+assert.equal(dialog(),firstDialog,'Successful consent must remain visible until dismissed');
 assert.equal(document.querySelector('[role="alert"]'),null,'Successful consent must not show a failure');
+await terminalFocus();
+await click('Done');
+assert.equal(firstDialog.isConnected,false,'Done must dismiss the completed connection dialog');
 completed=false;hold=true;
 await click(reconnect);
 await waitFor(()=>release,'The old attempt poll must be in flight');
-await click('Close');
-await click(reconnect);
-await waitFor(waiting,'A newer consent attempt must remain open');
+const restartDialog=dialog();
+const oldAttempt=String(requests.length).repeat(43);
+await click('Start again');
+await waitFor(()=>requests.length===4&&waiting(),'Explicit restart must open a new attempt');
+assert.equal(dialog(),restartDialog,'Explicit restart must retain its dialog');
+assert.deepEqual(requests.at(-1),{returnTo:'window',connectionId,restartAttempt:oldAttempt});
 await act(async()=>release());
 await settle();
-assert.ok(waiting(),'A late completed poll cannot close a newer attempt');
+assert.ok(waiting(),'A late completed poll cannot settle a newer attempt');
 assert.equal(document.querySelector('[role="alert"]'),null);
+for(const outcome of ['connected','cancelled','failed','expired']){
+  await broadcast(outcome,oldAttempt);
+  assert.ok(waiting(),'A stale callback cannot settle the newer attempt');
+  assert.equal(requests.length,4,'A stale callback cannot restart authorization');
+}
+await broadcast('failed',String(requests.length).repeat(43));
+await waitFor(()=>button('Try again'),'Current failure must offer direct recovery');
+assert.equal(dialog(),restartDialog);
+assert.equal(requests.length,4);
+await terminalFocus();
+await click('Try again');
+await waitFor(waiting,'Failure recovery requires an explicit new attempt');
+assert.equal(requests.length,5);
+assert.deepEqual(requests.at(-1),{returnTo:'window',connectionId},'A terminal retry must not replace an active attempt');
+await broadcast('cancelled',String(requests.length).repeat(43));
+await waitFor(()=>button('Try again'),'Current cancellation must offer direct recovery');
+assert.equal(dialog(),restartDialog);
+await terminalFocus();
+await click('Close');
+assert.equal(restartDialog.isConnected,false);
+assert.equal(requests.length,5,'Closing recovery cannot authorize a new connection');
+assert.ok(requests.every(request=>request.connectionId===connectionId));
+await click('Add account');
+await waitFor(waiting,'Adding an account must open its own consent attempt');
+const addDialog=dialog();
+assert.deepEqual(requests.at(-1),{returnTo:'window'},'Adding an account must not reconnect an existing account');
+available=false;
+await focus();
+await waitFor(()=>button('Try again'),'Add-account failure must expose recovery');
+assert.equal(dialog(),addDialog);
+assert.equal(requests.length,6,'Add-account failure must not retry automatically');
+await terminalFocus();
+available=true;
+await click('Try again');
+await waitFor(waiting,'Explicit add-account recovery must start new consent');
+assert.equal(dialog(),addDialog);
+assert.deepEqual(requests.at(-1),{returnTo:'window'},'Add-account retry must preserve its original intent');
 completed=true;
 await focus();
-await waitFor(()=>!waiting(),'The current attempt can still complete');
-assert.equal(requests.length,4);
-assert.ok(requests.every(request=>request.connectionId===connectionId));
+await waitFor(()=>button('Done')&&!waiting(),'Add-account success must remain inspectable');
+assert.equal(dialog(),addDialog);
+await terminalFocus();
+await click('Done');
+assert.equal(addDialog.isConnected,false);
+assert.equal(requests.length,7);
+completed=false;popupBlocked=true;
+await click('Add account');
+await waitFor(consentLink,'A blocked popup must leave the unopened consent URL available');
+const manual=consentLink();
+const beforeManual=requests.length;
+await act(async()=>{manual.addEventListener('click',event=>event.preventDefault(),{once:true});manual.click();});
+await waitFor(waiting,'After manual handoff only a fresh restart should remain');
+assert.equal(consentLink(),null,'A manually opened one-time link must not be offered again');
+assert.equal(requests.length,beforeManual,'Manual handoff must use the already authorized attempt');
+assert.deepEqual(requests.at(-1),{returnTo:'window'});
+await click('Close');
+assert.equal(requests.length,beforeManual,'Closing pending consent must not retry authorization');
+popupBlocked=false;
+await click('Add account');
+await waitFor(waiting,'A new add-account attempt must be active');
+const completingDialog=dialog();
+const completingAttempt=String(requests.length).repeat(43);
+const beforeConflict=requests.length;
+restartBlocked=true;
+await click('Start again');
+await waitFor(()=>requests.length===beforeConflict+1&&waiting(),'A finishing attempt must remain pending after restart is rejected');
+assert.equal(dialog(),completingDialog);
+assert.deepEqual(requests.at(-1),{returnTo:'window',restartAttempt:completingAttempt});
+assert.equal(button('Try again'),undefined,'A conflict must preserve the active consent');
+completed=true;
+await broadcast('connected',completingAttempt);
+await waitFor(()=>button('Done')&&!waiting(),'The original completing attempt must still confirm after a rejected restart');
+assert.equal(dialog(),completingDialog);
+assert.equal(requests.length,beforeConflict+1,'Completion cannot start another authorization');
+await click('Done');
 await act(async()=>root.unmount());
 pageDataCache.clear();
 dom.window.close();
@@ -3594,17 +3709,21 @@ test(
         host: '127.0.0.1:4310',
         ...(desktop ? { 'x-nod-desktop-token': token } : { cookie: `nod-access-4310=${token}` }),
       };
+      const assertSurface = (location: string) =>
+        assert.equal(new URL(location).searchParams.get('desktop'), desktop ? '1' : null);
       for (const fromChat of [false, true]) {
         const turn = fromChat ? { threadId: randomUUID(), turnId: randomUUID() } : undefined;
         const expectedOutcome = fromChat ? 'continued' : 'connected';
         await integrations.manageConnections('connect', 'gmail', turn, undefined, true);
         const callback = new URL(f.callbacks.at(-1)!);
         callback.searchParams.set('account', [...f.accounts.keys()].at(-1)!);
+        callback.searchParams.set('desktop', desktop ? '0' : '1');
         const response = await app.inject({
           url: `${callback.pathname}${callback.search}`,
           headers: { host: headers.host },
         });
         assert.equal(response.statusCode, 302, response.body);
+        assertSurface(response.headers.location!);
         assert.equal(
           new URL(response.headers.location!).searchParams.get('connection'),
           expectedOutcome,
@@ -3614,6 +3733,7 @@ test(
           headers: { host: headers.host },
         });
         assert.equal(new URL(replay.headers.location!).searchParams.get('connection'), 'expired');
+        assertSurface(replay.headers.location!);
         assert.deepEqual(resumed, turn ? [turn.turnId] : []);
         resumed.length = 0;
 
@@ -3638,6 +3758,7 @@ test(
           headers: { host: headers.host },
         });
         assert.equal(complete.statusCode, 302, complete.body);
+        assertSurface(complete.headers.location!);
         assert.equal(
           new URL(complete.headers.location!).searchParams.get('connection'),
           expectedOutcome,
@@ -3667,6 +3788,7 @@ test(
           url: `/api/apps/callback?state=${discoveredState}&code=fixture-code`,
           headers: { host: headers.host },
         });
+        assertSurface(officialComplete.headers.location!);
         assert.equal(
           new URL(officialComplete.headers.location!).searchParams.get('connection'),
           expectedOutcome,
@@ -3674,6 +3796,22 @@ test(
         assert.deepEqual(resumed, turn ? [turn.turnId] : []);
         resumed.length = 0;
       }
+      const windowBegin = await app.inject({
+        method: 'POST',
+        url: '/api/apps/gmail/connect',
+        headers,
+        payload: { returnTo: 'window' },
+      });
+      assert.equal(windowBegin.statusCode, 200, windowBegin.body);
+      const windowCallback = new URL(f.callbacks.at(-1)!);
+      windowCallback.searchParams.set('account', [...f.accounts.keys()].at(-1)!);
+      const windowComplete = await app.inject({
+        url: `${windowCallback.pathname}${windowCallback.search}`,
+        headers: { host: headers.host },
+      });
+      assert.equal(windowComplete.statusCode, 302, windowComplete.body);
+      assert.equal(new URL(windowComplete.headers.location!).pathname, '/connected.html');
+      assertSurface(windowComplete.headers.location!);
       assert.equal(
         (await app.inject({ url: '/api/apps', headers: { host: headers.host } })).statusCode,
         401,
@@ -3698,10 +3836,10 @@ test(
     let finished = 0;
     let finishStarted: () => void = () => {};
     let finishRelease: () => void = () => {};
-    const finishing = new Promise<void>((resolve) => {
+    let finishing = new Promise<void>((resolve) => {
       finishStarted = resolve;
     });
-    const finishGate = new Promise<void>((resolve) => {
+    let finishGate = new Promise<void>((resolve) => {
       finishRelease = resolve;
     });
     t.after(() => finishRelease());
@@ -3788,8 +3926,32 @@ test(
       assert.equal(response.statusCode, 200, response.body);
       return response.json();
     };
-    const authorize = () =>
-      app.inject({ method: 'POST', url: `${path}/authorize`, headers, payload: {} });
+    const authorizations = new Map<string, { url: string; attempt: string }>();
+    const authorize = async (payload = {}) => {
+      const response = await app.inject({
+        method: 'POST',
+        url: `${path}/authorize`,
+        headers,
+        payload,
+      });
+      if (response.statusCode === 200)
+        authorizations.set(
+          new URL(response.json().url).searchParams.get('state')!,
+          response.json(),
+        );
+      return response;
+    };
+    const rawStatus = async (url: string) => {
+      const hash = createHash('sha256').update(url).digest('hex');
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/apps/setup-status',
+        headers,
+        payload: { hashes: [hash] },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      return response.json();
+    };
     const status = async () => {
       const response = await app.inject({ url: path, headers });
       assert.equal(response.statusCode, 200, response.body);
@@ -3802,15 +3964,24 @@ test(
         headers: { host: headers.host },
       });
       assert.equal(response.statusCode, 302, response.body);
-      return new URL(response.headers.location!).searchParams.get('connection');
+      const destination = new URL(response.headers.location!);
+      assert.equal(destination.pathname, '/connected.html');
+      assert.equal(destination.searchParams.get('desktop'), '1');
+      const outcome = destination.searchParams.get('connection');
+      if (outcome !== 'expired')
+        assert.equal(destination.searchParams.get('attempt'), authorizations.get(state)?.attempt);
+      return outcome;
     };
     const first = await authorize();
     assert.equal(first.statusCode, 200, first.body);
+    assert.equal(typeof first.json().attempt, 'string');
+    assert.ok(first.json().attempt.length >= 32);
+    assert.equal((await rawStatus(first.json().url)).apps[0].available, true);
     assert.deepEqual(await setupStatus(), {
       completed: [],
       apps: [{ hash: setupHash, slug: 'fixture-desktop', name: 'Fixture app' }],
     });
-    assert.equal((await authorize()).json().url, first.json().url);
+    assert.deepEqual((await authorize()).json(), first.json());
     assert.equal(states.length, 1);
     assert.equal((await status()).oauthStatus, 'pending');
     assert.equal((await status()).authorizationUrl, first.json().url);
@@ -3830,20 +4001,46 @@ test(
     );
     assert.equal(await callback(states[0], 'error=access_denied'), 'cancelled');
     assert.equal((await status()).oauthStatus, 'cancelled');
+    assert.equal((await rawStatus(first.json().url)).apps[0].available, false);
+    assert.notEqual((await setupStatus()).apps[0].available, false);
+    const firstHash = createHash('sha256').update(first.json().url).digest('hex');
+    const mixed = await app.inject({
+      method: 'POST',
+      url: '/api/apps/setup-status',
+      headers,
+      payload: { hashes: [setupHash, firstHash], connectionIds: [id] },
+    });
+    assert.equal(mixed.statusCode, 200, mixed.body);
+    assert.deepEqual(mixed.json().completed, []);
+    assert.equal(mixed.json().apps.length, 2);
+    assert.equal(
+      mixed.json().apps.find((row: { hash: string }) => row.hash === firstHash).available,
+      false,
+    );
+    assert.equal(
+      mixed.json().apps.find((row: { hash: string }) => row.hash === setupHash).available,
+      undefined,
+    );
+
     assert.equal((await status()).authorizationUrl, undefined);
     assert.equal((await authorize()).statusCode, 200);
     assert.equal(states.length, 2);
+    assert.notEqual(authorizations.get(states[1])?.attempt, first.json().attempt);
     assert.equal(await callback(states[0], 'error=access_denied'), 'expired');
     assert.equal((await status()).oauthStatus, 'pending');
     assert.equal(await callback(states[1], 'code=fail'), 'failed');
     assert.equal((await status()).oauthStatus, 'failed');
+    assert.equal((await rawStatus(authorizations.get(states[1])!.url)).apps[0].available, false);
+    assert.notEqual((await setupStatus()).apps[0].available, false);
     assert.equal((await authorize()).statusCode, 200);
     assert.equal(states.length, 3);
     assert.equal(await callback(states[1], 'code=fixture-code'), 'expired');
     assert.equal((await status()).oauthStatus, 'pending');
     const interrupted = callback(states[2], 'code=hold');
     await finishing;
+    assert.equal((await rawStatus(authorizations.get(states[2])!.url)).apps[0].available, true);
     assert.equal((await authorize()).statusCode, 409);
+    assert.equal((await authorize({ restart: true, returnTo: 'window' })).statusCode, 409);
     assert.equal(await callback(states[2], 'code=fixture-code'), 'expired');
     assert.equal(finished, 2);
     await createDiscoveredConnections(f.pool, { ...options, ownerId: 'foreign-owner' });
@@ -3880,6 +4077,135 @@ test(
       [id],
     );
     assert.deepEqual(await setupStatus(), { completed: [setupHash], apps: [] });
+    const webService = await createIntegrations(f.pool, {
+      ownerId,
+      provider: f.provider,
+      baseUrl: options.baseUrl,
+      discovered,
+      wake: async () => {},
+    });
+    const web = Fastify();
+    t.after(() => web.close());
+    webService.registerRoutes(web);
+    const finishInWindow = async (started: { url: string; attempt: string }, result: string) => {
+      const state = new URL(started.url).searchParams.get('state');
+      const response = await web.inject({
+        url: `/api/apps/callback?state=${state}&${result}&iss=${encodeURIComponent(issuer)}`,
+      });
+      assert.equal(response.statusCode, 302, response.body);
+      const destination = new URL(response.headers.location!);
+      assert.equal(destination.searchParams.get('desktop'), null);
+      if (destination.searchParams.get('connection') !== 'expired') {
+        assert.equal(destination.pathname, '/connected.html');
+        assert.equal(destination.searchParams.get('attempt'), started.attempt);
+      }
+      return destination.searchParams.get('connection');
+    };
+    for (const slug of ['notion', 'linear']) {
+      const connect = () =>
+        web.inject({
+          method: 'POST',
+          url: `/api/apps/${slug}/connect`,
+          payload: { returnTo: 'window' },
+        });
+      const cancelled = await connect();
+      assert.equal(cancelled.statusCode, 200, cancelled.body);
+      assert.equal(typeof cancelled.json().attempt, 'string');
+      assert.equal((await rawStatus(cancelled.json().url)).apps[0].available, true);
+      assert.equal(await finishInWindow(cancelled.json(), 'error=access_denied'), 'cancelled');
+      assert.equal((await rawStatus(cancelled.json().url)).apps[0].available, false);
+      const retry = await connect();
+      assert.equal(retry.statusCode, 200, retry.body);
+      assert.notEqual(retry.json().attempt, cancelled.json().attempt);
+      assert.equal(await finishInWindow(cancelled.json(), 'code=old'), 'expired');
+      const beforeFinish: number = finished;
+      assert.equal(await finishInWindow(retry.json(), 'code=fixture-code'), 'connected');
+      assert.equal(await finishInWindow(retry.json(), 'code=fixture-code'), 'expired');
+      assert.equal(finished, beforeFinish + 1);
+      const hash = createHash('sha256').update(retry.json().url).digest('hex');
+      assert.deepEqual(await rawStatus(retry.json().url), { completed: [hash], apps: [] });
+      const connectionsBefore: number = (await discovered.list()).length;
+      const replaceable = await connect();
+      const independent = await connect();
+      const replace = (attempt: string, extra: Record<string, unknown> = {}, service = slug) =>
+        web.inject({
+          method: 'POST',
+          url: `/api/apps/${service}/connect`,
+          payload: { returnTo: 'window', restartAttempt: attempt, ...extra },
+        });
+      const replaced = await replace(replaceable.json().attempt);
+      assert.equal(replaced.statusCode, 200, replaced.body);
+      assert.notEqual(replaced.json().attempt, replaceable.json().attempt);
+      assert.equal(await finishInWindow(replaceable.json(), 'code=old'), 'expired');
+      assert.equal((await rawStatus(independent.json().url)).apps[0].available, true);
+      const authorizationsBefore: number = states.length;
+      assert.equal((await replace(replaceable.json().attempt)).statusCode, 409);
+      assert.equal((await replace('x'.repeat(43))).statusCode, 409);
+      assert.equal(
+        (await replace(replaced.json().attempt, { connectionId: randomUUID() })).statusCode,
+        409,
+      );
+      assert.equal(
+        (await replace(replaced.json().attempt, {}, slug === 'notion' ? 'linear' : 'notion'))
+          .statusCode,
+        409,
+      );
+      const differentAccount = (await discovered.list()).find((entry) => entry.slug === slug)!;
+      await f.pool.query('UPDATE discovered_connections SET reconnect_required=true WHERE id=$1', [
+        differentAccount.connectionId,
+      ]);
+      assert.equal(
+        (await replace(replaced.json().attempt, { connectionId: differentAccount.connectionId }))
+          .statusCode,
+        409,
+      );
+      await f.pool.query('UPDATE discovered_connections SET reconnect_required=false WHERE id=$1', [
+        differentAccount.connectionId,
+      ]);
+      assert.equal(states.length, authorizationsBefore);
+      assert.equal(await finishInWindow(replaced.json(), 'code=fixture-code'), 'connected');
+      assert.equal((await discovered.list()).length, connectionsBefore + 1);
+      assert.equal(await finishInWindow(independent.json(), 'code=fixture-code'), 'connected');
+      assert.equal((await discovered.list()).length, connectionsBefore + 2);
+      finishing = new Promise<void>((resolve) => {
+        finishStarted = resolve;
+      });
+      finishGate = new Promise<void>((resolve) => {
+        finishRelease = resolve;
+      });
+      const completing = await connect();
+      const completingResult = finishInWindow(completing.json(), 'code=hold');
+      await finishing;
+      const beforeBlocked: number = states.length;
+      assert.equal((await replace(completing.json().attempt)).statusCode, 409);
+      assert.equal(states.length, beforeBlocked);
+      finishRelease();
+      assert.equal(await completingResult, 'connected');
+      assert.equal((await discovered.list()).length, connectionsBefore + 3);
+    }
+    const custom = await discovered.propose({
+      service: 'fixture-restart',
+      name: 'Synthetic restart app',
+      paths: [{ kind: 'mcp', endpoint: 'https://fixture.example/restart', auth: 'oauth' }],
+    });
+    const customId = new URL(custom.url, options.baseUrl).searchParams.get('connect');
+    const startCustom = (payload: Record<string, unknown>) =>
+      web.inject({
+        method: 'POST',
+        url: `/api/apps/discovery/${customId}/authorize`,
+        payload: { returnTo: 'window', ...payload },
+      });
+    const oldCustom = await startCustom({ clientId: 'synthetic-client-id' });
+    assert.equal(oldCustom.statusCode, 200, oldCustom.body);
+    assert.deepEqual((await startCustom({})).json(), oldCustom.json());
+    const currentCustom = await startCustom({ restart: true });
+    assert.equal(currentCustom.statusCode, 200, currentCustom.body);
+    assert.notEqual(currentCustom.json().url, oldCustom.json().url);
+    assert.notEqual(currentCustom.json().attempt, oldCustom.json().attempt);
+    assert.deepEqual((await rawStatus(oldCustom.json().url)).apps, []);
+    assert.equal(await finishInWindow(oldCustom.json(), 'code=old'), 'expired');
+    assert.equal((await rawStatus(currentCustom.json().url)).apps[0].available, true);
+    assert.equal(await finishInWindow(currentCustom.json(), 'code=fixture-code'), 'connected');
   },
 );
 

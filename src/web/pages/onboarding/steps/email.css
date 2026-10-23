@@ -77,11 +77,19 @@
   align-items: center;
   gap: 12px;
 }
-.ob-email-waiting > svg {
+.ob-email-waiting-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.ob-email-waiting-status > svg {
+  flex-shrink: 0;
   color: var(--text-secondary);
 }
-.ob-email-waiting > p {
-  flex: 1 1 200px;
+.ob-email-waiting .button {
+  min-height: 44px;
 }
 @media (max-width: 640px) {
   .ob-email-card {

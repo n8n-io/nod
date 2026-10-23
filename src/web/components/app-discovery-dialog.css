@@ -11,7 +11,14 @@
 }
 .app-discovery-dialog form > .button {
   justify-self: end;
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
   margin-top: 8px;
+}
+.app-discovery-dialog .input {
+  min-width: 0;
+  min-height: 44px;
 }
 .app-discovery-dialog form > p {
   color: var(--muted-foreground);

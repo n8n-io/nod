@@ -1969,13 +1969,15 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 .connectionStatus?.(configuredOwner, pairingUrl)
                 .catch(() => undefined)
             : undefined;
-        const discoveredLinks = discovered.map(({ id, link_hash, ...service }) => ({
-          ...service,
-          hash:
-            link_hash && hashes.includes(link_hash)
-              ? link_hash
-              : createHash('sha256').update(`/apps?connect=${id}`).digest('hex'),
-        }));
+        const discoveredLinks = discovered.flatMap(({ id, link_hash, available, ...service }) => {
+          const proposalHash = createHash('sha256').update(`/apps?connect=${id}`).digest('hex');
+          return [
+            ...(link_hash && hashes.includes(link_hash)
+              ? [{ ...service, hash: link_hash, available }]
+              : []),
+            ...(hashes.includes(proposalHash) ? [{ ...service, hash: proposalHash }] : []),
+          ];
+        });
         const apps = [...links.rows, ...discoveredLinks]
           .filter((link) => !link.completed)
           .filter(({ hash }) => hashes.includes(hash))
@@ -2020,21 +2022,30 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           .object({
             returnTo: z.enum(['apps', 'onboarding', 'window']).default('apps'),
             connectionId: z.uuid().optional(),
+            restartAttempt: z
+              .string()
+              .regex(/^[A-Za-z0-9_-]{43}$/)
+              .optional(),
           })
           .strict()
           .parse(request.body ?? {});
         if (officialMcp.has(request.params.slug)) {
           if (!options.discovered)
             throw new IntegrationError('Discovered connections are unavailable.', 503);
-          const expired = (await options.discovered.list()).some(
+          const selected = (await options.discovered.list()).find(
             (entry) =>
-              entry.connectionId === input.connectionId &&
-              entry.slug === request.params.slug &&
-              entry.status === 'disconnected',
+              entry.connectionId === input.connectionId && entry.slug === request.params.slug,
           );
+          if (input.restartAttempt && input.connectionId && !selected)
+            throw new IntegrationError(
+              'This sign-in changed. Use the newest window or try again.',
+              409,
+            );
           return options.discovered.authorize(
             request.params.slug,
-            expired ? input.connectionId : undefined,
+            selected?.status === 'disconnected' ? input.connectionId : undefined,
+            input.returnTo,
+            input.restartAttempt,
           );
         }
         const discovered = input.connectionId
@@ -2046,8 +2057,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             (await options.discovered?.list())?.some((entry) => entry.slug === request.params.slug);
         if (discovered)
           return (
-            options.discovered?.reconnect(request.params.slug, input.connectionId) ??
-            Promise.reject(new IntegrationError('This service is unavailable.', 404))
+            options.discovered?.reconnect(
+              request.params.slug,
+              input.connectionId,
+              input.returnTo,
+            ) ?? Promise.reject(new IntegrationError('This service is unavailable.', 404))
           );
         if (input.connectionId)
           return reconnect(
@@ -2143,6 +2157,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               service = result.service;
               outcome = result.outcome;
               returnTo = result.returnTo;
+              attempt = result.attempt;
             }
           }
         }
@@ -2152,7 +2167,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           .header('Referrer-Policy', 'no-referrer')
           .redirect(
             new URL(
-              `${returnPaths[destination]}?connection=${outcome}${(destination === 'chat' || destination === 'window') && service ? `&service=${service}` : ''}${destination === 'window' && attempt ? `&attempt=${attempt}` : ''}`,
+              `${returnPaths[destination]}?connection=${outcome}${(destination === 'chat' || destination === 'window') && service ? `&service=${service}` : ''}${destination === 'window' && attempt ? `&attempt=${attempt}` : ''}${options.callbackReturnTo === 'window' ? '&desktop=1' : ''}`,
               options.baseUrl,
             ).href,
           );

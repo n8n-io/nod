@@ -255,6 +255,18 @@ export function SetupActions({
     setOpening(false);
     setError('');
   }
+  function confirmed(href: string) {
+    request.current?.abort();
+    request.current = null;
+    window.clearTimeout(timer.current);
+    setOpening(false);
+    setError('');
+    setSignIn((value) =>
+      value?.url === href && value.outcome !== 'connected'
+        ? { ...value, outcome: 'connected' }
+        : value,
+    );
+  }
   useEffect(() => {
     close();
     return () => {
@@ -263,7 +275,7 @@ export function SetupActions({
     };
   }, [key]);
   useEffect(() => {
-    if (signIn?.url && completed.has(signIn.url)) close();
+    if (signIn?.url && completed.has(signIn.url)) confirmed(signIn.url);
   }, [completed, signIn?.url]);
   async function connect(href: string) {
     const navigate = appLink.test(href);
@@ -301,6 +313,7 @@ export function SetupActions({
       service: previous?.slug ?? '',
       name: previous?.name ?? 'app',
       logoUrl: previous?.logoUrl,
+      url: href,
       opened: opened.current.has(href),
     });
     setOpening(true);
@@ -321,7 +334,7 @@ export function SetupActions({
         if (!current()) return;
         if (result.completed.includes(href)) {
           complete(href);
-          close();
+          confirmed(href);
           return;
         }
         const app = result.apps.get(href);
@@ -351,7 +364,7 @@ export function SetupActions({
       if (result.completed.includes(href)) {
         popup?.close();
         complete(href);
-        close();
+        confirmed(href);
         return;
       }
       const app = result.apps.get(href);
