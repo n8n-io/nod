@@ -215,9 +215,10 @@ export const toolDefinitions = {
   ),
   browser: defineTool(
     'browser',
-    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs and link URLs; selector scopes it and offset skips earlier text); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: any key agent-browser knows, such as Enter, Backspace, ArrowDown or a character, or a shortcut such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs when specified for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?, amount?} (amount in pixels, default 600); evaluate {script} (one JavaScript expression run in the current page; returns its JSON result with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). If a control opens a document, click it, inspect the page or tabs, then download the document. waitMs waits for slow pages.',
+    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs and link URLs; selector scopes it and offset skips earlier text); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: any key agent-browser knows, such as Enter, Backspace, ArrowDown or a character, or a shortcut such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs when specified for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?, amount?} (amount in pixels, default 600); evaluate {script} (one JavaScript expression run in the current page; returns its JSON result with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). If a control opens a document, click it, inspect the page or tabs, then download the document. handoff {text} gives the user control of the current page and pauses this task. text states what the page shows and what the user needs to do, in their language. Use this action whenever the user needs to act in your browser; never send a /browser link. Wait for handback, then inspect the page before continuing. Subagents return browser blockers to their parent. waitMs waits for slow pages.',
     Type.Object({
       action: literals([
+        'handoff',
         'open',
         'snapshot',
         'click',
@@ -726,6 +727,20 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
       return context.reactToMessage(p.messageId, p.reaction);
     }),
     bind(toolDefinitions.browser, async ({ action, name, ...rest }) => {
+      if (action === 'handoff') {
+        if (turn.execution.parentRunId)
+          throw new Error(
+            'Return the browser blocker to the parent agent. A subagent cannot hand over its browser.',
+          );
+        const text = rest.text?.trim();
+        if (!text) throw new Error('Say what the user needs to do on the current page.');
+        await computer.currentPage(browserId).catch(() => {
+          throw new Error('Open the page in your browser before handing it to the user.');
+        });
+        signal.throwIfAborted();
+        await pause('browser', text);
+        return 'The browser is in chat. Wait for the user to return control.';
+      }
       if (action === 'screenshot') {
         const bytes = await screenshot();
         if (!bytes) return 'Open a browser URL first.';

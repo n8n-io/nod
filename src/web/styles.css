@@ -780,17 +780,21 @@ input[type='range']:disabled {
   display: grid;
   place-items: center;
   min-height: 240px;
-  background: var(--black);
+  background: var(--background);
   outline: none;
+}
+.browser-handoff-screen:has(img:not([hidden])) {
+  min-height: 0;
 }
 .browser-handoff-screen:focus-visible {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
-.browser-handoff-screen img {
+.browser-handoff .browser-handoff-screen img {
+  border-radius: 0;
   display: block;
   width: 100%;
   height: auto;
-  cursor: pointer;
+  cursor: default;
   user-select: none;
 }
 .browser-handoff-bar {
@@ -801,9 +805,37 @@ input[type='range']:disabled {
   color: var(--muted-foreground);
   font-size: var(--text-control);
 }
-.browser-handoff-bar > [role='status'] {
+.browser-handoff-bar > span {
   flex: 1;
   min-width: 0;
+}
+.browser-handoff-state {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  font-weight: 400;
+}
+.browser-handoff-feedback {
+  margin: 0;
+  padding: 10px 14px;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.browser-handoff-feedback[role='alert'] {
+  color: var(--error);
+}
+.browser-handoff-recovery {
+  width: 100%;
+  padding: 32px 20px;
+  background: var(--background);
+  color: var(--foreground);
+  text-align: center;
+}
+.browser-handoff-recovery p {
+  max-width: 42ch;
+  margin: 8px auto 16px;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
 }
 .browser-handoff-actions {
   display: flex;
@@ -849,7 +881,7 @@ input[type='range']:disabled {
   font-size: 13px;
   font-weight: 550;
 }
-.browser-handoff-header > span:not(.brand-glyph) {
+.browser-handoff-title {
   flex: 1;
 }
 .browser-handoff-expanded .browser-handoff-screen {
@@ -870,6 +902,19 @@ input[type='range']:disabled {
   border-top: 1px solid var(--border);
 }
 @media (max-width: 640px) {
+  .browser-handoff-bar {
+    flex-wrap: wrap;
+  }
+  .browser-handoff-bar > span {
+    order: -1;
+    flex-basis: 100%;
+  }
+  .browser-handoff-actions:last-child {
+    margin-left: auto;
+  }
+  .browser-handoff-save-label {
+    display: none;
+  }
   .browser-handoff-expanded {
     max-width: calc(100vw - 16px);
     max-height: calc(100dvh - var(--desktop-titlebar-height, 0px) - 16px);

@@ -58,10 +58,6 @@ const admissions = new AsyncLocalStorage<{
   admit(asks: boolean): Promise<void>;
 }>();
 const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
-const browserLink = /\]\(\/browser\)/;
-const handsOverBrowser = (name: string, params: unknown) =>
-  name === 'ask_user' &&
-  browserLink.test(String((params as { question?: unknown } | null)?.question));
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
 const reportingTools = new Set(['ask_user', 'send_message', 'share_file', 'task']);
 const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
@@ -221,11 +217,17 @@ export function createAgentRuntime(dependencies: {
       replyOwed = false;
     };
     const reply = deliverReply;
-    const pause = async (reason: 'question' | 'approval' | 'credentials', message?: string) => {
+    let handoffBrowserId: string | undefined;
+    const pause: Turn['pause'] = async (reason, message) => {
+      if (browsed) {
+        const hold = computer.hold(browserId, true);
+        if (reason === 'browser') await hold;
+        else await hold.catch(() => {});
+      }
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
-      waitingFor = reason;
+      waitingFor = reason === 'browser' ? 'question' : reason;
       waitingMessage = message;
-      if (browsed) await computer.hold(browserId, true).catch(() => {});
+      if (reason === 'browser') handoffBrowserId = browserId;
       stopped = true;
       abortSession();
     };
@@ -431,7 +433,7 @@ export function createAgentRuntime(dependencies: {
             parallel: Boolean(deferred) || parallelTools.has(name),
             execute: async (params, options) => {
               assertActive();
-              if (browserTools.has(name) || handsOverBrowser(name, params)) await take();
+              if (browserTools.has(name)) await take();
               assertActive();
               const admitted = deferred || orderedTools.has(name) ? admission() : undefined;
               const run = () =>
@@ -445,12 +447,6 @@ export function createAgentRuntime(dependencies: {
                         `Invalid ${name} arguments${error ? ` at ${error.path || '/'}: ${error.message}` : ''}.`,
                       );
                     }
-                    if (handsOverBrowser(name, params))
-                      await computer.currentPage(turn.execution.browserId).catch(() => {
-                        throw new Error(
-                          'Open the page in your browser before handing it to the user.',
-                        );
-                      });
                     return execute(params);
                   },
                   { execution: turn.execution, nested: Boolean(options?.nested) },
@@ -800,9 +796,7 @@ export function createAgentRuntime(dependencies: {
         ...(result ? { result } : {}),
         ...(waitingFor ? { waitingFor } : {}),
         ...(waitingMessage ? { message: waitingMessage } : {}),
-        ...(waitingMessage && browserLink.test(waitingMessage)
-          ? { handoffBrowserId: browserId }
-          : {}),
+        ...(handoffBrowserId ? { handoffBrowserId } : {}),
       };
     } finally {
       stopped = true;

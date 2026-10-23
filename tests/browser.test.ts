@@ -1392,7 +1392,9 @@ test('every session drives its own browser, so background work never waits for t
     const conversation = turn(undefined, async (tools) => {
       await open(tools, 'https://example.com/conversation');
       await busy.promise;
-      await tools.get('ask_user')!.execute({ question: 'Sign in in [Open browser](/browser).' });
+      await tools
+        .get('browser')!
+        .execute({ action: 'handoff', text: 'Sign in on the current page.' });
     });
     const finished = randomUUID();
     const asking = randomUUID();
@@ -1409,7 +1411,10 @@ test('every session drives its own browser, so background work never waits for t
     assert.equal(done.status, 'succeeded');
     assert.equal((await waiting).status, 'waiting_user');
     busy.resolve();
-    assert.equal((await conversation).status, 'waiting_user');
+    const handedOver = await conversation;
+    assert.equal(handedOver.status, 'waiting_user');
+    assert.equal(handedOver.handoffBrowserId, threadId);
+    assert.equal(handedOver.message, 'Sign in on the current page.');
     assert.deepEqual(
       Object.fromEntries(opened),
       Object.fromEntries([

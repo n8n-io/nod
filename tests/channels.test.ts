@@ -1644,7 +1644,7 @@ test(
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`${locksTable};
     CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
-    CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
+    CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,handoff_browser_id text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
     CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,delivered_channel text,assistant_reaction text,assistant_reacted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
@@ -2324,6 +2324,7 @@ test(
     });
     const threadId = await createFixtureTables(pool, 'local-development');
     const sent: { provider: string; body: Record<string, unknown> }[] = [];
+    const handoffPresentations: unknown[] = [];
     const whatsappFileId = randomUUID();
     let providerCalls = 0;
     let failSend = false;
@@ -2380,6 +2381,7 @@ test(
       ownerId: 'local-development',
       present: async (_thread, input) => {
         assert.doesNotMatch(JSON.stringify(input), /private-token|api\/artifacts/);
+        if (input.kind === 'delivery' && input.secureAction) handoffPresentations.push(input);
         return 'Continua na aplicação nod.';
       },
       transport: createChatSdkTransport(pool, fixtureEnv),
@@ -2742,6 +2744,36 @@ test(
         );
       assert.ok(parts.length > 1 && parts.every((part) => part.length <= 4096));
       assert.ok(paragraphs.every((paragraph) => parts.some((part) => part.includes(paragraph))));
+
+      for (const [sourceId, provider] of [
+        ['channel:telegram:987:123456:10', 'telegram'],
+        ['channel:whatsapp:555000:wamid.good', 'whatsapp'],
+      ]) {
+        const before: number = sent.length;
+        await pool.query('UPDATE channel_inbox SET received_at=now() WHERE source_id=$1', [
+          sourceId,
+        ]);
+        await addReply(sourceId, 'The website needs sign-in.');
+        const handoff = await addReply(
+          sourceId,
+          'Complete sign-in on this page, then return control.',
+        );
+        await pool.query(
+          "UPDATE turns SET status='waiting',waiting_reason='question',handoff_browser_id=session_id::text WHERE id=(SELECT turn_id FROM messages WHERE id=$1)",
+          [handoff],
+        );
+        const presented = handoffPresentations.length;
+        await channels.drain();
+        assert.equal(sent.length, before + 2);
+        assert.equal(sent.at(-1)?.provider, provider);
+        assert.match(JSON.stringify(sent.at(-1)?.body), /Continua na aplicação nod/);
+        assert.match(JSON.stringify(sent.at(-2)?.body), /The website needs sign-in/);
+        assert.equal(handoffPresentations.length, presented + 1);
+        assert.doesNotMatch(
+          JSON.stringify(sent.slice(before)),
+          /\/browser|handoff_browser_id|Complete sign-in/,
+        );
+      }
 
       failSend = true;
       const uncertainId = await addReply('channel:telegram:987:123456:10');

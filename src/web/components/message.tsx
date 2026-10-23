@@ -123,12 +123,8 @@ export const MessageText = memo(function MessageText({
         >
           {text}
         </Markdown>
-        <SetupActions
-          actions={actions.filter(
-            (action) => action.setup !== 'browser' && !connected(action.href),
-          )}
-        />
-        {handoff && handoffTurnId && actions.some((action) => action.setup === 'browser') && (
+        <SetupActions actions={actions.filter((action) => !connected(action.href))} />
+        {handoff && handoffTurnId && (
           <BrowserHandoff key={handoffTurnId} turnId={handoffTurnId} paused={handoffPaused} />
         )}
       </div>

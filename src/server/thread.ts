@@ -694,7 +694,7 @@ export async function resumeAfterHandoff(turnId: string) {
       resumeTurn(
         turnId,
         `handoff:${turnId}`,
-        'The owner pressed Done on the browser you handed them. Look at the current page to see what they did there, if anything, then continue the request.',
+        'The owner returned control of the browser you handed them. Look at the current page to see what they did there, if anything, then continue the request.',
         false,
         client,
       )

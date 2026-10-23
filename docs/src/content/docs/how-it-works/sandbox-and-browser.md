@@ -96,7 +96,7 @@ Known secret values (passwords, codes, card numbers and security codes) are remo
 
 ## Browser handoff
 
-When Pi needs you in the browser, it asks with an **Open browser** link. nod web shows the live tab in chat.
+When Pi needs you in the browser, it calls `browser` with `action: handoff` and a clear instruction. nod web shows the live tab in chat.
 
 ```mermaid
 sequenceDiagram
@@ -104,16 +104,16 @@ sequenceDiagram
   actor You
   participant Server
   participant Browser
-  Pi->>You: Question with an Open browser link
+  Pi->>You: Instruction and live browser view
   Browser-->>You: Live JPEG frames
   You->>Server: Clicks, typing and scrolling
   Server->>Browser: Forwarded while the chat turn waits
-  You->>Server: Done
+  You->>Server: Return to nod
   Note over Pi: Next turn takes a fresh snapshot
 ```
 
 - Each handoff identifies its waiting turn and browser. Input reaches only that browser while its question stays pending. Other sessions keep their own browsers.
-- **Done** continues the session that asked, including a background session, without posting a message for you. Pi looks at the page to see what you did.
+- **Return to nod** continues the session that asked, including a background session, without posting a message for you. Pi looks at the page to see what you did.
 - One bridge call carries frames out, newest first, and your input in. Each input is acknowledged after the browser applies it. Failures reach the view without retrying the input. Losing the connection rejects pending input and disables it until the view reconnects.
 - Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
 - An init script makes every passkey request fail at once and reports no passkey support, so a sign-in doesn't open a passkey prompt that the live view can't show.

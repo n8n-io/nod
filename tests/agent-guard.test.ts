@@ -857,3 +857,89 @@ test('secure credential pause prevents subsequent tools in the same execution se
     assert.deepEqual(requested, [input]);
   }
 });
+
+test('browser handoff requires a live page, binds its session and stops further work without a link', async () => {
+  const sessionId = randomUUID();
+  let opened = false;
+  let holdFails = true;
+  const held: string[] = [];
+  const result = await fixture(
+    async (tools) => {
+      await assert.rejects(
+        call(tools, 'browser', { action: 'handoff', text: ' ' }),
+        /what the user needs/,
+      );
+      await assert.rejects(
+        call(tools, 'browser', { action: 'handoff', text: 'Complete this page.' }),
+        /Open the page/,
+      );
+      await call(tools, 'browser', { action: 'open', url: 'https://example.com/login' });
+      await assert.rejects(
+        call(tools, 'browser', { action: 'handoff', text: 'Complete sign-in.' }),
+        /hold unavailable/,
+      );
+      holdFails = false;
+      await call(tools, 'browser', { action: 'snapshot' });
+      await call(tools, 'browser', {
+        action: 'handoff',
+        text: 'Complete sign-in on this page, then return control.',
+      });
+      await assert.rejects(call(tools, 'browser', { action: 'snapshot' }), /stopped/);
+      await assert.rejects(
+        call(tools, 'apps', { action: 'SEARCH_TOOLS', args: { query: 'email' } }),
+        /stopped/,
+      );
+    },
+    { sessionId },
+    {
+      computer: fakeComputer({
+        act: async (id) => {
+          assert.equal(id, sessionId);
+          opened = true;
+          return { url: 'https://example.com/login', text: 'Synthetic sign-in page' };
+        },
+        currentPage: async (id) => {
+          assert.equal(id, sessionId);
+          if (!opened) throw new Error('No page');
+          return { origin: 'https://example.com', url: 'https://example.com/login' };
+        },
+        hold: async (id, value) => {
+          if (value) {
+            if (holdFails) throw new Error('Synthetic hold unavailable');
+            held.push(id);
+          }
+        },
+      }),
+    },
+  );
+  assert.equal(result.result.status, 'waiting_user');
+  assert.equal(result.result.waitingFor, 'question');
+  assert.equal(result.result.handoffBrowserId, sessionId);
+  assert.equal(result.result.message, 'Complete sign-in on this page, then return control.');
+  assert.deepEqual(held, [sessionId]);
+  const ordinary = await fixture(async (tools) => {
+    await call(tools, 'ask_user', { question: 'What did [the browser](/browser) show?' });
+  });
+  assert.equal(ordinary.result.handoffBrowserId, undefined);
+});
+
+test('a subagent cannot hand over its browser to the owner', async () => {
+  let refused = false;
+  const result = await fixture(async (tools, emit, execution) => {
+    if (execution.parentRunId) {
+      await assert.rejects(
+        call(tools, 'browser', { action: 'handoff', text: 'Complete sign-in.' }),
+        /subagent cannot hand over/,
+      );
+      refused = true;
+      emit({ type: 'final', text: 'The parent must handle sign-in.' });
+    } else
+      await call(tools, 'delegate', {
+        title: 'Check the website',
+        instruction: 'Check the synthetic page.',
+      });
+  });
+  assert.equal(refused, true);
+  assert.equal(result.result.status, 'succeeded');
+  assert.equal(result.result.handoffBrowserId, undefined);
+});

@@ -10,7 +10,7 @@ import { rehypeLocalLinks } from './markdown';
 import { isConnectionBridge } from './connection-url';
 import { appPagePath } from '../../shared/app-links';
 
-export type SetupKind = 'vault' | 'website' | 'app' | 'browser';
+export type SetupKind = 'vault' | 'website' | 'app';
 type SafeLink =
   | { href: string; kind: 'artifact' | 'external' | 'navigation' }
   | { href: string; kind: 'setup'; setup: SetupKind };
@@ -26,7 +26,7 @@ const e2eConsentPath =
   /^\/e2e\/connect\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const localPath =
   /^\/(?:api\/artifacts|vault|credentials|payments)\/[A-Za-z0-9_-]+\/?$|^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/;
-const defaultLabels = { vault: 'Open Vault', website: 'Connect website', browser: 'Open browser' };
+const defaultLabels = { vault: 'Open Vault', website: 'Connect website' };
 const appLabel = /^Connect [\p{L}\p{N}][\p{L}\p{N} .&()+-]{0,79}$/u;
 
 export function setupLink(
@@ -63,7 +63,6 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
     !appPagePath(value) &&
     value !== '/vault?add=login' &&
     value !== '/vault?add=card' &&
-    value !== '/browser' &&
     !connectionPath.test(value) &&
     !e2eConsentPath.test(value)
   )
@@ -87,8 +86,6 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
         return ['?add=login', '?add=card'].includes(url.search) && !url.hash
           ? { href: `/vault${url.search}`, kind: 'setup', setup: 'vault' }
           : null;
-      if (url.origin === base.origin && url.pathname === '/browser' && !url.search && !url.hash)
-        return { href: '/browser', kind: 'setup', setup: 'browser' };
       if (
         url.origin === base.origin &&
         !url.hash &&

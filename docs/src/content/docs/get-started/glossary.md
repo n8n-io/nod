@@ -21,11 +21,11 @@ This page explains the words you'll meet in these docs. Select a term to read th
 
 ## nod's computer
 
-| Term                             | What it means                                                                                                                                    |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Workspace](/use/workspace/)     | nod's private Linux computer, where it runs commands and keeps files. It never receives your model provider keys.                                |
-| [Browser](/use/browser/)         | nod's own web browser, separate from yours and from the workspace.                                                                               |
-| [Browser handoff](/use/browser/) | When a website needs you, nod sends an **Open browser** link to a live view of its browser. You take over, then select **Done** to hand it back. |
+| Term                             | What it means                                                                                                                  |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| [Workspace](/use/workspace/)     | nod's private Linux computer, where it runs commands and keeps files. It never receives your model provider keys.              |
+| [Browser](/use/browser/)         | nod's own web browser, separate from yours and from the workspace.                                                             |
+| [Browser handoff](/use/browser/) | When a website needs you, nod opens a live browser view in chat. You take over, then select **Return to nod** to hand it back. |
 
 ## Connections
 

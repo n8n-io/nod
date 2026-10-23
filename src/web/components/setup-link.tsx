@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { Globe2, KeyRound, Link2, MonitorSmartphone } from './icons';
+import { Globe2, KeyRound, Link2 } from './icons';
 import type { AppSetupStatus, CredentialRequest } from '../../shared/contracts';
 import { api, ApiError } from '../lib/api';
 import { captureAnalytics } from '../lib/analytics';
@@ -11,7 +11,7 @@ import { AppDiscoveryDialog } from './app-discovery-dialog';
 import { ServiceLogo } from './service-logo';
 import { usePrivateEntry } from './private-entry';
 
-const icons = { vault: KeyRound, website: Globe2, app: Link2, browser: MonitorSmartphone };
+const icons = { vault: KeyRound, website: Globe2, app: Link2 };
 const vaultLink = /^\/(?:vault|credentials)\/([A-Za-z0-9_-]+)\/?$/;
 const paymentLink = /^\/payments\/([a-f0-9-]{36})\/?$/i;
 const appLink = /^\/apps\?connect=([a-f0-9-]{36})$/i;

@@ -3043,13 +3043,25 @@ test(
             await checkResume(`credentials-retry:${resumed}`);
             assert.equal(await thread.resumeAfterConnection(research, 'Synthetic source'), true);
             const connected = await checkResume(`connection:${research}`);
-            await db.pool.query(
-              "UPDATE turns SET status='waiting',waiting_reason='question',handoff_browser_id=session_id::text WHERE id=$1",
-              [connected],
-            );
-            assert.equal(await thread.resumeAfterHandoff(connected), true);
-            await checkResume(`handoff:${connected}`);
-            assert.equal(await thread.resumeAfterHandoff(connected), false);
+            let handoffTurn = connected;
+            for (const channel of ['telegram:synthetic', 'whatsapp:synthetic']) {
+              await db.pool.query(
+                "UPDATE turns SET status='waiting',waiting_reason='question',handoff_browser_id=session_id::text,channel=$2 WHERE id=$1",
+                [handoffTurn, channel],
+              );
+              assert.equal(await thread.resumeAfterHandoff(handoffTurn), true);
+              const continued = await checkResume(`handoff:${handoffTurn}`);
+              const resumed = (
+                await db.pool.query('SELECT session_id,channel FROM turns WHERE id=$1', [continued])
+              ).rows[0];
+              const original = (
+                await db.pool.query('SELECT session_id FROM turns WHERE id=$1', [handoffTurn])
+              ).rows[0];
+              assert.equal(resumed.session_id, original.session_id);
+              assert.equal(resumed.channel, channel);
+              assert.equal(await thread.resumeAfterHandoff(handoffTurn), false);
+              handoffTurn = continued;
+            }
           } finally {
             quietBackgroundWork = false;
             dependencies.readArtifact = previousRead;
