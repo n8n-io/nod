@@ -37,18 +37,19 @@ Model requests go to the provider the user connects. Managed app requests and re
 
 ## What nod stores
 
-| Data                               | Where                                | Protection                                                                                                   | Kept                      |
-| ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------- |
-| Conversations, tasks and schedules | PostgreSQL                           | Every query scoped to the owner                                                                              | No automatic expiry       |
-| Saved logins and cards             | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed             |
-| Model keys users save              | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed             |
-| MCP, API and CLI credentials       | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed             |
-| Server-managed model keys          | Server configuration                 | Not stored by nod; never sent to the sandbox                                                                 | Until unset               |
-| App installation identity          | Private installation files           | AES-256-GCM bound to the owner; desktop encryption root protected by the operating system                    | Until app data is removed |
-| Vault activity                     | PostgreSQL                           | Owner-scoped, no secret values                                                                               | No automatic expiry       |
-| Model costs and app actions        | PostgreSQL                           | Owner-scoped                                                                                                 | Permanent                 |
-| Memory                             | A private file outside the workspace | From owner messages, Settings and chosen imports, plus a sent-email style note; skills without personal data | Until forgotten           |
-| Workspace files, browser profiles  | Local volumes                        | Separate containers per owner                                                                                | Until removed             |
+| Data                               | Where                                | Protection                                                                                                   | Kept                                     |
+| ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| Conversations, tasks and schedules | PostgreSQL                           | Every query scoped to the owner                                                                              | No automatic expiry                      |
+| Saved logins and cards             | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed                            |
+| Model keys users save              | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed                            |
+| MCP, API and CLI credentials       | PostgreSQL                           | AES-256-GCM, bound to owner, record and purpose                                                              | Until removed                            |
+| Server-managed model keys          | Server configuration                 | Not stored by nod; never sent to the sandbox                                                                 | Until unset                              |
+| App installation identity          | Private installation files           | AES-256-GCM bound to the owner; desktop encryption root protected by the operating system                    | Until app data is removed                |
+| Vault activity                     | PostgreSQL                           | Owner-scoped, no secret values                                                                               | No automatic expiry                      |
+| Model costs and app actions        | PostgreSQL                           | Owner-scoped                                                                                                 | Permanent                                |
+| Memory                             | A private file outside the workspace | From owner messages, Settings and chosen imports, plus a sent-email style note; skills without personal data | Until forgotten                          |
+| Diagnostic journal                 | Private files outside the workspace  | Redaction before storage and export; owner-specific directory and restricted file permissions                | Last 24 hours when active; at most 3 MiB |
+| Workspace files, browser profiles  | Local volumes                        | Separate containers per owner                                                                                | Until removed                            |
 
 ## Threats and controls
 
@@ -77,7 +78,7 @@ Tests use synthetic data and disposable databases. They never call a live model 
 
 ## Common questions
 
-**Does n8n see our conversations?** Managed app requests and results pass through n8n and can include conversation content used in app actions. Bug feedback selects a technical diagnostic report by default, with a preview and one-click opt-out. Reports contain permitted metadata, never chat text, prompts, tool arguments or results, or account details. Feedback text and files the user adds are sent as provided. See [Feedback](/trust/privacy/#feedback). Usage analytics are opt-in and mask content. Conversation traces are opt-in too: when a user turns them on, scrubbed model requests and replies go to the nod team's LangSmith project for 14 days, without any account or device identifier.
+**Does n8n see our conversations?** Managed app requests and results pass through n8n and can include conversation content used in app actions. Feedback selects a diagnostic report by default, with an exact preview and one-click opt-out. Reports include recent messages, tool inputs and results, and logs for support, debugging, and product improvement. Known secrets and recognized personal details are masked, but redaction can miss information. Credential fields, screenshots, binary data, system prompts, and model thinking are omitted. Feedback text and files the user adds are sent as provided. See [Feedback](/trust/privacy/#feedback). Usage analytics are opt-in and mask content. Conversation traces are opt-in too: when a user turns them on, scrubbed model requests and replies go to the nod team's LangSmith project for 14 days, without any account or device identifier.
 
 **Does nod train on our data?** nod doesn't train models, and n8n doesn't use conversation traces to train AI models. The model provider you connect processes requests under its own terms.
 

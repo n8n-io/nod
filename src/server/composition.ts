@@ -82,7 +82,10 @@ import { createIntegrationBrowser } from './integration-browser.ts';
 import { createIntegrationIdentityCheckpoint } from './integration-identity.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createSkillLibrary } from '../providers/pi/skills.ts';
-import { createFeedbackActivity } from '../shared/feedback-activity.ts';
+import { createFeedbackActivity, parseFeedbackActivity } from '../shared/feedback-activity.ts';
+import { createFeedbackLog } from './feedback-log.ts';
+import { createFeedbackRedactor } from './feedback-redaction.ts';
+import { withFailureLog, type FailureLogSink } from './failure-log.ts';
 import { createPiMemoryCurator } from '../providers/pi/memory-curator.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
@@ -415,9 +418,19 @@ export async function createApplication(
   adapters: ApplicationAdapters,
   options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> } = {},
 ) {
+  const diagnostics: {
+    log?: Awaited<ReturnType<typeof createFeedbackLog>>;
+    failure: FailureLogSink;
+  } = {
+    failure: (event, error, context) =>
+      diagnostics.log?.record('failure', { event, error, context }, context),
+  };
   try {
-    return await initializeApplication(adapters, options);
+    return await withFailureLog(diagnostics.failure, () =>
+      initializeApplication(adapters, options, diagnostics),
+    );
   } catch (error) {
+    await diagnostics.log?.close().catch(() => {});
     try {
       await adapters.analytics?.shutdown();
     } catch {}
@@ -431,6 +444,7 @@ export async function createApplication(
 async function initializeApplication(
   adapters: ApplicationAdapters,
   options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> },
+  diagnostics: { log?: Awaited<ReturnType<typeof createFeedbackLog>>; failure: FailureLogSink },
 ) {
   const analytics = await createAnalytics({
     provider: adapters.analytics,
@@ -444,6 +458,15 @@ async function initializeApplication(
   const feedbackActivity = createFeedbackActivity('runtime');
   const captureAnalytics: CaptureAnalytics = (event, delivery) => {
     feedbackActivity.record(event.event, 'properties' in event ? event.properties : undefined);
+    const activity = parseFeedbackActivity([
+      {
+        source: 'runtime',
+        ageMs: 0,
+        event: event.event,
+        properties: 'properties' in event ? event.properties : undefined,
+      },
+    ])[0];
+    if (activity) diagnostics.log?.record('activity', activity);
     analytics.capture(ownerId, event, delivery);
     if (
       event.event === 'nod_connection_changed' &&
@@ -503,7 +526,9 @@ async function initializeApplication(
       if (password) secrets.push(password);
     } catch {}
   }
-  adapters.models?.onSecrets((values) => secrets.push(...values));
+  adapters.models?.onSecrets((values) => {
+    for (const value of values) if (!secrets.includes(value)) secrets.push(value);
+  });
   const memoryCurator =
     adapters.memoryCurator ?? createPiMemoryCurator({ provider: adapters.model.provider });
   const ledger = createLedger({
@@ -594,6 +619,26 @@ async function initializeApplication(
     redactError: createErrorRedactor(secrets),
     pageVisited: (url, subagent) => websiteVisited(url, 'browser', subagent),
     observe: (turnId, event) => {
+      const { execution, id, type, name } = event;
+      diagnostics.log?.record(
+        type,
+        type === 'tool_start'
+          ? { tool: name, input: event.input }
+          : {
+              tool: name,
+              status: event.status,
+              output: event.output,
+              error: event.error,
+              durationMs: event.durationMs,
+            },
+        {
+          turnId,
+          sessionId: execution?.sessionId,
+          runId: execution?.runId,
+          parentRunId: execution?.parentRunId,
+          callId: id,
+        },
+      );
       if (event.type === 'tool_end') {
         captureAnalytics(toolUsed(event));
         const fetched = fetches.get(event.id);
@@ -986,6 +1031,38 @@ async function initializeApplication(
         : undefined,
     };
   };
+  let feedbackProfileRead: ReturnType<typeof ownerProfile> | undefined;
+  let feedbackRedaction:
+    | {
+        profile: Awaited<ReturnType<typeof ownerProfile>>;
+        redact: ReturnType<typeof createFeedbackRedactor>;
+      }
+    | undefined;
+  const feedbackSecrets = [ownerId, ...secrets];
+  diagnostics.log = await createFeedbackLog({
+    dataRoot,
+    ownerId,
+    sanitize: async (value) => {
+      const profile = await (feedbackProfileRead ??= ownerProfile().finally(() => {
+        feedbackProfileRead = undefined;
+      }));
+      for (let index = feedbackSecrets.length - 1; index < secrets.length; index++)
+        feedbackSecrets.push(secrets[index]);
+      if (
+        !feedbackRedaction ||
+        feedbackRedaction.profile.region !== profile.region ||
+        feedbackRedaction.profile.names.length !== profile.names.length ||
+        feedbackRedaction.profile.names.some((name, index) => name !== profile.names[index])
+      )
+        feedbackRedaction = {
+          profile,
+          redact: createFeedbackRedactor({ secrets: feedbackSecrets, profile }),
+        };
+      const { redact } = feedbackRedaction;
+      if (!redact.isReady()) throw new Error('Diagnostic redaction unavailable.');
+      return redact.value(value);
+    },
+  });
   adapters.traces?.configure({
     enabled: (await localAccounts.read(ownerId)).traces,
     secrets,
@@ -1465,6 +1542,7 @@ async function initializeApplication(
       await onboardingSuggestions.complete((await ownerNames().catch(() => []))[0]);
   };
   const app = await createApp({
+    failureLog: diagnostics.failure,
     analytics: captureAnalytics,
     linkReplay: analytics.linkReplay,
     admission,
@@ -1494,6 +1572,9 @@ async function initializeApplication(
   const feedbackReportOptions: FeedbackReportOptions = {
     pool,
     ownerId,
+    secrets,
+    profile: ownerProfile,
+    logs: () => diagnostics.log!.snapshot(),
     context: await feedbackContext({ environment: process.env }),
     get provider() {
       return adapters.model.provider;
@@ -1512,9 +1593,11 @@ async function initializeApplication(
       submit: async (input) => ({ submissionId: input.submissionId, status: 'rejected' }),
       status: async (submissionId) => ({ submissionId, status: 'rejected' }),
     },
-    buildReport: (activity) =>
+    buildReport: (activity, errors, errorsAvailable) =>
       buildFeedbackReport({
         ...feedbackReportOptions,
+        errors,
+        errorsAvailable,
         activity: [...feedbackActivity.snapshot(), ...activity].sort((a, b) => b.ageMs - a.ageMs),
       }),
     analytics: captureAnalytics,
@@ -1726,6 +1809,7 @@ async function initializeApplication(
       () => runtime.dispose(),
       () => analytics.shutdown(),
       () => adapters.telemetry?.shutdown(),
+      () => diagnostics.log?.close(),
     ]) {
       try {
         await close();

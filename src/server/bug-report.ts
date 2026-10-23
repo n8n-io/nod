@@ -3,8 +3,18 @@ import { feedbackLimits, type FeedbackContext } from '../shared/feedback.ts';
 import { parseFeedbackActivity, type FeedbackActivity } from '../shared/feedback-activity.ts';
 import { integrationServiceIds } from '../shared/integrations.ts';
 import { feedbackTechnicalContext } from './feedback-context.ts';
+import { createFeedbackRedactor } from './feedback-redaction.ts';
+import type { PersonalProfile } from './personal-data.ts';
+import type { FeedbackLogSnapshot } from './feedback-log.ts';
 
 type Row = Record<string, unknown>;
+
+export interface FeedbackClientError {
+  type: 'render' | 'error' | 'rejection';
+  message: string;
+  stack?: string;
+  ageMs: number;
+}
 
 export interface FeedbackReportOptions {
   pool: Pool;
@@ -13,6 +23,11 @@ export interface FeedbackReportOptions {
   model?: string;
   activity?: FeedbackActivity[];
   context?: Omit<FeedbackContext, 'enabled' | 'recipient'>;
+  secrets?: string[];
+  profile?: () => Promise<PersonalProfile>;
+  logs?: () => Promise<FeedbackLogSnapshot>;
+  errors?: FeedbackClientError[];
+  errorsAvailable?: boolean;
 }
 
 const providers = [
@@ -79,6 +94,28 @@ function tool(value: unknown) {
 
 export async function buildFeedbackReport(options: FeedbackReportOptions) {
   const now = Date.now();
+  let redact: ReturnType<typeof createFeedbackRedactor> | undefined;
+  let profileTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    if (options.profile) {
+      const candidate = createFeedbackRedactor({
+        secrets: [...(options.secrets ?? []), options.ownerId],
+        profile: await Promise.race([
+          options.profile(),
+          new Promise<never>((_, reject) => {
+            profileTimer = setTimeout(
+              () => reject(new Error('Diagnostic profile unavailable.')),
+              3000,
+            );
+          }),
+        ]),
+      });
+      if (candidate.isReady()) redact = candidate;
+    }
+  } catch {
+  } finally {
+    clearTimeout(profileTimer);
+  }
   const recent = [options.ownerId, new Date(now - 86_400_000), new Date(now)];
   const aliases = new Map<string, Map<unknown, string>>();
   function alias(kind: string, value: unknown) {
@@ -136,6 +173,7 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     collect(
       'messages',
       `SELECT id,turn_id,role,created_at,char_length(text) AS characters,
+       CASE WHEN octet_length(text)<=65536 THEN text ELSE '[message omitted: content limit]' END AS text,
        CASE WHEN jsonb_typeof(attachments)='array' THEN jsonb_array_length(attachments) ELSE 0 END AS attachment_count,
        reply_to_message_id IS NOT NULL AS has_reply
        FROM messages WHERE owner_id=$1 AND created_at BETWEEN $2 AND $3 ORDER BY created_at DESC,id DESC`,
@@ -147,12 +185,17 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
         characters: amount(row.characters),
         attachmentCount: amount(row.attachment_count),
         hasReply: row.has_reply === true,
+        ...(redact && row.role !== 'system' && typeof row.text === 'string'
+          ? { text: redact.text(row.text) }
+          : {}),
       }),
     ),
     collect(
       'turns',
       `SELECT id,parent_turn_id,session_id,source,channel,status,background,waiting_reason,
-       error IS NOT NULL AS error_present,created_at,started_at,finished_at
+       error IS NOT NULL AS error_present,
+       CASE WHEN octet_length(error)<=65536 THEN error ELSE '[error omitted: content limit]' END AS error,
+       created_at,started_at,finished_at
        FROM turns WHERE owner_id=$1 AND created_at BETWEEN $2 AND $3 ORDER BY created_at DESC,id DESC`,
       (row) => ({
         id: alias('t', row.id),
@@ -164,6 +207,7 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
         background: row.background === true,
         waitingReason: choice(row.waiting_reason, ['question', 'approval', 'credentials']),
         errorPresent: row.error_present === true,
+        ...(redact && typeof row.error === 'string' ? { error: redact.text(row.error) } : {}),
         ageMs: age(row.created_at),
         queueMs: duration(row.started_at, row.created_at),
         durationMs: duration(row.finished_at, row.started_at),
@@ -375,9 +419,54 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
       }),
     ),
   ]);
+  let logCoverage: FeedbackLogSnapshot['coverage'] = {
+    hours: 24,
+    dropped: 0,
+    truncated: false,
+    unavailable: true,
+  };
+  lists.logs = [];
+  if (redact && options.logs) {
+    try {
+      const snapshot = await options.logs();
+      logCoverage = snapshot.coverage;
+      lists.logs = snapshot.entries
+        .filter((entry) => entry.at <= now && entry.at >= now - 86_400_000)
+        .map((entry) => ({
+          event: entry.event,
+          ageMs: amount(now - entry.at),
+          turnId: alias('t', entry.scope.turnId),
+          sessionId: alias('s', entry.scope.sessionId),
+          runId: alias('r', entry.scope.runId),
+          parentRunId: alias('r', entry.scope.parentRunId),
+          callId: alias('c', entry.scope.callId),
+          data: redact!.value(entry.data),
+        }));
+    } catch {}
+  }
+  sections.logs = {
+    status: logCoverage.unavailable ? 'unavailable' : 'collected',
+    scope: 'recent',
+    rows: lists.logs.length,
+    truncated: logCoverage.truncated || logCoverage.dropped > 0,
+  };
+  lists.clientErrors = [];
+  const errorsAvailable = options.errorsAvailable ?? options.errors !== undefined;
+  if (redact && errorsAvailable)
+    lists.clientErrors = (options.errors ?? []).slice(-10).map((error) => ({
+      event: 'client_error',
+      ageMs: amount(error.ageMs),
+      data: redact!.value({ type: error.type, message: error.message, stack: error.stack }),
+    }));
+  sections.clientErrors = {
+    status: !redact || !errorsAvailable ? 'unavailable' : 'collected',
+    scope: 'recent',
+    rows: lists.clientErrors.length,
+    truncated: false,
+  };
   const report = {
-    format: 'nod-feedback-report-v2',
-    purpose: 'support-and-debugging',
+    format: 'nod-feedback-report-v3',
+    purpose: 'support-debugging-and-product-improvement',
     ...(options.context ? { environment: feedbackTechnicalContext(options.context) } : {}),
     runtime: {
       provider: choice(options.provider, providers, 'other'),
@@ -385,7 +474,9 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     },
     coverage: {
       hours: 24,
-      contentIncluded: false,
+      contentIncluded: Boolean(redact),
+      redaction: redact ? 'best-effort' : 'unavailable',
+      logs: logCoverage,
       truncated: Object.values(sections).some((section) => section.truncated),
       sections,
     },

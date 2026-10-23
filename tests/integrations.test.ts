@@ -1676,18 +1676,24 @@ test(
     await status('https://proxy.example.test/v1/connect/browser?ticket=foreign');
     assert.equal(pairingChecks.mock.callCount(), pairingReads);
     await database.pool.query('UPDATE app_connections SET owner_id=$1', ['another-owner']);
+    await database.pool.query('UPDATE app_setup_links SET owner_id=$1', ['another-owner']);
     assert.deepEqual((await status(begin.json().url)).json(), { completed: [], apps: [] });
     await database.pool.query('UPDATE app_connections SET owner_id=$1,revoked=true', [
       'fixture-owner',
     ]);
-    assert.deepEqual((await status(begin.json().url)).json(), { completed: [], apps: [] });
+    await database.pool.query('UPDATE app_setup_links SET owner_id=$1', ['fixture-owner']);
+    const expired = {
+      completed: [],
+      apps: [{ hash: linkHash, slug: 'gmail', name: 'Gmail', available: false }],
+    };
+    assert.deepEqual((await status(begin.json().url)).json(), expired);
     await database.pool.query('UPDATE app_connections SET revoked=false');
     await database.pool.query("UPDATE app_connections SET configuration_id='retired-proxy'");
     assert.equal((await status(begin.json().url)).json().apps[0].pairingConfirmed, undefined);
     await database.pool.query(
       "UPDATE app_connections SET configuration_id='proxy-fixture',callback_expires=now()-interval '1 minute'",
     );
-    assert.deepEqual((await status(begin.json().url)).json(), { completed: [], apps: [] });
+    assert.deepEqual((await status(begin.json().url)).json(), expired);
     assert.equal(pairingChecks.mock.callCount(), pairingReads);
     await database.pool.query(
       "UPDATE app_connections SET callback_expires=now()+interval '10 minutes'",
@@ -3970,8 +3976,8 @@ test(
   async (t) => {
     const f = await appsFixture(t);
     const work = await f.connect('gmail');
-    const start = async () => {
-      const response = await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
+    const start = async (app = f.app) => {
+      const response = await app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
       assert.equal(response.statusCode, 200);
       const callback = new URL(f.callbacks.at(-1)!);
       const pending = (
@@ -4001,11 +4007,17 @@ test(
       (await f.app.inject({ url: `${callback.pathname}${callback.search}` })).headers.location;
     let personal = await start();
     const other = await start();
-    const foreign = await start();
-    await f.pool.query('UPDATE app_connections SET owner_id=$1 WHERE id=$2', [
-      'foreign-owner',
-      foreign.id,
-    ]);
+    const foreignApp = Fastify();
+    t.after(() => foreignApp.close());
+    (
+      await createIntegrations(f.pool, {
+        ownerId: 'foreign-owner',
+        provider: f.provider,
+        baseUrl: 'http://localhost:4310',
+        wake: async () => {},
+      })
+    ).registerRoutes(foreignApp);
+    const foreign = await start(foreignApp);
     const pendingStatus = await setupStatus(
       personal.hash,
       other.hash,
@@ -4046,7 +4058,9 @@ test(
     );
     assert.equal(await complete(other.callback), 'http://localhost:4310/apps?connection=expired');
     assert.deepEqual(await status(other.hash), []);
-    assert.deepEqual((await setupStatus(other.hash, foreign.hash, '0'.repeat(64))).apps, []);
+    assert.deepEqual((await setupStatus(other.hash, foreign.hash, '0'.repeat(64))).apps, [
+      { hash: other.hash, slug: 'gmail', name: 'Gmail', available: false },
+    ]);
     f.provider.configurationId = 'current-configuration';
     await f.pool.query('UPDATE app_connections SET configuration_id=$1 WHERE id=$2', [
       'previous-configuration',
@@ -4110,6 +4124,97 @@ test(
     );
     assert.deepEqual(await status(reconnect.hash), [reconnect.hash]);
     assert.deepEqual(await status(other.hash), []);
+  },
+);
+
+test(
+  'expired Gmail setup cards preserve owned app metadata after another attempt completes and the service restarts',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const pairingChecks = t.mock.fn(async () => ({ pairingConfirmed: false }));
+    f.provider.connectionStatus = pairingChecks;
+    const start = async (app = f.app) => {
+      const response = await app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
+      assert.equal(response.statusCode, 200, response.body);
+      const url = response.json().url as string;
+      const hash = createHash('sha256').update(url).digest('hex');
+      const pending = (
+        await f.pool.query(
+          'SELECT id,pending_account_id FROM app_connections WHERE setup_link_hash=$1',
+          [hash],
+        )
+      ).rows[0];
+      const callback = new URL(f.callbacks.at(-1)!);
+      callback.searchParams.set('account', pending.pending_account_id);
+      return { id: pending.id, hash, url, callback };
+    };
+    const earlier = await start();
+    const later = await start();
+    const foreignApp = Fastify();
+    t.after(() => foreignApp.close());
+    (
+      await createIntegrations(f.pool, {
+        ownerId: 'foreign-owner',
+        provider: f.provider,
+        baseUrl: 'http://localhost:4310',
+        wake: async () => {},
+      })
+    ).registerRoutes(foreignApp);
+    const foreign = await start(foreignApp);
+    const read = async (app: typeof f.app, pairingUrl = earlier.url) => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/apps/setup-status',
+        payload: {
+          hashes: [earlier.hash, later.hash, foreign.hash, '0'.repeat(64)],
+          pairingUrl,
+        },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal(response.headers['cache-control'], 'no-store');
+      return response.json();
+    };
+    const pending = await read(f.app);
+    assert.deepEqual(pending.completed, []);
+    assert.deepEqual(
+      pending.apps.map((app: { hash: string }) => app.hash).sort(),
+      [earlier.hash, later.hash].sort(),
+    );
+    assert.equal(pairingChecks.mock.callCount(), 1);
+    await f.pool.query('DROP TABLE app_setup_links');
+    await initializeIntegrationSchema(f.pool);
+    await f.pool.query(
+      "UPDATE app_connections SET callback_expires=now()-interval '1 second' WHERE id=$1",
+      [earlier.id],
+    );
+    const completed = await f.app.inject({
+      url: `${later.callback.pathname}${later.callback.search}`,
+    });
+    assert.equal(completed.headers.location, 'http://localhost:4310/apps?connection=connected');
+    const expected = {
+      completed: [later.hash],
+      apps: [{ hash: earlier.hash, slug: 'gmail', name: 'Gmail', available: false }],
+    };
+    assert.deepEqual(await read(f.app), expected);
+    assert.equal(pairingChecks.mock.callCount(), 1);
+    await f.pool.query('DELETE FROM app_connections WHERE id=$1', [earlier.id]);
+    assert.deepEqual(await read(f.app), expected);
+    assert.equal(pairingChecks.mock.callCount(), 1);
+    const recovered = Fastify();
+    t.after(() => recovered.close());
+    (
+      await createIntegrations(f.pool, {
+        ownerId: 'local-development',
+        provider: f.provider,
+        baseUrl: 'http://localhost:4310',
+        wake: async () => {},
+      })
+    ).registerRoutes(recovered);
+    assert.deepEqual(await read(recovered), expected);
+    assert.equal(pairingChecks.mock.callCount(), 1);
+    assert.deepEqual(await read(recovered, foreign.url), expected);
+    assert.equal(pairingChecks.mock.callCount(), 1);
   },
 );
 

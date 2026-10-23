@@ -1,4 +1,5 @@
 import { feedbackActivity } from './feedback-activity';
+import { setFeedbackErrorOwner } from './feedback-errors';
 
 export class ApiError extends Error {
   constructor(
@@ -24,6 +25,7 @@ export function setRequestAccount(id: string | null) {
   requestAccount = id;
   accountGeneration++;
   feedbackActivity.clear();
+  setFeedbackErrorOwner(id);
   for (const request of privateRequests) request.abort();
   privateRequests.clear();
 }
