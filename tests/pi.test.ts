@@ -3127,6 +3127,196 @@ test('LM Studio servers list tool-trained chat models with their loaded context 
   );
 });
 
+test('cloud connections list only the account’s models and send each key only to its service', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const requests: string[] = [];
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      requests.push(url);
+      assert.equal(init?.redirect, 'error');
+      if (url.startsWith('https://bedrock.eu-west-1.amazonaws.com/')) {
+        assert.equal(headers.get('authorization'), 'Bearer fixture-bedrock-key');
+        return Response.json(
+          url.includes('/foundation-models?')
+            ? { modelSummaries: [{ modelId: 'amazon.nova-pro-v1:0' }, { modelId: 'fixture.v1:0' }] }
+            : {
+                inferenceProfileSummaries: [
+                  { inferenceProfileId: 'eu.anthropic.claude-opus-5-5', status: 'ACTIVE' },
+                  { inferenceProfileId: 'fixture.profile', status: 'ACTIVE' },
+                ],
+              },
+        );
+      }
+      if (url.startsWith('https://aiplatform.googleapis.com/v1/publishers/google/models/'))
+        return new Response(null, {
+          status: headers.get('x-goog-api-key') === 'fixture-vertex-key' ? 200 : 400,
+        });
+      if (url === 'https://fixture.openai.azure.com/openai/v1/models') {
+        assert.equal(headers.get('api-key'), 'fixture-azure-key');
+        return Response.json({ data: [] });
+      }
+      throw new Error('Unexpected model service request.');
+    },
+  });
+  const bedrock = await backend.catalog('amazon-bedrock', 'api_key', {
+    type: 'bedrock',
+    key: 'fixture-bedrock-key',
+    region: 'eu-west-1',
+  });
+  assert.deepEqual(bedrock.map(({ choice }) => choice.id).sort(), [
+    'amazon.nova-pro-v1:0',
+    'eu.anthropic.claude-opus-5-5',
+  ]);
+  const sent = requests.length;
+  await assert.rejects(
+    backend.catalog('amazon-bedrock', 'api_key', {
+      type: 'bedrock',
+      key: 'fixture-bedrock-key',
+      region: 'example.test/#',
+    }),
+  );
+  assert.equal(requests.length, sent);
+  const vertex = await backend.catalog('google-vertex', 'api_key', {
+    type: 'api_key',
+    key: 'fixture-vertex-key',
+  });
+  assert.ok(vertex.length > 1);
+  await assert.rejects(
+    backend.catalog('google-vertex', 'api_key', { type: 'api_key', key: 'fixture-wrong-key' }),
+  );
+  const azure = await backend.catalog('azure', 'api_key', {
+    type: 'azure',
+    url: 'https://fixture.openai.azure.com/openai/v1',
+    key: 'fixture-azure-key',
+    model: 'gpt-6.1-sol',
+    deployment: 'fixture-deployment',
+  });
+  assert.deepEqual(
+    azure.map(({ choice }) => choice.id),
+    ['gpt-6.1-sol'],
+  );
+});
+
+test('cloud model requests use the connection’s Region, API key and Azure deployment, once and without leaking the key', async (t) => {
+  const { createServer } = await import('node:http');
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const received: { url?: string; key?: string; model?: unknown }[] = [];
+  const tunnels = new Set<string>();
+  const server = createServer((request, response) => {
+    let text = '';
+    request.on('data', (chunk) => (text += chunk));
+    request.on('end', () => {
+      if (request.url?.startsWith('/moved/')) {
+        response.writeHead(307, { location: '/openai/v1/responses' });
+        return response.end();
+      }
+      received.push({
+        url: request.url,
+        key: request.headers['api-key'] as string | undefined,
+        model: JSON.parse(text || '{}').model,
+      });
+      response.writeHead(503, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: { message: 'Synthetic failure fixture-azure-key' } }));
+    });
+  });
+  server.on('connect', (request, socket) => {
+    tunnels.add(request.url ?? '');
+    socket.destroy();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const { port } = server.address() as import('node:net').AddressInfo;
+  const prompt = {
+    messages: [{ role: 'user' as const, content: 'Synthetic fixture', timestamp: 1 }],
+  };
+  const credential = {
+    type: 'azure' as const,
+    url: `http://127.0.0.1:${port}/openai/v1`,
+    key: 'fixture-azure-key',
+    model: 'gpt-6.1-sol',
+    deployment: 'fixture-deployment',
+  };
+  const backend = createPiModelBackend({ fetch: async () => Response.json({ data: [] }) });
+  const [azureDefinition] = await backend.catalog('azure', 'api_key', credential);
+  for (const url of [credential.url, `http://127.0.0.1:${port}/moved/openai/v1`]) {
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'azure',
+      method: 'api_key',
+      definition: azureDefinition,
+      effort: 'low',
+      read: async () => ({ ...credential, url }),
+    });
+    const failed = await runtime.completeSimple(model, prompt, { maxRetries: 5 });
+    assert.equal(failed.stopReason, 'error');
+    assert.ok(!JSON.stringify(failed).includes('fixture-azure-key'));
+  }
+  assert.deepEqual(received, [
+    {
+      url: '/openai/v1/responses?api-version=v1',
+      key: 'fixture-azure-key',
+      model: 'fixture-deployment',
+    },
+  ]);
+
+  const vertexCalls: { url: string; key: string | null }[] = [];
+  const send = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    vertexCalls.push({
+      url: String(input instanceof Request ? input.url : input),
+      key: new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get(
+        'x-goog-api-key',
+      ),
+    });
+    return Response.json(
+      { error: { code: 503, message: 'Synthetic fixture-vertex-key', status: 'UNAVAILABLE' } },
+      { status: 503 },
+    );
+  }) as typeof fetch;
+  try {
+    const [vertexDefinition] = await backend.catalog('google-vertex', 'api_key');
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'google-vertex',
+      method: 'api_key',
+      definition: vertexDefinition,
+      effort: 'low',
+      read: async () => ({ type: 'api_key', key: 'fixture-vertex-key' }),
+    });
+    const failed = await runtime.completeSimple(model, prompt, { maxRetries: 5 });
+    assert.equal(failed.stopReason, 'error');
+    assert.ok(!JSON.stringify(failed).includes('fixture-vertex-key'));
+  } finally {
+    globalThis.fetch = send;
+  }
+  assert.equal(vertexCalls.length, 1);
+  assert.ok(vertexCalls[0].url.startsWith('https://aiplatform.googleapis.com/'));
+  assert.equal(vertexCalls[0].key, 'fixture-vertex-key');
+
+  const proxy = process.env.HTTPS_PROXY;
+  process.env.HTTPS_PROXY = `http://127.0.0.1:${port}`;
+  try {
+    const bedrockDefinition = (await backend.catalog('amazon-bedrock', 'api_key')).find(
+      ({ choice }) => choice.id === 'eu.anthropic.claude-opus-5-5',
+    )!;
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'amazon-bedrock',
+      method: 'api_key',
+      definition: bedrockDefinition,
+      effort: 'low',
+      read: async () => ({ type: 'bedrock', key: 'fixture-bedrock-key', region: 'eu-west-1' }),
+    });
+    const failed = await runtime.completeSimple(model, prompt, {});
+    assert.equal(failed.stopReason, 'error');
+    assert.ok(!JSON.stringify(failed).includes('fixture-bedrock-key'));
+  } finally {
+    if (proxy === undefined) delete process.env.HTTPS_PROXY;
+    else process.env.HTTPS_PROXY = proxy;
+  }
+  assert.deepEqual([...tunnels], ['bedrock-runtime.eu-west-1.amazonaws.com:443']);
+});
+
 test('the Pi transcript keeps model changes for the next turn and leaves background turns out', async () => {
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
   const backend = createPiModelBackend({

@@ -3,6 +3,8 @@ import type { ModelChoice, ModelProvider, ModelMethod, ModelEffort } from '../sh
 export type ModelCredential =
   | { type: 'api_key'; key: string }
   | { type: 'endpoint'; url: string; key?: string }
+  | { type: 'bedrock'; key: string; region: string }
+  | { type: 'azure'; url: string; key: string; model: string; deployment: string }
   | {
       type: 'oauth';
       access: string;

@@ -74,15 +74,20 @@ async function installationId(root: string, supplied?: string) {
     .toLowerCase();
 }
 
-const hostedProviders: Record<string, 'openai' | 'anthropic' | 'openrouter' | 'typesafe'> = {
+const hostedProviders = {
   openai: 'openai',
   anthropic: 'anthropic',
   openrouter: 'openrouter',
+  'amazon-bedrock': 'amazon-bedrock',
+  'google-vertex': 'google-vertex',
+  azure: 'azure',
   typesafe: 'typesafe',
-};
+} as const;
 
 export function analyticsModel(provider: string, model?: string) {
-  const hosted = Object.hasOwn(hostedProviders, provider) ? hostedProviders[provider] : undefined;
+  const hosted = Object.hasOwn(hostedProviders, provider)
+    ? hostedProviders[provider as keyof typeof hostedProviders]
+    : undefined;
   return {
     provider: hosted ?? (provider === 'compatible' ? ('compatible' as const) : ('other' as const)),
     ...(model

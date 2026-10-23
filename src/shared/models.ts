@@ -1,4 +1,11 @@
-export type ModelProvider = 'openai' | 'anthropic' | 'openrouter' | 'compatible';
+export type ModelProvider =
+  | 'openai'
+  | 'anthropic'
+  | 'openrouter'
+  | 'compatible'
+  | 'amazon-bedrock'
+  | 'google-vertex'
+  | 'azure';
 export type ModelMethod = 'api_key' | 'subscription' | 'oauth';
 export type ModelEffort = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -40,12 +47,18 @@ export const modelProviderNames = {
   anthropic: 'Anthropic',
   openrouter: 'OpenRouter',
   compatible: 'OpenAI-compatible',
+  'amazon-bedrock': 'Amazon Bedrock',
+  'google-vertex': 'Google Vertex AI',
+  azure: 'Azure OpenAI',
 } as const;
+
+export const bedrockRegionPattern = /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/;
+export const azureDeploymentPattern = /^[\w.-]{1,64}$/;
 
 export function modelSource(connection: Pick<ModelConnection, 'provider' | 'method'>) {
   return connection.method === 'subscription'
     ? 'ChatGPT plan'
-    : connection.provider === 'openrouter' || connection.provider === 'compatible'
-      ? modelProviderNames[connection.provider]
-      : `${modelProviderNames[connection.provider]} API`;
+    : connection.provider === 'openai' || connection.provider === 'anthropic'
+      ? `${modelProviderNames[connection.provider]} API`
+      : modelProviderNames[connection.provider];
 }

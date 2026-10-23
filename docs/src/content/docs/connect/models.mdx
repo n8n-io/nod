@@ -1,6 +1,6 @@
 ---
 title: Models
-description: Connect OpenAI, Anthropic, OpenRouter, a ChatGPT plan or a local model, choose the model nod uses, and see where your keys are kept.
+description: Connect OpenAI, Anthropic, OpenRouter, Amazon Bedrock, Google Vertex AI, Azure OpenAI, a ChatGPT plan or a local model, choose the model nod uses, and see where your keys are kept.
 sidebar:
   order: 1
 ---
@@ -19,6 +19,9 @@ Your requests go to the service you connect. Paid providers bill you for use. To
 | ChatGPT           | ChatGPT Plus or Pro, in local nod only | GPT-6 Sol, high effort       |
 | Anthropic         | API key                                | Claude Opus 5.5, high effort |
 | OpenRouter        | API key, or sign in with your browser  | GPT-6.1 Sol, high effort     |
+| Amazon Bedrock    | API key and Region                     | You choose                   |
+| Google Vertex AI  | API key                                | You choose                   |
+| Azure OpenAI      | Endpoint, deployment and API key       | The deployment's model       |
 | OpenAI-compatible | Server address, in local nod only      | You choose                   |
 
 You can switch to any other model the service offers.
@@ -81,6 +84,52 @@ A ChatGPT connection made with an earlier version of nod needs one reconnect in 
 nod lists the OpenRouter models that support text and tools.
 
 </TabItem>
+<TabItem label="Amazon Bedrock">
+
+<Steps>
+
+1. In the Amazon Bedrock console, create a long-term key under **API keys**. Short-term keys expire within hours.
+2. In nod, next to **Amazon Bedrock**, select **Add API key**.
+3. Enter the **Region** your models run in, such as `us-east-1`, and paste the key into **Amazon Bedrock API key**.
+4. Select **Save connection**, then choose a model.
+
+</Steps>
+
+nod lists the models the key can call in that Region: models with on-demand access, and the inference profiles there, such as `eu.anthropic.claude-opus-5-5`. A profile that starts with `global.` can send requests to any AWS Region. To keep requests in one geography, choose a profile such as `eu.` or `us.`. That's why nod doesn't choose a Bedrock model for you.
+
+The key needs to list models (`bedrock:ListFoundationModels` and `bedrock:ListInferenceProfiles`) and call them. Keys made in the Bedrock console get the `AmazonBedrockLimitedAccess` policy, which allows both. nod doesn't use AWS access keys or profiles.
+
+</TabItem>
+<TabItem label="Google Vertex AI">
+
+<Steps>
+
+1. In the Google Cloud console, create an API key for Vertex AI. Bind it to a service account that can use Vertex AI, or use a Vertex AI express mode key.
+2. In nod, next to **Google Vertex AI**, select **Add API key**.
+3. Paste the key into **Google Vertex AI API key**, then select **Save connection**.
+4. Choose a model.
+
+</Steps>
+
+nod checks the key with a free token count and lists the Gemini models on Vertex AI. Requests go to Vertex AI's global endpoint. Service account key files aren't supported.
+
+</TabItem>
+<TabItem label="Azure OpenAI">
+
+<Steps>
+
+1. In Azure AI Foundry, open your model deployment and copy its endpoint, deployment name and key.
+2. In nod, next to **Azure OpenAI**, select **Add API key**.
+3. Enter the **Endpoint**, such as `https://your-resource.openai.azure.com`, and the **Deployment name**. If the deployment has its model's name, nod fills in **Model**. Otherwise, choose the model the deployment runs.
+4. Paste the key into **Azure OpenAI API key**, then select **Save connection**.
+
+</Steps>
+
+nod uses Azure's v1 API at that endpoint and sends the key only there. The endpoint needs HTTPS, unless it's on this computer. An address that ends at the resource or at `/openai` gets `/openai/v1` added. Any other path, such as an API gateway, is used as you enter it.
+
+Each deployment is one connection with one model. Add another connection for each deployment you want to use. The model you choose sets the context size and the prices nod counts toward your [spending](/use/spending/). Microsoft Entra ID sign-in isn't supported.
+
+</TabItem>
 <TabItem label="OpenAI-compatible">
 
 <Steps>
@@ -125,6 +174,9 @@ Two checks can use a decision model: reading whether your reply to a confirmatio
 | OpenRouter           | Jev (`typesafe/jev-1.13`) with the same OpenRouter key |
 | Anthropic directly   | Your selected model                                    |
 | ChatGPT subscription | Your selected model                                    |
+| Amazon Bedrock       | Your selected model                                    |
+| Google Vertex AI     | Your selected model                                    |
+| Azure OpenAI         | Your selected model                                    |
 | OpenAI-compatible    | Your selected model                                    |
 
 These calls are billed through the connection that runs them. GPT Decisions is paid API use, separate from a ChatGPT subscription. OpenRouter sends the checks to TypeSafe, even when you selected a chat model from another provider. See [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) and [Jev on OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/).
@@ -156,7 +208,7 @@ LLM_PROVIDER=anthropic
 ANTHROPIC_API_KEY=<your-key>
 ```
 
-A model you choose in the app takes priority over `LLM_PROVIDER` and `LLM_MODEL`. Restart nod after you edit `.env`.
+A model you choose in the app takes priority over `LLM_PROVIDER` and `LLM_MODEL`. Restart nod after you edit `.env`. Amazon Bedrock, Google Vertex AI and Azure OpenAI connect in **Models** only.
 
 ## Where your keys go
 
@@ -176,6 +228,7 @@ flowchart LR
 - nod encrypts saved keys and sign-ins with the Vault key. The Mac keeps that key in Keychain, and the Windows app protects it with Windows DPAPI. Other source installs need `NOD_VAULT_KEY`.
 - nod checks credential storage before starting a connection. If storage is unavailable, check the Vault configuration, permissions and database connection, then try again.
 - Keys from `.env` stay in server memory and aren't copied into the database.
+- Each key goes only to its own service: Amazon Bedrock in the Region you entered, Google Vertex AI, or the Azure OpenAI endpoint you entered.
 - Your browser doesn't store the key, and nod removes it from provider errors.
 
 ## Related resources

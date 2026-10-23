@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ModelConnection, ModelSelection, ModelsResponse } from '../../shared/models';
+import type {
+  ModelConnection,
+  ModelProvider,
+  ModelSelection,
+  ModelsResponse,
+} from '../../shared/models';
 import { usePageData } from './use-page-data';
 import { api, errorMessage, post } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
@@ -8,6 +13,47 @@ import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 export type Models = ReturnType<typeof useModels>;
 
 export const localServerAddress = 'http://localhost:11434/v1';
+
+export const modelProviders: ModelProvider[] = [
+  'openai',
+  'anthropic',
+  'openrouter',
+  'amazon-bedrock',
+  'google-vertex',
+  'azure',
+  'compatible',
+];
+
+export interface KeySettings {
+  region: string;
+  url: string;
+  model: string;
+  deployment: string;
+}
+
+export const noKeySettings: KeySettings = { region: '', url: '', model: '', deployment: '' };
+
+export function keySettingsReady(provider: ModelProvider, settings: KeySettings) {
+  if (provider === 'amazon-bedrock') return !!settings.region.trim();
+  if (provider === 'azure')
+    return !!(settings.url.trim() && settings.deployment.trim() && settings.model);
+  return true;
+}
+
+export function keyConnection(provider: ModelProvider, key: string, settings: KeySettings) {
+  return {
+    provider,
+    key,
+    ...(provider === 'amazon-bedrock' ? { region: settings.region.trim() } : {}),
+    ...(provider === 'azure'
+      ? {
+          url: settings.url.trim(),
+          model: settings.model,
+          ...(settings.deployment.trim() ? { deployment: settings.deployment.trim() } : {}),
+        }
+      : {}),
+  };
+}
 
 export function useModels() {
   const page = usePageData<ModelsResponse>('/api/models');

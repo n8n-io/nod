@@ -74,6 +74,15 @@
 .model-provider-logo.compatible {
   mask-image: url('/logos/server.svg');
 }
+.model-provider-logo.amazon-bedrock {
+  mask-image: url('/logos/amazon-bedrock.svg');
+}
+.model-provider-logo.google-vertex {
+  mask-image: url('/logos/google-vertex.svg');
+}
+.model-provider-logo.azure {
+  mask-image: url('/logos/azure.svg');
+}
 .model-key-form {
   display: grid;
   gap: 12px;

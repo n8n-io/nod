@@ -1218,6 +1218,34 @@ test('server addresses keep host and port, add http and refuse other schemes, si
   );
 });
 
+test('Azure endpoints need HTTPS away from this computer and resolve to the v1 API', async () => {
+  const { azureAddress } = await import('../src/server/models.ts');
+  assert.deepEqual(
+    [
+      'fixture.openai.azure.com',
+      'https://fixture.openai.azure.com/',
+      'https://fixture.cognitiveservices.azure.com/openai',
+      'https://fixture.services.ai.azure.com/openai/v1/',
+      'https://gateway.example.test/llm/openai/v1',
+      'http://127.0.0.1:8443',
+      'http://fixture.openai.azure.com',
+      'https://user:secret@fixture.openai.azure.com',
+      'https://fixture.openai.azure.com/?api-version=v1',
+    ].map(azureAddress),
+    [
+      'https://fixture.openai.azure.com/openai/v1',
+      'https://fixture.openai.azure.com/openai/v1',
+      'https://fixture.cognitiveservices.azure.com/openai/v1',
+      'https://fixture.services.ai.azure.com/openai/v1',
+      'https://gateway.example.test/llm/openai/v1',
+      'http://127.0.0.1:8443/openai/v1',
+      undefined,
+      undefined,
+      undefined,
+    ],
+  );
+});
+
 describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
   async function fixture(t: import('node:test').TestContext) {
     const { createModelService } = await import('../src/server/models.ts');

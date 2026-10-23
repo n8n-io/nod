@@ -215,13 +215,24 @@ export const analyticsModelProvider = z.enum([
   'openai',
   'anthropic',
   'openrouter',
+  'amazon-bedrock',
+  'google-vertex',
+  'azure',
   'typesafe',
   'compatible',
   'other',
 ]);
 const analyticsModel = z.string().regex(/^[a-z0-9][a-z0-9._:/-]{0,119}$/);
 const modelConnectionProperties = z.object({
-  provider: z.enum(['openai', 'anthropic', 'openrouter', 'compatible']),
+  provider: z.enum([
+    'openai',
+    'anthropic',
+    'openrouter',
+    'amazon-bedrock',
+    'google-vertex',
+    'azure',
+    'compatible',
+  ]),
   method: z.enum(['api_key', 'subscription', 'oauth']),
 });
 const turnProperties = z.object({

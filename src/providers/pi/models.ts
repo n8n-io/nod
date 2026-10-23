@@ -17,7 +17,7 @@ import type {
   ModelCredential,
   ModelDefinition,
 } from '../../ports/models.ts';
-import type { ModelProvider, ModelMethod } from '../../shared/models.ts';
+import { bedrockRegionPattern, type ModelProvider, type ModelMethod } from '../../shared/models.ts';
 import { signInPage } from '../../shared/sign-in-page.ts';
 import type { PiModelCall } from './traces.ts';
 
@@ -327,6 +327,59 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     );
     return models.flat();
   }
+  async function bedrockCatalog(local: readonly Model<Api>[], credential: ModelCredential) {
+    if (credential.type !== 'bedrock' || !bedrockRegionPattern.test(credential.region))
+      throw new Error('This model connection is unavailable.');
+    const root = `https://bedrock.${credential.region}.amazonaws.com`;
+    const init = {
+      headers: { Authorization: `Bearer ${credential.key}` },
+      redirect: 'error' as const,
+    };
+    const [models, profiles] = await Promise.all([
+      json(`${root}/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=TEXT`, init),
+      json(`${root}/inference-profiles?maxResults=1000`, init),
+    ]);
+    const available = new Set([
+      ...entries(models.modelSummaries, z.object({ modelId: z.string() })).map(
+        (model) => model.modelId,
+      ),
+      ...entries(
+        profiles.inferenceProfileSummaries,
+        z.object({ inferenceProfileId: z.string(), status: z.literal('ACTIVE') }),
+      ).map((profile) => profile.inferenceProfileId),
+    ]);
+    return local.filter((model) => available.has(model.id)).map(definition);
+  }
+  async function vertexCatalog(local: readonly Model<Api>[], credential: ModelCredential) {
+    if (credential.type !== 'api_key' || !local.length)
+      throw new Error('This model connection is unavailable.');
+    const response = await request(
+      `https://aiplatform.googleapis.com/v1/publishers/google/models/${local[0].id}:countTokens`,
+      {
+        method: 'POST',
+        headers: { 'x-goog-api-key': credential.key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'nod' }] }] }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    await response.body?.cancel();
+    if (!response.ok && response.status !== 404)
+      throw new Error(
+        'The model service rejected the request. Check the connection and account access.',
+      );
+    return local.map(definition);
+  }
+  async function azureCatalog(local: readonly Model<Api>[], credential: ModelCredential) {
+    if (credential.type !== 'azure') throw new Error('This model connection is unavailable.');
+    const model = local.find((item) => item.id === credential.model);
+    if (!model) throw new Error('This model connection is unavailable.');
+    await json(`${credential.url}/models`, {
+      headers: { 'api-key': credential.key },
+      redirect: 'error',
+    });
+    return [definition({ ...model, baseUrl: credential.url })];
+  }
   return {
     async signIn({ signal: requestedSignal, hostId, previous }) {
       const controller = new AbortController();
@@ -517,10 +570,14 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     },
     async catalog(provider: ModelProvider, method: ModelMethod, credential?: ModelCredential) {
       if (provider === 'compatible') return endpointCatalog(credential);
-      if (credential?.type === 'endpoint') throw new Error('This model connection is unavailable.');
-      if (method === 'subscription' && credential) chatgptCredential(credential);
       const local = (await runtime()).getModels(provider);
       if (!credential) return local.map(definition);
+      if (provider === 'amazon-bedrock') return bedrockCatalog(local, credential);
+      if (provider === 'google-vertex') return vertexCatalog(local, credential);
+      if (provider === 'azure') return azureCatalog(local, credential);
+      if (credential.type !== 'api_key' && credential.type !== 'oauth')
+        throw new Error('This model connection is unavailable.');
+      if (method === 'subscription') chatgptCredential(credential);
       const key = credential.type === 'api_key' ? credential.key : credential.access;
       const url =
         provider === 'openrouter'
@@ -742,7 +799,7 @@ export async function createPiModelRuntime(
     throw new ModelAuthError('Reconnect your ChatGPT account in Models.', true);
   const secrets = new Set<string>();
   const credentials: CredentialStore = {
-    async read(providerId) {
+    async read(providerId): ReturnType<CredentialStore['read']> {
       if (providerId !== provider) return undefined;
       const credential = await access.read();
       if (!credential) throw new Error('The selected model connection is unavailable.');
@@ -754,6 +811,18 @@ export async function createPiModelRuntime(
       if (credential.type === 'oauth')
         throw new Error('The selected model connection is unavailable.');
       if (credential.key) secrets.add(credential.key);
+      if (credential.type === 'bedrock')
+        return { type: 'api_key', key: credential.key, env: { AWS_REGION: credential.region } };
+      if (credential.type === 'azure')
+        return {
+          type: 'api_key',
+          key: credential.key,
+          env: {
+            AZURE_OPENAI_BASE_URL: credential.url,
+            AZURE_OPENAI_API_VERSION: 'v1',
+            AZURE_OPENAI_DEPLOYMENT_NAME_MAP: `${access.definition.choice.id}=${credential.deployment}`,
+          },
+        };
       return { type: 'api_key', key: credential.key || keyless };
     },
     async list() {

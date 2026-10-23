@@ -38,7 +38,15 @@ type AnalyticsEvents = {
     result: 'opened' | 'needs_access_setup';
   };
   nod_model_selected: {
-    provider: 'openai' | 'anthropic' | 'openrouter' | 'compatible' | 'other';
+    provider:
+      | 'openai'
+      | 'anthropic'
+      | 'openrouter'
+      | 'amazon-bedrock'
+      | 'google-vertex'
+      | 'azure'
+      | 'compatible'
+      | 'other';
     entry: 'settings' | 'onboarding';
     recommended: boolean;
   };
@@ -96,7 +104,16 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     result: ['opened', 'needs_access_setup'],
   },
   nod_model_selected: {
-    provider: ['openai', 'anthropic', 'openrouter', 'compatible', 'other'],
+    provider: [
+      'openai',
+      'anthropic',
+      'openrouter',
+      'amazon-bedrock',
+      'google-vertex',
+      'azure',
+      'compatible',
+      'other',
+    ],
     entry: ['settings', 'onboarding'],
     recommended: [true, false],
   },

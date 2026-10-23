@@ -150,6 +150,15 @@
 .ob-brain-logo.compatible {
   mask-image: url('/logos/server.svg');
 }
+.ob-brain-logo.amazon-bedrock {
+  mask-image: url('/logos/amazon-bedrock.svg');
+}
+.ob-brain-logo.google-vertex {
+  mask-image: url('/logos/google-vertex.svg');
+}
+.ob-brain-logo.azure {
+  mask-image: url('/logos/azure.svg');
+}
 .ob-brain-status {
   display: flex;
   flex-wrap: wrap;
@@ -183,6 +192,9 @@
 }
 .ob-brain-label {
   margin-top: 4px;
+}
+.ob-brain-form .field-label {
+  font-size: inherit;
 }
 .ob-brain-optional {
   color: var(--muted-foreground);

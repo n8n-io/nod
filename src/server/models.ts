@@ -16,14 +16,35 @@ import type {
   ModelSelection,
   ModelsResponse,
 } from '../shared/models.ts';
-import { lightestEffort, modelSource } from '../shared/models.ts';
+import {
+  azureDeploymentPattern,
+  bedrockRegionPattern,
+  lightestEffort,
+  modelSource,
+} from '../shared/models.ts';
 import { signInPage } from '../shared/sign-in-page.ts';
 import { agentModels, memoryModels } from '../shared/model-defaults.ts';
 import { createDatabaseModelStore, type ModelRecord, type ModelState } from './model-store.ts';
 import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
 import { logFailure } from './failure-log.ts';
 
-const providerSchema = z.enum(['openai', 'anthropic', 'openrouter']);
+const keySchema = z
+  .object({
+    provider: z.enum([
+      'openai',
+      'anthropic',
+      'openrouter',
+      'amazon-bedrock',
+      'google-vertex',
+      'azure',
+    ]),
+    key: z.string().trim().min(8).max(32000),
+    region: z.string().trim().max(100).optional(),
+    url: z.string().trim().max(2000).optional(),
+    model: z.string().trim().max(200).optional(),
+    deployment: z.string().trim().max(200).optional(),
+  })
+  .strict();
 const selectionSchema = z
   .object({
     connectionId: z.uuid(),
@@ -52,6 +73,45 @@ export function endpointAddress(address: string) {
   )
     return undefined;
   return url.href.replace(/\/+$/, '');
+}
+
+export function azureAddress(address: string) {
+  const value = address.trim();
+  const url = endpointAddress(/^[a-z][a-z\d+.-]*:\/\//i.test(value) ? value : `https://${value}`);
+  if (!url) return undefined;
+  const { protocol, hostname, origin, pathname } = new URL(url);
+  if (protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(hostname))
+    return undefined;
+  return pathname === '/' || pathname === '/openai' ? `${origin}/openai/v1` : url;
+}
+
+const rejected: Partial<Record<ModelProvider, string>> = {
+  'amazon-bedrock':
+    'Amazon Bedrock didn’t list models for this key in that Region. Check both, and that the key can list models.',
+  'google-vertex': 'Google Vertex AI didn’t accept this API key.',
+  azure: 'This Azure OpenAI endpoint didn’t accept the key. Check the endpoint and the key.',
+};
+
+function keyCredential(
+  provider: ModelProvider,
+  key: string,
+  settings: { region?: string; url?: string; model?: string; deployment?: string },
+): ModelCredential {
+  if (provider === 'amazon-bedrock') {
+    if (!settings.region || !bedrockRegionPattern.test(settings.region))
+      throw new ConnectionError('Enter an AWS Region, such as us-east-1.');
+    return { type: 'bedrock', key, region: settings.region };
+  }
+  if (provider !== 'azure') return { type: 'api_key', key };
+  const url = settings.url && azureAddress(settings.url);
+  if (!url)
+    throw new ConnectionError(
+      'Enter your Azure OpenAI endpoint, such as https://your-resource.openai.azure.com.',
+    );
+  const deployment = settings.deployment || settings.model;
+  if (!settings.model || !deployment || !azureDeploymentPattern.test(deployment))
+    throw new ConnectionError('Choose the model and enter its deployment name.');
+  return { type: 'azure', url, key, model: settings.model, deployment };
 }
 export function createModelService(options: {
   database: Pool;
@@ -278,7 +338,11 @@ export function createModelService(options: {
           ? (value.email ?? 'ChatGPT account')
           : value.type === 'endpoint'
             ? new URL(value.url).host
-            : modelSource({ provider, method });
+            : value.type === 'bedrock'
+              ? value.region
+              : value.type === 'azure'
+                ? value.deployment
+                : modelSource({ provider, method });
       const row: ModelRecord = {
         id,
         provider,
@@ -306,7 +370,9 @@ export function createModelService(options: {
     const preferred =
       (subscription && definitions.find((model) => model.choice.id === 'gpt-6-sol')) ||
       definitions.find((model) => model.choice.id === preferredId) ||
-      (subscription || provider === 'compatible' ? definitions[0] : undefined);
+      (subscription || provider === 'compatible' || definitions.length === 1
+        ? definitions[0]
+        : undefined);
     if (
       preferred &&
       status === 'connected' &&
@@ -589,12 +655,19 @@ export function createModelService(options: {
         );
       }
     },
-    async addKey(provider: ModelProvider, key: string) {
-      const value: ModelCredential = { type: 'api_key', key };
+    async addKey(
+      provider: ModelProvider,
+      key: string,
+      settings: { region?: string; url?: string; model?: string; deployment?: string } = {},
+    ) {
+      const value = keyCredential(provider, key, settings);
       remember(value);
       return tracked(provider, 'api_key', async () => {
         await checkStorage();
-        return save(provider, 'api_key', value, await catalog(provider, 'api_key', value));
+        const definitions = await catalog(provider, 'api_key', value).catch((error) => {
+          throw rejected[provider] ? new ConnectionError(rejected[provider]) : error;
+        });
+        return save(provider, 'api_key', value, definitions);
       });
     },
     async addEndpoint(address: string, key?: string) {
@@ -734,13 +807,16 @@ export function createModelService(options: {
         );
         routes.get('/api/models', async () => service.view());
         routes.post('/api/models/keys', async (request) => {
-          const input = z
-            .object({ provider: providerSchema, key: z.string().trim().min(8).max(32000) })
-            .strict()
-            .parse(request.body);
-          await service.addKey(input.provider, input.key);
+          const { provider, key, ...settings } = keySchema.parse(request.body);
+          await service.addKey(provider, key, settings);
           return service.view();
         });
+        routes.get('/api/models/azure', async () => ({
+          models: (await catalog('azure', 'api_key')).map(({ choice }) => ({
+            id: choice.id,
+            name: choice.name,
+          })),
+        }));
         routes.post('/api/models/endpoints', async (request) => {
           const input = z
             .object({

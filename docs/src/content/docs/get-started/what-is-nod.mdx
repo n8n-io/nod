@@ -31,7 +31,7 @@ flowchart LR
 - **Its own computer.** nod runs commands and keeps files in a private Linux workspace. It browses the web in its own browser, which you can take over when a site needs you.
 - **Your apps.** Connect Gmail, Calendar, Slack, Notion, Linear and others, and nod can read and act in them.
 - **Work that runs on its own.** nod can run tasks on a schedule. When you ask, it also notices new email and app activity that needs you.
-- **Your computer, your model.** nod runs on your computer. Its model requests go to the provider you choose: OpenAI, Anthropic, OpenRouter, or a [local model](/connect/local-models/) server such as Ollama that you run yourself.
+- **Your computer, your model.** nod runs on your computer. Its model requests go to the provider you choose: OpenAI, Anthropic, OpenRouter, Amazon Bedrock, Google Vertex AI, Azure OpenAI, or a [local model](/connect/local-models/) server such as Ollama that you run yourself.
 
 ## What nod can do
 
@@ -55,7 +55,7 @@ nod is designed to check with you before it sends, posts or deletes anything you
 | You need | Nothing else installed                           | Node.js, pnpm, Docker and Git              |
 | Updates  | Automatic on Apple silicon Macs                  | `git pull` and restart                     |
 
-Both need a model connection: an API key from OpenAI, Anthropic or OpenRouter, a ChatGPT Plus or Pro plan or a local model. [Connect apps](/connect/apps/) by signing in to each app and reviewing its permissions.
+Both need a model connection: an API key from OpenAI, Anthropic, OpenRouter, Amazon Bedrock, Google Vertex AI or Azure OpenAI, a ChatGPT Plus or Pro plan or a local model. [Connect apps](/connect/apps/) by signing in to each app and reviewing its permissions.
 
 ## What nod isn't
 
