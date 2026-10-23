@@ -626,11 +626,11 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       const accepted = async (response: Response) => {
         if (response.status !== 401) return response;
         await response.body?.cancel();
-        throw new ModelAuthError(
-          method === 'subscription'
-            ? 'Reconnect your ChatGPT account in Settings > Models.'
-            : `${modelProviderNames[provider]} didn’t accept this API key. Check it and try again.`,
-        );
+        throw method === 'subscription'
+          ? new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true)
+          : new ModelAuthError(
+              `${modelProviderNames[provider]} didn’t accept this API key. Check it and try again.`,
+            );
       };
       if (provider === 'openrouter') {
         const account = z

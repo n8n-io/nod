@@ -147,6 +147,12 @@ function usable(
   );
 }
 
+function selectedConnectionWorks(state: ModelState) {
+  return state.connections.some(
+    (row) => row.id === state.selection?.connectionId && row.status === 'connected',
+  );
+}
+
 function attention(row: Pick<ModelRecord, 'provider' | 'method' | 'managed' | 'status'>) {
   const name = `the ${modelSource(row)} connection`;
   return new ConnectionError(
@@ -347,10 +353,16 @@ export function createModelService(options: {
       logFailure('model_reconnect_flag_failed', error);
     }
   }
-  async function catalog(provider: ModelProvider, method: ModelMethod, value?: ModelCredential) {
+  async function catalog(
+    provider: ModelProvider,
+    method: ModelMethod,
+    value?: ModelCredential,
+    rejected?: () => Promise<void>,
+  ) {
     try {
       return await backend.catalog(provider, method, value);
     } catch (error) {
+      if (error instanceof ModelAuthError && error.requiresReconnect) await rejected?.();
       throw new ConnectionError(
         error instanceof ModelAuthError
           ? error.message
@@ -450,7 +462,7 @@ export function createModelService(options: {
       preferred &&
       status === 'connected' &&
       (!managed || options.bootstrap?.provider === provider) &&
-      (!state.selectionSet || (!managed && !usable(state.connections, state.selection)))
+      (!state.selectionSet || (!managed && !selectedConnectionWorks(state)))
     ) {
       state.selection = {
         connectionId: id,
@@ -468,7 +480,9 @@ export function createModelService(options: {
     const value = credential(snapshot);
     if (!value) throw new ConnectionError('This model connection is unavailable.');
     const previous = JSON.stringify(snapshot);
-    const definitions = await catalog(snapshot.provider, snapshot.method, value);
+    const definitions = await catalog(snapshot.provider, snapshot.method, value, () =>
+      needsReconnect(id, snapshot.models),
+    );
     if (!definitions.length) throw new ConnectionError('This connection has no supported models.');
     await store.change((state) => {
       const row = state.connections.find((item) => item.id === id);

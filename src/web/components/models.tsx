@@ -39,10 +39,12 @@ import {
   SearchField,
 } from './ui';
 
-function connectionName(connection: ModelConnection) {
+function connectionName(connection: ModelConnection, short = false) {
   if (!connection.keyEnding) return connection.label;
   const key = `Key …${connection.keyEnding}`;
-  return connection.label === modelSource(connection) ? key : `${connection.label} · ${key}`;
+  return short && connection.label === modelSource(connection)
+    ? key
+    : `${connection.label} · ${key}`;
 }
 
 function ModelConnectionAvatar({ connection }: { connection: ModelConnection }) {
@@ -387,7 +389,7 @@ export function ModelSettings({
                   <div className="model-connection-label">
                     <ModelConnectionAvatar connection={connection} />
                     <div className="model-connection-identity">
-                      <strong>{connectionName(connection)}</strong>
+                      <strong>{connectionName(connection, true)}</strong>
                       <span className={`model-connection-meta ${connection.status}`}>
                         {connection.status === 'reconnect'
                           ? connection.managed

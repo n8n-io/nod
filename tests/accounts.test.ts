@@ -2280,8 +2280,11 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const f = await fixture(t);
     const { createPiModelRuntime } = await import('../src/providers/pi/models.ts');
     const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    const { ModelAuthError } = await import('../src/ports/models.ts');
     let account = 'fixture-account';
     let down = false;
+    let revoked = false;
+    let hidden: string | undefined;
     const backend = {
       ...f.backend,
       signIn: stubSignIn(async () => ({
@@ -2295,7 +2298,11 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         credential?: Parameters<typeof f.backend.catalog>[2],
       ) => {
         if (down) throw new Error('fixture-catalog-outage');
-        return f.backend.catalog(provider, method, method === 'api_key' ? credential : undefined);
+        if (revoked && method === 'subscription')
+          throw new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
+        return f.backend
+          .catalog(provider, method, method === 'api_key' ? credential : undefined)
+          .then((definitions) => definitions.filter(({ choice }) => choice.id !== hidden));
       },
     };
     const store = createDatabaseModelStore({
@@ -2369,6 +2376,15 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(restarted.configured, true);
     assert.equal(await restarted.addKey('openai', 'fixture-api-1111'), key);
     assert.equal(restarted.view().connections.length, 2);
+    const chosen = restarted.view().selection!;
+    hidden = chosen.modelId;
+    await restarted.refreshCatalog(key);
+    hidden = undefined;
+    assert.deepEqual(restarted.view().selection, chosen);
+    assert.equal(restarted.configured, false);
+    await assert.rejects(restarted.resolve(), /selected model is unavailable/);
+    await restarted.refreshCatalog(key);
+    assert.equal(restarted.configured, true);
 
     await store.change((state) => {
       const [original] = state.connections;
@@ -2412,5 +2428,14 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(duplicated.view().connections.length, 3);
     assert.deepEqual(duplicated.view().selection, selection);
     assert.equal(await grants(), 3);
+
+    revoked = true;
+    await assert.rejects(duplicated.refreshCatalog(chatgpt.id), /Reconnect/);
+    revoked = false;
+    assert.equal(
+      duplicated.view().connections.find(({ id }) => id === chatgpt.id)?.status,
+      'reconnect',
+    );
+    assert.equal(duplicated.configured, false);
   });
 });
