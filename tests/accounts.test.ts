@@ -1994,6 +1994,110 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.ok(!stored.includes('fixture-rotated-key'));
   });
 
+  test('server-managed model keys rotate privately and disappear when removed without changing other connections', async (t) => {
+    for (const selected of ['managed', 'saved'] as const) {
+      await t.test(selected, async (t) => {
+        const f = await fixture(t);
+        const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+        const backend = createPiModelBackend({
+          fetch: async (input) => {
+            if (String(input) === 'https://api.anthropic.com/v1/models?limit=1000')
+              return Response.json({ data: [{ id: 'claude-opus-5-5' }] });
+            assert.equal(String(input), 'https://api.openai.com/v1/models');
+            return Response.json({ data: ['gpt-6.1-sol', 'gpt-6-luna'].map((id) => ({ id })) });
+          },
+        });
+        const originalKey = 'fixture-managed-original-key';
+        const rotatedKey = 'fixture-managed-rotated-key';
+        const savedKey = 'fixture-saved-key';
+        const otherKey = 'fixture-other-owner-key';
+        const replacementKey = 'fixture-anthropic-key';
+        const bootstrap = (key: string) => ({
+          provider: 'openai' as const,
+          credentials: { openai: { type: 'api_key' as const, key } },
+        });
+        const original = await f.create('fixture-owner', backend, bootstrap(originalKey));
+        const managed = original.view().connections[0];
+        const initialSelection = original.view().selection;
+        assert.equal(managed.managed, true);
+        assert.equal(initialSelection?.connectionId, managed.id);
+        const savedId = await original.addKey('openai', savedKey);
+        const other = await f.create('fixture-other', backend);
+        await other.addKey('openai', otherKey);
+        const otherView = other.view();
+        await other.close();
+        await original.close();
+
+        const rotated = await f.create('fixture-owner', backend, bootstrap(rotatedKey));
+        assert.equal(rotated.view().connections.find((row) => row.managed)?.id, managed.id);
+        assert.deepEqual(rotated.view().selection, initialSelection);
+        assert.deepEqual(await (await rotated.resolve()).read(), {
+          type: 'api_key',
+          key: rotatedKey,
+        });
+        const saved = rotated.view().connections.find((row) => row.id === savedId)!;
+        const choice = saved.models.find((model) => model.id === 'gpt-6-luna')!;
+        const savedSelection = {
+          connectionId: savedId,
+          modelId: choice.id,
+          effort: choice.efforts[0],
+        };
+        if (selected === 'saved') await rotated.select(savedSelection);
+        const visible = JSON.stringify([original.view(), rotated.view(), otherView]);
+        const stored = JSON.stringify([
+          (await f.database.query('SELECT * FROM model_connections')).rows,
+          (await f.database.query('SELECT * FROM vault_app_grants')).rows,
+        ]);
+        for (const key of [originalKey, rotatedKey, savedKey, otherKey]) {
+          assert.ok(!visible.includes(key));
+          assert.ok(!stored.includes(key));
+        }
+        assert.equal(
+          (await f.database.query('SELECT id FROM vault_app_grants WHERE id=$1', [managed.id]))
+            .rowCount,
+          0,
+        );
+        await rotated.close();
+
+        const removed = await f.create('fixture-owner', backend, {
+          provider: 'anthropic',
+          credentials: { anthropic: { type: 'api_key', key: replacementKey } },
+        });
+        assert.equal(
+          removed.view().connections.some((row) => row.id === managed.id),
+          false,
+        );
+        assert.equal(
+          (await f.database.query('SELECT id FROM model_connections WHERE id=$1', [managed.id]))
+            .rowCount,
+          0,
+        );
+        assert.deepEqual(
+          removed.view().connections.find((row) => row.id === savedId),
+          saved,
+        );
+        assert.ok(removed.view().connections.some((row) => row.provider === 'anthropic'));
+        if (selected === 'saved') {
+          assert.deepEqual(removed.view().selection, savedSelection);
+          assert.deepEqual(await (await removed.resolve()).read(), {
+            type: 'api_key',
+            key: savedKey,
+          });
+        } else {
+          assert.equal(removed.view().selection, null);
+          assert.equal(removed.configured, false);
+          await assert.rejects(removed.resolve());
+        }
+        const unchanged = await f.create('fixture-other', backend);
+        assert.deepEqual(unchanged.view(), otherView);
+        assert.deepEqual(await (await unchanged.resolve()).read(), {
+          type: 'api_key',
+          key: otherKey,
+        });
+      });
+    }
+  });
+
   test('sign-in is single-use; refresh and removal serialize across service instances without restoring a removed key', async (t) => {
     const f = await fixture(t);
     let exchanges = 0;

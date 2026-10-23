@@ -199,7 +199,7 @@ Spoken replies need an OpenAI API key, saved in **Models** or set through `OPENA
 
 ## Set connections in server settings
 
-In a source install, you can add connections in `.env` instead. They show **Server settings** in **Models**, and you remove them from `.env`, not from the app.
+In a source install or self-hosted server, you can add connections in `.env`. They show **Server settings** in **Models**. Update or remove their keys in `.env`, then [apply the configuration change](/deploy/configuration/#how-settings-work). Removing a key removes its server-managed connection; connections saved through the app stay intact. If you removed the selected connection, choose another model in **Models**.
 
 | Setting                      | What it does                                                                                                |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
