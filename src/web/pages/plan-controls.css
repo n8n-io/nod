@@ -12,8 +12,13 @@
 }
 .ask-nod-field {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
+}
+.ask-nod-field textarea {
+  field-sizing: content;
+  max-height: 180px;
+  resize: vertical;
 }
 .ask-nod-chips {
   display: flex;

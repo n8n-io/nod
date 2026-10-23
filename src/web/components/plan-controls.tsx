@@ -56,7 +56,7 @@ export function AskNod({
   onClose(): void;
 }) {
   const [text, setText] = useState('');
-  const input = useRef<HTMLInputElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
   const id = useId();
   useEffect(() => input.current?.focus(), []);
   const { prefix, placeholder, label, chips } = askFor(subject);
@@ -76,16 +76,22 @@ export function AskNod({
           submit(text);
         }}
       >
-        <Input
+        <textarea
           ref={input}
+          className="input"
+          rows={1}
           value={text}
           placeholder={placeholder}
           aria-label={placeholder}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
             if (event.key === 'Escape') {
               event.preventDefault();
               onClose();
+            } else if (event.key === 'Enter' && !event.shiftKey && !event.altKey) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
             }
           }}
         />
