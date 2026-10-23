@@ -26,7 +26,7 @@ Start it again with `docker compose up -d --wait`. Don't use `docker compose dow
 
 ## Back up
 
-Wait for active work to finish. Keep your configuration in `.env`, remove shell overrides, and apply configuration changes with `docker compose up -d --wait` before making a backup. Backup and restore refuse `NOD_ENV_FILE` overrides in either the shell or saved configuration; they preserve the installation's `.env` only.
+Wait for active work to finish. Keep your configuration in `.env`, remove shell overrides, and [apply configuration changes](/deploy/configuration/#how-settings-work) before making a backup. Backup and restore refuse `NOD_ENV_FILE` overrides in either the shell or saved configuration; they preserve the installation's `.env` only.
 
 Choose a new backup directory whose parent already exists:
 
