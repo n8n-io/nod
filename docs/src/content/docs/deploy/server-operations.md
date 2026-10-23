@@ -7,7 +7,7 @@ sidebar:
 
 Keep your server configuration and data together, and make a backup before updating nod.
 
-Run the commands below from `nod/deployment/self-host`. If you use the HTTPS profile, include `--profile https` in Compose start, stop, and status commands.
+Run the commands below from your bundle directory or `nod/deployment/self-host` source checkout. If you use the HTTPS profile, include `--profile https` in Compose start, stop, and status commands.
 
 ## Check and stop the server
 
@@ -44,7 +44,7 @@ The command stops the server, browser, and workspace while it copies data. It re
 | `workspace-data.tar.gz`  | Files created in nod's workspace.                                                             |
 | `workspace-tools.tar.gz` | Installed workspace tools and their files.                                                    |
 | `browser-data.tar.gz`    | Browser profiles and saved browser state.                                                     |
-| `source-commit`          | The source checkout revision to restore before starting nod.                                  |
+| `source-commit`          | The bundle or source checkout revision to restore before starting nod.                        |
 | `complete`               | The marker required by the restore command.                                                   |
 
 The destination must not exist. The command creates private files and refuses a custom `DATABASE_URL`. For an external database, coordinate its backup with copies of the four data volumes while nod is stopped.
@@ -59,7 +59,9 @@ Copy the backup off the server. TLS certificates are not included; Caddy obtains
 
 Keep the original installation until you have checked the restore. The restore command refuses an existing `.env`, project containers, or project volumes.
 
-1. Clone nod into a new folder. Check out the commit recorded in the backup's `source-commit` file.
+1. Unpack your saved bundle into a new folder. Its `source-revision` must match the backup's `source-commit`. Don't run the installer yet.
+
+   For a source installation, clone nod into a new folder and check out that commit:
 
    ```sh title="Terminal"
    git clone https://github.com/n8n-io/nod.git nod-restored
@@ -76,7 +78,13 @@ Keep the original installation until you have checked the restore. The restore c
 
 3. Review the restored `.env`. Set the new public address if it changed. If the original server still runs on this machine, select another `PORT`.
 4. Stop the original server before starting the restored one. Two copies can run the same schedules or receive messages for the same bot.
-5. Start the restored stack.
+5. Start the restored bundle:
+
+   ```sh title="Bundle installation"
+   sh install.sh
+   ```
+
+   Use `sh install.sh --https` for a public address. For a source checkout, rebuild and start:
 
    ```sh title="Terminal"
    docker compose up -d --build --wait
@@ -92,7 +100,26 @@ Open nod with the saved token. Check conversation history, workspace files, mode
 
 A restore returns data to the backup's point in time. It does not undo messages or actions that happened afterwards.
 
-## Update
+## Update a bundle
+
+1. Download the new [private bundle](/deploy/self-host/#install-a-prebuilt-bundle) for the same architecture. Check its workflow source revision and archive checksum.
+2. Back up the server. Keep the old bundle with that backup.
+3. Stop the stack with `docker compose stop`.
+4. From the parent of your installation directory, unpack the new bundle over the existing directory. The bundle doesn't contain `.env` or your data volumes.
+
+   ```sh title="Parent of the installation directory"
+   tar -xzf nod-server-linux-<architecture>-<new-commit>.tar.gz
+   cd nod-server-linux-<architecture>
+   sh install.sh
+   ```
+
+   For public HTTPS, use `sh install.sh --https`. The installer keeps your existing `.env`, checks the images, and starts them without compiling.
+
+5. Open nod, confirm its history and files, and check channel status.
+
+The `source-revision` file records the installed bundle revision. Don't change `COMPOSE_PROJECT_NAME` during an update: it selects your existing data volumes.
+
+## Update a source installation
 
 1. Read the release notes and create a backup.
 2. Stop the stack.

@@ -1,26 +1,37 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const directory = fileURLToPath(new URL('.', import.meta.url));
+const bundle = process.argv[2] && resolve(process.argv[2]);
 const scratch = await mkdtemp(join(tmpdir(), 'nod-host-check-'));
+let directory = bundle
+  ? join(scratch, 'installation')
+  : fileURLToPath(new URL('.', import.meta.url));
+if (bundle) await cp(bundle, directory, { recursive: true, mode: constants.COPYFILE_FICLONE });
 const project = `nod-check-${randomUUID()}`;
-const envFile = join(scratch, '.env');
+let envFile = join(bundle ? directory : scratch, '.env');
+const installations = [{ directory, envFile, project }];
 const environment = Object.fromEntries(
   ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'HOME', 'TMPDIR'].flatMap((name) =>
     process.env[name] ? [[name, process.env[name]]] : [],
   ),
 );
-environment.NOD_ENV_FILE = envFile;
-const command = (args, input) =>
+if (bundle) environment.COMPOSE_PROJECT_NAME = project;
+else environment.NOD_ENV_FILE = envFile;
+const command = (args, input, executable = 'docker') =>
   new Promise((resolve, reject) => {
-    const child = spawn('docker', args, { env: environment, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(executable, args, {
+      cwd: directory,
+      env: environment,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     const output = [];
     const errors = [];
     child.stdout.on('data', (chunk) => output.push(chunk));
@@ -28,22 +39,32 @@ const command = (args, input) =>
     child.on('error', reject);
     child.on('exit', (code) => {
       if (code === 0) resolve(Buffer.concat(output).toString());
-      else reject(new Error(`Docker check failed (${code}): ${Buffer.concat(errors).toString()}`));
+      else reject(new Error(`Hosting check failed (${code}): ${Buffer.concat(errors).toString()}`));
     });
     child.stdin.on('error', () => {});
     child.stdin.end(input);
   });
 const compose = (...args) =>
-  command(['compose', '--project-directory', directory, '--env-file', envFile, ...args]);
+  command([
+    'compose',
+    '--project-directory',
+    directory,
+    '--file',
+    join(directory, 'compose.yaml'),
+    '--env-file',
+    envFile,
+    ...args,
+  ]);
+const shell = (...args) => command(args, undefined, 'sh');
 const listener = createServer();
 await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
 const port = listener.address().port;
 await new Promise((resolve) => listener.close(resolve));
 const origin = `http://localhost:${port}`;
 environment.PORT = String(port);
-const originalToken = randomBytes(32).toString('base64url');
-const password = randomBytes(32).toString('base64url');
-const vault = randomBytes(32).toString('base64');
+let originalToken = randomBytes(32).toString('base64url');
+let password = randomBytes(32).toString('base64url');
+let vault = randomBytes(32).toString('base64');
 const example = await readFile(join(directory, '.env.example'), 'utf8');
 const writeEnvironment = (token) =>
   writeFile(
@@ -70,8 +91,45 @@ const request = (token, options = {}) =>
     redirect: 'error',
   });
 try {
-  await writeEnvironment(originalToken);
-  await compose('up', '-d', '--no-build', '--wait', '--wait-timeout', '120');
+  if (bundle) {
+    const proxy = await readFile(join(directory, 'docker-proxy.mjs'));
+    await writeFile(join(directory, 'docker-proxy.mjs'), 'corrupt bundle');
+    await assert.rejects(shell('install.sh'), /Bundle checksum failed/);
+    await assert.rejects(readFile(envFile), { code: 'ENOENT' });
+    await writeFile(join(directory, 'docker-proxy.mjs'), proxy);
+    const architecture = await readFile(join(directory, 'architecture'), 'utf8');
+    const checksums = await readFile(join(directory, 'checksums.sha256'), 'utf8');
+    const wrongArchitecture = architecture.trim() === 'amd64' ? 'arm64\n' : 'amd64\n';
+    await writeFile(join(directory, 'architecture'), wrongArchitecture);
+    await writeFile(
+      join(directory, 'checksums.sha256'),
+      checksums.replace(
+        /^[a-f0-9]{64}  architecture$/m,
+        `${createHash('sha256').update(wrongArchitecture).digest('hex')}  architecture`,
+      ),
+    );
+    await assert.rejects(shell('install.sh'), /Docker requires/);
+    await assert.rejects(readFile(envFile), { code: 'ENOENT' });
+    await writeFile(join(directory, 'architecture'), architecture);
+    await writeFile(join(directory, 'checksums.sha256'), checksums);
+    const installed = await shell('install.sh');
+    const generated = await readFile(envFile, 'utf8');
+    originalToken = generated.match(/^NOD_AUTH_TOKEN=(.+)$/m)?.[1];
+    password = generated.match(/^NOD_POSTGRES_PASSWORD=(.+)$/m)?.[1];
+    vault = generated.match(/^NOD_VAULT_KEY=(.+)$/m)?.[1];
+    assert.match(originalToken, /^[a-f0-9]{64}$/);
+    assert.match(password, /^[a-f0-9]{64}$/);
+    assert.equal(Buffer.from(vault, 'base64').length, 32);
+    for (const secret of [originalToken, password, vault]) assert.ok(!installed.includes(secret));
+    assert.ok(installed.includes(origin));
+    await writeEnvironment(originalToken);
+    console.log(
+      'Standalone installation generates private keys and rejects corrupt or wrong-architecture bundles.',
+    );
+  } else {
+    await writeEnvironment(originalToken);
+    await compose('up', '-d', '--no-build', '--wait', '--wait-timeout', '120');
+  }
   assert.equal((await request()).status, 401);
   assert.equal((await request('synthetic-invalid-token')).status, 401);
   assert.equal(
@@ -163,18 +221,23 @@ try {
   );
   const replacement = randomBytes(32).toString('base64url');
   await writeEnvironment(replacement);
-  await compose(
-    'up',
-    '-d',
-    '--no-build',
-    '--force-recreate',
-    '--wait',
-    '--wait-timeout',
-    '120',
-    'server',
-    'workspace',
-    'browser',
-  );
+  if (bundle) {
+    const saved = await readFile(envFile, 'utf8');
+    await shell('install.sh');
+    assert.equal(await readFile(envFile, 'utf8'), saved);
+  } else
+    await compose(
+      'up',
+      '-d',
+      '--no-build',
+      '--force-recreate',
+      '--wait',
+      '--wait-timeout',
+      '120',
+      'server',
+      'workspace',
+      'browser',
+    );
   assert.equal((await request(originalToken)).status, 401);
   assert.equal(
     (await request(undefined, { headers: { Cookie: cookie.split(';')[0] } })).status,
@@ -195,7 +258,67 @@ try {
   console.log(
     'Container replacement preserves data; token rotation revokes old Bearer and cookie access without logging secrets.',
   );
+  if (bundle) {
+    const backup = join(scratch, 'backup');
+    const running = (await compose('ps', '--status', 'running', '--services'))
+      .trim()
+      .split('\n')
+      .sort();
+    await shell('backup.sh', backup);
+    assert.equal(
+      await readFile(join(backup, 'source-commit'), 'utf8'),
+      await readFile(join(directory, 'source-revision'), 'utf8'),
+    );
+    assert.deepEqual(
+      (await compose('ps', '--status', 'running', '--services')).trim().split('\n').sort(),
+      running,
+    );
+    await compose('down');
+    directory = join(scratch, 'restored');
+    envFile = join(directory, '.env');
+    const restoredProject = `${project}-restored`;
+    installations.push({ directory, envFile, project: restoredProject });
+    await cp(bundle, directory, { recursive: true, mode: constants.COPYFILE_FICLONE });
+    environment.COMPOSE_PROJECT_NAME = restoredProject;
+    await shell('restore.sh', backup, restoredProject);
+    await shell('install.sh');
+    assert.equal((await request(replacement)).status, 200);
+    await command(
+      [
+        'exec',
+        '-i',
+        `${restoredProject}-server-1`,
+        'node',
+        '--import',
+        'tsx',
+        '--input-type=module',
+      ],
+      `import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';import {pool} from './src/server/db.ts';
+      assert.equal(await readFile(process.env.NOD_DATA_ROOT+'/hosting-probe','utf8'),'synthetic-persistence');
+      assert.equal(await readFile(process.env.NOD_DATA_ROOT+'/workspaces/${id}/probe.txt','utf8'),'synthetic-persistence');
+      assert.equal((await pool.query('SELECT value FROM nod_hosting_probe')).rows[0].value,'synthetic-persistence');
+      await pool.end();`,
+    );
+    console.log(
+      'Standalone bundle backup and fresh-project restore preserve authentication, workspace, server state, and PostgreSQL.',
+    );
+  }
 } finally {
-  await compose('down', '--volumes', '--remove-orphans').catch(() => {});
+  for (const installation of installations) {
+    await command([
+      'compose',
+      '--project-directory',
+      installation.directory,
+      '--file',
+      join(installation.directory, 'compose.yaml'),
+      '--env-file',
+      installation.envFile,
+      '--project-name',
+      installation.project,
+      'down',
+      '--volumes',
+      '--remove-orphans',
+    ]).catch(() => {});
+  }
   await rm(scratch, { recursive: true, force: true });
 }

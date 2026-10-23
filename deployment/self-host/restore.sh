@@ -21,7 +21,9 @@ if env | grep -Eq '^(NOD_AUTH_TOKEN|NOD_VAULT_KEY|NOD_POSTGRES_PASSWORD)='; then
   echo 'Unset shell secret overrides before restoring the saved .env.' >&2
   exit 1
 fi
-[ "$(git -C ../.. rev-parse HEAD)" = "$(cat "$backup/source-commit")" ] || { echo 'Check out the source revision recorded in source-commit before restoring.' >&2; exit 1; }
+if [ -f source-revision ]; then revision=$(cat source-revision); else revision=$(git -C ../.. rev-parse HEAD); fi
+[ "${#revision}" -eq 40 ] && printf '%s\n' "$revision" | grep -Eq '^[a-f0-9]{40}$' || { echo 'Invalid installation source revision.' >&2; exit 1; }
+[ "$revision" = "$(cat "$backup/source-commit")" ] || { echo 'Use the bundle or source checkout recorded in source-commit before restoring.' >&2; exit 1; }
 if [ -n "${DATABASE_URL:-}" ] || grep -Eq '^[[:space:]]*(export[[:space:]]+)?DATABASE_URL[[:space:]]*=[[:space:]]*[^[:space:]]' "$backup/.env"; then
   echo 'This restore command supports the bundled database only. Use your external database restore procedure.' >&2
   exit 1

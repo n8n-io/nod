@@ -18,6 +18,8 @@ if [ -n "${DATABASE_URL:-}" ] || grep -Eq '^[[:space:]]*(export[[:space:]]+)?DAT
   echo 'This backup command supports the bundled database only. Use your external database backup procedure.' >&2
   exit 1
 fi
+if [ -f source-revision ]; then revision=$(cat source-revision); else revision=$(git -C ../.. rev-parse HEAD); fi
+[ "${#revision}" -eq 40 ] && printf '%s\n' "$revision" | grep -Eq '^[a-f0-9]{40}$' || { echo 'Invalid installation source revision.' >&2; exit 1; }
 running=$(docker compose --file compose.yaml --env-file .env ps --status running --services)
 printf '%s\n' "$running" | grep -Fx postgres >/dev/null || { echo 'Start the bundled PostgreSQL service before backing up.' >&2; exit 1; }
 volume_for() {
@@ -61,7 +63,7 @@ trap 'exit 143' TERM
 stopped=true
 docker compose --file compose.yaml --env-file .env stop server browser workspace >/dev/null
 cp .env "$backup/.env"
-git -C ../.. rev-parse HEAD > "$backup/source-commit"
+printf '%s\n' "$revision" > "$backup/source-commit"
 docker compose --file compose.yaml --env-file .env exec -T postgres pg_dump -U nod -d nod --format=custom > "$backup/postgres.dump"
 archive_volume() {
   docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_OVERRIDE \

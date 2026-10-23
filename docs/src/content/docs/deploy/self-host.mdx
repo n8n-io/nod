@@ -16,13 +16,44 @@ One server belongs to one person. Its access token grants full access to that pe
 | Requirement   | Detail                                                                                                           |
 | ------------- | ---------------------------------------------------------------------------------------------------------------- |
 | Computer      | Linux AMD64 or ARM64, or a Mac with Docker Desktop. Start with two CPU cores, 8 GB of memory, and 50 GB of disk. |
-| Tools         | Git, Docker Engine 25 or newer with Compose v2, and OpenSSL. Host Node.js is not required.                       |
+| Tools         | Docker Engine 25 or newer with Compose v2, OpenSSL, and `sha256sum` or `shasum`. Source builds also need Git.    |
 | Remote access | An SSH tunnel, or a domain and inbound ports 80 and 443 for HTTPS.                                               |
 | Model         | Connect one after startup. No model key is needed to install the server.                                         |
 
 Choose a [cloud server](/deploy/providers/) or prepare a [Mac mini](/deploy/mac-mini/). The suggested size is a starting point; simultaneous browser tasks and local models need more capacity.
 
-## Install
+## Install a prebuilt bundle
+
+Use a successful **Self-host bundle** workflow artifact from the private [nod repository](https://github.com/n8n-io/nod/actions/workflows/self-host-bundle.yml). Choose `amd64` for Intel or AMD servers, or `arm64` for Apple Silicon and ARM servers. The Docker Engine must use Linux containers.
+
+These are private build artifacts, not public releases. The workflow builds and checks each architecture natively before uploading its bundle. It retains artifacts for 14 days; keep the bundle with your backups. Check the workflow's source revision before downloading. Repository access is needed only on the computer downloading the artifact.
+
+Download only from the authenticated GitHub workflow. That run identifies the source; the bundle's checksums detect transfer corruption.
+
+<Steps>
+
+1. Download the artifact named `nod-server-linux-<architecture>-<commit>` from a successful workflow run. Extract the downloaded ZIP on your computer. It contains a `.tar.gz` bundle and its `.sha256` file.
+2. Transfer those two files to your server using SCP, SFTP, or your provider's file transfer. On a Mac mini, copy them to the Mac.
+3. Check the archive and unpack it. Replace the placeholders with the downloaded filename.
+
+   ```sh title="Server"
+   sha256sum -c nod-server-linux-<architecture>-<commit>.tar.gz.sha256
+   tar -xzf nod-server-linux-<architecture>-<commit>.tar.gz
+   cd nod-server-linux-<architecture>
+   sh install.sh
+   ```
+
+   On macOS, use `shasum -a 256 -c` instead of `sha256sum -c`.
+
+4. If the server is on another computer, first [open an SSH tunnel](#open-a-remote-server-without-a-domain). Open the address printed by the installer and enter `NOD_AUTH_TOKEN` from the server's private `.env`. Finish onboarding to connect a model.
+
+</Steps>
+
+The installer checks the bundle and Docker architecture, loads its exact application images, generates private keys, and waits for a healthy stack. An existing `.env` keeps its keys and settings. PostgreSQL and the runtime helpers download from pinned public images, so installation needs internet access. The server needs no Node.js, Git, registry login, or GitHub credentials.
+
+To configure a domain before the first start, run `sh setup.sh`, set `NOD_PUBLIC_URL` in `.env`, then run `sh install.sh --https`. See [Add public HTTPS](#add-public-https) for DNS and firewall setup.
+
+## Build from source
 
 <Steps>
 
@@ -53,7 +84,7 @@ Choose a [cloud server](/deploy/providers/) or prepare a [Mac mini](/deploy/mac-
 
 </Steps>
 
-This setup builds from source. It does not require a registry account or a separately installed database.
+This option compiles the application and its browser tools on the server. Use a prebuilt bundle to avoid that first build. Neither option needs a separately installed database.
 
 ### Open a remote server without a domain
 
@@ -78,7 +109,13 @@ To use another port, change `PORT` in `.env` and use that port in the tunnel and
    NOD_PUBLIC_URL=https://nod.example.com
    ```
 
-3. Start the HTTPS profile:
+3. Start the HTTPS profile. For a bundle, run:
+
+   ```sh title="Bundle installation"
+   sh install.sh --https
+   ```
+
+   For a source checkout, run:
 
    ```sh title="Terminal"
    docker compose --profile https up -d --build --wait

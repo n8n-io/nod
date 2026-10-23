@@ -15,11 +15,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=docker /usr/local/bin/docker /usr/local/bin/docker
-COPY --from=build /app/package.json ./
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/src ./src
-COPY --from=build /app/dist ./dist
-COPY deployment/self-host/healthcheck.mjs ./healthcheck.mjs
+COPY --from=build --chown=node:node /app/package.json ./
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/src ./src
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --chown=node:node deployment/self-host/healthcheck.mjs ./healthcheck.mjs
 RUN mkdir -p /var/lib/nod/workspaces && chown -R node:node /var/lib/nod
 USER node
 ENV NODE_ENV=production
