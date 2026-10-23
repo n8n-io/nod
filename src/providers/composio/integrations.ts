@@ -9,6 +9,7 @@ import {
   IntegrationCatalogAccessDenied,
   IntegrationConnectionError,
   IntegrationInboxCursorExpired,
+  IntegrationPermissionError,
   type IntegrationProvider,
   type IntegrationService,
   type IntegrationSession,
@@ -71,21 +72,27 @@ const accountRouting = z.object({
 function providerFailure(action: string, result: Record<string, unknown>) {
   const data =
     result.data && typeof result.data === 'object' ? (result.data as Record<string, unknown>) : {};
-  const detail = [result.error, data.error, data.message].find(
-    (value) => value != null && value !== '',
-  );
+  const detail = [
+    ...new Set(
+      [result.error, data.error, data.message]
+        .filter((value) => value != null && value !== '')
+        .map((value) => (typeof value === 'string' ? value : JSON.stringify(value))),
+    ),
+  ].join('; ');
   const permissions = ['needed', 'provided'].flatMap((field) => {
     const value = data[field] ?? result[field];
     return typeof value === 'string' && value
       ? [`${field}: ${value.length > 1000 ? `${value.slice(0, 1000)}…` : value}`]
       : [];
   });
-  const text = [
-    ...permissions,
-    typeof detail === 'string' ? detail : JSON.stringify(detail ?? result),
-  ].join('; ');
+  const text = [...permissions, detail || JSON.stringify(result)].join('; ');
   const log = typeof result.logId === 'string' ? ` (Composio log ${result.logId})` : '';
-  return `Composio could not complete ${action}: ${text.slice(0, 4000)}${log}`;
+  const message = `Composio could not complete ${action}: ${text.slice(0, 4000)}${log}`;
+  const missingScope =
+    /\b(?:missing_scope|insufficient_scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT)\b|insufficient (?:authentication )?scopes/i.test(
+      detail,
+    );
+  return missingScope ? new IntegrationPermissionError(message) : new Error(message);
 }
 const schemaFields = z.record(z.string(), z.unknown());
 const toolSchemasResult = z.object({
@@ -576,7 +583,7 @@ export function createComposioProvider(options: {
             'ok' in result.data &&
             result.data.ok === false)
         )
-          throw new Error(providerFailure(action, result as Record<string, unknown>));
+          throw providerFailure(action, result as Record<string, unknown>);
         return files(result, signal ?? new AbortController().signal);
       },
       async upload(action, file, signal, accountId) {

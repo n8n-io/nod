@@ -10,6 +10,7 @@ import {
   IntegrationCatalogAccessDenied,
   IntegrationConnectionError,
   IntegrationInboxCursorExpired,
+  IntegrationPermissionError,
   type ConnectedApp,
   type IntegrationProvider,
   type IntegrationSearch,
@@ -1349,6 +1350,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       );
     } catch (error) {
       if (error instanceof IntegrationError) throw error;
+      if (error instanceof IntegrationPermissionError)
+        throw new IntegrationError(
+          `${failure('The app request failed', error)} The selected ${known.slug} connection (${known.id}) lacks permissions for this action. Preserve this account and prepared work. Do not retry until permissions change. Ask before switching to browser sign-in unless the user already chose that recovery. The connection service's auth configuration must request the missing permission before reconnection can grant it; its operator may need to update it first. If the user chooses to reconnect, use manage_apps connect ${JSON.stringify({ service: known.slug, connectionId: known.id })}.`,
+          403,
+        );
       throw new IntegrationError(
         `${failure('The app request failed', error)} If the action name or arguments may be wrong, look them up with apps SEARCH_TOOLS.`,
         502,
