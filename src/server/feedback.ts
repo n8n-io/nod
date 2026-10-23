@@ -4,6 +4,8 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { FeedbackDelivery, FeedbackEnvelope, FeedbackFile } from '../ports/feedback.ts';
 import type { CaptureAnalytics } from './analytics.ts';
+import { parseFeedbackActivity, type FeedbackActivity } from '../shared/feedback-activity.ts';
+import { feedbackTechnicalContext } from './feedback-context.ts';
 import {
   feedbackAttachmentMimeTypes,
   feedbackLimits,
@@ -86,7 +88,7 @@ export async function registerFeedback(
     ownerId: string;
     context: Omit<FeedbackContext, 'enabled' | 'recipient'>;
     delivery: FeedbackDelivery;
-    buildReport(): Promise<string>;
+    buildReport(activity: FeedbackActivity[]): Promise<string>;
     analytics?: CaptureAnalytics;
   },
 ) {
@@ -144,9 +146,15 @@ export async function registerFeedback(
       recipient: options.delivery.recipient,
     } satisfies FeedbackContext;
   });
-  app.post('/api/feedback/report', async (_request, reply) => {
+  app.post('/api/feedback/report', { bodyLimit: 32_768 }, async (request, reply) => {
     sweep();
-    const content = await options.buildReport();
+    const input = z
+      .object({ activity: z.array(z.unknown()).max(100).optional() })
+      .strict()
+      .parse(request.body ?? {});
+    const content = await options.buildReport(
+      parseFeedbackActivity(input.activity).map((row) => ({ ...row, source: 'app' })),
+    );
     if (Buffer.byteLength(content) > feedbackLimits.reportBytes)
       throw fail('The diagnostic report is too large.', 413);
     const report = {
@@ -198,12 +206,7 @@ export async function registerFeedback(
       category: input.category,
       feedback: input.feedback,
       computerName: null,
-      appVersion: input.appVersion,
-      appRelease: input.appRelease,
-      platform: input.platform,
-      development: input.development,
-      source: input.source,
-      appModified: input.appModified,
+      ...feedbackTechnicalContext(input),
       report: report ?? null,
       attachments,
     };

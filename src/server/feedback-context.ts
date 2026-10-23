@@ -2,6 +2,29 @@ import childProcess from 'node:child_process';
 import { promisify } from 'node:util';
 import type { FeedbackContext } from '../shared/feedback.ts';
 
+export function feedbackTechnicalContext(context: Omit<FeedbackContext, 'enabled' | 'recipient'>) {
+  const version = (value: string | null) =>
+    value &&
+    /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:-(?:alpha|beta|rc|canary|dev)(?:[.-]\d{1,6})?)?$/.test(value)
+      ? value
+      : null;
+  return {
+    appVersion: version(context.appVersion),
+    appRelease:
+      context.appRelease && /^[a-f0-9]{7,64}$/.test(context.appRelease)
+        ? context.appRelease
+        : version(context.appRelease),
+    platform:
+      context.platform &&
+      /^(?:darwin|linux|win32)(?:-(?:arm64|x64|ia32|arm))?$/.test(context.platform)
+        ? context.platform
+        : null,
+    development: context.development === true,
+    source: context.source === 'desktop' ? ('desktop' as const) : ('local-web' as const),
+    appModified: typeof context.appModified === 'boolean' ? context.appModified : null,
+  };
+}
+
 export async function feedbackContext(options: {
   environment: NodeJS.ProcessEnv;
   cwd?: string;
@@ -26,12 +49,12 @@ export async function feedbackContext(options: {
       }
     } catch {}
   }
-  return {
+  return feedbackTechnicalContext({
     appVersion: environment.NOD_APP_VERSION?.trim() || null,
     appRelease,
     development,
-    source: 'local-web',
+    source: environment.NOD_DESKTOP === 'true' ? 'desktop' : 'local-web',
     appModified,
-    platform: null,
-  };
+    platform: `${process.platform}-${process.arch}`,
+  });
 }

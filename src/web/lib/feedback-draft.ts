@@ -6,6 +6,7 @@ export type FeedbackDraft = {
   feedback: string;
   attachments: FeedbackAttachment[];
   pendingId: string | null;
+  reportChoice: boolean | null;
 };
 
 const writes = new Map<string, Promise<void>>();
@@ -40,6 +41,7 @@ async function transaction(
   ownerId: string,
   mode: IDBTransactionMode,
   operation: (store: IDBObjectStore) => IDBRequest,
+  consume: (value: unknown, store: IDBObjectStore) => unknown = (value) => value,
 ) {
   if (!ownerId) throw new Error('A draft owner is required.');
   const db = await database();
@@ -62,10 +64,21 @@ async function transaction(
       reject(new Error('Draft storage is unavailable.'));
     };
     try {
-      const request = operation(tx.objectStore('drafts'));
+      const store = tx.objectStore('drafts');
+      const request = operation(store);
+      let value: unknown;
+      request.onsuccess = () => {
+        try {
+          value = consume(request.result, store);
+        } catch (cause) {
+          tx.abort();
+          finish();
+          reject(cause);
+        }
+      };
       tx.oncomplete = () => {
         finish();
-        resolve(request.result);
+        resolve(value);
       };
     } catch (cause) {
       tx.abort();
@@ -126,23 +139,33 @@ function decode(value: unknown, ownerId: string): FeedbackDraft | null {
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
           draft.pendingId,
         ))) ||
+    (draft.reportChoice !== undefined &&
+      draft.reportChoice !== null &&
+      typeof draft.reportChoice !== 'boolean') ||
     !Array.isArray(draft.attachments) ||
     draft.attachments.length > feedbackLimits.attachments
   )
     return fail();
-  const attachments = draft.attachments.map((value) => {
-    if (!value || typeof value !== 'object') return fail();
-    const item = value as Record<string, unknown>;
-    const image = item.image as Record<string, unknown> | undefined;
-    const restored = parseFeedbackAttachment({
-      id: item.id,
-      file: restoredFile(item.file),
-      ...(image === undefined
-        ? {}
-        : { image: { original: restoredFile(image?.original), marks: image?.marks } }),
-    });
-    return restored ?? fail();
-  });
+  const attachments = draft.attachments
+    .map((value) => {
+      if (!value || typeof value !== 'object') return fail();
+      const item = value as Record<string, unknown>;
+      const image = item.image as Record<string, unknown> | undefined;
+      const restored = parseFeedbackAttachment({
+        id: item.id,
+        file: restoredFile(item.file),
+        ...(image === undefined
+          ? {}
+          : { image: { original: restoredFile(image?.original), marks: image?.marks } }),
+      });
+      return restored ?? fail();
+    })
+    .filter(
+      (item) =>
+        draft.reportChoice !== undefined ||
+        (item.file.name !== 'nod-screenshot.jpg' &&
+          item.image?.original.name !== 'nod-screenshot.jpg'),
+    );
   if (
     new Set(attachments.map((item) => item.id)).size !== attachments.length ||
     attachments.reduce((total, item) => total + item.file.size, 0) >
@@ -153,13 +176,44 @@ function decode(value: unknown, ownerId: string): FeedbackDraft | null {
     category: draft.category as FeedbackDraft['category'],
     feedback: draft.feedback,
     pendingId: draft.pendingId as string | null,
+    reportChoice: typeof draft.reportChoice === 'boolean' ? draft.reportChoice : null,
     attachments,
+  };
+}
+
+function encode(ownerId: string, draft: FeedbackDraft) {
+  return {
+    version: 1,
+    ownerId,
+    draft: {
+      ...draft,
+      attachments: draft.attachments.map((item) => ({
+        id: item.id,
+        file: storedFile(item.file),
+        ...(item.image
+          ? { image: { original: storedFile(item.image.original), marks: item.image.marks } }
+          : {}),
+      })),
+    },
   };
 }
 
 export async function loadFeedbackDraft(ownerId: string) {
   await writes.get(ownerId)?.catch(() => {});
-  return decode(await transaction(ownerId, 'readonly', (store) => store.get(ownerId)), ownerId);
+  return transaction(
+    ownerId,
+    'readwrite',
+    (store) => store.get(ownerId),
+    (value, store) => {
+      const draft = decode(value, ownerId);
+      if (
+        draft &&
+        (value as { draft: { reportChoice?: unknown } }).draft.reportChoice === undefined
+      )
+        store.put(encode(ownerId, draft), ownerId);
+      return draft;
+    },
+  ) as Promise<FeedbackDraft | null>;
 }
 
 export function saveFeedbackDraft(ownerId: string, draft: FeedbackDraft | null) {
@@ -167,20 +221,7 @@ export function saveFeedbackDraft(ownerId: string, draft: FeedbackDraft | null) 
   const task = pending
     .catch(() => {})
     .then(async () => {
-      const value = draft && {
-        version: 1,
-        ownerId,
-        draft: {
-          ...draft,
-          attachments: draft.attachments.map((item) => ({
-            id: item.id,
-            file: storedFile(item.file),
-            ...(item.image
-              ? { image: { original: storedFile(item.image.original), marks: item.image.marks } }
-              : {}),
-          })),
-        },
-      };
+      const value = draft && encode(ownerId, draft);
       await transaction(ownerId, 'readwrite', (store) =>
         value ? store.put(value, ownerId) : store.delete(ownerId),
       );
