@@ -1,0 +1,10 @@
+Synthetic CV for evaluation
+
+This person is not real. This file has no contact details.
+
+Location: Berlin. Remote work in Europe is acceptable.
+Experience: Seven years as a product manager for B2B software. Four years covered developer tools and workflow automation.
+Work: Led the first release of an enterprise workflow product. Set the roadmap for Git-based version history, environment promotion, rollback, and API access. Worked with engineering teams on reliable job execution and service metrics.
+Results: Shipped a product used by 40 enterprise teams. Used customer interviews, SQL analysis, and product metrics to set priorities and measure adoption.
+Skills: Product discovery, technical requirements, API products, source control, SQL, reliability measures, and English-language writing.
+Goal: A Senior Product Manager role in Berlin or remote Europe, focused on workflow automation or developer tools.

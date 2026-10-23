@@ -1,0 +1,10 @@
+Synthetic organization profile for evaluation
+
+This organization is not real. This file has no contact details.
+
+Base: Berlin, Germany. It is a small company with 12 staff.
+Work: Builds open-source tools for workflow automation and public-service data access.
+History: Has run two EU pilot projects with city partners. It has not led a large research consortium.
+Need: Grants or tenders for software prototypes, data exchange, and public-service workflows.
+Budget: The organization can co-fund up to €20,000. It cannot bid on work that needs a bank guarantee.
+Limits: It can apply in Germany or to EU-wide calls that admit German small companies. It cannot apply to calls limited to charities, universities, or companies outside the EU.
