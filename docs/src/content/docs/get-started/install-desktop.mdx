@@ -99,7 +99,7 @@ Use a normal PowerShell window, not **Run as administrator**. It verifies the in
 
 ## Keep nod running
 
-Closing the window keeps nod running in the menu bar on a Mac, or the tray on Windows. **Quit nod** stops nod and its private computer.
+For a local assistant, closing the window keeps nod running in the menu bar on a Mac, or the tray on Windows. **Quit nod** stops nod and its private computer.
 
 | nod is                                  | What runs                                       |
 | --------------------------------------- | ----------------------------------------------- |
@@ -107,6 +107,8 @@ Closing the window keeps nod running in the menu bar on a Mac, or the tray on Wi
 | Quit, or your computer is asleep        | Nothing, until nod is open and awake again      |
 
 If you rely on scheduled tasks, turn on **Open at login** in **Settings → General**.
+
+When connected to a server, the server keeps your assistant, channels and schedules running after you quit the app or put your computer to sleep. The server must stay running and connected.
 
 ## Update nod
 
@@ -116,9 +118,13 @@ When an update is ready, choose **Restart** to install it or **Later** to keep w
 
 On Windows, the restart runs the new installer in the background and opens nod again when it's done.
 
+Updating a connected desktop client does not update its server. Follow [Server operations](/deploy/server-operations/) to update the server separately.
+
 ## Where your data lives
 
-nod's database, workspace and browser stay on your computer. Requests go to the model provider and apps you choose. Managed app requests and results pass through n8n's hosted connection service and Composio. Usage analytics leave only if you turn on **Share usage data** during setup or in **Settings → General**. Conversation traces leave only if you turn on **Share conversation traces** in **Settings → General**. See [Your data and privacy](/trust/privacy/).
+For a local assistant, nod's database, workspace and browser stay on your computer. When connected to a server, the server stores them along with model credentials and the Composio identity. Every client using the same server reaches the same assistant and connected accounts. Your device keeps its server address, encrypted access token, preferences and client data, such as unsent drafts and downloaded files.
+
+Requests go to the model provider and apps you choose. Managed app requests and results pass through n8n's hosted connection service and Composio. Usage analytics leave only if you turn on **Share usage data** during setup or in **Settings → General**. Conversation traces leave only if you turn on **Share conversation traces** in **Settings → General**. See [Your data and privacy](/trust/privacy/).
 
 nod starts with a fresh profile and doesn't import data from a source install.
 
@@ -130,7 +136,7 @@ nod starts with a fresh profile and doesn't import data from a source install.
 
 ## Remove nod
 
-Moving nod to the Trash or uninstalling it keeps your data, so a later install opens where you left off. To delete everything first:
+Moving nod to the Trash or uninstalling it keeps your data, so a later install opens where you left off. Uninstalling a connected client does not delete server data. To delete a local assistant first, choose **Use this computer** in **Server connection**, then:
 
 1. Select **Remove all data** in **Settings → General**. If nod can't finish setup, select **Remove all data…** in the **nod** menu instead.
 2. Confirm. nod deletes your profile and private computer, then quits.
