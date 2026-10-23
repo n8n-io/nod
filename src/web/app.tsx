@@ -23,7 +23,7 @@ import { appPagePath } from '../shared/app-links';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
-import { useSession } from './hooks/use-session';
+import type { useSession } from './hooks/use-session';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
 import { AccountSettings } from './components/account-settings';
@@ -536,17 +536,18 @@ function AuthenticatedApp({
   );
 }
 function AccountApp({
+  sessionState,
   path,
   setPath,
   feedbackRequest,
   onFeedbackHandled,
 }: {
+  sessionState: ReturnType<typeof useSession>;
   path: string;
   setPath(path: string): void;
   feedbackRequest: number;
   onFeedbackHandled(): void;
 }) {
-  const sessionState = useSession();
   const { session } = sessionState;
   useEffect(() => {
     if (!sessionState.loading) desktopRendererReady();
@@ -629,7 +630,7 @@ function AccountApp({
   );
 }
 
-export function App() {
+export function App({ sessionState }: { sessionState: ReturnType<typeof useSession> }) {
   const [path, setPath] = useState(window.location.pathname);
   const [feedbackRequest, setFeedbackRequest] = useState(0);
   useEffect(() => {
@@ -652,6 +653,7 @@ export function App() {
         <Privacy />
       ) : (
         <AccountApp
+          sessionState={sessionState}
           path={path}
           setPath={setPath}
           feedbackRequest={feedbackRequest}

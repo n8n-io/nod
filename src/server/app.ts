@@ -27,7 +27,7 @@ import {
 } from './thread.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { accessKey, registerLocalAccess } from './access.ts';
-import { logFailure } from './failure-log.ts';
+import { logFailure, withFailureLog, type FailureLogSink } from './failure-log.ts';
 import { fileBytes } from '../shared/files.ts';
 import { BrowserActionError, type Computer } from '../ports/computer.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
@@ -65,6 +65,7 @@ function messageView(
 }
 
 export interface AppDependencies {
+  failureLog?: FailureLogSink;
   analytics?: CaptureAnalytics;
   linkReplay?: (turnId: string, sessionId: string) => void;
   admission?: WorkAdmission;
@@ -108,6 +109,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
     forceCloseConnections: true,
   });
   const streams = new Set<ServerResponse>();
+  if (dependencies.failureLog)
+    app.addHook('onRequest', (_request, _reply, done) =>
+      withFailureLog(dependencies.failureLog!, done),
+    );
   if (dependencies.analytics) registerAnalyticsRoutes(app, dependencies.analytics);
   app.addHook('preClose', async () => {
     for (const stream of streams) stream.end();
@@ -124,10 +129,15 @@ export async function createApp(dependencies: AppDependencies = {}) {
         },
   );
   if (desktopAccess && dependencies.admission) registerWorkAdmission(app, dependencies.admission);
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     const known = error instanceof Error ? (error as Error & { statusCode?: number }) : undefined;
     const status = error instanceof z.ZodError ? 400 : known?.statusCode || 500;
-    if (status >= 500) logFailure('request_failed', error);
+    if (status >= 500)
+      logFailure('request_failed', error, {
+        method: request.method,
+        operation: request.routeOptions.url?.split('/').filter(Boolean).join(' '),
+        status,
+      });
     reply.code(status).send({
       error:
         error instanceof z.ZodError

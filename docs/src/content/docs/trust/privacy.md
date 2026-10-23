@@ -101,17 +101,19 @@ Before a trace leaves your computer, nod removes known secrets, your name, email
 
 The feedback dialog shows who receives your submission: the nod team at n8n by default, or your operator's configured collector.
 
-**Include diagnostic report** is selected for **Bug or issue**. The report is for support and debugging only. Select **Review** to inspect it, or untick the checkbox to leave it out. Your choice stays with the draft when you close or reload it. **Idea** and **Other** start without a report unless you choose to include one. Preparing a report sends permitted app activity metadata to your nod runtime. The configured feedback recipient receives your submission only after you select **Send feedback**.
+**Include diagnostic report** starts selected for every category. The report helps with support, debugging, and product improvement. Select **Review** to inspect the exact attachment, or untick the checkbox to leave it out. Your choice stays with the draft when you close or reload it.
 
-The report contains technical metadata: activity counts, outcomes, timings, model usage counts, and connection health. It replaces internal execution IDs with temporary labels that only link entries within that report. Model and integration names are limited to known categories; custom labels are excluded. It contains no chat text, prompts, tool arguments or results, workflow or execution payloads, file contents, account names, addresses, or URLs. Absolute activity timestamps are excluded. Privacy comes from selecting permitted metadata, not from guessing which words are personal.
+The report can include recent chat messages, tool arguments and results, runtime and app errors, and technical activity. Tool results can include text read from files, websites, or connected apps. nod masks known secrets and recognized personal details before presenting the report. This is best-effort redaction: names and other personal information can remain. Review the report before sending it.
 
-The report includes bounded recent activity from your account's stored history, plus recent errors and navigation from the current app window and runtime. Database sections say when a source is unavailable or older entries were omitted. The recent app activity buffer has fixed limits and no omission marker. See [Report contents and limits](/deploy/troubleshooting/#report-contents-and-limits).
+Credential fields, screenshots, binary data, system prompts, and model thinking are omitted. Execution IDs become labels that link entries within the report. Technical model and integration fields use known categories, and activity times use relative ages and durations.
 
-Screenshots aren't captured automatically. Your written feedback and any files you choose to add can contain personal information and are sent as you provide them. Review them before sending. Desktop submissions also include the app version and platform. Feedback does not change your usage analytics or conversation trace settings.
+nod keeps a local journal of recent tool activity and failures, with redaction before writing and again when preparing a report. The journal holds at most three files of 1 MiB each. Reports read only the latest 24 hours. Expired records are removed on startup, report preparation, journal writes, and a one-minute cleanup timer. If nod is stopped, expired files remain until it runs again. See [Report contents and limits](/deploy/troubleshooting/#report-contents-and-limits).
 
-If the report can't be prepared, select **Continue without report**. Your text and selected files stay in the draft.
+Preparing a report sends recent app activity and errors from the app window to your nod runtime for redaction and assembly. The configured feedback recipient receives your submission only after you select **Send feedback**. Screenshots aren't captured automatically. Feedback text and files you choose to add are sent as provided and can contain personal information.
 
-Operators can disable submission and status checks with `NOD_FEEDBACK_ENABLED=false`. See the [configuration reference](/deploy/configuration/#analytics-and-feedback) for custom collectors and operation without either upstream collector.
+The report marks unavailable database or journal sources and omitted entries. The app activity and error buffers have fixed limits and no marker for dropped or expired entries. After an account change, app error capture pauses until the window reloads, and that source is marked unavailable. If redaction can't be prepared, the report omits message content and logs. If the report itself can't be prepared, select **Continue without report**. Your text and selected files stay in the draft.
+
+Feedback does not change your usage analytics or conversation trace settings. Operators can disable submission and status checks with `NOD_FEEDBACK_ENABLED=false`. See the [configuration reference](/deploy/configuration/#analytics-and-feedback) for custom collectors and operation without either upstream collector.
 
 ## What memory learns from
 
@@ -132,7 +134,7 @@ There's no button to clear only your chat history yet. **Remove all data** delet
 
 ## Where this is enforced
 
-[`src/server/memory-learning.ts`](https://github.com/n8n-io/nod/blob/main/src/server/memory-learning.ts) (memory sources) · [`src/server/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/server/analytics.ts) (analytics opt-in and events) · [`src/server/traces.ts`](https://github.com/n8n-io/nod/blob/main/src/server/traces.ts) and [`src/server/personal-data.ts`](https://github.com/n8n-io/nod/blob/main/src/server/personal-data.ts) (trace opt-in and scrubbing) · [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics-privacy.ts) (recording masks) · [`src/server/bug-report.ts`](https://github.com/n8n-io/nod/blob/main/src/server/bug-report.ts) (metadata-only reports)
+[`src/server/memory-learning.ts`](https://github.com/n8n-io/nod/blob/main/src/server/memory-learning.ts) (memory sources) · [`src/server/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/server/analytics.ts) (analytics opt-in and events) · [`src/server/traces.ts`](https://github.com/n8n-io/nod/blob/main/src/server/traces.ts) and [`src/server/personal-data.ts`](https://github.com/n8n-io/nod/blob/main/src/server/personal-data.ts) (trace opt-in and scrubbing) · [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics-privacy.ts) (recording masks) · [`src/server/bug-report.ts`](https://github.com/n8n-io/nod/blob/main/src/server/bug-report.ts) (report assembly) · [`src/server/feedback-redaction.ts`](https://github.com/n8n-io/nod/blob/main/src/server/feedback-redaction.ts) (report and journal redaction) · [`src/server/feedback-log.ts`](https://github.com/n8n-io/nod/blob/main/src/server/feedback-log.ts) (local journal limits)
 
 ## Related resources
 

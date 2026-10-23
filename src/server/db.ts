@@ -1,3 +1,4 @@
+import { logFailure } from './failure-log.ts';
 import pg from 'pg';
 import { databaseUrl } from './config.ts';
 import { locksTable } from './locks.ts';
@@ -15,12 +16,7 @@ export function createPool(config: pg.PoolConfig) {
     connectionTimeoutMillis: 10_000,
     ...config,
   });
-  created.on('error', (error) => {
-    const code = (error as { code?: unknown }).code;
-    console.error(
-      `A database connection failed while idle: ${error.name}${typeof code === 'string' ? ` ${code}` : ''}`,
-    );
-  });
+  created.on('error', (error) => logFailure('database_idle_error', error));
   return created;
 }
 

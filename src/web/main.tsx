@@ -1,11 +1,12 @@
-import { Component, StrictMode, type ReactNode } from 'react';
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './app';
-import { desktopRendererReady } from './lib/desktop';
+import { AppRoot } from './components/app-boundary';
 import { initializeTheme } from './lib/theme';
 import { initializeFocusVisibility } from './lib/focus';
-import { captureAnalytics, configureAnalytics } from './lib/analytics-client';
+import { configureAnalytics } from './lib/analytics-client';
 import { claimAccess, sessionStore } from './lib/session';
+import { recordFeedbackError } from './lib/feedback-errors';
 import './styles.css';
 import './components/message-actions.css';
 import './components/telegram-chat-link.css';
@@ -46,35 +47,14 @@ import './components/models.css';
 import './components/time-zone-picker.css';
 import './components/sidebar-unread.css';
 
-class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-  componentDidCatch() {
-    desktopRendererReady();
-    captureAnalytics('nod_ui_error', { area: 'application', action: 'render' });
-  }
-  render() {
-    if (this.state.failed)
-      return (
-        <main className="empty-state">
-          <h1>Let’s try that again.</h1>
-          <p>The workspace could not be displayed.</p>
-          <button
-            className="button button-primary button-default"
-            onClick={() => window.location.reload()}
-          >
-            Reload nod
-          </button>
-        </main>
-      );
-    return this.props.children;
-  }
-}
-
 initializeTheme();
 initializeFocusVisibility();
+window.addEventListener('error', (event) =>
+  recordFeedbackError('error', event.error ?? event.message),
+);
+window.addEventListener('unhandledrejection', (event) =>
+  recordFeedbackError('rejection', event.reason),
+);
 sessionStore.subscribe(() => {
   const { session } = sessionStore.getSnapshot();
   configureAnalytics(
@@ -94,9 +74,7 @@ window.addEventListener('hashchange', async () => {
 void claimAccess().finally(() =>
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <AppBoundary>
-        <App />
-      </AppBoundary>
+      <AppRoot>{(sessionState) => <App sessionState={sessionState} />}</AppRoot>
     </StrictMode>,
   ),
 );

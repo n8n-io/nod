@@ -1,3 +1,4 @@
+import { logFailure } from './failure-log.ts';
 import type { Pool } from 'pg';
 import type { PgBoss } from 'pg-boss';
 import { z } from 'zod';
@@ -70,9 +71,7 @@ export function createMemoryLearning(options: {
   async function ask(instructions: string, input: object) {
     const reply = await options.curator
       .curate({ task: 'reflect', instructions, input })
-      .catch(() => {
-        console.error('Memory maintenance could not reach the memory model.');
-      });
+      .catch((error) => logFailure('memory_maintenance_failed', error));
     const parsed = answer.safeParse(reply);
     return parsed.success ? parsed.data.ops : undefined;
   }

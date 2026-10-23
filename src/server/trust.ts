@@ -1,3 +1,4 @@
+import { logFailure } from './failure-log.ts';
 import type { Pool } from 'pg';
 import type { ModelReview } from '../ports/decisions.ts';
 import type { TurnRef } from './thread.ts';
@@ -127,9 +128,7 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
         { ...words, action: { name: action, arguments: args } },
       )
       .catch((error: unknown) => {
-        console.error(
-          `Trust check for ${action} failed (${error instanceof Error ? error.name : typeof error}); asking the owner.`,
-        );
+        logFailure('trust_check_failed', error);
         return undefined;
       });
     const basis = trustBasis(answer, words, said?.ids ?? []);

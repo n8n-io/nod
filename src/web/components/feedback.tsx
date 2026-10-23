@@ -21,6 +21,7 @@ import {
 import { api, ApiError, errorMessage } from '../lib/api';
 import { desktopFeedbackContext } from '../lib/desktop';
 import { feedbackActivitySnapshot } from '../lib/feedback-activity';
+import { feedbackErrorsAvailable, feedbackErrorsSnapshot } from '../lib/feedback-errors';
 import { clipboardFiles } from '../lib/composer-editor';
 import type { FeedbackAttachment } from '../lib/feedback-attachment';
 import { loadFeedbackDraft, saveFeedbackDraft, type FeedbackDraft } from '../lib/feedback-draft';
@@ -102,7 +103,7 @@ function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: Feedb
   const [feedback, setFeedback] = useState('');
   const [attachments, setAttachments] = useState<FeedbackAttachment[]>([]);
   const [reportChoice, setReportChoice] = useState<boolean | null>(null);
-  const includeReport = reportChoice ?? kind === 'bug';
+  const includeReport = reportChoice ?? true;
   const [report, setReport] = useState<FeedbackReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState('');
@@ -344,14 +345,18 @@ function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: Feedb
     setPreview(false);
     const promise = api<FeedbackReport>('/api/feedback/report', {
       method: 'POST',
-      body: JSON.stringify({ activity: feedbackActivitySnapshot() }),
+      body: JSON.stringify({
+        activity: feedbackActivitySnapshot(),
+        errors: feedbackErrorsSnapshot(),
+        errorsAvailable: feedbackErrorsAvailable(),
+      }),
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
     })
       .then((snapshot) => {
         if (controller.signal.aborted) return null;
         if (!feedbackReportData(snapshot.content))
           throw new Error(
-            'Update nod to prepare a private diagnostic report, or continue without one.',
+            'Update nod to prepare a redacted diagnostic report, or continue without one.',
           );
         reportRef.current = snapshot;
         setReport(snapshot);

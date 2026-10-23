@@ -179,6 +179,7 @@ function SetupAction({
         type="button"
         data-setup={setup}
         className="setup-app-card"
+        disabled={app?.available === false}
         onClick={(event) => {
           captureAnalytics('nod_setup_link_clicked', { setup });
           onConnect(href, event.currentTarget);
@@ -190,7 +191,7 @@ function SetupAction({
           <Icon size={28} aria-hidden="true" />
         )}
         <span className="setup-app-name">{app?.name ?? label.replace(/^Connect\s+/i, '')}</span>
-        <span className="setup-app-action">Connect</span>
+        <span className="setup-app-action">{app?.available === false ? 'Expired' : 'Connect'}</span>
       </button>
     );
   return (
@@ -324,7 +325,7 @@ export function SetupActions({
           return;
         }
         const app = result.apps.get(href);
-        if (!app) {
+        if (!app || app.available === false) {
           fail('This sign-in link is no longer available. Ask nod to connect again.');
           return;
         }
@@ -354,7 +355,7 @@ export function SetupActions({
         return;
       }
       const app = result.apps.get(href);
-      if (!app) throw new Error('The sign-in link is unavailable.');
+      if (!app || app.available === false) throw new Error('The sign-in link is unavailable.');
       const pairingConfirmed = app.pairingConfirmed === true;
       if (pairingConfirmed) {
         popup?.close();
