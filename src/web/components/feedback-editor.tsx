@@ -4,6 +4,7 @@ import { EditorContent, useEditor } from '@tiptap/react';
 import { Plugin } from '@tiptap/pm/state';
 import { feedbackLimits } from '../../shared/feedback';
 import { createComposerExtensions } from '../lib/composer-editor';
+import { composerMarkdown, parseComposerMarkdown } from '../lib/composer-markdown';
 import { EditorFormatting } from './editor-formatting';
 
 export interface FeedbackEditorHandle {
@@ -45,10 +46,10 @@ export const FeedbackEditor = forwardRef<FeedbackEditorHandle, FeedbackEditorPro
               new Plugin({
                 filterTransaction(transaction) {
                   if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return true;
-                  const length = editor.markdown!.serialize(transaction.doc.toJSON()).length;
+                  const length = composerMarkdown(transaction.doc).length;
                   const tooLong = length > feedbackLimits.text;
                   setLimitReached(tooLong);
-                  return !tooLong || length < editor.getMarkdown().length;
+                  return !tooLong || length < composerMarkdown(editor.state.doc).length;
                 },
               }),
             ];
@@ -59,8 +60,7 @@ export const FeedbackEditor = forwardRef<FeedbackEditorHandle, FeedbackEditorPro
     );
     const editor = useEditor({
       extensions,
-      content: value,
-      contentType: 'markdown',
+      content: parseComposerMarkdown(value),
       immediatelyRender: false,
       editable: !disabled,
       editorProps: {
@@ -80,7 +80,7 @@ export const FeedbackEditor = forwardRef<FeedbackEditorHandle, FeedbackEditorPro
         },
       },
       onUpdate: ({ editor: current }) => {
-        const text = current.isEmpty ? '' : current.getMarkdown();
+        const text = current.isEmpty ? '' : composerMarkdown(current.state.doc);
         lastValue.current = text;
         actions.current.onChange(text);
       },
@@ -99,13 +99,13 @@ export const FeedbackEditor = forwardRef<FeedbackEditorHandle, FeedbackEditorPro
       if (!editor) return;
       if (value !== lastValue.current) {
         lastValue.current = value;
-        editor.commands.setContent(value, { contentType: 'markdown', emitUpdate: false });
+        editor.commands.setContent(parseComposerMarkdown(value), { emitUpdate: false });
       }
       if (editor.isEmpty && value) {
         lastValue.current = '';
         actions.current.onChange('');
       }
-      setLimitReached(editor.getMarkdown().length > feedbackLimits.text);
+      setLimitReached(composerMarkdown(editor.state.doc).length > feedbackLimits.text);
     }, [editor, value]);
     useEffect(() => {
       if (!editor) return;

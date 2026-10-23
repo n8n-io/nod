@@ -10,6 +10,7 @@ import {
 } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { remarkLinkDestinations } from '../lib/markdown';
 import { Download, ExternalLink, FileText, Folder } from './icons';
 import { safeMessageLink } from '../lib/message-links';
 import { formatNumber } from '../lib/date-format';
@@ -410,7 +411,7 @@ function MarkdownView({ text }: { text: string }) {
     <div className="artifact-prose" tabIndex={0} data-artifact-scroll="">
       <article>
         <Markdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={[remarkGfm, remarkLinkDestinations]}
           skipHtml
           components={{
             a: ({ href, children }) => {

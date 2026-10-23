@@ -1,6 +1,6 @@
 import { Extension, InputRule, type Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import { Markdown } from '@tiptap/markdown';
+import Underline from '@tiptap/extension-underline';
 import Placeholder from '@tiptap/extension-placeholder';
 import { TableKit } from '@tiptap/extension-table';
 import TaskList from '@tiptap/extension-task-list';
@@ -8,7 +8,7 @@ import TaskItem from '@tiptap/extension-task-item';
 import { Fragment, Slice } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
 import { safeMessageLink } from './message-links';
-import { ComposerUnderline } from './composer-underline';
+import { parseComposerMarkdown } from './composer-markdown';
 
 export function clipboardFiles(clipboard: DataTransfer): File[] {
   const files = Array.from(clipboard.files ?? []);
@@ -35,7 +35,7 @@ function markdownPasteSlice(editor: Editor, value: string) {
   const leading = value.match(/^\n*/)?.[0].length ?? 0;
   const trailing = value.match(/\n*$/)?.[0].length ?? 0;
   let content = schema.nodeFromJSON(
-    editor.markdown!.parse(value.slice(leading, value.length - trailing)),
+    parseComposerMarkdown(value.slice(leading, value.length - trailing)),
   ).content;
   const first = content.firstChild;
   if (leading && first?.type.name === 'paragraph')
@@ -67,8 +67,7 @@ export function createComposerExtensions(callbacks: {
         isAllowedUri: (url) => Boolean(safeMessageLink(url, window.location.origin)),
       },
     }),
-    ComposerUnderline,
-    Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
+    Underline,
     TableKit.configure({ table: { resizable: false } }),
     TaskList,
     TaskItem.configure({ nested: true }),

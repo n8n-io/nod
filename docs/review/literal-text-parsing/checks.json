@@ -1,0 +1,70 @@
+{
+  "data": "Synthetic only. No live model, connected account or recipient.",
+  "baseline": "e8579573",
+  "before": {
+    "serializer": "@tiptap/markdown 3.32.0",
+    "input": "https://example.com/__nod_e2e__/hotel?x=1&next=2",
+    "markdown": "https://example.com/\\_\\_nod\\_e2e\\_\\_/hotel?x=1&amp;next=2"
+  },
+  "focused": {
+    "command": "pnpm exec tsx --test tests/url-guards.test.ts",
+    "passed": 18,
+    "failed": 0,
+    "generatedStrings": 150,
+    "seed": 661
+  },
+  "browser": {
+    "components": ["Composer", "FeedbackEditor", "MessageText"],
+    "fixtures": ["fixture.html", "fixture.tsx"],
+    "viewports": [
+      {
+        "width": 1080,
+        "height": 900,
+        "theme": "light",
+        "horizontalOverflow": false,
+        "screenshot": "light.png"
+      },
+      {
+        "width": 390,
+        "height": 844,
+        "theme": "dark",
+        "horizontalOverflow": false,
+        "screenshot": "dark-narrow.png"
+      }
+    ],
+    "paragraphGaps": ["12px", "12px", "0px"],
+    "checks": {
+      "plainPaste": true,
+      "richHtmlPaste": true,
+      "boldLinkLabel": true,
+      "failedSendRecovery": true,
+      "secondSend": true,
+      "ipv6WithUnderscores": true,
+      "proseUrlAndCode": true,
+      "queryStrings": true,
+      "shiftEnterNoSend": true,
+      "feedbackLimitRefusesExtraText": true,
+      "typedIpv6Url": true,
+      "artifactLink": true
+    },
+    "limits": [
+      "API responses are synthetic.",
+      "Confirmation copy is an example. No live model wrote it.",
+      "The fixture does not prove a live account action or message delivery."
+    ]
+  },
+  "requiredChecks": {
+    "check": "passed",
+    "integration": {
+      "passed": 622,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0
+    },
+    "build": "passed",
+    "docs": {
+      "pages": 54,
+      "internalLinks": "valid"
+    }
+  }
+}

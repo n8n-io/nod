@@ -780,6 +780,24 @@ test(
         firstThreadId = first.threadId;
       });
 
+      await t.test(
+        'message text reaches storage and the runtime without another parse',
+        async () => {
+          const value =
+            'Read <https://example.com/a_(b)?items[]=one&next=%26copy%3B#part_two>.\n\n`C:\\work\\file_name.txt` and <u>literal &amp; text</u>.';
+          const response = await sendJson({ text: value });
+          assert.equal(response.statusCode, 200);
+          const submitted = response.json<SubmitMessageResponse>();
+          await waitFor(settled(submitted.turnId));
+          assert.equal(ran(submitted.turnId)?.prompt, value);
+          assert.equal(
+            (await db.pool.query('SELECT text FROM messages WHERE id=$1', [submitted.messageId]))
+              .rows[0].text,
+            value,
+          );
+        },
+      );
+
       await t.test('a backlog of drain jobs does not delay the next turn', async () => {
         const threadId = (await thread.activeThread(db.pool)).id;
         for (let index = 0; index < 30; index++)
