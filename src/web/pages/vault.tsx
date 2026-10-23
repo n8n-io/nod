@@ -73,7 +73,7 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
   const newTrigger = useRef<HTMLButtonElement>(null);
   const openingDialog = useRef(false);
   const items = vaultItems(entries ?? [], sessions.data ?? []);
-  const empty = Boolean(entries && (sessions.data || sessions.error)) && !items.length;
+  const empty = Boolean(entries && sessions.data) && !items.length;
   const split = !phone && !empty;
   const search = query.trim().toLowerCase();
   const visible = items
@@ -415,7 +415,9 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
             ) : visible.length ? (
               <div className="vault-items">{visible.map(row)}</div>
             ) : (
-              <p className="vault-no-results">No items match “{query.trim()}”.</p>
+              items.length > 0 && (
+                <p className="vault-no-results">No items match “{query.trim()}”.</p>
+              )
             )}
           </div>
         )}

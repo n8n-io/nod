@@ -55,6 +55,7 @@
 .vault-start {
   grid-template-columns: minmax(0, 1fr);
   gap: 24px;
+  animation: startup-fade 180ms ease-out;
 }
 .vault-doors {
   display: grid;
@@ -113,11 +114,6 @@
 @media (max-width: 640px) {
   .vault-door {
     min-height: 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .vault-door {
-    transition: none;
   }
 }
 .vault-no-results {

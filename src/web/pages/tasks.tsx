@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useState } from 'react';
+import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import {
   CalendarClock,
@@ -405,7 +405,6 @@ export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity
   const schedules = usePageData<Schedule[]>('/api/schedules');
   const history = useScheduleHistory();
   const [view, setView] = useState<(typeof views)[number]>('current');
-  useEffect(() => captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: view }), []);
   const selectView = (next: typeof view) => {
     if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: next });
     setView(next);
@@ -443,6 +442,15 @@ export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity
     schedules.data?.length === 0 &&
     Boolean(history.data) &&
     !history.runs.length;
+  const tabbed =
+    !fresh &&
+    Boolean(settled || tasks.data?.length || schedules.data?.length || history.runs.length);
+  const seen = useRef(false);
+  useEffect(() => {
+    if (!tabbed || seen.current) return;
+    seen.current = true;
+    captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: view });
+  }, [tabbed]);
   const counts = {
     current: tasks.data ? open.length : null,
     scheduled: schedules.data ? upcoming.length : null,
@@ -453,7 +461,7 @@ export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity
       <PlanToast />
       <header className="page-heading secondary-heading">
         <PageTitle path="/tasks" />
-        {settled && !fresh && view === 'scheduled' && (
+        {tabbed && view === 'scheduled' && (
           <div className="secondary-heading-actions">
             <NewPlan onAsk={onAsk} />
           </div>
@@ -461,7 +469,7 @@ export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity
       </header>
       {fresh ? (
         <Ideas first="nod has nothing on its plate." ask={['task', 'schedule']} onAsk={onAsk} />
-      ) : !settled ? (
+      ) : !tabbed ? (
         <Pending label="Loading tasks…" />
       ) : (
         <>

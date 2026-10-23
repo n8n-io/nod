@@ -336,6 +336,7 @@
 .tasks-ideas {
   grid-template-columns: minmax(0, 1fr);
   gap: 24px;
+  animation: startup-fade 180ms ease-out;
 }
 [role='tabpanel'] > .tasks-ideas {
   padding-top: var(--secondary-empty-inset);
