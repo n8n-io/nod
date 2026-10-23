@@ -3281,14 +3281,21 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         assert.ok(currentText.includes('\n'));
         await act(async () => document.querySelector('.composer-send-preference').click());
         const fence = String.fromCharCode(96).repeat(3);
-        for (const [text, selector] of [
-          ['# First lineSecond line', 'h1'],
-          ['- First lineSecond line', 'li p'],
-          [fence + '\nFirst lineSecond line\n' + fence, 'code'],
+        for (const [text, selector, blocks, expected] of [
+          ['# First lineSecond line', 'h1', 'h1, h1 + p', [['H1', 'First line'], ['P', 'Second line']]],
+          ['- First lineSecond line', 'li p', 'li', [['LI', 'First line'], ['LI', 'Second line']]],
+          [fence + '\nFirst lineSecond line\n' + fence, 'code', 'pre, pre + p', [['PRE', 'First lineSecond line'], ['P', '']]],
         ]) {
           await edit(text, selector);
           await enter({ shiftKey: true });
           assert.equal(sends.length, 3);
+          assert.deepEqual(
+            Array.from(document.querySelector('[contenteditable]').querySelectorAll(blocks),
+              (block) => [block.tagName, block.textContent]),
+            expected,
+          );
+          if (selector === 'code')
+            assert.ok(document.querySelector('[contenteditable] > pre + p').contains(window.getSelection().anchorNode));
         }
         await act(async () => replaceText('Synthetic review request'));
         sends.length = 0;
@@ -4896,6 +4903,77 @@ test(
     }
   },
 );
+
+test('task and schedule requests preserve multiline text until an explicit send shortcut', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'https://nod.fixture.invalid', pretendToBeVisual: true });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+      });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Event', 'KeyboardEvent'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { AskNod } = await import('./src/web/components/plan-controls.tsx');
+      const root = createRoot(document.getElementById('root'));
+      const sent = [];
+      let closed = 0;
+      const multiline = 'First line\nSecond line';
+      try {
+        for (const [index, subject, prefix] of [
+          [0, { kind: 'task' }, ''],
+          [1, { kind: 'schedule' }, 'New schedule: '],
+          [2, { kind: 'schedule', title: 'Weekly review' }, 'About the schedule "Weekly review": '],
+        ]) {
+          await act(async () => root.render(createElement(AskNod, {
+            key: index, subject, onAsk: (text) => sent.push(text), onClose: () => closed++,
+          })));
+          const field = document.querySelector('.ask-nod-field input, .ask-nod-field textarea');
+          assert.ok(field);
+          const press = async (options = {}) => {
+            const event = new KeyboardEvent('keydown', {
+              key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true, ...options,
+            });
+            await act(async () => field.dispatchEvent(event));
+            return event;
+          };
+          await act(async () => {
+            Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value').set.call(field, multiline);
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+          });
+          assert.equal(field.value, multiline);
+          for (const modifiers of [{ shiftKey: true }, { altKey: true }]) {
+            assert.equal((await press(modifiers)).defaultPrevented, false);
+            assert.equal(sent.length, index);
+            assert.equal(field.value, multiline);
+          }
+          for (const modifiers of [{ isComposing: true }, { keyCode: 229 }]) {
+            await press(modifiers);
+            assert.equal(sent.length, index);
+          }
+          assert.equal((await press()).defaultPrevented, true);
+          assert.equal(sent.length, index + 1);
+          assert.equal(sent.at(-1), prefix + multiline);
+          assert.equal((await press({ key: 'Escape', code: 'Escape', keyCode: 27 })).defaultPrevented, true);
+          assert.equal(closed, index + 1);
+          assert.equal(sent.length, index + 1);
+        }
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
 
 test('chat draft recovery isolates owners and excludes private verification replies', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
