@@ -74,6 +74,7 @@ export function useModels() {
       return true;
     } catch (cause) {
       setError(errorMessage(cause));
+      void page.refresh();
       return false;
     } finally {
       pending.current = false;
@@ -155,6 +156,7 @@ export function useModelSignIn(
         }
         if (result.status === 'failed') {
           models.setError(result.error ?? 'Sign-in failed. Start a new connection.');
+          void models.refresh();
           finish();
           return;
         }
