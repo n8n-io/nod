@@ -1017,7 +1017,11 @@ test('a reused Windows runtime must match its published manifest and asset diges
     guest: { file: 'guest.tar.gz', bytes: pack.length, expandedBytes: 99, sha256: f.digest(pack) },
     fingerprint,
   };
-  const publish = async (bytes, draft = false) => {
+  const publish = async (
+    bytes,
+    draft = false,
+    asset = { digest: f.digest(pack), size: pack.length },
+  ) => {
     const state = await f.readState();
     state.releases['nod-v0.0.9'] = {
       id: 90,
@@ -1027,8 +1031,8 @@ test('a reused Windows runtime must match its published manifest and asset diges
         { name, size: 1, digest: `sha256:${f.digest(JSON.stringify(manifest))}` },
         {
           name: 'nod-Runtime-win32-x64.tar.gz',
-          size: pack.length,
-          digest: `sha256:${f.digest(pack)}`,
+          size: asset.size,
+          digest: `sha256:${asset.digest}`,
         },
       ],
     };
@@ -1045,6 +1049,14 @@ test('a reused Windows runtime must match its published manifest and asset diges
   await publish(Buffer.from('Tampered Windows runtime!'));
   await assert.rejects(reuse(), /Windows runtime does not match/);
   await assert.rejects(stat(join(assets, 'guest.tar.gz')));
+  for (const asset of [
+    { digest: f.digest('Another Windows runtime'), size: pack.length },
+    { digest: f.digest(pack), size: pack.length + 1 },
+  ]) {
+    await publish(pack, false, asset);
+    await assert.rejects(reuse(), /Windows runtime does not match/);
+    await assert.rejects(stat(join(assets, 'guest.tar.gz')));
+  }
   await publish(pack, true);
   await assert.rejects(reuse(), /reused Windows runtime is unavailable/);
   await publish(pack);
@@ -2482,6 +2494,18 @@ test('runtime fingerprints cover dependencies and every source the images use, a
   ].map(([, path]) => path);
   assert.ok(windowsCopies.length >= 2);
   for (const path of windowsCopies) assert.ok(windows.inputs.includes(path), path);
+  for (const path of [
+    'Dockerfile.browser',
+    'Dockerfile.workspace',
+    'desktop/runtime/Dockerfile.windows',
+  ])
+    for (const stage of (await readFile(join(repository, path), 'utf8')).split(/^FROM /m))
+      if (stage.includes('apt-get install'))
+        assert.match(
+          stage.slice(0, stage.indexOf('apt-get install')),
+          /^ARG NOD_RUNTIME_REFRESH$/m,
+          path,
+        );
   const dockerfiles = `${browserDockerfile}\n${await readFile(join(repository, 'Dockerfile.workspace'), 'utf8')}`;
   for (const [, path] of dockerfiles.matchAll(/^COPY (?:--\S+ )*(src\/\S+)/gm))
     assert.ok(input.inputs.includes(path), path);
@@ -2536,6 +2560,13 @@ test('runtime fingerprints cover dependencies and every source the images use, a
       env: { PATH: process.env.PATH, NOD_DESKTOP_TARGET: 'win32-x64', ...env },
     }).then(({ stdout }) => JSON.parse(stdout).fingerprint);
   const windowsBefore = await windowsRun();
+  const refreshed = await promisify(execFile)(
+    process.execPath,
+    [join(root, 'desktop/scripts/runtime-inputs.mjs')],
+    { env: { PATH: process.env.PATH, NOD_RUNTIME_REFRESH: '2026-10-19' } },
+  );
+  assert.notEqual(JSON.parse(refreshed.stdout).fingerprint, before);
+  assert.notEqual(await windowsRun({ NOD_RUNTIME_REFRESH: '2026-10-19' }), windowsBefore);
   assert.equal(
     await windowsRun({
       NOD_SIGNING_MODE: 'self-signed',

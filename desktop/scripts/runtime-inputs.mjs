@@ -106,6 +106,10 @@ export async function runtimeInputs(platform = runtimePlatform()) {
     }
     entries.push(['signing.mode', signingMode]);
   }
+  const refresh = process.env.NOD_RUNTIME_REFRESH || 'local';
+  if (!/^(?:local|\d{4}-\d{2}-\d{2})$/.test(refresh))
+    throw new Error('The runtime refresh must be local or a date.');
+  entries.push(['runtime:refresh', refresh]);
   entries.push(['target:platform', platform]);
   entries.sort(([left], [right]) => left.localeCompare(right));
   const lock = JSON.parse(

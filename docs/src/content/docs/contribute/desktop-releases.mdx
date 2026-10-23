@@ -132,7 +132,8 @@ Drafts are never offered to the installer or the updater.
 - If a reply, schedule or background check is running, or nod can't tell, it asks before restarting.
 - If the runtime hasn't changed, nod reuses it and downloads only the app or installer.
 - A Mac runtime changes only when what it ships changes: the browser worker and the source it imports, the scripts the images copy, dependencies, Dockerfiles, pinned downloads and the runtime build scripts. Other app changes reuse the published runtime.
-- A Windows runtime follows the same rule, plus its own Dockerfile, guest script and build script. When it hasn't changed, the release build downloads the published one, checks it against its manifest and GitHub's asset digest, and runs the full Windows install check on it, so Windows updates download only the installer.
+- A Windows runtime follows the same rule, plus its own Dockerfile, guest script and build script. When it hasn't changed, the release build downloads the published one, checks it against its manifest and GitHub's asset digest, and runs the full Windows install check on it. A Windows install that already has that runtime then updates with only the installer.
+- Both runtimes also rebuild in the first release of each week (from Monday, UTC). That build refetches the images' system packages, such as Chromium, instead of reusing Docker's cached layers, so a shipped runtime is never more than a week behind on security updates.
 - On Windows, the restart runs the verified installer silently over the current install, then opens nod again. The profile is kept.
 
 ## Help private-alpha testers

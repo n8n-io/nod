@@ -10,6 +10,7 @@ RUN node_modules/.bin/esbuild src/providers/container-browser/worker.ts src/prov
     && install -D -m 555 src/providers/container-browser/chromium.sh /out/src/providers/container-browser/chromium.sh
 
 FROM node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS browser
+ARG NOD_RUNTIME_REFRESH
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium xvfb xauth xdotool ffmpeg fonts-liberation fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji ca-certificates \
     && rm -rf /var/lib/apt/lists/*

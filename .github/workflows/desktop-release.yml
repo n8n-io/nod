@@ -59,6 +59,7 @@ jobs:
       runtime_public: ${{ steps.plan.outputs.runtime_public }}
       windows_runtime_fingerprint: ${{ steps.plan.outputs.windows_runtime_fingerprint }}
       windows_runtime_tag: ${{ steps.plan.outputs.windows_runtime_tag }}
+      runtime_refresh: ${{ steps.plan.outputs.runtime_refresh }}
     steps:
       - name: Check out the requested main revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -77,6 +78,8 @@ jobs:
         run: |
           until run=$(gh run list -R "$GITHUB_REPOSITORY" -w ci.yml -b main -c "$NOD_RELEASE_SOURCE" -L 1 --json databaseId --jq '.[0].databaseId // empty') && [ -n "$run" ]; do sleep 10; done
           gh run watch "$run" -R "$GITHUB_REPOSITORY" --exit-status --interval 30 > /dev/null
+      - name: Rebuild runtimes at least weekly
+        run: echo "NOD_RUNTIME_REFRESH=$(date -u -d "-$(( $(date -u +%u) - 1 )) days" +%F)" >> "$GITHUB_ENV"
       - name: Require tested source, signing configuration and runtime integrity
         id: plan
         env:
@@ -121,6 +124,7 @@ jobs:
       NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
       NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -145,6 +149,7 @@ jobs:
           file: Dockerfile.workspace
           platforms: linux/${{ matrix.docker_arch }}
           load: true
+          build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-workspace:experiment
           cache-from: type=gha,scope=desktop-workspace-${{ matrix.arch }}
           cache-to: type=gha,scope=desktop-workspace-${{ matrix.arch }},mode=max
@@ -155,6 +160,7 @@ jobs:
           file: Dockerfile.browser
           platforms: linux/${{ matrix.docker_arch }}
           load: true
+          build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-browser:experiment
           cache-from: type=gha,scope=desktop-browser-${{ matrix.arch }}
           cache-to: type=gha,scope=desktop-browser-${{ matrix.arch }},mode=max
@@ -193,6 +199,7 @@ jobs:
       NOD_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
       NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -256,6 +263,7 @@ jobs:
       NOD_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
       NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -394,6 +402,7 @@ jobs:
       NOD_RUNTIME_ASSETS: .local/windows-runtime-assets
       NOD_WINDOWS_RUNTIME_TAG: ${{ needs.plan.outputs.windows_runtime_tag }}
       NOD_WINDOWS_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.windows_runtime_fingerprint }}
+      NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -426,6 +435,7 @@ jobs:
           file: Dockerfile.workspace
           platforms: linux/amd64
           load: true
+          build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-workspace:experiment
           cache-from: |
             type=gha,scope=desktop-workspace-x64
@@ -440,6 +450,7 @@ jobs:
           file: Dockerfile.browser
           platforms: linux/amd64
           load: true
+          build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-browser:experiment
           cache-from: |
             type=gha,scope=desktop-browser-x64
@@ -596,6 +607,7 @@ jobs:
       NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
       NOD_RELEASE_PLAN: ${{ needs.plan.outputs.metadata_sha256 && '.local/desktop-release-plan.json' || '' }}
       NOD_RELEASE_PLAN_SHA256: ${{ needs.plan.outputs.metadata_sha256 }}
+      NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}
     permissions:
       contents: write
     steps:

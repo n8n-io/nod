@@ -71,10 +71,23 @@ for (const notice of lock.notices) {
   await download(notice.url, notice.sha256, file);
 }
 const image = 'nod-windows-rootfs:preview';
-await run('docker', ['build', '--platform', 'linux/amd64', '--tag', image, context], {
-  stdio: 'inherit',
-  timeout: 1_200_000,
-});
+await run(
+  'docker',
+  [
+    'build',
+    '--platform',
+    'linux/amd64',
+    '--build-arg',
+    'NOD_RUNTIME_REFRESH',
+    '--tag',
+    image,
+    context,
+  ],
+  {
+    stdio: 'inherit',
+    timeout: 1_200_000,
+  },
+);
 const container = await run('docker', ['create', '--platform', 'linux/amd64', image, '/bin/true'], {
   output: 'stdout',
 });

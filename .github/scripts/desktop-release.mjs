@@ -256,7 +256,7 @@ async function plan() {
       `repos/${releaseRepository}/releases?per_page=100`,
       '--paginate',
       '--jq',
-      '.[]',
+      '.[] | {tag_name, draft, assets: [.assets[] | {name}]}',
     ])
       .split('\n')
       .filter(Boolean)
@@ -273,6 +273,7 @@ async function plan() {
       ...first,
       windows_runtime_fingerprint: windows,
       windows_runtime_tag: windowsRuntime?.tag_name || '',
+      runtime_refresh: process.env.NOD_RUNTIME_REFRESH || 'local',
       mac_matrix: JSON.stringify({ include: targets }),
       runtime_matrix: JSON.stringify({
         include: targets.filter((target) => target.runtime_reused !== 'true'),
