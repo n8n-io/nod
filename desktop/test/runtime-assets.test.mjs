@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import {
   copyFile,
   mkdtemp,
@@ -16,7 +17,7 @@ import {
 } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, posix, resolve } from 'node:path';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createDesktopLifecycle } from '../main/lifecycle.mjs';
@@ -2494,6 +2495,55 @@ test('runtime fingerprints cover dependencies and every source the images use, a
   ].map(([, path]) => path);
   assert.ok(windowsCopies.length >= 2);
   for (const path of windowsCopies) assert.ok(windows.inputs.includes(path), path);
+  const covered = (inputs, path) => {
+    const full = join(repository, path);
+    if (!existsSync(full) || !statSync(full).isDirectory()) return inputs.includes(path);
+    return readdirSync(full, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .every((entry) =>
+        inputs.includes(posix.relative(repository, join(entry.parentPath, entry.name))),
+      );
+  };
+  for (const path of ['Dockerfile.workspace', 'Dockerfile.browser']) {
+    const dockerfile = await readFile(join(repository, path), 'utf8');
+    for (const [, sources] of dockerfile.matchAll(
+      /^(?:COPY|ADD)(?! --from)(?:\s+--\S+)*\s+(.+)\s+\S+$/gm,
+    ))
+      for (const source of sources.split(/\s+/))
+        if (source !== 'src') assert.ok(covered(input.inputs, source), `${path}: ${source}`);
+    for (const [source] of dockerfile.matchAll(/\bsrc\/[\w./-]+/g))
+      assert.ok(covered(input.inputs, source), `${path}: ${source}`);
+  }
+  for (const [inputs, roots] of [
+    [input.inputs, ['desktop/scripts/prepare-runtime.mjs', 'desktop/scripts/runtime-pack.mjs']],
+    [
+      windows.inputs,
+      ['desktop/scripts/prepare-runtime.mjs', 'desktop/scripts/prepare-windows-runtime.mjs'],
+    ],
+  ]) {
+    const seen = new Set();
+    const visit = async (path) => {
+      if (seen.has(path)) return;
+      seen.add(path);
+      assert.ok(covered(inputs, path), path);
+      if (!path.endsWith('.mjs') || path === 'desktop/scripts/runtime-inputs.mjs') return;
+      const source = await readFile(join(repository, path), 'utf8');
+      const targets = [
+        ...[...source.matchAll(/(?:from\s*|import\(\s*)'(\.{1,2}\/[^']+\.mjs)'/g)].map(
+          ([, target]) => posix.join(posix.dirname(path), target),
+        ),
+        ...[
+          ...source.matchAll(
+            /'((?:desktop|src|patches)\/[^'*]+|Dockerfile\.[\w.]+|\.dockerignore|package\.json|pnpm-[\w.-]+\.yaml)'/g,
+          ),
+        ].map(([, target]) => target),
+      ];
+      for (const target of targets)
+        if (await stat(join(repository, target)).catch(() => undefined)) await visit(target);
+    };
+    for (const root of roots) await visit(root);
+    assert.ok(seen.size > roots.length);
+  }
   for (const path of [
     'Dockerfile.browser',
     'Dockerfile.workspace',
