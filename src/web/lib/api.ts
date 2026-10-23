@@ -1,3 +1,5 @@
+import { feedbackActivity } from './feedback-activity';
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -21,6 +23,7 @@ export function setRequestAccount(id: string | null) {
   if (id === requestAccount) return;
   requestAccount = id;
   accountGeneration++;
+  feedbackActivity.clear();
   for (const request of privateRequests) request.abort();
   privateRequests.clear();
 }
@@ -45,6 +48,47 @@ async function request<T>(
       ? AbortSignal.any([controller.signal, options.signal])
       : controller.signal
     : (options.signal ?? undefined);
+  let status = 0;
+  const failure = (reason: string) => {
+    if (generation !== accountGeneration) return;
+    const segment = path.split(/[/?]/)[2];
+    const area =
+      (
+        {
+          messages: 'chat',
+          thread: 'chat',
+          conversation: 'chat',
+          state: 'chat',
+          apps: 'apps',
+          integrations: 'apps',
+          models: 'models',
+          browser: 'browser',
+          'browser-handoff': 'browser',
+          channels: 'channels',
+          'channel-settings': 'channels',
+          tasks: 'tasks',
+          schedules: 'tasks',
+          'schedule-runs': 'tasks',
+          usage: 'usage',
+          vault: 'vault',
+          'credential-requests': 'vault',
+          'payment-requests': 'vault',
+          preferences: 'settings',
+          privacy: 'settings',
+          configuration: 'settings',
+          trust: 'settings',
+          account: 'settings',
+          onboarding: 'onboarding',
+          feedback: 'feedback',
+        } as Record<string, string>
+      )[segment] ?? 'other';
+    feedbackActivity.record('request_failed', {
+      area,
+      method: options.method?.toUpperCase() ?? 'GET',
+      status,
+      reason,
+    });
+  };
   try {
     const response = await fetch(path, {
       ...options,
@@ -58,6 +102,8 @@ async function request<T>(
       (expectedAccount && generation !== accountGeneration)
     )
       throw new DOMException('The account changed.', 'AbortError');
+    status = response.status;
+    if (!response.ok) failure('http');
     if (
       expectedAccount &&
       response.status === 401 &&
@@ -74,6 +120,11 @@ async function request<T>(
     )
       throw new DOMException('The account changed.', 'AbortError');
     return result;
+  } catch (error) {
+    const timedOut = signal?.aborted && signal.reason?.name === 'TimeoutError';
+    if ((!signal?.aborted || timedOut) && (status === 0 || status < 400))
+      failure(timedOut ? 'timeout' : status === 0 ? 'network' : 'invalid_response');
+    throw error;
   } finally {
     if (controller) privateRequests.delete(controller);
   }

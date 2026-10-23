@@ -430,6 +430,12 @@ test(
     };
     try {
       const { createModelService } = await import('../src/server/models.ts');
+      const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+      await createDatabaseModelStore({
+        database: pool,
+        ownerId: 'route-fixture',
+        keyStore,
+      }).initialize();
       createModelService({
         database: pool,
         ownerId: 'route-fixture',
@@ -438,6 +444,17 @@ test(
         origin: headers.origin,
       }).register(application.app);
       await application.app.ready();
+      const diagnostics = await application.app.inject({
+        method: 'POST',
+        url: '/api/feedback/report',
+        headers,
+        payload: {},
+      });
+      assert.equal(diagnostics.statusCode, 200);
+      const diagnosticReport = JSON.parse(diagnostics.json().content);
+      assert.equal(diagnosticReport.coverage.contentIncluded, false);
+      for (const [name, section] of Object.entries(diagnosticReport.coverage.sections))
+        assert.equal((section as { status: string }).status, 'collected', name);
       assert.equal(
         (
           await application.app.inject({

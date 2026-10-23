@@ -2,6 +2,7 @@ import type { CaptureResult, PostHog } from 'posthog-js';
 import { posthogConfig, type AnalyticsConfiguration } from '../../shared/analytics';
 import { desktopSettingsAvailable } from './desktop';
 import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
+import { feedbackActivity } from './feedback-activity';
 
 type AnalyticsEvents = {
   nod_onboarding_step_viewed: {
@@ -392,6 +393,7 @@ export function captureAnalytics<Event extends keyof AnalyticsEvents>(
   ...args: AnalyticsEvents[Event] extends undefined ? [] : [AnalyticsEvents[Event]]
 ) {
   try {
+    feedbackActivity.record(event, args[0]);
     if (configuration?.enabled) posthog?.capture(event, args[0]);
   } catch {}
 }
@@ -412,6 +414,7 @@ export function analyticsForCurrentSession(): typeof captureAnalytics {
 }
 
 export function capturePageview(path: string) {
+  feedbackActivity.record('screen', { screen: analyticsRoute(path) });
   if (!configuration?.enabled) return;
   const route = analyticsRoute(path);
   if (route === lastPage) return;

@@ -146,16 +146,16 @@ On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/nod/instal
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Not enough storage    | nod needs the runtime's extracted size plus 512 MiB, and downloads also reserve the archive size. The error says how much to free. Free it and retry. Existing data is kept. |
 | Setup was interrupted | Retry it.                                                                                                                                                                    |
-| It still fails        | Open **Send feedback** in Chat, tick **Include diagnostic report**, review it and send. If Chat can't open, send the visible setup error.                                    |
+| It still fails        | Open **Send feedback** in Chat, choose **Bug or issue**, review the selected diagnostic report, and send. If Chat can't open, describe the visible setup error.              |
 | Starting over         | Select **Remove all data…** in the **nod** menu. It deletes the profile and private computer, keeps the runtime, and quits.                                                  |
 
-If recent history can't be read or scrubbed, the report omits conversation and action details. You can review and send that limited report. If the report itself can't be prepared, select **Continue without report**, then **Send feedback**. Your text and selected attachments stay in the draft.
+The report contains technical metadata, never chat text, tool arguments, results, or screenshots. Database sections mark unavailable sources and omitted older entries. The app activity buffer has fixed limits and no omission marker. See [Report contents and limits](/deploy/troubleshooting/#report-contents-and-limits). If preparation fails, select **Continue without report**, then **Send feedback**. Your text and selected attachments stay in the draft; check these for personal information.
 
 :::danger[Don't delete the profile to recover]
 Never delete the profile, VM, database or runtime cache as a routine recovery step. A downgrade or full backup-and-restore isn't supported. Testers should never send API keys, passwords or the settings file.
 :::
 
-In development, **Copy trace** copies the same report without sending it. `NOD_FEEDBACK_URL` changes where feedback goes, and an empty value turns sending off.
+In development, **Copy report** copies the same report without sending it. `NOD_FEEDBACK_URL` changes where feedback goes, and an empty value turns sending off.
 
 :::caution[Hardware needs aren't measured yet]
 The storage check covers installing the runtime only. The VM reserves 3 to 6 GiB of RAM and a 24 GiB virtual disk that grows as it's used.

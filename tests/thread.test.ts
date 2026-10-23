@@ -3903,7 +3903,10 @@ async function feedbackFixture(t: TestContext) {
     source: 'desktop' as const,
     appModified: false,
   };
-  const open = async (ownerId = randomUUID(), buildReport = async () => state.content) => {
+  const open = async (
+    ownerId = randomUUID(),
+    buildReport: Parameters<typeof registerFeedback>[1]['buildReport'] = async () => state.content,
+  ) => {
     const app = Fastify();
     apps.push(app);
     await registerFeedback(app, {
@@ -3932,12 +3935,48 @@ test(
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await feedbackFixture(t);
-    const first = await f.open();
+    const first = await f.open(randomUUID(), async (activity: unknown) =>
+      JSON.stringify({ activity }),
+    );
     const second = await f.open();
     const snapshot = (
-      await first.app.inject({ method: 'POST', url: '/api/feedback/report' })
+      await first.app.inject({
+        method: 'POST',
+        url: '/api/feedback/report',
+        payload: {
+          activity: [
+            {
+              source: 'runtime',
+              ageMs: 1245,
+              event: 'nod_ui_error',
+              properties: {
+                area: 'chat',
+                action: 'send',
+                message: 'Unstructured private diagnostic canary',
+              },
+              account: 'Private account canary',
+            },
+            { source: 'app', ageMs: 0, event: 'Private event name', properties: { area: 'chat' } },
+          ],
+        },
+      })
     ).json<{ id: string; content: string }>();
-    const input = f.submission({ reportId: snapshot.id });
+    assert.deepEqual(JSON.parse(snapshot.content), {
+      activity: [
+        {
+          source: 'app',
+          ageMs: 1000,
+          event: 'nod_ui_error',
+          properties: { area: 'chat', action: 'send' },
+        },
+      ],
+    });
+    const input = f.submission({
+      reportId: snapshot.id,
+      appVersion: 'Private version canary',
+      appRelease: 'Private release canary',
+      platform: 'Private computer canary',
+    });
     const crossOwner = await second.app.inject({
       method: 'POST',
       url: '/api/feedback',
@@ -3948,6 +3987,19 @@ test(
     const sent = await first.app.inject({ method: 'POST', url: '/api/feedback', payload: input });
     assert.equal(sent.statusCode, 200);
     assert.equal(f.state.envelopes.length, 1);
+    const delivered = f.state.envelopes[0];
+    assert.equal(Buffer.from(delivered.report!.data, 'base64').toString(), snapshot.content);
+    assert.equal(delivered.appVersion, null);
+    assert.equal(delivered.appRelease, null);
+    assert.equal(delivered.platform, null);
+    assert.doesNotMatch(JSON.stringify(delivered), /canary/);
+    const withoutReport = await first.app.inject({
+      method: 'POST',
+      url: '/api/feedback',
+      payload: f.submission(),
+    });
+    assert.equal(withoutReport.statusCode, 200);
+    assert.equal(f.state.envelopes[1].report, undefined);
     const foreignStatus = await second.app.inject({ url: `/api/feedback/${input.submissionId}` });
     assert.equal(foreignStatus.json().status, 'rejected');
     assert.equal(f.state.statusRequests.length, 0);
@@ -3960,270 +4012,322 @@ test(
 );
 
 test(
-  'feedback diagnostics exclude unrelated personal context, scrub personal data, redact mirrored credentials and stay bounded',
+  'feedback diagnostics retain operational evidence without exporting content or owner identifiers',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await feedbackFixture(t);
     const { buildFeedbackReport } = await import('../src/server/bug-report.ts');
     await f.pool.query(`
-      CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text,status text DEFAULT 'idle',archived_at timestamptz);
-      CREATE TABLE messages(id uuid,owner_id text,thread_id uuid,turn_id uuid,role text,text text,created_at timestamptz DEFAULT now());
-      CREATE TABLE turns(id uuid,owner_id text,thread_id uuid,source text,status text,error text,background boolean DEFAULT false,waiting_reason text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
-      CREATE TABLE profiles(owner_id text,data jsonb);
-      CREATE TABLE goals(owner_id text,title text);
-      CREATE TABLE schedules(owner_id text,prompt text)
+      CREATE TABLE messages(id uuid,owner_id text,turn_id uuid,role text,text text,attachments jsonb DEFAULT '[]',reply_to_message_id uuid,created_at timestamptz DEFAULT now());
+      CREATE TABLE turns(id uuid,owner_id text,parent_turn_id uuid,session_id uuid,source text,channel text,status text,error text,background boolean,waiting_reason text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
+      CREATE TABLE turn_events(id uuid,turn_id uuid,run_id uuid,parent_run_id uuid,session_id uuid,call_id uuid,type text,summary text,created_at timestamptz DEFAULT now());
+      CREATE TABLE model_usage(id text,owner_id text,turn_id uuid,session_id uuid,run_id uuid,parent_run_id uuid,cost_usd double precision,details jsonb,created_at timestamptz DEFAULT now());
+      CREATE TABLE tasks(id uuid,owner_id text,turn_id uuid,session_id uuid,state text,step_index integer,steps jsonb,revision integer,applied_revision integer,updated_at timestamptz DEFAULT now());
+      CREATE TABLE app_connections(id uuid,owner_id text,slug text,account_id text,account_active boolean,revoked boolean,callback_expires timestamptz,triggers_enabled boolean,watch_failures integer,inbox_failed boolean,inbox_reconnect_required boolean,account_checked_at timestamptz,inbox_checked_at timestamptz,created_at timestamptz DEFAULT now());
+      CREATE TABLE browser_connections(id uuid,owner_id text,state text,checked_at timestamptz,created_at timestamptz DEFAULT now());
+      CREATE TABLE discovered_connections(id uuid,owner_id text,reconnect_required boolean,replaced_at timestamptz,paths jsonb,created_at timestamptz DEFAULT now());
+      CREATE TABLE model_connections(id uuid,owner_id text,provider text,method text,status text,managed boolean,created_at timestamptz DEFAULT now());
+      CREATE TABLE integration_events(id text,owner_id text,slug text,state text,created_at timestamptz DEFAULT now());
+      CREATE TABLE schedules(id uuid,owner_id text,kind text,enabled boolean,delivery_channel text,next_run_at timestamptz,created_at timestamptz DEFAULT now());
+      CREATE TABLE schedule_runs(id uuid,owner_id text,schedule_id uuid,turn_id uuid,created_at timestamptz DEFAULT now());
+      CREATE TABLE channel_inbox(source_id text,owner_id text,provider text,state text,turn_id uuid,created_at timestamptz DEFAULT now());
+      CREATE TABLE channel_outbox(source_id text,state text,reason text,updated_at timestamptz DEFAULT now());
     `);
     const ownerId = randomUUID();
     const otherOwner = randomUUID();
-    const threadId = randomUUID();
-    const archivedThread = randomUUID();
-    const otherThread = randomUUID();
-    const secret = 'synthetic-saved-password/123';
-    const username = 'synthetic-saved-user';
-    const apiKey = 'synthetic-bootstrap/composio-value';
-    const personal =
-      'from Marta Vidal <marta.vidal@example.com>, card 4111 1111 1111 1111, call 612 345 678';
-    const paddedApiKey = ` \t${apiKey}\r\n`;
-    const echoes = [
-      apiKey,
-      paddedApiKey,
-      encodeURIComponent(apiKey),
-      encodeURIComponent(paddedApiKey),
+    const turnId = randomUUID();
+    const foreignTurn = randomUUID();
+    const sessionId = randomUUID();
+    const mainRun = randomUUID();
+    const childRun = randomUUID();
+    const callId = randomUUID();
+    const messageId = randomUUID();
+    const scheduleId = randomUUID();
+    const privateValues = [
+      'Marta Vidal',
+      'someone.unknown@example.com',
+      'Rua da Piedade 37',
+      'a private medical condition',
+      '4111 1111 1111 1111',
+      'synthetic-password/123',
+      'https://customer.example.com/private?token=secret',
+      '/Users/customer/private.pdf',
     ];
+    const privateText = privateValues.join(' | ');
     await f.pool.query(
-      'INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,NULL),($3,$2,now()),($4,$5,NULL)',
-      [threadId, ownerId, archivedThread, otherThread, otherOwner],
+      `INSERT INTO turns VALUES($1,$2,NULL,$3,'task','web','failed',$4,true,'approval',now()-interval '5 minutes',now()-interval '4 minutes',now()-interval '3 minutes'),
+       ($5,$6,NULL,$7,'user','telegram','succeeded',$4,false,NULL,now(),now(),now())`,
+      [turnId, ownerId, sessionId, privateText, foreignTurn, otherOwner, randomUUID()],
     );
-    await f.pool.query('INSERT INTO profiles VALUES($1,$2)', [
-      ownerId,
-      { personal: 'synthetic-private-profile' },
-    ]);
-    await f.pool.query('INSERT INTO goals VALUES($1,$2)', [ownerId, 'synthetic-private-goal']);
-    await f.pool.query('INSERT INTO schedules VALUES($1,$2)', [
-      ownerId,
-      'synthetic-private-schedule',
-    ]);
-    for (const row of [
+    await f.pool.query(
+      `INSERT INTO messages(id,owner_id,turn_id,role,text,attachments) VALUES($1,$2,$3,'assistant',$4,$5),($6,$7,$8,'user','foreign-owner', '[]');
+       `,
       [
+        messageId,
         ownerId,
-        threadId,
-        `Visible diagnostic ${secret} ${encodeURIComponent(secret)} ${username} ${echoes.join('|')} ${personal}`,
-        'now()',
+        turnId,
+        privateText,
+        JSON.stringify([{ name: privateText, mimeType: 'application/pdf' }]),
+        randomUUID(),
+        otherOwner,
+        foreignTurn,
       ],
-      [ownerId, archivedThread, 'synthetic-archived-thread', 'now()'],
-      [otherOwner, otherThread, 'synthetic-foreign-owner', 'now()'],
-      [ownerId, threadId, 'synthetic-old-message', "now()-interval '2 days'"],
+    );
+    await f.pool.query(
+      `INSERT INTO messages(id,owner_id,role,text,created_at) VALUES($1,$2,'user','old-message',now()-interval '2 days'),($3,$2,'user','future-message',now()+interval '1 day')`,
+      [randomUUID(), ownerId, randomUUID()],
+    );
+    for (const event of [
+      [mainRun, null, 'agent_start', privateText],
+      [childRun, mainRun, 'agent_start', privateText],
+      [childRun, mainRun, 'tool_failed', 'browser'],
+      [childRun, mainRun, 'tool_failed', 'sign in'],
+      [childRun, mainRun, 'tool_complete', 'web search'],
+      [childRun, mainRun, 'tool_failed', privateText],
+      [childRun, mainRun, 'agent_failed', privateText],
     ])
       await f.pool.query(
-        `INSERT INTO messages(id,owner_id,thread_id,role,text,created_at) VALUES($1,$2,$3,'assistant',$4,${row[3]})`,
-        [randomUUID(), row[0], row[1], row[2]],
+        'INSERT INTO turn_events(id,turn_id,session_id,run_id,parent_run_id,call_id,type,summary) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+        [randomUUID(), turnId, sessionId, event[0], event[1], callId, event[2], event[3]],
       );
     await f.pool.query(
-      "INSERT INTO turns(id,owner_id,thread_id,source,status,error) VALUES($1,$2,$3,'user','failed',$4)",
-      [randomUUID(), ownerId, threadId, `Provider failure ${echoes.join('|')}`],
+      `INSERT INTO turn_events(id,turn_id,type,summary) VALUES($1,$2,'agent_complete','foreign-event')`,
+      [randomUUID(), foreignTurn],
     );
-    const toolCall = (id: string, name: string, input: unknown, output: string) => {
-      const timestamp = new Date().toISOString();
-      return [
-        {
-          type: 'message',
-          timestamp,
-          message: {
-            role: 'assistant',
-            content: [{ type: 'toolCall', id, name, arguments: input }],
+    for (const owner of [ownerId, otherOwner]) {
+      const currentTurn = owner === ownerId ? turnId : foreignTurn;
+      await f.pool.query(
+        'INSERT INTO model_usage(id,owner_id,turn_id,session_id,run_id,parent_run_id,cost_usd,details) VALUES($1,$2,$3,$4,$5,$6,0.01234,$7)',
+        [
+          randomUUID(),
+          owner,
+          currentTurn,
+          sessionId,
+          childRun,
+          mainRun,
+          {
+            provider: 'openai',
+            model: 'gpt-5',
+            category: 'agent',
+            status: 'failed',
+            durationMs: 4321,
+            inputTokens: 123,
+            outputTokens: 45,
+            cacheReadTokens: 10,
+            cacheWriteTokens: 0,
+            operation: privateText,
+            private: privateText,
+            pricing: 'sdk_estimate',
+            estimateUsd: 0.04567,
+            costUsd: 987,
           },
-        },
-        {
-          type: 'message',
-          timestamp,
-          message: {
-            role: 'toolResult',
-            toolCallId: id,
-            toolName: name,
-            content: [{ type: 'text', text: output }],
-          },
-        },
-      ];
-    };
+        ],
+      );
+      await f.pool.query(`INSERT INTO tasks VALUES($1,$2,$3,$4,'open',1,$5,2,1,now())`, [
+        randomUUID(),
+        owner,
+        currentTurn,
+        sessionId,
+        JSON.stringify([privateText, privateText]),
+      ]);
+      await f.pool.query(
+        `INSERT INTO app_connections(id,owner_id,slug,account_id,account_active,revoked,triggers_enabled,watch_failures,inbox_failed,inbox_reconnect_required) VALUES($1,$2,$3,$4,false,false,true,3,true,true)`,
+        [randomUUID(), owner, privateText, privateText],
+      );
+      await f.pool.query(
+        `INSERT INTO browser_connections(id,owner_id,state) VALUES($1,$2,'needs_sign_in')`,
+        [randomUUID(), owner],
+      );
+      await f.pool.query(
+        `INSERT INTO discovered_connections(id,owner_id,reconnect_required,paths) VALUES($1,$2,true,$3)`,
+        [
+          randomUUID(),
+          owner,
+          JSON.stringify([{ kind: 'mcp', endpoint: privateText }, { kind: privateText }]),
+        ],
+      );
+      await f.pool.query(
+        `INSERT INTO model_connections(id,owner_id,provider,method,status,managed) VALUES($1,$2,$3,'api_key','reconnect',false)`,
+        [randomUUID(), owner, privateText],
+      );
+      await f.pool.query(
+        `INSERT INTO integration_events(id,owner_id,slug,state) VALUES($1,$2,'gmail','processing')`,
+        [privateText + owner, owner],
+      );
+      const schedule = owner === ownerId ? scheduleId : randomUUID();
+      await f.pool.query(
+        `INSERT INTO schedules(id,owner_id,kind,enabled,delivery_channel,next_run_at) VALUES($1,$2,'recurring',true,'web',now()-interval '1 minute')`,
+        [schedule, owner],
+      );
+      await f.pool.query(
+        `INSERT INTO schedule_runs(id,owner_id,schedule_id,turn_id) VALUES($1,$2,$3,$4)`,
+        [randomUUID(), owner, schedule, currentTurn],
+      );
+      const channelId = privateText + owner;
+      await f.pool.query(
+        `INSERT INTO channel_inbox(source_id,owner_id,provider,state,turn_id) VALUES($1,$2,'telegram','submitted',$3)`,
+        [channelId, owner, currentTurn],
+      );
+      await f.pool.query(
+        `INSERT INTO channel_outbox(source_id,state,reason) VALUES($1,'uncertain','send_not_confirmed')`,
+        [channelId],
+      );
+    }
     const options = {
       pool: f.pool,
       ownerId,
-      secrets: [paddedApiKey],
-      provider: 'synthetic',
-      model: 'synthetic',
-      profile: async () => ({ names: ['Marta Vidal'], region: 'ES' }),
-      sessionEntries: async (requested: string) => {
-        assert.equal(requested, threadId);
-        return [
-          {
-            type: 'message',
-            message: {
-              role: 'toolResult',
-              toolName: 'get_credential',
-              content: [{ type: 'text', text: JSON.stringify({ username, password: secret }) }],
-            },
-          },
-          {
-            type: 'message',
-            message: {
-              role: 'assistant',
-              content: [{ type: 'thinking', thinking: 'synthetic-private-reasoning' }],
-            },
-          },
-          ...toolCall(
-            'credential',
-            'get_credential',
-            { origin: 'synthetic-credential-origin' },
-            secret,
-          ),
-          ...toolCall(
-            'browser',
-            'browser',
-            {
-              action: `echo ${secret}`,
-              attendees: [{ displayName: 'Ana Ruiz', email: 'ana.ruiz@example.com' }],
-            },
-            `Visible tool activity ${username}; ${echoes.join('|')} ${personal}`,
-          ),
-          ...toolCall(
-            'fill',
-            'browser',
-            { action: 'fill', text: 'synthetic-private-fill' },
-            username,
-          ),
-          ...toolCall('login', 'sign_in', { origin: 'synthetic-private-origin' }, 'private-login'),
-        ];
+      provider: privateText,
+      model: privateText,
+      context: {
+        appVersion: '1.2.3',
+        appRelease: privateText,
+        platform: privateText,
+        development: false,
+        source: 'desktop' as const,
+        appModified: null,
+      },
+      activity: [
+        {
+          source: 'app' as const,
+          ageMs: 1000,
+          event: 'screen',
+          properties: { screen: '/apps', url: privateText },
+        },
+      ],
+      profile: () => {
+        throw new Error('Profiles must not be read');
+      },
+      sessionEntries: () => {
+        throw new Error('Session transcripts must not be read');
       },
     };
     const encoded = await buildFeedbackReport(options);
     for (const omitted of [
-      secret,
-      encodeURIComponent(secret),
-      username,
-      ...echoes,
-      'synthetic-private-profile',
-      'synthetic-private-goal',
-      'synthetic-private-schedule',
-      'synthetic-private-reasoning',
-      'synthetic-archived-thread',
-      'synthetic-foreign-owner',
-      'synthetic-old-message',
-      'synthetic-credential-origin',
-      'synthetic-private-fill',
-      'synthetic-private-origin',
-      'private-login',
-      'Marta',
-      'Vidal',
-      'marta.vidal@example.com',
-      '4111',
-      '612 345 678',
-      'Ana Ruiz',
-      'ana.ruiz@example.com',
+      ...privateValues,
+      ownerId,
+      otherOwner,
+      turnId,
+      foreignTurn,
+      sessionId,
+      mainRun,
+      childRun,
+      callId,
+      messageId,
+      scheduleId,
+      'foreign-owner',
+      'foreign-event',
+      'old-message',
+      'future-message',
     ])
       assert.ok(!encoded.includes(omitted), omitted);
-    assert.ok(encoded.includes('Visible diagnostic'));
-    assert.ok(encoded.includes('Visible tool activity'));
-    assert.ok(encoded.includes('[redacted]'));
+    assert.doesNotMatch(encoded, /\d{4}-\d{2}-\d{2}T/);
     const report = JSON.parse(encoded);
+    assert.equal(report.format, 'nod-feedback-report-v2');
+    assert.equal(report.coverage.contentIncluded, false);
+    assert.ok(
+      Object.values(report.coverage.sections).every(
+        (section: any) => section.status === 'collected',
+      ),
+    );
     assert.equal(report.messages.length, 1);
-    assert.equal(report.trace.length, 4);
-    const large = 'x'.repeat(3500);
-    const start = Date.now() + 1_000;
-    let newest = '';
-    for (let index = 0; index < 200; index++) {
-      newest = randomUUID();
-      await f.pool.query(
-        "INSERT INTO messages(id,owner_id,thread_id,role,text,created_at) VALUES($1,$2,$3,'assistant',$4,$5)",
-        [newest, ownerId, threadId, `${large}${large}${large}`, new Date(start + index * 1000)],
-      );
-    }
-    const bounded = await buildFeedbackReport(options);
-    assert.ok(Buffer.byteLength(bounded) <= feedbackLimits.reportBytes);
-    const truncated = JSON.parse(bounded);
-    assert.equal(truncated.coverage.truncated, true);
-    assert.equal(truncated.messages.at(-1).id, newest);
-    assert.ok(truncated.messages.length > 30);
+    assert.equal(report.messages[0].characters, privateText.length);
+    assert.equal(report.messages[0].attachmentCount, 1);
+    assert.equal(report.turns.length, 1);
+    assert.equal(report.messages[0].turnId, report.turns[0].id);
+    assert.equal(report.turns[0].status, 'failed');
+    assert.equal(report.turns[0].queueMs, 60_000);
+    assert.equal(report.turns[0].durationMs, 60_000);
+    assert.equal(report.turns[0].errorPresent, true);
+    assert.equal(report.execution.length, 7);
+    assert.ok(report.execution.some((row: any) => row.tool === 'sign_in'));
+    assert.ok(report.execution.some((row: any) => row.tool === 'web'));
+    const child = report.execution.find(
+      (row: any) => row.parentRunId && row.type === 'agent_start',
+    );
+    assert.ok(
+      report.execution.some(
+        (row: any) => row.runId === child.parentRunId && row.type === 'agent_start',
+      ),
+    );
+    assert.ok(
+      report.execution.some(
+        (row: any) =>
+          row.runId === child.runId && row.type === 'tool_failed' && row.tool === 'browser',
+      ),
+    );
+    assert.equal(report.modelUsage.length, 1);
+    assert.equal(report.modelUsage[0].runId, child.runId);
+    assert.equal(report.modelUsage[0].inputTokens, 123);
+    assert.equal(report.modelUsage[0].modelFamily, 'gpt');
+    assert.equal(report.modelUsage[0].durationMs, 4321);
+    assert.equal(report.modelUsage[0].costUsd, 0.01234);
+    assert.equal(report.modelUsage[0].estimateUsd, 0.04567);
+    assert.deepEqual(report.runtime, { provider: 'other', modelFamily: 'custom' });
+    assert.equal(report.environment.appVersion, '1.2.3');
+    assert.equal(report.environment.appRelease, null);
+    assert.equal(report.environment.platform, null);
+    assert.deepEqual(report.appActivity.entries, [
+      { source: 'app', ageMs: 1000, event: 'screen', properties: { screen: '/apps' } },
+    ]);
+    assert.equal(report.tasks[0].steps, 2);
+    assert.equal(report.connections.length, 1);
+    assert.equal(report.connections[0].app, 'custom');
+    assert.equal(report.connections[0].status, 'reconnect');
+    assert.equal(report.connections[0].watchFailures, 3);
+    assert.equal(report.connections[0].inboxFailed, true);
+    assert.equal(report.browserConnections.length, 1);
+    assert.equal(report.directConnections.length, 1);
+    assert.deepEqual(report.directConnections[0].methods, ['mcp', 'other']);
+    assert.equal(report.modelConnections[0].provider, 'other');
+    assert.equal(report.integrationEvents.length, 1);
+    assert.equal(report.schedules.length, 1);
+    assert.equal(report.schedules[0].failedRuns, 1);
+    assert.equal(report.schedules[0].overdue, true);
+    assert.equal(report.channels.length, 1);
+    assert.equal(report.channels[0].deliveryState, 'uncertain');
 
-    const { SessionManager } = await import('@earendil-works/pi-coding-agent');
-    const { openLocalSession, readPiSessionEntries } =
-      await import('../src/providers/pi/checkpoint.ts');
-    const sessionRoot = await mkdtemp(join(tmpdir(), 'feedback-session-'));
-    t.after(() => rm(sessionRoot, { recursive: true, force: true }));
-    const directory = join(sessionRoot, threadId);
-    const session = SessionManager.create(directory, directory);
-    session.appendMessage({ role: 'user', content: 'Synthetic request', timestamp: Date.now() });
-    session.appendMessage({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'Synthetic response' }],
-      api: 'openai-responses',
-      provider: 'openai',
-      model: 'synthetic',
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: 'stop',
-      timestamp: Date.now(),
+    await f.pool.query(
+      `INSERT INTO messages(id,owner_id,role,text,created_at)
+       SELECT gen_random_uuid(),$1,'user',repeat('x',n),now()-interval '10 seconds'+n*interval '1 millisecond'
+       FROM generate_series(1,250) n`,
+      [ownerId],
+    );
+    const bounded = await buildFeedbackReport(options);
+    const truncated = JSON.parse(bounded);
+    assert.ok(Buffer.byteLength(bounded) <= feedbackLimits.reportBytes);
+    assert.equal(truncated.coverage.truncated, true);
+    assert.equal(truncated.coverage.sections.messages.truncated, true);
+    assert.equal(truncated.messages.length, 200);
+    assert.ok(truncated.messages.some((row: any) => row.characters === 250));
+    assert.ok(!truncated.messages.some((row: any) => row.characters === 1));
+
+    await f.pool.query(
+      "UPDATE model_usage SET cost_usd='Infinity',details=jsonb_set(details,'{estimateUsd}','-1') WHERE owner_id=$1",
+      [ownerId],
+    );
+    const invalidCost = JSON.parse(await buildFeedbackReport(options));
+    assert.equal(invalidCost.modelUsage[0].costUsd, null);
+    assert.equal(invalidCost.modelUsage[0].estimateUsd, null);
+    await f.pool.query('DROP TABLE model_usage');
+    const unavailable = JSON.parse(await buildFeedbackReport(options));
+    assert.equal(unavailable.coverage.sections.modelUsage.status, 'unavailable');
+    assert.deepEqual(unavailable.modelUsage, []);
+    assert.equal(unavailable.turns[0].status, 'failed');
+    assert.equal(unavailable.messages.length, 200);
+    const runtime = await f.open(ownerId, () => buildFeedbackReport(options));
+    const prepared = await runtime.app.inject({ method: 'POST', url: '/api/feedback/report' });
+    assert.equal(prepared.statusCode, 200);
+    const snapshot = prepared.json<{ id: string; content: string }>();
+    const sent = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/feedback',
+      payload: f.submission({ reportId: snapshot.id }),
     });
-    await writeFile(session.getSessionFile()!, '\n{"type":"message",', { flag: 'a' });
-    const reopened = openLocalSession(directory);
-    reopened.appendMessage({
-      role: 'user',
-      content: 'Synthetic request after interruption',
-      timestamp: Date.now(),
-    });
-    assert.equal(reopened.getEntries().length, 3);
-    const readSession = () => readPiSessionEntries({ threadId, sessionRoot });
-    await assert.rejects(readSession);
-    const recoveredFile = await readFile(session.getSessionFile()!, 'utf8');
-    for (const unavailable of ['session', 'profile'] as const) {
-      await t.test(`feedback remains sendable when ${unavailable} is unavailable`, async () => {
-        const runtime = await f.open(ownerId, () =>
-          buildFeedbackReport({
-            ...options,
-            ...(unavailable === 'session'
-              ? { sessionEntries: readSession }
-              : {
-                  profile: async () => {
-                    throw new Error('synthetic-private-profile-failure');
-                  },
-                }),
-          }),
-        );
-        const prepared = await runtime.app.inject({ method: 'POST', url: '/api/feedback/report' });
-        assert.equal(prepared.statusCode, 200);
-        const snapshot = prepared.json<{ id: string; content: string }>();
-        const limited = JSON.parse(snapshot.content);
-        assert.equal(limited.coverage.contentOmitted, true);
-        assert.equal(limited.coverage.toolTraceSource, 'unavailable');
-        assert.equal(limited.messages.at(-1).id, newest);
-        assert.equal(limited.turns[0].status, 'failed');
-        assert.deepEqual(limited.trace, []);
-        assert.ok(limited.messages.every((row: object) => !('text' in row)));
-        assert.ok(
-          limited.turns.every((row: object) => !('error' in row) && !('waiting_reason' in row)),
-        );
-        for (const omitted of [secret, username, apiKey, 'Marta', 'Visible diagnostic', 'private'])
-          assert.ok(!snapshot.content.includes(omitted), omitted);
-        assert.ok(Buffer.byteLength(snapshot.content) <= feedbackLimits.reportBytes);
-        const submission = f.submission({ reportId: snapshot.id });
-        const sent = await runtime.app.inject({
-          method: 'POST',
-          url: '/api/feedback',
-          payload: submission,
-        });
-        assert.equal(sent.json().status, 'submitted');
-        assert.equal(
-          Buffer.from(f.state.envelopes.at(-1)!.report!.data, 'base64').toString(),
-          snapshot.content,
-        );
-      });
-    }
-    assert.equal(await readFile(session.getSessionFile()!, 'utf8'), recoveredFile);
+    assert.equal(sent.json().status, 'submitted');
+    assert.equal(
+      Buffer.from(f.state.envelopes.at(-1)!.report!.data, 'base64').toString(),
+      snapshot.content,
+    );
   },
 );
 
