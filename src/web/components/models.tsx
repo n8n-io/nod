@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  Brain,
   Check,
   ChevronDown,
   ExternalLink,
+  FileImage,
   KeyRound,
   Plus,
   RefreshCw,
@@ -799,15 +801,23 @@ export function ModelPicker({
   const connections = (models.data?.connections ?? []).filter(
     (source) => source.status === 'connected',
   );
-  const choices = connections
-    .flatMap((source) => {
-      const recommended = recommendedModel(source)?.id;
-      return source.models.map((item) => ({
-        source,
-        item,
-        recommended: item.id === recommended,
-      }));
-    })
+  const available = connections.flatMap((source) => {
+    const recommended = recommendedModel(source)?.id;
+    return source.models.map((item) => ({
+      source,
+      item,
+      recommended: item.id === recommended,
+    }));
+  });
+  const sharedImages = available.length > 1 && available.every(({ item }) => item.images);
+  const sharedThinking =
+    available.length > 1 &&
+    available.every(({ item }) => item.efforts.some((effort) => effort !== 'off'));
+  const sharedCapabilities = [
+    sharedImages && 'read images',
+    sharedThinking && 'think before replying',
+  ].filter(Boolean);
+  const choices = available
     .filter(({ source, item }) =>
       `${item.name} ${item.id} ${source.label} ${modelSource(source)}`
         .toLowerCase()
@@ -881,7 +891,9 @@ export function ModelPicker({
         >
           <DialogTitle>Choose a model</DialogTitle>
           <p id="model-picker-description" className="model-intro">
-            Your choice applies to your next message.
+            {sharedCapabilities.length
+              ? `All these models can ${sharedCapabilities.join(' and ')}.`
+              : 'Your choice applies to your next message.'}
           </p>
           <SearchField
             inputRef={searchInput}
@@ -918,13 +930,27 @@ export function ModelPicker({
                       <strong>{item.name}</strong>
                       {recommended && <span className="model-option-recommended">Recommended</span>}
                     </span>
-                    <small>
-                      {source.method === 'subscription'
-                        ? 'ChatGPT'
-                        : modelProviderNames[source.provider]}
-                      {source.label !== modelSource(source) ? ` · ${source.label}` : ''}
-                      {sharedLabel && source.keyEnding ? ` · Key …${source.keyEnding}` : ''}
-                    </small>
+                    <span className="model-option-details">
+                      <span>
+                        {source.method === 'subscription'
+                          ? 'ChatGPT'
+                          : modelProviderNames[source.provider]}
+                        {source.label !== modelSource(source) ? ` · ${source.label}` : ''}
+                        {sharedLabel && source.keyEnding ? ` · Key …${source.keyEnding}` : ''}
+                      </span>
+                      {item.images && !sharedImages && (
+                        <span className="model-option-capability">
+                          <FileImage size={14} />
+                          Reads images
+                        </span>
+                      )}
+                      {!sharedThinking && item.efforts.some((effort) => effort !== 'off') && (
+                        <span className="model-option-capability">
+                          <Brain size={14} />
+                          Extra thinking
+                        </span>
+                      )}
+                    </span>
                   </span>
                   <span className="model-option-status">
                     {active && <Check size={18} aria-hidden="true" />}

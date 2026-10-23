@@ -309,11 +309,20 @@
   flex-wrap: wrap;
   gap: 6px 10px;
 }
-.model-option small {
-  display: block;
+.model-option-details {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
   color: var(--muted-foreground);
   font-size: var(--text-control);
-  margin-top: 4px;
+  margin-top: 6px;
+}
+.model-option-capability {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
 }
 .model-option svg {
   flex-shrink: 0;
