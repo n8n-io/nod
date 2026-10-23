@@ -12,6 +12,7 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import {
   createAgentSession,
   SessionManager,
+  SettingsManager,
   ModelRuntime,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
@@ -344,6 +345,61 @@ function recordingWorkspace() {
     },
   };
 }
+
+test('Pi loads only owned extensions without trusting workspace package settings', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-settings-'));
+  const workspacePath = join(directory, 'workspace');
+  await mkdir(join(workspacePath, '.pi'), { recursive: true });
+  await writeFile(
+    join(workspacePath, '.pi', 'settings.json'),
+    JSON.stringify({
+      packages: ['./project-extension'],
+      npmCommand: ['fixture-package-manager'],
+    }),
+  );
+  let resolved = 0;
+  const projectSettings = SettingsManager.prototype.getProjectSettings;
+  t.mock.method(SettingsManager.prototype, 'getProjectSettings', function (this: SettingsManager) {
+    const settings = projectSettings.call(this);
+    assert.deepEqual(settings, {});
+    assert.deepEqual(this.getPackages(), []);
+    assert.equal(this.getNpmCommand(), undefined);
+    assert.equal(this.isProjectTrusted(), false);
+    resolved += 1;
+    return settings;
+  });
+  let captured: Parameters<typeof createAgentSession>[0];
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture-key',
+    sessionRoot: join(directory, 'sessions'),
+    createSession: async (options) => {
+      captured = options;
+      return createAgentSession(options);
+    },
+  });
+  try {
+    const session = await agent.open({
+      ...fakeExecution(randomUUID(), randomUUID()),
+      ...sandbox,
+      workspace: { ...sandbox.workspace, path: workspacePath },
+      systemPrompt: 'fixture',
+      tools: [],
+      shouldStop: () => false,
+      onEvent: () => {},
+    });
+    assert.ok(resolved > 0);
+    const names = captured!
+      .resourceLoader!.getExtensions()
+      .extensions.flatMap((extension) => [...extension.tools.keys()]);
+    assert.ok(names.includes('web_search'));
+    assert.ok(names.includes('codemode'));
+    await session.dispose();
+  } finally {
+    await agent.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('Pi sessions use native tools on the sandbox workspace plus nod tools', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-native-'));
