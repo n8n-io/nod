@@ -20,11 +20,12 @@ import {
 } from '../../shared/feedback';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { desktopFeedbackContext } from '../lib/desktop';
+import { feedbackActivitySnapshot } from '../lib/feedback-activity';
 import { clipboardFiles } from '../lib/composer-editor';
 import type { FeedbackAttachment } from '../lib/feedback-attachment';
 import { loadFeedbackDraft, saveFeedbackDraft, type FeedbackDraft } from '../lib/feedback-draft';
 import { FeedbackAttachments } from './feedback-attachments';
-import { FeedbackDiagnostics } from './feedback-diagnostics';
+import { FeedbackDiagnostics, feedbackReportData } from './feedback-diagnostics';
 import { FeedbackEditor, type FeedbackEditorHandle } from './feedback-editor';
 import { Button, Dialog, DialogContent, DialogTitle } from './ui';
 
@@ -67,7 +68,6 @@ type FeedbackDialogProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
   returnFocus(): HTMLElement | null;
-  screenshot?: File | null;
 };
 
 function sameDraft(first: FeedbackDraft, second: FeedbackDraft | null) {
@@ -76,13 +76,18 @@ function sameDraft(first: FeedbackDraft, second: FeedbackDraft | null) {
     first.category === second.category &&
     first.feedback === second.feedback &&
     first.attachments === second.attachments &&
-    first.pendingId === second.pendingId
+    first.pendingId === second.pendingId &&
+    first.reportChoice === second.reportChoice
   );
 }
 
 function hasDraft(draft: FeedbackDraft) {
   return (
-    !!draft.feedback || !!draft.attachments.length || draft.category !== 'bug' || !!draft.pendingId
+    !!draft.feedback ||
+    !!draft.attachments.length ||
+    draft.category !== 'bug' ||
+    !!draft.pendingId ||
+    draft.reportChoice !== null
   );
 }
 
@@ -90,19 +95,14 @@ export function FeedbackDialog(props: FeedbackDialogProps) {
   return <FeedbackDraftDialog key={props.ownerId} {...props} />;
 }
 
-function FeedbackDraftDialog({
-  ownerId,
-  open,
-  onOpenChange,
-  returnFocus,
-  screenshot,
-}: FeedbackDialogProps) {
+function FeedbackDraftDialog({ ownerId, open, onOpenChange, returnFocus }: FeedbackDialogProps) {
   const storageKey = `nod.feedback.pending.${ownerId}`;
   const [pendingId, setPendingId] = useState(() => readPending(storageKey));
   const [kind, setKind] = useState<FeedbackSubmission['category']>('bug');
   const [feedback, setFeedback] = useState('');
   const [attachments, setAttachments] = useState<FeedbackAttachment[]>([]);
-  const [includeReport, setIncludeReport] = useState(false);
+  const [reportChoice, setReportChoice] = useState<boolean | null>(null);
+  const includeReport = reportChoice ?? kind === 'bug';
   const [report, setReport] = useState<FeedbackReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState('');
@@ -131,7 +131,6 @@ function FeedbackDraftDialog({
   const restoreVersion = useRef(0);
   const persisted = useRef<FeedbackDraft | null>(null);
   const dirty = useRef(false);
-  const started = useRef(false);
   const dragDepth = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const detailsInput = useRef<FeedbackEditorHandle>(null);
@@ -151,8 +150,9 @@ function FeedbackDraftDialog({
       feedback,
       attachments,
       pendingId,
+      reportChoice,
     }),
-    [kind, feedback, attachments, pendingId],
+    [kind, feedback, attachments, pendingId, reportChoice],
   );
   const currentDraft = useRef(draft);
   currentDraft.current = draft;
@@ -167,6 +167,7 @@ function FeedbackDraftDialog({
       if (!active.current || restoreVersion.current !== version) return;
       const value = saved ?? {
         category: 'bug' as const,
+        reportChoice: null,
         feedback: '',
         attachments: [],
         pendingId: null,
@@ -175,17 +176,15 @@ function FeedbackDraftDialog({
       persisted.current = value;
       setKind(value.category);
       setFeedback(value.feedback);
-      setIncludeReport(false);
+      setReportChoice(value.reportChoice);
       setAttachments(value.attachments);
       setPendingId(pending);
       setReceipt(pending ? { submissionId: pending, status: 'unknown' } : null);
-      started.current = !!saved || !!pending;
       allowSave.current = true;
       setRestoreFailed(false);
     } catch {
       if (!active.current || restoreVersion.current !== version) return;
       persisted.current = currentDraft.current;
-      started.current = true;
       setRestoreFailed(true);
       setDraftError('Couldn’t restore your saved draft. You can keep writing here.');
     } finally {
@@ -305,12 +304,6 @@ function FeedbackDraftDialog({
   }, [open, pendingId, storageKey]);
 
   useEffect(() => {
-    if (!open || !hydrated || pendingId || started.current || !screenshot) return;
-    started.current = true;
-    addAttachments([screenshot]);
-  }, [open, hydrated, pendingId, screenshot]);
-
-  useEffect(() => {
     if (open && hydrated && !pendingId) detailsInput.current?.focus({ preventScroll: true });
   }, [open, hydrated]);
 
@@ -351,11 +344,15 @@ function FeedbackDraftDialog({
     setPreview(false);
     const promise = api<FeedbackReport>('/api/feedback/report', {
       method: 'POST',
-      body: '{}',
+      body: JSON.stringify({ activity: feedbackActivitySnapshot() }),
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
     })
       .then((snapshot) => {
         if (controller.signal.aborted) return null;
+        if (!feedbackReportData(snapshot.content))
+          throw new Error(
+            'Update nod to prepare a private diagnostic report, or continue without one.',
+          );
         reportRef.current = snapshot;
         setReport(snapshot);
         return snapshot;
@@ -376,6 +373,7 @@ function FeedbackDraftDialog({
     allowSave.current = true;
     const empty: FeedbackDraft = {
       category: 'bug',
+      reportChoice: null,
       feedback: '',
       attachments: [],
       pendingId: null,
@@ -388,11 +386,10 @@ function FeedbackDraftDialog({
     submission.current = null;
     setReceipt(null);
     setBusy(null);
-    started.current = false;
     setKind('bug');
     setFeedback('');
     setAttachments(empty.attachments);
-    setIncludeReport(false);
+    setReportChoice(null);
     setReport(null);
     reportRef.current = null;
     setReportError('');
@@ -662,7 +659,7 @@ function FeedbackDraftDialog({
       onClick={() => void copyReport()}
     >
       <Copy size={16} aria-hidden="true" />
-      {copyStatus === 'copying' ? 'Copying…' : copyStatus === 'copied' ? 'Copied' : 'Copy trace'}
+      {copyStatus === 'copying' ? 'Copying…' : copyStatus === 'copied' ? 'Copied' : 'Copy report'}
     </Button>
   );
 
@@ -813,7 +810,7 @@ function FeedbackDraftDialog({
                       error={reportError}
                       frozen={frozen}
                       onToggleIncluded={() => {
-                        setIncludeReport(!includeReport);
+                        setReportChoice(!includeReport);
                         setPreview(false);
                       }}
                       onReview={async () => {
@@ -877,7 +874,8 @@ function FeedbackDraftDialog({
             )}
             {context?.enabled && context.recipient && (
               <p className="feedback-send-notice">
-                Sends your feedback and selected attachments to {context.recipient}.
+                Sends your feedback and selected files as written to {context.recipient}. Check them
+                for private details.
               </p>
             )}
             {(contextError || (context && !context.enabled)) && (

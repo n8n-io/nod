@@ -82,7 +82,7 @@ import { createIntegrationBrowser } from './integration-browser.ts';
 import { createIntegrationIdentityCheckpoint } from './integration-identity.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createSkillLibrary } from '../providers/pi/skills.ts';
-import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
+import { createFeedbackActivity } from '../shared/feedback-activity.ts';
 import { createPiMemoryCurator } from '../providers/pi/memory-curator.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
@@ -441,7 +441,9 @@ async function initializeApplication(
       process.env.NOD_APP_VERSION || process.env.NOD_IMAGE_RELEASE || process.env.NOD_RELEASE,
   });
   let observeConnections: ((only?: 'apps' | 'models') => Promise<void>) | undefined;
+  const feedbackActivity = createFeedbackActivity('runtime');
   const captureAnalytics: CaptureAnalytics = (event, delivery) => {
+    feedbackActivity.record(event.event, 'properties' in event ? event.properties : undefined);
     analytics.capture(ownerId, event, delivery);
     if (
       event.event === 'nod_connection_changed' &&
@@ -1492,31 +1494,29 @@ async function initializeApplication(
   const feedbackReportOptions: FeedbackReportOptions = {
     pool,
     ownerId,
-    secrets,
+    context: await feedbackContext({ environment: process.env }),
     get provider() {
       return adapters.model.provider;
     },
     get model() {
       return adapters.model.name;
     },
-    profile: ownerProfile,
-    sessionEntries: (threadId) =>
-      readPiSessionEntries({
-        threadId,
-        sessionRoot: join(dataRoot, 'sessions'),
-      }),
   };
   await registerFeedback(app, {
     pool,
     ownerId,
-    context: await feedbackContext({ environment: process.env }),
+    context: feedbackReportOptions.context!,
     delivery: adapters.feedback ?? {
       configured: false,
       recipient: null,
       submit: async (input) => ({ submissionId: input.submissionId, status: 'rejected' }),
       status: async (submissionId) => ({ submissionId, status: 'rejected' }),
     },
-    buildReport: () => buildFeedbackReport(feedbackReportOptions),
+    buildReport: (activity) =>
+      buildFeedbackReport({
+        ...feedbackReportOptions,
+        activity: [...feedbackActivity.snapshot(), ...activity].sort((a, b) => b.ageMs - a.ageMs),
+      }),
     analytics: captureAnalytics,
   });
   registerPrivacyNotice(app, privacyNotice);

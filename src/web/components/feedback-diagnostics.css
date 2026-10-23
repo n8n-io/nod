@@ -83,27 +83,6 @@
   overscroll-behavior: contain;
   padding-right: 8px;
 }
-.feedback-diagnostics-message {
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
-}
-.feedback-diagnostics-message:first-child {
-  padding-top: 0;
-  border: 0;
-}
-.feedback-diagnostics-message strong {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--foreground);
-}
-.feedback-diagnostics-message p {
-  font-size: var(--text-control);
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 .feedback-diagnostics-activity {
   display: flex;
   align-items: baseline;

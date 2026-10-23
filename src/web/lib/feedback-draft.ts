@@ -6,6 +6,7 @@ export type FeedbackDraft = {
   feedback: string;
   attachments: FeedbackAttachment[];
   pendingId: string | null;
+  reportChoice: boolean | null;
 };
 
 const writes = new Map<string, Promise<void>>();
@@ -126,23 +127,33 @@ function decode(value: unknown, ownerId: string): FeedbackDraft | null {
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
           draft.pendingId,
         ))) ||
+    (draft.reportChoice !== undefined &&
+      draft.reportChoice !== null &&
+      typeof draft.reportChoice !== 'boolean') ||
     !Array.isArray(draft.attachments) ||
     draft.attachments.length > feedbackLimits.attachments
   )
     return fail();
-  const attachments = draft.attachments.map((value) => {
-    if (!value || typeof value !== 'object') return fail();
-    const item = value as Record<string, unknown>;
-    const image = item.image as Record<string, unknown> | undefined;
-    const restored = parseFeedbackAttachment({
-      id: item.id,
-      file: restoredFile(item.file),
-      ...(image === undefined
-        ? {}
-        : { image: { original: restoredFile(image?.original), marks: image?.marks } }),
-    });
-    return restored ?? fail();
-  });
+  const attachments = draft.attachments
+    .map((value) => {
+      if (!value || typeof value !== 'object') return fail();
+      const item = value as Record<string, unknown>;
+      const image = item.image as Record<string, unknown> | undefined;
+      const restored = parseFeedbackAttachment({
+        id: item.id,
+        file: restoredFile(item.file),
+        ...(image === undefined
+          ? {}
+          : { image: { original: restoredFile(image?.original), marks: image?.marks } }),
+      });
+      return restored ?? fail();
+    })
+    .filter(
+      (item) =>
+        draft.reportChoice !== undefined ||
+        (item.file.name !== 'nod-screenshot.jpg' &&
+          item.image?.original.name !== 'nod-screenshot.jpg'),
+    );
   if (
     new Set(attachments.map((item) => item.id)).size !== attachments.length ||
     attachments.reduce((total, item) => total + item.file.size, 0) >
@@ -153,6 +164,7 @@ function decode(value: unknown, ownerId: string): FeedbackDraft | null {
     category: draft.category as FeedbackDraft['category'],
     feedback: draft.feedback,
     pendingId: draft.pendingId as string | null,
+    reportChoice: typeof draft.reportChoice === 'boolean' ? draft.reportChoice : null,
     attachments,
   };
 }
