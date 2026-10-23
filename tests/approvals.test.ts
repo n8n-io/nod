@@ -552,6 +552,7 @@ test(
 
       const { createTrust } = await import('../src/server/trust.ts');
       const reviews: Array<Record<string, any>> = [];
+      const prompts: string[] = [];
       let aligned: boolean | string | ((input: Record<string, any>) => boolean) = false;
       t.beforeEach(() => {
         aligned = false;
@@ -567,7 +568,7 @@ test(
       const trust = createTrust({
         pool: db.pool,
         ownerId,
-        review: async (_instructions, input) => {
+        review: async (instructions, input) => {
           if ('reply' in input) {
             replies.push(input);
             const reply = String(input.reply)
@@ -577,6 +578,7 @@ test(
             return { answer: replyAnswers[reply] ?? 'other' };
           }
           reviews.push(input as Record<string, any>);
+          prompts.push(instructions);
           const yes =
             typeof aligned === 'function' ? aligned(input as Record<string, any>) : aligned;
           return { run: yes };
@@ -882,6 +884,49 @@ test(
           assert.equal(reviews.at(-1)?.userMessages, undefined);
           assert.equal(reviews.at(-1)?.standingInstruction, undefined);
           await setRule('');
+        },
+      );
+
+      await t.test(
+        'owner rules reach the checker in chat, scheduled and background work, and only owners with rules get the rules prompt',
+        async () => {
+          const setRules = (rules: string) =>
+            db.pool.query(
+              `INSERT INTO preferences(owner_id,rules) VALUES($1,$2)
+               ON CONFLICT(owner_id) DO UPDATE SET rules=EXCLUDED.rules`,
+              [ownerId, rules],
+            );
+          const send = email('ana.named@example.test');
+          await setRules('');
+          aligned = true;
+          const chat = await begin('Send Ana the synthetic update.');
+          assert.deepEqual(await trust.check(chat, 'GMAIL_SEND_EMAIL', send), { confirm: false });
+          assert.equal(reviews.at(-1)?.userRules, undefined);
+          const plain = prompts.at(-1)!;
+          assert.doesNotMatch(plain, /userRules/);
+          const rules = 'Always ask me before sending any email.';
+          await setRules(`  ${rules}\n`);
+          aligned = (input) => input.userRules === undefined;
+          for (const [turn, reason] of [
+            [chat, 'unrequested'],
+            [await begin('Synthetic event', { source: 'event' }), 'background'],
+            [await begin('Synthetic scheduled work', { source: 'schedule' }), 'schedule'],
+          ] as const) {
+            assert.deepEqual(await trust.check(turn, 'GMAIL_SEND_EMAIL', send), {
+              confirm: true,
+              reason,
+            });
+            assert.equal(reviews.at(-1)?.userRules, rules);
+            assert.ok(prompts.at(-1)!.startsWith(plain));
+            assert.match(prompts.at(-1)!, /userRules/);
+          }
+          await setRules('');
+          await trust.check(chat, 'NOD_notification_preferences_update', {
+            rules,
+            currentRules: '',
+          });
+          assert.equal(reviews.at(-1)?.userRules, undefined);
+          assert.match(prompts.at(-1)!, /currentRules/);
         },
       );
 

@@ -243,15 +243,31 @@ function TaskLimit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
   );
 }
 
-function StandingInstruction({ rule, onSaved }: { rule: string; onSaved(): void }) {
-  const [draft, setDraft] = useState(rule);
+function RuleEditor({
+  field,
+  value,
+  label,
+  placeholder,
+  hint,
+  remove,
+  onSaved,
+}: {
+  field: 'notificationRule' | 'rules';
+  value: string;
+  label: string;
+  placeholder: string;
+  hint: string;
+  remove: string;
+  onSaved(): void;
+}) {
+  const [draft, setDraft] = useState(value);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  async function save(notificationRule: string) {
+  async function save(text: string) {
     setBusy(true);
     setError('');
     try {
-      await savePreferences({ notificationRule });
+      await savePreferences({ [field]: text });
       onSaved();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -270,15 +286,15 @@ function StandingInstruction({ rule, onSaved }: { rule: string; onSaved(): void 
         maxLength={4000}
         value={draft}
         autoFocus
-        aria-label="Standing instruction"
-        placeholder="Whenever Ana sends an invoice, forward it to accounting@acme.com."
+        aria-label={label}
+        placeholder={placeholder}
         onChange={(event) => setDraft(event.target.value)}
       />
       <div className="usage-rule-actions">
-        <Button size="sm" type="submit" disabled={busy || draft.trim() === rule}>
+        <Button size="sm" type="submit" disabled={busy || draft.trim() === value}>
           Save
         </Button>
-        {rule && (
+        {value && (
           <Button
             type="button"
             size="sm"
@@ -286,11 +302,11 @@ function StandingInstruction({ rule, onSaved }: { rule: string; onSaved(): void 
             disabled={busy}
             onClick={() => void save('')}
           >
-            Stop
+            {remove}
           </Button>
         )}
       </div>
-      <small>nod reads and drafts on its own, and does only what this says.</small>
+      <small>{hint}</small>
       {error && <Notice>{error}</Notice>}
     </form>
   );
@@ -300,11 +316,13 @@ function Sentence({
   view,
   vault,
   rule,
+  rules,
   onSaved,
 }: {
   view: TrustView;
   vault: VaultActivity;
   rule: string;
+  rules: string;
   onSaved(): void;
 }) {
   const format = useDateFormat();
@@ -411,9 +429,35 @@ function Sentence({
           text={rule ? 'follows your instruction' : 'watches nothing'}
           label="Standing instruction"
         >
-          {(close) => <StandingInstruction rule={rule} onSaved={close} />}
+          {(close) => (
+            <RuleEditor
+              field="notificationRule"
+              value={rule}
+              label="Standing instruction"
+              placeholder="Whenever Ana sends an invoice, forward it to accounting@acme.com."
+              hint="nod reads and drafts on its own, and does only what this says."
+              remove="Stop"
+              onSaved={close}
+            />
+          )}
         </Value>
         {rule ? <>: “{rule}”</> : '.'}
+        <br />
+        {rules ? 'Everywhere, nod keeps ' : 'You haven’t set any '}
+        <Value text={rules ? 'your rules' : 'rules'} label="Rules">
+          {(close) => (
+            <RuleEditor
+              field="rules"
+              value={rules}
+              label="Rules"
+              placeholder="Always ask before sending email outside my company."
+              hint="Say what nod may do without asking, or must ask you about first."
+              remove="Clear"
+              onSaved={close}
+            />
+          )}
+        </Value>
+        {rules ? <>: “{rules}”</> : '.'}
       </p>
       {limit?.reached && (
         <Notice kind="info">
@@ -599,6 +643,7 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
             view={trust.data}
             vault={vault.data}
             rule={preferences.data.notificationRule}
+            rules={preferences.data.rules}
             onSaved={() => void trust.refresh()}
           />
           <Statement view={trust.data} vault={vault.data} opener={opener} />

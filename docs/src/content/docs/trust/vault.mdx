@@ -74,7 +74,7 @@ A login works only on its exact origin: the protocol, host and port. The browser
 ## When nod asks first
 
 - **Which account.** nod reuses the one saved login that fits. If several could apply and you haven't said which, it asks.
-- **Whether to sign in.** The same [checker](/trust/approvals/) that decides app actions checks whether your recent messages need this website. If not, nod asks, for example "Sign in to reports.example.com?". Mentioning a domain isn't consent.
+- **Whether to sign in.** The same [checker](/trust/approvals/) that decides app actions checks whether your recent messages need this website. If not, or if [one of your rules](/trust/approvals/#your-rules) says to ask first, nod asks, for example "Sign in to reports.example.com?". Mentioning a domain isn't consent.
 - **Scheduled runs** are checked against the instruction that created the schedule.
 - **Background work** nod starts itself is checked against your [standing instruction](/trust/approvals/#standing-instructions). If that doesn't need this website, nod asks you first.
 

@@ -1201,14 +1201,17 @@ async function initializeApplication(
                 timeZone: schedule.timeZone,
               }
             : undefined;
-          const rule =
-            action === 'notification_preferences_update' && 'notificationRule' in input
-              ? (await triage.getPreferences()).notificationRule
+          const preferences =
+            action === 'notification_preferences_update'
+              ? await triage.getPreferences()
               : undefined;
+          const rule = 'notificationRule' in input ? preferences?.notificationRule : undefined;
+          const rules = 'rules' in input ? preferences?.rules : undefined;
           const verdict = await trust.check(turn, `NOD_${action}`, {
             ...input,
             ...(current ? { currentSchedule: current } : {}),
             ...(rule === undefined ? {} : { currentNotificationRule: rule }),
+            ...(rules === undefined ? {} : { currentRules: rules }),
           });
           return approvals.request(turn, `NOD_${action}`, input, {
             ...provenance,
@@ -1234,6 +1237,7 @@ async function initializeApplication(
               ...(verdict.confirm ? { reason: verdict.reason } : {}),
               ...(current ? { schedule: current } : {}),
               ...(rule === undefined ? {} : { currentNotificationRule: rule }),
+              ...(rules === undefined ? {} : { currentRules: rules }),
             },
           });
         }
