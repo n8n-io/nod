@@ -69,15 +69,6 @@ for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
     if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
         raise SystemExit("The public token exception must be limited to its configuration file.")
 
-evidence_path = "docs/research/apps-acceptance-b8e489cb.json"
-composio = json.loads(
-    (config.parent / ".github/fixtures/composio-secret-scanner.json").read_text()
-)
-source_hashes = {field: digest for digest, field in composio["fingerprints"][evidence_path]}
-code, findings = scan(json.dumps(source_hashes, indent=2), evidence_path)
-if code != 0 or findings:
-    raise SystemExit("Verified acceptance source hashes must pass secret scanning.")
-
 synthetic = f'api_key = "{candidate}"'
 for filename in [
     "tests/app.test.ts",
@@ -130,6 +121,9 @@ for rule, key in provider_keys.items():
             raise SystemExit("Provider key formats must fail secret scanning everywhere.")
 
 changed_digest = hashlib.sha256(candidate.encode()).hexdigest()
+composio = json.loads(
+    (config.parent / ".github/fixtures/composio-secret-scanner.json").read_text()
+)
 for filename, fingerprints in composio["fingerprints"].items():
     if not fingerprints:
         raise SystemExit("The Composio snapshot must exercise a fingerprint exception.")
@@ -137,7 +131,7 @@ for filename, fingerprints in composio["fingerprints"].items():
     changed = "".join(f'"{field}": "{changed_digest}"\n' for _, field in fingerprints)
     code, findings = scan(snapshot, filename)
     if code != 0 or findings:
-        raise SystemExit("Verified evidence fingerprints must pass at their exact artifact path.")
+        raise SystemExit("Allowlisted fingerprints must pass only at their exact artifact path.")
     for content, target in [
         (changed, filename),
         (snapshot, "docs/testing/composio-proxy/new-source.json"),
