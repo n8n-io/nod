@@ -28,7 +28,7 @@ You don't have to wait. The message box stays open while nod works. For work tha
 
 Reply to a task's message to continue that task. A message without a reply target goes to the main chat. If it clearly changes an existing task, nod sends your message to that task. If the target is unclear, nod asks which task you mean.
 
-nod does work it can finish now in the main chat, even when it takes several steps, such as reading your inbox and drafting replies. Work that has to outlive its answer gets a saved task session: it waits on someone or something, runs for a long stretch, or runs alongside other jobs. You can discuss other work while a task runs. Updates may wait for the current step to finish. Different tasks can continue in parallel. See [Track tasks](/use/tasks/).
+Quick answers, single lookups, brief summaries of supplied content and simple actions stay in the main chat. Substantial work with several steps gets a saved task session, even when it can finish in one sitting. Work that waits on someone or something, runs alongside other jobs, or that you ask nod to track also gets a task. You can discuss other work while a task runs. Updates may wait for the current step to finish. Different tasks can continue in parallel. See [Track tasks](/use/tasks/).
 
 ## Answer nod's questions
 

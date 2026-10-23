@@ -99,3 +99,15 @@ The writing style and delivery rules now have separate scopes. The runtime recei
 | Runtime docs                     | The Message cadence section now includes milestones and removes the requirement for a status before every step.                                              |
 
 Cubic also flagged the old `++text++` underline paste shortcut. Its removal is intentional under CommonMark. The old editor already saved underline as `<u>text</u>`. That form and the formatting toolbar still work. The chat guide now states this behavior.
+
+## Saved task visibility
+
+The task API has no minimum duration or severity gate. Starting a task saves its record and start message in one transaction. State reads include completed tasks, and chat uses the saved message ID to show the task card.
+
+The old coordinator prompt told the model to keep work in chat even when it took several steps or minutes. Its tool description also limited saved tasks to work that outlived the reply. Both now use one `taskRouting` value. Substantial multi-step work gets a saved task even when it can finish in one sitting. Quick answers, single lookups, brief summaries of supplied content and simple actions stay in chat. One coherent job stays in one task.
+
+The start message provides the task's acknowledgement. The coordinator does not send a second opening or execute the same work again. This review establishes the former routing rule; it does not include the affected user's conversation from that day.
+
+## Validation note
+
+One full rerun failed during concurrent private-storage initialization. The storage adapter and lock code are unchanged by this PR. The same existing test passed 12 focused runs against a disposable PostgreSQL instance. The full suite is checked again before merge.
