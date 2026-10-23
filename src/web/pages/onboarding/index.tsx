@@ -17,7 +17,7 @@ import {
 } from '../../lib/desktop';
 import { DesktopPreferencesSetup } from './steps/desktop-preferences';
 import { useBrowserTimeZone } from '../../hooks/use-browser-time-zone';
-import { api, errorMessage } from '../../lib/api';
+import { api, ApiError, errorMessage } from '../../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../../lib/analytics';
 import { clearStored, prepareSuggestions, readStep, writeStep } from './storage';
 import { Welcome } from './steps/welcome';
@@ -98,6 +98,7 @@ export function Onboarding({
   const [saving, setSaving] = useState(false);
   const [runtimeError, setRuntimeError] = useState('');
   const [error, setError] = useState('');
+  const [missing, setMissing] = useState<'brain' | 'email' | null>(null);
   const preparationRequest = useRef<AbortController | null>(null);
   const active = useRef(false);
   const retrying = useRef(false);
@@ -164,6 +165,11 @@ export function Onboarding({
         if (active.current) {
           setCompletionFailed(true);
           setError(errorMessage(cause));
+          setMissing(
+            cause instanceof ApiError && (cause.step === 'brain' || cause.step === 'email')
+              ? cause.step
+              : null,
+          );
         }
       });
   }, [finishing, preparation]);
@@ -280,7 +286,21 @@ export function Onboarding({
         description={failure ? 'Your progress is saved.' : undefined}
         error={failure || undefined}
       >
-        {failure && (
+        {failure && missing && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setFinishing(0);
+              setCompletionFailed(false);
+              setError('');
+              setMissing(null);
+              setPosition({ step: missing, arrived: 'back' });
+            }}
+          >
+            {missing === 'brain' ? 'Connect an AI provider' : 'Connect Gmail'}
+          </Button>
+        )}
+        {failure && !missing && (
           <Button variant="outline" disabled={saving} onClick={() => void retry()}>
             Try again
           </Button>

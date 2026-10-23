@@ -344,7 +344,7 @@ describe('account routes', () => {
     analytics?: Analytics,
     onTraces?: (enabled: boolean) => void,
     key?: string,
-    onboardingReady?: () => Promise<boolean>,
+    onboardingMissing?: () => Promise<'brain' | 'email' | null>,
   ) {
     let record: AccountSettings = {
       theme: 'system',
@@ -391,7 +391,7 @@ describe('account routes', () => {
       },
       traces: onTraces !== undefined,
       onTraces,
-      onboardingReady,
+      onboardingMissing,
     }).register(app);
     await app.ready();
     return { app, calls, record: () => record };
@@ -404,7 +404,7 @@ describe('account routes', () => {
     const f = await fixture(undefined, undefined, undefined, async () => {
       checked++;
       if (failed) throw new Error('Synthetic provider outage');
-      return ready;
+      return ready ? null : 'email';
     });
     t.after(() => f.app.close());
     const complete = () =>
@@ -414,7 +414,9 @@ describe('account routes', () => {
         headers: { origin },
         payload: { onboardingCompleted: true },
       });
-    assert.equal((await complete()).statusCode, 409);
+    const refused = await complete();
+    assert.equal(refused.statusCode, 409);
+    assert.equal(refused.json().step, 'email');
     assert.equal(f.record().onboardingCompleted, false);
     assert.equal(f.calls.writes, 0);
     assert.equal(f.calls.started, 0);

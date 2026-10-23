@@ -2,6 +2,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly step?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -80,11 +81,15 @@ async function request<T>(
 
 async function requireOk(response: Response, signal?: AbortSignal) {
   if (response.ok) return;
-  const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
+  const body = (await response.json().catch(() => null)) as {
+    error?: unknown;
+    step?: unknown;
+  } | null;
   signal?.throwIfAborted();
   throw new ApiError(
     typeof body?.error === 'string' ? body.error : 'The request could not be completed. Try again.',
     response.status,
+    typeof body?.step === 'string' ? body.step : undefined,
   );
 }
 
