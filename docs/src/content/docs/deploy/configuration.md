@@ -65,21 +65,21 @@ Keys set here become server-managed connections. They stay in server memory and 
 | `LLM_MODEL`                  | The first model choice.                                                                                                                                                                       | `gpt-6.1-sol`, `claude-opus-5-5` or `openai/gpt-6.1-sol` by provider, or the server's first model for `compatible` |
 | `OPENAI_API_KEY`             | Adds an OpenAI connection. It also turns on voice transcription and voice replies.                                                                                                            | Empty                                                                                                              |
 | `ANTHROPIC_API_KEY`          | Adds an Anthropic connection.                                                                                                                                                                 | Empty                                                                                                              |
-| `OPENROUTER_API_KEY`         | Adds an OpenRouter connection.                                                                                                                                                                | Empty                                                                                                              |
-| `OPENAI_COMPATIBLE_BASE_URL` | Adds an [OpenAI-compatible server](/connect/local-models/), such as Ollama at `http://localhost:11434/v1`. Local nod only.                                                                    | Empty                                                                                                              |
+| `OPENROUTER_API_KEY`         | Adds an OpenRouter connection. Also enables voice transcription when no OpenAI API connection is available.                                                                                   | Empty                                                                                                              |
+| `OPENAI_COMPATIBLE_BASE_URL` | Adds an [OpenAI-compatible server](/connect/local-models/), such as Ollama at `http://localhost:11434/v1`. The address must be reachable from nod's server.                                   | Empty                                                                                                              |
 | `OPENAI_COMPATIBLE_API_KEY`  | The key for that server, if it needs one.                                                                                                                                                     | Empty                                                                                                              |
-| `TYPESAFE_API_KEY`           | Selects direct Jev for reading approval replies, regardless of the chat connection.                                                                                                           | Empty                                                                                                              |
+| `TYPESAFE_API_KEY`           | Selects direct Jev for reading approval replies and checking emails that give account access, regardless of the chat connection.                                                              | Empty                                                                                                              |
 | `TTS_MODEL`                  | The OpenAI speech model for voice replies.                                                                                                                                                    | `gpt-4o-mini-tts`                                                                                                  |
 | `STT_MODEL`                  | The transcription model for incoming voice messages. OpenAI is used when its key is available; otherwise OpenRouter is used. On OpenRouter, a model ID without `/` gets the `openai/` prefix. | `gpt-transcribe` (`openai/gpt-transcribe` on OpenRouter)                                                           |
 | `TTS_VOICE`                  | The voice for voice replies.                                                                                                                                                                  | `coral`                                                                                                            |
 
-Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an OpenRouter connection uses Jev through OpenRouter. Direct Anthropic, ChatGPT subscription, Amazon Bedrock, Google Vertex AI, Azure OpenAI and OpenAI-compatible connections use the selected chat model for this check. Your selected model still writes messages. See [Decision checks](/connect/models/#decision-checks) for billing, data routing, and failure behavior.
+Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an OpenRouter connection uses Jev through OpenRouter. Other connections use the selected model for confirmation replies and their smaller background model, when available, for email checks. Your selected model still writes messages. See [Decision checks](/connect/models/#decision-checks) for billing, data routing, and failure behavior.
+
+Voice also works with API keys saved in **Models**. OpenAI supplies spoken replies and takes precedence for transcription; OpenRouter supplies transcription when no OpenAI API connection is available.
 
 ## Apps and Composio
 
 nod routes Composio connections through n8n's connection service by default. Users connect each app directly from onboarding or **Apps**.
-
-`COMPOSIO_API_KEY`, `COMPOSIO_WEBHOOK_SECRET` and `COMPOSIO_*_AUTH_CONFIG_ID` are no longer read by nod. Remove them from your environment and reconnect apps in **Apps**.
 
 | Variable                 | What it does                                                                                      | Default                      |
 | ------------------------ | ------------------------------------------------------------------------------------------------- | ---------------------------- |
@@ -91,11 +91,11 @@ The service operator configures the Composio project and app authorization setti
 
 ## Vault
 
-| Variable        | What it does                                                                                                                                                                                                     | Default |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `NOD_VAULT_KEY` | A base64 32-byte key that encrypts saved credentials and overrides automatic local storage. Local macOS uses Keychain; local Linux web uses a private profile file. Other server modes require a configured key. | Empty   |
+| Variable        | What it does                                                                                                                                         | Default                   |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `NOD_VAULT_KEY` | A base64 32-byte key that encrypts saved credentials. Overrides automatic source-install key storage. The self-hosting stack generates it in `.env`. | Unset for source installs |
 
-For an explicitly managed server key, create it with `openssl rand -base64 32`. Local Linux web installs keep their generated key at `NOD_DATA_ROOT/vault/master-key`, outside the sandbox. The directory and key must be owned by the server user and private. Desktop uses its existing OS-protected key.
+For an explicitly managed server key, create it with `openssl rand -base64 32`. Without it, macOS source installs use Keychain, and Linux source installs use `NOD_DATA_ROOT/vault/master-key`, outside the sandbox. Other source platforms require `NOD_VAULT_KEY`. The Linux key directory and file must be owned by the server user and private. Desktop uses its OS-protected key.
 
 nod never generates a replacement when encrypted data already exists. Restore the original key if it is missing. Back up the private key separately alongside the encrypted database; a database backup alone cannot recover saved credentials.
 
@@ -130,10 +130,6 @@ Set `TELEGRAM_ENABLED=false` or `WHATSAPP_ENABLED=false` to disable a channel ex
 For QR setup, use **Channels** to scan the code. The `bot` and `self-chat` modes do not use the Meta access token, app secret, business phone number ID or webhook token. The saved device keys stay encrypted in the database. See [WhatsApp setup](/use/channels/#set-up-a-channel).
 
 The smallest Telegram configuration needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USER_ID`; it uses polling. For webhook mode, register `/api/webhooks/telegram` on your public origin with Telegram and use the same webhook secret.
-
-:::caution[Upgrading an existing source install]
-Older examples set channel flags to `false` and WhatsApp mode to `bot`. Clear those defaults, including `WHATSAPP_POLICY_CONFIRMED`, if you want to keep managing your existing connection in **Channels**.
-:::
 
 ## Analytics and feedback
 
@@ -198,7 +194,7 @@ This version exports model spans only. It does not export metrics, logs, browser
 | `WORKSPACE_CONTAINER` | The Docker container for the workspace. | `nod-workspace` |
 | `BROWSER_CONTAINER`   | The Docker container for the browser.   | `nod-browser`   |
 
-The self-hosting stack supplies these names. It gives the server a restricted Docker connection; the workspace and browser receive no Docker socket or provider keys.
+The self-hosting stack sets these names to `nod-workspace-<project>` and `nod-browser-<project>`, using `COMPOSE_PROJECT_NAME` for `<project>`. It gives the server a restricted Docker connection; the workspace and browser receive no Docker socket or provider keys.
 
 ## Docker stack settings
 
@@ -215,7 +211,7 @@ These values belong in `deployment/self-host/.env` and control Compose. They are
 
 Compose sets `NOD_HOST`, `NOD_DATA_ROOT`, `WORKSPACE_CONTAINER`, `BROWSER_CONTAINER`, `NODE_ENV`, and `NOD_ENVIRONMENT` for its internal layout. These values override `.env` in the stack. Store data in the supplied volumes rather than changing container paths.
 
-Set `DATABASE_URL` only to use an external PostgreSQL server. The bundled database remains unused in that configuration. The backup and restore commands support the bundled database only.
+Set `DATABASE_URL` only to use an external PostgreSQL server. The bundled database still starts, but nod uses the external database. The backup and restore commands support the bundled database only.
 
 ## Advanced source installs
 

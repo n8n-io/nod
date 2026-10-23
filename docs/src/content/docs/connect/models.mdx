@@ -63,8 +63,6 @@ nod uses OpenAI's [Sign in with ChatGPT](https://developers.openai.com/siwc/toke
 
 ChatGPT sign-in listens on port `1455` where nod's server runs. If another program uses that port, nod stops with an error before it opens OpenAI. When connecting to a remote server, the final browser address may not load on your device. Copy that full address into **Callback URL** in nod and select **Complete sign-in**. The server checks the sign-in and stores the connection; you do not need to expose port `1455` publicly.
 
-A ChatGPT connection made with an earlier version of nod needs one reconnect in **Settings > Models**.
-
 </TabItem>
 <TabItem label="Anthropic">
 
@@ -178,7 +176,7 @@ Two checks can use a decision model: reading whether your reply to a confirmatio
 
 Pick a capable model if nod acts for you: the [trust check](/trust/approvals/) runs on it. In our [decision evals](/contribute/evals/#quoted-reasons-on-23-october-2026), GPT-6.1 Sol, Claude Opus 5.5 and Claude Sonnet 5.5 approved nothing they shouldn't have, while Claude Haiku 5.5 let a few unlabelled buttons and one delete through.
 
-| Current connection   | Decision checks                                        |
+| Current connection   | Confirmation replies                                   |
 | -------------------- | ------------------------------------------------------ |
 | OpenAI API key       | GPT Decisions (`gpt-6-luna`) with the same key         |
 | OpenRouter           | Jev (`typesafe/jev-1.13`) with the same OpenRouter key |
@@ -195,8 +193,8 @@ In a source install, set `TYPESAFE_API_KEY` in `.env` to use Jev directly (`jev-
 
 A failed decision request does not switch providers or approve anything: the confirmation stays pending, and your reply reaches nod as an ordinary message. A failed email check hides that email's content. See [Approvals and the trust check](/trust/approvals/).
 
-:::note[Voice needs its own key]
-Spoken replies need an OpenAI API key in server settings (`OPENAI_API_KEY`). An OpenAI key in **Models** or a ChatGPT plan doesn't turn on voice.
+:::note[Voice needs an API connection]
+Spoken replies need an OpenAI API key, saved in **Models** or set through `OPENAI_API_KEY`. Transcription also works with an OpenRouter connection; a ChatGPT plan alone doesn't enable voice.
 :::
 
 ## Set connections in server settings
@@ -235,7 +233,7 @@ flowchart LR
   server -. no key .-> sandbox
 ```
 
-- nod encrypts saved keys and sign-ins with the Vault key. The Mac keeps that key in Keychain, and the Windows app protects it with Windows DPAPI. Other source installs need `NOD_VAULT_KEY`.
+- nod encrypts saved keys and sign-ins with the Vault key. macOS uses Keychain, the Windows app uses Windows DPAPI, and Linux source installs use a private file. The self-hosting stack generates `NOD_VAULT_KEY` in its private `.env`. See [Vault configuration](/deploy/configuration/#vault).
 - nod checks credential storage before starting a connection. If storage is unavailable, check the Vault configuration, permissions and database connection, then try again.
 - Keys from `.env` stay in server memory and aren't copied into the database.
 - Each key goes only to its own service: Amazon Bedrock in the Region you entered, Google Vertex AI, or the Azure OpenAI endpoint you entered.

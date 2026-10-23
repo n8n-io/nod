@@ -70,9 +70,10 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - Every query and route is scoped to one owner.
 - File previews never run a file in nod's own page. An HTML file runs in a sandbox with an empty origin and no network, forms or pop-ups, and its preview closes if it tries to open a website. Other formats are read as data. Files that can run code get no local preview before they upload.
 
-### Local access
+### Client access
 
-- Loopback isn't treated as identity. Every local `/api` request needs the owner key from `NOD_DATA_ROOT/access-key`, or the desktop app's per-launch token. Only verified webhooks, OAuth callbacks, the key exchange and the privacy notice go without it.
+- Loopback isn't treated as identity. Local `/api` requests need the owner key from `NOD_DATA_ROOT/access-key`, or the local desktop app's per-launch token. A self-hosted server uses `NOD_AUTH_TOKEN`, presented by desktop clients as a bearer token and exchanged for an access cookie by web clients. Only verified webhooks, OAuth callbacks, the key exchange and the privacy notice go without authentication.
+- Network access requires an explicit server token and HTTPS. The server checks the request's host and browser origin against its configured public address.
 
 ## Limits
 
@@ -109,7 +110,7 @@ The team aims to acknowledge your report within 3 business days and to share a f
 | Authority and confirmations | [`trust.ts`](https://github.com/n8n-io/nod/blob/main/src/server/trust.ts), [`approvals.ts`](https://github.com/n8n-io/nod/blob/main/src/server/approvals.ts)                                              |
 | Vault and one use           | [`vault-access.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-access.ts), [`vault-use.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-use.ts)                                |
 | Browser entry and proxy     | [`agent-browser`](https://github.com/n8n-io/nod/tree/main/src/providers/agent-browser)                                                                                                                    |
-| Local access                | [`access.ts`](https://github.com/n8n-io/nod/blob/main/src/server/access.ts)                                                                                                                               |
+| Client access               | [`access.ts`](https://github.com/n8n-io/nod/blob/main/src/server/access.ts), [`network.ts`](https://github.com/n8n-io/nod/blob/main/src/server/network.ts)                                                |
 | File previews               | [`attachment-frame.tsx`](https://github.com/n8n-io/nod/blob/main/src/web/components/attachment-frame.tsx), [`attachment-kind.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/attachment-kind.ts) |
 
 ## Related resources

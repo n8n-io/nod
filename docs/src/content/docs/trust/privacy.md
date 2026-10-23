@@ -101,9 +101,9 @@ Analytics have no fields for raw messages, nod's replies, tool arguments or resu
 
 ## Conversation traces
 
-Conversation traces are off until you turn on **Share conversation traces** in **Settings**. While it's on, each request nod makes to your model is sent with the model's reply to the nod team at n8n, through n8n's nod Traces service to n8n's LangSmith project in the EU. Traces are deleted after 14 days, and n8n doesn't use them to train AI models.
+Conversation traces are off until you turn on **Share conversation traces** in **Settings**. While it's on, nod sends scrubbed model requests and replies to its configured trace receiver. The default is n8n's nod Traces service, which forwards them to n8n's LangSmith project in the EU. There, traces are deleted after 14 days, and n8n doesn't use them to train AI models. A different receiver has its own access and retention policies.
 
-Before a trace leaves your computer, nod removes known secrets, your name, email addresses, phone numbers, card numbers, IBANs, crypto wallets, common ID numbers, IP addresses, personal fields in app data and images. A trace carries no account or device identifier, its conversation ID changes every day and whenever nod restarts, and your saved memory is left out. Removal is automatic and can miss details written in other forms, such as another person's name in a sentence, so traces are pseudonymised, not anonymous. See [Conversation traces](/trust/conversation-traces/) for every layer, an example and where traces go.
+Before a trace leaves the machine running your assistant, nod removes known secrets, your name, email addresses, phone numbers, card numbers, IBANs, crypto wallets, common ID numbers, IP addresses, personal fields in app data and images. A trace carries no account or device identifier, its conversation ID changes every day and whenever nod restarts, and your saved memory is left out. Removal is automatic and can miss details written in other forms, such as another person's name in a sentence, so traces are pseudonymised, not anonymous. See [Conversation traces](/trust/conversation-traces/) for every layer, an example and where traces go.
 
 ## Feedback
 
@@ -132,7 +132,10 @@ Memory notes come only from your own messages and the notes you add or import in
 - **Memories.** Open **Settings → Memory**, select a note and choose **Forget**. This deletes the note and its earlier versions. You can also ask nod to forget something.
 - **Vault items.** Open the item in **Vault** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
-- **Everything.** In the desktop app, select **Remove all data** in **Settings → General**. nod deletes your profile and private computer from the folders above, then quits. From source, stop nod and delete its `NOD_DATA_ROOT` folder (`.local/` by default) and its Docker volumes. Uninstalling the app alone keeps your data. A service you signed in to through nod may still list nod as a connected app until you remove it there.
+- **A local desktop assistant.** Select **Remove all data** in **Settings → General**. nod deletes your local profile and private computer, then quits. If connected to a server, first choose **Use this computer** in **Server connection**. This deletes no server data.
+- **A source install or self-hosted server.** Stop it, then remove its data directory and Docker volumes. For a server, follow [Server operations](/deploy/server-operations/). Disconnecting or uninstalling a client keeps the server's data.
+
+Uninstalling the desktop app alone keeps its data. A service you signed in to through nod may still list nod as a connected app until you remove it there.
 
 Disconnecting an app does not erase the connection service's installation or revocation records. **Remove all data** deletes local data, not those records. To request their removal from n8n's service, use **Send feedback**; for a custom service, contact its operator.
 

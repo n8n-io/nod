@@ -98,7 +98,7 @@ You can also tell nod in chat, for example "forget my old address" or "stop reme
 
 ## Check memory from Telegram or WhatsApp
 
-Send `/memory` (or `/context`) to get a short summary. It doesn't use the model or cost anything. Telegram also receives the full export as a document.
+Send `/memory` (or `/context`) for a short summary written by your selected model. That model call counts toward usage. Telegram and the WhatsApp QR connection also receive the full export as a document. With the WhatsApp Cloud API, open nod to get it.
 
 ## Memory is context, not permission
 

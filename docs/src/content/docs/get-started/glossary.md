@@ -53,9 +53,10 @@ This page explains the words you'll meet in these docs. Select a term to read th
 
 ## Running nod
 
-| Term                                                  | What it means                                                                                                      |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| [Owner access key](/get-started/install-from-source/) | The secret that opens a source install of nod. The access link nod prints when it starts saves it in your browser. |
+| Term                                                  | What it means                                                                                                                    |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| [Owner access key](/get-started/install-from-source/) | The secret that opens a local source install of nod. The access link nod prints when it starts saves it in your browser.         |
+| [Server access token](/deploy/self-host/)             | The `NOD_AUTH_TOKEN` configured on a self-hosted server. Enter it in the web or desktop client to reach that server's assistant. |
 
 ## Related resources
 

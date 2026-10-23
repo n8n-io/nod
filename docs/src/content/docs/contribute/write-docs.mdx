@@ -1,6 +1,6 @@
 ---
 title: Write docs
-description: Run the nod docs locally, write pages in the house style and use the components and diagrams the site supports.
+description: Run, write and publish the nod docs, using the site's house style, components and diagrams.
 sidebar:
   order: 8
 ---
@@ -39,7 +39,7 @@ The docs are an [Astro Starlight](https://starlight.astro.build) site in the `do
    pnpm --dir docs dev
    ```
 
-3. Open `http://localhost:4321/nod/` in your browser.
+3. Open `http://localhost:4321/` in your browser.
 
 4. Before you open a pull request, build the site. The build fails on a broken link or a missing heading anchor.
 
@@ -50,6 +50,29 @@ The docs are an [Astro Starlight](https://starlight.astro.build) site in the `do
 </Steps>
 
 On every pull request that changes `docs/`, the **Docs** workflow builds the site, checks every internal link, and attaches the built site to the run as the `nod-docs` artifact.
+
+## Publish the docs
+
+The live site is [nod-docs.pages.dev](https://nod-docs.pages.dev), in the Cloudflare Pages project **nod-docs**. The **Docs** workflow keeps its build artifact for seven days; it does not publish it. Deployment settings live outside this repository, so check the Pages project before relying on automatic updates.
+
+Use a Cloudflare account with access to the existing project. Run `pnpm dlx wrangler@4.152.0 pages project list` to check access. If **nod-docs** is absent, ask the project's owner for access before continuing. The [rename PR](https://github.com/n8n-io/nod/pull/398) records its initial deployment. Do not create a replacement project to update the existing site.
+
+Build the reviewed revision:
+
+```sh title="Terminal"
+pnpm --dir docs install --frozen-lockfile
+pnpm --dir docs build
+```
+
+The output is `docs/dist`. The default site address is `https://nod-docs.pages.dev`, with no path prefix. Set `DOCS_SITE` and `DOCS_BASE` at build time only when publishing to another address or path.
+
+Confirm the Pages project's production branch. For a Direct Upload project, read `production_branch` through Cloudflare's [Get Project API](https://developers.cloudflare.com/api/resources/pages/subresources/projects/methods/get/); its dashboard does not expose branch controls. Replace `PRODUCTION_BRANCH` below with that branch before uploading the built site:
+
+```sh title="Terminal"
+pnpm dlx wrangler@4.152.0 pages deploy docs/dist --project-name nod-docs --branch PRODUCTION_BRANCH
+```
+
+Use a different branch for a preview deployment. Open the returned deployment URL, check the changed pages and their links, then check the live address after a production deployment. For automated publishing, follow [Cloudflare's CI guide](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/) with credentials restricted to the project account. The **Docs** workflow does not yet implement that step.
 
 ## Where pages live
 
@@ -152,7 +175,7 @@ nod's docs follow the [n8n docs style](https://docs.n8n.io/contribute/contributi
 
 ## Link to other pages
 
-Write internal links as site paths that start and end with `/`, without the `/nod` prefix. The build adds the prefix and checks that every page and heading exists.
+Write internal links as site paths that start and end with `/`. The build adds any configured `DOCS_BASE` prefix and checks that every page and heading exists.
 
 ```md
 See [Approve one payment](/trust/payments/#approve-one-payment).

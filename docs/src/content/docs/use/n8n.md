@@ -9,7 +9,7 @@ Connect your n8n once, then ask for it by name in chat, such as "build an n8n wo
 
 ## Connect
 
-Open **Apps** and select **Connect** on n8n. If n8n runs on this computer, the address is already filled in. Otherwise enter yours, such as `https://you.app.n8n.cloud`, then approve nod on n8n's own consent page. See [Connect n8n](/connect/mcp-api-cli/#n8n) for access tokens and self-hosted addresses.
+Open **Apps** and select **Connect** on n8n. If n8n responds at `http://localhost:5678` from nod's server, the address is already filled in. Otherwise enter an address that server can reach, such as `https://you.app.n8n.cloud`, then approve nod on n8n's own consent page. See [Connect n8n](/connect/mcp-api-cli/#n8n) for access tokens and self-hosted addresses.
 
 ## What to ask
 

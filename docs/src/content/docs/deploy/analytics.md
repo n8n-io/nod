@@ -40,10 +40,12 @@ To disable both upstream analytics and feedback, set `NOD_ANALYTICS_ENABLED=fals
 
 nod counts installations, not people. Two installations count as two, and a shared one counts as one.
 
-| Runtime        | Identity                                                      | Available by default                       |
-| -------------- | ------------------------------------------------------------- | ------------------------------------------ |
-| Source install | `local:<installation UUID>` in `<NOD_DATA_ROOT>/analytics-id` | With `pnpm start`, not with `pnpm run dev` |
-| Desktop app    | `local:<installation UUID>` in the desktop profile            | In packaged apps, not in development       |
+| Runtime                      | Identity                                                      | Available by default                                                          |
+| ---------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Source or self-hosted server | `local:<installation UUID>` in `<NOD_DATA_ROOT>/analytics-id` | With `NODE_ENV=production`, including `pnpm start` and the self-hosting stack |
+| Local desktop runtime        | `local:<installation UUID>` in the desktop profile            | In packaged apps, not in development                                          |
+
+Web and desktop clients connected to the same server use that server's installation identity. A separate local desktop assistant has its own identity.
 
 "Available" still needs the owner's opt-in. PostHog creates no person profile and doesn't look up your location from your IP address.
 

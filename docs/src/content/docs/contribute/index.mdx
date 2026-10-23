@@ -29,7 +29,7 @@ Agreeing on the approach first saves you from building something that can't merg
 
 1. Install Node.js 24.21.0 or newer, pnpm 10.34.5, Docker with Compose v2 and Git. Development works on macOS and Linux.
 
-2. Follow [Install from source](/get-started/install-from-source/) for the first start, including the Vault key on Linux.
+2. Follow [Install from source](/get-started/install-from-source/) for the first start and credential storage setup.
 
 3. Start nod with automatic reload.
 
@@ -66,7 +66,7 @@ nod's server code is split into layers. `src/server/composition.ts` is the only 
 - tests/ tests for the app
 - desktop/ the desktop app
 - evals/ capability evals
-- deployment/ n8n delivery
+- deployment/ self-hosting and n8n delivery
 - docs/ this site
 
 </FileTree>
@@ -93,7 +93,7 @@ Each arrow means "may import". Every layer may also import `src/shared`.
 | Thread, turns, stop and reset   | `src/server/thread.ts`, `src/runtime/`                                                                                                 | `tests/thread.test.ts`, `tests/pi.test.ts`                                                                       |
 | Approvals and the trust check   | `src/server/trust.ts`, `src/server/approvals.ts`                                                                                       | `tests/approvals.test.ts`, `tests/approvals-application.test.ts`, `tests/agent-guard.test.ts`                    |
 | Vault, sign-in and payments     | `src/server/vault.ts`, `src/server/vault-use.ts`, `src/server/vault-access.ts`, `src/server/vault-crypto.ts`, `src/server/payments.ts` | `tests/vault.test.ts`, `tests/vault-chat-code.test.ts`, `tests/browser-sign-in.test.ts`, `tests/browser.test.ts` |
-| Workspace and browser isolation | `src/providers/docker/`, `src/providers/agent-browser/`, `Dockerfile.*`                                                                | `tests/sandbox.test.ts`, `tests/browser.test.ts`, `tests/computers.test.ts`                                      |
+| Workspace and browser isolation | `src/providers/docker/`, `src/providers/agent-browser/`, `Dockerfile.*`                                                                | `tests/sandbox.test.ts`, `tests/browser.test.ts`                                                                 |
 | Connected apps                  | `src/server/integrations.ts`, `src/providers/composio/`, `src/providers/discovered/`                                                   | `tests/integrations.test.ts`                                                                                     |
 | Channels                        | `src/server/channels.ts`, `src/providers/chat-sdk/`                                                                                    | `tests/channels.test.ts`, `tests/channel-delivery.test.ts`, `tests/channel-application.test.ts`                  |
 | Schedules and background checks | `src/server/schedules.ts`, `src/server/triage.ts`                                                                                      | `tests/schedules.test.ts`                                                                                        |

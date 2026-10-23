@@ -9,7 +9,9 @@ import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
 nod can use a model that runs on your own computer, or on any server with an OpenAI-compatible API. Model requests then go only to the address you enter, and a local model costs nothing per request.
 
-Local models work in the [desktop app](/get-started/install-desktop/) and [source installs](/get-started/install-from-source/).
+Local models work in the [desktop app](/get-started/install-desktop/), [source installs](/get-started/install-from-source/), and [self-hosted servers](/deploy/self-host/).
+
+The model server must be reachable from nod's server. On a remote install, `localhost` refers to that server; inside Docker, it refers to nod's container.
 
 :::caution[Your model also decides when nod asks you]
 nod's [trust check](/trust/approvals/) runs on your selected model. It decides whether your words cover each app action, website step and sign-in, or whether nod asks you first. Smaller models make that call less reliably: they can ask more often, or run something you didn't ask for. Use the largest model your computer runs well.
@@ -98,7 +100,7 @@ With LM Studio 0.4 or later, nod reads each model's details. It skips embedding 
 
 <Steps>
 
-1. Open the account menu, select **Models**, then select **Add server** next to **OpenAI-compatible**. During onboarding, select **More providers**, then **Your own server**.
+1. Open **Settings → Models**, then select **Add server** next to **OpenAI-compatible**. During onboarding, select **More providers**, then **Your own server**.
 2. Check the **Server address**. nod fills in Ollama's address, `http://localhost:11434/v1`. If you leave out `/v1`, nod tries it for you.
 3. Add an **API key** only if the server needs one.
 4. Select **Save connection**, or **Connect** during onboarding.

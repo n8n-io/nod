@@ -1,12 +1,14 @@
 # nod docs
 
-The source of the nod documentation site, built with [Astro Starlight](https://starlight.astro.build). When a pull request or a push to `main` changes the site, the **Docs** workflow builds it, checks every internal link, and attaches the built site to the run as the `nod-docs` artifact.
+The source of [nod's documentation](https://nod-docs.pages.dev), built with [Astro Starlight](https://starlight.astro.build) and hosted on Cloudflare Pages. The **Docs** workflow builds and checks the site, then attaches a `nod-docs` artifact. Publishing is a separate step; see [Publish the docs](src/content/docs/contribute/write-docs.mdx#publish-the-docs).
 
 ```sh
 pnpm --dir docs install --frozen-lockfile
-pnpm --dir docs dev     # http://localhost:4321/nod/
-pnpm --dir docs build   # fails on a broken link
+pnpm --dir docs dev
+pnpm --dir docs build
 ```
+
+The dev server opens at `http://localhost:4321/`. The build fails on a broken link.
 
 | Path                       | What it holds                                                                                     |
 | -------------------------- | ------------------------------------------------------------------------------------------------- |

@@ -28,20 +28,21 @@ pnpm exec tsx --test tests/approvals.test.ts
 
 `pnpm install` sets up Git hooks with [Lefthook](https://github.com/evilmartians/lefthook).
 
-| Hook       | What runs                                                                                                                                           |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pre-commit | Prettier formats your staged files. If [Gitleaks](https://github.com/gitleaks/gitleaks) is installed, it scans them for secrets.                    |
-| Pre-push   | `pnpm run lint`: `pnpm run check` without formatting. It type-checks, checks import boundaries and checks that the workspace images share packages. |
+| Hook       | What runs                                                                                                                        |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Pre-commit | Prettier formats your staged files. If [Gitleaks](https://github.com/gitleaks/gitleaks) is installed, it scans them for secrets. |
+| Pre-push   | `pnpm run lint`: `pnpm run check` without formatting. It type-checks and checks import boundaries.                               |
 
 Secret scanning skips its generic keyword check in tests and fixtures. Known key formats fail everywhere, so keep test values synthetic.
 
 ## Extra checks for some areas
 
-| If you change | Also run                                                 |
-| ------------- | -------------------------------------------------------- |
-| `desktop/`    | `pnpm run desktop:test`                                  |
-| `evals/`      | `pnpm --dir evals run check` and `pnpm --dir evals test` |
-| `docs/`       | `pnpm --dir docs build`                                  |
+| If you change           | Also run                                                                                                                                      |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `desktop/`              | `pnpm run desktop:test`                                                                                                                       |
+| `deployment/self-host/` | The server and standalone bundle checks in [Self-host bundle](https://github.com/n8n-io/nod/blob/main/.github/workflows/self-host-bundle.yml) |
+| `evals/`                | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                      |
+| `docs/`                 | `pnpm --dir docs build`                                                                                                                       |
 
 The [capability evals](/contribute/evals/) call live models, so they aren't part of these checks. They run nightly and on request.
 
@@ -67,13 +68,13 @@ Wait for a controlled frame to finish loading before checking an old control bin
 
 Add a test only when it would catch a real regression in one of these areas. Extend the existing file for that area instead of adding a new one.
 
-| Area                  | For example                                                                                         |
-| --------------------- | --------------------------------------------------------------------------------------------------- |
-| Core harness          | One thread and Pi session per owner, turns one at a time, stop, interruption, reset, session rebase |
-| Sandbox isolation     | Nothing on the host, no keys in the sandbox, contained paths                                        |
-| Safety                | Approvals, uncertain actions, Vault and sign-in fencing, onboarding task cards                      |
-| Owner isolation       | Owner scoping, local access, URL guards, redaction                                                  |
-| Integration contracts | Channel delivery, schedule firing, downloads, OAuth completion                                      |
+| Area                  | For example                                                                                                                      |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Core harness          | One thread per owner, saved chat and task sessions, one turn per session at a time, stop, interruption, reset and session rebase |
+| Sandbox isolation     | Nothing on the host, no keys in the sandbox, contained paths                                                                     |
+| Safety                | Approvals, uncertain actions, Vault and sign-in fencing, onboarding task cards                                                   |
+| Owner isolation       | Owner scoping, local access, URL guards, redaction                                                                               |
+| Integration contracts | Channel delivery, schedule firing, downloads, OAuth completion                                                                   |
 
 Leave out tautological tests, mocks that return what they were told, and tests of UI copy, wording, CSS, constants or configuration. For a change in `src/web`, check it in the running app instead.
 
@@ -120,6 +121,7 @@ flowchart TD
 | `desktop/`                                       | Desktop tests                                                                                                                                |
 | `evals/`                                         | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                     |
 | `deployment/n8n/`                                | The n8n delivery contract tests                                                                                                              |
+| `deployment/self-host/`                          | Full app checks, plus the **Self-host bundle** workflow's native builds and server and installer checks for both architectures               |
 
 A manual CI run uses every check. The exception is a run on `release/desktop`, which compares that branch with `main`. The rules are in [`.github/scripts/ci-scope.mjs`](https://github.com/n8n-io/nod/blob/main/.github/scripts/ci-scope.mjs).
 

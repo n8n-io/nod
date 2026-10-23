@@ -4,7 +4,7 @@
 </picture>
 
 <p align="center">
-  <a href="docs/README.md"><img alt="Docs" src="https://img.shields.io/badge/docs-read_them-ff91ac?style=flat-square&labelColor=191919" /></a>
+  <a href="https://nod-docs.pages.dev"><img alt="Docs" src="https://img.shields.io/badge/docs-read_them-ff91ac?style=flat-square&labelColor=191919" /></a>
   <a href="https://github.com/n8n-io/nod/releases"><img alt="Download" src="https://img.shields.io/badge/download-macOS_·_Windows-ff91ac?style=flat-square&labelColor=191919" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache_2.0-ff91ac?style=flat-square&labelColor=191919" /></a>
   <img alt="Status" src="https://img.shields.io/badge/status-early_preview-ff91ac?style=flat-square&labelColor=191919" />
@@ -41,7 +41,7 @@
 ## Built to be trusted
 
 - **Authority comes from you.** A web page or an email can never give nod permission. The server checks every app action against what you asked, and asks you when it isn't sure.
-- **Your secrets never reach the model.** Vault fills saved logins and cards into the exact website, privately.
+- **Vault keeps saved secrets out of the model.** It fills saved logins and cards into the exact website, privately.
 - **What matters is on the record.** Every sign-in, every change or message sent through your apps, and every model cost, with a monthly spending limit.
 - **Runs on your computer.** With the desktop app or from source. You pick the model provider, and the code is open.
 
@@ -73,7 +73,7 @@ You also need a model connection: an OpenAI, Anthropic or OpenRouter API key, an
 
 ## Read the docs
 
-The docs are a site in [`docs/`](docs/README.md). Run them with `pnpm --dir docs dev`, or start reading here:
+Read the [documentation site](https://nod-docs.pages.dev). Its source lives in [`docs/`](docs/README.md); run it locally with `pnpm --dir docs dev`, or browse these pages in the repository:
 
 | Section                                                              | What's inside                                         |
 | -------------------------------------------------------------------- | ----------------------------------------------------- |

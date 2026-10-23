@@ -23,8 +23,6 @@ Each entry has an address, `area/slug`, a text of up to 4,000 characters and an 
 | `routines`    | Recurring procedures they described |
 | `lessons`     | Corrections and what to avoid       |
 
-Earlier versions kept the owner's name, location, phone and preferences in a separate profile. On upgrade, its text becomes confirmed notes, such as `Name: …` in `about` and the preferences in `preferences`. Long text is split at sentence and line breaks into notes of up to 120 characters, so each shows in full in the index. Text that looks like a secret is skipped. If memory is full, the profile stays and nod tries again at the next start.
-
 The code is in [`src/server/memory.ts`](https://github.com/n8n-io/nod/blob/main/src/server/memory.ts) and [`src/server/memory-tree.ts`](https://github.com/n8n-io/nod/blob/main/src/server/memory-tree.ts).
 
 ## How Pi reads memory
@@ -143,9 +141,9 @@ Sensitive topics are health, religion, politics, sexuality, gender identity, eth
 
 **Settings → Memory** reads `GET /api/memory`, and **Export** downloads `GET /api/memory/export` as one Markdown file. Quotes in the view come only from the owner's own messages. The add, edit, confirm, forget and restore routes are in [`src/server/personal.ts`](https://github.com/n8n-io/nod/blob/main/src/server/personal.ts).
 
-**Import** splits a pasted answer from another assistant into notes in the page, without a model: each `- ` line, or each line when the answer has no bullets, becomes a note in the area named by the heading above it (`## About you`, `## Preferences`, `## People`, `## Routines` or `## Lessons`), or `about` otherwise. The owner removes what they don't want, and `POST /api/memory/import` saves the rest as stated notes, word for word. Like the profile move, it skips notes already saved, lines over 4,000 characters and text that looks like a secret.
+**Import** splits a pasted answer from another assistant into notes in the page, without a model: each `- ` line, or each line when the answer has no bullets, becomes a note in the area named by the heading above it (`## About you`, `## Preferences`, `## People`, `## Routines` or `## Lessons`), or `about` otherwise. The owner removes what they don't want, and `POST /api/memory/import` saves the rest as stated notes, word for word. It skips notes already saved, lines over 4,000 characters and text that looks like a secret.
 
-Page changes post nothing to chat and work while saving is off. Rewriting a note archives the previous version and makes the note stated. On Telegram or WhatsApp, `/memory` or `/context` sends a short digest without a turn or a model call.
+Page changes post nothing to chat and work while saving is off. Rewriting a note archives the previous version and makes the note stated. On Telegram or WhatsApp, `/memory` or `/context` sends a short digest without an agent turn. The selected model writes the summary, and that call counts toward usage.
 
 ## Writing style from Gmail
 

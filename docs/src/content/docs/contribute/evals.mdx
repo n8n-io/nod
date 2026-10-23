@@ -38,7 +38,7 @@ flowchart TD
 
 Web search and page fetch (`web_search` and `fetch_content`) run on the server. A fetch to a named fixture host uses the local test server. Other requests can reach the public web.
 
-Checks grade the end state: the fake world, the workspace files and the trace. Trust checks use decision models the way production chooses them: `TYPESAFE_API_KEY` first, otherwise the agent's provider. A separate judge model grades what needs judgement, and also reads the text of any file nod shares with the user. Every request to a lookalike website records which browser made it, so a check can tell what each browser, including a subagent's, was showing.
+Checks grade the end state: the fake world, the workspace files and the trace. Action trust checks and confirmation-fact checks use the selected chat model at its lowest reasoning effort, as in production. Decision models can classify approval replies and emails that give account access; they do not decide whether an action is allowed. A separate judge model grades what needs judgement, and also reads the text of any file nod shares with the user. Every request to a lookalike website records which browser made it, so a check can tell what each browser, including a subagent's, was showing.
 
 :::caution[The fakes are the main fidelity risk]
 The fake apps are hand-written approximations of Composio's responses, not recordings. Check a result against a real account before you trust it for a connector.

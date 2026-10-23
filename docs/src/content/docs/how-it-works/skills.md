@@ -46,13 +46,13 @@ The library has 26 task guides in [`src/runtime/skills`](https://github.com/n8n-
 | `subscriptions-and-bills` |                         |                          |
 | `travel`                  |                         |                          |
 
-Seven guides have a reference for one specific case: recurring meetings, data imports, government forms, catalog synchronization, corpus research, purchase claims and existing travel bookings.
+Eight guides have a reference for one specific case: recurring meetings, data imports, government forms, catalog synchronization, corpus research, purchase claims, existing travel bookings and n8n Telegram workflows.
 
 ## How the model reads a guide
 
 The `skills` tool has these actions:
 
-- `{action: "list"}` returns the names and descriptions of the guides and of the learned skills.
+- `{action: "list"}` returns the names and descriptions of built-in guides. Learned skills are listed in the owner context.
 - `{action: "read", name}` loads a guide's `SKILL.md` or a learned skill. Add `file: "references/<name>.md"` to load one reference of a guide.
 - `{action: "save", name, description, body}` and `{action: "patch", name, old, new}` write a learned skill. See [Learned skills](/how-it-works/memory/#learned-skills).
 
