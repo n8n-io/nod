@@ -89,7 +89,7 @@ function providerFailure(action: string, result: Record<string, unknown>) {
   const log = typeof result.logId === 'string' ? ` (Composio log ${result.logId})` : '';
   const message = `Composio could not complete ${action}: ${text.slice(0, 4000)}${log}`;
   const missingScope =
-    /\b(?:missing_scope|insufficient_scope|insufficientPermissions|ACCESS_TOKEN_SCOPE_INSUFFICIENT)\b|insufficient (?:authentication )?scopes/i.test(
+    /\b(?:missing_scope|insufficient_scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT)\b|insufficient (?:authentication )?scopes/i.test(
       detail,
     );
   return missingScope ? new IntegrationPermissionError(message) : new Error(message);

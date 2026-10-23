@@ -7106,12 +7106,16 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
   for (const [name, failure] of [
     ['OAuth insufficient scope', { error: 'insufficient_scope', data: {} }],
     [
-      'Gmail nested permission reason',
+      'Gmail nested insufficient scopes detail',
       {
         error: null,
         data: {
           successful: false,
-          error: { code: 403, errors: [{ reason: 'insufficientPermissions' }] },
+          error: {
+            code: 403,
+            message: 'Request had insufficient authentication scopes.',
+            errors: [{ reason: 'insufficientPermissions' }],
+          },
         },
       },
     ],
@@ -7126,12 +7130,16 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
       },
     ],
     [
-      'Generic outer error preserves the nested Gmail permission reason',
+      'Generic outer error preserves the nested Gmail scope detail',
       {
         error: 'Request failed',
         data: {
           successful: false,
-          error: { code: 403, errors: [{ reason: 'insufficientPermissions' }] },
+          error: {
+            code: 403,
+            message: 'Request had insufficient authentication scopes.',
+            errors: [{ reason: 'insufficientPermissions' }],
+          },
         },
         resultType: 'failed',
       },
@@ -7147,6 +7155,13 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
   for (const failure of [
     { error: 'HTTP 403: Permission denied.', data: {} },
     { error: null, data: { successful: false, error: { code: 403, message: 'Forbidden' } } },
+    {
+      error: null,
+      data: {
+        successful: false,
+        error: { code: 403, errors: [{ reason: 'insufficientPermissions' }] },
+      },
+    },
   ]) {
     result = { ...failure, resultType: 'completed' };
     await assert.rejects(
