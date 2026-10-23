@@ -481,12 +481,14 @@ if (args[1] === 'create') {
     if (args.includes('--prerelease=false')) release.prerelease = false;
     if (args.includes('--notes-file')) release.body = readFileSync(flag('--notes-file'), 'utf8');
   } else if (args[1] === 'upload') {
-    const bytes = readFileSync(args[3]);
-    const name = basename(args[3]);
-    release.assets = release.assets.filter(asset => asset.name !== name);
-    state.assetIds = (state.assetIds || 0) + 1;
-    release.assets.push({ id: state.assetIds, name, size: bytes.length, digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'), state: 'uploaded' });
-    state.contents[tag + '/' + name] = bytes.toString('base64');
+    for (const file of args.slice(3, args.indexOf('--repo'))) {
+      const bytes = readFileSync(file);
+      const name = basename(file);
+      release.assets = release.assets.filter(asset => asset.name !== name);
+      state.assetIds = (state.assetIds || 0) + 1;
+      release.assets.push({ id: state.assetIds, name, size: bytes.length, digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'), state: 'uploaded' });
+      state.contents[tag + '/' + name] = bytes.toString('base64');
+    }
   } else if (args[1] === 'download') {
     const name = flag('--pattern');
     if (!state.contents[tag + '/' + name]) missing();

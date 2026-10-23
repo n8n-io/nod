@@ -235,8 +235,11 @@ async function plan() {
         arch: target,
         platform: `darwin-${target}`,
         linux_runner:
-          target === 'arm64' ? 'blacksmith-8vcpu-ubuntu-2404-arm' : 'blacksmith-8vcpu-ubuntu-2404',
-        mac_runner: target === 'arm64' ? 'macos-15' : 'macos-15-intel',
+          target === 'arm64'
+            ? 'blacksmith-16vcpu-ubuntu-2404-arm'
+            : 'blacksmith-16vcpu-ubuntu-2404',
+        mac_runner: 'blacksmith-12vcpu-macos-15',
+        node_arch: target,
         docker_arch: target === 'arm64' ? 'arm64' : 'amd64',
       });
     }
@@ -421,11 +424,11 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
       ],
       repository,
     );
-  for (const file of files) {
+  for (const file of files)
     if ((await stat(file)).size >= maximumAssetBytes)
       throw new Error('GitHub release assets must be smaller than 2 GiB.');
-    gh(['release', 'upload', tag, file, '--repo', repository, '--clobber'], repository);
-  }
+  if (files.length)
+    gh(['release', 'upload', tag, ...files, '--repo', repository, '--clobber'], repository);
   release = releaseByTag(repository, tag);
   if (
     !release?.draft ||
