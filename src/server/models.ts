@@ -85,13 +85,6 @@ export function azureAddress(address: string) {
   return pathname === '/' || pathname === '/openai' ? `${origin}/openai/v1` : url;
 }
 
-const rejected: Partial<Record<ModelProvider, string>> = {
-  'amazon-bedrock':
-    'Amazon Bedrock didn’t list models for this key in that Region. Check both, and that the key can list models.',
-  'google-vertex': 'Google Vertex AI didn’t accept this API key.',
-  azure: 'This Azure OpenAI endpoint didn’t accept the key. Check the endpoint and the key.',
-};
-
 function keyCredential(
   provider: ModelProvider,
   key: string,
@@ -664,10 +657,7 @@ export function createModelService(options: {
       remember(value);
       return tracked(provider, 'api_key', async () => {
         await checkStorage();
-        const definitions = await catalog(provider, 'api_key', value).catch((error) => {
-          throw rejected[provider] ? new ConnectionError(rejected[provider]) : error;
-        });
-        return save(provider, 'api_key', value, definitions);
+        return save(provider, 'api_key', value, await catalog(provider, 'api_key', value));
       });
     },
     async addEndpoint(address: string, key?: string) {

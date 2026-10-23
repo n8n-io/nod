@@ -95,7 +95,7 @@ nod lists the OpenRouter models that support text and tools.
 
 </Steps>
 
-nod lists the models the key can call in that Region: models with on-demand access, and the inference profiles there, such as `eu.anthropic.claude-opus-5-5`. A profile that starts with `global.` can send requests to any AWS Region. To keep requests in one geography, choose a profile such as `eu.` or `us.`. That's why nod doesn't choose a Bedrock model for you.
+nod lists the models and inference profiles Bedrock offers in that Region, such as `eu.anthropic.claude-opus-5-5`. The key still needs permission to call the one you choose. A profile that starts with `global.` can send requests to any commercial AWS Region. A geographic profile such as `eu.` or `us.` stays in that geography, and each model's page in the AWS docs lists the Regions it can use. That's why nod doesn't choose a Bedrock model for you.
 
 The key needs to list models (`bedrock:ListFoundationModels` and `bedrock:ListInferenceProfiles`) and call them. Keys made in the Bedrock console get the `AmazonBedrockLimitedAccess` policy, which allows both. nod doesn't use AWS access keys or profiles.
 
@@ -104,14 +104,14 @@ The key needs to list models (`bedrock:ListFoundationModels` and `bedrock:ListIn
 
 <Steps>
 
-1. In the Google Cloud console, create an API key for Vertex AI. Bind it to a service account that can use Vertex AI, or use a Vertex AI express mode key.
+1. In the Google Cloud console, create an API key for Vertex AI: an express mode key, or a standard key in a project with billing.
 2. In nod, next to **Google Vertex AI**, select **Add API key**.
 3. Paste the key into **Google Vertex AI API key**, then select **Save connection**.
 4. Choose a model.
 
 </Steps>
 
-nod checks the key with a free token count and lists the Gemini models on Vertex AI. Requests go to Vertex AI's global endpoint. Service account key files aren't supported.
+nod checks the key with a free token count and lists the Gemini models on Vertex AI. Requests go to Vertex AI's global endpoint. Google recommends service accounts over API keys for production, but nod doesn't support service account key files yet.
 
 </TabItem>
 <TabItem label="Azure OpenAI">

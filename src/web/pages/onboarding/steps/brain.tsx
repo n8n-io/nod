@@ -85,13 +85,15 @@ const providers: Record<
 
 const invalidKey = 'That key didn’t work. Check it and try again.';
 
-function ownerChooses(source: ModelConnection) {
+function noDefault(source: ModelConnection) {
   return (
-    (source.provider === 'compatible' ||
-      source.provider === 'amazon-bedrock' ||
-      source.provider === 'google-vertex') &&
+    (source.provider === 'amazon-bedrock' || source.provider === 'google-vertex') &&
     source.models.length > 1
   );
+}
+
+function ownerChooses(source: ModelConnection) {
+  return noDefault(source) || (source.provider === 'compatible' && source.models.length > 1);
 }
 
 function recommended(source: ModelConnection) {
@@ -99,9 +101,7 @@ function recommended(source: ModelConnection) {
   return (
     (subscription && source.models.find((item) => item.id === 'gpt-6-sol')) ||
     source.models.find((item) => item.id === agentModels[source.provider]) ||
-    (source.provider === 'amazon-bedrock' || source.provider === 'google-vertex'
-      ? undefined
-      : source.models[0])
+    (noDefault(source) ? undefined : source.models[0])
   );
 }
 

@@ -327,27 +327,52 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     );
     return models.flat();
   }
+  async function cloudResponse(url: string, init: RequestInit, rejected: string) {
+    const response = await request(url, {
+      ...init,
+      redirect: 'error',
+      signal: AbortSignal.timeout(15000),
+    });
+    if ([400, 401, 403, 404].includes(response.status)) {
+      await response.body?.cancel();
+      throw new ModelAuthError(rejected);
+    }
+    return response;
+  }
   async function bedrockCatalog(local: readonly Model<Api>[], credential: ModelCredential) {
     if (credential.type !== 'bedrock' || !bedrockRegionPattern.test(credential.region))
       throw new Error('This model connection is unavailable.');
     const root = `https://bedrock.${credential.region}.amazonaws.com`;
-    const init = {
-      headers: { Authorization: `Bearer ${credential.key}` },
-      redirect: 'error' as const,
-    };
-    const [models, profiles] = await Promise.all([
-      json(`${root}/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=TEXT`, init),
-      json(`${root}/inference-profiles?maxResults=1000`, init),
-    ]);
-    const available = new Set([
-      ...entries(models.modelSummaries, z.object({ modelId: z.string() })).map(
-        (model) => model.modelId,
-      ),
-      ...entries(
+    const list = async (path: string) =>
+      jsonResponse(
+        await cloudResponse(
+          `${root}${path}`,
+          { headers: { Authorization: `Bearer ${credential.key}` } },
+          'Amazon Bedrock didn’t accept this key in that Region. Check both, and that the key can list models.',
+        ),
+      );
+    const available = new Set(
+      entries(
+        (await list('/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=TEXT'))
+          .modelSummaries,
+        z.object({ modelId: z.string() }),
+      ).map((model) => model.modelId),
+    );
+    let page: string | undefined;
+    do {
+      const profiles = await list(
+        `/inference-profiles?type=SYSTEM_DEFINED&maxResults=1000${page ? `&nextToken=${encodeURIComponent(page)}` : ''}`,
+      );
+      for (const profile of entries(
         profiles.inferenceProfileSummaries,
         z.object({ inferenceProfileId: z.string(), status: z.literal('ACTIVE') }),
-      ).map((profile) => profile.inferenceProfileId),
-    ]);
+      ))
+        available.add(profile.inferenceProfileId);
+      page =
+        typeof profiles.nextToken === 'string' && profiles.nextToken !== page
+          ? profiles.nextToken
+          : undefined;
+    } while (page);
     return local.filter((model) => available.has(model.id)).map(definition);
   }
   async function vertexCatalog(local: readonly Model<Api>[], credential: ModelCredential) {
@@ -364,20 +389,23 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       },
     );
     await response.body?.cancel();
+    if ([400, 401, 403].includes(response.status))
+      throw new ModelAuthError('Google Vertex AI didn’t accept this API key.');
     if (!response.ok && response.status !== 404)
-      throw new Error(
-        'The model service rejected the request. Check the connection and account access.',
-      );
+      throw new Error('The model service is temporarily unavailable. Try again.');
     return local.map(definition);
   }
   async function azureCatalog(local: readonly Model<Api>[], credential: ModelCredential) {
     if (credential.type !== 'azure') throw new Error('This model connection is unavailable.');
     const model = local.find((item) => item.id === credential.model);
     if (!model) throw new Error('This model connection is unavailable.');
-    await json(`${credential.url}/models`, {
-      headers: { 'api-key': credential.key },
-      redirect: 'error',
-    });
+    await jsonResponse(
+      await cloudResponse(
+        `${credential.url}/models`,
+        { headers: { 'api-key': credential.key } },
+        'This Azure OpenAI endpoint didn’t accept the key. Check the endpoint and the key.',
+      ),
+    );
     return [definition({ ...model, baseUrl: credential.url })];
   }
   return {

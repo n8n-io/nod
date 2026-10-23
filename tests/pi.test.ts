@@ -3137,18 +3137,30 @@ test('cloud connections list only the account’s models and send each key only 
       requests.push(url);
       assert.equal(init?.redirect, 'error');
       if (url.startsWith('https://bedrock.eu-west-1.amazonaws.com/')) {
-        assert.equal(headers.get('authorization'), 'Bearer fixture-bedrock-key');
+        if (headers.get('authorization') !== 'Bearer fixture-bedrock-key')
+          return Response.json({ message: 'Synthetic denial' }, { status: 403 });
+        if (url.includes('/foundation-models?'))
+          return Response.json({
+            modelSummaries: [{ modelId: 'amazon.nova-pro-v1:0' }, { modelId: 'fixture.v1:0' }],
+          });
+        assert.match(url, /\/inference-profiles\?type=SYSTEM_DEFINED&maxResults=1000/);
         return Response.json(
-          url.includes('/foundation-models?')
-            ? { modelSummaries: [{ modelId: 'amazon.nova-pro-v1:0' }, { modelId: 'fixture.v1:0' }] }
-            : {
+          url.includes('nextToken=fixture-page')
+            ? {
                 inferenceProfileSummaries: [
                   { inferenceProfileId: 'eu.anthropic.claude-opus-5-5', status: 'ACTIVE' },
+                ],
+              }
+            : {
+                inferenceProfileSummaries: [
                   { inferenceProfileId: 'fixture.profile', status: 'ACTIVE' },
                 ],
+                nextToken: 'fixture-page',
               },
         );
       }
+      if (url === 'https://down.openai.azure.com/openai/v1/models')
+        return Response.json({ error: { message: 'Synthetic outage' } }, { status: 503 });
       if (url.startsWith('https://aiplatform.googleapis.com/v1/publishers/google/models/'))
         return new Response(null, {
           status: headers.get('x-goog-api-key') === 'fixture-vertex-key' ? 200 : 400,
@@ -3169,6 +3181,14 @@ test('cloud connections list only the account’s models and send each key only 
     'amazon.nova-pro-v1:0',
     'eu.anthropic.claude-opus-5-5',
   ]);
+  await assert.rejects(
+    backend.catalog('amazon-bedrock', 'api_key', {
+      type: 'bedrock',
+      key: 'fixture-wrong-key',
+      region: 'eu-west-1',
+    }),
+    /didn’t accept this key/,
+  );
   const sent = requests.length;
   await assert.rejects(
     backend.catalog('amazon-bedrock', 'api_key', {
@@ -3185,6 +3205,7 @@ test('cloud connections list only the account’s models and send each key only 
   assert.ok(vertex.length > 1);
   await assert.rejects(
     backend.catalog('google-vertex', 'api_key', { type: 'api_key', key: 'fixture-wrong-key' }),
+    /didn’t accept this API key/,
   );
   const azure = await backend.catalog('azure', 'api_key', {
     type: 'azure',
@@ -3196,6 +3217,16 @@ test('cloud connections list only the account’s models and send each key only 
   assert.deepEqual(
     azure.map(({ choice }) => choice.id),
     ['gpt-6.1-sol'],
+  );
+  await assert.rejects(
+    backend.catalog('azure', 'api_key', {
+      type: 'azure',
+      url: 'https://down.openai.azure.com/openai/v1',
+      key: 'fixture-azure-key',
+      model: 'gpt-6.1-sol',
+      deployment: 'fixture-deployment',
+    }),
+    (error: Error) => !error.message.includes('didn’t accept'),
   );
 });
 
