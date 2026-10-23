@@ -139,6 +139,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   const [checking, setChecking] = useState(false);
   const [callback, setCallback] = useState('');
   const keyField = useRef<HTMLInputElement>(null);
+  const submitting = useRef(false);
   const connections = data?.connections ?? [];
   const selected = connections.find((item) => item.id === data?.selection?.connectionId);
   const usable = (provider: ModelProvider) =>
@@ -243,7 +244,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
 
   async function saveKey(event: FormEvent) {
     event.preventDefault();
-    if (checking || !provider) return;
+    if (submitting.current || !provider) return;
     const value = key.trim();
     const endpoint = provider === 'compatible';
     const detailed = endpoint || provider === 'amazon-bedrock' || provider === 'azure';
@@ -253,6 +254,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
     if (!endpoint && value.length < 8) return setKeyError(invalidKey);
     setKeyError('');
     models.setError('');
+    submitting.current = true;
     setChecking(true);
     try {
       const result = await api<ModelsResponse>(
@@ -278,6 +280,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
           : errorMessage(cause),
       );
     } finally {
+      submitting.current = false;
       setChecking(false);
     }
   }
@@ -315,7 +318,9 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
           {((shown.provider === 'compatible' && ready) || ownerChooses(shown)) && (
             <ModelPicker manageConnections={false} surface="onboarding" />
           )}
-          {(shown.status === 'loading' || (!ready && !recommendation) || models.error) && (
+          {(shown.status === 'loading' ||
+            (!ready && !recommendation && !ownerChooses(shown)) ||
+            models.error) && (
             <Button
               variant="outline"
               disabled={models.busy}
@@ -593,7 +598,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
         show={revealed >= 4}
         onBack={onBack}
         onNext={onNext}
-        nextDisabled={!ready || models.busy || checking || !!flow.signIn}
+        nextDisabled={!selectedReady || models.busy || checking || !!flow.signIn}
       />
     </section>
   );
