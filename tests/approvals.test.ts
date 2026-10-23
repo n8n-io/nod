@@ -347,6 +347,7 @@ test(
     assert.equal(dataRoot, join(fixtureRoot, '.local'));
     let messages: ReturnType<typeof thread.createUserMessageService>;
     const app = await createApp({
+      questionStates: (ids) => approvals.states(ids),
       submitMessage: (text, attachments, options) => messages.submit(text, attachments, options),
       configuration: () => configuration({ llmReady: true }),
     });
@@ -2043,6 +2044,16 @@ test(
           assert.deepEqual(await messages.submit('Yes.', [], reply), accepted);
           const confirmed = await proposal(turn.turnId);
           assert.equal(confirmed.status, 'confirmed');
+          assert.deepEqual(await approvals.states([confirmed.confirmation_message_id]), {
+            [confirmed.confirmation_message_id]: 'confirmed',
+          });
+          assert.equal(
+            (await request('GET', `/api/messages/around/${confirmed.confirmation_message_id}`))
+              .json()
+              .find((message: { id: string }) => message.id === confirmed.confirmation_message_id)
+              .questionState,
+            'confirmed',
+          );
           assert.equal(confirmed.execution_turn_id, accepted.turnId);
           assert.equal((await row(accepted.turnId)).channel, channel);
           const before = calls.length;
@@ -2065,6 +2076,9 @@ test(
             undefined,
           );
           assert.equal((await proposal(turn.turnId)).status, 'completed');
+          assert.deepEqual(await approvals.states([confirmed.confirmation_message_id]), {
+            [confirmed.confirmation_message_id]: 'completed',
+          });
           await finish(accepted.turnId, 'succeeded');
         },
       );
@@ -2396,6 +2410,14 @@ test(
             failExecution = false;
           }
           assert.equal((await stored(failed)).status, 'uncertain');
+          const questionId = (await stored(failed)).confirmation_message_id;
+          assert.deepEqual(await approvals.states([questionId]), { [questionId]: 'uncertain' });
+          await db.pool.query('UPDATE approvals SET owner_id=$2 WHERE id=$1', [
+            failed,
+            'other-owner',
+          ]);
+          assert.deepEqual(await approvals.states([questionId]), {});
+          await db.pool.query('UPDATE approvals SET owner_id=$2 WHERE id=$1', [failed, ownerId]);
           assert.equal(await execute(failed), undefined);
           assert.equal(await confirm(failed, true), undefined);
           assert.equal(calls.length, before + 1);

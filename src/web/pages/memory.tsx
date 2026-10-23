@@ -198,9 +198,13 @@ function NoteDetail({
   const [expires, setExpires] = useState(note.expires ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const form = useRef<HTMLFormElement>(null);
   const dirty =
     (mode === 'edit' && text.trim() !== note.text) ||
     (mode === 'expires' && (expires || null) !== note.expires);
+  useEffect(() => {
+    if (error && !busy) form.current?.querySelector<HTMLElement>('textarea,input')?.focus();
+  }, [error, busy]);
   useEffect(() => {
     onDirtyChange?.(dirty);
     return () => onDirtyChange?.(false);
@@ -219,13 +223,25 @@ function NoteDetail({
   }
   function save(event: FormEvent) {
     event.preventDefault();
+    if (busy || (mode === 'edit' && !text.trim())) return;
     const body = mode === 'edit' ? { text: text.trim() } : { expires: expires || null };
     const unchanged = 'text' in body ? body.text === note.text : body.expires === note.expires;
     if (unchanged) setMode('view');
     else void run(() => onChange(body));
   }
   const cancel = (
-    <Button type="button" variant="ghost" size="sm" onClick={() => setMode('view')}>
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      disabled={busy}
+      onClick={() => {
+        setText(note.text);
+        setExpires(note.expires ?? '');
+        setError('');
+        setMode('view');
+      }}
+    >
       Cancel
     </Button>
   );
@@ -237,9 +253,26 @@ function NoteDetail({
         {stageLabel[note.status]}
       </p>
       {mode === 'edit' ? (
-        <form className="memory-form" onSubmit={save}>
+        <form
+          ref={form}
+          className="memory-form"
+          onSubmit={save}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !busy) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!dirty) setMode('view');
+            }
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              if (!busy && text.trim() && !event.nativeEvent.isComposing)
+                event.currentTarget.requestSubmit();
+            }
+          }}
+        >
           <textarea
             className="input"
+            disabled={busy}
             value={text}
             maxLength={noteChars}
             rows={3}
@@ -258,10 +291,26 @@ function NoteDetail({
         <h4 className="memory-text">{note.text}</h4>
       )}
       {mode === 'expires' ? (
-        <form className="memory-form" onSubmit={save}>
+        <form
+          ref={form}
+          className="memory-form"
+          onSubmit={save}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !busy) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!dirty) setMode('view');
+            }
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              if (!busy && !event.nativeEvent.isComposing) event.currentTarget.requestSubmit();
+            }
+          }}
+        >
           <input
             className="input"
             type="date"
+            disabled={busy}
             value={expires}
             min={dayKey(Date.now(), format)}
             aria-label="Keep until"

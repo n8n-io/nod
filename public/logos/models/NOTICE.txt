@@ -1,0 +1,58 @@
+Model provider logo attribution
+
+OpenCode
+Source: https://github.com/anomalyco/opencode
+Commit: 0471a39a0f24ba8ef89954176513b839b4b56971
+Source directory: packages/ui/src/assets/icons/provider/
+License: MIT, Copyright (c) 2025 opencode. See LICENSE-OPENCODE.txt.
+The following 27 assets are unmodified. Local filename -> source filename:
+
+amazon-bedrock.svg -> amazon-bedrock.svg
+anthropic.svg -> anthropic.svg
+azure.svg -> azure.svg
+baseten.svg -> baseten.svg
+cerebras.svg -> cerebras.svg
+cloudflare.svg -> cloudflare-workers-ai.svg
+deepseek.svg -> deepseek.svg
+fireworks.svg -> fireworks-ai.svg
+google.svg -> google.svg
+google-vertex.svg -> google-vertex.svg
+groq.svg -> groq.svg
+huggingface.svg -> huggingface.svg
+kimi.svg -> kimi-for-coding.svg
+meta.svg -> meta.svg
+minimax.svg -> minimax.svg
+mistral.svg -> mistral.svg
+moonshot.svg -> moonshotai.svg
+nvidia.svg -> nvidia.svg
+openai.svg -> openai.svg
+opencode.svg -> opencode.svg
+opencode-go.svg -> opencode-go.svg
+openrouter.svg -> openrouter.svg
+together.svg -> togetherai.svg
+vercel.svg -> vercel.svg
+xai.svg -> xai.svg
+xiaomi.svg -> xiaomi.svg
+zai.svg -> zai.svg
+
+Lobe Icons
+Source: https://github.com/lobehub/lobe-icons
+Commit: 7d7d0379f18b114a4009dc5cb85a7c375284f31b
+Source directory: packages/static-svg/icons/
+License: MIT, Copyright (c) 2023 LobeHub. See LICENSE-LOBEHUB.txt.
+Local filename -> source filename:
+
+ant-ling.svg -> ling.svg
+qwen.svg -> qwen.svg
+
+The SVG paths are unmodified. Dimensions are normalized to 24 pixels and
+inline layout styles removed.
+
+Radius
+Source: https://radius.earendil.com/enter (reviewed 2026-10-23)
+Local asset: radius.svg
+Source asset: inline radius-logo-mark SVG, with presentation classes removed.
+Attribution: Earendil Works. This asset is not covered by either bundled MIT
+license.
+
+Provider names and trademarks remain with their respective owners.

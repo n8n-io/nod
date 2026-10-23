@@ -106,6 +106,8 @@ Send `/memory` (or `/context`) to get a short summary. It doesn't use the model 
 A note helps nod understand you. It never lets nod act. Sending, paying or deleting still goes through the [trust check](/trust/approvals/), whatever memory says.
 :::
 
+While editing a note, press Command/Ctrl+Enter to save. Escape keeps unsaved edits open; use **Cancel** to discard them. A failed save keeps the draft available.
+
 ## Related resources
 
 - [Chat with nod](/use/chat/)

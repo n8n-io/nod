@@ -81,6 +81,7 @@ export interface IntegrationInboxPoll {
   }>;
 }
 export class IntegrationInboxCursorExpired extends Error {}
+export class IntegrationPermissionError extends Error {}
 export class IntegrationCatalogAccessDenied extends Error {
   constructor() {
     super('The app catalog is unavailable. Try again later.');

@@ -15,6 +15,7 @@ import type { SuggestedTask, TaskSuggestions } from '../../shared/onboarding';
 import type { TrustView } from '../../shared/trust';
 import { integrationServices } from '../../shared/integrations';
 import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
+import { ChatTools } from '../components/chat-tools';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { TaskCard } from './tasks';
 import { MessageBubble } from '../components/message';
@@ -275,7 +276,7 @@ export function Chat({
     text: string;
     kind: 'success' | 'error';
   } | null>(null);
-  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [replyTo, setReplyTo] = useState<Pick<Message, 'id' | 'role' | 'text'> | null>(null);
   const taskReply = useRef<string | null>(null);
   const [focusTarget, setFocusTarget] = useState<{ id: string; pages: number } | null>(() =>
     initialFocusMessageId ? { id: initialFocusMessageId, pages: 0 } : null,
@@ -313,6 +314,9 @@ export function Chat({
   const returning = useRef(0);
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
+  const returnPosition = useRef<{ top: number; id?: string; offset: number } | null>(null);
+  const focusRequest = useRef(0);
+  const [canReturn, setCanReturn] = useState(false);
   const stickToBottom = useRef(true);
   const resetLock = useRef(false);
   const streamTimes = useRef(new Map<string, string>());
@@ -395,7 +399,7 @@ export function Chat({
       ).length
     : 0;
   useLayoutEffect(() => {
-    if (stickToBottom.current)
+    if (stickToBottom.current && !window.getSelection()?.toString())
       bottom.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
     else updateAway();
     reportRead();
@@ -436,6 +440,9 @@ export function Chat({
   useEffect(() => {
     if (initializedThread.current === threadId) return;
     initializedThread.current = threadId;
+    returnPosition.current = null;
+    focusRequest.current++;
+    setCanReturn(false);
     historyVersion.current++;
     setHistoryPage({ threadId, messages: [] });
     setLoadingHistory(false);
@@ -487,9 +494,47 @@ export function Chat({
     return () => clearTimeout(timer);
   }, [connectionNotice]);
   useEffect(() => {
+    const notice = (event: Event) => setError((event as CustomEvent<string>).detail);
+    window.addEventListener('nod:file-notice', notice);
+    return () => window.removeEventListener('nod:file-notice', notice);
+  }, []);
+  useEffect(() => {
     const focusMessage = (event: Event) => {
       const detail = (event as CustomEvent<{ messageId?: unknown }>).detail;
-      if (typeof detail?.messageId === 'string') setFocusTarget({ id: detail.messageId, pages: 0 });
+      if (typeof detail?.messageId === 'string') {
+        const element = scroll.current;
+        const anchor =
+          element &&
+          Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]')).find(
+            (message) =>
+              message.getBoundingClientRect().bottom > element.getBoundingClientRect().top,
+          );
+        returnPosition.current = {
+          top: element?.scrollTop ?? 0,
+          id: anchor?.dataset.messageId,
+          offset:
+            anchor && element
+              ? anchor.getBoundingClientRect().top - element.getBoundingClientRect().top
+              : 0,
+        };
+        setCanReturn(true);
+        const expectedThread = threadRef.current;
+        const version = ++focusRequest.current;
+        const id = detail.messageId;
+        void api<Message[]>(`/api/messages/around/${id}`)
+          .then((messages) => {
+            if (expectedThread !== threadRef.current || version !== focusRequest.current) return;
+            setHistoryPage((current) => ({
+              ...current,
+              messages: mergeMessages(current.messages, messages),
+            }));
+            setFocusTarget({ id, pages: 0 });
+          })
+          .catch((cause) => {
+            if (expectedThread === threadRef.current && version === focusRequest.current)
+              setError(errorMessage(cause));
+          });
+      }
     };
     window.addEventListener('nod:focus-message', focusMessage);
     return () => window.removeEventListener('nod:focus-message', focusMessage);
@@ -525,7 +570,7 @@ export function Chat({
   async function send(
     value: string,
     attachments: Artifact[],
-    reply: Message | null = replyTo,
+    reply: Pick<Message, 'id' | 'role' | 'text'> | null = replyTo,
     source: 'composer' | 'task_card' | 'ask_nod' | 'task_reply' = reply &&
     reply.id === taskReply.current
       ? 'task_reply'
@@ -535,7 +580,8 @@ export function Chat({
     const captureAnalytics = analyticsForCurrentSession();
     const sentThread = threadId;
     const verificationRequests = (state.verificationRequests ?? []).filter(
-      (request) => !reply || request.turnId === reply.turnId,
+      (request) =>
+        !reply || request.turnId === allMessages.find((message) => message.id === reply.id)?.turnId,
     );
     const explicitVerification =
       classifyVerificationReply(value).kind !== 'ordinary' || Boolean(securityCodeIn(value));
@@ -554,7 +600,12 @@ export function Chat({
       : 'Verification code sent securely.';
     const signature = privateVerification
       ? null
-      : JSON.stringify([value, attachments.map((item) => item.id), reply?.id ?? null]);
+      : JSON.stringify([
+          value,
+          attachments.map((item) => item.id),
+          reply?.id ?? null,
+          reply?.text ?? null,
+        ]);
     if (privateVerification) retry.current = null;
     const id =
       signature !== null &&
@@ -619,7 +670,14 @@ export function Chat({
           clientMessageId: id,
           text: value,
           attachmentIds: attachments.map((item) => item.id),
-          ...(replyId ? { replyToMessageId: replyId } : {}),
+          ...(replyId
+            ? {
+                replyToMessageId: replyId,
+                ...(reply && allMessages.find((item) => item.id === replyId)?.text !== reply.text
+                  ? { replyQuote: reply.text.slice(0, 4000) }
+                  : {}),
+              }
+            : {}),
           ...(seenMessageId ? { seenMessageId } : {}),
           ...(verificationRequestId ? { verificationRequestId } : {}),
         }),
@@ -873,6 +931,7 @@ export function Chat({
   }
   const chatActions = (
     <>
+      <ChatTools files={files} tasks={state.tasks} />
       {import.meta.env?.DEV === true && state.configuration.conversationResetEnabled && (
         <Button
           type="button"
@@ -894,7 +953,7 @@ export function Chat({
     </>
   );
   return (
-    <PrivateEntryWorkspace key={ownerId} active={visible}>
+    <PrivateEntryWorkspace key={`${ownerId}.${threadId}`} active={visible}>
       <ArtifactWorkspace className="chat-page" files={files}>
         {desktopSettingsAvailable() ? (
           <>
@@ -925,6 +984,35 @@ export function Chat({
         <div
           className="conversation-scroll"
           ref={scroll}
+          onDragOver={(event) => {
+            if (
+              event.dataTransfer.types.includes('Files') ||
+              event.dataTransfer.types.includes('application/x-nod-artifact')
+            ) {
+              event.preventDefault();
+              event.currentTarget.dataset.dropFiles = '';
+            }
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node))
+              delete event.currentTarget.dataset.dropFiles;
+          }}
+          onDrop={(event) => {
+            delete event.currentTarget.dataset.dropFiles;
+            if ((event.target as HTMLElement).closest('.browser-handoff')) return;
+            const artifact = event.dataTransfer.getData('application/x-nod-artifact');
+            if (artifact) {
+              event.preventDefault();
+              try {
+                window.dispatchEvent(
+                  new CustomEvent('nod:attach-artifact', { detail: JSON.parse(artifact) }),
+                );
+              } catch {}
+            } else if (event.dataTransfer.files.length) {
+              event.preventDefault();
+              composer.current?.upload(Array.from(event.dataTransfer.files));
+            }
+          }}
           onScroll={() => {
             updateActiveTurn();
             updateAway();
@@ -1030,6 +1118,17 @@ export function Chat({
                     <MessageBubble
                       message={message}
                       handoffPaused={spendingPaused}
+                      delivery={
+                        message.role === 'user'
+                          ? !persistedIds.has(message.id) && !message.turnId
+                            ? 'sending'
+                            : state.turns.some(
+                                  (turn) => turn.id === message.turnId && turn.status === 'queued',
+                                )
+                              ? 'queued'
+                              : undefined
+                          : undefined
+                      }
                       connectedAppIds={connectedAppIds}
                       streaming={streamIds.has(message.streamId ?? '')}
                       grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
@@ -1040,9 +1139,9 @@ export function Chat({
                       }
                       onReply={
                         message.turnId || persistedIds.has(message.id)
-                          ? () => {
+                          ? (quote?: string) => {
                               taskReply.current = null;
-                              setReplyTo(message);
+                              setReplyTo(quote?.trim() ? { ...message, text: quote } : message);
                               composer.current?.focus();
                             }
                           : undefined
@@ -1084,6 +1183,30 @@ export function Chat({
           </div>
         </div>
         <div className="chat-bottom conversation-column">
+          {canReturn && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (scroll.current && returnPosition.current !== null) {
+                  stickToBottom.current = false;
+                  const saved = returnPosition.current;
+                  const anchor = Array.from(
+                    scroll.current.querySelectorAll<HTMLElement>('[data-message-id]'),
+                  ).find((message) => message.dataset.messageId === saved.id);
+                  if (anchor)
+                    scroll.current.scrollTop +=
+                      anchor.getBoundingClientRect().top -
+                      scroll.current.getBoundingClientRect().top -
+                      saved.offset;
+                  else scroll.current.scrollTop = saved.top;
+                }
+                setCanReturn(false);
+              }}
+            >
+              Return to where you were
+            </Button>
+          )}
           {away?.shown && (
             <Button
               className={`jump-latest${unseen ? ' has-unseen' : ''}`}
@@ -1128,6 +1251,9 @@ export function Chat({
             <Composer
               key={threadId}
               ref={composer}
+              draftKey={`nod.chat-draft.${ownerId}.${threadId}`}
+              privateReply={Boolean(state.verificationRequests?.length)}
+              restoreReply={setReplyTo}
               ready={state.configuration.llmReady && !resetting && !welcoming && !spendingPaused}
               text={text}
               setText={setText}

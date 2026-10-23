@@ -42,6 +42,8 @@ ipcRenderer.on('nod:feedback:open', () => {
 });
 
 contextBridge.exposeInMainWorld('nodDesktop', {
+  fileAction: (id, action) => invoke('nod:file:action', id, action),
+  fileMenu: (id, image) => invoke('nod:file:menu', id, image),
   ready: () => invoke('nod:renderer-ready'),
   status: () => invoke('nod:status'),
   prepare: (options) => invoke('nod:prepare', options),

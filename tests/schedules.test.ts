@@ -361,6 +361,40 @@ test(
       await t.test(
         'schedule editor changes retain the intended recurrence and exact run time',
         async () => {
+          const edited = await create({ cron: '0 9 * * *' });
+          const beforePreview = (await request('GET', '/api/schedules'))
+            .json()
+            .find((row: { id: string }) => row.id === edited.id);
+          const preview = await request('POST', `/api/schedules/${edited.id}/preview`, {
+            cron: '30 10 * * 1-5',
+            timeZone: 'Europe/Lisbon',
+          });
+          assert.equal(preview.statusCode, 200);
+          assert.equal(preview.json().nextRun, '2035-10-29T10:30:00.000Z');
+          assert.deepEqual(
+            (await request('GET', '/api/schedules'))
+              .json()
+              .find((row: { id: string }) => row.id === edited.id),
+            beforePreview,
+          );
+          assert.equal(
+            (
+              await request('PATCH', `/api/schedules/${edited.id}`, {
+                title: 'Changed title',
+                expectedRevision: beforePreview.revision,
+              })
+            ).statusCode,
+            200,
+          );
+          assert.equal(
+            (
+              await request('PATCH', `/api/schedules/${edited.id}`, {
+                title: 'Stale reversal',
+                expectedRevision: beforePreview.revision,
+              })
+            ).statusCode,
+            409,
+          );
           for (const [frequency, day, expected] of [
             ['daily', '1', '2035-10-27T09:30:00.000Z'],
             ['weekdays', '1', '2035-10-29T10:30:00.000Z'],
@@ -442,6 +476,9 @@ test(
           assert.equal(history[0]!.status, 'queued');
           assert.equal((await saved(schedule.id)).enabled, false);
           assert.equal((await saved(schedule.id)).nextRun, null);
+          const preview = await request('POST', `/api/schedules/${schedule.id}/preview`, {});
+          assert.equal(preview.statusCode, 200);
+          assert.equal(preview.json().nextRun, null);
           assert.equal((await saved(schedule.id)).lastRun?.id, history[0]!.id);
           await personal.initialize({ workers: false });
           await deliver([job]);

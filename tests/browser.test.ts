@@ -2993,6 +2993,298 @@ test('redaction masks secure links, common token strings and secret assignments 
   );
 });
 
+test('rich feedback redaction preserves diagnostic content while removing personal data and credentials', async () => {
+  const { createFeedbackRedactor } = await import('../src/server/feedback-redaction.ts');
+  const secrets = ['synthetic-provider-secret/alpha'];
+  const redactor = createFeedbackRedactor({
+    secrets,
+    profile: { names: ['Marta Vidal'], region: 'ES' },
+  });
+  const result = redactor.value({
+    tool: 'browser',
+    status: 'failed',
+    input: {
+      action: 'navigate',
+      url: 'https://marta.private.example.test/patients/third-party?token=opaque',
+      name: 'Other Synthetic Person',
+      account_id: 'synthetic-account-opaque',
+      headers: [
+        { name: 'Authorization', value: 'synthetic-authorization' },
+        ['Cookie', 'synthetic-cookie'],
+      ],
+      attempts: 2,
+    },
+    output:
+      'The browser timed out after opening the account page. Marta Vidal wrote to marta.vidal@example.test; phone +34 612 345 678.',
+    error:
+      'HTTP 503. Failed opening /Users/private-person/secret-project/note.txt. Contact @synthetic_handle.',
+    details: 'Provider rejected synthetic-provider-secret/alpha. Retry was not attempted.',
+    payload: JSON.stringify({
+      firstName: 'Private Given',
+      text: 'The confirmation never appeared.',
+      secret: 'synthetic-json-secret',
+      source: 'https://custom-tenant.example.test/private/document',
+      externalId: 'synthetic-record-id',
+    }),
+    usage: { input_tokens: 1234, output_tokens: 42 },
+  });
+  const encoded = JSON.stringify(result);
+  for (const sensitive of [
+    'Marta',
+    'Vidal',
+    'marta.vidal',
+    '+34 612',
+    'Other Synthetic Person',
+    'synthetic-account-opaque',
+    'synthetic-authorization',
+    'synthetic-cookie',
+    'private-person',
+    'secret-project',
+    'synthetic_handle',
+    secrets[0],
+    'Private Given',
+    'synthetic-json-secret',
+    'custom-tenant',
+    'synthetic-record-id',
+    'third-party',
+  ])
+    assert.ok(!encoded.includes(sensitive), sensitive);
+  for (const useful of [
+    'browser',
+    'navigate',
+    'timed out',
+    'HTTP 503',
+    'confirmation never appeared',
+    'Retry was not attempted',
+    '1234',
+  ])
+    assert.ok(encoded.includes(useful), useful);
+  assert.equal((result as any).input.attempts, 2);
+  assert.equal((result as any).usage.output_tokens, 42);
+  secrets.push('synthetic-new-secret');
+  assert.equal(redactor.text('Rejected synthetic-new-secret'), 'Rejected [redacted]');
+  secrets[0] = 'synthetic-replaced-secret';
+  assert.equal(redactor.text('Rejected synthetic-replaced-secret'), 'Rejected [redacted]');
+  secrets[0] = 'vidal';
+  assert.ok(!redactor.text('third.vidal@example.test').includes('third'));
+  secrets[0] = 'unpaired-\ud800-secret';
+  assert.equal(redactor.text('Rejected unpaired-\ud800-secret'), 'Rejected [redacted]');
+  for (const secret of ['alpha{"x":"hello"}omega', 'before["private-value"]after']) {
+    secrets[0] = secret;
+    for (const value of [secret, JSON.stringify(secret), encodeURIComponent(secret)]) {
+      const safe = redactor.text(`Rejected ${value}. HTTP 503.`);
+      assert.ok(!safe.includes('hello'));
+      assert.ok(!safe.includes('private-value'));
+      assert.ok(safe.includes('HTTP 503'));
+    }
+  }
+});
+
+test('rich feedback redaction handles embedded JSON, identifying addresses, encoded secrets and binary', async () => {
+  const { createFeedbackRedactor } = await import('../src/server/feedback-redaction.ts');
+  const redactor = createFeedbackRedactor({
+    secrets: ['fixture/secret-token'],
+    profile: { names: ['Marta Vidal'], region: 'ES' },
+  });
+  const values = [
+    'Useful result: {"name":"Synthetic Third Person","email":"third.person@example.test","arguments":{"api_key":"embedded-api-secret","query":"recent messages"}} end.',
+    JSON.stringify(
+      JSON.stringify({
+        display_name: 'Another Synthetic Person',
+        address: 'Private Street 14',
+        input: { action: 'read', password: 'embedded-password' },
+      }),
+    ),
+    'GET "https://private-user.custom.example.test/private-person?query=patient-data" failed with HTTP 404.',
+    'Open /api/accounts/private-account/files/private-file?query=private-query failed.',
+    'File "C:\\Users\\Private Owner\\Secret Folder\\report.txt" could not be read.',
+    'Working directory /home/private-owner/project failed.',
+    'ENOENT /home/alice/Private Project/log.txt\nRetry was not attempted.',
+    'EACCES C:\\Users\\unknown-other\\Shared Folder\\Ada Lovelace\\report.txt\nAccess is unavailable.',
+    'Open /Users/Marta Vidal/Archived Notes/private.txt\nHTTP 418.',
+    'Open C:/Users/unknown-other/Client Records/Design Review.txt\nHTTP 502.',
+    "Open /home/alice/O'Brien Private Files/readme.txt\nHTTP 409.",
+    'Open file:///home/alice/Private Project/log.txt\nFile lookup failed.',
+    'Open file:///home/alice/Private%20Project/log.txt\nFile lookup failed.',
+    'Open https://tenant.example.test/Private%20Project/Personal%20Notes/log.txt\nHTTP 410.',
+    'Open https%3A%2F%2Ftenant.example.test%2FPrivate%20Project%2FPersonal%20Notes%2Flog.txt\nHTTP 411.',
+    'Open "file:///home/alice/Private%20Project/log.txt" failed with ENOENT.',
+    'Open "https://tenant.example.test/Personal%20Notes/log.txt" failed with HTTP 412.',
+    'Rejected fixture%2fsecret-token and marta.vidal%40example.test.',
+    'External record 00000000-1111-4222-8333-444444444444 was not found.',
+    { type: 'image', data: 'synthetic-private-image' },
+    {
+      content: [
+        {
+          type: 'image',
+          data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWZkAAAAASUVORK5CYII=',
+          mimeType: 'image/png',
+        },
+        { type: 'audio', data: 'c3ludGhldGljIGF1ZGlv', mimeType: 'audio/wav' },
+        { type: 'text', text: 'The screenshot request completed after 421 ms.' },
+      ],
+    },
+    { document: Buffer.from('synthetic-buffer-value') },
+    'data:image/png;base64,' + 'Z'.repeat(500),
+    'Encoded output: ' + 'Y'.repeat(512),
+  ];
+  const safe = redactor.value(values);
+  const encoded = JSON.stringify(safe);
+  for (const sensitive of [
+    'Synthetic Third Person',
+    'third.person',
+    'embedded-api-secret',
+    'Another Synthetic Person',
+    'Private Street',
+    'embedded-password',
+    'private-user',
+    'private-person',
+    'patient-data',
+    'private-account',
+    'private-file',
+    'private-query',
+    'Private Owner',
+    'Secret Folder',
+    'private-owner',
+    'alice',
+    'Project/log',
+    'Project',
+    'Personal',
+    'tenant.example',
+    'unknown-other',
+    'Shared Folder',
+    'Ada Lovelace',
+    'Archived Notes',
+    'Client Records',
+    'Design Review',
+    'Private Files',
+    'fixture',
+    'marta.vidal',
+    '00000000-1111',
+    'synthetic-private-image',
+    'iVBORw0KGgoAAAANS',
+    'c3ludGhldGljIGF1ZGlv',
+    'synthetic-buffer-value',
+    'Z'.repeat(20),
+    'Y'.repeat(20),
+  ])
+    assert.ok(!encoded.includes(sensitive), sensitive);
+  for (const useful of [
+    'Useful result',
+    'recent messages',
+    'action',
+    'read',
+    'HTTP 404',
+    'could not be read',
+    'was not found',
+    '421 ms',
+    'ENOENT',
+    'EACCES',
+    'Retry was not attempted',
+    'Access is unavailable',
+    'HTTP 418',
+    'HTTP 502',
+    'HTTP 409',
+    'File lookup failed',
+    'HTTP 410',
+    'HTTP 411',
+    'HTTP 412',
+  ])
+    assert.ok(encoded.includes(useful), useful);
+  const concealedType = createFeedbackRedactor({ secrets: ['image'], profile: { names: [] } });
+  assert.ok(
+    !JSON.stringify(concealedType.value({ type: 'image', data: 'c3ludGhldGljIGltYWdl' })).includes(
+      'c3ludGhldGljIGltYWdl',
+    ),
+  );
+});
+
+test('rich feedback redaction bounds traversal and preserves sanitized Error diagnostics without getters', async () => {
+  const { createFeedbackRedactor } = await import('../src/server/feedback-redaction.ts');
+  const redactor = createFeedbackRedactor({
+    secrets: ['bounded-private-secret'],
+    profile: { names: ['Marta Vidal'], region: 'ES' },
+  });
+  let invoked = 0;
+  const cause = Object.assign(new Error('HTTP request for marta.vidal@example.test failed'), {
+    code: 'ETIMEDOUT',
+  });
+  const error = Object.assign(new Error('Browser failed with bounded-private-secret', { cause }), {
+    statusCode: 503,
+  });
+  Object.defineProperty(error, 'name', { value: 'ConnectionError' });
+  Object.defineProperty(error, 'stack', {
+    get() {
+      invoked++;
+      return 'getter-private-stack';
+    },
+  });
+  const unsafeError = new Error();
+  Object.defineProperty(unsafeError, 'message', {
+    get() {
+      invoked++;
+      return 'getter-private-message';
+    },
+  });
+  const payload = {
+    error,
+    unsafeError,
+    frontendError: {
+      message: 'Render failed',
+      stack:
+        'Error: Render failed\n    at render (file:///Users/private-owner/Private Project/src/web/app.tsx:13:27)\n    at /home/private-owner/private-project/worker.ts:18:4',
+    },
+    tools: Array.from({ length: 1000 }, () => ({ action: 'read', output: 'Useful diagnostic' })),
+    binary: new Uint8Array([1, 2, 3]),
+  };
+  Object.defineProperty(payload, 'privateGetter', {
+    enumerable: true,
+    get() {
+      invoked++;
+      return 'getter-private-value';
+    },
+  });
+  Object.defineProperty(payload, 'toJSON', {
+    value() {
+      invoked++;
+      return 'private-tojson';
+    },
+  });
+  const safe = redactor.value(payload) as any;
+  assert.equal(invoked, 0);
+  assert.equal(safe.error.name, 'ConnectionError');
+  assert.equal(safe.error.statusCode, 503);
+  assert.equal(safe.error.cause.code, 'ETIMEDOUT');
+  assert.ok(safe.error.cause.stack.includes('HTTP request'));
+  assert.ok(safe.frontendError.stack.includes(':13:27'));
+  assert.ok(safe.frontendError.stack.includes(':18:4'));
+  assert.ok(!JSON.stringify(safe).includes('private-owner'));
+  assert.ok(!JSON.stringify(safe).includes('Private Project'));
+  assert.ok(!JSON.stringify(safe).includes('private-project'));
+  assert.ok(safe.error.message.includes('Browser failed'));
+  assert.ok(!JSON.stringify(safe).includes('bounded-private-secret'));
+  assert.ok(!JSON.stringify(safe).includes('marta.vidal'));
+  assert.ok(safe.tools.length <= 101);
+  const cyclic: Record<string, unknown> = { result: 'Useful output' };
+  cyclic.cycle = cyclic;
+  assert.ok(JSON.stringify(redactor.value(cyclic)).includes('[circular]'));
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(redactor.value({ large: 'diagnostic '.repeat(100_000) }))) <
+      64_000,
+  );
+  assert.ok(
+    !redactor
+      .text('partial {"password":"bounded-private-secret')
+      .includes('bounded-private-secret'),
+  );
+  const boundary = redactor.text(
+    'diagnostic '.repeat(2800) + ' marta.vidal@example.test bounded-private-secret',
+  );
+  assert.ok(boundary.includes('diagnostic'));
+  assert.ok(!boundary.includes('marta.vidal'));
+  assert.ok(!boundary.includes('bounded-private-secret'));
+});
+
 test('Telegram chat cards require paired owned metadata and preserve ordinary links', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
@@ -3106,7 +3398,7 @@ test('Telegram chat cards require paired owned metadata and preserve ordinary li
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
 
-test('composer uploads preserve retry bytes, cancellation, previews and failed-send recovery', async () => {
+test('composer preserves keyboard shortcuts, upload retries, previews and failed-send recovery', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: String.raw`
@@ -3119,6 +3411,7 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
       Object.assign(globalThis, {
         window: dom.window,
         document: dom.window.document,
+        localStorage: dom.window.localStorage,
         IS_REACT_ACT_ENVIRONMENT: true,
         getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
         requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
@@ -3138,6 +3431,7 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
       ])
         globalThis[name] = dom.window[name];
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
       const rect = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
       HTMLElement.prototype.getBoundingClientRect = () => rect;
@@ -3157,11 +3451,11 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
       URL.revokeObjectURL = (url) => revoked.push(url);
       fetch = (url, options) =>
         new Promise((resolve, reject) => {
-          assert.equal(url, '/api/uploads');
+          assert.ok(url === '/api/uploads' || url.endsWith('/metadata'));
           assert.equal(options.headers.get('X-nod-Account'), 'synthetic-owner');
           const request = { url, options, resolve, reject };
           requests.push(request);
-          options.signal.addEventListener(
+          options.signal?.addEventListener(
             'abort',
             () => reject(new DOMException('Aborted', 'AbortError')),
             { once: true },
@@ -3174,16 +3468,21 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
       const { setRequestAccount } = await import('./src/web/lib/api.ts');
       setRequestAccount('synthetic-owner');
       let drafts = [],
-        result = { sent: false, restoreText: true };
+        result = { sent: false, restoreText: true },
+        currentText,
+        replaceText;
       const setDrafts = (value) => {
         drafts = value;
       };
-      function Fixture() {
-        const [text, setText] = useState('Synthetic review request');
+      function Fixture({ draftKey } = {}) {
+        const [text, setText] = useState(draftKey ? '' : 'Synthetic review request');
+        currentText = text;
+        replaceText = setText;
         return createElement(
           ArtifactDrawerContext.Provider,
           { value: { selectedId: null, open: (...args) => opened.push(args), setDrafts } },
           createElement(Composer, {
+            draftKey,
             ready: true,
             text,
             setText,
@@ -3196,7 +3495,7 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
           }),
         );
       }
-      const root = createRoot(document.getElementById('root'));
+      let root = createRoot(document.getElementById('root'));
       const settle = async (check) => {
         for (let i = 0; i < 100 && !check(); i++)
           await act(async () => {
@@ -3221,6 +3520,24 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
             .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
         );
       };
+      const edit = async (text = 'First lineSecond line', selector = 'p') => {
+        await act(async () => replaceText(text));
+        await act(async () => {
+          const field = document.querySelector('[contenteditable]');
+          field.focus();
+          window.getSelection().collapse(field.querySelector(selector).firstChild, 10);
+          document.dispatchEvent(new Event('selectionchange'));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+      };
+      const enter = async (modifiers = {}) => {
+        await act(async () => {
+          document.querySelector('[contenteditable]').dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, ...modifiers,
+          }));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+      };
       const artifact = {
         id: '00000000-0000-4000-8000-000000000001',
         name: 'Review.txt',
@@ -3232,6 +3549,56 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
       try {
         await act(async () => root.render(createElement(Fixture)));
         await settle(() => document.querySelector('[contenteditable]'));
+        await edit();
+        for (const modifiers of [{ isComposing: true }, { keyCode: 229 }]) {
+          await enter(modifiers);
+          assert.equal(sends.length, 0);
+        }
+        result = { sent: true };
+        for (const modifiers of [{}, { metaKey: true }, { ctrlKey: true }]) {
+          const count = sends.length;
+          await edit();
+          await enter({ shiftKey: true });
+          assert.equal(sends.length, count);
+          assert.equal(currentText.replaceAll('\\\n', '\n'), 'First line\nSecond line');
+          const expected = currentText;
+          await enter(modifiers);
+          assert.deepEqual(sends.at(-1), { text: expected, attachments: [] });
+          assert.equal(sends.length, count + 1);
+          if (!count) await act(async () => document.querySelector('.composer-send-preference').click());
+        }
+        await edit();
+        await enter();
+        assert.equal(sends.length, 3);
+        assert.ok(currentText.includes('\n'));
+        await act(async () => document.querySelector('.composer-send-preference').click());
+        const fence = String.fromCharCode(96).repeat(3);
+        for (const [text, selector, blocks, expected] of [
+          ['# First lineSecond line', 'h1', 'h1, h1 + p', [['H1', 'First line'], ['P', 'Second line']]],
+          ['- First lineSecond line', 'li p', 'li', [['LI', 'First line'], ['LI', 'Second line']]],
+          [fence + '\nFirst lineSecond line\n' + fence, 'code', 'pre, pre + p', [['PRE', 'First lineSecond line'], ['P', '']]],
+        ]) {
+          await edit(text, selector);
+          await enter({ shiftKey: true });
+          assert.equal(sends.length, 3);
+          assert.deepEqual(
+            Array.from(document.querySelector('[contenteditable]').querySelectorAll(blocks),
+              (block) => [block.tagName, block.textContent]),
+            expected,
+          );
+          if (selector === 'code')
+            assert.ok(document.querySelector('[contenteditable] > pre + p').contains(window.getSelection().anchorNode));
+        }
+        await act(async () => replaceText('Synthetic review request'));
+        sends.length = 0;
+        result = { sent: false, restoreText: true };
+        const storage = Object.getOwnPropertyDescriptor(window, 'localStorage');
+        Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new Error('Synthetic storage failure'); } });
+        await act(async () => document.querySelector('.composer-send-preference').click());
+        await act(async () => document.querySelector('[contenteditable]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+        assert.equal(sends.length, 0);
+        await act(async () => document.querySelector('.composer-send-preference').click());
+        Object.defineProperty(window, 'localStorage', storage);
         const first = new File(['Synthetic review file'], 'Review.txt', { type: 'text/plain' });
         const second = new File(['Queued file'], 'Queued.txt', { type: 'text/plain' });
         await choose([first, second]);
@@ -3264,6 +3631,14 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
         }
         await act(async () => requests[1].resolve(Response.json(artifact)));
         await settle(() => drafts[0]?.downloadUrl === artifact.url);
+        const native = [];
+        window.nodDesktop = { fileAction: async (...args) => { native.push(args); } };
+        const { prepareFile, reuseFile } = await import('./src/web/components/file-actions.tsx');
+        prepareFile(drafts[0]);
+        assert.deepEqual(native, [[artifact.id, 'prepare']]);
+        await act(async () => reuseFile(drafts[0]));
+        assert.equal(drafts.length, 1);
+        delete window.nodDesktop;
         assert.equal(document.querySelector('[aria-label="Send message"]').disabled, false);
         await submit();
         await settle(
@@ -3303,7 +3678,35 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
         assert.equal(drafts.length, 0);
         assert.deepEqual([...new Set(revoked)].sort(), created.map((item) => item.url).sort());
         for (const item of created) assert.equal(revoked.filter((url) => url === item.url).length, 1);
-
+        const restoredFiles = Array.from({ length: 5 }, (_, index) => {
+          const id = '00000000-0000-4000-8000-' + String(index + 1).padStart(12, '0');
+          return { ...artifact, id, url: '/api/artifacts/' + id, name: index === 0 ? artifact.name : 'Restored-' + index + '.txt' };
+        });
+        localStorage.setItem('synthetic-owner.thread', JSON.stringify({ version: 1, text: 'Restored synthetic request', reply: null, attachments: restoredFiles, missing: [] }));
+        root = createRoot(document.getElementById('root'));
+        closed = false;
+        await act(async () => root.render(createElement(Fixture, { draftKey: 'synthetic-owner.thread' })));
+        await settle(() => requests.length === 8);
+        assert.equal(requests[4].url, artifact.url + '/metadata');
+        assert.equal(document.querySelector('[aria-label="Send message"]').disabled, true);
+        await submit();
+        assert.equal(sends.length, 2);
+        assert.equal(requests.length, 8);
+        await act(async () => requests[4].resolve(Response.json({ error: 'Synthetic offline check' }, { status: 503 })));
+        assert.equal(requests.length, 8);
+        await act(async () => {
+          for (let index = 1; index < 4; index++) requests[4 + index].resolve(Response.json(restoredFiles[index]));
+        });
+        await settle(() => requests.length === 9);
+        await act(async () => requests[8].resolve(Response.json(restoredFiles[4])));
+        await settle(() => document.querySelector('[aria-label="Retry checking Review.txt"]'));
+        assert.equal(JSON.parse(localStorage.getItem('synthetic-owner.thread')).attachments[0].id, artifact.id);
+        await click('Retry checking Review.txt');
+        await settle(() => requests.length === 10);
+        await act(async () => requests[9].resolve(Response.json(artifact)));
+        await settle(() => !document.querySelector('[aria-label="Send message"]').disabled);
+        await submit();
+        assert.deepEqual(sends[2], { text: 'Restored synthetic request', attachments: restoredFiles });
       } finally {
         if (!closed) await act(async () => root.unmount());
         dom.window.close();
@@ -3313,83 +3716,183 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
 
-test('automatic feedback captures exclude remote handoffs and unsent editable content without changing the page', async () => {
+test('feedback defaults, restored consent and report failures never send unselected content', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 15_000,
-    input: `
+    timeoutMs: 30_000,
+    input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
-      const dom = new JSDOM('<main>Sent synthetic conversation</main>', { url: 'http://localhost', pretendToBeVisual: true });
-      Object.assign(globalThis, {
-        window: dom.window, document: dom.window.document,
-        ...Object.fromEntries(['Node', 'Element', 'HTMLElement', 'HTMLImageElement', 'HTMLCanvasElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'CSSRule', 'XMLSerializer'].map(name => [name, dom.window[name]])),
-      });
-      let images = 0;
-      let native = 0;
-      globalThis.Image = class {
-        set src(value) { if (value) { images++; queueMicrotask(() => this.onload?.()); } }
-      };
-      dom.window.HTMLCanvasElement.prototype.getContext = () => ({ fillRect() {}, drawImage() {} });
-      dom.window.HTMLCanvasElement.prototype.toBlob = function (callback) { callback(new Blob(['synthetic-safe-raster'], { type: 'image/jpeg' })); };
-      const { captureFeedbackScreenshot } = await import('./src/web/lib/feedback-capture.ts');
-      const safe = '<main>Sent synthetic conversation</main><div contenteditable="true"><p><br></p></div><input><textarea></textarea><input type="checkbox" checked><input type="hidden" value="synthetic-hidden-metadata">';
-      const privateViews = [
-        ['collapsed handoff', '<div class="browser-handoff"><img src="synthetic-private-page.png"></div>'],
-        ['input draft', '<input value="Synthetic unsent private input">'],
-        ['textarea draft', '<textarea>Synthetic unsent private textarea</textarea>'],
-        ['rich chat draft', '<div contenteditable="true"><p>Synthetic <strong>unsent chat</strong></p></div>'],
-        ['plain chat draft', '<div contenteditable="plaintext-only">Synthetic unsent plain chat</div>'],
-        ['pending upload', '<div class="pending-attachments">Synthetic private attachment</div>'],
-        ['credential form', '<form><input type="password" name="password"></form>'],
-      ];
-      const leaked = [];
-      try {
-        for (const mode of ['web', 'native']) {
-          window.nodDesktop = mode === 'native' ? { captureFeedbackScreenshot: async () => { native++; return new Uint8Array([1, 2, 3]); } } : undefined;
-          for (const [name, markup] of privateViews) {
-            document.body.innerHTML = markup;
-            if (name === 'input draft') document.querySelector('input').value = 'Synthetic changed input property';
-            const before = document.body.innerHTML;
-            const fields = [...document.querySelectorAll('input, textarea')].map(field => field.value);
-            const captures = images + native;
-            if ((await captureFeedbackScreenshot()) !== null || images + native !== captures) leaked.push(mode + ': ' + name);
-            assert.equal(document.body.innerHTML, before);
-            assert.deepEqual([...document.querySelectorAll('input, textarea')].map(field => field.value), fields);
-          }
-          document.body.innerHTML = safe;
-          const before = document.body.innerHTML;
-          const file = await captureFeedbackScreenshot();
-          assert.ok(file?.size, mode + ' empty composer');
-          assert.equal(document.body.innerHTML, before);
+      import { indexedDB } from 'fake-indexeddb';
+      const dom = new JSDOM('<div id="root"></div><main>Synthetic private visible conversation</main>', { url: 'http://localhost', pretendToBeVisual: true });
+      Object.assign(globalThis, { window: dom.window, document: dom.window.document, indexedDB, IS_REACT_ACT_ENVIRONMENT: true });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Event', 'MouseEvent', 'KeyboardEvent', 'CustomEvent', 'MutationObserver', 'DOMParser', 'NodeFilter', 'DocumentFragment', 'HTMLButtonElement', 'HTMLDivElement', 'HTMLFormElement']) globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      globalThis.getComputedStyle = dom.window.getComputedStyle;
+      globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+      globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+      const copied = [];
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => copied.push(value) } });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      let captures = 0;
+      window.nodDesktop = { captureFeedbackScreenshot: async () => { captures++; return new Uint8Array([1, 2, 3]); } };
+      const reports = [];
+      const submissions = [];
+      let sessionOwner = 'defaults';
+      fetch = async (url, options = {}) => {
+        if (url === '/api/session') return Response.json({ user: {id: sessionOwner, name: 'Synthetic owner', email: null, avatarUrl: null}, settings: {theme: 'system', onboardingCompleted: true, usageData: false, traces: false}, capabilities: {developer: false, traces: false} });
+        if (url === '/api/feedback/context') return Response.json({ enabled: true, recipient: 'Synthetic team', appVersion: null, appRelease: null, development: true, source: 'local-web', appModified: null, platform: null });
+        if (url === '/api/feedback/report') return new Promise(resolve => reports.push({ resolve, options }));
+        if (url === '/api/feedback') {
+          const payload = JSON.parse(options.body);
+          submissions.push(payload);
+          return Response.json({ submissionId: payload.submissionId, status: 'rejected' });
         }
-        assert.deepEqual(leaked, []);
-        let release;
-        let started;
-        const requested = new Promise(resolve => started = resolve);
-        window.nodDesktop = { captureFeedbackScreenshot: () => { native++; started(); return new Promise(resolve => release = resolve); } };
-        document.body.innerHTML = safe;
-        const pending = captureFeedbackScreenshot();
-        await requested;
-        document.querySelector('[contenteditable]').textContent = 'Synthetic draft typed during capture';
-        release(new Uint8Array([1, 2, 3]));
-        assert.equal(await pending, null);
-        assert.equal(document.querySelector('[contenteditable]').textContent, 'Synthetic draft typed during capture');
-        document.body.innerHTML = safe;
-        window.nodDesktop = { captureFeedbackScreenshot: async () => { native++; return new Uint8Array([1, 2, 3]); } };
-        const frame = window.requestAnimationFrame;
-        window.requestAnimationFrame = callback => frame(() => {
-          document.body.insertAdjacentHTML('beforeend', '<div class="browser-handoff">Synthetic newly opened remote page</div>');
-          callback(0);
-        });
-        const captures = native;
-        assert.equal(await captureFeedbackScreenshot(), null);
-        assert.equal(native, captures);
+        throw new Error('Unexpected fixture request: ' + url);
+      };
+      const { createElement: h, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { FeedbackDialog } = await import('./src/web/components/feedback.tsx');
+      const { AppRoot } = await import('./src/web/components/app-boundary.tsx');
+      const { sessionStore } = await import('./src/web/lib/session.ts');
+      const { loadFeedbackDraft, saveFeedbackDraft } = await import('./src/web/lib/feedback-draft.ts');
+      const { setRequestAccount } = await import('./src/web/lib/api.ts');
+      const { recordFeedbackError, feedbackErrorsSnapshot } = await import('./src/web/lib/feedback-errors.ts');
+      const root = createRoot(document.querySelector('#root'));
+      function BrokenView() {
+        throw new Error('Synthetic fatal renderer failure');
+      }
+      function CrashFixture() {
+        return h(AppRoot, null, state => state.session?.user?.id === 'defaults' ? h(BrokenView) : h('p', null, 'Healthy account view'));
+      }
+      let key = 0;
+      const settle = async predicate => {
+        for (let attempt = 0; attempt < 150; attempt++) {
+          if (predicate()) return;
+          await act(async () => new Promise(resolve => setTimeout(resolve, 10)));
+        }
+        assert.ok(predicate(), 'UI did not settle');
+      };
+      const render = async ownerId => {
+        setRequestAccount(ownerId);
+        await act(async () => root.render(h(FeedbackDialog, { key: ++key, ownerId, open: true, onOpenChange() {}, returnFocus: () => null, screenshot: new File(['synthetic-private-screen'], 'capture.png', {type:'image/png'}) })));
+        await settle(() => document.querySelector('[aria-label="Feedback type"] button:not(:disabled)'));
+      };
+      const choice = () => document.querySelector('.feedback-diagnostics input[type="checkbox"]');
+      const click = async text => {
+        const button = [...document.querySelectorAll('button')].find(button => button.textContent.trim() === text);
+        assert.ok(button, text);
+        await act(async () => button.click());
+      };
+      const send = () => document.querySelector('.feedback-footer button[type="submit"]');
+      const draft = (category, reportChoice = null) => ({ category, reportChoice, feedback: 'Synthetic bug description', attachments: [], pendingId: null });
+      const snapshot = { id: '00000000-0000-4000-8000-000000000001', expiresAt: '2099-01-01T00:00:00Z', content: JSON.stringify({format:'nod-feedback-report-v3', coverage:{hours:24,contentIncluded:true,redaction:'best-effort',truncated:false,sections:{}}, messages:[{role:'user',characters:20,text:'The Gmail request failed with 503 for [email].'}],turns:[{source:'user',status:'failed'}],execution:[],connections:[],appActivity:{entries:[{source:'app',ageMs:1000,event:'screen',properties:{screen:'/apps'}},{source:'app',ageMs:2000,event:'request_failed',properties:{area:'apps',method:'GET',status:503,reason:'http'}}]}}) };
+      try {
+        await sessionStore.refresh();
+        await render('defaults');
+        for(let index=0;index<12;index++) recordFeedbackError('error', new Error('Synthetic render failure '+index));
+        assert.equal(feedbackErrorsSnapshot().length, 10);
+        assert.match(feedbackErrorsSnapshot()[0].message, /failure 2$/);
+        assert.equal(choice().checked, true);
+        await click('Idea');
+        assert.equal(choice().checked, true);
+        await click('Other');
+        assert.equal(choice().checked, true);
+        await click('Bug or issue');
+        assert.equal(choice().checked, true);
+        await act(async () => choice().click());
+        await click('Idea');
+        await click('Bug or issue');
+        assert.equal(choice().checked, false);
+        await act(async () => root.render(null));
+        assert.equal((await loadFeedbackDraft('defaults')).reportChoice, false);
+        await render('defaults');
+        assert.equal(choice().checked, false);
+        await act(async () => root.render(null));
+        await saveFeedbackDraft('defaults', draft('bug', true));
+        await act(async () => root.render(h(CrashFixture)));
+        assert.equal(sessionStore.getSnapshot().session.user.id, 'defaults');
+        assert.ok(feedbackErrorsSnapshot().some(entry => entry.type === 'render' && entry.message === 'Synthetic fatal renderer failure'));
+        await click('Send feedback');
+        await settle(() => reports.length === 1);
+        const crashRequest = reports[0];
+        const crashDetails = JSON.parse(crashRequest.options.body);
+        assert.equal(crashDetails.errorsAvailable, true);
+        assert.ok(crashDetails.errors.some(entry => entry.type === 'render' && entry.message === 'Synthetic fatal renderer failure'));
+        assert.equal(crashRequest.options.headers.get('X-nod-Account'), 'defaults');
+        assert.ok(!JSON.stringify(await loadFeedbackDraft('defaults')).includes('Synthetic fatal renderer failure'));
+        await act(async () => sessionStore.invalidate());
+        assert.equal(crashRequest.options.signal.aborted, true);
+        assert.deepEqual(feedbackErrorsSnapshot(), []);
+        assert.equal(document.querySelector('[role="dialog"]'), null);
+        await act(async () => crashRequest.resolve(Response.json(snapshot)));
+        assert.equal(document.querySelector('pre[aria-label="Diagnostic report"]'), null);
+        sessionOwner = 'next-crash-owner';
+        await act(async () => sessionStore.refresh());
+        assert.equal(sessionStore.getSnapshot().session.user.id, 'next-crash-owner');
+        assert.ok(document.body.textContent.includes('Healthy account view'));
+        assert.equal(submissions.length, 0);
+        await act(async () => root.render(null));
+        reports.length = 0;
+        await saveFeedbackDraft('sending-without-report', draft('bug'));
+        await render('sending-without-report');
+        await settle(() => reports.length === 1);
+        assert.equal(send().disabled, true);
+        await act(async () => choice().click());
+        assert.equal(send().disabled, false);
+        await act(async () => send().click());
+        await settle(() => submissions.length === 1);
+        assert.equal(submissions[0].reportId, null);
+        assert.deepEqual(submissions[0].attachments, []);
+        assert.equal(captures, 0);
+        await saveFeedbackDraft('sending-report', draft('bug'));
+        setRequestAccount('sending-report');
+        recordFeedbackError('rejection', new Error('Synthetic late error from old account'));
+        assert.deepEqual(feedbackErrorsSnapshot(), []);
+        await render('sending-report');
+        await settle(() => reports.length === 2);
+        assert.deepEqual(JSON.parse(reports[1].options.body).errors, []);
+        assert.equal(JSON.parse(reports[1].options.body).errorsAvailable, false);
+        await act(async () => reports[1].resolve(Response.json(snapshot)));
+        await settle(() => !send().disabled);
+        await click('Review');
+        assert.equal(document.querySelector('pre[aria-label="Diagnostic report"]')?.textContent, snapshot.content);
+        assert.ok(document.body.textContent.includes('The Gmail request failed with 503 for [email].'));
+        const activity = [...document.querySelectorAll('.feedback-diagnostics-section')].find(section => section.querySelector('summary')?.textContent.trim() === 'App activity')?.querySelector('.feedback-diagnostics-items');
+        assert.ok(activity);
+        assert.equal(activity.querySelectorAll('.feedback-diagnostics-activity').length, 2);
+        await act(async () => send().click());
+        await settle(() => submissions.length === 2);
+        assert.equal(submissions[1].reportId, snapshot.id);
+        assert.deepEqual(submissions[1].attachments, []);
+        assert.equal(captures, 0);
+        await saveFeedbackDraft('legacy-report', draft('bug'));
+        await render('legacy-report');
+        await settle(() => reports.length === 3);
+        assert.deepEqual(JSON.parse(reports[2].options.body).errors, []);
+        const legacy = {...snapshot, content: JSON.stringify({format:'nod-feedback-report-v1',messages:[{text:'Synthetic private legacy content'}]})};
+        await act(async () => reports[2].resolve(Response.json(legacy)));
+        await settle(() => document.querySelector('.feedback-diagnostics-error'));
+        assert.equal(document.body.textContent.includes('Synthetic private legacy content'), false);
+        assert.equal(send().disabled, true);
+        assert.deepEqual(copied, []);
+        await click('Continue without report');
+        assert.equal(send().disabled, false);
+        await act(async () => send().click());
+        await settle(() => submissions.length === 3);
+        assert.equal(submissions[2].reportId, null);
+        assert.equal(JSON.stringify(submissions).includes('synthetic-private-screen'), false);
+        assert.equal(JSON.stringify(submissions).includes('Synthetic private legacy content'), false);
+        await saveFeedbackDraft('restored-idea', draft('feature', false));
+        await render('restored-idea');
+        assert.equal(choice().checked, false);
+        assert.equal(send().disabled, false);
       } finally {
+        await act(async () => root.unmount());
         dom.window.close();
       }
     `,
   });
-  assert.equal(result.exitCode, 0, result.stderr);
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
 
 test('browser handoff retains pending-frame input and allows handback after an input timeout', async () => {
@@ -3546,17 +4049,34 @@ test('feedback draft storage isolates owners', async () => {
       const rendered = new File(['synthetic-rendered-covered-pixels'], 'capture.png', { type: 'image/png', lastModified: 2000 });
       const marks = [{ tool: 'redact', from: { x: 10, y: 20 }, to: { x: 70, y: 90 } }];
       const first = {
-        category: 'feature', feedback: 'Synthetic idea draft', pendingId: null,
+        category: 'feature', feedback: 'Synthetic idea draft', pendingId: null, reportChoice: true,
         attachments: [{ id: 'capture', file: rendered, image: { original, marks } }],
       };
       const second = {
-        category: 'other', feedback: 'Different synthetic owner', pendingId: crypto.randomUUID(),
+        category: 'other', feedback: 'Different synthetic owner', pendingId: crypto.randomUUID(), reportChoice: false,
         attachments: [{ id: 'log', file: new File(['synthetic log'], 'details.log', { type: 'text/plain' }) }],
       };
       await Promise.all([saveFeedbackDraft('owner-one', first), saveFeedbackDraft('owner-two', second)]);
       const restored = await loadFeedbackDraft('owner-one');
       assert.equal(await restored.attachments[0].image.original.text(), 'synthetic-original-private-pixels');
+      assert.equal(restored.reportChoice, true);
+      assert.equal((await loadFeedbackDraft('owner-two')).reportChoice, false);
       assert.equal((await loadFeedbackDraft('owner-two')).pendingId, second.pendingId);
+      const legacy = {
+        category: 'bug', feedback: 'Synthetic older draft', pendingId: null,
+        attachments: [
+          { id: 'automatic', file: new File(['synthetic-private-screen'], 'nod-screenshot.jpg', {type:'image/jpeg'}) },
+          { id: 'edited-automatic', file: new File(['synthetic-edited-screen'], 'nod-screenshot.png', {type:'image/png'}), image: { original: new File(['synthetic-private-original'], 'nod-screenshot.jpg', {type:'image/jpeg'}), marks } },
+          second.attachments[0],
+        ],
+      };
+      await saveFeedbackDraft('legacy-owner', legacy);
+      const migrated = await loadFeedbackDraft('legacy-owner');
+      assert.equal(migrated.reportChoice, null);
+      assert.deepEqual(migrated.attachments.map(item => item.id), ['log']);
+      assert.equal(await migrated.attachments[0].file.text(), 'synthetic log');
+      await saveFeedbackDraft('current-owner', {...legacy, reportChoice:null});
+      assert.deepEqual((await loadFeedbackDraft('current-owner')).attachments.map(item => item.id), ['automatic', 'edited-automatic', 'log']);
       assert.equal(await loadFeedbackDraft('owner-three'), null);
       await assert.rejects(loadFeedbackDraft(''), /owner/);
       const db = await new Promise((resolve, reject) => {
@@ -3564,6 +4084,20 @@ test('feedback draft storage isolates owners', async () => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
+      const raw = await new Promise((resolve, reject) => {
+        const tx = db.transaction('drafts', 'readonly');
+        const request = tx.objectStore('drafts').get('legacy-owner');
+        tx.oncomplete = () => resolve(request.result);
+        tx.onerror = reject;
+      });
+      assert.equal(raw.draft.reportChoice, null);
+      assert.deepEqual(raw.draft.attachments.map(item => item.id), ['log']);
+      assert.equal(await raw.draft.attachments[0].file.blob.text(), 'synthetic log');
+      assert.equal(JSON.stringify(raw).includes('nod-screenshot'), false);
+      await saveFeedbackDraft('racing-owner', legacy);
+      const newest = {...second, feedback:'Synthetic newer explicit draft'};
+      await Promise.all([loadFeedbackDraft('racing-owner'), saveFeedbackDraft('racing-owner', newest)]);
+      assert.equal((await loadFeedbackDraft('racing-owner')).feedback, newest.feedback);
       await new Promise((resolve, reject) => {
         const tx = db.transaction('drafts', 'readwrite');
         const store = tx.objectStore('drafts');
@@ -4703,3 +5237,110 @@ test(
     }
   },
 );
+
+test('task and schedule requests preserve multiline text until an explicit send shortcut', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 30_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'https://nod.fixture.invalid', pretendToBeVisual: true });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+      });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Event', 'KeyboardEvent'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { AskNod } = await import('./src/web/components/plan-controls.tsx');
+      const root = createRoot(document.getElementById('root'));
+      const sent = [];
+      let closed = 0;
+      const multiline = 'First line\nSecond line';
+      try {
+        for (const [index, subject, prefix] of [
+          [0, { kind: 'task' }, ''],
+          [1, { kind: 'schedule' }, 'New schedule: '],
+          [2, { kind: 'schedule', title: 'Weekly review' }, 'About the schedule "Weekly review": '],
+        ]) {
+          await act(async () => root.render(createElement(AskNod, {
+            key: index, subject, onAsk: (text) => sent.push(text), onClose: () => closed++,
+          })));
+          const field = document.querySelector('.ask-nod-field input, .ask-nod-field textarea');
+          assert.ok(field);
+          const press = async (options = {}) => {
+            const event = new KeyboardEvent('keydown', {
+              key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true, ...options,
+            });
+            await act(async () => field.dispatchEvent(event));
+            return event;
+          };
+          await act(async () => {
+            Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value').set.call(field, multiline);
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+          });
+          assert.equal(field.value, multiline);
+          for (const modifiers of [{ shiftKey: true }, { altKey: true }]) {
+            assert.equal((await press(modifiers)).defaultPrevented, false);
+            assert.equal(sent.length, index);
+            assert.equal(field.value, multiline);
+          }
+          for (const modifiers of [{ isComposing: true }, { keyCode: 229 }]) {
+            await press(modifiers);
+            assert.equal(sent.length, index);
+          }
+          assert.equal((await press()).defaultPrevented, true);
+          assert.equal(sent.length, index + 1);
+          assert.equal(sent.at(-1), prefix + multiline);
+          assert.equal((await press({ key: 'Escape', code: 'Escape', keyCode: 27 })).defaultPrevented, true);
+          assert.equal(closed, index + 1);
+          assert.equal(sent.length, index + 1);
+        }
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('chat draft recovery isolates owners and excludes private verification replies', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 10000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('', { url: 'https://nod.fixture.invalid' });
+      globalThis.localStorage = dom.window.localStorage;
+      const { readChatDraft, writeChatDraft } = await import('./src/web/lib/chat-draft.ts');
+      const draft = { text: 'Budget is 1450', reply: { id: 'synthetic-source', role: 'assistant', text: 'A quoted passage' }, attachments: [], missing: ['report.pdf'] };
+      assert.equal(writeChatDraft('owner-a.thread-a', draft), true);
+      assert.deepEqual(readChatDraft('owner-a.thread-a'), draft);
+      assert.equal(readChatDraft('owner-b.thread-a'), null);
+      assert.equal(readChatDraft('owner-a.thread-b'), null);
+      const replyOnly = { ...draft, text: '', attachments: [], missing: [] };
+      writeChatDraft('owner-a.thread-a', replyOnly);
+      assert.deepEqual(readChatDraft('owner-a.thread-a'), replyOnly);
+      const file = { id: '00000000-0000-4000-8000-000000000001', name: 'report.pdf', mimeType: 'application/pdf', size: 5, url: '/api/artifacts/00000000-0000-4000-8000-000000000001' };
+      localStorage.setItem('owner-a.thread-a', JSON.stringify({ ...draft, version: 1, attachments: [null, {}, file] }));
+      assert.deepEqual(readChatDraft('owner-a.thread-a'), { ...draft, attachments: [file] });
+      const large = { ...draft, text: 'Synthetic long draft '.repeat(6000), attachments: Array.from({ length: 51 }, (_, index) => ({ ...file, id: String(index) })), missing: Array.from({ length: 51 }, (_, index) => 'file-' + index) };
+      writeChatDraft('owner-a.thread-a', large);
+      assert.deepEqual(readChatDraft('owner-a.thread-a'), large);
+      writeChatDraft('owner-a.thread-a', { ...draft, text: 'The code is 731408' }, true);
+      assert.equal(readChatDraft('owner-a.thread-a'), null);
+      writeChatDraft('owner-a.thread-a', { ...draft, text: '731408' });
+      assert.equal(readChatDraft('owner-a.thread-a'), null);
+      writeChatDraft('owner-a.thread-a', draft);
+      writeChatDraft('owner-a.thread-a', null);
+      assert.equal(readChatDraft('owner-a.thread-a'), null);
+      dom.window.close();
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});

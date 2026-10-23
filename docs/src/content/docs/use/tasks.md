@@ -9,6 +9,8 @@ The **Tasks** page shows what nod is working on, what's scheduled and what's don
 
 Until there's something to show, the page helps you start instead. Select **something that takes a while** or **something that repeats** to ask nod in your own words or pick an idea. The views appear once nod has a task, a schedule or a past run.
 
+When writing a task or schedule request, press Enter to send or Shift+Enter for a new line.
+
 nod starts a saved task session for substantial work with several steps, even when it can finish in one sitting. Research across several sources, comparisons, reports and app workflows can become tasks. Work that waits on someone or something, runs alongside other jobs, or that you ask nod to track also becomes a task. Quick answers, single lookups, brief summaries of supplied content and simple actions stay in chat. There is no fixed limit of three tasks.
 
 For example, "Compare these options and make a report" becomes a task. So does "Ask three venues for quotes and tell me when they've all replied". "What time is this meeting?" stays in chat. The main chat stays available while tasks work. Each task keeps its goal and history, and its start message is its acknowledgement.
@@ -49,6 +51,10 @@ An owner update has a revision. **Owner update queued** means the task has not r
 Open a task preview and select **Stop** to stop that task and its helpers. Other tasks continue. The main Stop control stops active work and closes all open tasks. You can also ask nod in the main chat to stop one task, or all background work, including scheduled runs and app checks. Reset also closes the old thread's open tasks.
 
 A task checks in when its spending since your last message to it passes the amount you set in **Usage**, $5 by default, and asks whether to keep going. See [Task check-ins](/use/spending/#task-check-ins).
+
+## Rename a task
+
+Open its preview and select its title in the details. Change the display name, then select **Save**. The task goal and original request stay the same. **Cancel** or Escape discards the edit.
 
 ## Inspect task activity
 

@@ -57,6 +57,16 @@ The workspace can reach the internet. Code that nod runs there can download file
 
 When nod shares a file, it appears as an attachment in the nod app, up to 90 MB. Select it to open it in a panel next to the chat, so you can keep talking to nod while you read. Press the arrow keys to move through every file in the conversation, drag the panel's edge to resize it, and press **Escape** to close it. Select **Download** to save a file.
 
+The panel remembers reading state for up to eight recently viewed files, with a total retention limit of 90 MB. Use the filename selector to jump between files during this conversation visit.
+
+- **Use in message** adds an existing file to your draft.
+- **Copy image** copies raster image data where the clipboard supports it. **Download** keeps the original file format.
+- In the desktop app, drag a file card, image, or preview file icon to a folder to copy the file. **Save to Downloads** shows **Open** and **Show in folder** after the save completes. The file menu uses the system menu.
+- **Edit copy** lets you change a plain-text or Markdown file. **Save copy to message** creates a new file and attaches it to your draft. The original file remains available.
+- **Export files** lets you select several files and download them as one ZIP file, up to 90 MB in total.
+
+Native opening is limited to supported document and raster image types. Save other formats and open them from your file manager.
+
 | File                                    | How it opens                                                       |
 | --------------------------------------- | ------------------------------------------------------------------ |
 | Images, video and audio                 | At full size. Select an image to zoom; audio shows its waveform    |

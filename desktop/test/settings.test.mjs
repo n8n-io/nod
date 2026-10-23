@@ -4583,3 +4583,119 @@ test('the first introduction requests native notifications only from its owned r
     });
   }
 });
+
+test('artifact exports keep owned bytes, safe names, separate saves and restricted opening', async () => {
+  const { createArtifactFiles, canOpenArtifact } = await import('../main/artifact-files.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'nod-artifact-contract-'));
+  let requests = 0;
+  let filename = '../report.pdf';
+  const files = createArtifactFiles({
+    temporary: root,
+    downloads: join(root, 'Downloads'),
+    fetchArtifact: async () => {
+      requests++;
+      return new Response('synthetic PDF bytes', {
+        headers: {
+          'content-type': 'application/pdf',
+          'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        },
+      });
+    },
+  });
+  const id = randomUUID();
+  try {
+    const [first, second] = await Promise.all([files.prepare(id), files.prepare(id)]);
+    assert.equal(first.path, second.path);
+    assert.equal(first.name, 'report.pdf');
+    assert.equal(requests, 1);
+    assert.equal(await readFile(first.path, 'utf8'), 'synthetic PDF bytes');
+    await files.save(id);
+    await files.save(id);
+    assert.equal(await readFile(join(root, 'Downloads/report.pdf'), 'utf8'), 'synthetic PDF bytes');
+    assert.equal(
+      await readFile(join(root, 'Downloads/report (1).pdf'), 'utf8'),
+      'synthetic PDF bytes',
+    );
+    await assert.rejects(files.prepare('../../private'), /unavailable/);
+    assert.equal(canOpenArtifact(first), true);
+    assert.equal(canOpenArtifact({ name: 'report.desktop', type: 'application/pdf' }), false);
+    assert.equal(canOpenArtifact({ name: 'report.pdf', type: 'text/html' }), false);
+    filename = 'report:Q4?.pdf';
+    assert.equal((await files.prepare(randomUUID())).name, 'report_Q4_.pdf');
+    filename = 'CON.pdf';
+    assert.equal((await files.prepare(randomUUID())).name, '_CON.pdf');
+    const pinnedId = randomUUID();
+    const pinned = await files.path(pinnedId);
+    const evicted = await files.prepare(randomUUID());
+    for (let index = 0; index < 9; index++) await files.prepare(randomUUID());
+    await assert.rejects(readFile(evicted.path), { code: 'ENOENT' });
+    assert.equal(await readFile(pinned.path, 'utf8'), 'synthetic PDF bytes');
+    const absent = createArtifactFiles({
+      temporary: root,
+      downloads: root,
+      fetchArtifact: async () => new Response('', { status: 404 }),
+    });
+    await assert.rejects(absent.prepare(randomUUID()), /no longer available/);
+    const blocked = join(root, 'not-a-directory');
+    await writeFile(blocked, 'Synthetic disk setup failure');
+    let cancelled = false;
+    const failed = createArtifactFiles({
+      temporary: blocked,
+      downloads: root,
+      fetchArtifact: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('Synthetic recovered download'));
+              controller.close();
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+        ),
+    });
+    const failedId = randomUUID();
+    await assert.rejects(failed.prepare(failedId));
+    assert.equal(cancelled, true);
+    await rm(blocked);
+    await mkdir(blocked);
+    const retried = await failed.prepare(failedId);
+    assert.equal(await readFile(retried.path, 'utf8'), 'Synthetic recovered download');
+    await failed.dispose();
+    let source;
+    const streaming = createArtifactFiles({
+      temporary: root,
+      downloads: root,
+      fetchArtifact: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              source = controller;
+              controller.enqueue(new TextEncoder().encode('First streamed bytes'));
+            },
+          }),
+        ),
+    });
+    const streamId = randomUUID();
+    const pending = streaming.prepare(streamId);
+    const rejected = assert.rejects(pending, { name: 'AbortError' });
+    let partial;
+    for (let attempt = 0; attempt < 100 && !partial; attempt++) {
+      for (const name of await readdir(root)) {
+        const path = join(root, name, streamId, 'download');
+        if ((await readFile(path).catch(() => null))?.toString() === 'First streamed bytes')
+          partial = path;
+      }
+      if (!partial) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(partial);
+    source.enqueue(new TextEncoder().encode(' Later streamed bytes'));
+    await streaming.dispose();
+    await rejected;
+    await assert.rejects(readFile(partial), { code: 'ENOENT' });
+  } finally {
+    await files.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});

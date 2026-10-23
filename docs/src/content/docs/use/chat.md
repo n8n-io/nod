@@ -13,14 +13,22 @@ nod follows your conversation language, including questions, confirmations and c
 
 ## Send a message
 
-Type in the message box and press Enter. Press Shift+Enter for a new line.
+Type in the message box and press Enter. Press Shift+Enter for a new line. Select **↵ Send** in the composer to use Enter for a new line and Command/Ctrl+Enter to send.
 
 You can paste Markdown or formatted text. Chat, feedback and message display use the same CommonMark parser, with GitHub Flavored Markdown support. When you send a message or restore an unsent draft, the serializer preserves the meaning of text and links. Markdown can use escapes for literal characters. These escapes do not change the displayed text or a link's destination. Code stays literal, including text that looks like a link or a code fence.
 
 Use the formatting toolbar to underline text. Pasted `<u>text</u>` also keeps its underline. The old `++text++` shortcut stays literal under CommonMark.
 
-- **Attach files.** Select **Attach files**, paste an image or drop files on the box. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. nod gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
+- **Attach files.** Select **Attach files**, paste an image or drop files anywhere in the conversation. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. nod gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
 - **Reply to a message.** Hover over a message and select its arrow, or right-click inside the bubble, then select **Reply** or **Copy**. On touch screens, use the visible arrow. The time appears in the bottom-right corner of each bubble.
+
+Your unfinished draft stays on this device for your account and conversation. After a reload, nod restores its text, reply target, and available uploaded files. It checks saved files before you can send them. If a check fails, select **Retry** or remove the file. An interrupted upload needs the original file again. Private entry values and recognized verification replies are excluded. A file that exceeds the limit is rejected individually; other valid files stay attached. Removing an uploaded draft file offers **Undo**.
+
+Select a passage in a message, then **Reply to selection** to quote it. The quote stays separate from your own message. Select a reply quote to visit its source. **Return to where you were** restores your reading position. Copy controls on code blocks and tables copy only that block. Table content pastes into spreadsheet cells. Message Copy includes formatted text where the clipboard supports it. **Copy Markdown** copies the source text.
+
+Select **Find in conversation** to search stored messages in the current conversation. Search shows up to 50 recent matches. Select **Commands**, or press Command/Ctrl+K outside an editor, to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
+
+An action confirmation shows its current state beside the question. **Done** means the confirmed action finished. **Outcome unclear** means it failed or stopped after execution started. It can still have changed the target. Check the result before you try again. nod does not repeat it automatically.
 
 ## Keep talking while nod works
 
@@ -100,7 +108,13 @@ Select **Send feedback** at the top of the chat, choose **Bug or issue**, **Idea
 
 After first-time setup, a short invitation points to **Send feedback**. Dismiss it with its close button or press Escape while the invitation or feedback button is focused; it stays dismissed on that device.
 
-To help the team investigate, tick **Include diagnostic report** to add your recent chat, actions and their results. It's off by default. nod removes known secrets and the personal details it recognizes, but can miss others, such as another person's name in a sentence. Select **Review** to see the report before you send.
+**Include diagnostic report** starts selected for every feedback category. It adds recent messages, tool inputs and results, errors, and app activity to help fix problems and improve nod. Known secrets and recognized personal details are masked, but redaction can miss information.
+
+Select **Review** to inspect the exact report that will be attached. Untick the checkbox to leave it out. Your choice stays with the draft when you close or reload it.
+
+Preparing a report sends recent app activity and errors to your nod runtime for redaction and assembly. The feedback recipient receives your submission only after you select **Send feedback**. If preparation fails, select **Continue without report**.
+
+Screenshots aren't captured automatically. Your feedback text and files you add are sent as provided, so check them for personal information too.
 
 ## Start with an empty chat
 

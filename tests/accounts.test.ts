@@ -98,12 +98,14 @@ test('settings Escape preserves nested interactions and pending changes before r
       const { createElement, useState, act } = await import('react');
       const { createRoot } = await import('react-dom/client');
       const { App } = await import('./src/web/app.tsx');
+      const { useSession } = await import('./src/web/hooks/use-session.ts');
       const { Dialog, DialogContent, DialogTitle } = await import('./src/web/components/ui.tsx');
       let openDialog;
       function Fixture() {
+        const sessionState = useSession();
         const [dialog, setDialog] = useState(false);
         openDialog = () => setDialog(true);
-        return createElement('div', null, createElement(App), createElement(Dialog, {
+        return createElement('div', null, createElement(App, { sessionState }), createElement(Dialog, {
           open: dialog, onOpenChange: setDialog,
         }, createElement(DialogContent, { 'aria-describedby': undefined },
           createElement(DialogTitle, null, 'Nested action'), createElement('button', null, 'Nested control'))));
@@ -962,6 +964,13 @@ describe('analytics privacy', () => {
           report?.({
             ...usage,
             id: randomUUID(),
+            provider: 'radius',
+            model: 'acme-private-acquisition-canary',
+            durationMs: 0,
+          });
+          report?.({
+            ...usage,
+            id: randomUUID(),
             provider: 'openai',
             model: 'gpt-6-sol',
             durationMs: 0,
@@ -1000,6 +1009,14 @@ describe('analytics privacy', () => {
         },
         {
           ...shared,
+          provider: 'radius',
+          model: 'custom',
+          input_tokens: 0,
+          output_tokens: 0,
+          pricing: 'unavailable',
+        },
+        {
+          ...shared,
           provider: 'openai',
           model: 'gpt-6-sol',
           input_tokens: 0,
@@ -1009,6 +1026,7 @@ describe('analytics privacy', () => {
         },
       ],
     );
+    assert.ok(!JSON.stringify(captured).includes('acme-private-acquisition-canary'));
   });
 });
 
@@ -1382,6 +1400,178 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       };
     };
   }
+
+  test('native provider connections keep owned credentials private and preserve the selected model', async (t) => {
+    const f = await fixture(t);
+    const { apiKeyModelProviders } = await import('../src/shared/models.ts');
+    const backend = {
+      ...f.backend,
+      catalog: (provider: import('../src/shared/models.ts').ModelProvider) =>
+        f.backend.catalog(provider, 'api_key'),
+    };
+    const owner = await f.create('fixture-provider-owner', backend);
+    const other = await f.create('fixture-provider-other', backend);
+    const app = Fastify();
+    owner.register(app);
+    t.after(() => app.close());
+    let original: import('../src/shared/models.ts').ModelSelection | null = null;
+    for (const provider of apiKeyModelProviders) {
+      const key = `fixture-private-${provider}-key`;
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/models/keys',
+        payload: {
+          provider,
+          key,
+          ...(provider === 'amazon-bedrock' ? { region: 'eu-west-1' } : {}),
+          ...(provider === 'azure'
+            ? {
+                url: 'https://fixture.openai.azure.com',
+                model: 'gpt-6.1-sol',
+                deployment: 'fixture-deployment',
+              }
+            : {}),
+          ...(provider.startsWith('cloudflare-')
+            ? {
+                accountId: 'ABCDEF0123456789ABCDEF0123456789',
+                ...(provider === 'cloudflare-ai-gateway' ? { gatewayId: 'fixture-gateway' } : {}),
+              }
+            : {}),
+        },
+      });
+      assert.equal(response.statusCode, 200, `${provider}: ${response.body}`);
+      assert.ok(!response.body.includes(key));
+      const connection = owner.view().connections.find((item) => item.provider === provider)!;
+      assert.ok(connection);
+      if (!original) original = owner.view().selection;
+      assert.deepEqual(owner.view().selection, original);
+      const choice = connection.models[0];
+      await assert.rejects(
+        other.select({
+          connectionId: connection.id,
+          modelId: choice.id,
+          effort: choice.efforts[0],
+        }),
+      );
+    }
+    assert.equal(owner.view().connections.length, apiKeyModelProviders.length);
+    assert.deepEqual(other.view(), { connections: [], selection: null });
+    const stored = JSON.stringify([
+      (await f.database.query('SELECT * FROM model_connections')).rows,
+      (await f.database.query('SELECT * FROM vault_app_grants')).rows,
+    ]);
+    assert.ok(!stored.includes('fixture-private-'));
+    const cloud = owner
+      .view()
+      .connections.find((item) => item.provider === 'cloudflare-ai-gateway')!;
+    const choice = cloud.models[0];
+    await owner.select({ connectionId: cloud.id, modelId: choice.id, effort: choice.efforts[0] });
+    const captured = await owner.resolve();
+    assert.deepEqual(await captured.read(), {
+      type: 'cloudflare',
+      key: 'fixture-private-cloudflare-ai-gateway-key',
+      accountId: 'abcdef0123456789abcdef0123456789',
+      gatewayId: 'fixture-gateway',
+    });
+    await owner.remove(cloud.id);
+    assert.equal(await captured.read(), undefined);
+  });
+
+  test('model setup chooses capable defaults, preserves explicit choices and requires valid cloud accounts', async (t) => {
+    const f = await fixture(t);
+    const backend = {
+      ...f.backend,
+      catalog: (provider: import('../src/shared/models.ts').ModelProvider) =>
+        f.backend.catalog(provider, 'api_key'),
+    };
+    const google = await f.create('fixture-google-default', backend);
+    await google.addKey('google', 'fixture-google-key');
+    assert.equal(google.view().selection?.modelId, 'gemini-3.8-flash');
+    assert.equal(google.view().selection?.effort, 'medium');
+    const chosen = google.view().selection!;
+    await google.addKey('mistral', 'fixture-mistral-key');
+    assert.deepEqual(google.view().selection, chosen);
+    const paidGoogle = await f.create('fixture-google-paid-choice', {
+      ...backend,
+      catalog: async () =>
+        (await backend.catalog('google')).filter(
+          (definition) => definition.choice.id === 'gemini-4-argon',
+        ),
+    });
+    const paidConnection = await paidGoogle.addKey('google', 'fixture-google-paid-key');
+    assert.equal(paidGoogle.view().selection, null);
+    assert.equal(paidGoogle.configured, false);
+    await paidGoogle.select({
+      connectionId: paidConnection,
+      modelId: 'gemini-4-argon',
+      effort: 'medium',
+    });
+    assert.equal(paidGoogle.configured, true);
+    assert.equal((await paidGoogle.resolve()).definition.choice.id, 'gemini-4-argon');
+    const bedrock = await f.create('fixture-bedrock-default', backend);
+    await bedrock.addKey('amazon-bedrock', 'fixture-bedrock-key', { region: 'eu-west-1' });
+    assert.equal(bedrock.view().selection, null);
+    const explicit = await f.create('fixture-explicit-default', backend, {
+      provider: 'google',
+      model: 'fixture-unavailable-model',
+      credentials: { google: { type: 'api_key', key: 'fixture-managed-key' } },
+    });
+    assert.equal(explicit.configured, false);
+    assert.equal(explicit.view().selection, null);
+    const fallbackBackend = {
+      ...backend,
+      catalog: async () =>
+        [
+          {
+            choice: {
+              id: 'fixture-small',
+              name: 'Small',
+              efforts: ['off'] as const,
+              images: false,
+              contextWindow: 8000,
+            },
+            spec: {},
+          },
+          {
+            choice: {
+              id: 'fixture-capable',
+              name: 'Capable',
+              efforts: ['low', 'high'] as const,
+              images: true,
+              contextWindow: 262144,
+            },
+            spec: {},
+          },
+        ].map((definition) => ({
+          ...definition,
+          choice: { ...definition.choice, efforts: [...definition.choice.efforts] },
+        })),
+    };
+    const fallback = await f.create('fixture-fallback-default', fallbackBackend);
+    await fallback.addKey('deepseek', 'fixture-fallback-key');
+    assert.equal(fallback.view().selection?.modelId, 'fixture-small');
+    assert.equal(fallback.view().selection?.effort, 'off');
+    const subscription = await f.create('fixture-subscription-default', {
+      ...backend,
+      signIn: stubSignIn(async () => subscriptionCredential()),
+    });
+    const signIn = await subscription.start('openai');
+    await subscription.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${signIn.attempt}&code=fixture`),
+    );
+    assert.equal(subscription.view().selection?.modelId, 'gpt-6-sol');
+    const count = google.view().connections.length;
+    for (const settings of [
+      {},
+      { accountId: 'not-an-account', gatewayId: 'fixture-gateway' },
+      { accountId: '0123456789abcdef0123456789abcdef' },
+      { accountId: '0123456789abcdef0123456789abcdef', gatewayId: '../other-gateway' },
+    ])
+      await assert.rejects(
+        google.addKey('cloudflare-ai-gateway', 'fixture-rejected-key', settings),
+      );
+    assert.equal(google.view().connections.length, count);
+  });
 
   test('image fallback uses owned connected models without changing the chat selection and reads current credentials', async (t) => {
     const f = await fixture(t);
@@ -2464,4 +2654,223 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     );
     assert.equal(duplicated.configured, false);
   });
+});
+
+test('feedback activity keeps only bounded technical facts, expires locally and clears on owner changes', async (t) => {
+  const { createFeedbackActivity, parseFeedbackActivity } =
+    await import('../src/shared/feedback-activity.ts');
+  const { feedbackActivity, feedbackActivitySnapshot } =
+    await import('../src/web/lib/feedback-activity.ts');
+  const { api } = await import('../src/web/lib/api.ts');
+  const { captureAnalytics, capturePageview } = await import('../src/web/lib/analytics.ts');
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+  const history = createFeedbackActivity('runtime');
+  const privateValue = 'A private person and their confidential project';
+  history.record('nod_connection_changed', {
+    app: 'gmail',
+    connection_method: 'managed_app',
+    status: 'failed',
+    failure_reason: 'authentication',
+    domain: privateValue,
+    account: privateValue,
+  });
+  history.record('nod_service_used', {
+    app: privateValue,
+    connection_method: 'mcp',
+    outcome: 'failed',
+    duration_ms: 12,
+    error: privateValue,
+  });
+  history.record(privateValue, { status: 'failed' });
+  assert.deepEqual(
+    history.snapshot().map((row) => row.properties),
+    [
+      {
+        app: 'gmail',
+        connection_method: 'managed_app',
+        status: 'failed',
+        failure_reason: 'authentication',
+      },
+      { app: 'custom', connection_method: 'mcp', outcome: 'failed', duration_ms: 12 },
+    ],
+  );
+  assert.ok(!JSON.stringify(history.snapshot()).includes(privateValue));
+  assert.deepEqual(
+    parseFeedbackActivity([
+      { source: 'app', ageMs: 0, event: '__proto__', properties: { status: privateValue } },
+    ]),
+    [],
+  );
+  t.mock.timers.tick(1_800_001);
+  assert.deepEqual(history.snapshot(), []);
+  for (let index = 0; index < 110; index++)
+    history.record('request_failed', {
+      area: 'chat',
+      method: 'POST',
+      status: 500,
+      reason: 'http',
+      path: privateValue,
+    });
+  assert.equal(history.snapshot().length, 100);
+  let requests = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    requests++;
+    return Response.json({ error: privateValue }, { status: 503 });
+  });
+  setRequestAccount('diagnostic-owner-one');
+  t.after(() => setRequestAccount(null));
+  capturePageview('/vault/private-person?secret=private');
+  captureAnalytics('nod_ui_error', { area: 'chat', action: 'send' });
+  assert.equal(requests, 0);
+  await assert.rejects(api('/api/apps/private-account?secret=private'), /private person/);
+  for (let index = 0; index < 110; index++)
+    capturePageview(`/vault/private-person-${index}?secret=private`);
+  assert.deepEqual(
+    feedbackActivitySnapshot().map((row) => row.properties),
+    [
+      { screen: '/credentials' },
+      { area: 'chat', action: 'send' },
+      { area: 'apps', method: 'GET', status: 503, reason: 'http' },
+    ],
+  );
+  assert.ok(!JSON.stringify(feedbackActivitySnapshot()).includes('private'));
+  capturePageview('/apps');
+  capturePageview('/vault/private-person');
+  assert.equal(feedbackActivitySnapshot().filter((row) => row.event === 'screen').length, 3);
+  t.mock.timers.tick(1_800_001);
+  capturePageview('/vault/private-person');
+  assert.equal(feedbackActivitySnapshot().filter((row) => row.event === 'screen').length, 1);
+  setRequestAccount('diagnostic-owner-two');
+  assert.deepEqual(feedbackActivitySnapshot(), []);
+  capturePageview('/vault/private-person');
+  assert.equal(feedbackActivitySnapshot().length, 1);
+  feedbackActivity.clear();
+  for (const [path, area] of [
+    ['/api/thread/stop', 'chat'],
+    ['/api/browser-handoff/private-session/complete', 'browser'],
+    ['/api/channel-settings/private-channel', 'channels'],
+    ['/api/schedule-runs?limit=20', 'tasks'],
+    ['/api/credential-requests/private-request', 'vault'],
+    ['/api/payment-requests/private-request', 'vault'],
+  ]) {
+    await assert.rejects(api(path, { method: 'POST' }), /private person/);
+    assert.deepEqual(feedbackActivitySnapshot().at(-1)?.properties, {
+      area,
+      method: 'POST',
+      status: 503,
+      reason: 'http',
+    });
+  }
+  assert.ok(!JSON.stringify(feedbackActivitySnapshot()).includes('private'));
+  feedbackActivity.clear();
+  t.mock.method(
+    globalThis,
+    'fetch',
+    async (_path: string, options: RequestInit) =>
+      new Promise<Response>((_resolve, reject) =>
+        options.signal!.addEventListener('abort', () => reject(options.signal!.reason), {
+          once: true,
+        }),
+      ),
+  );
+  const timeout = new AbortController();
+  const timedRequest = api('/api/channels/private-recipient', { signal: timeout.signal });
+  timeout.abort(new DOMException(privateValue, 'TimeoutError'));
+  await assert.rejects(timedRequest, { name: 'TimeoutError' });
+  assert.deepEqual(
+    feedbackActivitySnapshot().map((row) => row.properties),
+    [{ area: 'channels', method: 'GET', status: 0, reason: 'timeout' }],
+  );
+  for (const changedOwner of [false, true]) {
+    const cancellation = new AbortController();
+    const cancelledRequest = api('/api/channels/private-recipient', {
+      signal: cancellation.signal,
+    });
+    if (changedOwner) setRequestAccount('diagnostic-owner-three');
+    else cancellation.abort();
+    await assert.rejects(cancelledRequest, { name: 'AbortError' });
+    assert.equal(feedbackActivitySnapshot().length, changedOwner ? 0 : 1);
+  }
+  feedbackActivity.record('nod_ui_error', { area: 'settings', action: 'load' });
+  setRequestAccount(null);
+  assert.deepEqual(feedbackActivitySnapshot(), []);
+  for (const path of ['/api/session', '/api/access']) {
+    let respond: (response: Response) => void = () => {};
+    t.mock.method(
+      globalThis,
+      'fetch',
+      async () => new Promise<Response>((resolve) => (respond = resolve)),
+    );
+    setRequestAccount('diagnostic-owner-one');
+    const staleRequest = api(path);
+    setRequestAccount('diagnostic-owner-two');
+    respond(Response.json({ error: privateValue }, { status: 503 }));
+    await assert.rejects(staleRequest, /private person/);
+    assert.deepEqual(feedbackActivitySnapshot(), []);
+  }
+});
+
+test('failure logging keeps concurrent runtime sinks isolated without exposing messages to the console', async (t) => {
+  const { logFailure, withFailureLog } = await import('../src/server/failure-log.ts');
+  const consoleOutput: string[] = [];
+  t.mock.method(console, 'error', (...values: unknown[]) => consoleOutput.push(values.join(' ')));
+  const received: Array<
+    Array<{ event: string; error: unknown; context?: Record<string, unknown> }>
+  > = [[], []];
+  const failure = Object.assign(new Error('synthetic private failure message'), {
+    code: 'ECONNRESET',
+  });
+  await Promise.all(
+    received.map((events, index) =>
+      withFailureLog(
+        (event, error, context) => {
+          events.push({ event, error, context });
+        },
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, index === 0 ? 5 : 1));
+          logFailure(`runtime_${index}`, failure, { turnId: `synthetic-private-turn-${index}` });
+        },
+      ),
+    ),
+  );
+  for (const [index, events] of received.entries()) {
+    assert.equal(events.length, 1);
+    assert.equal(events[0].event, `runtime_${index}`);
+    assert.equal(events[0].error, failure);
+    assert.deepEqual(events[0].context, { turnId: `synthetic-private-turn-${index}` });
+  }
+  assert.equal(
+    withFailureLog(
+      () => {
+        throw new Error('sink failure');
+      },
+      () => {
+        logFailure('broken_sink', failure);
+        return 42;
+      },
+    ),
+    42,
+  );
+  await withFailureLog(
+    async () => {
+      throw new Error('async sink failure');
+    },
+    async () => {
+      logFailure('rejected_sink', failure);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    },
+  );
+  logFailure('outside_runtime', failure);
+  assert.deepEqual(
+    received.map((events) => events.length),
+    [1, 1],
+  );
+  assert.equal(consoleOutput.length, 5);
+  for (const line of consoleOutput) {
+    const item = JSON.parse(line);
+    assert.equal(item.name, 'Error');
+    assert.equal(item.code, 'ECONNRESET');
+    assert.ok(!line.includes('synthetic'));
+    assert.ok(!line.includes('sink failure'));
+  }
 });

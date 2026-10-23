@@ -1,5 +1,6 @@
 import { Play } from './icons';
 import { useEffect, useRef } from 'react';
+import { FileActions, fileDrag, prepareFile } from './file-actions';
 import type { Artifact } from '../../shared/contracts';
 import { ownedArtifactUrl } from '../lib/attachment-url';
 import { attachmentKind, previewableImage, vectorImage } from '../lib/attachment-kind';
@@ -141,26 +142,32 @@ export function ImageGallery({ images }: { images: ImagePreview[] }) {
       aria-label={`${images.length} ${itemLabel}${images.length === 1 ? '' : 's'}`}
     >
       {visible.map((image, index) => (
-        <button
-          type="button"
-          className={`attachment-image-tile is-${attachmentKind(image.mimeType ?? 'image/png', image.name)}${image.source === 'sticker' ? ' is-sticker' : ''}${drawer.selectedId === image.id ? ' is-selected' : ''}`}
-          key={image.id}
-          aria-label={`View ${itemLabel} ${index + 1} of ${images.length}`}
-          aria-current={drawer.selectedId === image.id || undefined}
-          onClick={(event) =>
-            drawer.open(image.id, {
-              element: event.currentTarget,
-              keyboard: event.detail === 0,
-            })
-          }
-        >
-          <AttachmentThumbnail image={image} />
-          {index === 3 && images.length > visible.length && (
-            <span className="attachment-image-more" aria-hidden="true">
-              +{images.length - visible.length}
-            </span>
-          )}
-        </button>
+        <div key={image.id} className="attachment-image-item">
+          <button
+            draggable
+            onDragStart={(event) => fileDrag(event, image)}
+            onPointerEnter={() => prepareFile(image)}
+            type="button"
+            className={`attachment-image-tile is-${attachmentKind(image.mimeType ?? 'image/png', image.name)}${image.source === 'sticker' ? ' is-sticker' : ''}${drawer.selectedId === image.id ? ' is-selected' : ''}`}
+            key={image.id}
+            aria-label={`View ${itemLabel} ${index + 1} of ${images.length}`}
+            aria-current={drawer.selectedId === image.id || undefined}
+            onClick={(event) =>
+              drawer.open(image.id, {
+                element: event.currentTarget,
+                keyboard: event.detail === 0,
+              })
+            }
+          >
+            <AttachmentThumbnail image={image} />
+            {index === 3 && images.length > visible.length && (
+              <span className="attachment-image-more" aria-hidden="true">
+                +{images.length - visible.length}
+              </span>
+            )}
+          </button>
+          <FileActions item={image} />
+        </div>
       ))}
     </div>
   );

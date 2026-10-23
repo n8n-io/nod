@@ -528,6 +528,20 @@ export function createTasks(options: {
 
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/tasks', () => read(pool, { closed: true }));
+    app.patch<{ Params: { id: string } }>('/api/tasks/:id', async (request) => {
+      const id = z.uuid().parse(request.params.id);
+      const { title } = z
+        .object({ title: z.string().trim().min(1).max(160) })
+        .strict()
+        .parse(request.body);
+      const { rowCount } = await pool.query(
+        'UPDATE tasks SET title=$3 WHERE id=$1 AND owner_id=$2',
+        [id, ownerId, title],
+      );
+      if (!rowCount) throw failure('Task not found.', 404);
+      refresh();
+      return { ok: true };
+    });
     app.get<{ Params: { id: string } }>('/api/tasks/:id', async (request) => {
       const id = z.uuid().parse(request.params.id);
       const task = (await read(pool, { id, closed: true }))[0];

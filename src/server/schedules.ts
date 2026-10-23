@@ -721,7 +721,12 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return value(row);
   }
 
-  async function update(id: string, raw: unknown, provenance?: ScheduleProvenance) {
+  async function update(
+    id: string,
+    raw: unknown,
+    provenance?: ScheduleProvenance,
+    expectedRevision?: number,
+  ) {
     z.uuid().parse(id);
     const input = updateSchema.parse(raw);
     if (!Object.keys(input).length) throw invalid('Choose a schedule detail to update.');
@@ -733,7 +738,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         )
       ).rows[0];
       if (!previous) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
-      assertRevision(previous, provenance?.expectedRevision);
+      assertRevision(previous, provenance?.expectedRevision ?? expectedRevision);
       const next = updateValue(previous, input);
       const authorized =
         input.prompt === undefined
@@ -813,10 +818,33 @@ export function createSchedules(dependencies: ScheduleDependencies) {
 
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/schedules', list);
+    app.post<{ Params: { id: string } }>('/api/schedules/:id/preview', async (request) => {
+      const previous = await read(z.uuid().parse(request.params.id));
+      const input = updateSchema
+        .pick({ cron: true, runAt: true, timeZone: true })
+        .parse(request.body);
+      const next = updateValue(previous, input);
+      validateTiming(next, false);
+      if (next.kind === 'once' && next.runAt && new Date(next.runAt) <= now())
+        return { nextRun: null };
+      return {
+        nextRun:
+          nextOccurrence({
+            ...previous,
+            cron: next.cron,
+            timeZone: next.timeZone,
+            runAt: next.runAt ? new Date(next.runAt) : null,
+            enabled: true,
+          })?.toISOString() ?? null,
+      };
+    });
     app.post('/api/schedules', (request) => create(request.body));
-    app.patch<{ Params: { id: string } }>('/api/schedules/:id', (request) =>
-      update(request.params.id, request.body),
-    );
+    app.patch<{ Params: { id: string } }>('/api/schedules/:id', (request) => {
+      const { expectedRevision, ...body } = updateSchema
+        .extend({ expectedRevision: z.number().int().nonnegative().optional() })
+        .parse(request.body);
+      return update(request.params.id, body, undefined, expectedRevision);
+    });
     app.delete<{ Params: { id: string } }>('/api/schedules/:id', (request) =>
       remove(request.params.id),
     );

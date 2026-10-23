@@ -118,9 +118,45 @@ Ask nod to check the result in the app or website before you try again. See [One
 
 Select **Send feedback** in the chat. In the desktop app, it's also in the menu bar menu. The dialog names the recipient before you send: the nod team at n8n by default, or your operator's configured collector.
 
-Tick **Include diagnostic report** to add your recent chat, actions and their results, then select **Review** to read it before you send. nod removes known secrets and the personal details it recognizes first, but can miss others. Never add API keys, passwords or your settings file.
+If the workspace crashes, use **Send feedback** on the error screen before **Reload nod** to include the captured error.
+
+Choose a feedback category and describe what happened. Include what you expected, what actually happened, and the steps that trigger the problem. **Include diagnostic report** starts selected for every category. Your choice stays with a saved draft.
+
+Select **Review** to inspect the exact attachment, or untick the checkbox to omit it. The report masks known secrets and recognized personal details, but can miss information. If preparation fails, select **Continue without report**. Your nod runtime prepares the report from recent messages, logs, and app activity. Only **Send feedback** sends it to the configured feedback recipient.
+
+Screenshots aren't captured automatically. Check your feedback text and any files you add for personal information. Never add API keys, passwords, or your settings file.
 
 To report a bug, use the [bug report form](https://github.com/n8n-io/nod/issues/new/choose). Report a vulnerability privately, as the [security policy](https://github.com/n8n-io/nod/blob/main/SECURITY.md) describes.
+
+### Report contents and limits
+
+The `nod-feedback-report-v3` JSON attachment connects the steps before a failure with the affected chat, agent work, app usage, and connections. It helps with support, debugging, and product improvement. It combines technical metadata with recent content after best-effort redaction.
+
+| Section                 | What it shows                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Runtime                 | App version, release, platform, known model provider, and model family.                                                   |
+| Chat                    | Recent user and assistant message text, roles, character and attachment counts, and reply metadata.                       |
+| Turns and agent work    | Request source, channel, outcome, waiting state, queue and run duration, tool category, and parent-child relationships.   |
+| Model usage             | Request outcomes, duration, token counts, recorded cost and estimates, and known model categories.                        |
+| Tasks and schedules     | State, progress counts, enabled state, overdue work, and recent run and failure counts.                                   |
+| Connections             | Managed app, browser, direct connection, and model connection state, plus reconnect and event-delivery health.            |
+| Channels                | Receiving and delivery states, with a permitted failure reason.                                                           |
+| Runtime logs            | Recent tool inputs and results, application and background failures, error messages and stacks, and connection activity.  |
+| App activity and errors | Recent screen categories, API failure categories and status codes, UI errors, and captured app error messages and stacks. |
+
+Database activity covers the latest 24 hours for your account across its conversations and background work. Each database section includes at most 200 entries, or 400 for agent execution events. Connection and schedule sections show current state. Report-local labels preserve execution relationships without exporting their original IDs. Activity uses relative ages and durations.
+
+The runtime journal uses three rotating files of at most 1 MiB each in nod's private data folder. Data is redacted before it is written and again when it is exported. Reports include up to 200 journal entries from the latest 24 hours. An entry larger than 64 KiB is replaced with an omission marker. Expired records are removed on startup, report preparation, subsequent journal writes, and a one-minute cleanup timer. Files can remain while nod is stopped. Dropped entries and unavailable journal data are identified in the report.
+
+The separate app activity buffer holds up to 100 recent entries for 30 minutes in the current runtime and app window. The app window also keeps up to 10 recent error messages and stacks for 30 minutes. These buffers don't depend on usage analytics being enabled. Closing the app window or restarting the runtime clears that source's buffer. Dropped or expired activity entries aren't marked. Activity categories contain no raw request URLs or response bodies. App error messages and stacks reach the runtime for redaction when a report is prepared and aren't written to its journal. After an account change, error capture pauses until the app window reloads, and the report marks that source unavailable.
+
+The redactor omits individual strings longer than 32,000 characters before scanning them. Database reads separately omit message and error text larger than 64 KiB. App error messages and stacks each have an 8,192-character capture limit. Structured values also have depth, entry-count, and size limits. These limits can remove details from long messages and tool results.
+
+The report includes a coverage record for each database section and the runtime journal: collection status, entry count, and omitted-entry indicators. These markers do not count entries dropped or expired from the app activity and error buffers. The final attachment is capped at 512 KiB. Older entries are removed if needed, and their sections mark that truncation. An empty or incomplete section doesn't prove that no problem occurred.
+
+The report excludes credential fields, screenshots, binary data, system prompts, and model thinking. Text returned by a file, browser, or app tool can be included after redaction. Redaction can miss personal details, so review the complete attachment and leave it out if needed. A report also cannot recover details outside its time or size limits.
+
+The report setting does not enable [usage analytics or conversation traces](/trust/privacy/).
 
 ## Related resources
 

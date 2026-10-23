@@ -17,32 +17,35 @@ import type {
   ModelsResponse,
 } from '../shared/models.ts';
 import {
+  apiKeyModelProviders,
   azureDeploymentPattern,
   bedrockRegionPattern,
+  cloudflareAccountPattern,
+  cloudflareGatewayPattern,
   lightestEffort,
   modelSource,
 } from '../shared/models.ts';
 import { signInPage } from '../shared/sign-in-page.ts';
-import { agentModels, memoryModels } from '../shared/model-defaults.ts';
+import {
+  agentModels,
+  defaultEffort,
+  defaultModel,
+  memoryModels,
+} from '../shared/model-defaults.ts';
 import { createDatabaseModelStore, type ModelRecord, type ModelState } from './model-store.ts';
 import { analyticsModel, type CaptureAnalytics } from './analytics.ts';
 import { logFailure } from './failure-log.ts';
 
 const keySchema = z
   .object({
-    provider: z.enum([
-      'openai',
-      'anthropic',
-      'openrouter',
-      'amazon-bedrock',
-      'google-vertex',
-      'azure',
-    ]),
+    provider: z.enum(apiKeyModelProviders),
     key: z.string().trim().min(8).max(32000),
     region: z.string().trim().max(100).optional(),
     url: z.string().trim().max(2000).optional(),
     model: z.string().trim().max(200).optional(),
     deployment: z.string().trim().max(200).optional(),
+    accountId: z.string().trim().max(100).optional(),
+    gatewayId: z.string().trim().max(100).optional(),
   })
   .strict();
 export const modelSelectionInput = z
@@ -85,15 +88,37 @@ export function azureAddress(address: string) {
   return pathname === '/' || pathname === '/openai' ? `${origin}/openai/v1` : url;
 }
 
-function keyCredential(
+export function modelKeyCredential(
   provider: ModelProvider,
   key: string,
-  settings: { region?: string; url?: string; model?: string; deployment?: string },
+  settings: {
+    region?: string;
+    url?: string;
+    model?: string;
+    deployment?: string;
+    accountId?: string;
+    gatewayId?: string;
+  },
 ): ModelCredential {
   if (provider === 'amazon-bedrock') {
     if (!settings.region || !bedrockRegionPattern.test(settings.region))
       throw new ConnectionError('Enter an AWS Region, such as us-east-1.');
     return { type: 'bedrock', key, region: settings.region };
+  }
+  if (provider === 'cloudflare-workers-ai' || provider === 'cloudflare-ai-gateway') {
+    if (!settings.accountId || !cloudflareAccountPattern.test(settings.accountId))
+      throw new ConnectionError('Enter your 32-character Cloudflare account ID.');
+    if (
+      provider === 'cloudflare-ai-gateway' &&
+      (!settings.gatewayId || !cloudflareGatewayPattern.test(settings.gatewayId))
+    )
+      throw new ConnectionError('Enter your Cloudflare AI Gateway ID.');
+    return {
+      type: 'cloudflare',
+      key,
+      accountId: settings.accountId.toLowerCase(),
+      ...(provider === 'cloudflare-ai-gateway' ? { gatewayId: settings.gatewayId } : {}),
+    };
   }
   if (provider !== 'azure') return { type: 'api_key', key };
   const url = settings.url && azureAddress(settings.url);
@@ -125,6 +150,7 @@ function connectionLabel(provider: ModelProvider, method: ModelMethod, value: Mo
   if (value.type === 'endpoint') return new URL(value.url).host;
   if (value.type === 'bedrock') return value.region;
   if (value.type === 'azure') return value.deployment;
+  if (value.type === 'cloudflare') return value.gatewayId ?? value.accountId;
   return modelSource({ provider, method });
 }
 
@@ -262,7 +288,7 @@ export function createModelService(options: {
     const state = await store.read();
     rows = state.connections.map(({ credential: saved, ...row }) => {
       const value = row.managed ? options.bootstrap?.credentials[row.provider] : saved;
-      return value?.type === 'api_key' || value?.type === 'bedrock'
+      return value?.type === 'api_key' || value?.type === 'bedrock' || value?.type === 'cloudflare'
         ? { ...row, keyEnding: value.key.slice(-4) }
         : row;
     });
@@ -424,7 +450,7 @@ export function createModelService(options: {
         : state.connections.filter(
             (row) => row !== previous && sameAccount(row, provider, method, value),
           );
-      if (!previous && state.connections.length - duplicates.length >= 20)
+      if (!previous && state.connections.length - duplicates.length >= 80)
         throw new ConnectionError('Remove an unused model connection before adding another.');
       const working = status === 'loading' && previous?.status === 'connected';
       const row: ModelRecord = {
@@ -451,17 +477,12 @@ export function createModelService(options: {
   }
   function selectDefault(state: ModelState, row: ModelRecord) {
     const { provider, method, models: definitions, id, managed, status } = row;
-    const preferredId =
-      managed && options.bootstrap?.provider === provider
-        ? (options.bootstrap.model ?? agentModels[provider])
-        : agentModels[provider];
-    const subscription = method === 'subscription';
-    const preferred =
-      (subscription && definitions.find((model) => model.choice.id === 'gpt-6-sol')) ||
-      definitions.find((model) => model.choice.id === preferredId) ||
-      (subscription || provider === 'compatible' || definitions.length === 1
-        ? definitions[0]
-        : undefined);
+    const choices = definitions.map((model) => model.choice);
+    const configuredModel =
+      managed && options.bootstrap?.provider === provider ? options.bootstrap.model : undefined;
+    const preferred = configuredModel
+      ? choices.find((model) => model.id === configuredModel)
+      : defaultModel(provider, choices, method);
     if (
       preferred &&
       status === 'connected' &&
@@ -470,8 +491,8 @@ export function createModelService(options: {
     ) {
       state.selection = {
         connectionId: id,
-        modelId: preferred.choice.id,
-        effort: preferred.choice.efforts.includes('high') ? 'high' : preferred.choice.efforts[0],
+        modelId: preferred.id,
+        effort: defaultEffort(provider, preferred),
       };
       state.selectionSet = true;
     }
@@ -740,9 +761,16 @@ export function createModelService(options: {
     async addKey(
       provider: ModelProvider,
       key: string,
-      settings: { region?: string; url?: string; model?: string; deployment?: string } = {},
+      settings: {
+        region?: string;
+        url?: string;
+        model?: string;
+        deployment?: string;
+        accountId?: string;
+        gatewayId?: string;
+      } = {},
     ) {
-      const value = keyCredential(provider, key, settings);
+      const value = modelKeyCredential(provider, key, settings);
       remember(value);
       return tracked(provider, 'api_key', async () => {
         await checkStorage();

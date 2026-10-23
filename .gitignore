@@ -4,6 +4,11 @@ dist/
 .env.*
 !.env.example
 .local/
+/.playwright-mcp/
+/docs/research/
+/docs/review/
+/prototypes/
+/src/web/prototypes/
 .DS_Store
 *.log
 coverage/

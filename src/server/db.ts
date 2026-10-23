@@ -1,3 +1,4 @@
+import { logFailure } from './failure-log.ts';
 import pg from 'pg';
 import { databaseUrl } from './config.ts';
 import { locksTable } from './locks.ts';
@@ -15,12 +16,7 @@ export function createPool(config: pg.PoolConfig) {
     connectionTimeoutMillis: 10_000,
     ...config,
   });
-  created.on('error', (error) => {
-    const code = (error as { code?: unknown }).code;
-    console.error(
-      `A database connection failed while idle: ${error.name}${typeof code === 'string' ? ` ${code}` : ''}`,
-    );
-  });
+  created.on('error', (error) => logFailure('database_idle_error', error));
   return created;
 }
 
@@ -91,6 +87,7 @@ export async function initializeDatabase() {
       stream_id text, reaction text, assistant_reaction text, assistant_reacted_at timestamptz,
       reaction_revision integer NOT NULL DEFAULT 0, reply_to_message_id uuid REFERENCES messages(id)
     );
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_quote text;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS suggestions jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_channel text;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS handoff_browser_id text;

@@ -906,3 +906,225 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+.conversation-scroll[data-drop-files] {
+  outline: 2px dashed var(--ring);
+  outline-offset: -12px;
+}
+.file-actions {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.file-actions > :is(.button, a) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+.file-action-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  flex-basis: 100%;
+}
+.file-action-notice button,
+.composer-send-preference {
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.composer-send-preference {
+  font-size: 12px;
+}
+.attachment-image-item {
+  min-width: 0;
+}
+.attachment-image-item .file-actions {
+  opacity: 0;
+  transition: opacity 100ms;
+}
+.attachment-image-item:hover .file-actions,
+.attachment-image-item:focus-within .file-actions {
+  opacity: 1;
+}
+.message-copy-block {
+  position: relative;
+}
+.copy-block {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px;
+  border: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+.message-copy-status,
+.selection-reply {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.selection-reply {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  padding: 6px 10px;
+}
+.chat-tools {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  gap: 2px;
+}
+.chat-tool-results {
+  display: flex;
+  flex-direction: column;
+  max-height: 50vh;
+  overflow: auto;
+}
+.chat-tool-results button {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 10px;
+  border: 0;
+  border-radius: var(--control-radius);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.chat-tool-results button:hover,
+.chat-tool-results button:focus-visible {
+  background: var(--accent-soft);
+}
+.artifact-retained {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.artifact-retained[hidden],
+.artifact-drawer[hidden] {
+  display: none;
+}
+.artifact-edit {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.artifact-edit textarea {
+  flex: 1;
+  resize: none;
+  min-height: 200px;
+  font-family: monospace;
+}
+.artifact-edit > div {
+  display: flex;
+  gap: 8px;
+}
+.artifact-drawer-title select {
+  max-width: 100%;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+}
+.artifact-export {
+  position: relative;
+  font-size: 12px;
+}
+.artifact-export summary {
+  cursor: pointer;
+  padding: 6px;
+}
+.artifact-export > div {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 5;
+  width: 280px;
+  max-height: 50vh;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 12px;
+  border-radius: var(--control-radius);
+}
+.artifact-export label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  overflow-wrap: anywhere;
+}
+.inline-name {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: text;
+}
+.inline-name:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 4px;
+}
+.inline-name-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.inline-name-form .input {
+  flex: 1;
+  min-width: 120px;
+}
+.inline-name-form > .notice {
+  flex-basis: 100%;
+  margin: 0;
+}
+@media (hover: none) {
+  .attachment-image-item .file-actions {
+    opacity: 1;
+  }
+}
+@media (max-width: 600px) {
+  .artifact-drawer-header .file-actions > .button {
+    width: 24px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .attachment-image-item .file-actions {
+    transition: none;
+  }
+}
+
+.message-delivery {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-inline-end: 8px;
+}
+
+.message-question-state {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}

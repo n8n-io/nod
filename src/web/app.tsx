@@ -17,13 +17,12 @@ import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
-import { captureFeedbackScreenshot } from './lib/feedback-capture';
 import { navigate, sidebarItems } from './lib/navigation';
 import { appPagePath } from '../shared/app-links';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
-import { useSession } from './hooks/use-session';
+import type { useSession } from './hooks/use-session';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
 import { AccountSettings } from './components/account-settings';
@@ -284,28 +283,16 @@ function AuthenticatedApp({
     setFeedbackDiscovery(false);
   };
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [feedbackScreenshot, setFeedbackScreenshot] = useState<File | null>(null);
-  const feedbackCapture = useRef<Promise<File | null> | null>(null);
   const feedbackTrigger = useRef<HTMLElement | null>(null);
-  const openFeedback = async () => {
-    if (feedbackOpen || feedbackCapture.current) return;
+  const openFeedback = () => {
+    if (feedbackOpen) return;
     dismissFeedbackDiscovery();
     feedbackTrigger.current =
       document.activeElement !== document.body ? (document.activeElement as HTMLElement) : null;
-    const capture = captureFeedbackScreenshot().catch(() => null);
-    feedbackCapture.current = capture;
-    const screenshot = await capture;
-    if (feedbackCapture.current !== capture) return;
-    feedbackCapture.current = null;
-    setFeedbackScreenshot(screenshot);
     setFeedbackOpen(true);
   };
   useEffect(() => {
     setFeedbackOpen(false);
-    setFeedbackScreenshot(null);
-    return () => {
-      feedbackCapture.current = null;
-    };
   }, [session.user!.id]);
   useEffect(() => {
     if (!feedbackRequest) return;
@@ -544,7 +531,6 @@ function AuthenticatedApp({
       <FeedbackDialog
         key={session.user!.id}
         ownerId={session.user!.id}
-        screenshot={feedbackScreenshot}
         open={feedbackOpen}
         onOpenChange={setFeedbackOpen}
         returnFocus={() =>
@@ -557,17 +543,18 @@ function AuthenticatedApp({
   );
 }
 function AccountApp({
+  sessionState,
   path,
   setPath,
   feedbackRequest,
   onFeedbackHandled,
 }: {
+  sessionState: ReturnType<typeof useSession>;
   path: string;
   setPath(path: string): void;
   feedbackRequest: number;
   onFeedbackHandled(): void;
 }) {
-  const sessionState = useSession();
   const { session } = sessionState;
   useEffect(() => {
     if (!sessionState.loading && (!session?.user || !session.settings)) desktopRendererReady();
@@ -652,7 +639,7 @@ function AccountApp({
   );
 }
 
-export function App() {
+export function App({ sessionState }: { sessionState: ReturnType<typeof useSession> }) {
   const [path, setPath] = useState(window.location.pathname);
   const [feedbackRequest, setFeedbackRequest] = useState(0);
   useEffect(() => {
@@ -675,6 +662,7 @@ export function App() {
         <Privacy />
       ) : (
         <AccountApp
+          sessionState={sessionState}
           path={path}
           setPath={setPath}
           feedbackRequest={feedbackRequest}

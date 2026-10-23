@@ -6,6 +6,7 @@ import type {
   ModelsResponse,
 } from '../../shared/models';
 import { usePageData } from './use-page-data';
+import { defaultEffort, defaultModel } from '../../shared/model-defaults';
 import { api, errorMessage, post } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
@@ -14,29 +15,31 @@ export type Models = ReturnType<typeof useModels>;
 
 export const localServerAddress = 'http://localhost:11434/v1';
 
-export const modelProviders: ModelProvider[] = [
-  'openai',
-  'anthropic',
-  'openrouter',
-  'amazon-bedrock',
-  'google-vertex',
-  'azure',
-  'compatible',
-];
-
 export interface KeySettings {
   region: string;
   url: string;
   model: string;
   deployment: string;
+  accountId: string;
+  gatewayId: string;
 }
 
-export const noKeySettings: KeySettings = { region: '', url: '', model: '', deployment: '' };
+export const noKeySettings: KeySettings = {
+  region: '',
+  url: '',
+  model: '',
+  deployment: '',
+  accountId: '',
+  gatewayId: '',
+};
 
 export function keySettingsReady(provider: ModelProvider, settings: KeySettings) {
   if (provider === 'amazon-bedrock') return !!settings.region.trim();
   if (provider === 'azure')
     return !!(settings.url.trim() && settings.deployment.trim() && settings.model);
+  if (provider === 'cloudflare-workers-ai') return !!settings.accountId.trim();
+  if (provider === 'cloudflare-ai-gateway')
+    return !!(settings.accountId.trim() && settings.gatewayId.trim());
   return true;
 }
 
@@ -52,6 +55,10 @@ export function keyConnection(provider: ModelProvider, key: string, settings: Ke
           ...(settings.deployment.trim() ? { deployment: settings.deployment.trim() } : {}),
         }
       : {}),
+    ...(provider === 'cloudflare-workers-ai' || provider === 'cloudflare-ai-gateway'
+      ? { accountId: settings.accountId.trim() }
+      : {}),
+    ...(provider === 'cloudflare-ai-gateway' ? { gatewayId: settings.gatewayId.trim() } : {}),
   };
 }
 
@@ -97,12 +104,16 @@ export function modelReady(models: ModelsResponse | null | undefined) {
 }
 
 export function modelSelection(source: ModelConnection, modelId: string): ModelSelection {
-  const efforts = source.models.find((item) => item.id === modelId)?.efforts ?? [];
+  const model = source.models.find((item) => item.id === modelId);
   return {
     connectionId: source.id,
     modelId,
-    effort: efforts.includes('high') ? 'high' : efforts[0],
+    effort: model ? defaultEffort(source.provider, model) : 'off',
   };
+}
+
+export function recommendedModel(source: ModelConnection) {
+  return defaultModel(source.provider, source.models, source.method);
 }
 
 export function useModelSignIn(
