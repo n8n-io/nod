@@ -16,6 +16,6 @@ Composition needs macOS `say` with the Daniel voice, plus `ffmpeg`. It records e
 
 To select another output folder, pass it as the first argument to both commands. The second argument to `compose.mjs` selects the video asset folder. After visual review, copy the six PNG files from the output `screens` folder to `docs/src/assets/screens`.
 
-The other screenshots and banners retain their original synthetic content. Their text edits use the app font and move the following text to keep normal word spacing. Historical review captures in `docs/review` keep their original source records.
+The other screenshots and banners retain their original synthetic content. Their text edits use the app font and move the following text to keep normal word spacing.
 
 Verify the result with OCR, then review each screenshot, every video scene, each transition, captions and browser playback. Run `pnpm --dir docs build` to check the site and its links. Fixture checks do not prove live sign-in or payment completion.

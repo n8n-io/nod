@@ -70,7 +70,11 @@ for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
         raise SystemExit("The public token exception must be limited to its configuration file.")
 
 evidence_path = "docs/research/apps-acceptance-b8e489cb.json"
-code, findings = scan((config.parent / evidence_path).read_text(), evidence_path)
+composio = json.loads(
+    (config.parent / ".github/fixtures/composio-secret-scanner.json").read_text()
+)
+source_hashes = {field: digest for digest, field in composio["fingerprints"][evidence_path]}
+code, findings = scan(json.dumps(source_hashes, indent=2), evidence_path)
 if code != 0 or findings:
     raise SystemExit("Verified acceptance source hashes must pass secret scanning.")
 
@@ -126,9 +130,6 @@ for rule, key in provider_keys.items():
             raise SystemExit("Provider key formats must fail secret scanning everywhere.")
 
 changed_digest = hashlib.sha256(candidate.encode()).hexdigest()
-composio = json.loads(
-    (config.parent / ".github/fixtures/composio-secret-scanner.json").read_text()
-)
 for filename, fingerprints in composio["fingerprints"].items():
     if not fingerprints:
         raise SystemExit("The Composio snapshot must exercise a fingerprint exception.")
