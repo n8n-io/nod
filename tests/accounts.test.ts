@@ -2281,6 +2281,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const { createPiModelRuntime } = await import('../src/providers/pi/models.ts');
     const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
     let account = 'fixture-account';
+    let down = false;
     const backend = {
       ...f.backend,
       signIn: stubSignIn(async () => ({
@@ -2292,7 +2293,10 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         provider: Parameters<typeof f.backend.catalog>[0],
         method: Parameters<typeof f.backend.catalog>[1],
         credential?: Parameters<typeof f.backend.catalog>[2],
-      ) => f.backend.catalog(provider, method, method === 'api_key' ? credential : undefined),
+      ) => {
+        if (down) throw new Error('fixture-catalog-outage');
+        return f.backend.catalog(provider, method, method === 'api_key' ? credential : undefined);
+      },
     };
     const store = createDatabaseModelStore({
       database: f.database,
@@ -2319,6 +2323,14 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       [{ id: chatgpt.id, status: 'connected' }],
     );
     assert.deepEqual(owner.view().selection, selection);
+    down = true;
+    await signIn(owner);
+    down = false;
+    assert.deepEqual(
+      owner.view().connections.map(({ id, status }) => ({ id, status })),
+      [{ id: chatgpt.id, status: 'connected' }],
+    );
+    assert.equal(owner.configured, true);
     assert.equal(await grants(), 1);
 
     await store.change((state) => {

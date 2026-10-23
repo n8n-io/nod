@@ -410,14 +410,15 @@ export function createModelService(options: {
           );
       if (!previous && state.connections.length - duplicates.length >= 20)
         throw new ConnectionError('Remove an unused model connection before adding another.');
+      const working = status === 'loading' && previous?.status === 'connected';
       const row: ModelRecord = {
         id: previous?.id ?? id ?? randomUUID(),
         provider,
         method,
         label: connectionLabel(provider, method, value),
-        models: definitions,
+        models: working ? previous.models : definitions,
         managed,
-        status,
+        status: working ? 'connected' : status,
         ...(!managed ? { credential: value } : {}),
       };
       state.connections = state.connections.flatMap((item) =>
