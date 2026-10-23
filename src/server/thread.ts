@@ -532,12 +532,16 @@ export async function cancelTurns(
       values,
     )
   ).rows.map((row) => row.id);
-  if (taskIds.length)
-    await client.query(
-      "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND state='open'",
-      [taskIds, ownerId],
-    );
+  const tasks = taskIds.length
+    ? (
+        await client.query(
+          "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND state='open' RETURNING title",
+          [taskIds, ownerId],
+        )
+      ).rows.map((row) => row.title as string)
+    : [];
   return {
+    tasks,
     ids: current.rows.map((row) => row.id as string),
     browsers: [
       ...new Set(

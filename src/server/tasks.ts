@@ -314,12 +314,8 @@ export function createTasks(options: {
       if (current.session_id !== turn.threadId || !sourceMessageId)
         throw failure('Only the main chat can stop tasks.');
       if (!request.id) {
-        const tasks = await read(client, { thread: turn.threadId });
         const cancelled = await cancelTurns(client, turn.threadId, { background: true });
-        return {
-          stopped: { tasks: tasks.map((task) => task.title), runs: cancelled.browsers.length },
-          cancelled,
-        };
+        return { stopped: { tasks: cancelled.tasks, runs: cancelled.browsers.length }, cancelled };
       }
       const cancelled = await stop(client, request.id, turn.threadId);
       return { task: (await read(client, { id: request.id, closed: true }))[0], cancelled };
