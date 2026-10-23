@@ -6,6 +6,7 @@ import type { FeedbackDelivery, FeedbackEnvelope, FeedbackFile } from '../ports/
 import type { CaptureAnalytics } from './analytics.ts';
 import { parseFeedbackActivity, type FeedbackActivity } from '../shared/feedback-activity.ts';
 import { feedbackTechnicalContext } from './feedback-context.ts';
+import type { FeedbackClientError } from './bug-report.ts';
 import {
   feedbackAttachmentMimeTypes,
   feedbackLimits,
@@ -88,7 +89,11 @@ export async function registerFeedback(
     ownerId: string;
     context: Omit<FeedbackContext, 'enabled' | 'recipient'>;
     delivery: FeedbackDelivery;
-    buildReport(activity: FeedbackActivity[]): Promise<string>;
+    buildReport(
+      activity: FeedbackActivity[],
+      errors: FeedbackClientError[],
+      errorsAvailable: boolean,
+    ): Promise<string>;
     analytics?: CaptureAnalytics;
   },
 ) {
@@ -146,14 +151,32 @@ export async function registerFeedback(
       recipient: options.delivery.recipient,
     } satisfies FeedbackContext;
   });
-  app.post('/api/feedback/report', { bodyLimit: 32_768 }, async (request, reply) => {
+  app.post('/api/feedback/report', { bodyLimit: 262_144 }, async (request, reply) => {
     sweep();
     const input = z
-      .object({ activity: z.array(z.unknown()).max(100).optional() })
+      .object({
+        activity: z.array(z.unknown()).max(100).optional(),
+        errorsAvailable: z.boolean().optional(),
+        errors: z
+          .array(
+            z
+              .object({
+                type: z.enum(['render', 'error', 'rejection']),
+                message: z.string().max(8192),
+                stack: z.string().max(8192).optional(),
+                ageMs: z.number().finite().min(0).max(1_800_000),
+              })
+              .strict(),
+          )
+          .max(10)
+          .optional(),
+      })
       .strict()
       .parse(request.body ?? {});
     const content = await options.buildReport(
       parseFeedbackActivity(input.activity).map((row) => ({ ...row, source: 'app' })),
+      input.errors ?? [],
+      input.errorsAvailable ?? input.errors !== undefined,
     );
     if (Buffer.byteLength(content) > feedbackLimits.reportBytes)
       throw fail('The diagnostic report is too large.', 413);

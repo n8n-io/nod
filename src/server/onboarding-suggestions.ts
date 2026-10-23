@@ -474,11 +474,7 @@ export function createOnboardingSuggestions(options: {
         );
       }, pool);
     })()
-      .catch((error) =>
-        console.error(
-          `First tasks were not posted: ${error instanceof Error ? error.message : String(error)}`,
-        ),
-      )
+      .catch((error) => logFailure('first_tasks_delivery_failed', error))
       .finally(() => {
         delivering = undefined;
         refresh();

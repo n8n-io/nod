@@ -108,9 +108,13 @@ Select **Send feedback** at the top of the chat, choose **Bug or issue**, **Idea
 
 After first-time setup, a short invitation points to **Send feedback**. Dismiss it with its close button or press Escape while the invitation or feedback button is focused; it stays dismissed on that device.
 
-**Include diagnostic report** is selected for **Bug or issue**. It adds technical activity, errors, and connection health for support and debugging. Chat text, account details, and file contents stay out. Select **Review** to see the full report, or untick the checkbox to leave it out. Your choice stays with the draft when you close or reload it. **Idea** and **Other** start without a report unless you choose to include one.
+**Include diagnostic report** starts selected for every feedback category. It adds recent messages, tool inputs and results, errors, and app activity to help fix problems and improve nod. Known secrets and recognized personal details are masked, but redaction can miss information.
 
-Preparing a report sends its technical app activity to your nod runtime. The feedback recipient receives your submission only after you select **Send feedback**. If the report can't be prepared, select **Continue without report** to send your feedback. Screenshots aren't captured automatically. Your feedback text and any files you add are sent as you provide them, so check them for personal information.
+Select **Review** to inspect the exact report that will be attached. Untick the checkbox to leave it out. Your choice stays with the draft when you close or reload it.
+
+Preparing a report sends recent app activity and errors to your nod runtime for redaction and assembly. The feedback recipient receives your submission only after you select **Send feedback**. If preparation fails, select **Continue without report**.
+
+Screenshots aren't captured automatically. Your feedback text and files you add are sent as provided, so check them for personal information too.
 
 ## Start with an empty chat
 

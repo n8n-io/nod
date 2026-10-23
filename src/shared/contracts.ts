@@ -231,6 +231,7 @@ export interface AppSetupStatus {
     name: string;
     logoUrl?: string;
     pairingConfirmed?: boolean;
+    available?: boolean;
   }>;
 }
 export interface Configuration {

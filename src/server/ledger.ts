@@ -1,3 +1,4 @@
+import { logFailure } from './failure-log.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
@@ -133,7 +134,7 @@ export function createLedger({
   function save(sql: string, values: unknown[]) {
     return pool.query(sql, values).then(
       () => undefined,
-      (error) => console.error(`The ledger skipped a record: ${error?.name ?? 'error'}`),
+      (error) => logFailure('ledger_record_failed', error),
     );
   }
 
@@ -173,7 +174,7 @@ export function createLedger({
       () => {
         pendingUsage.delete(id);
       },
-      (error) => console.error(`The ledger could not save usage: ${error?.name ?? 'error'}`),
+      (error) => logFailure('ledger_usage_failed', error, { turnId: attributedTurn }),
     );
     pendingUsage.set(id, { values, pending });
     analytics?.(modelUsed(usage));

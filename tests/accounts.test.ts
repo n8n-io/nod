@@ -98,12 +98,14 @@ test('settings Escape preserves nested interactions and pending changes before r
       const { createElement, useState, act } = await import('react');
       const { createRoot } = await import('react-dom/client');
       const { App } = await import('./src/web/app.tsx');
+      const { useSession } = await import('./src/web/hooks/use-session.ts');
       const { Dialog, DialogContent, DialogTitle } = await import('./src/web/components/ui.tsx');
       let openDialog;
       function Fixture() {
+        const sessionState = useSession();
         const [dialog, setDialog] = useState(false);
         openDialog = () => setDialog(true);
-        return createElement('div', null, createElement(App), createElement(Dialog, {
+        return createElement('div', null, createElement(App, { sessionState }), createElement(Dialog, {
           open: dialog, onOpenChange: setDialog,
         }, createElement(DialogContent, { 'aria-describedby': undefined },
           createElement(DialogTitle, null, 'Nested action'), createElement('button', null, 'Nested control'))));
@@ -2617,5 +2619,70 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
     respond(Response.json({ error: privateValue }, { status: 503 }));
     await assert.rejects(staleRequest, /private person/);
     assert.deepEqual(feedbackActivitySnapshot(), []);
+  }
+});
+
+test('failure logging keeps concurrent runtime sinks isolated without exposing messages to the console', async (t) => {
+  const { logFailure, withFailureLog } = await import('../src/server/failure-log.ts');
+  const consoleOutput: string[] = [];
+  t.mock.method(console, 'error', (...values: unknown[]) => consoleOutput.push(values.join(' ')));
+  const received: Array<
+    Array<{ event: string; error: unknown; context?: Record<string, unknown> }>
+  > = [[], []];
+  const failure = Object.assign(new Error('synthetic private failure message'), {
+    code: 'ECONNRESET',
+  });
+  await Promise.all(
+    received.map((events, index) =>
+      withFailureLog(
+        (event, error, context) => {
+          events.push({ event, error, context });
+        },
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, index === 0 ? 5 : 1));
+          logFailure(`runtime_${index}`, failure, { turnId: `synthetic-private-turn-${index}` });
+        },
+      ),
+    ),
+  );
+  for (const [index, events] of received.entries()) {
+    assert.equal(events.length, 1);
+    assert.equal(events[0].event, `runtime_${index}`);
+    assert.equal(events[0].error, failure);
+    assert.deepEqual(events[0].context, { turnId: `synthetic-private-turn-${index}` });
+  }
+  assert.equal(
+    withFailureLog(
+      () => {
+        throw new Error('sink failure');
+      },
+      () => {
+        logFailure('broken_sink', failure);
+        return 42;
+      },
+    ),
+    42,
+  );
+  await withFailureLog(
+    async () => {
+      throw new Error('async sink failure');
+    },
+    async () => {
+      logFailure('rejected_sink', failure);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    },
+  );
+  logFailure('outside_runtime', failure);
+  assert.deepEqual(
+    received.map((events) => events.length),
+    [1, 1],
+  );
+  assert.equal(consoleOutput.length, 5);
+  for (const line of consoleOutput) {
+    const item = JSON.parse(line);
+    assert.equal(item.name, 'Error');
+    assert.equal(item.code, 'ECONNRESET');
+    assert.ok(!line.includes('synthetic'));
+    assert.ok(!line.includes('sink failure'));
   }
 });
