@@ -3236,6 +3236,7 @@ const memoryFixture = async (tables: string[] = []) => {
   const post = async (
     text: string,
     options: {
+      id?: string;
       owner?: string;
       role?: string;
       at?: string;
@@ -3244,7 +3245,7 @@ const memoryFixture = async (tables: string[] = []) => {
       suggestions?: string;
     } = {},
   ) => {
-    const id = randomUUID();
+    const id = options.id ?? randomUUID();
     const turnId = randomUUID();
     await pool.query(
       'INSERT INTO messages(id,owner_id,role,text,turn_id,attachments,created_at,thread_id,suggestions) VALUES($1,$2,$3,$4,$5,$6::jsonb,COALESCE($7::timestamptz,now()),$8,$9::jsonb)',
@@ -3475,7 +3476,7 @@ test(
       const flat = 'Our holiday flat is at Rua Antiga 5, Faro.';
       const older = await post(flat, { thread: randomUUID() });
       const details = 'Ship it to Rua Fixture 12, 4050-262 Porto, and call me on +351 912 000 111.';
-      const earlier = await post(details);
+      const earlier = await post(details, { id: 'fa1f176a-c3a0-48ff-a2dc-11ef41119dab' });
       await post('Your draft: ship to Rua Fixture 99 and bank with FastBank.', {
         role: 'assistant',
       });
@@ -3512,9 +3513,10 @@ test(
         ],
         [{ m: 3, text: ask }, [flat, details]],
       );
+      const written = await memory.load();
       assert.deepEqual(
         Object.fromEntries(
-          (await memory.load()).entries.map((entry) => [entry.slug, [entry.origin, entry.sources]]),
+          written.entries.map((entry) => [entry.slug, [entry.origin, entry.sources]]),
         ),
         {
           'holiday-flat': ['stated', [older.id]],
@@ -3522,7 +3524,10 @@ test(
           phone: ['stated', [earlier.id]],
         },
       );
-      assert.doesNotMatch(JSON.stringify(await memory.load()), /FastBank|Fixture 99|4111|sk-/);
+      assert.doesNotMatch(
+        [...written.entries, ...written.archive].map((entry) => entry.text).join('\n'),
+        /FastBank|Fixture 99|4111|sk-/,
+      );
 
       const thread = randomUUID();
       await post('Synthetic first tasks.', {
