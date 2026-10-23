@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   Check,
-  Brain,
   ChevronDown,
   ExternalLink,
   KeyRound,
@@ -44,6 +43,49 @@ import {
   SearchField,
 } from './ui';
 
+const modelProviderLogos: Record<ModelProvider, string> = {
+  openai: 'models/openai',
+  anthropic: 'models/anthropic',
+  google: 'models/google',
+  openrouter: 'models/openrouter',
+  'amazon-bedrock': 'models/amazon-bedrock',
+  'google-vertex': 'models/google-vertex',
+  azure: 'models/azure',
+  'ant-ling': 'models/ant-ling',
+  baseten: 'models/baseten',
+  cerebras: 'models/cerebras',
+  'cloudflare-workers-ai': 'models/cloudflare',
+  'cloudflare-ai-gateway': 'models/cloudflare',
+  deepseek: 'models/deepseek',
+  fireworks: 'models/fireworks',
+  groq: 'models/groq',
+  huggingface: 'models/huggingface',
+  'kimi-coding': 'models/kimi',
+  meta: 'models/meta',
+  minimax: 'models/minimax',
+  'minimax-cn': 'models/minimax',
+  mistral: 'models/mistral',
+  moonshotai: 'models/moonshot',
+  'moonshotai-cn': 'models/moonshot',
+  nvidia: 'models/nvidia',
+  opencode: 'models/opencode',
+  'opencode-go': 'models/opencode-go',
+  'qwen-token-plan': 'models/qwen',
+  'qwen-token-plan-cn': 'models/qwen',
+  'qwen-token-plan-individual': 'models/qwen',
+  radius: 'models/radius',
+  together: 'models/together',
+  'vercel-ai-gateway': 'models/vercel',
+  xai: 'models/xai',
+  xiaomi: 'models/xiaomi',
+  'xiaomi-token-plan-ams': 'models/xiaomi',
+  'xiaomi-token-plan-cn': 'models/xiaomi',
+  'xiaomi-token-plan-sgp': 'models/xiaomi',
+  zai: 'models/zai',
+  'zai-coding-cn': 'models/zai',
+  compatible: 'server',
+};
+
 export function ModelProviderLogo({
   provider,
   size = 16,
@@ -51,24 +93,16 @@ export function ModelProviderLogo({
   provider: ModelProvider;
   size?: number;
 }) {
-  const branded = [
-    'openai',
-    'anthropic',
-    'google',
-    'openrouter',
-    'amazon-bedrock',
-    'google-vertex',
-    'azure',
-    'compatible',
-  ].includes(provider);
   return (
     <span
-      className={`model-provider-logo ${provider}${branded ? '' : ' generic'}`}
-      style={{ width: size, height: size }}
+      className="model-provider-logo"
+      style={{
+        width: size,
+        height: size,
+        maskImage: `url('/logos/${modelProviderLogos[provider]}.svg')`,
+      }}
       aria-hidden="true"
-    >
-      {!branded && <Brain size={size} />}
-    </span>
+    />
   );
 }
 
