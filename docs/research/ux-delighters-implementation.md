@@ -2,7 +2,7 @@
 
 This branch implements the interaction changes from the [assessment](ux-delighters-2026-10-23.md). It keeps the existing layout, colors, and type.
 
-The branch is `feat/native-ux-delighters`. Its base is `55b8a2ff` on `main`. The assessment describes an earlier source version. Task receipts, browser handoff recovery, account recovery, and Stop all work changed on `main` after that assessment. This branch keeps those changes.
+The branch is `feat/native-ux-delighters`. Its base is `95796c6d` on `main`. The assessment describes an earlier source version. Task receipts, browser handoff recovery, account recovery, and Stop all work changed on `main` after that assessment. This branch keeps those changes.
 
 ## Scope
 
@@ -76,6 +76,6 @@ Request `/__fixture/record` at that address to start a recording. Use the deskto
 - **Desktop fixtures:** `pnpm run desktop:test` passed 188 tests. Two platform tests were skipped. File export checks cover exact bytes, safe names, duplicate saves, missing files, and restricted native opening.
 - **Builds:** The app build and the docs build passed. All published internal docs links are valid. Vite reports the existing large-chunk warning.
 - **macOS UI checks:** Checked table and code Copy feedback, image copy and paste, selected-text replies, draft reload, attachment Undo, preview switching at 125% zoom, file reuse, native menus, save receipts, separate edited copies, search, Return, Commands, and ZIP export. The ZIP contains the two selected files. A native PDF drag back into chat supplies real file bytes.
-- **Video:** `.local/ux-delighters/nod-desktop-ux.mp4` is a 57-second recording of the actual Electron page with synthetic data. Its frames were inspected. It shows the main chat and file flows. System menus and Finder are outside the page capture.
+- **Video:** [Desktop demo](../review/ux-delighters/desktop.mp4) is a 57-second recording of the actual Electron page with synthetic data. Its frames were inspected. It shows the main chat and file flows. System menus and Finder are outside the page capture.
 - **Device limits:** A completed Finder or Explorer drop still needs a separate check. Native drag, clipboard target formats, and system menus also need checks on Windows and Linux. This review does not establish results on those systems or on touch devices.
 - **Live checks:** None. No live model, connected account, recipient, or normal local database was used.
