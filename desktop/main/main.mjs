@@ -1328,6 +1328,7 @@ async function startEngine({ runtime, signal, pending = false }) {
   });
   child.stdout?.resume();
   let diagnostics = '';
+  let failure = '';
   child.stderr?.on('data', (chunk) => {
     if (status.phase !== 'starting') return;
     diagnostics = (diagnostics + chunk.toString()).slice(-4000);
@@ -1337,8 +1338,10 @@ async function startEngine({ runtime, signal, pending = false }) {
       if (
         /^(?:Error|TypeError|SyntaxError|ReferenceError|RangeError)(?::| \[)/.test(line) &&
         !line.includes('{')
-      )
+      ) {
+        failure = line.replace(/^\w+(?: \[[^\]]*\])?: /, '');
         void writeDiagnostic(line).catch(() => {});
+      }
   });
   child.on('exit', (code) => {
     if (engine !== child) return;
@@ -1377,7 +1380,7 @@ async function startEngine({ runtime, signal, pending = false }) {
   }
   if (!ready) {
     await stopEngine();
-    throw new Error('nod could not start. Check your settings and try again.');
+    throw new Error(failure || 'nod could not start. Check your settings and try again.');
   }
   enginePreferencesReady = true;
   return finishEnginePreparation(pending);

@@ -507,27 +507,19 @@ test(
         },
       );
     }
-    await t.test(
-      'owned app records fence a missing checkpoint without fencing other owners or providers',
-      async () => {
-        await initializeIntegrationSchema(pool);
-        await pool.query(
-          "INSERT INTO app_connections(owner_id,slug,provider_id,account_id,pending_account_id) VALUES ('lost-checkpoint','gmail','composio','synthetic-account',NULL), ('pending-checkpoint','gmail','composio',NULL,'synthetic-pending'), ('abandoned-setup','gmail','composio',NULL,NULL), ('other-provider','fixture','fixture','synthetic-other',NULL)",
-        );
-        for (const owner of ['lost-checkpoint', 'pending-checkpoint']) {
-          const saved = options(owner);
-          const proxy = createComposioProxy(saved);
-          await assert.rejects(proxy.initialize(), /identity is missing/);
-          assert.throws(() => proxy.userId);
-          await assert.rejects(stat(saved.dataRoot), { code: 'ENOENT' });
-        }
-        for (const owner of ['new-owner', 'other-provider', 'abandoned-setup']) {
-          const fresh = createComposioProxy(options(owner));
-          await fresh.initialize();
-          assert.match(fresh.userId, /^nod_[a-f0-9]{64}$/);
-        }
-      },
-    );
+    await t.test('apps connected before app identities existed still start', async () => {
+      await initializeIntegrationSchema(pool);
+      await pool.query(
+        "INSERT INTO app_connections(owner_id,slug,provider_id,account_id,pending_account_id) VALUES ('connected-before','gmail','composio','synthetic-account',NULL), ('pending-before','gmail','composio',NULL,'synthetic-pending')",
+      );
+      for (const owner of ['connected-before', 'pending-before']) {
+        const saved = options(owner);
+        const proxy = createComposioProxy(saved);
+        await proxy.initialize();
+        assert.match(proxy.userId, /^nod_[a-f0-9]{64}$/);
+        assert.ok(await saved.checkpoint.read());
+      }
+    });
   },
 );
 

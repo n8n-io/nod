@@ -27,20 +27,7 @@ export function createIntegrationIdentityCheckpoint(
         'SELECT public_key FROM integration_identities WHERE owner_id=$1',
         [ownerId],
       );
-      if (result.rows[0]) return result.rows[0].public_key;
-      const table = await pool.query<{ present: boolean }>(
-        "SELECT to_regclass('app_connections') IS NOT NULL AS present",
-      );
-      if (
-        table.rows[0]?.present &&
-        (
-          await pool.query(
-            "SELECT 1 FROM app_connections WHERE owner_id=$1 AND provider_id='composio' AND (account_id IS NOT NULL OR pending_account_id IS NOT NULL) LIMIT 1",
-            [ownerId],
-          )
-        ).rowCount
-      )
-        throw new Error('nod’s saved app identity is missing. Restore its app data to reconnect.');
+      return result.rows[0]?.public_key;
     },
     async commit(publicKey) {
       await ready();
