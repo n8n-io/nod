@@ -117,7 +117,7 @@ The **Build desktop release** workflow runs on `main` by hand for a draft or a r
 
 Release builds run one at a time, and up to 100 runs can wait in the queue. A failed build can reuse its matching draft. Published assets are never replaced.
 
-The container images, the Windows runtime, Mac signing and notarization, the Mac update checks and the publishing steps run on Blacksmith runners. Both Mac apps build on Apple silicon; the Intel app builds and runs its checks with x64 Node under Rosetta. The Windows jobs run on GitHub's Windows runners, because the installer check needs WSL 2, which Blacksmith's Windows runners can't run. The Mac update checks run alongside the builds, and the Windows job runs its update checks while the Windows runtime builds. Each Mac app job signs its own runtime before packaging the app, and the release uploads its assets in parallel.
+The container images, the Windows runtime, Mac signing and notarization, the Mac update checks and the publishing steps run on Blacksmith runners. Both Mac apps build on Apple silicon; the Intel app builds and runs its checks with x64 Node under Rosetta. The Windows jobs run on GitHub's Windows runners, because the installer check needs WSL 2, which Blacksmith's Windows runners can't run. The Mac and Windows update checks run alongside the builds, and the Windows job installs and builds while the Windows runtime builds or downloads. Each Mac app job signs its own runtime before packaging the app, and the release uploads its assets in parallel.
 
 ## How installed apps update
 
