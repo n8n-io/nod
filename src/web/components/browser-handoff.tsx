@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, KeyRound, Maximize2, Minimize2, RotateCw } from './icons';
 import type { BrowserHandoffInput } from '../../shared/browser-handoff';
-import { ApiError, apiStream, errorMessage, post } from '../lib/api';
+import { ApiError, api, apiStream, errorMessage } from '../lib/api';
 import { browserFrames } from '../lib/browser-frames';
 import { captureAnalytics } from '../lib/analytics';
 import { BrandMark } from './brand';
@@ -27,6 +27,22 @@ const buttons = ['left', 'middle', 'right'] as const;
 const batchBytes = 64 * 1024;
 const textPiece = 2000;
 const encoder = new TextEncoder();
+
+async function post(path: string, body: unknown) {
+  try {
+    return await api(path, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(75_000),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError')
+      throw new Error(
+        'The browser did not confirm this request. Check the page before trying again.',
+      );
+    throw error;
+  }
+}
 
 export function BrowserHandoff({ turnId, paused = false }: { turnId: string; paused?: boolean }) {
   const screen = useRef<HTMLDivElement>(null);
@@ -423,8 +439,8 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
           <div className="browser-handoff-recovery">
             <strong>The browser view could not connect.</strong>
             <p>
-              Your task is waiting. Reconnect the view to continue. Your last input will not run
-              again.
+              Your task is waiting. Try to reconnect the view. The page can close after 30 minutes.
+              Your last input will not run again.
             </p>
             <Button
               variant="outline"

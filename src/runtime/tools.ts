@@ -734,9 +734,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
           );
         const text = rest.text?.trim();
         if (!text) throw new Error('Say what the user needs to do on the current page.');
-        await computer.currentPage(browserId).catch(() => {
-          throw new Error('Open the page in your browser before handing it to the user.');
-        });
+        await computer.currentPage(browserId);
         signal.throwIfAborted();
         await pause('browser', text);
         return 'The browser is in chat. Wait for the user to return control.';

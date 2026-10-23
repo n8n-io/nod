@@ -27,6 +27,7 @@ import {
 import { untrustedBlock } from '../src/shared/untrusted.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import type { Computer } from '../src/ports/computer.ts';
+import { BrowserActionError } from '../src/ports/computer.ts';
 
 async function fixture(
   run: (
@@ -861,6 +862,7 @@ test('secure credential pause prevents subsequent tools in the same execution se
 test('browser handoff requires a live page, binds its session and stops further work without a link', async () => {
   const sessionId = randomUUID();
   let opened = false;
+  let pageError: Error | undefined;
   let holdFails = true;
   const held: string[] = [];
   const result = await fixture(
@@ -871,9 +873,20 @@ test('browser handoff requires a live page, binds its session and stops further 
       );
       await assert.rejects(
         call(tools, 'browser', { action: 'handoff', text: 'Complete this page.' }),
-        /Open the page/,
+        /Open the login page/,
       );
       await call(tools, 'browser', { action: 'open', url: 'https://example.com/login' });
+      for (const error of [
+        new BrowserActionError('browser_navigation_failed'),
+        new Error('Synthetic private entry is active.'),
+      ]) {
+        pageError = error;
+        await assert.rejects(
+          call(tools, 'browser', { action: 'handoff', text: 'Complete sign-in.' }),
+          { message: error.message },
+        );
+      }
+      pageError = undefined;
       await assert.rejects(
         call(tools, 'browser', { action: 'handoff', text: 'Complete sign-in.' }),
         /hold unavailable/,
@@ -900,7 +913,8 @@ test('browser handoff requires a live page, binds its session and stops further 
         },
         currentPage: async (id) => {
           assert.equal(id, sessionId);
-          if (!opened) throw new Error('No page');
+          if (!opened) throw new Error('Open the login page in this task browser first.');
+          if (pageError) throw pageError;
           return { origin: 'https://example.com', url: 'https://example.com/login' };
         },
         hold: async (id, value) => {
