@@ -235,11 +235,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   function startSignIn() {
     if (provider !== 'openai' && provider !== 'openrouter') return;
     setKeyError('');
-    const reconnect = connections.find(
-      (item) =>
-        item.provider === provider && item.status === 'reconnect' && item.method !== 'api_key',
-    );
-    void flow.connect(provider, reconnect?.id);
+    void flow.connect(provider);
   }
 
   async function saveKey(event: FormEvent) {

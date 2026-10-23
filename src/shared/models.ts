@@ -35,6 +35,7 @@ export interface ModelConnection {
   status: 'connected' | 'loading' | 'reconnect';
   models: ModelChoice[];
   managed: boolean;
+  keyEnding?: string;
 }
 
 export interface ModelsResponse {
