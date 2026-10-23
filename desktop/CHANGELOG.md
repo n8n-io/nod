@@ -2,6 +2,36 @@
 
 Releases from before the rename to nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.2.4 - 2026-10-23
+
+### Features
+
+- Add app links and model selection from chat. [#438](https://github.com/n8n-io/nod/pull/438) (31f0a10)
+- **web:** Useful empty states for Tasks and Vault. [#437](https://github.com/n8n-io/nod/pull/437) (81bc0d5)
+- **trust:** Authenticator keys, 1Password sign-in, quoted trust reasons and receipts. [#431](https://github.com/n8n-io/nod/pull/431) (8689fd8)
+
+### Fixes
+
+- **onboarding:** Say which setup step is missing and go back to it. [#439](https://github.com/n8n-io/nod/pull/439) (80bf1ca)
+
+<details>
+<summary>Maintenance (2 changes)</summary>
+
+- **desktop:** Reuse the published Windows runtime within a week and rebuild runtimes weekly. [#435](https://github.com/n8n-io/nod/pull/435) (d835c85)
+- **desktop:** Cut release time with Blacksmith M4 Macs, a larger publisher and overlapped Windows work. [#434](https://github.com/n8n-io/nod/pull/434) (5b36df1)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.2.3...80bf1ca923053b68d9419c28ea858e0267c19324)
+
+<details>
+<summary>Build details</summary>
+
+Source: `80bf1ca923053b68d9419c28ea858e0267c19324`
+Previous release: `nod-v0.2.3`
+
+</details>
+
 ## 0.2.3 - 2026-10-23
 
 ### Features
