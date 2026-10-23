@@ -1,3 +1,4 @@
+import { logFailure } from './failure-log.ts';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -732,9 +733,7 @@ export function resumeAfterConnection(turnId: string, service: string) {
 
 export async function initializeThreads() {
   stopping = false;
-  boss.on('error', () =>
-    console.error('The thread queue reported an error. Check database availability.'),
-  );
+  boss.on('error', (error) => logFailure('thread_queue_failed', error));
   await boss.start();
   await boss.createQueue(queue);
 }
@@ -767,22 +766,6 @@ async function finishTurn(
           : (fields.error ?? status),
     );
   return Boolean(updated.rowCount);
-}
-
-function describeFailure(error: unknown) {
-  if (!(error instanceof Error)) return 'a thrown value that is not an Error';
-  const fields = [error.name];
-  for (const key of ['code', 'statusCode'] as const) {
-    const value = (error as { code?: unknown; statusCode?: unknown })[key];
-    if (typeof value === 'string' || typeof value === 'number')
-      fields.push(`${key}=${String(value).slice(0, 64)}`);
-  }
-  const frames = (error.stack ?? '')
-    .split(/\r?\n/)
-    .filter((line) => /^\s+at /.test(line))
-    .slice(0, 2)
-    .map((line) => line.trim());
-  return [...fields, ...frames].join(' | ');
 }
 
 const interrupted = 'Interrupted.';
@@ -971,7 +954,7 @@ async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   for (const turn of claimed) {
     const execute = () => executeTurn(turn, dependencies);
     const work = (dependencies.observeTurn ? dependencies.observeTurn(turn.id, execute) : execute())
-      .catch((error) => console.error(`Turn ${turn.id} did not finish: ${describeFailure(error)}`))
+      .catch((error) => logFailure('turn_unfinished', error, { threadId, turnId: turn.id }))
       .then(() => drainNext(threadId))
       .finally(refresh);
     inflight.add(work);
@@ -980,14 +963,16 @@ async function drainThread(threadId: string, dependencies: ThreadDependencies) {
 }
 
 async function drainNext(threadId: string) {
+  let failure: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       return await sendDrain(undefined, threadId);
-    } catch {
+    } catch (error) {
+      failure = error;
       await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
     }
   }
-  console.error('The next turn could not be queued. It runs on the next message or start.');
+  logFailure('thread_drain_failed', failure, { threadId });
 }
 
 type StoredAttachment = Partial<Pick<Artifact, 'id' | 'name' | 'mimeType' | 'source'>>;
@@ -1501,7 +1486,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     } else {
       failure = error instanceof ModelRequestError ? 'model' : 'unknown';
       if (await failTurn(turnId, dependencies.present, failureText(error)))
-        console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
+        logFailure('turn_failed', error, { threadId, turnId, sessionId: turn.session_id });
     }
   } finally {
     dependencies.analytics?.({

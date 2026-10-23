@@ -443,16 +443,45 @@ test(
         backend: {} as never,
         origin: headers.origin,
       }).register(application.app);
+      application.app.get('/api/diagnostics-fixture/:id', async () => {
+        throw new Error('Synthetic app render failed for example.person@example.com');
+      });
       await application.app.ready();
+      const failedRequest = await application.app.inject({
+        url: '/api/diagnostics-fixture/synthetic-private-record?email=other.person@example.com',
+        headers,
+      });
+      assert.equal(failedRequest.statusCode, 500);
       const diagnostics = await application.app.inject({
         method: 'POST',
         url: '/api/feedback/report',
         headers,
-        payload: {},
+        payload: {
+          errors: [
+            {
+              type: 'render',
+              ageMs: 100,
+              message: 'View failed for example.person@example.com',
+              stack: 'Error: synthetic renderer stack',
+            },
+          ],
+        },
       });
       assert.equal(diagnostics.statusCode, 200);
       const diagnosticReport = JSON.parse(diagnostics.json().content);
-      assert.equal(diagnosticReport.coverage.contentIncluded, false);
+      assert.equal(diagnosticReport.coverage.contentIncluded, true);
+      const failure = diagnosticReport.logs.find(
+        (entry: any) => entry.data?.event === 'request_failed',
+      );
+      assert.ok(failure);
+      assert.match(failure.data.error.message, /Synthetic app render failed/);
+      assert.equal(failure.data.context.status, 500);
+      assert.equal(failure.data.context.operation, 'api diagnostics-fixture :id');
+      assert.match(diagnosticReport.clientErrors[0].data.message, /View failed/);
+      assert.doesNotMatch(
+        diagnostics.json().content,
+        /example.person@example.com|other.person@example.com|synthetic-private-record/,
+      );
       for (const [name, section] of Object.entries(diagnosticReport.coverage.sections))
         assert.equal((section as { status: string }).status, 'collected', name);
       assert.equal(
