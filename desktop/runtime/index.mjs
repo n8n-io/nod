@@ -569,6 +569,9 @@ export async function finishRuntime({
   await images.postgres;
   loadImage('workspace');
   loadImage('browser');
+  const storage = storageReady.get(resolve(dataRoot));
+  const port =
+    process.platform === 'win32' ? (storage?.port ?? (await availablePort())) : saved.port;
   const postgres = await replaceContainer(
     runDocker,
     names.postgres,
@@ -577,7 +580,7 @@ export async function finishRuntime({
       '--network',
       `nod-control-${identity}`,
       '--publish',
-      `127.0.0.1:${process.platform === 'win32' ? saved.port : 54329}:5432`,
+      `127.0.0.1:${process.platform === 'win32' ? port : 54329}:5432`,
       '--memory',
       '512m',
       '--cpus',
@@ -594,10 +597,10 @@ export async function finishRuntime({
     {
       env: { ...dockerEnvironment, POSTGRES_PASSWORD: saved.password },
       remember: true,
-      reuse: storageReady.get(resolve(dataRoot))?.postgres,
+      reuse: storage?.postgres,
     },
   );
-  const databaseUrl = `postgresql://nod:${saved.password}@127.0.0.1:${saved.port}/nod`;
+  const databaseUrl = `postgresql://nod:${saved.password}@127.0.0.1:${port}/nod`;
   try {
     await waitFor(
       () => runDocker(['exec', names.postgres, 'pg_isready', '-U', 'nod', '-d', 'nod']),
@@ -614,8 +617,10 @@ export async function finishRuntime({
         try {
           await client.connect();
           await client.query('SELECT 1');
-        } catch {
-          throw new Error('nod could not unlock local storage. Retry without resetting your data.');
+        } catch (error) {
+          throw new Error(
+            `nod could not unlock local storage (${error.message || error.code}). Retry without resetting your data.`,
+          );
         } finally {
           await client.end().catch(() => {});
         }
@@ -623,7 +628,6 @@ export async function finishRuntime({
       { signal, attempts: 12, interval: 1000 },
     );
   } catch (error) {
-    const storage = storageReady.get(resolve(dataRoot));
     if (storage) storage.postgres = undefined;
     throw error;
   }
@@ -683,6 +687,7 @@ exec "$docker" "$@"
     env,
     environment: env,
     postgres,
+    port,
     close: () => stopRuntime({ dataRoot, resourcesPath }),
   };
   signal?.throwIfAborted();

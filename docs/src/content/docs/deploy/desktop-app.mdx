@@ -39,6 +39,7 @@ flowchart LR
 
 - Electron runs the app window and the nod server.
 - A private WSL 2 distribution named `nod-<profile>` holds PostgreSQL and separate workspace and browser containers. Docker runs only inside it.
+- nod reaches PostgreSQL through WSL's localhost forwarding, on a loopback port it picks free at each launch.
 - nod doesn't change your default WSL distribution or global WSL settings.
 
 </TabItem>

@@ -14,6 +14,7 @@ import {
   utimes,
   writeFile,
 } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -1839,7 +1840,7 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
   }
 });
 
-test('database readiness failure replaces retained PostgreSQL only on the next explicit retry', async () => {
+test('Windows storage starts on a free port, and a readiness failure names its cause and replaces retained PostgreSQL on that port only on the next explicit retry', async (t) => {
   const source = await readFile(new URL('../runtime/index.mjs', import.meta.url), 'utf8');
   const functions = source
     .slice(
@@ -1848,10 +1849,14 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
     )
     .replaceAll('export ', '')
     .replace("const { default: pg } = await import('pg');", '');
-  const { replaceContainer } = await import('../runtime/index.mjs');
+  const { availablePort, replaceContainer } = await import('../runtime/index.mjs');
+  const taken = createServer();
+  await new Promise((listening) => taken.listen(0, '127.0.0.1', listening));
+  t.after(() => taken.close());
   for (const failure of ['pg_isready', 'connect', 'query']) {
     const containers = new Map();
     const commands = [];
+    const connections = [];
     let fault = 'workspace';
     let created = 0;
     let stopped = 0;
@@ -1864,14 +1869,18 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
         preparing: new Map(),
         storageReady: new Map(),
         replaceContainer,
+        availablePort,
         ensureNetwork: async () => {},
         protectNetworks: '',
         waitFor: async (operation) => operation(),
         removeStaleImages: async () => {},
         pg: {
           Client: class {
+            constructor({ connectionString }) {
+              connections.push(new URL(connectionString).port);
+            }
             async connect() {
-              if (fault === 'connect') throw new Error('Synthetic connection failure');
+              if (fault === 'connect') throw new Error('Synthetic connect failure');
             }
             async query() {
               if (fault === 'query') throw new Error('Synthetic query failure');
@@ -1892,7 +1901,7 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
                 id: `sha256:${name}`,
               })),
             },
-            saved: { port: 54329, password: 'synthetic-fixture-password' },
+            saved: { port: taken.address().port, password: 'synthetic-fixture-password' },
             controlRoot: 'synthetic-control',
             path: 'synthetic-path',
             dockerEnvironment: {},
@@ -1922,7 +1931,7 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
                 });
               }
               if (args[0] === 'exec' && args[2] === 'pg_isready' && fault === 'pg_isready')
-                throw new Error('Synthetic PostgreSQL readiness failure');
+                throw new Error('Synthetic pg_isready failure');
               if (args[0] === 'inspect') return 'true';
               return '';
             },
@@ -1949,7 +1958,10 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
       await assert.rejects(lifecycle.start({ retry: true }), /Synthetic browser startup failure/);
       assert.equal(postgres(), original);
       fault = failure;
-      await assert.rejects(lifecycle.start({ retry: true }));
+      await assert.rejects(
+        lifecycle.start({ retry: true }),
+        new RegExp(`Synthetic ${failure} failure`),
+      );
       assert.equal(postgres(), original);
       assert.equal(stopped, 0);
       const attempted = commands.length;
@@ -1967,6 +1979,9 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
       );
       assert.equal(launches.length, 2);
       assert.deepEqual(launches[1], launches[0]);
+      const published = launches[0][launches[0].indexOf('--publish') + 1];
+      assert.notEqual(published, `127.0.0.1:${taken.address().port}:5432`);
+      assert.deepEqual(new Set(connections), new Set([published.split(':')[1]]));
       assert.equal(stopped, 0);
     } finally {
       await lifecycle.close();

@@ -59,7 +59,7 @@ On Windows, the message reads "nod needs more free disk space to prepare its pri
 
 ### Setup fails or stops partway
 
-Retry first. Don't delete the profile, VM, database or runtime cache by hand to fix it. If it still fails, [send feedback](#send-feedback-with-a-diagnostic-report). If the chat can't open, send a screenshot of the setup error instead. When a setup command exits with an error, the message ends with the last lines it printed, which show the cause.
+Retry first. Don't delete the profile, VM, database or runtime cache by hand to fix it. If it still fails, [send feedback](#send-feedback-with-a-diagnostic-report). If the chat can't open, send a screenshot of the setup error instead. When a setup command exits with an error, the message ends with the last lines it printed, which show the cause. When nod can't connect to its local storage, the message names the connection error.
 
 To start over, select **Remove all data…** in the **nod** menu, then open nod again. It deletes your profile and private computer. See [Remove nod](/get-started/install-desktop/#remove-nod) for what it keeps.
 

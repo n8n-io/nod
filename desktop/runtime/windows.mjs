@@ -17,7 +17,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 import { assetHash } from './assets.mjs';
-import { availablePort, execute, finishRuntime } from './index.mjs';
+import { execute, finishRuntime } from './index.mjs';
 
 const holders = new Map();
 const distributionName = (root) =>
@@ -226,16 +226,12 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     saved &&
     (saved.version !== 1 ||
       saved.distribution !== distribution ||
-      !/^[a-f0-9]{64}$/.test(saved.password) ||
-      !Number.isInteger(saved.port) ||
-      saved.port < 1 ||
-      saved.port > 65535)
+      !/^[a-f0-9]{64}$/.test(saved.password))
   )
     throw new Error('The nod computer configuration needs recovery.');
   saved ??= {
     version: 1,
     distribution,
-    port: await availablePort(),
     password: randomBytes(32).toString('hex'),
     guest: manifest.guest.sha256,
   };
