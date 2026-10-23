@@ -2693,51 +2693,67 @@ test('the remote desktop starts without a local runtime and fences tokens to its
   }
 });
 
-test('an unreadable server token can be replaced without resetting the local Vault or starting a runtime', async (t) => {
-  const storedProfile = await fixture(t, 'darwin');
-  const environment = await storedProfile.store.environment();
-  const token = randomBytes(32).toString('base64url');
-  const url = 'https://assistant.example.test';
-  await storedProfile.store.saveConnection({ url, token });
-  const saved = JSON.parse(await readFile(storedProfile.path, 'utf8'));
-  saved.secrets.serverToken = randomBytes(48).toString('base64');
-  await writeFile(storedProfile.path, JSON.stringify(saved));
-  storedProfile.store = storedProfile.reopen();
-  const previous = await readFile(storedProfile.path, 'utf8');
-  await assert.rejects(storedProfile.store.connection(), { code: 'NOD_SERVER_TOKEN_UNAVAILABLE' });
-  const f = await runningDesktop(
-    t,
-    async () =>
-      Response.json({ user: { id: 'server-owner' }, settings: { onboardingCompleted: true } }),
-    {
-      storedProfile,
-      initialState: 'fresh',
-      prepareRuntime: () => assert.fail('Token recovery must not start a local runtime.'),
-    },
-  );
-  try {
-    await f.launch();
-    await f.settle();
-    assert.equal(f.status().phase, 'error');
-    assert.equal(f.status().needsServerConnection, true);
-    assert.equal(await readFile(storedProfile.path, 'utf8'), previous);
-    f.showConnectionSettings();
-    const window = f.windows.at(-1);
-    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-    assert.deepEqual(
-      JSON.parse(JSON.stringify(await f.handlers.get('nod:connection:get')(event))),
-      { url },
-    );
-    await f.storage.store.saveConnection({ url, token });
-    assert.deepEqual(await storedProfile.reopen().connection(), { url, token });
-    assert.equal((await f.prepare()).phase, 'ready', JSON.stringify(f.status()));
-    assert.equal(f.status().needsServerConnection, false);
-    assert.deepEqual(await storedProfile.reopen().environment(), environment);
-    assert.equal(f.children.length, 0);
-    assert.ok(!(await readFile(storedProfile.path, 'utf8')).includes(token));
-  } finally {
-    await f.close();
-  }
+test('server token recovery distinguishes a locked store from unreadable ciphertext without resetting local data', async (t) => {
+  for (const failure of ['locked', 'ciphertext'])
+    await t.test(failure, async (t) => {
+      const storedProfile = await fixture(t, 'darwin');
+      const environment = await storedProfile.store.environment();
+      const token = randomBytes(32).toString('base64url');
+      const url = 'https://assistant.example.test';
+      await storedProfile.store.saveConnection({ url, token });
+      const saved = JSON.parse(await readFile(storedProfile.path, 'utf8'));
+      if (failure === 'ciphertext') {
+        saved.secrets.serverToken = randomBytes(48).toString('base64');
+        await writeFile(storedProfile.path, JSON.stringify(saved));
+      } else storedProfile.encryption.isAsyncEncryptionAvailable = async () => false;
+      storedProfile.store = storedProfile.reopen();
+      const previous = await readFile(storedProfile.path, 'utf8');
+      await assert.rejects(storedProfile.store.connection(), (error) => {
+        assert.equal(
+          error.code,
+          failure === 'ciphertext' ? 'NOD_SERVER_TOKEN_UNAVAILABLE' : undefined,
+        );
+        if (failure === 'locked') assert.match(error.message, /Unlock your Mac keychain/);
+        return true;
+      });
+      const f = await runningDesktop(
+        t,
+        async () =>
+          Response.json({ user: { id: 'server-owner' }, settings: { onboardingCompleted: true } }),
+        {
+          storedProfile,
+          initialState: 'fresh',
+          prepareRuntime: () => assert.fail('Token recovery must not start a local runtime.'),
+        },
+      );
+      try {
+        await f.launch();
+        await f.settle();
+        assert.equal(f.status().phase, 'error');
+        assert.equal(f.status().needsServerConnection, failure === 'ciphertext');
+        assert.equal(await readFile(storedProfile.path, 'utf8'), previous);
+        if (failure === 'ciphertext') {
+          f.showConnectionSettings();
+          const window = f.windows.at(-1);
+          const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+          assert.deepEqual(
+            JSON.parse(JSON.stringify(await f.handlers.get('nod:connection:get')(event))),
+            { url },
+          );
+          await f.storage.store.saveConnection({ url, token });
+        } else storedProfile.encryption.isAsyncEncryptionAvailable = async () => true;
+        assert.deepEqual(await storedProfile.reopen().connection(), { url, token });
+        assert.equal((await f.prepare()).phase, 'ready', JSON.stringify(f.status()));
+        assert.equal(f.status().needsServerConnection, false);
+        if (failure === 'locked')
+          assert.equal(await readFile(storedProfile.path, 'utf8'), previous);
+        assert.deepEqual(await storedProfile.reopen().environment(), environment);
+        assert.equal(f.children.length, 0);
+        assert.ok(!(await readFile(storedProfile.path, 'utf8')).includes(token));
+      } finally {
+        await f.close();
+      }
+    });
 });
 
 test('remote connection verification rejects redirects before a second server receives the token', async (t) => {
@@ -3081,25 +3097,72 @@ test('native onboarding replay reaches product onboarding without restarting or 
 });
 
 test('unavailable or plaintext key stores refuse secret persistence and decryption', async (t) => {
-  const f = await fixture(t);
-  await f.store.environment();
-  const previous = await readFile(f.path, 'utf8');
-  for (const unavailable of [
-    { ...f.encryption, isEncryptionAvailable: () => false },
-    { ...f.encryption, getSelectedStorageBackend: () => 'basic_text' },
-  ]) {
-    const store = createSettingsStore(f.path, unavailable, 'win32');
-    const fresh = createSettingsStore(join(dirname(f.path), 'fresh.json'), unavailable, 'win32');
-    await assert.rejects(fresh.environment());
-    await assert.rejects(store.environment());
-    assert.equal(await readFile(f.path, 'utf8'), previous);
-  }
-  const value = JSON.parse(previous);
-  const ciphertext = Buffer.from(value.secrets.vaultKey, 'base64');
-  ciphertext[12] ^= 1;
-  value.secrets.vaultKey = ciphertext.toString('base64');
-  await writeFile(f.path, JSON.stringify(value));
-  await assert.rejects(f.reopen().environment());
+  for (const platform of ['darwin', 'win32', 'linux'])
+    await t.test(platform, async (t) => {
+      const f = await fixture(t, platform);
+      await f.store.environment();
+      const connection = {
+        url: 'https://assistant.example.test',
+        token: randomBytes(32).toString('base64url'),
+      };
+      await f.store.saveConnection(connection);
+      const previous = await readFile(f.path, 'utf8');
+      for (const unavailable of [
+        {
+          ...f.encryption,
+          isEncryptionAvailable: () => false,
+          isAsyncEncryptionAvailable: async () => false,
+        },
+        {
+          ...f.encryption,
+          isEncryptionAvailable: () => {
+            throw new Error('Synthetic availability failure.');
+          },
+          isAsyncEncryptionAvailable: async () => {
+            throw new Error('Synthetic availability failure.');
+          },
+        },
+        { ...f.encryption, getSelectedStorageBackend: () => 'basic_text' },
+      ]) {
+        const accessed = [];
+        for (const method of [
+          'encryptString',
+          'encryptStringAsync',
+          'decryptString',
+          'decryptStringAsync',
+        ])
+          unavailable[method] = () => {
+            accessed.push(method);
+            throw new Error('Unavailable stores must not access a key.');
+          };
+        const store = createSettingsStore(f.path, unavailable, platform);
+        const fresh = createSettingsStore(
+          join(dirname(f.path), 'fresh.json'),
+          unavailable,
+          platform,
+        );
+        await assert.rejects(fresh.environment());
+        await assert.rejects(store.environment());
+        await assert.rejects(fresh.saveConnection(connection));
+        await assert.rejects(store.connection(), (error) => {
+          assert.equal(error.code, undefined);
+          assert.match(error.message, /Unlock/);
+          return true;
+        });
+        assert.deepEqual(accessed, []);
+        assert.equal(await readFile(f.path, 'utf8'), previous);
+      }
+      assert.deepEqual(await f.reopen().connection(), connection);
+      const value = JSON.parse(previous);
+      const ciphertext = Buffer.from(value.secrets.vaultKey, 'base64');
+      ciphertext[12] ^= 1;
+      value.secrets.vaultKey = (
+        platform === 'darwin' ? ciphertext.subarray(0, 1) : ciphertext
+      ).toString('base64');
+      await writeFile(f.path, JSON.stringify(value));
+      await assert.rejects(f.reopen().environment());
+      assert.deepEqual(await f.reopen().connection(), connection);
+    });
 });
 
 test('unsupported saved schemas fail closed without rewriting or unlocking their contents', async (t) => {

@@ -145,13 +145,17 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       ? 'Unlock your Mac keychain, then quit and reopen nod.'
       : 'Unlock your system key store, then try again.';
   async function available() {
-    if (
-      !(platform === 'darwin'
-        ? await encryption.isAsyncEncryptionAvailable()
-        : encryption.isEncryptionAvailable()) ||
-      encryption.getSelectedStorageBackend?.() === 'basic_text'
-    )
+    try {
+      if (
+        !(platform === 'darwin'
+          ? await encryption.isAsyncEncryptionAvailable()
+          : encryption.isEncryptionAvailable()) ||
+        encryption.getSelectedStorageBackend?.() === 'basic_text'
+      )
+        throw new Error();
+    } catch {
       throw new Error(keyStoreMessage);
+    }
   }
   async function protect(value) {
     try {
@@ -165,10 +169,10 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       throw new Error(keyStoreMessage);
     }
   }
-  async function reveal(value) {
+  async function reveal(value, failure) {
     if (!value) return '';
+    await available();
     try {
-      await available();
       if (platform === 'darwin') {
         const ciphertext = Buffer.from(value, 'base64');
         const { result } = await encryption.decryptStringAsync(ciphertext);
@@ -178,10 +182,13 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       }
       return encryption.decryptString(Buffer.from(value, 'base64'));
     } catch {
-      throw new Error(
-        platform === 'darwin'
-          ? keyStoreMessage
-          : 'The system key store could not unlock your saved keys.',
+      throw (
+        failure ??
+        new Error(
+          platform === 'darwin'
+            ? keyStoreMessage
+            : 'The system key store could not unlock your saved keys.',
+        )
       );
     }
   }
@@ -210,16 +217,18 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       return exclusive(async () => {
         const value = await read();
         if (!value.serverUrl) return null;
-        try {
-          return { url: value.serverUrl, token: await reveal(value.secrets.serverToken) };
-        } catch {
-          throw Object.assign(
-            new Error(
-              'nod could not unlock your saved server token. Reconnect with your server’s authentication token.',
+        return {
+          url: value.serverUrl,
+          token: await reveal(
+            value.secrets.serverToken,
+            Object.assign(
+              new Error(
+                'nod could not unlock your saved server token. Reconnect with your server’s authentication token.',
+              ),
+              { code: 'NOD_SERVER_TOKEN_UNAVAILABLE' },
             ),
-            { code: 'NOD_SERVER_TOKEN_UNAVAILABLE' },
-          );
-        }
+          ),
+        };
       });
     },
     saveConnection(input) {
