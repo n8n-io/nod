@@ -333,3 +333,10 @@
     transition: none;
   }
 }
+.tasks-ideas {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+[role='tabpanel'] > .tasks-ideas {
+  padding-top: var(--secondary-empty-inset);
+}

@@ -93,7 +93,7 @@ export function ScheduleRow({
       </PlanDetails>
       {asking && (
         <AskNod
-          subject={{ title: schedule.title }}
+          subject={{ kind: 'schedule', title: schedule.title }}
           onAsk={onAsk}
           onClose={() => setAsking(false)}
         />

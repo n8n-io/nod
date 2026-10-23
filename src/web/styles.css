@@ -2042,7 +2042,7 @@ input[type='range']:disabled {
   border: 1px solid var(--border);
   border-radius: var(--dialog-radius);
 }
-.secondary-page[data-reveal] :is(.resource-list, .saved-plan-list, .app-grid, .secondary-empty) {
+.secondary-page[data-reveal] :is(.resource-list, .saved-plan-list, .app-grid) {
   animation: startup-fade 180ms ease-out;
 }
 .chat-route {

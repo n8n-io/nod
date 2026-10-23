@@ -15,16 +15,36 @@ import {
   type ScheduleFrequency,
 } from '../lib/schedules';
 
-type Subject = { title?: string };
-
-function subjectPrefix(subject: Subject) {
-  return subject.title ? `About the schedule ${JSON.stringify(subject.title)}: ` : 'New schedule: ';
-}
+type Subject = { kind: 'task' } | { kind: 'schedule'; title?: string };
 
 const suggestions = {
+  task: ['Get three quotes for a boiler service', 'Follow up on emails nobody answered this week'],
   schedule: ['Move it to 8:00 on weekdays', 'Run it every Monday', 'Add the weather'],
   newSchedule: ['Remind me to stretch at 16:00', 'Summarize my inbox each Friday'],
 };
+
+function askFor(subject: Subject) {
+  if (subject.kind === 'task')
+    return {
+      prefix: '',
+      placeholder: 'What should nod take care of?',
+      label: 'Ask nod for a task',
+      chips: suggestions.task,
+    };
+  if (subject.title)
+    return {
+      prefix: `About the schedule ${JSON.stringify(subject.title)}: `,
+      placeholder: `What should change in ${subject.title}?`,
+      label: `Ask nod about ${subject.title}`,
+      chips: suggestions.schedule,
+    };
+  return {
+    prefix: 'New schedule: ',
+    placeholder: 'What should nod do, and when?',
+    label: 'Ask nod for a new schedule',
+    chips: suggestions.newSchedule,
+  };
+}
 
 export function AskNod({
   subject,
@@ -39,18 +59,15 @@ export function AskNod({
   const input = useRef<HTMLInputElement>(null);
   const id = useId();
   useEffect(() => input.current?.focus(), []);
-  const chips = subject.title ? suggestions.schedule : suggestions.newSchedule;
+  const { prefix, placeholder, label, chips } = askFor(subject);
   const submit = (value: string) => {
     if (!value.trim()) return;
-    onAsk(`${subjectPrefix(subject)}${value.trim()}`);
+    onAsk(`${prefix}${value.trim()}`);
   };
-  const placeholder = subject.title
-    ? `What should change in ${subject.title}?`
-    : 'What should nod do, and when?';
   return (
     <div className="ask-nod" role="group" aria-labelledby={`${id}-label`}>
       <span className="sr-only" id={`${id}-label`}>
-        Ask nod {subject.title ? `about ${subject.title}` : 'for a new schedule'}
+        {label}
       </span>
       <form
         className="ask-nod-field"
@@ -724,7 +741,7 @@ export function NewPlan({ onAsk }: { onAsk(text: string): void }) {
       </Button>
       {open && (
         <div className="connection-menu-options menu new-plan-card">
-          <AskNod subject={{}} onAsk={onAsk} onClose={() => setOpen(false)} />
+          <AskNod subject={{ kind: 'schedule' }} onAsk={onAsk} onClose={() => setOpen(false)} />
         </div>
       )}
     </>

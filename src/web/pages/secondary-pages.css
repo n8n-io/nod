@@ -180,36 +180,6 @@
   gap: 4px;
   margin-left: auto;
 }
-.secondary-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-  padding: var(--secondary-empty-inset) 0 24px;
-  max-width: 46ch;
-}
-.secondary-page > .secondary-empty {
-  padding-top: calc(
-    var(--secondary-empty-inset) + var(--secondary-tab-height) + var(--secondary-section-gap)
-  );
-}
-.secondary-empty > svg {
-  margin-bottom: 4px;
-  color: var(--muted-foreground);
-}
-.secondary-empty h2 {
-  font-size: 16px;
-  font-weight: 500;
-  line-height: 1.5;
-}
-.secondary-empty p {
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  line-height: 1.65;
-}
-.secondary-empty .button {
-  margin-top: 4px;
-}
 @media (max-width: 550px) {
   .content-page.secondary-page {
     padding: 24px var(--page-inline) 40px;
@@ -290,6 +260,43 @@
   display: grid;
   gap: 16px;
   justify-items: start;
+}
+.statement-value {
+  padding: 0;
+  border: 0;
+  border-bottom: 2px dotted var(--brand-pink);
+  background: none;
+  color: var(--foreground);
+  font: inherit;
+  font-weight: 500;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.statement-value:hover,
+.statement-value[data-state='open'] {
+  border-bottom-style: solid;
+}
+.statement-value:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.statement-pop {
+  z-index: 60;
+  display: grid;
+  gap: 12px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-menu);
+}
+.statement-pop small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
 }
 .statement-empty {
   color: var(--muted-foreground);

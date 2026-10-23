@@ -200,7 +200,7 @@ try {
     assert(!(await evaluate('/otto/i.test(document.body.innerText)')), 'An old name remains.');
     const clip = limit
       ? await evaluate(
-          `(() => {const a=document.querySelector('.usage-sentence').getBoundingClientRect();const b=document.querySelector('.usage-pop').getBoundingClientRect();const x=Math.max(0,Math.min(a.x,b.x)-16),y=Math.max(0,Math.min(a.y,b.y)-16);return {x,y,width:Math.min(innerWidth-x,Math.max(a.right,b.right)-x+16),height:Math.max(a.bottom,b.bottom)-y+16,scale:1};})()`,
+          `(() => {const a=document.querySelector('.usage-sentence').getBoundingClientRect();const b=document.querySelector('.statement-pop').getBoundingClientRect();const x=Math.max(0,Math.min(a.x,b.x)-16),y=Math.max(0,Math.min(a.y,b.y)-16);return {x,y,width:Math.min(innerWidth-x,Math.max(a.right,b.right)-x+16),height:Math.max(a.bottom,b.bottom)-y+16,scale:1};})()`,
         )
       : undefined;
     const screenshot = await send('Page.captureScreenshot', {

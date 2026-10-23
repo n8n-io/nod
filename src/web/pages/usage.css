@@ -2,43 +2,6 @@
   display: grid;
   gap: 32px;
 }
-.usage-value {
-  padding: 0;
-  border: 0;
-  border-bottom: 2px dotted var(--brand-pink);
-  background: none;
-  color: var(--foreground);
-  font: inherit;
-  font-weight: 500;
-  letter-spacing: inherit;
-  cursor: pointer;
-}
-.usage-value:hover,
-.usage-value[data-state='open'] {
-  border-bottom-style: solid;
-}
-.usage-value:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-.usage-pop {
-  z-index: 60;
-  display: grid;
-  gap: 12px;
-  width: max-content;
-  max-width: calc(100vw - 32px);
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--card-radius);
-  background: var(--surface-overlay);
-  box-shadow: var(--shadow-menu);
-}
-.usage-pop small {
-  color: var(--muted-foreground);
-  font-size: 12px;
-  line-height: 1.5;
-}
 .usage-month {
   display: grid;
   gap: 12px;

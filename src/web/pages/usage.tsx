@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import * as Popover from '@radix-ui/react-popover';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { CalendarClock, MessageCircle, ScanSearch, Undo2, Zap } from '../components/icons';
 import type { TrustEntry, TrustPage, TrustSource, TrustView } from '../../shared/trust';
 import type { AccountPreferences } from '../../shared/account';
@@ -21,6 +20,7 @@ import {
   type DateFormat,
 } from '../lib/date-format';
 import { PageTitle } from '../components/page-title';
+import { StatementValue } from '../components/statement-value';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { VaultUse } from '../components/vault-activity';
 import { becauseText } from '../lib/trust-because';
@@ -52,28 +52,6 @@ function times(count: number) {
 
 function saveLimits(body: { monthlyUsd?: number | null; taskUsd?: number | null }) {
   return api('/api/trust/limit', { method: 'PUT', body: JSON.stringify(body) });
-}
-
-function Value({
-  text,
-  label,
-  children,
-}: {
-  text: ReactNode;
-  label: string;
-  children(close: () => void): ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger className="usage-value">{text}</Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content className="usage-pop" align="start" sideOffset={8} aria-label={label}>
-          {children(() => setOpen(false))}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
-  );
 }
 
 function Chart({ month, limit }: { month: TrustView['month']; limit: number | undefined }) {
@@ -366,29 +344,32 @@ function Sentence({
     <>
       <p className="statement-summary usage-sentence">
         nod spent{' '}
-        <Value text={money(month.spentUsd)} label={`Spending in ${name}`}>
+        <StatementValue text={money(month.spentUsd)} label={`Spending in ${name}`}>
           {() => <Month view={view} />}
-        </Value>
+        </StatementValue>
         {limit ? (
           <>
             {' '}
             of{' '}
-            <Value text={money(limit.monthlyUsd)} label="Monthly limit">
+            <StatementValue text={money(limit.monthlyUsd)} label="Monthly limit">
               {limitForm}
-            </Value>{' '}
+            </StatementValue>{' '}
             in {name}
           </>
         ) : (
           <>
             {' '}
             in {name}, with{' '}
-            <Value text="no monthly limit" label="Monthly limit">
+            <StatementValue text="no monthly limit" label="Monthly limit">
               {limitForm}
-            </Value>
+            </StatementValue>
           </>
         )}
         . {taskUsd === null ? 'Tasks ' : 'Tasks check in at '}
-        <Value text={taskUsd === null ? 'never check in' : money(taskUsd)} label="Task check-in">
+        <StatementValue
+          text={taskUsd === null ? 'never check in' : money(taskUsd)}
+          label="Task check-in"
+        >
           {(close) => (
             <TaskLimit
               view={view}
@@ -398,7 +379,7 @@ function Sentence({
               }}
             />
           )}
-        </Value>
+        </StatementValue>
         .
         <br />
         {done.length ? (
@@ -417,7 +398,7 @@ function Sentence({
         )}
         <br />
         On its own, nod{' '}
-        <Value
+        <StatementValue
           text={rule ? 'follows your instruction' : 'watches nothing'}
           label="Standing instruction"
         >
@@ -435,11 +416,11 @@ function Sentence({
               }}
             />
           )}
-        </Value>
+        </StatementValue>
         {rule ? <>: “{rule}”</> : '.'}
         <br />
         {rules ? 'Everywhere, nod keeps ' : 'You haven’t set any '}
-        <Value text={rules ? 'your rules' : 'rules'} label="Rules">
+        <StatementValue text={rules ? 'your rules' : 'rules'} label="Rules">
           {(close) => (
             <RuleEditor
               field="rules"
@@ -454,7 +435,7 @@ function Sentence({
               }}
             />
           )}
-        </Value>
+        </StatementValue>
         {rules ? <>: “{rules}”</> : '.'}
       </p>
       {limit?.reached && (

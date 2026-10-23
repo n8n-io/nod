@@ -20,6 +20,9 @@
   flex-wrap: wrap;
   gap: 4px;
 }
+.statement-pop .ask-nod {
+  width: min(420px, calc(100vw - 64px));
+}
 .schedule-timing {
   display: grid;
   gap: 12px;

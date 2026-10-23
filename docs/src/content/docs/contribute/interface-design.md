@@ -93,20 +93,20 @@ Don't show a construction grid. Keep the existing reduced-motion behaviour. The 
 <details>
 <summary>Rules for each surface</summary>
 
-| Surface                   | Rule                                                                   |
-| ------------------------- | ---------------------------------------------------------------------- |
-| Shell                     | Neutral sidebar, pink selection, quiet utility controls                |
-| Chat                      | Neutral received bubbles, pink sent bubbles, readable tables and files |
-| Composer                  | Clear boundary, visible focus, one primary send action                 |
-| Tasks and schedules       | Shared title, tabs, row spacing and action height                      |
-| Apps and channels         | Neutral cards, visible connection state, consistent controls           |
-| Vault                     | Clear selection, fields and error states; secure forms preserved       |
-| Usage                     | One summary line, one cost card, a quiet statement list                |
-| Sign-in                   | Plain capability text, pink sign-in action, one inset story panel      |
-| Onboarding                | Clear connection steps, no decorative grid behind fields               |
-| Credentials and approvals | Clear action hierarchy; origin and expiry preserved                    |
-| File previews             | One panel beside the chat; quiet header actions; local scrolling       |
-| Native desktop setup      | Same palette and type scale as the web app                             |
+| Surface                   | Rule                                                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Shell                     | Neutral sidebar, pink selection, quiet utility controls                                                            |
+| Chat                      | Neutral received bubbles, pink sent bubbles, readable tables and files                                             |
+| Composer                  | Clear boundary, visible focus, one primary send action                                                             |
+| Tasks and schedules       | Shared title, tabs, row spacing and action height; one summary line with ideas while empty                         |
+| Apps and channels         | Neutral cards, visible connection state, consistent controls                                                       |
+| Vault                     | Clear selection, fields and error states; secure forms preserved; one summary line and the ways to add while empty |
+| Usage                     | One summary line, one cost card, a quiet statement list                                                            |
+| Sign-in                   | Plain capability text, pink sign-in action, one inset story panel                                                  |
+| Onboarding                | Clear connection steps, no decorative grid behind fields                                                           |
+| Credentials and approvals | Clear action hierarchy; origin and expiry preserved                                                                |
+| File previews             | One panel beside the chat; quiet header actions; local scrolling                                                   |
+| Native desktop setup      | Same palette and type scale as the web app                                                                         |
 
 </details>
 
