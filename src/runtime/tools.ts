@@ -181,7 +181,7 @@ export const toolDefinitions = {
   ),
   send_message: defineTool(
     'send_message',
-    'Send a message to the user now. In a conversation or task, use it for useful progress, a blocker, a decision, a reply to a specific earlier message, or a separate part of an answer when a natural break gives each message a clear purpose. Keep related details together and avoid a rapid series of small messages. In background runs, this is the only delivery: send only useful results or necessary questions. Do not repeat a sent message in the final answer.',
+    'Send a message to the user now. In a conversation or task, deliver a useful, verified partial result as soon as it is ready during longer work. Say what you found or completed and what remains. Also use it for an important change, a blocker, a decision, a reply to a specific earlier message, or a separate part of an answer when each message has a clear purpose. Keep related details together. Skip routine tool narration, repeated waiting updates and rapid series of small messages. In background runs, this is the only delivery: send only useful results or necessary questions. Do not repeat a sent message in the final answer.',
     Type.Object({
       text: Type.String(),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),

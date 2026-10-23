@@ -15,6 +15,7 @@ A separate defect affected IPv6 links. Markdown-to-HTML conversion encoded the h
 - Chat and Markdown file previews pass the parsed link destination through the documented `hProperties` field. The sanitizer and URL guard still check it.
 - Failed sends restore the same document meaning. Reference links, formatting, lists, tasks, tables, code and underline use the same conversion.
 - Replies and confirmation text share a friendly writing rule. Paragraphs have blank lines. Message breaks follow the task and conversation. There is no fixed message count or special schedule format.
+- The activity view stays available. A useful, verified partial result gets a normal chat message with what is complete and what remains. Routine steps do not each need a new status or message.
 - Chat paragraphs have a 12-pixel gap.
 
 Markdown source can contain valid escapes. The contract is unchanged text, formatting and link meaning after parsing. The server does not decode Markdown again.
@@ -66,3 +67,13 @@ The export uses H.264 at 1280 × 628 pixels. Sampled frames were checked, and th
 [Research on notification timing](https://interruptions.net/literature/Iqbal-CHI08.pdf) supports breaks in a task as useful times to interrupt. [A field study on grouped notifications](https://doi.org/10.1016/j.chb.2019.07.016) supports limiting interruptions. These findings guide message breaks. They do not establish an ideal number of messages for a chat reply.
 
 [Research on conversational style and trust](https://arxiv.org/abs/2502.10844) supports care with praise and changes of stance. The writing rule asks for practical help and honest disagreement.
+
+### Progress and perceived waiting
+
+A [2021 study with 360 participants](https://doi.org/10.1145/3472307.3484181) found that contextual conversational feedback improved ratings of response time. It did not improve agent likeability. [CUI 2025 research](https://arxiv.org/abs/2507.22352) found that natural cues improved perceived response time during longer waits. That study used voice and VR, so it does not directly test nod's chat.
+
+[Sidekick](https://arxiv.org/abs/2607.17527) studied 30 users of computer use agents. It found benefits from combining quiet background cues with summaries of completed actions. Its combined design performed better than text feedback in chat or an ambient display. This supports keeping activity visible while choosing useful moments to deliver results.
+
+The evidence does not show that all activity indicators make an agent feel slower. [A CHI 2026 study](https://arxiv.org/abs/2602.04138) found that hiding time feedback made waits feel longer and less clear. [Operational transparency research](https://www.hbs.edu/faculty/Pages/item.aspx?num=40158) also found that visible work could increase perceived value. That is a different measure from perceived speed.
+
+nod's design choice is to deliver meaningful, verified partial results in chat while keeping routine activity available. Each result states what is complete and what remains. These studies do not prove that this message design improves nod's perceived speed, and they do not measure a dopamine effect. That needs a user study.
