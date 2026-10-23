@@ -1662,6 +1662,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             )
           ).rows[0];
           if (!row) throw new VaultError('This saved login is no longer available.', 409);
+          if (selected && selected.expires_at.getTime() <= Date.now())
+            throw new VaultError('This sign-in took too long. Start it again.', 409);
           if (selected?.entry_id && selected.entry_id !== row.id)
             throw new VaultError(
               'Choose the saved login that matches the account already entered.',
@@ -2096,6 +2098,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       }
     });
     const selected = await selection(root, ownerId, origin);
+    if (selected && selected.expires_at.getTime() <= Date.now()) return undefined;
     if (selected?.entry_id)
       candidates = candidates.filter(({ entry }) => entry.id === selected.entry_id);
     else if (selected) {

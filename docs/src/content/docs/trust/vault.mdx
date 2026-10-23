@@ -39,7 +39,7 @@ In the private **Sign in** form, select **Use 1Password**. The first time, enter
 
 This needs the 1Password 8 app on the same computer as nod, signed in, with **Settings → Developer → Integrate with other apps** turned on. It works in the desktop app and in a source install.
 
-- **What nod reads.** Only the logins 1Password itself would fill on the website in front of you, and then only the one you choose. The model never sees the list or any value.
+- **What nod reads.** To list them, the helper reads the logins 1Password itself would fill on the website in front of you, on your computer. Only the one you choose is copied to Vault, and the model never sees the list or any value.
 - **Where it runs.** A small helper process talks to 1Password; the nod server never loads 1Password's code. 1Password's approval lets that helper read your account until it's idle for 10 minutes or you lock 1Password, and nod closes it after 10 idle minutes.
 - **Why a copy.** Scheduled and background tasks can then sign in without waiting for you to approve in 1Password. If you change the password in 1Password, choose the login from 1Password again the next time nod asks, and the copy is updated.
 

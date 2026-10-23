@@ -427,13 +427,15 @@ export function createLedger({
           const title = app ? `${app}: ${label}` : label;
           counts.set(title, (counts.get(title) ?? 0) + 1);
         }
+        const costUsd = costs[row.sessionId] ?? null;
+        if (!counts.size && costUsd === null) return [];
         return [
           [
             row.messageId,
             {
               sessionId: row.sessionId,
               actions: [...counts].map(([label, count]) => ({ label, count })),
-              costUsd: costs[row.sessionId] ?? null,
+              costUsd,
             },
           ],
         ];

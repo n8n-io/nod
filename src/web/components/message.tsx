@@ -527,6 +527,14 @@ export function MessageBubble({
             className="message-receipt"
             href={`/usage?session=${message.receipt.sessionId}`}
             onClick={(event) => {
+              if (
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              )
+                return;
               event.preventDefault();
               navigate(`/usage?session=${message.receipt!.sessionId}`);
             }}

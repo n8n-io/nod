@@ -1,9 +1,7 @@
 export type TrustSource = 'chat' | 'task' | 'schedule' | 'event' | 'check' | 'resume';
 
-export interface TrustBecause {
-  kind: 'message' | 'schedule' | 'standing' | 'rule' | 'approved';
-  text?: string;
-}
+export type TrustBecause =
+  { kind: 'message' | 'schedule' | 'standing' | 'rule'; text: string } | { kind: 'approved' };
 
 export interface TrustAction {
   label: string;

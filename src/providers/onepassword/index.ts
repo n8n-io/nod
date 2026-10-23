@@ -117,16 +117,20 @@ export function createOnePassword(options: {
   const answerMs = options.answerMs ?? 120_000;
   const waiting = new Map<
     number,
-    { resolve(value: unknown): void; reject(error: PasswordManagerError): void }
+    {
+      channel: OnePasswordChannel;
+      resolve(value: unknown): void;
+      reject(error: PasswordManagerError): void;
+    }
   >();
   const ended = new WeakSet<OnePasswordChannel>();
   let current: Promise<OnePasswordChannel> | undefined;
   let idle: ReturnType<typeof setTimeout> | undefined;
   let sequence = 0;
 
-  function stop(message: string) {
+  function stop(channel: OnePasswordChannel, message: string) {
     for (const waiter of waiting.values())
-      waiter.reject(new PasswordManagerError('failed', message));
+      if (waiter.channel === channel) waiter.reject(new PasswordManagerError('failed', message));
   }
 
   function connect() {
@@ -143,7 +147,7 @@ export function createOnePassword(options: {
         channel.closed(() => {
           ended.add(channel);
           if (current === opening) current = undefined;
-          stop('The 1Password helper stopped. Try again.');
+          stop(channel, 'The 1Password helper stopped. Try again.');
         });
         return channel;
       },
@@ -164,6 +168,7 @@ export function createOnePassword(options: {
     clearTimeout(idle);
     try {
       const channel = await connect();
+      signal?.throwIfAborted();
       const id = ++sequence;
       return await new Promise<unknown>((resolve, reject) => {
         const settle = (error: PasswordManagerError | undefined, value?: unknown) => {
@@ -180,6 +185,7 @@ export function createOnePassword(options: {
           answerMs,
         );
         waiting.set(id, {
+          channel,
           resolve: (value) => settle(undefined, value),
           reject: (error) => settle(error),
         });
@@ -213,8 +219,10 @@ export function createOnePassword(options: {
     clearTimeout(idle);
     const opened = current;
     current = undefined;
-    stop('nod closed its 1Password helper.');
-    (await opened?.catch(() => undefined))?.close();
+    const channel = await opened?.catch(() => undefined);
+    if (!channel) return;
+    stop(channel, 'nod closed its 1Password helper.');
+    channel.close();
   }
 
   return {

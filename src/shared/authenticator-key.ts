@@ -11,7 +11,13 @@ const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
 function base32(value: string) {
   const secret = value.replace(/[\s-]/g, '').replace(/=+$/, '').toUpperCase();
-  if (secret.length < 16 || secret.length > 256 || !/^[A-Z2-7]+$/.test(secret)) return undefined;
+  if (
+    secret.length < 16 ||
+    secret.length > 256 ||
+    ![0, 2, 4, 5, 7].includes(secret.length % 8) ||
+    !/^[A-Z2-7]+$/.test(secret)
+  )
+    return undefined;
   return secret;
 }
 

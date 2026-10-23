@@ -165,6 +165,9 @@ test('authenticator codes match RFC 6238 and only usable keys are accepted', () 
     '',
     'JBSWY3DP',
     'JBSWY3DPEHPK3PX1',
+    'JBSWY3DPEHPK3PXPJ',
+    'JBSWY3DPEHPK3PXPJBS',
+    'JBSWY3DPEHPK3PXPJBSWY3',
     'otpauth://hotp/Shop?secret=JBSWY3DPEHPK3PXP&counter=1',
     'otpauth://totp/Shop?secret=JBSWY3DPEHPK3PXP&algorithm=MD5',
     'otpauth://totp/Shop?secret=JBSWY3DPEHPK3PXP&digits=9',
@@ -234,6 +237,8 @@ test('a 1Password login applies only where 1Password itself would fill it', () =
     matchingWebsite(anywhere('android://key@com.example.app/'), 'https://example.com'),
     undefined,
   );
+  for (const url of ['mailto:login@example.com', 'https://login:secret@example.com'])
+    assert.equal(matchingWebsite(anywhere(url), 'https://example.com'), undefined, url);
 });
 
 test('the real 1Password helper runs in its own process and fails clearly without the app', async () => {
@@ -285,6 +290,36 @@ test('a stopped 1Password helper fails its request at once and the next request 
       );
       assert.ok(Date.now() - started < 1_000);
     }
+    assert.equal(opened, 2);
+  } finally {
+    await manager.close();
+  }
+});
+
+test('an idle 1Password helper closing late never fails a request on its replacement', async () => {
+  const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  let opened = 0;
+  const manager = createOnePassword({
+    idleMs: 5,
+    open: async () => {
+      const answerMs = ++opened === 1 ? 0 : 60;
+      const closed: Array<() => void> = [];
+      let reply: (raw: unknown) => void = () => {};
+      return {
+        send: (message: { id: number }) =>
+          void setTimeout(() => reply({ id: message.id, ok: true, value: [] }), answerMs),
+        receive: (receiver: (raw: unknown) => void) => {
+          reply = receiver;
+        },
+        closed: (listener: () => void) => closed.push(listener),
+        close: () => void setTimeout(() => closed.forEach((listener) => listener()), 30),
+      };
+    },
+  });
+  try {
+    assert.deepEqual(await manager.logins('Synthetic account', 'https://example.com'), []);
+    await delay(15);
+    assert.deepEqual(await manager.logins('Synthetic account', 'https://example.com'), []);
     assert.equal(opened, 2);
   } finally {
     await manager.close();
@@ -2342,6 +2377,22 @@ test(
         await assert.rejects(
           vault.fillAuthenticatorCode(task, owner, first.id, code),
           /matches the account already entered/,
+        );
+        assert.equal(injections.length, entered);
+      });
+
+      await t.test('an expired sign-in choice never gets a code', async () => {
+        const task = await turn();
+        assert.equal(await vault.fillSaved(task, owner, first.id, password), true);
+        await pool.query(
+          "UPDATE credential_account_selections SET expires_at=now()-interval '1 second' WHERE origin=$1",
+          [origin],
+        );
+        assert.equal(await vault.authenticatorLogin(task, owner, origin), undefined);
+        const entered = injections.length;
+        await assert.rejects(
+          vault.fillAuthenticatorCode(task, owner, first.id, code),
+          /took too long/,
         );
         assert.equal(injections.length, entered);
       });

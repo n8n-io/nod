@@ -481,7 +481,7 @@ test(
         },
       );
       await t.test(
-        'task activity names each step and the app actions the task took, only the owner’s',
+        'task activity names each tool call and the app actions the task took, only the owner’s',
         async () => {
           const { createLedger } = await import('../src/server/ledger.ts');
           await createLedger({ pool: db.pool, ownerId }).initialize();

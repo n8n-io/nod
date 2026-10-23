@@ -8,7 +8,9 @@ export interface OnePasswordWebsite {
 function address(url: string) {
   try {
     const parsed = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(url) ? url : `https://${url}`);
-    return ['http:', 'https:'].includes(parsed.protocol) ? parsed : undefined;
+    return ['http:', 'https:'].includes(parsed.protocol) && !parsed.username && !parsed.password
+      ? parsed
+      : undefined;
   } catch {
     return undefined;
   }

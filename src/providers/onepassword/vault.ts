@@ -29,6 +29,8 @@ function field(item: Item, id: string) {
   return item.fields.find((value) => value.id === id)?.value ?? '';
 }
 
+const active = { type: 'ByState', content: { active: true, archived: false } } as const;
+
 function reference(id: string) {
   const [vaultId, itemId, ...rest] = id.split('/');
   if (!vaultId || !itemId || rest.length)
@@ -72,12 +74,7 @@ export function onePasswordVault(version: string) {
       const found: PasswordManagerLogin[] = [];
       for (const vault of await op.vaults.list()) {
         const websites = new Map(
-          (
-            await op.items.list(vault.id, {
-              type: 'ByState',
-              content: { active: true, archived: false },
-            })
-          ).flatMap((item) => {
+          (await op.items.list(vault.id, active)).flatMap((item) => {
             const website =
               item.category === ItemCategory.Login && matchingWebsite(item.websites, origin);
             return website ? [[item.id, website] as const] : [];
@@ -105,6 +102,8 @@ export function onePasswordVault(version: string) {
   ): Promise<PasswordManagerSecret> {
     const { vaultId, itemId } = reference(id);
     return use(account, async (op) => {
+      if (!(await op.items.list(vaultId, active)).some((overview) => overview.id === itemId))
+        throw new PasswordManagerError('missing', 'This 1Password login is no longer available.');
       const item = await op.items.get(vaultId, itemId);
       if (item.category !== ItemCategory.Login || !matchingWebsite(item.websites, origin))
         throw new PasswordManagerError('missing', 'This 1Password login is not for this website.');
