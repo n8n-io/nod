@@ -602,5 +602,18 @@ export async function createApprovals(
     };
   }
 
-  return { request, chat: { answer: answerChat, accept: acceptChat }, executeConfirmed };
+  async function states(messageIds: string[]) {
+    if (!messageIds.length) return {};
+    const { rows } = await pool.query<{
+      id: string;
+      status:
+        'pending' | 'confirmed' | 'executing' | 'completed' | 'uncertain' | 'declined' | 'expired';
+    }>(
+      'SELECT confirmation_message_id AS id,status FROM approvals WHERE owner_id=$1 AND confirmation_message_id=ANY($2::uuid[])',
+      [ownerId, messageIds],
+    );
+    return Object.fromEntries(rows.map((row) => [row.id, row.status]));
+  }
+
+  return { request, chat: { answer: answerChat, accept: acceptChat }, executeConfirmed, states };
 }

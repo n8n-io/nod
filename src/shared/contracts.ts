@@ -24,6 +24,8 @@ export interface Message {
   createdAt: string;
   attachments: Artifact[];
   receipt?: MessageReceipt;
+  questionState?:
+    'pending' | 'confirmed' | 'executing' | 'completed' | 'uncertain' | 'declined' | 'expired';
   streamId?: string | null;
   reaction?: MessageReaction | null;
   reactions?: Array<{ actor: 'user' | 'assistant'; reaction: MessageReaction }>;

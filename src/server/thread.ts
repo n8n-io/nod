@@ -67,6 +67,7 @@ export interface SubmitUserMessageOptions {
   channel?: string;
   client?: PoolClient;
   replyToMessageId?: string;
+  replyQuote?: string;
   seenMessageId?: string;
   clientMessageId?: string;
   prompt?: string;
@@ -416,7 +417,7 @@ export async function submitUserMessage(
     if (options.clientMessageId) {
       const previous = (
         await client.query(
-          'SELECT id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id FROM messages WHERE id=$1',
+          'SELECT id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote FROM messages WHERE id=$1',
           [options.clientMessageId],
         )
       ).rows[0];
@@ -427,6 +428,7 @@ export async function submitUserMessage(
           previous.thread_id !== thread.id ||
           previous.text !== text ||
           previous.reply_to_message_id !== (options.replyToMessageId ?? null) ||
+          previous.reply_quote !== (options.replyQuote ?? null) ||
           JSON.stringify((previous.attachments as Artifact[]).map((item) => item.id)) !==
             JSON.stringify(attachments.map((item) => item.id))
         )
@@ -444,6 +446,11 @@ export async function submitUserMessage(
       if (prior) return { threadId: thread.id, turnId: prior.id, messageId: prior.message_id };
     }
     await assertReplyTarget(client, thread.id, options.replyToMessageId);
+    if (
+      options.replyQuote !== undefined &&
+      (!options.replyToMessageId || !options.replyQuote.trim() || options.replyQuote.length > 4000)
+    )
+      throw httpError('Select a passage of 4,000 characters or fewer.');
     const confirmed = await confirmAction?.accept(client, {
       ...confirmation,
       threadId: thread.id,
@@ -487,7 +494,7 @@ export async function submitUserMessage(
     );
     if (taskTarget) await taskTarget.record(turnId);
     await client.query(
-      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id) VALUES($1,$2,'user',$3,$4,$5,$6,$7)",
+      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8)",
       [
         messageId,
         ownerId,
@@ -496,6 +503,7 @@ export async function submitUserMessage(
         turnId,
         JSON.stringify(attachments),
         options.replyToMessageId ?? null,
+        options.replyQuote ?? null,
       ],
     );
     await sendDrain(client, thread.id);
@@ -988,7 +996,7 @@ async function loadMessage(messageId: string | null) {
   const message = messageId
     ? (
         await pool.query(
-          `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
+          `SELECT s.attachments,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments
            FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
            WHERE s.id=$1 AND s.owner_id=$2`,
           [messageId, ownerId],

@@ -2528,6 +2528,21 @@ test(
               state.turns.some((entry) => entry.id === id),
               false,
             );
+          const matches = (await request('GET', '/api/messages/search?q=Fixture')).json<
+            Array<{ id: string }>
+          >();
+          assert.ok(matches.length > 0);
+          assert.equal(
+            matches.some((message) => message.id === foreign || message.id === archived.id),
+            false,
+          );
+          for (const id of [foreign, archived.id])
+            assert.equal((await request('GET', `/api/messages/around/${id}`)).statusCode, 404);
+          const around = await request('GET', `/api/messages/around/${matches[0].id}`);
+          assert.equal(around.statusCode, 200);
+          assert.ok(
+            around.json<Array<{ id: string }>>().some((message) => message.id === matches[0].id),
+          );
           const expected = new Set(
             (
               await db.pool.query('SELECT id FROM messages WHERE thread_id=$1', [freshThread])
@@ -2550,6 +2565,38 @@ test(
             cursor = `?before=${encodeURIComponent(page.messages[0].createdAt)}&beforeId=${page.messages[0].id}&threadId=${freshThread}`;
           }
           assert.deepEqual(seen, expected);
+          const quoted = await db.pool.connect();
+          try {
+            await quoted.query('BEGIN');
+            const clientMessageId = randomUUID();
+            const options = {
+              client: quoted,
+              threadId: freshThread,
+              clientMessageId,
+              replyToMessageId: matches[0].id,
+              replyQuote: 'Fixture',
+            };
+            const posted = await thread.submitUserMessage('Use November here.', [], options);
+            const stored = (
+              await quoted.query('SELECT text,reply_quote FROM messages WHERE id=$1', [
+                posted.messageId,
+              ])
+            ).rows[0];
+            assert.deepEqual(stored, { text: 'Use November here.', reply_quote: 'Fixture' });
+            assert.equal(
+              (await thread.submitUserMessage('Use November here.', [], options)).messageId,
+              posted.messageId,
+            );
+            await assert.rejects(
+              thread.submitUserMessage('Use November here.', [], {
+                ...options,
+                replyQuote: 'Changed passage',
+              }),
+            );
+          } finally {
+            await quoted.query('ROLLBACK');
+            quoted.release();
+          }
           const message = [...seen][0];
           const react = (id: string, reaction: string) =>
             request('POST', `/api/messages/${id}/reaction`, { reaction });

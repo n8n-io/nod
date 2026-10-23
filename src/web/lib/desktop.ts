@@ -178,3 +178,30 @@ export async function retryDesktopRuntime() {
   if (failure || status.phase !== 'ready' || status.runtime?.phase !== 'ready')
     throw new Error(failure || 'Your workspace is not ready yet. Try again.');
 }
+
+export function desktopFilesAvailable() {
+  return (
+    typeof (window as DesktopWindow & { nodDesktop?: { fileAction?: unknown } }).nodDesktop
+      ?.fileAction === 'function'
+  );
+}
+
+export function desktopFileAction(
+  id: string,
+  action: 'prepare' | 'drag' | 'save' | 'open' | 'show',
+) {
+  const bridge = (
+    window as unknown as { nodDesktop?: { fileAction(id: string, action: string): Promise<void> } }
+  ).nodDesktop;
+  if (!bridge?.fileAction)
+    return Promise.reject(new Error('This file action needs the desktop app.'));
+  return bridge.fileAction(id, action);
+}
+
+export function nativeFileMenu(id: string, image: boolean): Promise<string | null> {
+  return (
+    window as unknown as {
+      nodDesktop: { fileMenu(id: string, image: boolean): Promise<string | null> };
+    }
+  ).nodDesktop.fileMenu(id, image);
+}

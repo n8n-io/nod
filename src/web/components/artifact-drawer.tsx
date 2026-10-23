@@ -16,7 +16,6 @@ import {
   ChevronRight,
   CodeXml,
   Copy,
-  Download,
   Eye,
   Maximize2,
   Minimize2,
@@ -34,6 +33,9 @@ import {
 } from './attachment-images';
 import AttachmentData, { PreviewUnavailable } from './attachment-data';
 import PdfPreview from './attachment-pdf';
+import { FileActions, fileDrag } from './file-actions';
+import { ArtifactEdit, ArtifactExport } from './artifact-edit';
+import { apiResponse } from '../lib/api';
 import { Button } from './ui';
 import { SharedMessageCard } from './shared-message-card';
 import { StickerPlayer } from './sticker-player';
@@ -279,12 +281,29 @@ function storedWidth() {
   return Number.isFinite(value) && value >= minimumWidth ? value : null;
 }
 
+function RetainedArtifact({
+  item,
+  mode,
+  stage,
+  report,
+}: {
+  item: ImagePreview;
+  mode: 'preview' | 'code';
+  stage: string;
+  report(id: string, detail: string): void;
+}) {
+  const onDetail = useCallback((value: string) => report(item.id, value), [item.id, report]);
+  return <ArtifactView item={item} mode={mode} stage={stage} onDetail={onDetail} />;
+}
+
 function ArtifactDrawer({
   items,
   current,
   onSelect,
   onClose,
+  visible = true,
 }: {
+  visible?: boolean;
   items: ImagePreview[];
   current: ImagePreview;
   onSelect(id: string): void;
@@ -295,7 +314,29 @@ function ArtifactDrawer({
   const [width, setWidth] = useState<number | null>(storedWidth);
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<'preview' | 'code'>('preview');
-  const [detail, setDetail] = useState('');
+  const [details, setDetails] = useState<Record<string, string>>({});
+  const detail = details[current.id] ?? '';
+  const reportDetail = useCallback(
+    (id: string, value: string) =>
+      setDetails((values) => (values[id] === value ? values : { ...values, [id]: value })),
+    [],
+  );
+  const [editing, setEditing] = useState(false);
+  const [copyError, setCopyError] = useState('');
+  const viewed = useRef<ImagePreview[]>([]);
+  const modesByFile = useRef(new Map<string, 'preview' | 'code'>());
+  viewed.current = [
+    ...viewed.current.filter(
+      (item) => item.id !== current.id && items.some((value) => value.id === item.id),
+    ),
+    current,
+  ].slice(-8);
+  while (
+    viewed.current.length > 1 &&
+    viewed.current.reduce((total, item) => total + item.size, 0) > 90 * 1024 * 1024
+  )
+    viewed.current.shift();
+  modesByFile.current.set(current.id, mode);
   const [copied, setCopied] = useState(false);
   const [closing, setClosing] = useState(false);
   const [stage, setStage] = useState('#f1f1f1');
@@ -307,8 +348,7 @@ function ArtifactDrawer({
   const copyable =
     ['markdown', 'html', 'csv', 'text', 'n8n-workflow'].includes(kind ?? '') &&
     (ownedArtifactUrl(current.url) || localPreviewUrl(current.url));
-  const download =
-    current.downloadUrl && ownedArtifactUrl(current.downloadUrl) ? current.downloadUrl : null;
+
   const overlay = expanded || (pageWidth > 0 && pageWidth < minimumWidth + minimumChat + 40);
   const docked = Math.min(
     Math.max(width ?? Math.round(pageWidth * 0.5), minimumWidth),
@@ -350,14 +390,20 @@ function ArtifactDrawer({
     };
   }, []);
   useEffect(() => {
-    root.current?.focus({ preventScroll: true });
-  }, []);
+    if (visible) root.current?.focus({ preventScroll: true });
+  }, [visible]);
   useEffect(() => {
-    setDetail('');
+    root.current?.querySelectorAll<HTMLMediaElement>('audio,video').forEach((media) => {
+      if (!visible || media.closest('.artifact-retained[hidden]')) media.pause();
+    });
+  }, [current.id, visible]);
+  useEffect(() => {
     setMode('preview');
     setCopied(false);
+    setEditing(false);
+    setCopyError('');
     setClosing(false);
-  }, [current.id]);
+  }, [current.id, visible]);
   useEffect(() => {
     if (!copied) return;
     const timer = setTimeout(() => setCopied(false), 1600);
@@ -439,16 +485,20 @@ function ArtifactDrawer({
   }
   async function copy() {
     try {
-      const response = await fetch(current.url, { credentials: 'same-origin' });
-      if (!response.ok) return;
+      setCopyError('');
+      const response = await apiResponse(current.url);
+      if (!response.ok) throw new Error('The file could not be loaded.');
       await navigator.clipboard.writeText(await response.text());
       setCopied(true);
-    } catch {}
+    } catch {
+      setCopyError('Could not copy. Select the text or download the file.');
+    }
   }
   const meta = [fileType(current.name), detail, fileSize(current.size)].filter(Boolean).join(' · ');
   return (
     <aside
       ref={root}
+      hidden={!visible}
       className={`artifact-drawer${overlay ? ' is-overlay' : ''}${closing ? ' is-closing' : ''}`}
       style={overlay ? undefined : { width: docked, ['--artifact-width' as string]: `${docked}px` }}
       aria-label={current.name}
@@ -493,7 +543,23 @@ function ArtifactDrawer({
             className="artifact-drawer-glyph"
           />
           <div className="artifact-drawer-title">
-            <h2 title={current.name}>{current.name}</h2>
+            <h2 title={current.name} draggable onDragStart={(event) => fileDrag(event, current)}>
+              {items.length > 1 ? (
+                <select
+                  aria-label="Choose a file"
+                  value={current.id}
+                  onChange={(event) => onSelect(event.target.value)}
+                >
+                  {items.map((item) => (
+                    <option value={item.id} key={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                current.name
+              )}
+            </h2>
             <span>{meta}</span>
           </div>
           <div className="artifact-drawer-actions">
@@ -551,18 +617,20 @@ function ArtifactDrawer({
                 {copied ? <Check size={16} /> : <Copy size={16} />}
               </Button>
             )}
-            {download && (
-              <Button variant="ghost" size="icon" asChild>
-                <a
-                  href={download}
-                  download={current.name}
-                  aria-label={`Download ${current.name}`}
-                  title="Download"
+            <FileActions item={current} />
+            {['markdown', 'text'].includes(kind ?? '') &&
+              current.size <= 4000000 &&
+              ownedArtifactUrl(current.url) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditing((value) => !value)}
+                  aria-pressed={editing}
                 >
-                  <Download size={16} />
-                </a>
-              </Button>
-            )}
+                  Edit copy
+                </Button>
+              )}
+            {items.length > 1 && <ArtifactExport files={items} />}
             <Button
               variant="ghost"
               size="icon"
@@ -585,8 +653,25 @@ function ArtifactDrawer({
             </Button>
           </div>
         </header>
-        <div className="artifact-drawer-body" key={`${current.id}:${current.url}`}>
-          <ArtifactView item={current} mode={mode} stage={stage} onDetail={setDetail} />
+        {copyError && <p role="status">{copyError}</p>}
+        <div className="artifact-drawer-body">
+          {editing && (
+            <ArtifactEdit key={current.id} item={current} onClose={() => setEditing(false)} />
+          )}
+          {viewed.current.map((item) => (
+            <div
+              key={`${item.id}:${item.url}`}
+              hidden={editing || item.id !== current.id}
+              className="artifact-retained"
+            >
+              <RetainedArtifact
+                item={item}
+                mode={modesByFile.current.get(item.id) ?? 'preview'}
+                stage={stage}
+                report={reportDetail}
+              />
+            </div>
+          ))}
         </div>
       </div>
     </aside>
@@ -606,7 +691,11 @@ export function ArtifactWorkspace({
   const [drafts, setDrafts] = useState<ImagePreview[]>([]);
   const trigger = useRef<AttachmentTrigger | null>(null);
   const items = state?.source === 'drafts' ? drafts : files;
+  const retained = useRef<ImagePreview | null>(null);
   const current = state ? items.find((item) => item.id === state.id) : undefined;
+  if (current) retained.current = current;
+  const displayed =
+    current ?? (retained.current && items.find((item) => item.id === retained.current!.id));
   const open = useCallback((id: string, from?: AttachmentTrigger, source?: 'drafts') => {
     trigger.current = from ?? null;
     setState({ id, source });
@@ -623,11 +712,12 @@ export function ArtifactWorkspace({
     <ArtifactDrawerContext.Provider value={value}>
       <div className={className}>
         {children}
-        {current && (
+        {displayed && (
           <ArtifactDrawer
+            visible={Boolean(current)}
             items={items}
-            current={current}
-            onSelect={(id) => setState((value) => value && { ...value, id })}
+            current={displayed}
+            onSelect={(id) => setState({ id, source: state?.source })}
             onClose={close}
           />
         )}

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download } from './icons';
+import { FileActions, fileDrag } from './file-actions';
+import { desktopFileAction, desktopFilesAvailable } from '../lib/desktop';
 import type { Artifact, Message } from '../../shared/contracts';
 import { attachmentKind, fileSize, fileType } from '../lib/attachment-kind';
-import { Button } from './ui';
 import { FileGlyph } from './attachment-glyph';
 import { AudioPlayer } from './audio-player';
 import { SharedMessageCard } from './shared-message-card';
@@ -136,6 +136,11 @@ function DocumentCard({
     .join(' · ');
   return (
     <div
+      draggable
+      onDragStart={(event) => fileDrag(event, item)}
+      onPointerEnter={() => {
+        if (desktopFilesAvailable()) void desktopFileAction(item.id, 'prepare').catch(() => {});
+      }}
       className={`attachment-card is-${attachmentKind(mimeType, item.name) ?? 'file'}${selected ? ' is-selected' : ''}`}
     >
       <button
@@ -154,13 +159,7 @@ function DocumentCard({
         )}
         <CardDetails name={item.name} mimeType={mimeType} meta={meta} />
       </button>
-      {item.downloadUrl && ownedArtifactUrl(item.downloadUrl) && (
-        <Button variant="ghost" size="icon" className="attachment-card-download" asChild>
-          <a href={item.downloadUrl} download={item.name} aria-label={`Download ${item.name}`}>
-            <Download size={16} />
-          </a>
-        </Button>
-      )}
+      <FileActions item={item} />
     </div>
   );
 }

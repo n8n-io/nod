@@ -4710,3 +4710,30 @@ test(
     }
   },
 );
+
+test('chat draft recovery isolates owners and excludes private verification replies', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 10000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('', { url: 'https://nod.fixture.invalid' });
+      globalThis.localStorage = dom.window.localStorage;
+      const { readChatDraft, writeChatDraft } = await import('./src/web/lib/chat-draft.ts');
+      const draft = { text: 'Budget is 1450', reply: { id: 'synthetic-source', role: 'assistant', text: 'A quoted passage' }, attachments: [], missing: ['report.pdf'] };
+      assert.equal(writeChatDraft('owner-a.thread-a', draft), true);
+      assert.deepEqual(readChatDraft('owner-a.thread-a'), draft);
+      assert.equal(readChatDraft('owner-b.thread-a'), null);
+      assert.equal(readChatDraft('owner-a.thread-b'), null);
+      writeChatDraft('owner-a.thread-a', { ...draft, text: 'The code is 731408' }, true);
+      assert.equal(readChatDraft('owner-a.thread-a'), null);
+      writeChatDraft('owner-a.thread-a', { ...draft, text: '731408' });
+      assert.equal(readChatDraft('owner-a.thread-a'), null);
+      writeChatDraft('owner-a.thread-a', draft);
+      writeChatDraft('owner-a.thread-a', null);
+      assert.equal(readChatDraft('owner-a.thread-a'), null);
+      dom.window.close();
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});

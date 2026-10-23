@@ -91,6 +91,7 @@ export async function initializeDatabase() {
       stream_id text, reaction text, assistant_reaction text, assistant_reacted_at timestamptz,
       reaction_revision integer NOT NULL DEFAULT 0, reply_to_message_id uuid REFERENCES messages(id)
     );
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_quote text;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS suggestions jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_channel text;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS handoff_browser_id text;

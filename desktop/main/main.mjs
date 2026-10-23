@@ -33,6 +33,7 @@ import {
 } from './notifications.mjs';
 import { createAppPreferencesStore } from './app-preferences.mjs';
 import { createChatReadCursorStore } from './chat-read-cursors.mjs';
+import { registerArtifactFileHandlers } from './artifact-file-handlers.mjs';
 import { saveArtifactDownload } from './downloads.mjs';
 import { createDesktopLifecycle } from './lifecycle.mjs';
 import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
@@ -1653,6 +1654,13 @@ else {
         ]),
       );
       refreshUpdateMenu();
+      registerArtifactFileHandlers({
+        isEngine,
+        origin: () => engineOrigin,
+        token: () => authToken,
+        window: () => engineWindow,
+        icon: join(desktopRoot, 'assets/nod-macos.png'),
+      });
       ipcMain.handle('nod:renderer-ready', (event) => {
         const window = isSetup(event)
           ? setupWindow

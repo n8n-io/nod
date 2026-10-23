@@ -116,6 +116,7 @@ async function patchSchedule(id: string, body: Record<string, unknown>) {
     items ? items.map((entry) => (entry.id === id ? { ...entry, ...saved } : entry)) : items,
   );
   void pageDataCache.refresh(path, true);
+  return saved;
 }
 
 type Toast = { id: number; text: string; failed?: boolean; undo?(): void };
@@ -127,6 +128,13 @@ function showToast(value: Toast | null) {
 }
 
 export function PlanToast() {
+  const [held, setHeld] = useState(false);
+  const [visible, setVisible] = useState(() => document.visibilityState === 'visible');
+  useEffect(() => {
+    const change = () => setVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', change);
+    return () => document.removeEventListener('visibilitychange', change);
+  }, []);
   const value = useSyncExternalStore(
     (listener) => {
       toastListeners.add(listener);
@@ -136,15 +144,23 @@ export function PlanToast() {
     () => null,
   );
   useEffect(() => {
-    if (!value) return;
+    if (!value || held || !visible) return;
     const timer = setTimeout(() => {
       if (toast?.id === value.id) showToast(null);
     }, 6000);
     return () => clearTimeout(timer);
-  }, [value]);
+  }, [value, held, visible]);
   useEffect(() => () => showToast(null), []);
   return (
-    <div className="plan-toast">
+    <div
+      className="plan-toast"
+      onPointerEnter={() => setHeld(true)}
+      onPointerLeave={() => setHeld(false)}
+      onFocus={() => setHeld(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setHeld(false);
+      }}
+    >
       {value && (
         <Notice kind={value.failed ? 'error' : 'success'}>
           <span>{value.text}</span>
@@ -175,15 +191,15 @@ export function useDirectChange(id: string) {
   ) {
     setBusy(true);
     try {
-      await patchSchedule(id, body);
+      const saved = await patchSchedule(id, body);
       showToast({
         id: Date.now(),
         text: note,
         ...(undo
           ? {
               undo: () =>
-                void patchSchedule(id, undo).catch((cause) =>
-                  showToast({ id: Date.now(), text: errorMessage(cause), failed: true }),
+                void patchSchedule(id, { ...undo, expectedRevision: saved.revision }).catch(
+                  (cause) => showToast({ id: Date.now(), text: errorMessage(cause), failed: true }),
                 ),
             }
           : {}),
@@ -282,6 +298,50 @@ export function ScheduleTiming({
   const [draft, setDraft] = useState(initial);
   const [error, setError] = useState('');
   const timeZoneLabel = useId();
+  const [nextRun, setNextRun] = useState<string | null>(schedule.nextRun);
+  const [previewError, setPreviewError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      try {
+        const body = {
+          timeZone: draft.timeZone,
+          ...(schedule.kind === 'once'
+            ? { runAt: scheduleRunAt(draft.date, draft.time, draft.timeZone) }
+            : {
+                cron: scheduleExpression(
+                  draft.frequency,
+                  draft.time,
+                  draft.day,
+                  schedule.cron ?? undefined,
+                ),
+              }),
+        };
+        void api<{ nextRun: string | null }>(`/api/schedules/${schedule.id}/preview`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        })
+          .then((result) => {
+            setNextRun(result.nextRun);
+            setPreviewError('');
+          })
+          .catch((cause) => {
+            if (!controller.signal.aborted) {
+              setNextRun(null);
+              setPreviewError(errorMessage(cause));
+            }
+          });
+      } catch {
+        setNextRun(null);
+        setPreviewError('Choose a valid date and time.');
+      }
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [draft, schedule.id, schedule.kind]);
   const dirty = Object.keys(initial).some(
     (key) => draft[key as keyof typeof draft] !== initial[key as keyof typeof initial],
   );
@@ -296,6 +356,14 @@ export function ScheduleTiming({
     <form
       className="schedule-timing"
       aria-label={`Timing for ${schedule.title}`}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && !change.busy) {
+          event.preventDefault();
+          event.stopPropagation();
+          setDraft(initial);
+          setError('');
+        }
+      }}
       onSubmit={(event) => {
         event.preventDefault();
         if (!dirty || change.busy) return;
@@ -410,6 +478,22 @@ export function ScheduleTiming({
         <p className="field-hint">Months without this day are skipped.</p>
       )}
       {error && <Notice>{error}</Notice>}
+      {nextRun && (
+        <p className="field-hint" role="status">
+          {schedule.enabled ? 'Next run:' : 'Next run if enabled:'}{' '}
+          {new Intl.DateTimeFormat(undefined, {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+            timeZone: draft.timeZone,
+          }).format(new Date(nextRun))}{' '}
+          ({draft.timeZone})
+        </p>
+      )}
+      {previewError && (
+        <p role="status" className="field-hint">
+          {previewError}
+        </p>
+      )}
       {dirty && (
         <div className="schedule-timing-actions">
           <Button

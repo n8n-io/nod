@@ -11,11 +11,15 @@ import { Button, Notice } from './ui';
 import { ownedArtifactUrl, type ImagePreview } from './attachment-images';
 import { FileGlyph } from './attachment-glyph';
 import { attachmentKind, fileSize, localPreviewable } from '../lib/attachment-kind';
+import { readChatDraft, writeChatDraft } from '../lib/chat-draft';
+import { readUiPreference, writeUiPreference } from '../lib/ui-preferences';
+import { artifactFromPreview } from './file-actions';
+import { ownedArtifactUrl as validArtifact } from '../lib/attachment-url';
 import { useArtifactDrawer } from './artifact-context';
 
 interface DraftAttachment {
   id: string;
-  file: File;
+  file?: File;
   state: 'queued' | 'uploading' | 'failed' | 'ready';
   error?: string;
   name: string;
@@ -28,11 +32,15 @@ interface DraftAttachment {
 
 export interface ComposerHandle {
   focus(): void;
+  upload(files: File[]): void;
 }
 
 export type ComposerSendResult = { sent: true } | { sent: false; restoreText: boolean };
 
 interface ComposerProps {
+  draftKey?: string;
+  privateReply?: boolean;
+  restoreReply?(reply: Pick<Message, 'id' | 'role' | 'text'> | null): void;
   ready: boolean;
   text: string;
   setText(value: string): void;
@@ -44,12 +52,37 @@ interface ComposerProps {
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { ready, text, setText, replyTo, clearReply, onSend, onStop, stopping = false },
+  {
+    ready,
+    text,
+    setText,
+    replyTo,
+    clearReply,
+    onSend,
+    onStop,
+    stopping = false,
+    draftKey,
+    restoreReply,
+    privateReply = false,
+  },
   ref,
 ) {
-  const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
+  const restored = useRef(draftKey ? readChatDraft(draftKey) : null);
+  const restoredOnce = useRef(false);
+  const [attachments, setAttachments] = useState<DraftAttachment[]>(
+    () =>
+      restored.current?.attachments.map((artifact) => ({
+        ...artifact,
+        artifact,
+        state: 'ready',
+      })) ?? [],
+  );
   const drawer = useArtifactDrawer();
   const [error, setError] = useState('');
+  const [sendWithEnter, setSendWithEnter] = useState(
+    () => readUiPreference('nod.send-with-enter') !== 'false',
+  );
+  const [removed, setRemoved] = useState<DraftAttachment | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const mounted = useRef(true);
@@ -102,7 +135,63 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (document.activeElement === document.body || form.current?.contains(document.activeElement))
       focus();
   }
-  useImperativeHandle(ref, () => ({ focus }), [editor]);
+  useImperativeHandle(ref, () => ({ focus, upload: (files) => upload(files, 'drop') }), [editor]);
+  useEffect(() => {
+    if (restoredOnce.current || !editor) return;
+    restoredOnce.current = true;
+    const saved = restored.current;
+    attachmentValues.current = attachments;
+    if (saved) {
+      if (!text) setText(saved.text);
+      if (!replyTo) restoreReply?.(saved.reply);
+      if (saved.missing.length) setError(`Attach these files again: ${saved.missing.join(', ')}`);
+      for (const item of saved.attachments)
+        void api<Artifact>(`${item.url}/metadata`)
+          .then((artifact) => {
+            if (mounted.current)
+              updateAttachments(
+                attachmentValues.current.map((value) =>
+                  value.id === item.id ? { ...value, artifact } : value,
+                ),
+              );
+          })
+          .catch(() => {
+            if (mounted.current) {
+              updateAttachments(attachmentValues.current.filter((value) => value.id !== item.id));
+              setError(`${item.name} is no longer available. Attach it again.`);
+            }
+          });
+    }
+  }, [editor]);
+  useEffect(() => {
+    if (draftKey && restoredOnce.current)
+      writeChatDraft(
+        draftKey,
+        {
+          text,
+          reply: replyTo,
+          attachments: attachments.flatMap((item) => (item.artifact ? [item.artifact] : [])),
+          missing: attachments.filter((item) => !item.artifact).map((item) => item.name),
+        },
+        privateReply,
+      );
+  }, [draftKey, text, replyTo, attachments, privateReply]);
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const item = (event as CustomEvent<ImagePreview>).detail;
+      if (
+        !item ||
+        !validArtifact(item.url) ||
+        attachmentValues.current.some((value) => value.id === item.id)
+      )
+        return;
+      const artifact = artifactFromPreview(item);
+      updateAttachments([...attachmentValues.current, { ...artifact, artifact, state: 'ready' }]);
+      focus();
+    };
+    window.addEventListener('nod:attach-artifact', receive);
+    return () => window.removeEventListener('nod:attach-artifact', receive);
+  }, [editor]);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -128,6 +217,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       URL.revokeObjectURL(item.previewUrl);
   }
   function removeAttachment(item: DraftAttachment) {
+    if (item.artifact) setRemoved(item);
     item.controller?.abort();
     if (item.controller) uploads.current.delete(item.controller);
     releasePreview(item);
@@ -145,6 +235,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         );
         try {
           const body = new FormData();
+          if (!item.file) throw new Error('Choose this file again.');
           body.append('file', item.file);
           const artifact = await api<Artifact>('/api/uploads', {
             method: 'POST',
@@ -196,9 +287,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   function upload(files: File[], method: 'picker' | 'drop' | 'paste') {
     if (!files.length) return;
     if (fileInput.current) fileInput.current.value = '';
-    if (files.some((file) => file.size > fileBytes)) {
-      setError(`Each file must be ${fileBytes / 1024 / 1024} MB or smaller.`);
-      return;
+    const rejected = files.filter((file) => file.size > fileBytes);
+    setError('');
+    if (rejected.length) {
+      setError(
+        `${rejected.map((file) => file.name).join(', ')} must be ${fileBytes / 1024 / 1024} MB or smaller. The other files were kept.`,
+      );
+      files = files.filter((file) => file.size <= fileBytes);
+      if (!files.length) return;
     }
     const first = files[0];
     captureAnalytics('nod_attachment_added', {
@@ -232,7 +328,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       };
     });
     updateAttachments([...attachmentValues.current, ...items]);
-    setError('');
     void queueUploads(items);
   }
   function restoreUnsent() {
@@ -253,6 +348,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const sequence = ++sends.current;
     pendingSends.current++;
     setError('');
+    if (draftKey) writeChatDraft(draftKey, null);
     editor.commands.clearContent();
     updateAttachments([]);
     focus();
@@ -279,6 +375,35 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     submit: () => void submit(),
     upload: (files, method) => void upload(files, method),
   };
+  useEffect(() => {
+    const drop = (event: DragEvent) => {
+      if (
+        event.defaultPrevented ||
+        !(event.target instanceof Element) ||
+        !event.target.closest('.chat-page') ||
+        event.target.closest('.artifact-drawer,.private-entry-panel,.browser-handoff')
+      )
+        return;
+      if (event.dataTransfer?.files.length) {
+        event.preventDefault();
+        upload(Array.from(event.dataTransfer.files), 'drop');
+      }
+    };
+    const over = (event: DragEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest('.chat-page') &&
+        event.dataTransfer?.types.includes('Files')
+      )
+        event.preventDefault();
+    };
+    window.addEventListener('drop', drop);
+    window.addEventListener('dragover', over);
+    return () => {
+      window.removeEventListener('drop', drop);
+      window.removeEventListener('dragover', over);
+    };
+  }, [editor]);
   const pendingUploads = attachments.filter((item) => !item.artifact).length;
   const images = useMemo(
     () =>
@@ -309,6 +434,29 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   return (
     <div className="composer-wrap">
       {error && <Notice>{error}</Notice>}
+      {removed && (
+        <Notice kind="info">
+          Attachment removed.{' '}
+          <button
+            type="button"
+            onClick={() => {
+              if (!attachmentValues.current.some((item) => item.id === removed.id))
+                updateAttachments([...attachmentValues.current, removed]);
+              setRemoved(null);
+              focus();
+            }}
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            aria-label="Dismiss attachment notice"
+            onClick={() => setRemoved(null)}
+          >
+            Dismiss
+          </button>
+        </Notice>
+      )}
       {replyTo && (
         <div className="reply-context composer-reply">
           <CornerUpLeft size={16} />
@@ -338,6 +486,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           if (event.dataTransfer.types.includes('Files')) event.preventDefault();
         }}
         onDropCapture={(event) => {
+          const internal = event.dataTransfer.getData('application/x-nod-artifact');
+          if (internal) {
+            event.preventDefault();
+            event.stopPropagation();
+            try {
+              window.dispatchEvent(
+                new CustomEvent('nod:attach-artifact', { detail: JSON.parse(internal) }),
+              );
+            } catch {}
+            return;
+          }
           if (!event.dataTransfer.files.length) return;
           event.preventDefault();
           event.stopPropagation();
@@ -432,10 +591,30 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <EditorContent editor={editor} />
         <EditorFormatting editor={editor} />
         <span className="sr-only" id="composer-keyboard-hint">
-          Enter to send. Shift or Alt plus Enter for a new line or list item.
+          {sendWithEnter
+            ? 'Enter to send. Shift or Alt plus Enter for a new line or list item.'
+            : 'Command or Control plus Enter to send. Enter for a new line.'}
         </span>
         <div className="composer-tools">
           <div className="composer-left">
+            <button
+              type="button"
+              className="composer-send-preference"
+              title={
+                sendWithEnter
+                  ? 'Enter sends. Select to use Enter for a new line.'
+                  : 'Enter adds a line. Command or Ctrl+Enter sends.'
+              }
+              aria-pressed={sendWithEnter}
+              onClick={() => {
+                const next = !sendWithEnter;
+                setSendWithEnter(next);
+                writeUiPreference('nod.send-with-enter', String(next));
+                focus();
+              }}
+            >
+              {sendWithEnter ? '↵ Send' : '⌘/Ctrl ↵ Send'}
+            </button>
             <input
               ref={fileInput}
               type="file"
@@ -463,8 +642,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 variant="ghost"
                 size="icon"
                 className="stop-button"
-                aria-label="Stop nod"
-                title="Stop"
+                aria-label="Stop all work"
+                title="Stop all work"
                 disabled={stopping}
                 onClick={onStop}
               >

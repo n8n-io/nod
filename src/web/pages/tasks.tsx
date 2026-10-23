@@ -23,6 +23,9 @@ import type {
   TaskStatus,
 } from '../../shared/contracts';
 import { taskHeadline, taskLabels } from '../../shared/task-status';
+import { InlineName } from '../components/inline-name';
+import { pageDataCache } from '../lib/page-data-cache';
+import { api } from '../lib/api';
 import { PageTitle } from '../components/page-title';
 import { AskNod, NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
 import { StatementValue } from '../components/statement-value';
@@ -202,6 +205,19 @@ export function TaskCard({
         </button>
       </h2>
       <div className="task-preview-body" id={`${headingId}-body`} hidden={!expanded}>
+        {expanded && (
+          <InlineName
+            value={task.title}
+            label="task title"
+            save={async (title) => {
+              await api(`/api/tasks/${task.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ title }),
+              });
+              await pageDataCache.refresh('/api/tasks', true);
+            }}
+          />
+        )}
         {!onReply && task.status === 'needs_you' && task.question && (
           <div className="task-preview-question">
             <MessageText text={task.question} />
@@ -329,7 +345,7 @@ export function TaskCard({
                 }
               }}
             >
-              {stopping ? 'Stopping…' : 'Stop'}
+              {stopping ? 'Stopping…' : 'Stop this task'}
             </Button>
           )}
         </div>
@@ -410,12 +426,23 @@ export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity
     setView(next);
   };
   const tabsId = useId();
+  const [interacting, setInteracting] = useState(false);
+  const stableOrder = useRef<string[]>([]);
   const open = (tasks.data ?? [])
-    .filter((task) => !closed(task))
+    .filter((task) => !closed(task) || (interacting && stableOrder.current.includes(task.id)))
     .sort(
       (a, b) =>
         order.indexOf(a.status) - order.indexOf(b.status) || b.updatedAt.localeCompare(a.updatedAt),
     );
+  if (interacting)
+    open.sort((a, b) => {
+      const position = (id: string) => {
+        const index = stableOrder.current.indexOf(id);
+        return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+      };
+      return position(a.id) - position(b.id);
+    });
+  else stableOrder.current = open.map((task) => task.id);
   const upcoming = (schedules.data ?? [])
     .filter((schedule) => schedule.enabled && schedule.nextRun)
     .sort((a, b) => a.nextRun!.localeCompare(b.nextRun!) || a.id.localeCompare(b.id));
@@ -457,7 +484,17 @@ export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity
     previous: null,
   };
   return (
-    <div className="content-page secondary-page tasks-page">
+    <div
+      className="content-page secondary-page tasks-page"
+      onPointerEnter={() => setInteracting(true)}
+      onPointerLeave={() => {
+        if (!document.activeElement?.closest('.tasks-page')) setInteracting(false);
+      }}
+      onFocus={() => setInteracting(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setInteracting(false);
+      }}
+    >
       <PlanToast />
       <header className="page-heading secondary-heading">
         <PageTitle path="/tasks" />

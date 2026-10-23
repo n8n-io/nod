@@ -8,6 +8,7 @@ import TaskItem from '@tiptap/extension-task-item';
 import { Fragment, Slice } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
 import { safeMessageLink } from './message-links';
+import { readUiPreference } from './ui-preferences';
 import { ComposerUnderline } from './composer-underline';
 
 export function clipboardFiles(clipboard: DataTransfer): File[] {
@@ -136,6 +137,13 @@ export function createComposerExtensions(callbacks: {
                   return editor.commands.setHardBreak();
                 }
                 if (callbacks.mode === 'feedback' && !event.metaKey && !event.ctrlKey) return false;
+                if (
+                  callbacks.mode !== 'feedback' &&
+                  readUiPreference('nod.send-with-enter') === 'false' &&
+                  !event.metaKey &&
+                  !event.ctrlKey
+                )
+                  return false;
                 event.preventDefault();
                 callbacks.submit();
                 return true;

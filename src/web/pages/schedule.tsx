@@ -16,6 +16,7 @@ import {
   useDirectChange,
 } from '../components/plan-controls';
 import { Button } from '../components/ui';
+import { InlineName } from '../components/inline-name';
 import { money } from '../lib/money';
 
 const historyPath = '/api/schedule-runs?limit=20';
@@ -38,7 +39,13 @@ export function ScheduleRow({
   return (
     <article className="saved-plan">
       <div className="saved-plan-title">
-        <h2>{schedule.title}</h2>
+        <h2>
+          <InlineName
+            value={schedule.title}
+            label="schedule title"
+            save={(title) => change.apply({ title }, 'Title updated.', { title: schedule.title })}
+          />
+        </h2>
         <span className="saved-plan-status">
           {!schedule.enabled ? 'Paused' : schedule.kind === 'once' ? 'One time' : 'Recurring'}
         </span>

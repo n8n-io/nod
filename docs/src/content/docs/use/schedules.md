@@ -65,6 +65,10 @@ Work nod starts on its own reads and drafts. It sends, deletes or changes someth
 
 The first time nod messages you about something on its own, such as a calendar change, it sends a short second message to say it will keep doing this. When that first message asks you something, the line goes in it, before the question, so a short reply still answers the question. Tell it to stop or to do less at any time. After a one-off job that will come up again, such as this week's top posts or a reply to a client, nod offers once, in its own message, to keep doing it, unless a schedule already covers it. It sets nothing up until you say yes. When you act on something background work brought you, such as asking nod to reply, and it will come up again, nod offers once to do it without asking next time.
 
+## Edit schedule details
+
+Select a schedule title to rename it in place. Timing changes show the next run from the same schedule engine that runs the job. The preview does not change the saved schedule. Save applies the change. Undo restores its previous timing only if no newer change has replaced it. The Undo notice stays available while you hover over it, focus it, or switch away from nod.
+
 ## Quiet hours
 
 Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → General → Quiet hours**.

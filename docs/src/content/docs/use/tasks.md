@@ -50,6 +50,10 @@ Open a task preview and select **Stop** to stop that task and its helpers. Other
 
 A task checks in when its spending since your last message to it passes the amount you set in **Usage**, $5 by default, and asks whether to keep going. See [Task check-ins](/use/spending/#task-check-ins).
 
+## Rename a task
+
+Open its preview and select its title in the details. Change the display name, then select **Save**. The task goal and original request stay the same. **Cancel** or Escape discards the edit.
+
 ## Inspect task activity
 
 On the **Tasks** page, open a preview and select **Show activity**. The details show planned steps, nod's steps and messages, and the tool and helper steps between them, such as _Searched the web_ or _Gmail: send email_. Select **Show in chat** to return to the task's message.

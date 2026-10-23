@@ -1473,6 +1473,7 @@ async function initializeApplication(
     activity: activity.current,
     planningTasks: onboardingSuggestions.planning,
     receipts: ledger.receipts,
+    questionStates: approvals.states,
     computer,
     configuration: () =>
       configuration({

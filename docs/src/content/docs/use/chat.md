@@ -13,10 +13,18 @@ nod follows your conversation language, including questions, confirmations and c
 
 ## Send a message
 
-Type in the message box and press Enter. Press Shift+Enter for a new line.
+Type in the message box and press Enter. Press Shift+Enter for a new line. Select **↵ Send** in the composer to use Enter for a new line and Command/Ctrl+Enter to send.
 
-- **Attach files.** Select **Attach files**, paste an image or drop files on the box. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. nod gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
+- **Attach files.** Select **Attach files**, paste an image or drop files anywhere in the conversation. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. nod gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
 - **Reply to a message.** Hover over a message and select its arrow, or right-click inside the bubble, then select **Reply** or **Copy**. On touch screens, use the visible arrow. The time appears in the bottom-right corner of each bubble.
+
+Your unfinished draft stays on this device for your account and conversation. After a reload, nod restores its text, reply target, and available uploaded files. An interrupted upload needs the original file again. Private entry values and recognized verification replies are excluded. A file that exceeds the limit is rejected individually; other valid files stay attached. Removing an uploaded draft file offers **Undo**.
+
+Select a passage in a message, then **Reply to selection** to quote it. The quote stays separate from your own message. Select a reply quote to visit its source. **Return to where you were** restores your reading position. Copy controls on code blocks and tables copy only that block. Table content pastes into spreadsheet cells. Message Copy includes formatted text where the clipboard supports it. **Copy Markdown** copies the source text.
+
+Select **Find in conversation** to search stored messages in the current conversation. Search shows up to 50 recent matches. Select **Commands**, or press Command/Ctrl+K outside an editor, to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
+
+An action confirmation shows its current state beside the question. **Done** means the confirmed action finished. **Outcome unclear** means it failed or stopped after execution started. nod does not repeat it automatically.
 
 ## Keep talking while nod works
 

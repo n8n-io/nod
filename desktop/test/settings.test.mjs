@@ -4137,3 +4137,50 @@ test('native readiness notification waits for full runtime readiness and reaches
     });
   }
 });
+
+test('artifact exports keep owned bytes, safe names, separate saves and restricted opening', async () => {
+  const { createArtifactFiles, canOpenArtifact } = await import('../main/artifact-files.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'nod-artifact-contract-'));
+  let requests = 0;
+  const files = createArtifactFiles({
+    temporary: root,
+    downloads: join(root, 'Downloads'),
+    fetchArtifact: async () => {
+      requests++;
+      return new Response('synthetic PDF bytes', {
+        headers: {
+          'content-type': 'application/pdf',
+          'content-disposition': "attachment; filename*=UTF-8''..%2Freport.pdf",
+        },
+      });
+    },
+  });
+  const id = randomUUID();
+  try {
+    const [first, second] = await Promise.all([files.prepare(id), files.prepare(id)]);
+    assert.equal(first.path, second.path);
+    assert.equal(first.name, 'report.pdf');
+    assert.equal(requests, 1);
+    assert.equal(await readFile(first.path, 'utf8'), 'synthetic PDF bytes');
+    await files.save(id);
+    await files.save(id);
+    assert.equal(await readFile(join(root, 'Downloads/report.pdf'), 'utf8'), 'synthetic PDF bytes');
+    assert.equal(
+      await readFile(join(root, 'Downloads/report (1).pdf'), 'utf8'),
+      'synthetic PDF bytes',
+    );
+    await assert.rejects(files.prepare('../../private'), /unavailable/);
+    assert.equal(canOpenArtifact(first), true);
+    assert.equal(canOpenArtifact({ name: 'report.desktop', type: 'application/pdf' }), false);
+    assert.equal(canOpenArtifact({ name: 'report.pdf', type: 'text/html' }), false);
+    const absent = createArtifactFiles({
+      temporary: root,
+      downloads: root,
+      fetchArtifact: async () => new Response('', { status: 404 }),
+    });
+    await assert.rejects(absent.prepare(randomUUID()), /no longer available/);
+  } finally {
+    await files.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});

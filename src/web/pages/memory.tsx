@@ -237,7 +237,21 @@ function NoteDetail({
         {stageLabel[note.status]}
       </p>
       {mode === 'edit' ? (
-        <form className="memory-form" onSubmit={save}>
+        <form
+          className="memory-form"
+          onSubmit={save}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !busy) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!dirty) setMode('view');
+            }
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              event.currentTarget.requestSubmit();
+            }
+          }}
+        >
           <textarea
             className="input"
             value={text}
@@ -258,7 +272,21 @@ function NoteDetail({
         <h4 className="memory-text">{note.text}</h4>
       )}
       {mode === 'expires' ? (
-        <form className="memory-form" onSubmit={save}>
+        <form
+          className="memory-form"
+          onSubmit={save}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !busy) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!dirty) setMode('view');
+            }
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              event.currentTarget.requestSubmit();
+            }
+          }}
+        >
           <input
             className="input"
             type="date"
