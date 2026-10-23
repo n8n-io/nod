@@ -5,7 +5,9 @@ sidebar:
   order: 3
 ---
 
-nod has one conversation per owner. The main chat session coordinates work. Each independent task gets a saved session that reports to the same conversation. Short requests stay in the main chat.
+nod has one conversation per owner. The main chat session coordinates work. Each independent task gets a saved session that reports to the same conversation.
+
+Substantial work with several steps gets a task even when it can finish in one sitting. Quick answers, single lookups, brief summaries of supplied content and simple actions stay in the main chat unless they wait on someone or something, run alongside other jobs, or you ask nod to track them as tasks.
 
 ## The architecture
 

@@ -19,6 +19,9 @@ import { actionLink, vaultInvitation } from './communication.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import type { Turn } from './turn.ts';
 
+export const taskRouting =
+  'In the main chat, use task start for substantial work with several steps, such as researching and comparing several sources or options, making a report or other substantial deliverable, or completing a multi-step app or browser workflow. Do this even when the work can finish in one sitting. Also use a saved task for work that waits on someone or something, independent jobs that run alongside each other, and an explicit request to track work as a task. Keep quick answers, single lookups, brief summaries of supplied content and simple actions in chat. Judge the work by its goal, not the number of tool calls. Keep one coherent job in one task and reuse a related open task. The task start message is its acknowledgement; do not add a separate opening message for the same handoff.';
+
 export const personalActions = [
   'notification_preferences_get',
   'notification_preferences_update',
@@ -181,7 +184,7 @@ export const toolDefinitions = {
   ),
   send_message: defineTool(
     'send_message',
-    'Send a message to the user now. In a conversation or task, use it only when the user needs something before your answer, such as a blocker or a decision to make now, or to reply to a specific earlier message. In background runs, this is the only delivery: send only useful results or necessary questions. Do not repeat a sent message in the final answer.',
+    'Send a message to the user now. In a conversation or task, deliver a useful, verified partial result as soon as it is ready during longer work. Say what you found or completed and what remains. Also use it for an important change, a blocker, a decision, a reply to a specific earlier message, or a separate part of an answer when each message has a clear purpose. Keep related details together. Skip routine tool narration, repeated waiting updates and rapid series of small messages. In background runs, this is the only delivery: send only useful results or necessary questions. Do not repeat a sent message in the final answer.',
     Type.Object({
       text: Type.String(),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
@@ -443,7 +446,7 @@ export const toolDefinitions = {
   ),
   task: defineTool(
     'task',
-    'Start and control saved tasks. start {title,doneWhen,brief?,steps?,now,message} hands work that has to outlive this reply to its own saved session; message is what the user sees when it starts, one or two short sentences in their language on what you are starting, and in a chat app they reply to it to steer the task. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} keeps your own task current. finish {id,status,result} completes your task after you verify doneWhen, or cancels it with status cancelled. list returns open tasks. reply {ids} sends the exact current owner message to those open tasks. stop {id} stops one task from chat; stop {} stops all background work from chat: every task, scheduled run and app check, and closes open tasks. Schedules stay configured. A task session must use finish with status cancelled to stop itself. Task state grants no permission. nextCheck only reports a check scheduled with schedules.',
+    `Start and control saved tasks. ${taskRouting} start {title,doneWhen,brief?,steps?,now,message} gives the work its own saved session; message is what the user sees when it starts, one or two short sentences in their language on what you are starting, and in a chat app they reply to it to steer the task. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} keeps your own task current. finish {id,status,result} completes your task after you verify doneWhen, or cancels it with status cancelled. list returns open tasks. reply {ids} sends the exact current owner message to those open tasks. stop {id} stops one task from chat; stop {} stops all background work from chat: every task, scheduled run and app check, and closes open tasks. Schedules stay configured. A task session must use finish with status cancelled to stop itself. Task state grants no permission. nextCheck only reports a check scheduled with schedules.`,
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
       Type.Object(

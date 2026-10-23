@@ -1,0 +1,134 @@
+{
+  "data": "Synthetic only. No live model, connected account or recipient.",
+  "baseline": "e8579573",
+  "before": {
+    "serializer": "@tiptap/markdown 3.32.0",
+    "input": "https://example.com/__nod_e2e__/hotel?x=1&next=2",
+    "markdown": "https://example.com/\\_\\_nod\\_e2e\\_\\_/hotel?x=1&amp;next=2"
+  },
+  "focused": {
+    "command": "pnpm exec tsx --test tests/url-guards.test.ts",
+    "passed": 18,
+    "failed": 0,
+    "generatedStrings": 150,
+    "seed": 661
+  },
+  "browser": {
+    "components": ["Composer", "FeedbackEditor", "MessageText"],
+    "fixtures": ["fixture.html", "fixture.tsx"],
+    "viewports": [
+      {
+        "width": 1080,
+        "height": 900,
+        "theme": "light",
+        "horizontalOverflow": false,
+        "screenshot": "light.png"
+      },
+      {
+        "width": 390,
+        "height": 844,
+        "theme": "dark",
+        "horizontalOverflow": false,
+        "screenshot": "dark-narrow.png"
+      }
+    ],
+    "paragraphGaps": ["12px", "12px", "0px"],
+    "checks": {
+      "plainPaste": true,
+      "richHtmlPaste": true,
+      "boldLinkLabel": true,
+      "failedSendRecovery": true,
+      "secondSend": true,
+      "ipv6WithUnderscores": true,
+      "proseUrlAndCode": true,
+      "queryStrings": true,
+      "shiftEnterNoSend": true,
+      "feedbackLimitRefusesExtraText": true,
+      "typedIpv6Url": true,
+      "artifactLink": true
+    },
+    "limits": [
+      "API responses are synthetic.",
+      "Confirmation copy is an example. No live model wrote it.",
+      "The fixture does not prove a live account action or message delivery."
+    ]
+  },
+  "requiredChecks": {
+    "sourceCommit": "bf2417a967bc2a32a6d2023f3d9fecb728059a1f",
+    "check": "passed",
+    "integration": {
+      "passed": 623,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0
+    },
+    "build": "passed",
+    "docs": {
+      "pages": 54,
+      "internalLinks": "valid"
+    }
+  },
+  "demo": {
+    "pr": "https://github.com/n8n-io/nod/pull/445",
+    "recordedAfterPrOpened": true,
+    "sourceCommit": "b3d6377f14ba693b0a5461ff9c7441a66d30550d",
+    "file": "demo.mp4",
+    "durationSeconds": 25.3,
+    "bytes": 422498,
+    "sha256": "7217d2ff35890cca01c5459fded6bf70b4bfceda25c278342f7f7913767933bf",
+    "video": {
+      "codec_name": "h264",
+      "width": 1280,
+      "height": 628,
+      "avg_frame_rate": "30/1"
+    },
+    "viewedFramesAtSeconds": [0, 4, 8, 12, 16, 20, 24],
+    "scenes": [
+      "Readable confirmation paragraphs",
+      "Paste a URL",
+      "Failed send restores the draft",
+      "Second send preserves the link",
+      "Rich feedback paste preserves the label and destination",
+      "Literal code and an artifact link"
+    ],
+    "captionStyle": "The review caption stays visible while the page scrolls. Product component styles are unchanged.",
+    "audio": false,
+    "liveModel": false,
+    "syntheticData": true
+  },
+  "cadenceDemo": {
+    "file": "cadence-demo.mp4",
+    "desktopFile": "nod-cadence-and-parsing-demo.mp4",
+    "productSourceCommit": "976963f174404b876d041d8aa5a827f263594099",
+    "fixture": "cadence.tsx",
+    "fixtureSha256": "f7dbe3fe3c3b3e5f8919eec077a776478ef33665d64fafd13c7bdf010dd54f94",
+    "durationSeconds": 28.566667,
+    "video": {
+      "codec_name": "h264",
+      "width": 1278,
+      "height": 716,
+      "avg_frame_rate": "30/1"
+    },
+    "bytes": 743428,
+    "sha256": "c7b80effd19c712b83633b681cd3959a7cdc40b292d03b3f2c126045c864d283",
+    "reviewedFramesAtSeconds": [0, 4, 8, 12, 16, 20, 24, 27],
+    "checks": {
+      "realChatPage": true,
+      "activityVisibleWithMilestone": true,
+      "assistantMessages": 3,
+      "routineCheckAddsNoMessage": true,
+      "activityClearsAtEnd": true,
+      "chatAndArtifactHrefMatchInput": true,
+      "literalCodeMatchesInput": true,
+      "realArtifactPreview": true,
+      "composerFullyVisible": true,
+      "horizontalOverflow": false,
+      "fullVideoDecode": "passed"
+    },
+    "limits": [
+      "Assistant text and API responses are scripted and synthetic.",
+      "This does not measure live model behavior or perceived speed.",
+      "The short demo timings do not define a production message interval."
+    ]
+  }
+}

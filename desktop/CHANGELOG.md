@@ -2,6 +2,33 @@
 
 Releases from before the rename to nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.2.5 - 2026-10-23
+
+### Features
+
+- **tasks:** Stop all background work when the owner asks in chat. [#444](https://github.com/n8n-io/nod/pull/444) (f4b6e81)
+- **onboarding:** Redesign model selection as one provider card. [commit](https://github.com/n8n-io/nod/commit/f27fa1ce4be8b1ab1345bf68e19d8447af8aee9d) (f27fa1c)
+
+### Fixes
+
+- **chat:** Preserve links and keep replies readable. [commit](https://github.com/n8n-io/nod/commit/4014d5e879ace35b2f9bef7785254f1a3874a2b0) (4014d5e)
+- **channels:** Remove stale WhatsApp QR codes. [commit](https://github.com/n8n-io/nod/commit/55b8a2ff325d52539c9e7b88915ffefc6a521f0d) (55b8a2f)
+- **onboarding:** Address review feedback and leave out the playground. [commit](https://github.com/n8n-io/nod/commit/263eaa157a012bc124a1f53257707c5cf5f03ec4) (263eaa1)
+- **browser:** Make handoff explicit and show who has control. [commit](https://github.com/n8n-io/nod/commit/e85795732057dcdef93921043a7e0f53be0845a5) (e857957)
+- **models:** Repair the same account on sign-in and show connections that need reconnecting. [#442](https://github.com/n8n-io/nod/pull/442) (879a2cb)
+- **ci:** Mount desktop preload files in integration tests. [#441](https://github.com/n8n-io/nod/pull/441) (05d0ce9)
+- **feedback:** Keep reports sendable when diagnostics are incomplete. [#436](https://github.com/n8n-io/nod/pull/436) (6869b0f)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.2.4...4014d5e879ace35b2f9bef7785254f1a3874a2b0)
+
+<details>
+<summary>Build details</summary>
+
+Source: `4014d5e879ace35b2f9bef7785254f1a3874a2b0`
+Previous release: `nod-v0.2.4`
+
+</details>
+
 ## 0.2.4 - 2026-10-23
 
 ### Features

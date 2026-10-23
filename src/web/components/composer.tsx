@@ -6,6 +6,7 @@ import { fileBytes } from '../../shared/files';
 import { api, errorMessage } from '../lib/api';
 import { captureAnalytics } from '../lib/analytics';
 import { createComposerExtensions } from '../lib/composer-editor';
+import { composerMarkdown, parseComposerMarkdown } from '../lib/composer-markdown';
 import { EditorFormatting } from './editor-formatting';
 import { Button, Notice } from './ui';
 import { ownedArtifactUrl, type ImagePreview } from './attachment-images';
@@ -110,8 +111,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   );
   const editor = useEditor({
     extensions,
-    content: text,
-    contentType: 'markdown',
+    content: parseComposerMarkdown(text),
     immediatelyRender: false,
     editorProps: {
       attributes: {
@@ -123,7 +123,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       },
     },
     onUpdate: ({ editor: current }) => {
-      const value = current.getMarkdown();
+      const value = composerMarkdown(current.state.doc);
       lastText.current = value;
       setText(value);
     },
@@ -206,7 +206,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(() => {
     if (editor && text !== lastText.current) {
       lastText.current = text;
-      editor.commands.setContent(text, { contentType: 'markdown', emitUpdate: false });
+      editor.commands.setContent(parseComposerMarkdown(text), { emitUpdate: false });
     }
   }, [editor, text]);
   function updateAttachments(values: DraftAttachment[]) {
@@ -335,15 +335,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const items = unsent.current.splice(0).sort((a, b) => a.sequence - b.sequence);
     if (!items.length || !editor || editor.isDestroyed || !mounted.current) return;
     editor.commands.setContent(
-      [...items.map((item) => item.text), editor.getMarkdown()].filter(Boolean).join('\n\n'),
-      { contentType: 'markdown' },
+      parseComposerMarkdown(
+        [...items.map((item) => item.text), composerMarkdown(editor.state.doc)]
+          .filter(Boolean)
+          .join('\n\n'),
+      ),
     );
     updateAttachments([...items.flatMap((item) => item.attachments), ...attachmentValues.current]);
     restoreFocus();
   }
   async function submit() {
     if (!editor || !ready || attachmentValues.current.some((item) => !item.artifact)) return;
-    const sentText = editor.getMarkdown().trim();
+    const sentText = composerMarkdown(editor.state.doc).trim();
     const sentAttachments = attachmentValues.current;
     if (!sentText && !sentAttachments.length) return;
     const sequence = ++sends.current;

@@ -2,7 +2,7 @@
 
 This branch implements the interaction changes from the [assessment](ux-delighters-2026-10-23.md). It keeps the existing layout, colors, and type.
 
-The branch is `feat/native-ux-delighters`. Its base is `95796c6d` on `main`. The assessment describes an earlier source version. Task receipts, browser handoff recovery, account recovery, and Stop all work changed on `main` after that assessment. This branch keeps those changes.
+The branch is `feat/native-ux-delighters`. Its base is `8ab87eff` on `main`. The assessment describes an earlier source version. Task receipts, browser handoff recovery, account recovery, and Stop all work changed on `main` after that assessment. This branch keeps those changes.
 
 ## Scope
 

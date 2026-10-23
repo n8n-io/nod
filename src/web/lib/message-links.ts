@@ -6,7 +6,7 @@ import remarkRehype from 'remark-rehype';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
 import { SKIP, visit } from 'unist-util-visit';
-import { rehypeLocalLinks } from './markdown';
+import { rehypeLocalLinks, remarkLinkDestinations } from './markdown';
 import { isConnectionBridge } from './connection-url';
 import { appPagePath } from '../../shared/app-links';
 
@@ -122,6 +122,7 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
 const setupParser = unified()
   .use(remarkParse)
   .use(remarkGfm)
+  .use(remarkLinkDestinations)
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeRaw)
   .use(rehypeLocalLinks)

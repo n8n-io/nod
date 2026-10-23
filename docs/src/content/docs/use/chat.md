@@ -15,6 +15,10 @@ nod follows your conversation language, including questions, confirmations and c
 
 Type in the message box and press Enter. Press Shift+Enter for a new line. Select **↵ Send** in the composer to use Enter for a new line and Command/Ctrl+Enter to send.
 
+You can paste Markdown or formatted text. Chat, feedback and message display use the same CommonMark parser, with GitHub Flavored Markdown support. When you send a message or restore an unsent draft, the serializer preserves the meaning of text and links. Markdown can use escapes for literal characters. These escapes do not change the displayed text or a link's destination. Code stays literal, including text that looks like a link or a code fence.
+
+Use the formatting toolbar to underline text. Pasted `<u>text</u>` also keeps its underline. The old `++text++` shortcut stays literal under CommonMark.
+
 - **Attach files.** Select **Attach files**, paste an image or drop files anywhere in the conversation. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. nod gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
 - **Reply to a message.** Hover over a message and select its arrow, or right-click inside the bubble, then select **Reply** or **Copy**. On touch screens, use the visible arrow. The time appears in the bottom-right corner of each bubble.
 
@@ -32,7 +36,7 @@ You don't have to wait. The message box stays open while nod works. For work tha
 
 Reply to a task's message to continue that task. A message without a reply target goes to the main chat. If it clearly changes an existing task, nod sends your message to that task. If the target is unclear, nod asks which task you mean.
 
-nod does work it can finish now in the main chat, even when it takes several steps, such as reading your inbox and drafting replies. Work that has to outlive its answer gets a saved task session: it waits on someone or something, runs for a long stretch, or runs alongside other jobs. You can discuss other work while a task runs. Updates may wait for the current step to finish. Different tasks can continue in parallel. See [Track tasks](/use/tasks/).
+Quick answers, single lookups, brief summaries of supplied content and simple actions stay in the main chat. Substantial work with several steps gets a saved task session, even when it can finish in one sitting. Work that waits on someone or something, runs alongside other jobs, or that you ask nod to track also gets a task. You can discuss other work while a task runs. Updates may wait for the current step to finish. Different tasks can continue in parallel. See [Track tasks](/use/tasks/).
 
 ## Answer nod's questions
 

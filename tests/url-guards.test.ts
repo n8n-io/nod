@@ -6,6 +6,9 @@ import { crc32 } from 'node:zlib';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { JSDOM } from 'jsdom';
+import fc from 'fast-check';
+import { composerMarkdown, parseComposerMarkdown } from '../src/web/lib/composer-markdown.ts';
+import { createComposerExtensions } from '../src/web/lib/composer-editor.ts';
 import { createBrowserProxy, publicLookup } from '../src/providers/agent-browser/network.ts';
 import {
   createPublicLinkPreviewProvider,
@@ -25,6 +28,141 @@ import { messageSetupLinks, safeMessageLink, setupLink } from '../src/web/lib/me
 
 const origin = 'http://localhost:4310';
 const render = (text: string) => renderToStaticMarkup(createElement(MessageText, { text }));
+
+test('editor text and destinations survive send, display and repeated draft recovery', async () => {
+  const dom = new JSDOM('<!doctype html><div></div>', { url: origin });
+  const globals = [
+    'window',
+    'document',
+    'navigator',
+    'Node',
+    'HTMLElement',
+    'Element',
+    'MutationObserver',
+    'getComputedStyle',
+  ] as const;
+  const saved = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  for (const key of globals)
+    Object.defineProperty(globalThis, key, { value: dom.window[key], configurable: true });
+  const { Editor } = await import('@tiptap/core');
+  const editor = new Editor({ extensions: createComposerExtensions({ submit() {}, upload() {} }) });
+  const show = (value: string) => JSDOM.fragment(render(value));
+  const urls = [
+    'https://example.com/__nod_e2e__/hotel',
+    'https://example.com/a_b?q=one&next=two#part_three',
+    'https://example.com/a_(b)?items[]=x&items[]=y',
+    'https://example.com/a)b?q=one',
+    'https://example.com/?q=&copy;&value=%26amp%3B',
+    'https://example.com/?q=%E2%9C%93%20%2F%5C%26%23',
+    'https://example.com/日本語?q=smørrebrød',
+    'https://[2001:db8::1]/a_b?x=1&next=2',
+    'www.example.com/a_b?x=1&next=2',
+    '/api/artifacts/12345678-1234-1234-1234-123456789abc',
+    '/api/artifacts/file_name',
+  ];
+  try {
+    for (const value of urls) {
+      editor.commands.setContent({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: value }] }],
+      });
+      const serialized = composerMarkdown(editor.state.doc);
+      if (value.startsWith('https://')) assert.ok(serialized.includes(value), serialized);
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const shown = show(serialized);
+        assert.equal(shown.textContent, value);
+        assert.ok(shown.querySelector('a'), serialized);
+        assert.equal(
+          decodeURI(new URL(shown.querySelector('a')!.getAttribute('href')!, origin).href),
+          decodeURI(new URL(value.startsWith('www.') ? `http://${value}` : value, origin).href),
+        );
+        editor.commands.setContent(parseComposerMarkdown(serialized));
+        assert.equal(editor.getText(), value);
+        assert.equal(composerMarkdown(editor.state.doc), serialized);
+      }
+      editor.commands.setContent(parseComposerMarkdown(value));
+      assert.equal(editor.getText(), value);
+      assert.equal(show(composerMarkdown(editor.state.doc)).querySelector('a')!.textContent, value);
+    }
+    const literals = [
+      '<script>alert("example")</script>',
+      'C:\\work\\file_name.txt',
+      '&amp; &copy; &#x41; <tag> **literal** [x] \\ _ ~ `',
+      '++literal++ ~~literal~~ **literal** _literal_',
+      '# literal 1. literal > literal | literal',
+      ...fc.sample(
+        fc
+          .array(fc.constantFrom(...Array.from('abc_*/[]()<>\\`~!@#$%^&=+:;"\'|{}🙂é中')), {
+            maxLength: 80,
+          })
+          .map((characters) => 'x' + characters.join('') + 'z'),
+        { seed: 661, numRuns: 150 },
+      ),
+    ];
+    for (const value of literals) {
+      editor.commands.setContent({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: value }] }],
+      });
+      const serialized = composerMarkdown(editor.state.doc);
+      const shown = show(serialized);
+      assert.equal(shown.textContent, value, serialized);
+      assert.equal(shown.querySelector('script,iframe,img'), null);
+      editor.commands.setContent(parseComposerMarkdown(serialized));
+      assert.equal(editor.getText(), value, serialized);
+      assert.equal(composerMarkdown(editor.state.doc), serialized);
+    }
+    const code =
+      'const url = "https://example.com/a_b?x=1&y=2";\n```\n# literal <tag> &copy;\n````\nend';
+    editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'codeBlock', content: [{ type: 'text', text: code }] }],
+    });
+    const serialized = composerMarkdown(editor.state.doc);
+    assert.equal(show(serialized).querySelector('code')!.textContent, code + '\n');
+    editor.commands.setContent(parseComposerMarkdown(serialized));
+    assert.equal(editor.state.doc.firstChild!.textContent, code);
+    assert.equal(composerMarkdown(editor.state.doc), serialized);
+    for (const source of [
+      '[A *label*](<https://example.com/a)b?q=&amp;copy;> "A \\"title\\"")',
+      '[Reference][target]\n\n[target]: https://example.com/a_b?x=1&y=2 "Reference"',
+      '# Heading\n\n- first\n- second\n  - nested\n\n3. third\n4. fourth\n\n- [ ] pending\n- [x] done',
+      '| Name | Value |\n| --- | --- |\n| literal \\| pipe | `a_b` |',
+      '<u>Underlined **bold** and *italic*</u> and `code with `` ticks`',
+      '<u>First <u>nested</u> last</u>',
+      '[`file_name`](/api/artifacts/12345678-1234-1234-1234-123456789abc)',
+      '| One | Two |\n| --- | --- |\n| first<br>second | <u>value</u> |',
+    ]) {
+      editor.commands.setContent(parseComposerMarkdown(source));
+      const serialized = composerMarkdown(editor.state.doc);
+      const expected = show(source);
+      const actual = show(serialized);
+      assert.equal(actual.textContent, expected.textContent, serialized);
+      assert.deepEqual(
+        [...actual.querySelectorAll('a')].map((a) => a.getAttribute('href')),
+        [...expected.querySelectorAll('a')].map((a) => a.getAttribute('href')),
+      );
+      editor.commands.setContent(parseComposerMarkdown(serialized));
+      assert.equal(composerMarkdown(editor.state.doc), serialized);
+    }
+    for (const url of ['https://[2001:db8::1]/__notes__?x=1&next=2', ...urls.slice(0, 7)]) {
+      const source = `Read ${url} next.\n\n\`${url}\``;
+      editor.commands.setContent(parseComposerMarkdown(source));
+      const shown = show(composerMarkdown(editor.state.doc));
+      assert.equal(shown.querySelector('a')!.getAttribute('href'), url);
+      assert.equal(shown.querySelectorAll('a').length, 1);
+      assert.equal(shown.querySelector('code')!.textContent, url);
+    }
+  } finally {
+    editor.destroy();
+    dom.window.close();
+    globals.forEach((key, index) =>
+      saved[index]
+        ? Object.defineProperty(globalThis, key, saved[index]!)
+        : Reflect.deleteProperty(globalThis, key),
+    );
+  }
+});
 
 const addresses = async () => [{ address: '93.184.216.34', family: 4 }];
 const html = (text = '<title>Fixture page</title>') => ({

@@ -9,9 +9,9 @@ The **Tasks** page shows what nod is working on, what's scheduled and what's don
 
 Until there's something to show, the page helps you start instead. Select **something that takes a while** or **something that repeats** to ask nod in your own words or pick an idea. The views appear once nod has a task, a schedule or a past run.
 
-nod starts a saved task session for work that has to outlive its answer: work that waits on someone or something, runs for a long stretch, or runs alongside other jobs. The main chat stays available while the task runs. Work nod can finish now stays in chat, even when it takes several steps. There is no fixed limit of three tasks.
+nod starts a saved task session for substantial work with several steps, even when it can finish in one sitting. Research across several sources, comparisons, reports and app workflows can become tasks. Work that waits on someone or something, runs alongside other jobs, or that you ask nod to track also becomes a task. Quick answers, single lookups, brief summaries of supplied content and simple actions stay in chat. There is no fixed limit of three tasks.
 
-For example, "Compare these options and make a report" stays in chat. "Ask three venues for quotes and tell me when they've all replied" becomes a task. The task keeps its goal and history while you discuss other work.
+For example, "Compare these options and make a report" becomes a task. So does "Ask three venues for quotes and tell me when they've all replied". "What time is this meeting?" stays in chat. The main chat stays available while tasks work. Each task keeps its goal and history, and its start message is its acknowledgement.
 
 Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and owner memory. Each task has its own working folder and saved session. See [Task sessions](/how-it-works/task-sessions/) for the architecture.
 
@@ -36,7 +36,7 @@ Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and own
 | **Next check** | When nod will look again                                                                   |
 | **Done when**  | What finished looks like                                                                   |
 
-The same compact task preview appears in chat and on the Tasks page. It shows the title, status, current activity and, when steps are available, a segmented step bar. Select the preview to open its available steps and controls in place. Select it again to close the details. While a task works, its card and a bubble at the bottom of the chat show what it's doing and, while it browses, the website it's on, without posting messages. Inside the details, select **Show activity** to read nod's steps and messages, with its tool steps in between. This view does not show private model reasoning.
+The same compact task preview appears in chat and on the Tasks page. It shows the title, status, current activity and, when steps are available, a segmented step bar. Select the preview to open its available steps and controls in place. Select it again to close the details. While a task works, its card and a bubble at the bottom of the chat show its current activity and, while it browses, the website it is on. Useful, verified milestones also arrive as chat messages, with what is complete and what remains. Inside the details, select **Show activity** to read nod's steps and messages, with its tool steps in between. This view does not show private model reasoning.
 
 ![Two compact task previews in chat, one Working and one Needs you.](../../../assets/screens/task-sessions-chat.png)
 
