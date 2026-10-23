@@ -46,8 +46,6 @@ When you say yes to an app action, the server runs that saved action once, and t
 | A saved login that doesn't get through | nod checks the page and doesn't enter that login again in the task. The next try opens the private form, where you pick a login or type a new password |
 | A model request                        | A temporary provider error is retried up to three times                                                                                                |
 
-Provider lookups, such as listing accounts or tool schemas, may also retry at the HTTP level. These retries don't repeat a task or an app action.
-
 ## Stop and restarts
 
 **Stop** cancels running, queued and waiting tasks. A form or code you submit late can't restart them. Stop can't undo anything that already reached a website or app.

@@ -4,7 +4,7 @@
 </picture>
 
 <p align="center">
-  <a href="https://nod-docs.pages.dev"><img alt="Docs" src="https://img.shields.io/badge/docs-read_them-ff91ac?style=flat-square&labelColor=191919" /></a>
+  <a href="docs/README.md"><img alt="Docs" src="https://img.shields.io/badge/docs-read_them-ff91ac?style=flat-square&labelColor=191919" /></a>
   <a href="https://github.com/n8n-io/nod/releases"><img alt="Download" src="https://img.shields.io/badge/download-macOS_·_Windows-ff91ac?style=flat-square&labelColor=191919" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache_2.0-ff91ac?style=flat-square&labelColor=191919" /></a>
   <img alt="Status" src="https://img.shields.io/badge/status-early_preview-ff91ac?style=flat-square&labelColor=191919" />
@@ -73,7 +73,7 @@ You also need a model connection: an OpenAI, Anthropic or OpenRouter API key, an
 
 ## Read the docs
 
-Read the [documentation site](https://nod-docs.pages.dev). Its source lives in [`docs/`](docs/README.md); run it locally with `pnpm --dir docs dev`, or browse these pages in the repository:
+Read the docs for this revision in [`docs/`](docs/README.md). Run the site locally with `pnpm --dir docs dev`, or start with these pages:
 
 | Section                                                              | What's inside                                         |
 | -------------------------------------------------------------------- | ----------------------------------------------------- |
