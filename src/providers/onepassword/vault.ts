@@ -14,15 +14,10 @@ import {
 } from '../../ports/password-manager.ts';
 import { matchingWebsite } from './websites.ts';
 
-function failure(error: unknown) {
+function failure(reason: 'unavailable' | 'failed', error: unknown) {
   if (error instanceof PasswordManagerError) return error;
   const message = error instanceof Error ? error.message : String(error);
-  if (/native library is not available|desktop application not found/i.test(message))
-    return new PasswordManagerError(
-      'unavailable',
-      'nod can’t reach the 1Password app on this computer.',
-    );
-  return new PasswordManagerError('failed', `1Password: ${message.slice(0, 300)}`);
+  return new PasswordManagerError(reason, `1Password: ${message.slice(0, 300)}`);
 }
 
 function field(item: Item, id: string) {
@@ -56,15 +51,19 @@ export function onePasswordVault(version: string) {
   }
 
   async function use<T>(account: string, run: (op: Client) => Promise<T>) {
+    const open = () =>
+      client(account).catch((error: unknown) => {
+        throw failure('unavailable', error);
+      });
     try {
-      return await run(await client(account));
+      return await run(await open());
     } catch (error) {
-      if (!(error instanceof DesktopSessionExpiredError)) throw failure(error);
+      if (!(error instanceof DesktopSessionExpiredError)) throw failure('failed', error);
       clients.delete(account);
       try {
-        return await run(await client(account));
+        return await run(await open());
       } catch (retry) {
-        throw failure(retry);
+        throw failure('failed', retry);
       }
     }
   }

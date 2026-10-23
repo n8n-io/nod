@@ -249,7 +249,7 @@ test('the real 1Password helper runs in its own process and fails clearly withou
       (error: unknown) =>
         error instanceof PasswordManagerError &&
         error.reason === 'unavailable' &&
-        /1Password app/.test(error.message),
+        /^1Password: ./.test(error.message),
     );
   } finally {
     await manager.close();
