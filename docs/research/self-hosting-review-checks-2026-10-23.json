@@ -1,7 +1,6 @@
 {
   "date": "2026-10-23",
   "scope": "Disposable local Docker checks with synthetic data. No live models, messaging accounts, cloud VM or public certificate issuance.",
-  "base_commit": "09a619e580f0fb0a9edb0465a3f3bea0884f6252",
   "environment": "linux aarch64",
   "docker_engine": "28.5.1",
   "server_image_id": "sha256:a2d93cda6920dce502eccf25d88203eaf31a5645303ec8d954d56b9d30dc7b03",
@@ -44,5 +43,7 @@
   "documentation": {
     "build_pages": 59,
     "internal_links_valid": true
-  }
+  },
+  "image_source_commit": "09a619e580f0fb0a9edb0465a3f3bea0884f6252",
+  "deployment_configuration_commit": "25861df2dfd123104826d795b0582e37b8159d81"
 }
