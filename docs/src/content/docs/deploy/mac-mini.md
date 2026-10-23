@@ -25,7 +25,7 @@ The desktop app's local assistant and the self-hosting stack have separate data.
 
 For public access, use a domain and HTTPS as described in the [server guide](/deploy/self-host/). Your router must forward ports 80 and 443 to the Mac. Some home internet connections block incoming traffic or use carrier-grade NAT.
 
-For private access, use a VPN or an HTTPS reverse proxy you manage. Set `NOD_PUBLIC_URL` to the exact HTTPS address you open. Keep token authentication enabled on private networks too.
+For private access, open an [SSH tunnel](/deploy/self-host/#open-a-remote-server-without-a-domain) to the Mac, directly or over your VPN. Alternatively, run an [HTTPS reverse proxy](/deploy/self-host/#use-an-existing-proxy) reachable over the VPN and set `NOD_PUBLIC_URL` to its exact HTTPS origin. A VPN alone does not expose the stack's loopback port or provide the HTTPS required for a remote origin. Keep token authentication enabled on private networks too.
 
 The desktop app connects with the same server address and token as the web app. nod keeps working on the Mac mini after you close the app on your other device.
 

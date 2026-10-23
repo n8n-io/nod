@@ -35,6 +35,70 @@ import { createOtlpTelemetry } from '../src/providers/otlp/telemetry.ts';
 import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 import { runProcess } from '../src/providers/process.ts';
 
+test('server sign-in preserves the entered token until a session is confirmed and allows retry', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 10_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' });
+      Object.assign(globalThis, { window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true });
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { ServerAccess } = await import('./src/web/components/server-access.tsx');
+      const { createSessionStore } = await import('./src/web/lib/session.ts');
+      const requests = [];
+      globalThis.fetch = async (path, options) => {
+        assert.equal(path, '/api/access');
+        requests.push(JSON.parse(options.body));
+        return Response.json({ ok: true });
+      };
+      let result = 'outage';
+      const store = createSessionStore(async path => {
+        assert.equal(path, '/api/session');
+        if (result === 'outage') throw new Error('Synthetic session service outage');
+        if (result === 'malformed') return { invalid: true };
+        if (result === 'anonymous') return { user: null, settings: null,
+          capabilities: { developer: false, traces: false } };
+        return { user: { id: 'fixture', name: 'Fixture', email: null, avatarUrl: null },
+          settings: { theme: 'system', onboardingCompleted: false, usageData: false, traces: false },
+          capabilities: { developer: false, traces: false } };
+      }, () => {});
+      store.invalidate('', true);
+      const root = createRoot(document.querySelector('#root'));
+      try {
+        await act(async () => root.render(createElement(ServerAccess, { onConnected: store.refresh })));
+        const input = document.querySelector('input');
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(input, 'synthetic-token');
+          input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+        });
+        const submit = () => act(async () => document.querySelector('form').dispatchEvent(
+          new dom.window.Event('submit', { bubbles: true, cancelable: true })));
+        for (result of ['outage', 'malformed', 'anonymous']) {
+          await submit();
+          assert.equal(store.getSnapshot().locked, true);
+          assert.equal(input.value, 'synthetic-token');
+          assert.ok(document.querySelector('.notice'));
+        }
+        assert.equal(requests.length, 3);
+        result = 'connected';
+        await submit();
+        assert.equal(requests.length, 4);
+        assert.equal(store.getSnapshot().locked, false);
+        assert.equal(input.value, '');
+        assert.equal(document.querySelector('.notice'), null);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
 test('settings Escape preserves nested interactions and pending changes before returning to the prior page', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,

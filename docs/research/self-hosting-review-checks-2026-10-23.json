@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-23",
+  "scope": "Disposable local Docker checks with synthetic data. No live models, messaging accounts, cloud VM or public certificate issuance.",
+  "base_commit": "09a619e580f0fb0a9edb0465a3f3bea0884f6252",
+  "environment": "linux aarch64",
+  "docker_engine": "28.5.1",
+  "server_image_id": "sha256:a2d93cda6920dce502eccf25d88203eaf31a5645303ec8d954d56b9d30dc7b03",
+  "files_sha256": {
+    "deployment/self-host/compose.yaml": "a3ea1a2e473334734a1df18073eaab5c2ef21f3c9601c51d77f9af3914ee6672",
+    "deployment/self-host/.env.example": "c595bba205d78bd7d5b6b5e663af90871c9ac5272bdc96075f412d7ca4717413",
+    "deployment/self-host/setup.sh": "c7be860c0a4374d6d5423b060280c34959a9e2f022c6312b37f3184b473c597c",
+    "deployment/self-host/backup.sh": "aed79e6d892d50d98bd1ed9cc4974f13d65f161630ebbc665655e29691c9c92e",
+    "deployment/self-host/restore.sh": "6c672b4ae5d6b28d138929f63cccb6a4d0106c9fef9667fff3b7d387e59d22ed",
+    "deployment/self-host/Caddyfile": "4f54a3febe348a226e4ec8afeb03b2e66bc88df958891d10d84513ee5046d300",
+    "deployment/self-host/check.mjs": "a2c039350cf8071a2bfe957d76543575fc329193513d0e9f954608914a39df40"
+  },
+  "real_stack_check": {
+    "shell_port_override_and_derived_public_origin": true,
+    "bearer_cookie_host_origin_authentication": true,
+    "workspace_browser_bridge_secret_and_network_isolation": true,
+    "container_replacement_data_persistence": true,
+    "token_rotation_revokes_old_bearer_and_cookie": true,
+    "no_logged_secrets": true
+  },
+  "operations": {
+    "setup_rejects_all_shell_secret_overrides_before_writing": true,
+    "setup_preserves_existing_secrets_on_rejection": true,
+    "setup_preserves_existing_private_configuration": true,
+    "backup_rejects_shell_and_saved_env_file_overrides_before_mutation": true,
+    "backup_resumes_exact_previously_running_services": true,
+    "restore_rejects_shell_and_saved_env_file_overrides_before_mutation": true,
+    "failed_compose_validation_removes_only_new_configuration": true,
+    "existing_configuration_is_preserved": true,
+    "retry_after_config_failure_succeeds_and_leaves_services_stopped": true,
+    "database_and_four_volumes_roundtrip_with_ownership": true,
+    "disposable_containers_and_volumes_removed": true
+  },
+  "caddy": {
+    "caddy_profile_rejects_http_custom_port_and_ipv6": true,
+    "caddy_profile_starts_healthy_and_serves_tls_on_443": true,
+    "custom_https_origin_remains_accepted_without_profile": true,
+    "disposable_caddy_resources_removed": true
+  },
+  "documentation": {
+    "build_pages": 59,
+    "internal_links_valid": true
+  }
+}

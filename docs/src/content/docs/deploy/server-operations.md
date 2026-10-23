@@ -26,7 +26,7 @@ Start it again with `docker compose up -d --wait`. Don't use `docker compose dow
 
 ## Back up
 
-Wait for active work to finish. Keep your configuration in `.env`, remove shell overrides, and restart after configuration changes before making a backup.
+Wait for active work to finish. Keep your configuration in `.env`, remove shell overrides, and restart after configuration changes before making a backup. Backup and restore refuse `NOD_ENV_FILE` overrides in either the shell or saved configuration; they preserve the installation's `.env` only.
 
 Choose a new backup directory whose parent already exists:
 
@@ -85,6 +85,8 @@ Keep the original installation until you have checked the restore. The restore c
    For a public address, use `docker compose --profile https up -d --build --wait` instead.
 
 The restore command restores file ownership and the original Vault key. It stops PostgreSQL afterwards and leaves the assistant stopped until you start it.
+
+If configuration validation fails before data is restored, the command removes the newly created `.env` so you can correct the backup configuration and retry. A failure after restoration starts keeps the new project for inspection.
 
 Open nod with the saved token. Check conversation history, workspace files, model settings, and channel status. Check a saved credential through the private form without sending its value to chat. Review schedules before leaving the server running.
 

@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { apiResponse } from '../lib/api';
 import { Button, Field, Input, Notice } from './ui';
 
-export function ServerAccess({ onConnected }: { onConnected(): Promise<void> }) {
+export function ServerAccess({ onConnected }: { onConnected(): Promise<boolean> }) {
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -17,7 +17,6 @@ export function ServerAccess({ onConnected }: { onConnected(): Promise<void> }) 
         redirect: 'error',
         body: JSON.stringify({ key: key.trim() }),
       });
-      setKey('');
       if (!response.ok) {
         setError(
           response.status === 401
@@ -26,9 +25,9 @@ export function ServerAccess({ onConnected }: { onConnected(): Promise<void> }) 
         );
         return;
       }
-      await onConnected();
-    } catch {
+      if (!(await onConnected())) throw new Error('The server session could not be opened.');
       setKey('');
+    } catch {
       setError('Could not connect. Try again.');
     } finally {
       setBusy(false);

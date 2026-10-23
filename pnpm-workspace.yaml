@@ -1,5 +1,9 @@
 packages: []
 nodeLinker: hoisted
+overrides:
+  dompurify@3.4.16: 3.4.17
+  ip-address@10.7.2: 10.7.4
+  hono@4.13.9: 4.13.13
 allowBuilds:
   agent-browser: true
   esbuild: true

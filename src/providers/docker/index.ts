@@ -172,7 +172,7 @@ export function createCommandWorkspace(options: {
   const command = (id: string, args: string[], input: CommandInput = {}) =>
     supervise((signal) => options.runCommand(id, args, { ...input, signal }), input.signal);
   async function helper(id: string, program: string, request: unknown, input: CommandInput) {
-    const result = await command(id, ['python3', '-c', program], {
+    const result = await command(id, ['/usr/bin/python3', '-I', '-c', program], {
       ...input,
       input: JSON.stringify(request),
     });
@@ -221,7 +221,7 @@ export function createCommandWorkspace(options: {
     },
     async readArtifact(id, path, maxBytes) {
       threadIdentity(id);
-      if (!Number.isInteger(maxBytes) || maxBytes < 1)
+      if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
         throw new Error('The artifact size limit is invalid.');
       const base = `/workspace/${id}`;
       const target = posix.relative(base, workspaceFile(id, path));
@@ -238,12 +238,18 @@ export function createCommandWorkspace(options: {
         );
         const line = stdout.indexOf(10);
         const header = stdout.subarray(0, Math.max(line, 0)).toString();
-        if (line < 0 || (identity !== undefined && header !== identity))
+        if (line < 0 || line > 1024 || (identity !== undefined && header !== identity))
           throw new Error('The workspace file changed while it was read.');
         identity = header;
         size = Number(header.split(':')[2]);
         const data = stdout.subarray(line + 1);
-        if (!data.byteLength && offset < size)
+        if (
+          !Number.isSafeInteger(size) ||
+          size < 0 ||
+          size > maxBytes ||
+          data.byteLength > Math.min(artifactChunk, size - offset, maxBytes - offset) ||
+          (!data.byteLength && offset < size)
+        )
           throw new Error('The workspace file operation failed.');
         chunks.push(data);
         offset += data.byteLength;

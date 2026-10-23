@@ -33,6 +33,8 @@ A long reply arrives as several messages. If a file doesn't arrive, open nod to 
 
 Open **Channels** in the sidebar, then select **Connect** on Telegram or WhatsApp. nod checks your details before it saves them, and keeps them encrypted, outside the chat.
 
+On a self-hosted server, leave that channel's environment variables blank or unset to use this setup. A channel configured through the environment is server-managed: edit its settings in `.env` and restart the server.
+
 <Tabs syncKey="channel">
 <TabItem label="Telegram">
 
@@ -86,7 +88,9 @@ Cloud API mode needs a [self-hosted server](/deploy/self-host/) with public HTTP
 <details>
 <summary>Configure channels in .env instead</summary>
 
-On a source install or self-hosted server, set the `TELEGRAM_*` and `WHATSAPP_*` values in [Configuration](/deploy/configuration/#channels), then restart. The **Channels** page checks your details and pairs your account.
+On a source install or self-hosted server, set the `TELEGRAM_*` or `WHATSAPP_*` values in [Configuration](/deploy/configuration/#channels), then restart. Any nonempty value makes that channel server-managed. The **Channels** page cannot edit or remove its configuration, and Telegram pairing is unavailable. A managed WhatsApp QR connection still lets you scan or renew its QR code.
+
+To configure and pair the channel in the app, clear all its environment variables and restart. This restores any configuration previously saved through **Channels**.
 
 </details>
 

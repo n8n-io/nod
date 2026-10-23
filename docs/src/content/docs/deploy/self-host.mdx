@@ -39,7 +39,7 @@ Choose a [cloud server](/deploy/providers/) or prepare a [Mac mini](/deploy/mac-
    sh setup.sh
    ```
 
-   This creates a private `.env` with a server token, a Vault encryption key, and a database password. It preserves an existing `.env` and never prints the secrets.
+   This creates a private `.env` with a server token, a Vault encryption key, and a database password. It preserves an existing `.env` and never prints the secrets. Keep these secrets in `.env`; unset shell overrides before running setup or Compose.
 
 3. Build and start the stack.
 
@@ -49,7 +49,7 @@ Choose a [cloud server](/deploy/providers/) or prepare a [Mac mini](/deploy/mac-
 
    The first build downloads dependencies and browser tools. Later starts reuse the images. Keep the terminal open until the command completes.
 
-4. Open `http://localhost:4310`. Copy `NOD_AUTH_TOKEN` from `.env` into the access form. Finish onboarding to connect a model.
+4. If the server is on another computer, first [open an SSH tunnel](#open-a-remote-server-without-a-domain). Then open `http://localhost:4310` on your computer. For a same-computer install, open that address directly. Copy `NOD_AUTH_TOKEN` from the server's `.env` into the access form. Finish onboarding to connect a model.
 
 </Steps>
 
@@ -64,6 +64,8 @@ ssh -L 4310:127.0.0.1:4310 <user>@<server-address>
 ```
 
 Keep that connection open and visit `http://localhost:4310`. Leave `NOD_PUBLIC_URL` at its local default for this setup. The token is still required.
+
+To use another port, change `PORT` in `.env` and use that port in the tunnel and browser address. The default `NOD_PUBLIC_URL` follows `PORT`.
 
 ## Add public HTTPS
 
@@ -86,13 +88,13 @@ Keep that connection open and visit `http://localhost:4310`. Leave `NOD_PUBLIC_U
 
 </Steps>
 
-Caddy obtains and renews the certificate. Keep using `--profile https` when you operate this installation. If certificate setup fails, check DNS and whether the provider or router blocks ports 80 or 443.
+Caddy obtains and renews the certificate. This profile accepts a DNS or IPv4 host with HTTPS on port 443. Use an existing proxy for a different HTTPS port or an IPv6 URL. Keep using `--profile https` when you operate this installation. If certificate setup fails, check DNS and whether the provider or router blocks ports 80 or 443.
 
 The public URL must be an origin: scheme, hostname, and optional port. Paths, query strings, fragments, and embedded credentials are refused.
 
 ### Use an existing proxy
 
-You can use your own HTTPS reverse proxy instead of the HTTPS profile. Forward requests to the stack's loopback port `4310`.
+You can use your own HTTPS reverse proxy instead of the HTTPS profile, including an origin with a custom port such as `https://nod.example.com:8443`. Forward requests to the stack's loopback port `4310`, or the port you set in `PORT`.
 
 Preserve the public `Host` header and support WebSockets and streaming responses. Set `NOD_PUBLIC_URL` to that exact HTTPS origin. nod does not trust forwarded headers to decide which origin is allowed.
 
@@ -110,7 +112,7 @@ The app's local assistant is separate. Connecting does not migrate its data. To 
 
 ## Connect Telegram or WhatsApp
 
-Open **Channels** in nod and follow [Telegram and WhatsApp](/use/channels/). Both share the server's assistant.
+Open **Channels** in nod and follow [Telegram and WhatsApp](/use/channels/). Leave that channel's environment variables blank or unset to configure it in the app. Both share the server's assistant.
 
 - Telegram polling and the WhatsApp QR connection need outbound internet access. They can work without a public domain.
 - Telegram webhooks and Meta's WhatsApp Cloud API need a public HTTPS address.

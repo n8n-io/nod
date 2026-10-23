@@ -1,63 +1,89 @@
 ---
 title: Choose a cloud server
-description: Create a Linux server for nod on Google Cloud, AWS, or Oracle Cloud using a free trial or free tier.
+description: Choose a VPS for nod, compare Hetzner and DigitalOcean, and understand Railway trial limits.
 sidebar:
   order: 3
 ---
 
-Use a Linux virtual machine with Docker Engine and persistent disk storage. The same nod stack runs on each provider.
+Use a Linux virtual machine with Docker Engine and persistent disk storage. Hetzner and DigitalOcean can run the same nod stack as a Mac mini. Railway has a separate VM sandbox product worth considering for short experiments.
 
-Start with two CPU cores, 8 GB of memory, and 50 GB of disk. This is a starting size, not a measured minimum. Parallel browser tasks need more memory. Running a model on the same machine needs separate capacity.
+Start with two CPU cores, 8 GB of memory, and 50 GB of disk. This is a starting size, not a measured minimum. Browser tasks and local models can need more capacity.
 
-## Compare free offers
+## Choose a provider
 
-Offers checked on 2026-10-23. Eligibility, capacity, and terms can change. Verify the account's plan and remaining credit before creating a server.
+Offers checked on 2026-10-23. Verify eligibility, remaining credit, and the displayed price before creating resources. Model providers charge separately.
 
-| Provider     | Suggested test server                                                | Free offer                                                                                          | What happens when it ends                                        |
-| ------------ | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Google Cloud | `e2-standard-2`, Ubuntu 24.04, 50 GB persistent disk                 | Eligible new customers get US$300 for 90 days.                                                      | Resources stop unless you explicitly upgrade.                    |
-| AWS          | `m7i-flex.large`, Ubuntu 24.04, 50 GB EBS                            | Eligible new customers get US$100, with up to US$100 more through activities. Choose **Free plan**. | The account closes after six months or when its credits run out. |
-| Oracle Cloud | `VM.Standard.A1.Flex`, two OCPUs, 12 GB RAM, Ubuntu, 50 GB boot disk | Always Free allowance, subject to home-region capacity.                                             | No fixed expiry; idle instances can be reclaimed.                |
+| Provider                                                                      | Use it for                                                              | Free offer and limits                                                                                                                                      |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Hetzner Cloud](https://docs.hetzner.com/cloud/general/faq/)                  | A persistent VPS with control over Docker, storage, and firewall rules. | Paid hosting. Its referral-credit program has ended; don't rely on old free-credit links.                                                                  |
+| [DigitalOcean](https://docs.digitalocean.com/platform/billing/signup-credit/) | A persistent VPS, or a short test covered by signup credit.             | The first team receives US$5 for 90 days. A valid payment method is required before creating a Droplet. Credit does not make continued hosting free.       |
+| [Railway](https://docs.railway.com/pricing/free-trial)                        | A bounded VM experiment when capacity is available.                     | Anonymous VMs have 2 vCPU, 2 GB RAM, and a 60-minute build window. Registered trials receive US$5 for 30 days. VM lifecycle and memory limits still apply. |
 
-These are trial configurations, not a promise of unlimited free hosting. Model providers charge separately. Google Cloud's always-free `e2-micro` and the smallest free AWS instances have less memory than the starting size above.
+If you need a free-only test, confirm the credit before starting and delete resources before it runs out. Hetzner is not a free-trial option under the terms above.
 
-## Google Cloud
+## Hetzner Cloud
 
-1. Check [Free Trial eligibility](https://docs.cloud.google.com/free/docs/free-cloud-features). You must not have used the trial or previously paid for Google Cloud, Google Maps Platform, or Firebase.
-2. Create a trial billing account and a project for nod. Keep the account on the trial plan. Google requires a valid payment method for verification.
-3. Create a Compute Engine VM using Ubuntu 24.04 and [`e2-standard-2`](https://docs.cloud.google.com/compute/docs/general-purpose-machines#e2_machine_types), which has two vCPUs and 8 GB of memory. Attach a 50 GB persistent boot disk.
-4. For public access, allow inbound TCP ports 80 and 443. Restrict SSH to your address or use the provider's SSH access.
-5. Connect to the VM, [install Docker Engine and Compose](https://docs.docker.com/engine/install/ubuntu/), then follow [Host your own server](/deploy/self-host/).
+1. Create a project and add your SSH public key. Choose Ubuntu 24.04 on an AMD64 or ARM64 server with at least 8 GB RAM and 50 GB of disk.
+2. Check the price before creating it. [Hetzner bills allocated servers even when powered off](https://docs.hetzner.com/cloud/billing/faq/); removing a server and any separately allocated resources ends their charges.
+3. Add a cloud firewall allowing SSH from your address. For public HTTPS, also allow inbound TCP 80 and 443.
+4. Connect through SSH and [install Docker Engine with Compose](https://docs.docker.com/engine/install/ubuntu/).
+5. Follow [Host your own server](/deploy/self-host/). Open an SSH tunnel before local browser access, or configure a domain and HTTPS.
 
-The trial has limited quotas and cannot request quota increases. If a zone is full, try another zone within the available quota. Google documents these [quota limits](https://docs.cloud.google.com/compute/resource-usage).
+Use nod's [backup procedure](/deploy/server-operations/#back-up) to preserve the database, files, and keys together. Keep a copy outside the VM.
 
-## AWS
+## DigitalOcean
 
-1. Review [AWS Free plan](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/free-tier-plans.html), then choose **Free plan** during signup. An existing paid account has different billing rules.
-2. Launch an EC2 instance with Ubuntu 24.04 and [`m7i-flex.large`](https://aws.amazon.com/ec2/instance-types/m7i/), which has two vCPUs and 8 GiB of memory. Check that the image and instance show **Free tier eligible**.
-3. Add a 50 GB EBS boot volume. Compute, disk, public addresses, and traffic can consume trial credit; monitor the account's remaining credit.
-4. Create a security group allowing TCP 80 and 443 for public access, and SSH only from your address. Keep the database and Docker API closed.
-5. Connect with SSH, [install Docker Engine and Compose](https://docs.docker.com/engine/install/ubuntu/), then follow [Host your own server](/deploy/self-host/).
+1. Check the [signup credit](https://docs.digitalocean.com/platform/billing/signup-credit/) in the Control Panel. Older guides advertising a standard US$200 credit do not describe the current offer.
+2. [Create a Droplet](https://docs.digitalocean.com/products/droplets/how-to/create/) with Ubuntu 24.04, at least two vCPUs, 8 GB RAM, and 50 GB persistent disk. Add your SSH public key. Check the hourly price and any optional paid resources before creation.
+3. Add a cloud firewall allowing SSH from your address. For public HTTPS, also allow inbound TCP 80 and 443.
+4. Connect through SSH, [install Docker Engine with Compose](https://docs.docker.com/engine/install/ubuntu/), and follow [Host your own server](/deploy/self-host/).
+5. For a disposable test, export a backup and remove the Droplet and related resources before the credit expires or runs out.
 
-The current [EC2 free-tier rules](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-free-tier-usage.html) list `m7i-flex.large` as eligible for accounts created from 2025-07-15. An eligible label means credit can cover usage; it does not mean the VM runs indefinitely for free.
+The normal nod stack includes PostgreSQL. A managed database is optional and is not needed for this setup.
 
-## Oracle Cloud
+## Railway: understand the VM limits
 
-1. Review [Oracle Cloud Free Tier](https://www.oracle.com/cloud/free/faq/). Oracle permits one free account per person and requires a supported payment card for verification.
-2. Choose your home region carefully. Always Free compute and disk must be created there.
-3. Create an Ubuntu instance with `VM.Standard.A1.Flex`, two OCPUs, 12 GB RAM, and a 50 GB boot disk. Confirm the resources are **Always Free eligible**.
-4. Allow inbound TCP 80 and 443 in the network security group or subnet rules. Restrict SSH to your address. Check the VM's own firewall too.
-5. Connect with SSH, [install Docker Engine and Compose](https://docs.docker.com/engine/install/ubuntu/), then follow [Host your own server](/deploy/self-host/). This server uses ARM64.
+Railway's [Sandboxes](https://docs.railway.com/sandboxes) are Linux VMs, separate from its ordinary deployed services. They [include a Docker daemon and CLI](https://railway.com/changelog/2026-06-12-docker-in-sandboxes), so running sibling containers is possible. Deploying nod's server image as an ordinary Railway service alone does not create its Docker runtime, browser, or workspace.
 
-The current [Always Free allowance](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm) is 1,500 OCPU hours and 9,000 GB hours each month: two OCPUs and 12 GB continuously. Boot and block volumes share a 200 GB allowance. Older guides describing four OCPUs and 24 GB do not match the current documentation.
+Free and Trial Sandboxes are limited to two vCPUs and 2 GB RAM. They are destroyed after up to five idle minutes; only paid plans can disable that timeout. Active SSH, port-forwarding, or command sessions defer idle destruction. Background containers alone do not. Checkpoints preserve a disk snapshot, but they are not a replacement for a consistent database backup.
 
-Oracle can reclaim instances that meet its idle criteria over seven days. Capacity is not guaranteed. If the free shape is unavailable, try another availability domain or another provider. Keep an independent [backup](/deploy/server-operations/#back-up).
+Railway also offers an [anonymous VM](https://railway.com/free-vm):
+
+```sh title="Terminal"
+ssh railway.new
+```
+
+It requires no account or card, identifies you by your SSH key, and gives you 60 minutes to build. There is then a 24-hour window to claim the VM; unclaimed files are deleted. The preview URL is restricted to your IP until claimed. Availability is capacity-dependent. This is a separate trial flow: its page does not guarantee a disk size or list Docker among its installed tools.
+
+Before transferring nod, check the VM:
+
+```sh title="Remote terminal"
+df -h
+free -m
+docker version
+docker compose version
+```
+
+The current nod installation builds images from source. A 2 GB VM may run out of memory during those builds. For an experiment, prepare images on a machine with the same Linux architecture and transfer them privately with Docker's image export/import tools. After loading the images, use `docker compose up -d --no-build --wait`. Keep the server configuration and token private.
+
+Use a persistent VPS for an unattended assistant. Don't keep the only copy of your conversation, credentials, or files in a disposable trial VM. These Railway instructions describe the platform constraints; they do not establish a verified nod deployment there.
+
+## Other cloud accounts
+
+The same installation works on a conventional Ubuntu VM from another provider. If you already have an eligible trial, these are alternatives:
+
+| Provider                                                                                           | Suggested starting VM                                 | Trial terms                                                                                                                                      |
+| -------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [AWS Free plan](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/free-tier-plans.html) | Ubuntu 24.04, `m7i-flex.large`, 50 GB EBS.            | Eligible new customers receive US$100 plus up to US$100 through activities. Choose **Free plan**. It ends after six months or credit exhaustion. |
+| [Google Cloud](https://docs.cloud.google.com/free/docs/free-cloud-features)                        | Ubuntu 24.04, `e2-standard-2`, 50 GB persistent disk. | Eligible new customers receive US$300 for 90 days. Keep the trial plan; resources stop unless you upgrade.                                       |
+
+Check [EC2 free-tier eligibility](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-free-tier-usage.html) or [Google's machine sizes](https://docs.cloud.google.com/compute/docs/general-purpose-machines#e2_machine_types) before choosing a VM. Small always-free machines have less memory than the starting size above. An existing paid account follows different billing rules.
 
 ## Finish the network setup
 
-Point a domain's DNS record at the VM's public address and use HTTPS. Open only 80 and 443 for nod's proxy. Keep SSH restricted.
+For public access, point a domain at the VM and use [nod's HTTPS setup](/deploy/self-host/#add-public-https). Open only ports 80 and 443 for the proxy and keep SSH restricted. An SSH tunnel works without a domain.
 
-Docker warns that published container ports can bypass `ufw` rules. Use the provider firewall as well, and don't publish PostgreSQL, the browser, the workspace, or the Docker API. See [Docker's firewall limitations](https://docs.docker.com/engine/install/ubuntu/#firewall-limitations).
+Docker warns that published container ports can bypass `ufw` rules. Use the provider firewall too, and don't publish PostgreSQL, the browser, the workspace, or the Docker API. See [Docker's firewall limitations](https://docs.docker.com/engine/install/ubuntu/#firewall-limitations).
 
 Before a trial expires, export a backup and decide whether to move or keep the server. Stopping a VM can leave disks and addresses allocated. Follow the provider's removal flow when you finish a disposable test.
 

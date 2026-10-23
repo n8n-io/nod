@@ -104,7 +104,6 @@ function ConnectionSetup() {
     setError('');
     try {
       await desktop.saveConnection(local ? null : { url, token });
-      setToken('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Your connection could not be saved.');
     } finally {
@@ -160,7 +159,9 @@ function ConnectionSetup() {
           <button className="server-connect" type="submit" disabled={busy || loading}>
             {busy ? 'Connecting…' : 'Connect and restart app'}
           </button>
-          <p className="server-help">Your local assistant stays saved on this computer.</p>
+          <p className="server-help">
+            Your local chats and files are kept. You can switch back anytime.
+          </p>
           <div className="server-actions">
             <button
               type="button"

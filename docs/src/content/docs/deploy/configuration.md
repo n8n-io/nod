@@ -11,7 +11,7 @@ Configure a source install or self-hosted server through environment variables. 
 
 - A source install reads `.env` in the repository folder. Git ignores it. `pnpm start` creates it from `.env.example`, readable only by you.
 - The [self-hosting stack](/deploy/self-host/) has its own `.env` in `deployment/self-host/`. Keep it private and include it in your backup.
-- A variable set in your shell wins over the same variable in `.env`.
+- A variable set in your shell wins over the same variable in `.env`. For the self-hosting stack, keep `NOD_AUTH_TOKEN`, `NOD_VAULT_KEY`, and `NOD_POSTGRES_PASSWORD` in `.env` and unset shell overrides before setup or Compose.
 - nod reads settings when it starts. Restart nod after you change one.
 - Most things don't need a variable. You connect models, apps and channels in the app, and nod saves them encrypted.
 - The desktop app doesn't read `.env`. When connected to a server, it uses that server's configuration. Its server address and token are client settings.
@@ -38,7 +38,7 @@ flowchart LR
 | `NOD_PUBLIC_URL`          | The exact origin you open nod at. Remote origins require HTTPS and `NOD_AUTH_TOKEN`. No path, query, fragment, or user credentials. Loopback origins can use HTTP.   | `http://localhost:<PORT>`                           |
 | `NOD_PRIVACY_NOTICE_FILE` | A Markdown privacy notice served at `/privacy`.                                                                                                                      | No notice                                           |
 
-The access token grants full access to this server's assistant. Generate one with `openssl rand -hex 32`. Keep it separate from `NOD_VAULT_KEY`.
+The access token grants full access to this server's assistant. `setup.sh` generates it from 32 cryptographically random bytes. For manual setup, use `openssl rand -hex 32`; a long word or repeated character is not a secure token. Keep it separate from `NOD_VAULT_KEY`.
 
 Omit `NOD_AUTH_TOKEN` and `NOD_PUBLIC_URL` from a local source configuration when you don't set them. An explicitly empty value is invalid. The Docker setup fills both in.
 

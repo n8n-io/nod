@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
@@ -40,16 +40,17 @@ await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
 const port = listener.address().port;
 await new Promise((resolve) => listener.close(resolve));
 const origin = `http://localhost:${port}`;
+environment.PORT = String(port);
 const originalToken = randomBytes(32).toString('base64url');
 const password = randomBytes(32).toString('base64url');
 const vault = randomBytes(32).toString('base64');
+const example = await readFile(join(directory, '.env.example'), 'utf8');
 const writeEnvironment = (token) =>
   writeFile(
     envFile,
     [
+      example,
       `COMPOSE_PROJECT_NAME=${project}`,
-      `PORT=${port}`,
-      `NOD_PUBLIC_URL=${origin}`,
       `NOD_AUTH_TOKEN=${token}`,
       `NOD_POSTGRES_PASSWORD=${password}`,
       `NOD_VAULT_KEY=${vault}`,
@@ -112,7 +113,7 @@ try {
     (await request(undefined, { headers: { Cookie: cookie.split(';')[0] } })).status,
     200,
   );
-  console.log('Bearer, web cookie, and Host/Origin authentication passed.');
+  console.log('Shell PORT override, Bearer, web cookie, and Host/Origin authentication passed.');
   const runtimeAddress = (
     await command([
       'inspect',

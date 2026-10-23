@@ -133,9 +133,8 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
             </span>
           </Bubble>,
           <Bubble>
-            I run on <strong>your computer</strong> and work in{' '}
-            <strong>the apps you already use</strong>. Let’s get to know each other a bit first, so
-            I can really help.
+            I work in <strong>the apps you already use</strong>. Let’s get to know each other a bit
+            first, so I can really help.
           </Bubble>,
           <Bubble>
             I’m <strong>built to check with you before I send, post or delete</strong> anything you

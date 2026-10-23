@@ -13,6 +13,10 @@ for file in .env source-commit complete postgres.dump server-data.tar.gz workspa
   [ -f "$backup/$file" ] || { echo "Backup is missing $file." >&2; exit 1; }
 done
 [ "$(cat "$backup/complete")" = nod-self-host-backup-v1 ] || { echo 'Unsupported or incomplete backup.' >&2; exit 1; }
+if grep -Eq '^[[:space:]]*(export[[:space:]]+)?NOD_ENV_FILE[[:space:]]*=' "$backup/.env"; then
+  echo 'Restore requires the saved .env; remove NOD_ENV_FILE from the backup configuration.' >&2
+  exit 1
+fi
 if env | grep -Eq '^(NOD_AUTH_TOKEN|NOD_VAULT_KEY|NOD_POSTGRES_PASSWORD)='; then
   echo 'Unset shell secret overrides before restoring the saved .env.' >&2
   exit 1
@@ -40,17 +44,20 @@ docker image inspect "$helper_image" >/dev/null 2>&1 || docker pull "$helper_ima
   } > .env
 )
 export COMPOSE_PROJECT_NAME="$project"
-docker compose config --quiet
+if ! docker compose --file compose.yaml --env-file .env config --quiet; then
+  rm .env
+  exit 1
+fi
 cleanup() {
   result=$?
   trap - EXIT HUP INT TERM
-  docker compose stop postgres >/dev/null || result=1
+  docker compose --file compose.yaml --env-file .env stop postgres >/dev/null || result=1
   if [ "$result" -ne 0 ]; then
     echo 'Restore incomplete. The new project was kept for inspection; no assistant was started.' >&2
   else
     printf '%s\n' 'Restored into a new project. Review .env before starting nod.' \
-      'Start with: docker compose up -d --build --wait' \
-      'For public HTTPS: docker compose --profile https up -d --build --wait'
+      'Start with: docker compose --file compose.yaml --env-file .env up -d --build --wait' \
+      'For public HTTPS: docker compose --file compose.yaml --env-file .env --profile https up -d --build --wait'
   fi
   exit "$result"
 }
@@ -66,5 +73,5 @@ for volume in server-data workspace-data workspace-tools browser-data; do
     --mount "type=volume,src=${project}_$volume,dst=/data" \
     --entrypoint tar "$helper_image" -C /data --same-owner -xzf - < "$backup/$volume.tar.gz"
 done
-docker compose up -d --wait postgres
-docker compose exec -T postgres pg_restore --exit-on-error --no-owner --no-privileges -U nod -d nod < "$backup/postgres.dump"
+docker compose --file compose.yaml --env-file .env up -d --wait postgres
+docker compose --file compose.yaml --env-file .env exec -T postgres pg_restore --exit-on-error --no-owner --no-privileges -U nod -d nod < "$backup/postgres.dump"

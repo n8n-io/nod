@@ -116,6 +116,15 @@ export function managedChannelEnvironment(environment: Record<string, string | u
       )
     )
       throw new Error(`Invalid ${mode}.`);
+    if (provider === 'whatsapp' && values[enabled] === 'true' && values[mode] !== 'cloud') {
+      if (values.WHATSAPP_POLICY_CONFIRMED !== 'true')
+        throw new Error('Set WHATSAPP_POLICY_CONFIRMED=true before enabling linked WhatsApp.');
+      if (
+        (values[mode] === 'bot' || values.WHATSAPP_ALLOWED_NUMBER) &&
+        !/^\d{7,15}$/.test(values.WHATSAPP_ALLOWED_NUMBER ?? '')
+      )
+        throw new Error('WHATSAPP_ALLOWED_NUMBER must contain 7 to 15 digits.');
+    }
     if (provider === 'telegram' && values[mode] === 'polling')
       values.TELEGRAM_WEBHOOK_SECRET_TOKEN ||= randomBytes(32).toString('base64url');
     managed[provider] = values;

@@ -617,7 +617,7 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
     runCommand: async (_id, args, input) => {
       launches++;
       const request = JSON.parse(input.input!);
-      assert.ok([artifactWriteProgram, artifactReadProgram].includes(args[2]));
+      assert.ok([artifactWriteProgram, artifactReadProgram].includes(args.at(-1)!));
       request.base = f.directory;
       return f.run(args, { ...input, input: JSON.stringify(request) });
     },
@@ -710,8 +710,9 @@ test('self-hosted runtime limits Docker access to unprivileged execution in its 
     Privileged: false,
   };
   try {
-    for (const path of ['/containers/json', '/images/json', '/containers/create', '/info'])
-      assert.equal((await call(path, {})).status, 403, path);
+    for (const path of ['/containers/json', '/images/json', '/info'])
+      assert.equal((await call(path)).status, 403, path);
+    assert.equal((await call('/containers/create', {})).status, 403);
     for (const change of [
       { User: 'root' },
       { User: '0' },

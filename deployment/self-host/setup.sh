@@ -3,6 +3,10 @@ set -eu
 set -C
 cd "$(dirname "$0")"
 umask 077
+if env | grep -Eq '^(NOD_AUTH_TOKEN|NOD_VAULT_KEY|NOD_POSTGRES_PASSWORD)='; then
+  echo 'Keep server secrets in .env and unset shell overrides before running setup or Compose.' >&2
+  exit 1
+fi
 command -v docker >/dev/null 2>&1 || { echo 'Install Docker with Compose first.' >&2; exit 1; }
 docker compose version >/dev/null
 api=$(docker version --format '{{.Server.APIVersion}}')
@@ -24,5 +28,5 @@ else
   ) > .env
 fi
 chmod 600 .env
-docker compose config --quiet
-printf '%s\n' 'Ready. Run: docker compose up -d --build --wait' 'Open http://localhost:4310 and enter NOD_AUTH_TOKEN from .env.' 'For HTTPS, set NOD_PUBLIC_URL and run: docker compose --profile https up -d --build --wait'
+docker compose --file compose.yaml --env-file .env config --quiet
+printf '%s\n' 'Ready. Run: docker compose --file compose.yaml --env-file .env up -d --build --wait' 'Open the configured NOD_PUBLIC_URL and enter NOD_AUTH_TOKEN from .env. For a remote server, open an SSH tunnel first.' 'For HTTPS on port 443, set NOD_PUBLIC_URL and run: docker compose --file compose.yaml --env-file .env --profile https up -d --build --wait'

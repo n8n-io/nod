@@ -30,6 +30,10 @@ test('channel environment rejects ambiguous flags and disables explicitly config
     { WHATSAPP_POLICY_CONFIRMED: 'yes' },
     { TELEGRAM_MODE: 'unknown' },
     { WHATSAPP_MODE: 'unknown' },
+    { WHATSAPP_MODE: 'self-chat' },
+    { WHATSAPP_MODE: 'bot', WHATSAPP_POLICY_CONFIRMED: 'true' },
+    { WHATSAPP_MODE: 'bot', WHATSAPP_POLICY_CONFIRMED: 'true', WHATSAPP_ALLOWED_NUMBER: '123' },
+    { WHATSAPP_MODE: 'self-chat', WHATSAPP_POLICY_CONFIRMED: 'false' },
   ])
     assert.throws(() => managedChannelEnvironment(environment));
   const disabled = managedChannelEnvironment({

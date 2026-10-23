@@ -6,6 +6,10 @@ umask 077
 [ "$#" -eq 1 ] || { echo 'Usage: sh backup.sh /absolute/new-backup-directory' >&2; exit 1; }
 case "$1" in /*) ;; *) echo 'Use an absolute backup path.' >&2; exit 1 ;; esac
 [ -f .env ] || { echo 'This installation has no .env.' >&2; exit 1; }
+if grep -Eq '^[[:space:]]*(export[[:space:]]+)?NOD_ENV_FILE[[:space:]]*=' .env; then
+  echo 'Backup requires the installation .env; remove NOD_ENV_FILE from .env.' >&2
+  exit 1
+fi
 if env | grep -Eq '^(NOD_AUTH_TOKEN|NOD_VAULT_KEY|NOD_POSTGRES_PASSWORD)='; then
   echo 'Keep server secrets in .env and unset shell overrides before backing up.' >&2
   exit 1
@@ -14,10 +18,10 @@ if [ -n "${DATABASE_URL:-}" ] || grep -Eq '^[[:space:]]*(export[[:space:]]+)?DAT
   echo 'This backup command supports the bundled database only. Use your external database backup procedure.' >&2
   exit 1
 fi
-running=$(docker compose ps --status running --services)
+running=$(docker compose --file compose.yaml --env-file .env ps --status running --services)
 printf '%s\n' "$running" | grep -Fx postgres >/dev/null || { echo 'Start the bundled PostgreSQL service before backing up.' >&2; exit 1; }
 volume_for() {
-  container=$(docker compose ps --all --quiet "$1")
+  container=$(docker compose --file compose.yaml --env-file .env ps --all --quiet "$1")
   [ -n "$container" ] || { echo "Missing $1 container." >&2; exit 1; }
   volume=$(docker inspect --format "{{range .Mounts}}{{if eq .Destination \"$2\"}}{{.Name}}{{end}}{{end}}" "$container")
   [ -n "$volume" ] || { echo "Missing $1 data volume." >&2; exit 1; }
@@ -38,7 +42,7 @@ cleanup() {
   if [ "$stopped" = true ]; then
     for service in browser workspace server; do
       if printf '%s\n' "$running" | grep -Fx "$service" >/dev/null; then
-        docker compose start "$service" >/dev/null || result=1
+        docker compose --file compose.yaml --env-file .env start "$service" >/dev/null || result=1
       fi
     done
   fi
@@ -55,10 +59,10 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 stopped=true
-docker compose stop server browser workspace >/dev/null
+docker compose --file compose.yaml --env-file .env stop server browser workspace >/dev/null
 cp .env "$backup/.env"
 git -C ../.. rev-parse HEAD > "$backup/source-commit"
-docker compose exec -T postgres pg_dump -U nod -d nod --format=custom > "$backup/postgres.dump"
+docker compose --file compose.yaml --env-file .env exec -T postgres pg_dump -U nod -d nod --format=custom > "$backup/postgres.dump"
 archive_volume() {
   docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_OVERRIDE \
     --security-opt no-new-privileges:true --mount "type=volume,src=$1,dst=/data,readonly" \

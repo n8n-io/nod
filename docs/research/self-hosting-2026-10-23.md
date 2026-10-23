@@ -26,21 +26,61 @@ These are self-hosting comparators; their licenses and product scope differ. The
 - Use Docker Engine on Linux VMs and Docker Desktop on Mac. Publish AMD64 and ARM64 artifacts only after testing each architecture.
 - Prefer explicit updates to unattended migration. Verify backup and restore before claiming recoverability.
 
-## Free deployment candidates
+## OpenClaw and Hermes: concrete hosting lessons
 
-| Provider                                                                                                           | Relevant official terms                                                                                                                                                   | Proposed use                                                                                                                                        |
-| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Google Cloud](https://docs.cloud.google.com/free/docs/free-cloud-features)                                        | US$300 for 90 days for eligible new customers; identity/payment verification; no charge unless upgraded; resources stop at expiry.                                        | AMD64 Ubuntu VM using trial credit, initially `e2-standard-2`.                                                                                      |
-| [AWS Free plan](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/free-tier-plans.html)                 | US$100 on signup plus up to US$100 earned; no charges on Free plan; closes after six months or credit exhaustion.                                                         | AMD64 Ubuntu EC2; [`m7i-flex.large` is eligible](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-free-tier-usage.html) under current rules. |
-| [Oracle Always Free](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm) | Home-region allowance is 1,500 OCPU hours and 9,000 GB hours monthly, equivalent to two OCPUs and 12 GB; 200 GB boot/block storage; capacity and idle reclamation limits. | ARM64 Ubuntu `VM.Standard.A1.Flex` if capacity is available.                                                                                        |
+[OpenClaw's Docker setup](https://docs.openclaw.ai/install/docker) runs onboarding, generates its Gateway token, writes configuration, and starts Compose. Official versioned images avoid its documented 6 GB source-build requirement. A browser-equipped image removes a separate Chromium installation step. Its [VM runtime guide](https://docs.openclaw.ai/install/docker-vm-runtime) is shared by provider guides instead of duplicating installation logic.
 
-[Azure's free account](https://azure.microsoft.com/en-us/pricing/purchase-options/azure-account) is a fallback: US$200 for 30 days with spending protection, then an explicit paid upgrade to continue. Do not choose a paid account merely to work around trial ineligibility.
+Its [Railway guide](https://docs.openclaw.ai/install/railway) packages a Gateway and Control UI behind a generated HTTPS URL, with a token and persistent `/data` volume. It includes a read-only `doctor` check and backup/restore commands. This is a useful onboarding pattern, but not an equivalent isolation architecture: OpenClaw's Docker documentation says agent sandboxing is off by default. nod must retain its separate browser/workspace containers and server-only provider secrets.
 
-Docker supports Ubuntu on [AMD64 and ARM64](https://docs.docker.com/engine/install/ubuntu/). Ordinary Linux VMs supply a Docker host; the stack does not need nested hardware virtualization. Managed container platforms are not equivalent: nod needs persistent volumes and controlled execution in its workspace/browser containers.
+[Hermes's installer](https://hermes-agent.nousresearch.com/docs/getting-started/installation) prepares dependencies and runs setup. Its [official Docker path](https://hermes-agent.nousresearch.com/docs/user-guide/docker) offers tested AMD64/ARM64 images, a one-time setup wizard, and one persistent data directory. Pulling and recreating the container preserves data; config migrations make backups before modifying configuration. The [updater](https://hermes-agent.nousresearch.com/docs/getting-started/updating) adds pre-update snapshots or full backups, while machine migration uses explicit backup/import commands.
+
+Hermes also has a dedicated [desktop Gateways page](https://hermes-agent.nousresearch.com/docs/user-guide/desktop) for remote connections and OS-protected tokens. The Railway templates found during this research are community wrappers, such as [this dashboard template](https://github.com/mazshakibaii/hermes-agent-railway); they should not be described as an upstream Hermes deployment guarantee.
+
+Apply these patterns in this order:
+
+1. Ship tested images so installation does not compile the application or browser tools on a small VPS.
+2. Make one installation command generate secrets, start the complete stack, wait for health, and explain how to open the protected web app.
+3. Keep provider pages focused on VM creation, firewall, and access; reuse one stack and one operations guide.
+4. Keep updates and backups explicit, preserve keys and data, and validate browser/workspace execution separately from HTTP health.
+
+## Smaller providers and free validation
+
+The current focus is Hetzner, DigitalOcean, and Railway. Oracle provisioning is no longer being pursued. Existing AWS work can provide an independent conventional-VM environment.
+
+| Provider                                                                      | Verified official terms                                                                                                                                                                                                                                                               | Fit for nod                                                                                                                                                                                                                                          |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Hetzner](https://docs.hetzner.com/cloud/general/faq/)                        | Its referral-credit program has been discontinued. Allocated servers are [billed even while powered off](https://docs.hetzner.com/cloud/billing/faq/).                                                                                                                                | A suitable persistent Docker VPS when paid hosting is wanted. It does not meet the current free-only deployment constraint.                                                                                                                          |
+| [DigitalOcean](https://docs.digitalocean.com/platform/billing/signup-credit/) | First-team signup credit is US$5 for 90 days, verified by the provider on 2026-07-15. A valid payment method is required before creating a Droplet.                                                                                                                                   | A short credit-funded Ubuntu VM check if the account is eligible. Confirm credit and delete resources before exhaustion; do not repeat the obsolete US$200 standard offer.                                                                           |
+| [Railway anonymous VM](https://railway.com/free-vm)                           | No account/card; two vCPUs and 2 GB RAM; 60-minute build window; 24 hours to claim; preview initially restricted to the creator's IP; unclaimed files deleted. The [trial reference](https://docs.railway.com/pricing/free-trial) also limits creation to three boxes per IP per day. | A bounded experiment if capacity, Docker, and disk are sufficient. The anonymous documentation does not guarantee a disk size or Docker installation.                                                                                                |
+| [Railway Sandboxes](https://docs.railway.com/sandboxes)                       | Docker daemon/CLI are [included](https://railway.com/changelog/2026-06-12-docker-in-sandboxes). Free/Trial maximum is two vCPUs and 2 GB RAM, with up to five idle minutes before destruction. Only paid plans can disable idle destruction.                                          | The right Railway product to evaluate for our Docker-based runtime. Ordinary service deployment alone does not provide nod's full stack. Active sessions can defer sandbox idle destruction; they do not extend the separate anonymous build window. |
+
+Railway Sandboxes can join a private network and publish HTTPS domains. Their disk checkpoints preserve files but do not establish database consistency. Losing or destroying the VM loses its live Docker volumes; export a nod backup independently. A successful short sandbox test would not prove unattended hosting or reboot recovery.
+
+On 2026-10-23, the actual anonymous Railway connection attempt was refused with “Anonymous trials are unavailable right now. Sign up to keep building.” No VM was provisioned and no nod deployment was verified through that attempt. Google OAuth signup also returned `GOOGLE_CONNECTION_FAILED` while Railway displayed an outage banner. Provider testing was paused; these are availability and signup results, not compatibility failures.
+
+[Fly's free trial](https://fly.io/docs/about/free-trial/) allows two aggregate VM hours or seven days, up to 4 GB per VM and 20 GB volume storage, but stops trial machines after five minutes. Adding a payment card ends the trial. These restrictions make it a poor primary validation target for this stack.
+
+[Google Cloud](https://docs.cloud.google.com/free/docs/free-cloud-features) and [AWS Free plan](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/free-tier-plans.html) remain alternatives for eligible existing trial accounts. Do not upgrade to a paid plan to bypass a trial restriction.
+
+Docker supports Ubuntu on [AMD64 and ARM64](https://docs.docker.com/engine/install/ubuntu/). Ordinary Linux VMs supply the Docker host needed by the stack. Managed container services need a separate compatibility assessment: nod requires a daemon, controlled container execution, PostgreSQL, and persistent volumes.
 
 For a Mac mini, Docker Desktop's [startup setting](https://docs.docker.com/desktop/settings-and-maintenance/settings/#general) starts on sign-in. Document this limit and wake/power behavior rather than promising unattended boot recovery.
 
-## Repository gaps found
+## Minimum prebuilt installation proposal
+
+This is proposed work, not a published artifact or available installation command. The source repository is private. Do not publish its images, source, or bundles publicly as a shortcut around authentication.
+
+The smallest useful release unit is an architecture-specific bundle containing the three tested images (server, browser, workspace), the Compose stack and operations scripts, and a manifest with the source revision, architecture, image identities, and archive checksums. Public helper images remain pinned by digest. The existing desktop release workflow already exports tested browser/workspace image archives; reuse that packaging approach and add the server image.
+
+Add a single installer that accepts a locally supplied bundle, verifies its manifest and architecture, loads the images, creates or preserves private `.env` secrets, and starts Compose with `--no-build --wait`. It should print the canonical address and access instructions without printing credentials. The same bundle must support a matching fresh restore. Keep source building as an explicit developer path.
+
+While the repository remains private, authorized operators can download a private CI artifact on their own computer and transfer it through SSH. This avoids putting a GitHub credential on the server. Prepare and test the packaging locally first; private CI artifact distribution is a separate release step. A public anonymous installer is not available until release visibility is intentionally changed.
+
+A later registry path can use versioned AMD64/ARM64 images pinned by digest. [GitHub Container Registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry) supports anonymous pulls for public packages; private pulls require package access and authentication. Public package visibility must be an explicit release decision, not inferred from a successful private build.
+
+## Initial repository gaps
+
+These describe the baseline before the self-hosting implementation, not its current delivery status.
 
 - Root `compose.yaml` starts PostgreSQL, workspace, and browser, while the application runs on the host.
 - Local containers have fixed names and lack restart policies.

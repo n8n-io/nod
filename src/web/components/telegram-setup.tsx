@@ -93,7 +93,7 @@ export function TelegramSetup({
   const steps = ['Create a bot', 'Paste the bot token', 'Open your bot', 'Confirm your account'];
   const setupError =
     error ||
-    (unavailable && !state.paired
+    (unavailable && !state.paired && !setup?.managed
       ? 'Set up the secure key store on this computer to connect Telegram.'
       : '');
 

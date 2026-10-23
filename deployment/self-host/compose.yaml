@@ -13,8 +13,9 @@ services:
       NODE_ENV: production
       NOD_ENVIRONMENT: production
       NOD_HOST: 0.0.0.0
+      PORT: ${PORT:-4310}
       NOD_DATA_ROOT: /var/lib/nod
-      NOD_PUBLIC_URL: ${NOD_PUBLIC_URL:-http://localhost:4310}
+      NOD_PUBLIC_URL: ${NOD_PUBLIC_URL:-http://localhost:${PORT:-4310}}
       NOD_AUTH_TOKEN: ${NOD_AUTH_TOKEN:?Run sh setup.sh first}
       NOD_VAULT_KEY: ${NOD_VAULT_KEY:?Run sh setup.sh first}
       DATABASE_URL: ${DATABASE_URL:-postgresql://nod:${NOD_POSTGRES_PASSWORD:?Run sh setup.sh first}@postgres:5432/nod}
@@ -139,8 +140,21 @@ services:
     image: caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
     profiles: [https]
     restart: unless-stopped
+    entrypoint: /bin/sh
+    command:
+      - -ec
+      - |
+        origin=$${NOD_PUBLIC_URL%/}
+        case "$$origin" in
+          https://*) authority=$${origin#https://} ;;
+          *) echo 'The HTTPS profile requires an https:// origin on port 443.' >&2; exit 1 ;;
+        esac
+        case "$$authority" in
+          ''|*[!a-zA-Z0-9.-]*) echo 'The HTTPS profile requires a DNS or IPv4 host on port 443. Use an existing proxy for other ports or IPv6.' >&2; exit 1 ;;
+        esac
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     environment:
-      NOD_PUBLIC_URL: ${NOD_PUBLIC_URL:-http://localhost:4310}
+      NOD_PUBLIC_URL: ${NOD_PUBLIC_URL:-http://localhost:${PORT:-4310}}
       PORT: ${PORT:-4310}
     ports:
       - '80:80'
@@ -154,6 +168,11 @@ services:
     depends_on:
       server:
         condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:2019/config/']
+      interval: 5s
+      timeout: 3s
+      retries: 6
 
 networks:
   backend:
