@@ -3106,7 +3106,7 @@ test('Telegram chat cards require paired owned metadata and preserve ordinary li
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
 
-test('composer uploads preserve retry bytes, cancellation, previews and failed-send recovery', async () => {
+test('composer preserves keyboard shortcuts, upload retries, previews and failed-send recovery', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: String.raw`
@@ -3139,6 +3139,7 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
       ])
         globalThis[name] = dom.window[name];
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
       const rect = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
       HTMLElement.prototype.getBoundingClientRect = () => rect;
@@ -3175,12 +3176,16 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
       const { setRequestAccount } = await import('./src/web/lib/api.ts');
       setRequestAccount('synthetic-owner');
       let drafts = [],
-        result = { sent: false, restoreText: true };
+        result = { sent: false, restoreText: true },
+        currentText,
+        replaceText;
       const setDrafts = (value) => {
         drafts = value;
       };
       function Fixture({ draftKey } = {}) {
         const [text, setText] = useState(draftKey ? '' : 'Synthetic review request');
+        currentText = text;
+        replaceText = setText;
         return createElement(
           ArtifactDrawerContext.Provider,
           { value: { selectedId: null, open: (...args) => opened.push(args), setDrafts } },
@@ -3223,6 +3228,24 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
             .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
         );
       };
+      const edit = async (text = 'First lineSecond line', selector = 'p') => {
+        await act(async () => replaceText(text));
+        await act(async () => {
+          const field = document.querySelector('[contenteditable]');
+          field.focus();
+          window.getSelection().collapse(field.querySelector(selector).firstChild, 10);
+          document.dispatchEvent(new Event('selectionchange'));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+      };
+      const enter = async (modifiers = {}) => {
+        await act(async () => {
+          document.querySelector('[contenteditable]').dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, ...modifiers,
+          }));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+      };
       const artifact = {
         id: '00000000-0000-4000-8000-000000000001',
         name: 'Review.txt',
@@ -3234,6 +3257,42 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
       try {
         await act(async () => root.render(createElement(Fixture)));
         await settle(() => document.querySelector('[contenteditable]'));
+        await edit();
+        for (const modifiers of [{ isComposing: true }, { keyCode: 229 }]) {
+          await enter(modifiers);
+          assert.equal(sends.length, 0);
+        }
+        result = { sent: true };
+        for (const modifiers of [{}, { metaKey: true }, { ctrlKey: true }]) {
+          const count = sends.length;
+          await edit();
+          await enter({ shiftKey: true });
+          assert.equal(sends.length, count);
+          assert.equal(currentText.replaceAll('\\\n', '\n'), 'First line\nSecond line');
+          const expected = currentText;
+          await enter(modifiers);
+          assert.deepEqual(sends.at(-1), { text: expected, attachments: [] });
+          assert.equal(sends.length, count + 1);
+          if (!count) await act(async () => document.querySelector('.composer-send-preference').click());
+        }
+        await edit();
+        await enter();
+        assert.equal(sends.length, 3);
+        assert.ok(currentText.includes('\n'));
+        await act(async () => document.querySelector('.composer-send-preference').click());
+        const fence = String.fromCharCode(96).repeat(3);
+        for (const [text, selector] of [
+          ['# First lineSecond line', 'h1'],
+          ['- First lineSecond line', 'li p'],
+          [fence + '\nFirst lineSecond line\n' + fence, 'code'],
+        ]) {
+          await edit(text, selector);
+          await enter({ shiftKey: true });
+          assert.equal(sends.length, 3);
+        }
+        await act(async () => replaceText('Synthetic review request'));
+        sends.length = 0;
+        result = { sent: false, restoreText: true };
         const storage = Object.getOwnPropertyDescriptor(window, 'localStorage');
         Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new Error('Synthetic storage failure'); } });
         await act(async () => document.querySelector('.composer-send-preference').click());
