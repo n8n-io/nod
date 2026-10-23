@@ -18,7 +18,7 @@ Open **Usage** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Lin
 
 Select this month's total to see a chart and a forecast, such as "On track for $12.40". Every app action is recorded, reads included.
 
-![Usage shows model costs, a $40 monthly limit, the $5 task check-in, a standing instruction, completed tasks and a sign-in.](../../../assets/screens/usage-light.png)
+![Usage shows model costs, a $40 monthly limit, the $5 task check-in, a standing instruction, a rule to ask before paying, completed tasks and a sign-in.](../../../assets/screens/usage-light.png)
 
 ## Set a monthly limit
 
