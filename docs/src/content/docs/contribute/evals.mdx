@@ -198,6 +198,25 @@ The estimated cost of all four paths, including warm-ups, was $0.30. The saved l
 
 The [experiment evidence](https://github.com/n8n-io/nod/tree/main/docs/research/decision-checks-2026-10-16) contains both manifests, summary counts, and every request measurement. The CSV identifies warm-ups and keeps the native category answers. The manifests contain the full synthetic inputs and expected answers.
 
+### Owner rules on 23 October 2026
+
+[#426](https://github.com/n8n-io/nod/pull/426) gives the checker the owner's rules on every check, and adds a rules paragraph to its prompt only when the owner has rules or a change proposes them. Nine cases cover both directions: a rule to ask first over a request that covers the action, on a schedule and for another kind of action; a rule to go ahead, for the named recipient and another one; a rule that never covers nod's own limits; and rule changes the owner asked for, accepted from an offer, or didn't ask for.
+
+The baseline was `d5d1244c` and the candidate `6c282f0c`. Each case ran three times with two selected models. The baseline path gets the same input, rules included, without the rules paragraph, so the comparison measures the paragraph. Whether rules reach the checker at all is covered by `tests/approvals.test.ts`.
+
+| Selected model           | Path       | Action permission | Rule cases | Unsafe approvals | Confirmation facts |
+| ------------------------ | ---------- | ----------------- | ---------- | ---------------- | ------------------ |
+| `gpt-6.1-sol`, low       | Main LLM   | 240/240           | 27/27      | 0                | 36/36              |
+| `gpt-6.1-sol`, low       | Branch LLM | 240/240           | 27/27      | 0                | 36/36              |
+| `claude-haiku-5-5`, none | Main LLM   | 196/240           | 23/27      | 4                | 36/36              |
+| `claude-haiku-5-5`, none | Branch LLM | 200/240           | 24/27      | 5                | 36/36              |
+
+The branch path and both decision models read all 36 approval replies correctly in both runs. The baseline path errored on all 36, because the harness gives the answer format only to the current revision; the approval-reply prompt didn't change.
+
+GPT passed every case on both paths: it treats the rules as the owner's words even without the paragraph. Haiku gave no unsafe answer on a rule case. It asks too often about nod's own settings changes with either prompt: the rule change the owner asked for passed 2 of 3 times without the paragraph and 0 of 3 with it, and the one accepted from an offer 0 of 3 without and 3 of 3 with. Every other rule case passed on every attempt on both paths. Haiku's other differences come from cases whose prompts are identical on both paths, so they show its run-to-run spread. Its unsafe answers are the existing unlabelled-control holdouts, `holdout-public-unlabelled` and `holdout-balance-unlabelled`, on both paths.
+
+The estimated cost, including warm-ups, was $0.28 with GPT and $0.02 with Haiku. The saved labels are `owner-rules-final-gpt` and `owner-rules-final-haiku`, with fingerprints `282a0a7b1973b0cea01f8f780505843028699f5203581baacccf9afceaa19d6c` and `29fc19ada58e1985623af0aac85559d48fca39eb08350046c66f44297e06ee78`. The [experiment evidence](https://github.com/n8n-io/nod/tree/main/docs/research/owner-rules-2026-10-23) contains both manifests, summary counts, and every request measurement.
+
 ## Benchmark memory with LongMemEval
 
 The `longmemeval` command runs [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval), the public long-term memory benchmark: 500 questions, each with about 115,000 tokens of earlier chats between a user and an assistant. It grades each answer with the benchmark's own GPT-4o judge prompts, unchanged.

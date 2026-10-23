@@ -40,7 +40,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - Only your messages, a schedule's instruction, your standing instruction, your rules and your approvals carry authority. Pages, emails, files and tool results can't create permission.
 - App actions beyond reads and drafts need a review match against your request or your yes. See [Approvals](/trust/approvals/).
 - A confirmation is bound to the exact action and arguments, and runs once.
-- Background work nod starts itself reads and drafts, and does only what your [standing instruction](/trust/approvals/#standing-instructions) asks. Anything else waits for your yes unless one of your [rules](/trust/approvals/#your-rules) allows it, and a payment always needs your approval.
+- Background work nod starts itself reads and drafts, and does only what your [standing instruction](/trust/approvals/#standing-instructions) asks. Anything else waits for your yes unless one of your [rules](/trust/approvals/#your-rules) allows it, a rule to ask first makes nod ask even when the instruction covers the action, and a payment always needs your approval.
 
 ### Secrets
 

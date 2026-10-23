@@ -1,0 +1,326 @@
+{
+  "gpt": {
+    "fingerprint": "282a0a7b1973b0cea01f8f780505843028699f5203581baacccf9afceaa19d6c",
+    "blocked": {},
+    "spentUsd": 0.284262588257,
+    "knownCostUsd": 0.284262588257,
+    "unpriced": false,
+    "budgetReached": false,
+    "summary": {
+      "main-llm": {
+        "common": {
+          "attempts": 276,
+          "correct": 240,
+          "unsafe": 0,
+          "errors": 36,
+          "p50Ms": 1764,
+          "p95Ms": 4202,
+          "casesPassOnce": 80,
+          "casesPassAlways": 80,
+          "cases": 92,
+          "costUsd": 0.115674100126
+        },
+        "facts": {
+          "attempts": 36,
+          "correct": 36,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 1512,
+          "p95Ms": 2214,
+          "casesPassOnce": 12,
+          "casesPassAlways": 12,
+          "cases": 12,
+          "costUsd": 0.027126000001
+        },
+        "holdouts": {
+          "attempts": 129,
+          "correct": 108,
+          "unsafe": 0,
+          "errors": 21,
+          "p50Ms": 1678,
+          "p95Ms": 3571,
+          "casesPassOnce": 36,
+          "casesPassAlways": 36,
+          "cases": 43,
+          "costUsd": 0.059638800057
+        }
+      },
+      "branch-llm": {
+        "common": {
+          "attempts": 276,
+          "correct": 276,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 1797,
+          "p95Ms": 4091,
+          "casesPassOnce": 92,
+          "casesPassAlways": 92,
+          "cases": 92,
+          "costUsd": 0.112172700115
+        },
+        "facts": {
+          "attempts": 36,
+          "correct": 36,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 1434,
+          "p95Ms": 2178,
+          "casesPassOnce": 12,
+          "casesPassAlways": 12,
+          "cases": 12,
+          "costUsd": 0.026946
+        },
+        "holdouts": {
+          "attempts": 129,
+          "correct": 129,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 1747,
+          "p95Ms": 3406,
+          "casesPassOnce": 43,
+          "casesPassAlways": 43,
+          "cases": 43,
+          "costUsd": 0.056852800051
+        }
+      },
+      "gpt-decisions": {
+        "common": {
+          "attempts": 36,
+          "correct": 36,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 226,
+          "p95Ms": 443,
+          "casesPassOnce": 12,
+          "casesPassAlways": 12,
+          "cases": 12,
+          "costUsd": 0.001077600015
+        },
+        "facts": {
+          "attempts": 0,
+          "correct": 0,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": null,
+          "p95Ms": null,
+          "casesPassOnce": 0,
+          "casesPassAlways": 0,
+          "cases": 0,
+          "costUsd": 0
+        },
+        "holdouts": {
+          "attempts": 21,
+          "correct": 21,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 218,
+          "p95Ms": 285,
+          "casesPassOnce": 7,
+          "casesPassAlways": 7,
+          "cases": 7,
+          "costUsd": 0.000632100009
+        }
+      },
+      "jev-openrouter": {
+        "common": {
+          "attempts": 36,
+          "correct": 36,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 252,
+          "p95Ms": 435,
+          "casesPassOnce": 12,
+          "casesPassAlways": 12,
+          "cases": 12,
+          "costUsd": 0.000775278
+        },
+        "facts": {
+          "attempts": 0,
+          "correct": 0,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": null,
+          "p95Ms": null,
+          "casesPassOnce": 0,
+          "casesPassAlways": 0,
+          "cases": 0,
+          "costUsd": 0
+        },
+        "holdouts": {
+          "attempts": 21,
+          "correct": 21,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 252,
+          "p95Ms": 313,
+          "casesPassOnce": 7,
+          "casesPassAlways": 7,
+          "cases": 7,
+          "costUsd": 0.000454608
+        }
+      }
+    }
+  },
+  "haiku": {
+    "fingerprint": "29fc19ada58e1985623af0aac85559d48fca39eb08350046c66f44297e06ee78",
+    "blocked": {},
+    "spentUsd": 0.021009418223,
+    "knownCostUsd": 0.021009418223,
+    "unpriced": false,
+    "budgetReached": false,
+    "summary": {
+      "main-llm": {
+        "common": {
+          "attempts": 276,
+          "correct": 196,
+          "unsafe": 4,
+          "errors": 36,
+          "p50Ms": 711,
+          "p95Ms": 1348,
+          "casesPassOnce": 68,
+          "casesPassAlways": 63,
+          "cases": 92,
+          "costUsd": 0.007343085084
+        },
+        "facts": {
+          "attempts": 36,
+          "correct": 36,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 635,
+          "p95Ms": 1463,
+          "casesPassOnce": 12,
+          "casesPassAlways": 12,
+          "cases": 12,
+          "costUsd": 0.001891200024
+        },
+        "holdouts": {
+          "attempts": 129,
+          "correct": 93,
+          "unsafe": 4,
+          "errors": 21,
+          "p50Ms": 709,
+          "p95Ms": 1190,
+          "casesPassOnce": 32,
+          "casesPassAlways": 30,
+          "cases": 43,
+          "costUsd": 0.004019000047
+        }
+      },
+      "branch-llm": {
+        "common": {
+          "attempts": 276,
+          "correct": 236,
+          "unsafe": 5,
+          "errors": 0,
+          "p50Ms": 717,
+          "p95Ms": 1373,
+          "casesPassOnce": 81,
+          "casesPassAlways": 77,
+          "cases": 92,
+          "costUsd": 0.007937205076
+        },
+        "facts": {
+          "attempts": 36,
+          "correct": 36,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 652,
+          "p95Ms": 1157,
+          "casesPassOnce": 12,
+          "casesPassAlways": 12,
+          "cases": 12,
+          "costUsd": 0.001891200024
+        },
+        "holdouts": {
+          "attempts": 129,
+          "correct": 116,
+          "unsafe": 5,
+          "errors": 0,
+          "p50Ms": 693,
+          "p95Ms": 1343,
+          "casesPassOnce": 40,
+          "casesPassAlways": 38,
+          "cases": 43,
+          "costUsd": 0.004095000036
+        }
+      },
+      "gpt-decisions": {
+        "common": {
+          "attempts": 36,
+          "correct": 36,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 241,
+          "p95Ms": 298,
+          "casesPassOnce": 12,
+          "casesPassAlways": 12,
+          "cases": 12,
+          "costUsd": 0.001077600015
+        },
+        "facts": {
+          "attempts": 0,
+          "correct": 0,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": null,
+          "p95Ms": null,
+          "casesPassOnce": 0,
+          "casesPassAlways": 0,
+          "cases": 0,
+          "costUsd": 0
+        },
+        "holdouts": {
+          "attempts": 21,
+          "correct": 21,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 225,
+          "p95Ms": 277,
+          "casesPassOnce": 7,
+          "casesPassAlways": 7,
+          "cases": 7,
+          "costUsd": 0.000632100009
+        }
+      },
+      "jev-openrouter": {
+        "common": {
+          "attempts": 36,
+          "correct": 36,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 240,
+          "p95Ms": 303,
+          "casesPassOnce": 12,
+          "casesPassAlways": 12,
+          "cases": 12,
+          "costUsd": 0.000775278
+        },
+        "facts": {
+          "attempts": 0,
+          "correct": 0,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": null,
+          "p95Ms": null,
+          "casesPassOnce": 0,
+          "casesPassAlways": 0,
+          "cases": 0,
+          "costUsd": 0
+        },
+        "holdouts": {
+          "attempts": 21,
+          "correct": 21,
+          "unsafe": 0,
+          "errors": 0,
+          "p50Ms": 231,
+          "p95Ms": 284,
+          "casesPassOnce": 7,
+          "casesPassAlways": 7,
+          "cases": 7,
+          "costUsd": 0.000454608
+        }
+      }
+    }
+  }
+}
