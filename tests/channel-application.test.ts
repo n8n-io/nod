@@ -476,7 +476,7 @@ test(
         application.app.inject({
           method: 'POST',
           url: '/api/webhooks/telegram',
-          headers: { 'content-type': 'application/json' },
+          headers: { host: headers.host, 'content-type': 'application/json' },
           payload: { id, text, replyTo },
         });
       assert.equal((await send(1, 'Fixture request')).statusCode, 200);

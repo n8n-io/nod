@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-23",
+  "scope": "Real Docker volumes and PostgreSQL with synthetic data; no nod application, model calls, connected accounts, or cloud provider deployment.",
+  "source_commit": "87b728f7dcc00f72bfca994afa196d421326dd8c",
+  "docker_server_version": "28.5.1",
+  "scripts_sha256": {
+    "deployment/self-host/backup.sh": "fc9ed663cfa6a4ae312da64b5f7a79f6c832720bbeb0d93ca87bb100da28f70a",
+    "deployment/self-host/restore.sh": "207568c0f57f1fb91c8b0c736fda3b8f5ee959e53f2231c8d46a5100bc4841f5"
+  },
+  "results": {
+    "consistent_backup_and_exact_service_resumption": true,
+    "existing_backup_refused": true,
+    "mid_backup_failure_resumes_prior_services": true,
+    "external_database_refused_before_mutation": true,
+    "restore_leaves_assistant_stopped": true,
+    "postgres_and_four_volumes_roundtrip_with_ownership": true,
+    "saved_keys_preserved": true,
+    "existing_configuration_and_project_refused": true,
+    "environment": "linux aarch64",
+    "disposable_resources_removed": true
+  },
+  "subsequent_changes": [
+    "Both scripts now refuse a nondefault NOD_ENV_FILE before mutation; refusal and sh -n were verified separately. The roundtrip hashes above identify the tested scripts before this guard."
+  ]
+}

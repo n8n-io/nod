@@ -250,6 +250,7 @@ test('settings Escape preserves nested interactions and pending changes before r
         const desktopPreferences = { theme: 'system', resolvedTheme: 'light',
           notifications: true, launchAtLogin: true, onboardingPreferenceStep: 'complete' };
         runInNewContext(readFileSync('./desktop/preload/engine.cjs', 'utf8'), {
+          process: { argv: [] },
           require: () => ({
             contextBridge: { exposeInMainWorld: (name, value) => { window[name] = value; } },
             ipcRenderer: {

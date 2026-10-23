@@ -26,6 +26,166 @@ import {
 } from '../src/server/access.ts';
 import { appConfirmation } from '../src/ports/agent.ts';
 import type { ApprovalDescription, ApprovalExecutionContext } from '../src/server/approvals.ts';
+import { serverNetwork } from '../src/server/network.ts';
+
+test('server configuration refuses remote exposure without a valid token and an exact secure public origin', () => {
+  const key = randomBytes(32).toString('base64url');
+  for (const environment of [
+    { NOD_HOST: '0.0.0.0' },
+    { NOD_HOST: '::' },
+    { NOD_HOST: '192.0.2.1' },
+    { NOD_PUBLIC_URL: 'https://nod.example' },
+    { NOD_AUTH_TOKEN: '' },
+    { NOD_AUTH_TOKEN: key.slice(1) },
+    { NOD_AUTH_TOKEN: `${key}\n` },
+    { NOD_HOST: 'attacker.example', NOD_AUTH_TOKEN: key },
+    ...['0', '-1', '65536', '4310.5', 'not-a-port', ''].map((PORT) => ({ PORT })),
+  ])
+    assert.throws(() => serverNetwork(environment));
+  for (const NOD_PUBLIC_URL of [
+    '',
+    'http://nod.example',
+    'http://192.0.2.1:4310',
+    'http://127.0.0.2:4310',
+    'https://user:password@nod.example',
+    'https://nod.example/assistant',
+    'https://nod.example?token=secret',
+    'https://nod.example#token',
+    'https://nod.example/../',
+    ' https://nod.example',
+    'https://nod.example\n',
+    'file:///tmp/nod',
+  ])
+    assert.throws(() => serverNetwork({ NOD_PUBLIC_URL, NOD_AUTH_TOKEN: key }));
+  const remote = serverNetwork({
+    PORT: '8080',
+    NOD_HOST: '0.0.0.0',
+    NOD_PUBLIC_URL: 'https://nod.example:8443/',
+    NOD_AUTH_TOKEN: key,
+  });
+  assert.equal(remote.host, '0.0.0.0');
+  assert.equal(remote.port, 8080);
+  assert.equal(remote.publicOrigin, 'https://nod.example:8443');
+  assert.equal(remote.accessOrigin, remote.publicOrigin);
+  assert.equal(remote.authToken, key);
+  for (const NOD_PUBLIC_URL of [
+    'http://localhost:4310',
+    'http://127.0.0.1:4310',
+    'http://[::1]:4310',
+  ])
+    assert.equal(serverNetwork({ NOD_PUBLIC_URL }).publicOrigin, NOD_PUBLIC_URL);
+  assert.equal(serverNetwork({}).accessOrigin, undefined);
+  assert.equal(serverNetwork({ NOD_DESKTOP: 'true', NOD_AUTH_TOKEN: '' }).authToken, undefined);
+});
+
+test('remote access authenticates cookies and bearer clients only on the configured origin and host', async (t) => {
+  const key = randomBytes(32).toString('base64url');
+  const app = Fastify({ trustProxy: false });
+  t.after(() => app.close());
+  registerLocalAccess(app, 4310, { key, origin: 'https://nod.example', bearer: true });
+  app.get('/api/fixture', async () => ({ private: true }));
+  app.post('/api/fixture', async () => ({ private: true }));
+  app.post('/api/webhooks/telegram', async () => ({ ok: true }));
+  const authorized = { host: 'nod.example', authorization: `Bearer ${key}` };
+  for (const method of ['GET', 'POST'] as const) {
+    assert.equal(
+      (await app.inject({ method, url: '/api/fixture', headers: { host: 'nod.example' } }))
+        .statusCode,
+      401,
+    );
+    assert.equal(
+      (await app.inject({ method, url: '/api/fixture', headers: authorized })).statusCode,
+      200,
+    );
+  }
+  for (const headers of [
+    { ...authorized, host: 'localhost:4310' },
+    { ...authorized, host: 'attacker.example', 'x-forwarded-host': 'nod.example' },
+    { ...authorized, origin: 'http://nod.example' },
+    { ...authorized, origin: 'https://attacker.example' },
+    { ...authorized, origin: 'https://nod.example/path' },
+    { ...authorized, origin: 'https://nod.example/' },
+    { ...authorized, origin: 'null' },
+    { ...authorized, 'sec-fetch-site': 'cross-site' },
+  ])
+    assert.equal(
+      (await app.inject({ method: 'POST', url: '/api/fixture', headers })).statusCode,
+      403,
+    );
+  for (const authorization of ['Bearer wrong', `Basic ${key}`, `Bearer ${key} trailing`])
+    assert.equal(
+      (
+        await app.inject({
+          url: '/api/fixture',
+          headers: { ...authorized, authorization, cookie: `${accessCookie(4310)}=${key}` },
+        })
+      ).statusCode,
+      401,
+    );
+  const signedIn = await app.inject({
+    method: 'POST',
+    url: '/api/access',
+    headers: { host: 'nod.example', origin: 'https://nod.example' },
+    payload: { key },
+  });
+  assert.equal(signedIn.statusCode, 204);
+  assert.equal(signedIn.body, '');
+  const cookie = String(signedIn.headers['set-cookie']);
+  assert.match(cookie, /; Secure(?:;|$)/);
+  assert.match(cookie, /; HttpOnly(?:;|$)/);
+  assert.match(cookie, /; SameSite=Strict(?:;|$)/);
+  assert.equal(
+    (
+      await app.inject({
+        url: '/api/fixture',
+        headers: { host: 'nod.example', cookie: cookie.split(';')[0]! },
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/access',
+        headers: { host: 'nod.example', origin: 'https://attacker.example' },
+        payload: { key },
+      })
+    ).statusCode,
+    403,
+  );
+  assert.equal(
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/webhooks/telegram',
+        headers: { host: 'nod.example' },
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/webhooks/telegram',
+        headers: { host: 'attacker.example', 'x-forwarded-host': 'nod.example' },
+      })
+    ).statusCode,
+    403,
+  );
+  const rotated = Fastify();
+  t.after(() => rotated.close());
+  registerLocalAccess(rotated, 4310, {
+    key: randomBytes(32).toString('base64url'),
+    origin: 'https://nod.example',
+    bearer: true,
+  });
+  rotated.get('/api/fixture', async () => ({ private: true }));
+  for (const headers of [authorized, { host: 'nod.example', cookie: cookie.split(';')[0]! }])
+    assert.equal((await rotated.inject({ url: '/api/fixture', headers })).statusCode, 401);
+});
+
 test('localhost access requires the owner key and rejects foreign Host, Origin and cross-site requests', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nod-access-'));
   const app = Fastify();

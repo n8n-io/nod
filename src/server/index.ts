@@ -1,5 +1,14 @@
 import { pool } from './db.ts';
-import { dataRoot, desktopMode, ownerId, port, webRoot } from './config.ts';
+import {
+  authToken,
+  dataRoot,
+  desktopMode,
+  host,
+  ownerId,
+  port,
+  publicOrigin,
+  webRoot,
+} from './config.ts';
 import { accessKey } from './access.ts';
 import { createApplication, createDefaultAdapters } from './composition.ts';
 
@@ -97,7 +106,7 @@ if (desktopMode)
   });
 await app.listen({
   port,
-  host: '127.0.0.1',
+  host,
 });
 const address = app.server?.address();
 const listeningPort = address && typeof address === 'object' ? address.port : port;
@@ -108,7 +117,5 @@ if (desktopMode)
     type: 'nod-ready',
     port: listeningPort,
   });
-else
-  console.log(
-    `nod is ready at http://localhost:${listeningPort}/#access=${await accessKey(dataRoot)}`,
-  );
+else if (authToken) console.log(`nod is ready at ${publicOrigin}`);
+else console.log(`nod is ready at ${publicOrigin}/#access=${await accessKey(dataRoot)}`);

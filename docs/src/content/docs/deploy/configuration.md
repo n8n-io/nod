@@ -1,19 +1,20 @@
 ---
 title: Configuration reference
-description: Every setting a source install of nod reads from .env, what it does and its default value.
+description: Configure a nod server through environment variables, including access, models, channels, storage, and diagnostics.
 sidebar:
   order: 1
 ---
 
-This page lists the settings a source install of nod reads, what each one does and its default.
+Configure a source install or self-hosted server through environment variables. This page lists supported settings, defaults, and precedence.
 
 ## How settings work
 
-- Settings live in `.env` in the repository folder. Git ignores it. `pnpm start` creates it from `.env.example` the first time, readable only by you.
+- A source install reads `.env` in the repository folder. Git ignores it. `pnpm start` creates it from `.env.example`, readable only by you.
+- The [self-hosting stack](/deploy/self-host/) has its own `.env` in `deployment/self-host/`. Keep it private and include it in your backup.
 - A variable set in your shell wins over the same variable in `.env`.
 - nod reads settings when it starts. Restart nod after you change one.
 - Most things don't need a variable. You connect models, apps and channels in the app, and nod saves them encrypted.
-- The desktop app doesn't read `.env`. It manages its own settings in **Settings**.
+- The desktop app doesn't read `.env`. When connected to a server, it uses that server's configuration. Its server address and token are client settings.
 
 ```mermaid
 flowchart LR
@@ -25,15 +26,32 @@ flowchart LR
 
 ## Server and data
 
-| Variable                  | What it does                                                                                                                                            | Default                   |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `PORT`                    | The local port for the app and API.                                                                                                                     | `4310`                    |
-| `NOD_DATA_ROOT`           | The folder for local data: sessions, workspace files and the access key.                                                                                | `.local`                  |
-| `NOD_POSTGRES_PASSWORD`   | The password of the local PostgreSQL container. `pnpm start` generates one and saves it. A value you set needs at least 43 letters, digits, `_` or `-`. | Generated                 |
-| `DATABASE_URL`            | The PostgreSQL connection. `pnpm start` fills it in for the local container on `127.0.0.1:54329`. Set another URL to use your own database.             | Local container           |
-| `DATABASE_POOL_MAX`       | The most database connections the server opens.                                                                                                         | `12`                      |
-| `NOD_PUBLIC_URL`          | The address you open nod at.                                                                                                                            | `http://localhost:<PORT>` |
-| `NOD_PRIVACY_NOTICE_FILE` | A Markdown privacy notice served at `/privacy`.                                                                                                         | No notice                 |
+| Variable                  | What it does                                                                                                                                                         | Default                                             |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `PORT`                    | The local port for the app and API.                                                                                                                                  | `4310`                                              |
+| `NOD_HOST`                | The address the server listens on. Use `0.0.0.0` inside the self-hosting container. A non-loopback address requires `NOD_AUTH_TOKEN`.                                | `127.0.0.1`                                         |
+| `NOD_AUTH_TOKEN`          | The access token for the web and desktop clients: at least 43 letters, digits, `_`, or `-`. Required for a remote bind or public URL. Never printed in startup logs. | Unset; local installs generate a private access key |
+| `NOD_DATA_ROOT`           | The folder for local data: sessions, workspace files and the access key.                                                                                             | `.local`                                            |
+| `NOD_POSTGRES_PASSWORD`   | The password of the local PostgreSQL container. `pnpm start` generates one and saves it. A value you set needs at least 43 letters, digits, `_` or `-`.              | Generated                                           |
+| `DATABASE_URL`            | The PostgreSQL connection. `pnpm start` fills it in for the local container on `127.0.0.1:54329`. Set another URL to use your own database.                          | Local container                                     |
+| `DATABASE_POOL_MAX`       | The most database connections the server opens.                                                                                                                      | `12`                                                |
+| `NOD_PUBLIC_URL`          | The exact origin you open nod at. Remote origins require HTTPS and `NOD_AUTH_TOKEN`. No path, query, fragment, or user credentials. Loopback origins can use HTTP.   | `http://localhost:<PORT>`                           |
+| `NOD_PRIVACY_NOTICE_FILE` | A Markdown privacy notice served at `/privacy`.                                                                                                                      | No notice                                           |
+
+The access token grants full access to this server's assistant. Generate one with `openssl rand -hex 32`. Keep it separate from `NOD_VAULT_KEY`.
+
+Omit `NOD_AUTH_TOKEN` and `NOD_PUBLIC_URL` from a local source configuration when you don't set them. An explicitly empty value is invalid. The Docker setup fills both in.
+
+Changing `NOD_AUTH_TOKEN` and restarting revokes the previous token. Reconnect your web and desktop clients with the new token. See [Rotate access](/deploy/server-operations/#rotate-access).
+
+For a remote server, set both values before starting:
+
+```sh title=".env"
+NOD_PUBLIC_URL=https://nod.example.com
+NOD_AUTH_TOKEN=<your-generated-token>
+```
+
+Use the [self-hosting guide](/deploy/self-host/) to configure HTTPS and private backing services. Setting a public URL alone does not create a proxy or a certificate.
 
 ## Models
 
@@ -51,7 +69,7 @@ Keys set here become server-managed connections. They stay in server memory and 
 | `TYPESAFE_API_KEY`           | Selects direct Jev for reading approval replies, regardless of the chat connection.                                                                                                           | Empty                                                                                                              |
 | `TTS_MODEL`                  | The OpenAI speech model for voice replies.                                                                                                                                                    | `gpt-4o-mini-tts`                                                                                                  |
 | `STT_MODEL`                  | The transcription model for incoming voice messages. OpenAI is used when its key is available; otherwise OpenRouter is used. On OpenRouter, a model ID without `/` gets the `openai/` prefix. | `gpt-transcribe` (`openai/gpt-transcribe` on OpenRouter)                                                           |
-| `TTS_VOICE`                  | The voice for voice replies. Not in `.env.example`.                                                                                                                                           | `coral`                                                                                                            |
+| `TTS_VOICE`                  | The voice for voice replies.                                                                                                                                                                  | `coral`                                                                                                            |
 
 Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an OpenRouter connection uses Jev through OpenRouter. Direct Anthropic, ChatGPT subscription, Amazon Bedrock, Google Vertex AI, Azure OpenAI and OpenAI-compatible connections use the selected chat model for this check. Your selected model still writes messages. See [Decision checks](/connect/models/#decision-checks) for billing, data routing, and failure behavior.
 
@@ -85,24 +103,35 @@ Saved credentials can't be read without it. Keep a copy somewhere safe, outside 
 
 ## Channels
 
-Set up Telegram and WhatsApp in **Channels** instead. The app checks the account and saves the settings encrypted, and those override these variables. See [Channels](/use/channels/).
+Leave every variable for a channel blank or unset to manage it in **Channels**. The app checks your account and saves its settings encrypted.
 
-| Variable                        | What it does                                                                                                                 | Default                                      |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `TELEGRAM_ENABLED`              | `true` turns on Telegram.                                                                                                    | `false`                                      |
-| `TELEGRAM_BOT_TOKEN`            | The bot token from BotFather.                                                                                                | Empty                                        |
-| `TELEGRAM_WEBHOOK_SECRET_TOKEN` | The secret Telegram sends with each webhook call: 16 to 256 letters, digits, `_` or `-`.                                     | Empty                                        |
-| `TELEGRAM_ALLOWED_USER_ID`      | The only Telegram user ID nod answers.                                                                                       | Empty                                        |
-| `WHATSAPP_ENABLED`              | `true` turns on WhatsApp.                                                                                                    | `false`                                      |
-| `WHATSAPP_MODE`                 | `bot` links a separate number. `self-chat` links your own number. `cloud` uses Meta Cloud API.                               | `bot` in `.env.example`; otherwise Cloud API |
-| `WHATSAPP_POLICY_CONFIRMED`     | `true` confirms your use is allowed under the WhatsApp terms. Required.                                                      | `false`                                      |
-| `WHATSAPP_ACCESS_TOKEN`         | The WhatsApp Cloud API access token from Meta.                                                                               | Empty                                        |
-| `WHATSAPP_APP_SECRET`           | The Meta app secret. nod uses it to check webhook signatures.                                                                | Empty                                        |
-| `WHATSAPP_PHONE_NUMBER_ID`      | The ID of the business sender number.                                                                                        | Empty                                        |
-| `WHATSAPP_VERIFY_TOKEN`         | The token Meta sends when it verifies the webhook.                                                                           | Empty                                        |
-| `WHATSAPP_ALLOWED_NUMBER`       | Your personal number, with country code, 7 to 15 digits. Required for `bot` and Cloud API. Self-chat uses the linked number. | Empty                                        |
+Setting any nonempty variable for a channel makes that entire channel server-managed. Its environment configuration takes precedence over saved settings. The app shows this state and prevents configuration edits or removal.
+
+Set `TELEGRAM_ENABLED=false` or `WHATSAPP_ENABLED=false` to disable a channel explicitly. Otherwise, supplying channel settings enables it. Remove or clear every variable for that channel to return to its previous saved setup. Credentials from the environment are never copied into the database.
+
+| Variable                        | What it does                                                                                                                     | Default                                 |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `TELEGRAM_ENABLED`              | `true` enables Telegram; `false` disables it. Either value makes the channel server-managed.                                     | Unset; follows supplied configuration   |
+| `TELEGRAM_MODE`                 | `polling` receives messages through outbound requests. `webhook` needs a public HTTPS address and a registered Telegram webhook. | `polling` for environment-managed setup |
+| `TELEGRAM_BOT_TOKEN`            | The bot token from BotFather.                                                                                                    | Empty                                   |
+| `TELEGRAM_WEBHOOK_SECRET_TOKEN` | The secret Telegram sends with each webhook call: 16 to 256 letters, digits, `_` or `-`. Required for webhook mode.              | Generated in memory for polling         |
+| `TELEGRAM_ALLOWED_USER_ID`      | The only Telegram user ID nod answers.                                                                                           | Empty                                   |
+| `WHATSAPP_ENABLED`              | `true` enables WhatsApp; `false` disables it. Either value makes the channel server-managed.                                     | Unset; follows supplied configuration   |
+| `WHATSAPP_MODE`                 | `bot` links a separate number. `self-chat` links your own number. `cloud` uses Meta Cloud API.                                   | `cloud` for environment-managed setup   |
+| `WHATSAPP_POLICY_CONFIRMED`     | `true` confirms your use is allowed under the WhatsApp terms. Required.                                                          | `false`                                 |
+| `WHATSAPP_ACCESS_TOKEN`         | The WhatsApp Cloud API access token from Meta.                                                                                   | Empty                                   |
+| `WHATSAPP_APP_SECRET`           | The Meta app secret. nod uses it to check webhook signatures.                                                                    | Empty                                   |
+| `WHATSAPP_PHONE_NUMBER_ID`      | The ID of the business sender number.                                                                                            | Empty                                   |
+| `WHATSAPP_VERIFY_TOKEN`         | The token Meta sends when it verifies the webhook.                                                                               | Empty                                   |
+| `WHATSAPP_ALLOWED_NUMBER`       | Your personal number, with country code, 7 to 15 digits. Required for `bot` and Cloud API. Self-chat uses the linked number.     | Empty                                   |
 
 For QR setup, use **Channels** to scan the code. The `bot` and `self-chat` modes do not use the Meta access token, app secret, business phone number ID or webhook token. The saved device keys stay encrypted in the database. See [WhatsApp setup](/use/channels/#set-up-a-channel).
+
+The smallest Telegram configuration needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USER_ID`; it uses polling. For webhook mode, register `/api/webhooks/telegram` on your public origin with Telegram and use the same webhook secret.
+
+:::caution[Upgrading an existing source install]
+Older examples set channel flags to `false` and WhatsApp mode to `bot`. Clear those defaults, including `WHATSAPP_POLICY_CONFIRMED`, if you want to keep managing your existing connection in **Channels**.
+:::
 
 ## Analytics and feedback
 
@@ -113,6 +142,7 @@ For QR setup, use **Channels** to scan the code. The `bot` and `self-chat` modes
 | `NOD_FEEDBACK_ENABLED`            | `false` disables feedback submissions and status checks, regardless of the configured collector.                                   | Enabled                                                                                                                                     |
 | `NOD_FEEDBACK_URL`                | The HTTPS address that receives **Send feedback** reports. An empty value turns submission off.                                    | The nod team at n8n                                                                                                                         |
 | `NOD_FEEDBACK_RECEIPT_URL_PREFIX` | Required with a custom collector. An HTTPS issue collection URL ending in `/`; receipts must belong to that origin and path.       | n8n's Linear `LAB` issues for the default collector                                                                                         |
+| `NOD_FEEDBACK_TOKEN`              | Server-only authentication sent as `x-nod-feedback-token` to the configured feedback collector.                                    | Empty                                                                                                                                       |
 | `NOD_TRACES_URL`                  | The HTTPS address that receives conversation traces from owners who opt in. An empty value turns traces off for everyone.          | The nod team at n8n                                                                                                                         |
 | `NOD_TRACES_TOKEN`                | The token sent as `x-nod-traces-token` with each trace. Without it, nod sends no traces and hides the switch.                      | Empty; official desktop builds include one                                                                                                  |
 
@@ -166,8 +196,41 @@ This version exports model spans only. It does not export metrics, logs, browser
 | `WORKSPACE_CONTAINER` | The Docker container for the workspace. | `nod-workspace` |
 | `BROWSER_CONTAINER`   | The Docker container for the browser.   | `nod-browser`   |
 
+The self-hosting stack supplies these names. It gives the server a restricted Docker connection; the workspace and browser receive no Docker socket or provider keys.
+
+## Docker stack settings
+
+These values belong in `deployment/self-host/.env` and control Compose. They are separate from the application settings above.
+
+| Variable               | What it does                                                                                                                             | Default      |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `COMPOSE_PROJECT_NAME` | Names this installation's containers and volumes. Changing it selects different data; use the restore procedure to move an installation. | `nod-server` |
+| `NOD_BIND_ADDRESS`     | Host interface for the backend port. Keep loopback when using Caddy or another local proxy.                                              | `127.0.0.1`  |
+| `NOD_IMAGE_TAG`        | Tag assigned to the images built from your checked-out source. It does not download a published release.                                 | `local`      |
+| `NOD_SERVER_MEMORY`    | Server container's memory limit.                                                                                                         | `2g`         |
+| `NOD_BROWSER_MEMORY`   | Browser container's memory limit.                                                                                                        | `3g`         |
+| `NOD_WORKSPACE_MEMORY` | Workspace container's memory limit.                                                                                                      | `2g`         |
+
+Compose sets `NOD_HOST`, `NOD_DATA_ROOT`, `WORKSPACE_CONTAINER`, `BROWSER_CONTAINER`, `NODE_ENV`, and `NOD_ENVIRONMENT` for its internal layout. These values override `.env` in the stack. Store data in the supplied volumes rather than changing container paths.
+
+Set `DATABASE_URL` only to use an external PostgreSQL server. The bundled database remains unused in that configuration. The backup and restore commands support the bundled database only.
+
+## Advanced source installs
+
+The packaged server supplies these values. Change them only when you run a custom source layout.
+
+| Variable          | What it does                                                                                                                 | Default                  |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `NOD_WEB_ROOT`    | Directory containing the built web app.                                                                                      | `dist/web`               |
+| `NODE_ENV`        | Use `production` for a persistent server. Also controls development behavior and analytics defaults.                         | Set by the start command |
+| `NOD_ENVIRONMENT` | Runtime environment label. The conversation-reset development control is available only in `development` outside production. | `development`            |
+
+Variables beginning `NOD_DESKTOP_` and `NOD_TEST_` are internal runtime and test settings. Do not use them to configure a self-hosted server.
+
 ## Related resources
 
+- [Host your own server](/deploy/self-host/)
+- [Back up and update a server](/deploy/server-operations/)
 - [Install from source](/get-started/install-from-source/)
 - [Desktop app internals](/deploy/desktop-app/)
 - [Troubleshooting](/deploy/troubleshooting/)

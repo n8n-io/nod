@@ -100,7 +100,11 @@ import type { TrustBasis } from './trust-basis.ts';
 import { localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
-import { createChannelSettings, initializeChannelSettings } from './channel-settings.ts';
+import {
+  createChannelSettings,
+  initializeChannelSettings,
+  managedChannelEnvironment,
+} from './channel-settings.ts';
 import { createChannelMedia } from './channel-media.ts';
 import { createChannelSessionStore } from './channel-session.ts';
 import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
@@ -179,6 +183,7 @@ export interface ApplicationAdapters {
   telemetry?: UsageTelemetry;
   messagingSetup?: {
     verifier: ChannelSetupVerifier;
+    managed?: ReturnType<typeof managedChannelEnvironment>;
     create(environment: Record<string, string>): MessagingTransport;
   };
   model: { provider: string; name: string; configured: boolean; reconnect?: boolean };
@@ -371,6 +376,7 @@ export function createDefaultAdapters(
     decisions,
     messagingSetup: {
       verifier: createChatSdkSetupVerifier(),
+      managed: managedChannelEnvironment(env),
       create: (environment) => {
         const configured = { ...env, ...environment };
         const mode =
@@ -1570,6 +1576,7 @@ async function initializeApplication(
         ownerId,
         keyStore: adapters.keyStore,
         verifier: setup.verifier,
+        managed: setup.managed,
         linkStatus: async () => {
           if (!channels) throw new Error('Messaging is not ready.');
           return channels.pairing();

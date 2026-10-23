@@ -9,7 +9,17 @@ import { Badge, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
 This page explains what the desktop app runs on your computer, where it keeps your data and how it updates.
 
-The desktop app is the same nod as a source install. It starts the same server and web app, and adds installation, credential storage and a native window. You don't need Node.js, Docker Desktop or PostgreSQL.
+The desktop app can run nod locally or connect to your own server. Local mode starts the server and web app, with installation, credential storage, and a native window. You don't need Node.js, Docker Desktop, or PostgreSQL.
+
+## Connect to your server
+
+Choose **Server connection** in the nod app menu or tray, or **Connect to a server** on first launch. Enter the HTTPS server address and its `NOD_AUTH_TOKEN`.
+
+nod checks the connection before saving it. The operating system's secure storage protects the token. The app restarts into the remote assistant without starting its local runtime. Loopback HTTP addresses work for an SSH tunnel.
+
+Your conversation, files, models, and connected accounts stay on the server. Closing the desktop app does not stop it. Your local assistant remains separate; choose **Server connection → Use this computer** to return to it.
+
+See [Host your own server](/deploy/self-host/) for setup. The remaining sections describe local mode.
 
 ## What runs on your computer
 
@@ -152,8 +162,8 @@ Inside nod's distribution, drive mounts and Windows process access are turned of
 ## Current limits
 
 - Builds exist for Mac with Apple silicon or Intel, and Windows 11 x64. There are no Linux or Windows ARM builds.
-- Tasks run only while nod is open and the computer is awake.
-- WhatsApp needs a public HTTPS callback. The app doesn't relay webhooks to your computer.
+- Local tasks run only while nod is open and the computer is awake. Server tasks run while the server runs.
+- Meta's WhatsApp Cloud API needs a public HTTPS callback. The QR connection works without one. The app doesn't relay webhooks to your computer.
 - A new installation starts with a fresh profile. There's no sync between devices or migration from a source install.
 
 ## Build the app
@@ -214,6 +224,7 @@ Run `pnpm run desktop:windows:prepare` on a Linux x64 Docker builder. Then, on W
 
 ## Related resources
 
+- [Host your own server](/deploy/self-host/)
 - [Install the desktop app](/get-started/install-desktop/)
 - [Configuration reference](/deploy/configuration/)
 - [Troubleshooting](/deploy/troubleshooting/)

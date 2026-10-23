@@ -35,7 +35,15 @@ export function Telegram({ arrived, onNext, onBack, onSkip, nextLabel }: StepPro
   const issued = useRef(false);
 
   useEffect(() => {
-    if (!settings?.ready || issued.current || !state.ready || state.paired || pairingUrl) return;
+    if (
+      telegram?.managed ||
+      !settings?.ready ||
+      issued.current ||
+      !state.ready ||
+      state.paired ||
+      pairingUrl
+    )
+      return;
     if (state.candidate && state.waiting) return;
     issued.current = true;
     void telegramAction('pairing');

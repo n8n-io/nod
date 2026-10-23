@@ -217,7 +217,7 @@ function ChannelCard({
       (setup.mode === 'linked' && setup.connectionState !== 'connected')),
   );
   const status: keyof typeof channelStatus | null = connected
-    ? needsDelivery || needsPairing
+    ? needsDelivery || needsPairing || !configured
       ? 'needs-setup'
       : 'connected'
     : comingSoon
@@ -247,8 +247,18 @@ function ChannelCard({
         ) : (
           <p className="channel-option-benefit">{provider.description}</p>
         )}
+        {setup?.managed && (
+          <p className="channel-account-status">Managed by the server environment</p>
+        )}
       </div>
-      {connected ? (
+      {setup?.managed ? (
+        setup.enabled && configured && setup.mode === 'linked' && needsPairing ? (
+          <Button variant="outline" size="sm" disabled={busy} onClick={onPair}>
+            Link WhatsApp
+            <ArrowRight size={16} />
+          </Button>
+        ) : null
+      ) : connected ? (
         <div className="channel-account-actions">
           {(provider.id === 'telegram' && needsDelivery) || needsPairing ? (
             <Button variant="outline" size="sm" disabled={busy} onClick={onPair}>

@@ -4,7 +4,15 @@ import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { pool } from './db.ts';
-import { configuration, dataRoot, desktopAccess, ownerId, port } from './config.ts';
+import {
+  accessOrigin,
+  authToken,
+  configuration,
+  dataRoot,
+  desktopAccess,
+  ownerId,
+  port,
+} from './config.ts';
 import { events, type ServerEvent } from './events.ts';
 import { artifactView, localArtifacts, type ArtifactService } from './artifacts.ts';
 import {
@@ -108,7 +116,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
     port,
     desktopAccess
       ? { key: desktopAccess.token, desktop: true }
-      : { key: await accessKey(dataRoot) },
+      : {
+          key: authToken ?? (await accessKey(dataRoot)),
+          origin: accessOrigin,
+          bearer: authToken !== undefined,
+        },
   );
   if (desktopAccess && dependencies.admission) registerWorkAdmission(app, dependencies.admission);
   app.setErrorHandler((error, _request, reply) => {

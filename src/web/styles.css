@@ -2133,3 +2133,15 @@ input[type='range']:disabled {
   color: var(--muted-foreground);
   box-shadow: none;
 }
+
+.server-access {
+  display: grid;
+  gap: 20px;
+  width: min(360px, calc(100vw - 48px));
+  text-align: left;
+}
+
+.server-access h1,
+.server-access p {
+  margin: 0;
+}

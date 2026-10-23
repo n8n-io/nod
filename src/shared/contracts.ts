@@ -377,6 +377,7 @@ export interface ChannelLinkStatus {
 export interface ChannelSetupSummary {
   provider: ChannelProvider;
   enabled: boolean;
+  managed?: boolean;
   accountName?: string;
   accountHandle?: string;
   mode?: 'polling' | 'webhook' | 'linked';

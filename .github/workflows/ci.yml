@@ -153,6 +153,14 @@ jobs:
           docker buildx build --load --platform linux/amd64 --file Dockerfile.browser --tag nod-ci-browser .
           docker buildx build --load --platform linux/amd64 --file Dockerfile.workspace --tag nod-ci-workspace .
           docker buildx build --load --platform linux/amd64 --file scripts/Dockerfile.integration --tag nod-ci-integration .
+          docker buildx build --load --platform linux/amd64 --file deployment/self-host/Dockerfile --tag nod-server:ci .
+          docker tag nod-ci-browser nod-browser:ci
+          docker tag nod-ci-workspace nod-workspace:ci
+      - name: Verify the single-user server deployment and token rotation
+        if: needs.scope.outputs.images == 'true'
+        env:
+          NOD_IMAGE_TAG: ci
+        run: node deployment/self-host/check.mjs
       - name: Verify the shared local and desktop browser image
         if: needs.scope.outputs.images == 'true'
         run: node --import tsx desktop/scripts/check-browser-image.mjs nod-ci-browser
@@ -173,6 +181,7 @@ jobs:
           --volume "$PWD/desktop/main:/app/desktop/main:ro"
           --volume "$PWD/desktop/preload:/app/desktop/preload:ro"
           --volume "$PWD/desktop/ui:/app/desktop/ui:ro"
+          --volume "$PWD/deployment/self-host:/app/deployment/self-host:ro"
           --volume "$PWD/tsconfig.json:/app/tsconfig.json:ro"
           --volume "$PWD/dist/web:/app/dist/web:ro"
           --tmpfs /app/.local:uid=1000,gid=1000

@@ -9,6 +9,8 @@ import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
 Run nod from its source code on macOS or Linux. Choose this if you use Linux or want to change nod's code. On a Mac or Windows PC, the [desktop app](/get-started/install-desktop/) is quicker.
 
+To run nod on a VPS, cloud VM, or Mac mini and reach it from other devices, use [Host your own server](/deploy/self-host/).
+
 ## Requirements
 
 | You need         | Version or detail                                                                                                                                                                                                                 |
@@ -77,8 +79,8 @@ You can instead set `NOD_VAULT_KEY` yourself. If encrypted data already exists, 
 
 </Steps>
 
-:::danger[Keep nod on your computer]
-nod serves one person on `127.0.0.1` with no account login. Don't expose it to a network or the internet, for example through port forwarding, a tunnel or a reverse proxy.
+:::caution[Access from other devices]
+This source setup listens on your computer's loopback interface. For network access, follow [Host your own server](/deploy/self-host/) to configure a server token and HTTPS.
 :::
 
 ## Run nod day to day
@@ -112,4 +114,5 @@ Settings live in `.env`, and you need to restart after you change them. See [Con
 - [Install the desktop app](/get-started/install-desktop/)
 - [Your first conversation](/get-started/first-conversation/)
 - [Configuration](/deploy/configuration/)
+- [Host your own server](/deploy/self-host/)
 - [Troubleshooting](/deploy/troubleshooting/)

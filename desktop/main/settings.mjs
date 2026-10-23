@@ -6,6 +6,28 @@ import { dirname } from 'node:path';
 const preferenceFields = ['launchAtLogin', 'notifications', 'onboardingCompleted'];
 const onboardingPreferenceSteps = ['notifications', 'launchAtLogin', 'complete'];
 
+export function serverOrigin(value) {
+  try {
+    if (typeof value !== 'string' || value.length > 2048) throw new Error();
+    const url = new URL(value.trim());
+    if (
+      (url.protocol !== 'https:' &&
+        !(
+          url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+        )) ||
+      url.username ||
+      url.password ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash
+    )
+      throw new Error();
+    return url.origin;
+  } catch {
+    throw new Error('Enter an HTTPS server address, or a localhost address for an SSH tunnel.');
+  }
+}
+
 export function createSettingsStore(path, encryption, platform = process.platform) {
   let current;
   let unsynced = false;
@@ -74,18 +96,23 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         ...preferenceFields,
         'onboardingPreferenceStep',
         'welcome',
+        'serverUrl',
         'secrets',
       ];
       value = Object.fromEntries(Object.entries(saved).filter(([field]) => fields.includes(field)));
-      value.secrets = Object.hasOwn(saved.secrets, 'vaultKey')
-        ? { vaultKey: saved.secrets.vaultKey }
-        : {};
+      value.secrets = Object.fromEntries(
+        Object.entries(saved.secrets).filter(([field]) =>
+          ['vaultKey', 'serverToken'].includes(field),
+        ),
+      );
       if (
         value.version !== 1 ||
         !['system', 'light', 'dark'].includes(value.theme) ||
         preferenceFields.some((field) => typeof value[field] !== 'boolean') ||
         (value.onboardingPreferenceStep !== undefined &&
           !onboardingPreferenceSteps.includes(value.onboardingPreferenceStep)) ||
+        (value.serverUrl !== undefined &&
+          (serverOrigin(value.serverUrl) !== value.serverUrl || !value.secrets.serverToken)) ||
         (value.welcome !== undefined &&
           (!record(value.welcome) ||
             Object.keys(value.welcome).some(
@@ -164,6 +191,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       notifications: value.notifications,
       theme: value.theme,
       onboardingCompleted: value.onboardingCompleted,
+      ...(value.serverUrl ? { serverUrl: value.serverUrl } : {}),
       ...(value.welcome ? { welcome: { ...value.welcome } } : {}),
       onboardingPreferenceStep: value.onboardingCompleted
         ? 'complete'
@@ -177,6 +205,38 @@ export function createSettingsStore(path, encryption, platform = process.platfor
   return {
     get() {
       return exclusive(async () => redacted(await read()));
+    },
+    connection() {
+      return exclusive(async () => {
+        const value = await read();
+        return value.serverUrl
+          ? { url: value.serverUrl, token: await reveal(value.secrets.serverToken) }
+          : null;
+      });
+    },
+    saveConnection(input) {
+      return exclusive(async () => {
+        const previous = await read();
+        const value = { ...previous, secrets: { ...previous.secrets } };
+        if (input === null) {
+          delete value.serverUrl;
+          delete value.secrets.serverToken;
+        } else {
+          if (
+            !input ||
+            typeof input !== 'object' ||
+            Array.isArray(input) ||
+            Object.keys(input).some((field) => !['url', 'token'].includes(field)) ||
+            typeof input.token !== 'string' ||
+            !/^[A-Za-z0-9_-]{43,}$/.test(input.token)
+          )
+            throw new Error('Enter the authentication token configured on your server.');
+          value.serverUrl = serverOrigin(input.url);
+          value.secrets.serverToken = await protect(input.token);
+        }
+        await write(value);
+        return redacted(value);
+      });
     },
     save(input) {
       return exclusive(async () => {

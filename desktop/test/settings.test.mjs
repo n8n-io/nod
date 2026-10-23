@@ -22,7 +22,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { JSDOM } from 'jsdom';
-import { createSettingsStore } from '../main/settings.mjs';
+import { createSettingsStore, serverOrigin } from '../main/settings.mjs';
 import { createDesktopAnalytics } from '../main/analytics.mjs';
 import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
@@ -489,12 +489,14 @@ async function runningDesktop(
     clearTimeout,
     fetch: request,
     createSettingsStore: () => storage.store,
+    serverOrigin,
+    createHash,
     createDesktopAnalytics,
     createAppPreferencesStore: () => ({
       sync: async () => {},
       get: async () => ({ preferences: webPreferences }),
     }),
-    createChatReadCursorStore: () => ({}),
+    createChatReadCursorStore,
     saveArtifactDownload,
     createReadinessNotice,
     isQuietTime,
@@ -566,6 +568,7 @@ async function runningDesktop(
       constructor(options = {}) {
         super();
         this.sent = [];
+        this.options = options;
         this.bounds = {
           x: options.x ?? 0,
           y: options.y ?? 0,
@@ -680,15 +683,21 @@ async function runningDesktop(
     onboardingCompleted = true;
     status.phase = 'ready';
     ${initialState === 'running' ? '' : "engine = undefined; enginePreferencesReady = false; engineRuntimeReady = false; engineOrigin = ''; engineBound = false; onboardingCompleted = false; status.phase = 'idle';"}
-    ${source.slice(source.indexOf('      const appSession ='), source.indexOf('      const image = nativeImage'))}
+    configureAppSession();
     ${source.slice(source.indexOf("      ipcMain.handle('nod:renderer-ready'"), source.indexOf("      ipcMain.handle('nod:feedback:context'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('nod:feedback:context'"), source.indexOf("      ipcMain.handle('nod:preferences:get'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('nod:preferences:get'"), source.indexOf("      ipcMain.handle('nod:prepare'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('nod:prepare'"), source.indexOf("      ipcMain.handle('nod:runtime:import'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('nod:runtime:install-wsl'"), source.indexOf("      ipcMain.handle('nod:chat-read:get'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('nod:chat-read:get'"), source.indexOf("      ipcMain.handle('nod:external'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('nod:external'"), source.indexOf('      try {', source.indexOf("      ipcMain.handle('nod:external'")))}
     globalThis.running = {
       prepare,
+      startRemote,
+      checkRemoteConnection,
+      saveConnection,
+      engineRequest,
+      showConnectionSettings,
       launch: async () => { ${source.slice(source.lastIndexOf('      try {\n        const saved = await settings.get();'), source.indexOf('    })', source.lastIndexOf('      try {\n        const saved = await settings.get();')))} },
       settle: () => preparing ?? Promise.resolve(),
       close: async () => { quitting = true; await lifecycle.close(); },
@@ -933,7 +942,7 @@ test('native startup recovery keeps current status and serializes retry, prerequ
       publish({ phase: 'preparing', runtime: { phase: 'downloading', progress: 0.42 } });
       await settle(() => page.window.document.querySelector('progress')?.value === 42);
       assert.equal(page.window.document.querySelector('[role="alert"]'), null);
-      assert.equal(page.window.document.querySelector('button'), null);
+      assert.equal(page.window.document.querySelector('.recovery-actions button'), null);
       publish({ phase: 'error', error: 'Synthetic prerequisite failure', needsWsl: true });
       await settle(() => button('Install WSL'));
       button('Install WSL').click();
@@ -2551,6 +2560,136 @@ async function fixture(t, platform = 'win32') {
   };
 }
 
+test('server connections encrypt their token, preserve local keys, and never reveal it to renderers', async (t) => {
+  const f = await fixture(t);
+  const environment = await f.store.environment();
+  const token = randomBytes(32).toString('base64url');
+  await f.store.saveConnection({ url: 'https://assistant.example.test/', token });
+  assert.equal((await f.reopen().get()).serverUrl, 'https://assistant.example.test');
+  assert.ok(!JSON.stringify(await f.store.get()).includes(token));
+  assert.ok(!(await readFile(f.path, 'utf8')).includes(token));
+  assert.deepEqual(await f.reopen().connection(), { url: 'https://assistant.example.test', token });
+  assert.deepEqual(await f.reopen().environment(), environment);
+  for (const url of [
+    'http://assistant.example.test',
+    'http://192.168.1.20',
+    'https://user:password@assistant.example.test',
+    'https://assistant.example.test/path',
+    'https://assistant.example.test?token=secret',
+    'https://assistant.example.test#secret',
+    'file:///tmp/assistant',
+  ])
+    await assert.rejects(f.store.saveConnection({ url, token }));
+  assert.equal((await f.store.connection()).url, 'https://assistant.example.test');
+  f.encryption.isEncryptionAvailable = () => false;
+  await assert.rejects(f.store.saveConnection({ url: 'https://other.example.test', token }));
+  await assert.rejects(f.reopen().connection());
+  f.encryption.isEncryptionAvailable = () => true;
+  await f.store.saveConnection(null);
+  assert.equal(await f.reopen().connection(), null);
+  assert.deepEqual(await f.reopen().environment(), environment);
+});
+
+test('the remote desktop starts without a local runtime and fences tokens to its trusted origin and frame', async (t) => {
+  const storedProfile = await fixture(t);
+  const token = randomBytes(32).toString('base64url');
+  const url = 'https://assistant.example.test';
+  await storedProfile.store.saveConnection({ url, token });
+  const requests = [];
+  const f = await runningDesktop(
+    t,
+    async (target, options) => {
+      requests.push({ target, options });
+      return Response.json({
+        user: { id: 'local-development' },
+        settings: { onboardingCompleted: true },
+      });
+    },
+    {
+      storedProfile,
+      initialState: 'fresh',
+      prepareRuntime: () => assert.fail('A remote client must not prepare a local runtime.'),
+    },
+  );
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.children.length, 0);
+    assert.equal(f.status().phase, 'ready');
+    const window = f.windows.at(-1);
+    assert.equal(window.url, url);
+    assert.match(window.options.webPreferences.partition, /^persist:nod-server-/);
+    assert.equal(requests[0].options.headers.Authorization, `Bearer ${token}`);
+    assert.equal(requests[0].options.redirect, 'error');
+    const frame = window.webContents.mainFrame;
+    const request = {
+      url: `${url}/api/session`,
+      resourceType: 'xhr',
+      webContentsId: window.webContents.id,
+      frame,
+      requestHeaders: { authorization: 'forged', 'X-Nod-Desktop-Token': 'forged' },
+    };
+    assert.equal((await f.headers(request)).requestHeaders.Authorization, `Bearer ${token}`);
+    for (const change of [
+      { url: 'https://other.example.test/api/session' },
+      { url: 'http://assistant.example.test/api/session' },
+      { url: 'https://assistant.example.test:8443/api/session' },
+      { frame: { ...frame, routingId: frame.routingId + 1 } },
+      { webContentsId: -1 },
+    ])
+      assert.equal(
+        Object.keys((await f.headers({ ...request, ...change })).requestHeaders).length,
+        0,
+      );
+    const event = { sender: window.webContents, senderFrame: frame };
+    assert.throws(() => f.handlers.get('nod:connection:get')(event));
+    assert.throws(() => f.handlers.get('nod:connection:save')(event, null));
+    assert.ok(!JSON.stringify(await f.handlers.get('nod:settings:get')(event)).includes(token));
+    assert.equal((await storedProfile.reopen().get()).onboardingCompleted, false);
+    const threadId = randomUUID();
+    const cursor = { createdAt: new Date().toISOString(), messageIds: [randomUUID()] };
+    await f.handlers.get('nod:chat-read:set')(event, 'local-development', threadId, cursor);
+    assert.deepEqual(
+      await f.handlers.get('nod:chat-read:get')(event, 'local-development', threadId),
+      cursor,
+    );
+    assert.throws(() => f.handlers.get('nod:chat-read:get')(event, 'another-owner', threadId));
+
+    await f.engineRequest('/api/preferences');
+    assert.equal(requests.at(-1).options.headers.Authorization, `Bearer ${token}`);
+    assert.equal(requests.at(-1).options.redirect, 'error');
+  } finally {
+    await f.close();
+  }
+});
+
+test('remote connection verification rejects redirects before a second server receives the token', async (t) => {
+  const { createServer: createHttpServer } = await import('node:http');
+  let redirected = 0;
+  const target = createHttpServer((_request, response) => {
+    redirected++;
+    response.writeHead(200).end('{}');
+  });
+  await new Promise((resolve) => target.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => target.close(resolve)));
+  const token = randomBytes(32).toString('base64url');
+  const source = createHttpServer((request, response) => {
+    assert.equal(request.headers.authorization, `Bearer ${token}`);
+    response
+      .writeHead(302, { location: `http://127.0.0.1:${target.address().port}/api/session` })
+      .end();
+  });
+  await new Promise((resolve) => source.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => source.close(resolve)));
+  const f = await runningDesktop(t, fetch, { initialState: 'fresh' });
+  await assert.rejects(
+    f.checkRemoteConnection({ url: `http://127.0.0.1:${source.address().port}`, token }),
+  );
+  assert.equal(redirected, 0);
+  assert.equal(await f.storage.store.connection(), null);
+  await f.close();
+});
+
 test(
   'Windows DPAPI keeps the Vault and completed setup across real Electron restarts behind private ACLs that reapply without admin privileges',
   { skip: process.platform !== 'win32', timeout: 300_000 },
@@ -3137,6 +3276,7 @@ test('engine preload exposes no credential reveal and withholds privileged IPC e
   const listeners = new Map();
   let bridge;
   runInNewContext(await readFile(new URL('../preload/engine.cjs', import.meta.url), 'utf8'), {
+    process: { argv: [] },
     require: () => ({
       contextBridge: {
         exposeInMainWorld(_name, value) {
@@ -3154,6 +3294,8 @@ test('engine preload exposes no credential reveal and withholds privileged IPC e
     'applySettings',
     'getAppPreferences',
     'saveAppPreferences',
+    'getConnection',
+    'saveConnection',
     'importRuntime',
   ])
     assert.equal(bridge[field], undefined);

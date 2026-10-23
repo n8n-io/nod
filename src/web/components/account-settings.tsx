@@ -30,7 +30,11 @@ import {
 } from '../lib/date-format';
 import { savePreferences } from '../lib/preferences';
 import { localeRegion } from '../../shared/date-locale';
-import { desktopSettingsAvailable, removeDesktopData } from '../lib/desktop';
+import {
+  desktopRuntimeAvailable,
+  desktopSettingsAvailable,
+  removeDesktopData,
+} from '../lib/desktop';
 import { DesktopOptions, useDesktopSettings } from './desktop-settings';
 import { Memory } from '../pages/memory';
 import { ConnectionMenu } from './connection-menu';
@@ -674,7 +678,7 @@ export function AccountSettings({
                       </p>
                     </>
                   )}
-                  {desktop && (
+                  {desktopRuntimeAvailable() && (
                     <Button
                       className="account-remove-data"
                       variant="destructive"

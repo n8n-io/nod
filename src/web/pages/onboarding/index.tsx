@@ -9,7 +9,7 @@ import {
 import { Button, Notice } from '../../components/ui';
 import { SetupProgress } from '../../components/setup-progress';
 import {
-  desktopSettingsAvailable,
+  desktopRuntimeAvailable,
   desktopStatus,
   subscribeDesktopStatus,
   retryDesktopRuntime,
@@ -60,7 +60,7 @@ export function Onboarding({
   onUsageData?(enabled: boolean): Promise<void>;
 }) {
   useBrowserTimeZone();
-  const desktop = desktopSettingsAvailable();
+  const desktop = desktopRuntimeAvailable();
   const [position, setPosition] = useState(() => {
     const url = new URL(window.location.href);
     const replay = url.searchParams.get('replay') === '1';

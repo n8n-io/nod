@@ -40,6 +40,10 @@ type Desktop = {
   saveSettings(change: { welcome: WelcomeChoice }): Promise<{ welcome?: WelcomeChoice }>;
   status(): Promise<Status>;
   getPreferences(): Promise<Preferences>;
+  getConnection(): Promise<{ url: string }>;
+  saveConnection(connection: { url: string; token: string } | null): Promise<void>;
+  openConnectionSettings(): Promise<void>;
+  closeConnectionSettings(): Promise<void>;
   prepare(options?: { retry: boolean }): Promise<Status>;
   installWsl(): Promise<Status>;
   importRuntime(): Promise<Status | undefined>;
@@ -60,6 +64,121 @@ function applyPreferences(value: Preferences) {
       ? value.resolvedTheme ||
         (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
       : value.theme;
+}
+
+function ConnectionSetup() {
+  const [url, setUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [connected, setConnected] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef(false);
+  useEffect(() => {
+    if (!desktop) return;
+    let active = true;
+    void Promise.all([desktop.getConnection(), desktop.getPreferences()])
+      .then(([connection, preferences]) => {
+        if (!active) return;
+        setUrl(connection.url);
+        setConnected(Boolean(connection.url));
+        applyPreferences(preferences);
+      })
+      .catch(() => {
+        if (active) setError('Your saved connection could not be opened.');
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+          void desktop.ready?.();
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  async function connect(local = false) {
+    if (!desktop || pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      await desktop.saveConnection(local ? null : { url, token });
+      setToken('');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Your connection could not be saved.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <div className="titlebar" aria-hidden="true" />
+      <main className="server-setup">
+        <form
+          className="server-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void connect();
+          }}
+        >
+          <h1>Connect to your server</h1>
+          <p>Use the same assistant in this app, your browser and your chat apps.</p>
+          <label htmlFor="server-address">Server address</label>
+          <input
+            id="server-address"
+            type="url"
+            placeholder="https://nod.example.com"
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            autoComplete="url"
+            spellCheck={false}
+            required
+            disabled={busy || loading}
+          />
+          <label htmlFor="server-token">Authentication token</label>
+          <input
+            id="server-token"
+            type="password"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            required
+            disabled={busy || loading}
+            aria-describedby="server-token-help"
+          />
+          <p id="server-token-help" className="server-help">
+            Enter your server’s NOD_AUTH_TOKEN. nod saves it in your computer’s secure storage.
+          </p>
+          {error && (
+            <p className="server-error" role="alert">
+              {error}
+            </p>
+          )}
+          <button className="server-connect" type="submit" disabled={busy || loading}>
+            {busy ? 'Connecting…' : 'Connect and restart app'}
+          </button>
+          <p className="server-help">Your local assistant stays saved on this computer.</p>
+          <div className="server-actions">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void desktop?.closeConnectionSettings()}
+            >
+              Back
+            </button>
+            {connected && (
+              <button type="button" disabled={busy || loading} onClick={() => void connect(true)}>
+                Use this computer
+              </button>
+            )}
+          </div>
+        </form>
+      </main>
+    </>
+  );
 }
 
 function Startup() {
@@ -182,6 +301,13 @@ function Startup() {
             </p>
           )}
         </OnboardingFrame>
+        <button
+          className="server-entry"
+          type="button"
+          onClick={() => void desktop?.openConnectionSettings()}
+        >
+          Connect to a server
+        </button>
       </>
     );
 
@@ -291,9 +417,18 @@ function Startup() {
           </div>
         )}
       </SetupProgress>
+      <button
+        className="server-entry"
+        type="button"
+        onClick={() => void desktop?.openConnectionSettings()}
+      >
+        Server connection
+      </button>
     </>
   );
 }
 
 initializeFocusVisibility();
-createRoot(document.getElementById('root')!).render(<Startup />);
+createRoot(document.getElementById('root')!).render(
+  parameters.get('server') === 'true' ? <ConnectionSetup /> : <Startup />,
+);

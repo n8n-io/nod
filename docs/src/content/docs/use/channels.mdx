@@ -9,6 +9,8 @@ import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
 You can chat with nod from Telegram or WhatsApp. It's the same conversation, memory and tasks as in the nod app.
 
+With a [self-hosted server](/deploy/self-host/), channels stay connected while the server runs. You can close the web or desktop app.
+
 nod replies in the app you wrote from. A message from Telegram gets its answer on Telegram, and a schedule you set up there sends its results there too. Everything also shows in the chat in the nod app.
 
 nod uses your conversation language for pairing notices and private-step guidance. Its model writes the message; the server adds permitted file links and keeps private sign-in and payment links out of chat apps.
@@ -72,8 +74,8 @@ Select **Use Meta Cloud API instead** in the setup panel. You need a Meta app wi
 
 The Cloud API replies only within 24 hours of your last message. Its file support is limited: open nod to get files. The QR connection supports files directly.
 
-:::caution[Keep nod private]
-Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest of nod. The desktop app does not provide a public address, so Cloud API mode suits nod running on a server. This mode accepts text only. It does not accept incoming media. Use the QR connection for files and voice.
+:::caution[Use a protected server]
+Cloud API mode needs a [self-hosted server](/deploy/self-host/) with public HTTPS, or a proxy exposing only `/api/webhooks/whatsapp` from a local install. It accepts text only; use the QR connection for files and voice.
 :::
 
 </details>
@@ -84,7 +86,7 @@ Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest o
 <details>
 <summary>Configure channels in .env instead</summary>
 
-When you run nod from source, you can set the `TELEGRAM_*` and `WHATSAPP_*` values listed in `.env.example` and restart. The **Channels** page is easier, because it checks your details and pairs your account.
+On a source install or self-hosted server, set the `TELEGRAM_*` and `WHATSAPP_*` values in [Configuration](/deploy/configuration/#channels), then restart. The **Channels** page checks your details and pairs your account.
 
 </details>
 
@@ -187,6 +189,7 @@ Both channels have task controls. `/tasks` lists open tasks, with one message pe
 
 ## Related resources
 
+- [Host your own server](/deploy/self-host/)
 - [Chat with nod](/use/chat/)
 - [Spending and usage](/use/spending/)
 - [Memory](/use/memory/)
