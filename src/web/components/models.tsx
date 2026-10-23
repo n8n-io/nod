@@ -891,9 +891,9 @@ export function ModelPicker({
         >
           <DialogTitle>Choose a model</DialogTitle>
           <p id="model-picker-description" className="model-intro">
-            {sharedCapabilities.length
-              ? `All these models can ${sharedCapabilities.join(' and ')}.`
-              : 'Your choice applies to your next message.'}
+            Your choice applies to your next message.
+            {sharedCapabilities.length > 0 &&
+              ` All these models can ${sharedCapabilities.join(' and ')}.`}
           </p>
           <SearchField
             inputRef={searchInput}
