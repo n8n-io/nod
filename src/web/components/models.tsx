@@ -600,7 +600,7 @@ export function ModelPicker({
           </>
         )}
       </Button>
-      {model && connection?.status === 'reconnect' && (
+      {surface === 'settings' && model && connection?.status === 'reconnect' && (
         <a className="model-needs-reconnect" href="/settings/models">
           Reconnect in Settings &gt; Models
         </a>

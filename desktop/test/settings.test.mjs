@@ -1931,6 +1931,11 @@ test('partial onboarding restart keeps acknowledged consent and normal app progr
     assert.equal(new URL(window.url).pathname, '/onboarding');
     assert.equal(new URL(window.url).searchParams.get('welcome'), 'complete');
     assert.equal((await next.storage.store.get()).welcome.acknowledged, true);
+    next.openLink('nod://open/settings/models');
+    assert.equal(
+      window.sent.some(([name]) => name === 'nod:navigate'),
+      false,
+    );
     await next.storage.store.save({ notifications: true, launchAtLogin: true });
     completed = true;
     await next.handlers.get('nod:settings:save')(
@@ -1939,6 +1944,10 @@ test('partial onboarding restart keeps acknowledged consent and normal app progr
     );
     assert.equal((await next.storage.store.get()).welcome, undefined);
     assert.equal(writes, 1);
+    assert.deepEqual(
+      window.sent.filter(([name]) => name === 'nod:navigate'),
+      [['nod:navigate', '/settings/models']],
+    );
   } finally {
     await next.close();
   }

@@ -1741,6 +1741,7 @@ else {
         onboardingCompleted = saved.onboardingCompleted;
         if (onboardingCompleted) nativePreferencesPending = false;
         applyPreferences(saved);
+        for (const window of engineWindows) deliverAppLink(window);
         if (!['preparing', 'starting', 'error'].includes(status.phase))
           update({ message: 'Ready.' });
         return readDesktopSettings();

@@ -321,6 +321,8 @@ function AuthenticatedApp({
     if (!settingsOpen && path !== '/memory') settingsReturn.current = { path, trigger: null };
   }, [path, settingsOpen]);
   const [finishingOnboarding, setFinishingOnboarding] = useState(false);
+  const onboarding =
+    finishingOnboarding || !session.settings!.onboardingCompleted || replayingOnboarding(path);
   const [settingsRequest, setSettingsRequest] = useState(0);
   const settingsTab: AccountTab =
     path === '/settings/models' ? 'Models' : path === '/settings/memory' ? 'Memory' : 'General';
@@ -364,7 +366,7 @@ function AuthenticatedApp({
       ),
     [],
   );
-  useEffect(() => subscribeDesktopNavigation(openPage), []);
+  useEffect(() => (onboarding ? undefined : subscribeDesktopNavigation(openPage)), [onboarding]);
   useEffect(() => {
     if (path !== '/memory' || !session.settings!.onboardingCompleted) return;
     window.history.replaceState(null, '', '/settings/memory');
@@ -436,8 +438,6 @@ function AuthenticatedApp({
   };
   const allowed = path !== '/browser' || session.capabilities.developer;
   const match = /^\/(vault|credentials|payments)\/([^/]+)\/?$/.exec(path);
-  const onboarding =
-    finishingOnboarding || !session.settings!.onboardingCompleted || replayingOnboarding(path);
   return (
     <>
       {!allowed ? (
