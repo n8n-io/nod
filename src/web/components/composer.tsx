@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
-import { ArrowUp, Paperclip, X, RotateCcw, CornerUpLeft, Square } from './icons';
+import { ArrowUp, X, RotateCcw, CornerUpLeft, Square } from './icons';
 import type { Artifact, Message } from '../../shared/contracts';
 import { fileBytes } from '../../shared/files';
 import { api, errorMessage } from '../lib/api';
@@ -13,7 +13,6 @@ import { ownedArtifactUrl, type ImagePreview } from './attachment-images';
 import { FileGlyph } from './attachment-glyph';
 import { attachmentKind, fileSize, localPreviewable } from '../lib/attachment-kind';
 import { readChatDraft, writeChatDraft } from '../lib/chat-draft';
-import { readUiPreference, writeUiPreference } from '../lib/ui-preferences';
 import { artifactFromPreview } from './file-actions';
 import { ownedArtifactUrl as validArtifact } from '../lib/attachment-url';
 import { useArtifactDrawer } from './artifact-context';
@@ -80,11 +79,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   );
   const drawer = useArtifactDrawer();
   const [error, setError] = useState('');
-  const [sendWithEnter, setSendWithEnter] = useState(
-    () => readUiPreference('nod.send-with-enter') !== 'false',
-  );
   const [removed, setRemoved] = useState<DraftAttachment | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const mounted = useRef(true);
   const attachmentValues = useRef<DraftAttachment[]>([]);
@@ -100,14 +95,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const actions = useRef({
     submit: () => {},
     upload: (_files: File[], _method: 'paste') => {},
-    sendWithEnter: (): boolean => true,
   });
   const extensions = useMemo(
     () =>
       createComposerExtensions({
         submit: () => actions.current.submit(),
         upload: (files) => actions.current.upload(files, 'paste'),
-        sendWithEnter: () => actions.current.sendWithEnter(),
       }),
     [],
   );
@@ -309,9 +302,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     );
     void queueUploads([queued]);
   }
-  function upload(files: File[], method: 'picker' | 'drop' | 'paste') {
+  function upload(files: File[], method: 'drop' | 'paste') {
     if (!files.length) return;
-    if (fileInput.current) fileInput.current.value = '';
     const rejected = files.filter((file) => file.size > fileBytes);
     setError('');
     if (rejected.length) {
@@ -404,7 +396,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   actions.current = {
     submit: () => void submit(),
     upload: (files, method) => void upload(files, method),
-    sendWithEnter: () => sendWithEnter,
   };
   useEffect(() => {
     const drop = (event: DragEvent) => {
@@ -630,50 +621,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <EditorContent editor={editor} />
         <EditorFormatting editor={editor} />
         <span className="sr-only" id="composer-keyboard-hint">
-          {sendWithEnter
-            ? 'Enter to send. Shift or Alt plus Enter for a new line or list item.'
-            : 'Command or Control plus Enter to send. Enter for a new line.'}
+          Enter to send. Shift or Alt plus Enter for a new line or list item.
         </span>
         <div className="composer-tools">
-          <div className="composer-left">
-            <button
-              type="button"
-              className="composer-send-preference"
-              title={
-                sendWithEnter
-                  ? 'Enter sends. Select to use Enter for a new line.'
-                  : 'Enter adds a line. Command or Ctrl+Enter sends.'
-              }
-              aria-pressed={sendWithEnter}
-              onClick={() => {
-                const next = !sendWithEnter;
-                setSendWithEnter(next);
-                writeUiPreference('nod.send-with-enter', String(next));
-                focus();
-              }}
-            >
-              {sendWithEnter ? '↵ Send' : '⌘/Ctrl ↵ Send'}
-            </button>
-            <input
-              ref={fileInput}
-              type="file"
-              tabIndex={-1}
-              multiple
-              className="sr-only"
-              aria-label="Choose files"
-              onChange={(event) => void upload(Array.from(event.target.files ?? []), 'picker')}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Attach files"
-              title="Attach files or paste an image"
-              onClick={() => fileInput.current?.click()}
-            >
-              <Paperclip size={16} />
-            </Button>
-          </div>
           <div className="composer-right">
             {onStop && (
               <Button

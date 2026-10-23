@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowUp, Paperclip } from './icons';
+import { ArrowUp } from './icons';
 import { BrandMark } from './brand';
 import { Skeleton } from './ui';
 import { readUiPreference } from '../lib/ui-preferences';
@@ -74,11 +74,6 @@ export function ChatSkeleton({
         <div className="composer ghost-composer" aria-hidden="true">
           <p>Message nod…</p>
           <div className="composer-tools">
-            <div className="composer-left">
-              <span className="button button-ghost button-icon">
-                <Paperclip size={16} />
-              </span>
-            </div>
             <span className="button button-icon send-button ghost-send">
               <ArrowUp size={18} />
             </span>

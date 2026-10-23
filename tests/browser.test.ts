@@ -3404,7 +3404,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
     input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
-      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+      const dom = new JSDOM('<!doctype html><div id="root" class="chat-page"></div>', {
         url: 'https://nod.fixture.invalid',
         pretendToBeVisual: true,
       });
@@ -3508,10 +3508,12 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         assert.ok(button, label);
         await act(async () => button.click());
       };
-      const choose = async (files) => {
-        const input = document.querySelector('input[type="file"]');
-        Object.defineProperty(input, 'files', { configurable: true, value: files });
-        await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+      const upload = async (files, method = 'paste') => {
+        const event = new Event(method, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, method === 'paste' ? 'clipboardData' : 'dataTransfer', {
+          value: { files, getData: () => '' },
+        });
+        await act(async () => document.querySelector('[contenteditable]').dispatchEvent(event));
       };
       const submit = async () => {
         await act(async () =>
@@ -3547,6 +3549,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       };
       let closed = false;
       try {
+        localStorage.setItem('nod.send-with-enter', 'false');
         await act(async () => root.render(createElement(Fixture)));
         await settle(() => document.querySelector('[contenteditable]'));
         await edit();
@@ -3565,13 +3568,11 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
           await enter(modifiers);
           assert.deepEqual(sends.at(-1), { text: expected, attachments: [] });
           assert.equal(sends.length, count + 1);
-          if (!count) await act(async () => document.querySelector('.composer-send-preference').click());
         }
         await edit();
-        await enter();
+        await enter({ altKey: true });
         assert.equal(sends.length, 3);
-        assert.ok(currentText.includes('\n'));
-        await act(async () => document.querySelector('.composer-send-preference').click());
+        assert.equal(currentText.replaceAll('\\\n', '\n'), 'First line\nSecond line');
         const fence = String.fromCharCode(96).repeat(3);
         for (const [text, selector, blocks, expected] of [
           ['# First lineSecond line', 'h1', 'h1, h1 + p', [['H1', 'First line'], ['P', 'Second line']]],
@@ -3592,16 +3593,9 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => replaceText('Synthetic review request'));
         sends.length = 0;
         result = { sent: false, restoreText: true };
-        const storage = Object.getOwnPropertyDescriptor(window, 'localStorage');
-        Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new Error('Synthetic storage failure'); } });
-        await act(async () => document.querySelector('.composer-send-preference').click());
-        await act(async () => document.querySelector('[contenteditable]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
-        assert.equal(sends.length, 0);
-        await act(async () => document.querySelector('.composer-send-preference').click());
-        Object.defineProperty(window, 'localStorage', storage);
         const first = new File(['Synthetic review file'], 'Review.txt', { type: 'text/plain' });
         const second = new File(['Queued file'], 'Queued.txt', { type: 'text/plain' });
-        await choose([first, second]);
+        await upload([first, second]);
         await settle(() => requests.length === 1);
         assert.equal(drafts.length, 2);
         assert.equal(drafts[0].downloadUrl, undefined);
@@ -3658,7 +3652,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
           new File(['<svg/>'], 'Icon.svg', { type: 'image/svg+xml' }),
           new File(['<fixture/>'], 'Data.xml', { type: 'application/xml' }),
         ];
-        await choose(unsafe);
+        await upload(unsafe, 'drop');
         await settle(() => requests.length === 3);
         assert.equal(created.length, 2);
         assert.equal(drafts.length, 0);
@@ -3669,7 +3663,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
           new File(['Active'], 'Active.txt', { type: 'text/plain' }),
           new File(['Waiting'], 'Waiting.txt', { type: 'text/plain' }),
         ];
-        await choose(finalFiles);
+        await upload(finalFiles);
         await settle(() => requests.length === 4);
         await act(async () => root.unmount());
         closed = true;

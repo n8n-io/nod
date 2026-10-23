@@ -45,7 +45,7 @@ type AnalyticsEvents = {
     recommended: boolean;
   };
   nod_attachment_added: {
-    method: 'picker' | 'drop' | 'paste';
+    method: 'drop' | 'paste';
     kind: 'image' | 'pdf' | 'other';
     count: '1' | '2-5' | '6+';
   };
@@ -103,7 +103,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     recommended: [true, false],
   },
   nod_attachment_added: {
-    method: ['picker', 'drop', 'paste'],
+    method: ['drop', 'paste'],
     kind: ['image', 'pdf', 'other'],
     count: ['1', '2-5', '6+'],
   },
