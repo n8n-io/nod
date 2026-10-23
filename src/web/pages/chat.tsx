@@ -238,7 +238,11 @@ export function Chat({
   const modelSetup = (
     <div className="welcome model-setup">
       <BrandMark />
-      <h2>Choose a model to start chatting</h2>
+      <h2>
+        {state.configuration.modelReconnect
+          ? 'Reconnect your model to keep chatting'
+          : 'Choose a model to start chatting'}
+      </h2>
       <Button variant="outline" asChild>
         <a href="/settings/models">Open Settings &gt; Models</a>
       </Button>

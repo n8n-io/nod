@@ -235,6 +235,7 @@ export interface Configuration {
   provider: string;
   model: string;
   llmReady: boolean;
+  modelReconnect: boolean;
   integrationsReady: boolean;
   conversationResetEnabled: boolean;
 }

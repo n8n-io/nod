@@ -34,6 +34,7 @@ export function configuration(overrides: Partial<Configuration> = {}): Configura
     provider: 'unconfigured',
     model: 'Unconfigured',
     llmReady: false,
+    modelReconnect: false,
     integrationsReady: false,
     conversationResetEnabled:
       runtimeEnvironment === 'development' && process.env.NODE_ENV !== 'production',

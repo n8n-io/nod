@@ -39,6 +39,14 @@ import {
   SearchField,
 } from './ui';
 
+function connectionName(connection: ModelConnection, short = false) {
+  if (!connection.keyEnding) return connection.label;
+  const key = `Key …${connection.keyEnding}`;
+  return short && connection.label === modelSource(connection)
+    ? key
+    : `${connection.label} · ${key}`;
+}
+
 function ModelConnectionAvatar({ connection }: { connection: ModelConnection }) {
   const initials =
     connection.method !== 'api_key' && connection.label.includes('@')
@@ -381,14 +389,16 @@ export function ModelSettings({
                   <div className="model-connection-label">
                     <ModelConnectionAvatar connection={connection} />
                     <div className="model-connection-identity">
-                      <strong>{connection.label}</strong>
+                      <strong>{connectionName(connection, true)}</strong>
                       <span className={`model-connection-meta ${connection.status}`}>
                         {connection.status === 'reconnect'
-                          ? connection.provider !== 'compatible'
-                            ? 'Reconnect to continue'
-                            : connection.managed
-                              ? 'Can’t load its models · Refresh to retry'
-                              : 'Remove it and add the server again'
+                          ? connection.managed
+                            ? 'Can’t load its models · Refresh to retry'
+                            : connection.method !== 'api_key'
+                              ? 'Reconnect to continue'
+                              : connection.provider === 'compatible'
+                                ? 'Remove it and add the server again'
+                                : 'Remove it and add the key again'
                           : connection.status === 'loading'
                             ? 'Connected · Load models to continue'
                             : `${modelSource(connection)} · ${connection.models.length} ${connection.models.length === 1 ? 'model' : 'models'}`}
@@ -407,7 +417,7 @@ export function ModelSettings({
                       {connection.method !== 'api_key' && (
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant={connection.status === 'reconnect' ? 'outline' : 'ghost'}
                           size="sm"
                           disabled={busy}
                           onClick={() =>
@@ -417,28 +427,30 @@ export function ModelSettings({
                           Reconnect
                         </Button>
                       )}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size={connection.status === 'loading' ? 'sm' : 'icon'}
-                        aria-label={`Refresh ${connection.label} models`}
-                        disabled={busy}
-                        onClick={() =>
-                          void models.change(
-                            `/api/models/connections/${connection.id}/refresh`,
-                            'POST',
-                          )
-                        }
-                      >
-                        <RefreshCw size={16} />
-                        {connection.status === 'loading' && 'Load models'}
-                      </Button>
+                      {(connection.managed || connection.status !== 'reconnect') && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size={connection.status === 'loading' ? 'sm' : 'icon'}
+                          aria-label={`Refresh ${connectionName(connection)} models`}
+                          disabled={busy}
+                          onClick={() =>
+                            void models.change(
+                              `/api/models/connections/${connection.id}/refresh`,
+                              'POST',
+                            )
+                          }
+                        >
+                          <RefreshCw size={16} />
+                          {connection.status === 'loading' && 'Load models'}
+                        </Button>
+                      )}
                       {!connection.managed && (
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
-                          aria-label={`Remove ${connection.label}`}
+                          aria-label={`Remove ${connectionName(connection)}`}
                           disabled={busy}
                           onClick={() =>
                             void models.change(`/api/models/connections/${connection.id}`, 'DELETE')
@@ -580,12 +592,12 @@ export function ModelPicker({
         }}
         aria-label={
           model
-            ? `${canChoose ? 'Choose model' : 'Manage model connections'}: ${model.name}, ${connection!.label}`
+            ? `${canChoose ? 'Choose model' : 'Manage model connections'}: ${model.name}, ${connectionName(connection!)}`
             : canChoose
               ? 'Choose a model'
               : 'Connect a model'
         }
-        title={model ? `${model.name} · ${connection!.label}` : undefined}
+        title={model ? `${model.name} · ${connectionName(connection!)}` : undefined}
         disabled={models.loading}
       >
         {model ? (
@@ -635,6 +647,7 @@ export function ModelPicker({
                     <small>
                       {modelSource(source)}
                       {source.label !== modelSource(source) ? ` · ${source.label}` : ''}
+                      {source.keyEnding ? ` · Key …${source.keyEnding}` : ''}
                       {' · '}
                       {Math.round(item.contextWindow / 1000)}k context
                       {item.images ? ' · Images' : ''}

@@ -17,7 +17,12 @@ import type {
   ModelCredential,
   ModelDefinition,
 } from '../../ports/models.ts';
-import { bedrockRegionPattern, type ModelProvider, type ModelMethod } from '../../shared/models.ts';
+import {
+  bedrockRegionPattern,
+  modelProviderNames,
+  type ModelProvider,
+  type ModelMethod,
+} from '../../shared/models.ts';
 import { signInPage } from '../../shared/sign-in-page.ts';
 import type { PiModelCall } from './traces.ts';
 
@@ -57,7 +62,8 @@ class TokenRejected extends Error {
 
 function chatgptCredential(value: unknown) {
   const parsed = chatgptCredentialSchema.safeParse(value);
-  if (!parsed.success) throw new ModelAuthError('Reconnect your ChatGPT account in Models.', true);
+  if (!parsed.success)
+    throw new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
   return parsed.data;
 }
 
@@ -617,6 +623,15 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         provider === 'anthropic'
           ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
           : { Authorization: `Bearer ${key}` };
+      const accepted = async (response: Response) => {
+        if (response.status !== 401) return response;
+        await response.body?.cancel();
+        throw method === 'subscription'
+          ? new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true)
+          : new ModelAuthError(
+              `${modelProviderNames[provider]} didn’t accept this API key. Check it and try again.`,
+            );
+      };
       if (provider === 'openrouter') {
         const account = z
           .object({
@@ -625,15 +640,26 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
               is_provisioning_key: z.boolean().optional(),
             }),
           })
-          .parse(await json('https://openrouter.ai/api/v1/key', { headers }));
+          .parse(
+            await jsonResponse(
+              await accepted(
+                await request('https://openrouter.ai/api/v1/key', {
+                  headers,
+                  signal: AbortSignal.timeout(15000),
+                }),
+              ),
+            ),
+          );
         if (account.data.is_management_key || account.data.is_provisioning_key)
-          throw new Error('Use an inference key for OpenRouter.');
+          throw new ModelAuthError('Use an inference key for OpenRouter.');
       }
-      const response = await request(url, {
-        headers,
-        signal: AbortSignal.timeout(15000),
-        redirect: 'error',
-      });
+      const response = await accepted(
+        await request(url, {
+          headers,
+          signal: AbortSignal.timeout(15000),
+          redirect: 'error',
+        }),
+      );
       if (
         provider === 'openai' &&
         method === 'api_key' &&
@@ -801,7 +827,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           error instanceof TokenRejected && [400, 401, 403].includes(error.statusCode);
         throw new ModelAuthError(
           terminal
-            ? 'Reconnect your ChatGPT account in Models.'
+            ? 'Reconnect your ChatGPT account in Settings > Models.'
             : 'ChatGPT is temporarily unavailable. Try again.',
           terminal,
           { cause: error },
@@ -817,6 +843,10 @@ export async function createPiModelRuntime(
 ) {
   const subscription = access.method === 'subscription';
   const provider = access.provider;
+  const reconnect = async (credential?: ModelCredential) => {
+    await access.needsReconnect?.(credential);
+    return new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
+  };
   if (
     subscription &&
     (provider !== 'openai' ||
@@ -824,7 +854,7 @@ export async function createPiModelRuntime(
       access.definition.spec.api !== 'openai-responses' ||
       access.definition.spec.baseUrl !== resource)
   )
-    throw new ModelAuthError('Reconnect your ChatGPT account in Models.', true);
+    throw await reconnect();
   const secrets = new Set<string>();
   const credentials: CredentialStore = {
     async read(providerId): ReturnType<CredentialStore['read']> {
@@ -832,7 +862,9 @@ export async function createPiModelRuntime(
       const credential = await access.read();
       if (!credential) throw new Error('The selected model connection is unavailable.');
       if (subscription) {
-        const value = chatgptCredential(credential);
+        const parsed = chatgptCredentialSchema.safeParse(credential);
+        if (!parsed.success) throw await reconnect(credential);
+        const value = parsed.data;
         for (const secret of [value.access, value.refresh, value.idToken]) secrets.add(secret);
         return { type: 'oauth', access: value.access, refresh: '', expires: value.expires };
       }

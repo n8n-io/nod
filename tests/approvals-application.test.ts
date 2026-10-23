@@ -463,9 +463,10 @@ test(
             }),
           );
           assert.deepEqual(models.view().selection, before);
+          assert.equal(models.view().connections[0]!.keyEnding, '-key');
           assert.doesNotMatch(
             JSON.stringify(await application.personal.manage('models_get', {})),
-            /synthetic-model-key/,
+            /synthetic-model-key|keyEnding|-key/,
           );
         },
       );

@@ -150,7 +150,21 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     if (action === 'notification_preferences_get') return preferences.get();
     if (action === 'models_get') {
       if (!dependencies.models) throw new Error('Model settings are unavailable.');
-      return dependencies.models.view();
+      const { connections, selection } = dependencies.models.view();
+      return {
+        connections: connections.map(
+          ({ id, provider, method, label, status, managed, models }) => ({
+            id,
+            provider,
+            method,
+            label,
+            status,
+            managed,
+            models,
+          }),
+        ),
+        selection,
+      };
     }
     if (action === 'model_select') {
       const input = modelSelectionInput.parse(await validateReview(action, args));

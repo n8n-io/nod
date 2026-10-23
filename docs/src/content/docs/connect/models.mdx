@@ -34,7 +34,7 @@ Anthropic's [authentication conditions](https://code.claude.com/docs/en/legal-an
 
 Select **Settings** at the bottom of the sidebar, then **Models**. Onboarding shows the same options before your first chat.
 
-If a connection needs sign-in again, select **Reconnect** in **Settings > Models**. A recovery link in chat opens that screen.
+If a connection stops working, its row in **Settings > Models** says what it needs: **Reconnect** a sign-in, or remove a key or server connection and add it again. When it's the connection you selected, chat links to that screen.
 
 To change to an available model, you can also tell nod which model and service to use. This works in nod, Telegram, and WhatsApp. nod changes the saved selection for the next turn. Connecting a new service or signing in again still needs the private flow in the app.
 
@@ -63,7 +63,7 @@ nod uses OpenAI's [Sign in with ChatGPT](https://developers.openai.com/siwc/toke
 
 ChatGPT sign-in listens for the browser on port `1455` of your computer. If another program uses that port, nod stops with an error before it opens OpenAI.
 
-A ChatGPT connection made with an earlier version of nod needs one reconnect in **Models**.
+A ChatGPT connection made with an earlier version of nod needs one reconnect in **Settings > Models**.
 
 </TabItem>
 <TabItem label="Anthropic">
@@ -153,12 +153,16 @@ Use this for Ollama, LM Studio, vLLM, llama.cpp and hosted services with an Open
 
 All the models from your connections appear in one searchable list. Choosing a model also chooses the connection that pays for it.
 
-| To                     | Do this                                                                      |
-| ---------------------- | ---------------------------------------------------------------------------- |
-| Switch model           | Open **Settings → Models**, then pick a model.                               |
-| Update a model list    | In **Models**, select the refresh button next to the connection.             |
-| Fix an expired sign-in | Select **Reconnect** on a ChatGPT or OpenRouter sign-in connection.          |
-| Remove a connection    | Select the remove button next to it. If it was selected, choose a new model. |
+You can connect several accounts of one service, such as two ChatGPT accounts or a personal and a work API key. A ChatGPT connection shows the account's email. A key connection, including one an OpenRouter sign-in created, shows the key's last four characters, which the model never sees. Signing in again with an account you already connected, or adding the same key or server address to the same service again, updates that connection instead of adding another.
+
+If your selected connection is removed or needs reconnecting, the next connection you add or reconnect becomes your model. If only your model disappears from a working connection, nod keeps your choice and asks you to choose another. nod doesn't switch by itself after a failed request.
+
+| To                      | Do this                                                                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| Switch model            | Open **Settings → Models**, then pick a model.                                                        |
+| Update a model list     | In **Models**, select the refresh button next to the connection.                                      |
+| Fix a broken connection | Do what its row says: **Reconnect** a sign-in, or remove a key or server connection and add it again. |
+| Remove a connection     | Select the remove button next to it. If it was selected, choose a new model.                          |
 
 ## One model for everything
 

@@ -1818,11 +1818,14 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       0,
     );
     const third = await owner.addKey('openai', 'fixture-third-api-key');
+    assert.equal(await owner.apiKey('openai'), 'fixture-third-api-key');
+    const fourth = await owner.addKey('openai', 'fixture-fourth-api-key');
+    await owner.remove(third);
     assert.equal(owner.hasApiKey('openai'), false);
     assert.equal(await owner.apiKey('openai'), undefined);
     await owner.select(original);
     assert.equal(await owner.apiKey('openai'), 'fixture-first-api-key');
-    await owner.remove(third);
+    await owner.remove(fourth);
     await owner.remove(first);
     assert.equal(await captured.read(), undefined);
     assert.equal(owner.hasApiKey('openai'), false);
@@ -2271,5 +2274,194 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(inputs.at(-1)!.previous, undefined);
     assert.equal(restarted.view().connections.length, 2);
     assert.deepEqual(restarted.view().selection, selection);
+  });
+
+  test('each account is one connection: an unusable one shows on its row, signing in again repairs it, and what the owner adds next takes over', async (t) => {
+    const f = await fixture(t);
+    const { createPiModelRuntime } = await import('../src/providers/pi/models.ts');
+    const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    const { ModelAuthError } = await import('../src/ports/models.ts');
+    let account = 'fixture-account';
+    let down = false;
+    let revoked = false;
+    let hidden: string | undefined;
+    let held: { access: string; entered(): void; release: Promise<void> } | undefined;
+    const backend = {
+      ...f.backend,
+      signIn: stubSignIn(async () => ({
+        ...subscriptionCredential(),
+        access: `fixture-access-${randomUUID()}`,
+        accountId: account,
+        email: `${account}@example.test`,
+      })),
+      catalog: async (
+        provider: Parameters<typeof f.backend.catalog>[0],
+        method: Parameters<typeof f.backend.catalog>[1],
+        credential?: Parameters<typeof f.backend.catalog>[2],
+      ) => {
+        if (credential?.type === 'oauth' && credential.access === held?.access) {
+          held.entered();
+          await held.release;
+          throw new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
+        }
+        if (down) throw new Error('fixture-catalog-outage');
+        if (revoked && method === 'subscription')
+          throw new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
+        return f.backend
+          .catalog(provider, method, method === 'api_key' ? credential : undefined)
+          .then((definitions) => definitions.filter(({ choice }) => choice.id !== hidden));
+      },
+    };
+    const store = createDatabaseModelStore({
+      database: f.database,
+      ownerId: 'fixture-owner',
+      keyStore: f.keyStore,
+    });
+    await store.initialize();
+    const grants = async () =>
+      (await f.database.query('SELECT count(*)::int AS count FROM vault_app_grants')).rows[0].count;
+    async function signIn(service: Awaited<ReturnType<typeof f.create>>) {
+      const started = await service.start('openai');
+      await service.complete(
+        new URL(`http://127.0.0.1:1455/auth/callback?state=${started.attempt}&code=fixture`),
+      );
+    }
+    const owner = await f.create('fixture-owner', backend);
+    await signIn(owner);
+    const [chatgpt] = owner.view().connections;
+    const selection = owner.view().selection!;
+    assert.equal(selection.connectionId, chatgpt.id);
+    await signIn(owner);
+    assert.deepEqual(
+      owner.view().connections.map(({ id, status }) => ({ id, status })),
+      [{ id: chatgpt.id, status: 'connected' }],
+    );
+    assert.deepEqual(owner.view().selection, selection);
+    down = true;
+    await signIn(owner);
+    down = false;
+    assert.deepEqual(
+      owner.view().connections.map(({ id, status }) => ({ id, status })),
+      [{ id: chatgpt.id, status: 'connected' }],
+    );
+    assert.equal(owner.configured, true);
+    assert.equal(await grants(), 1);
+
+    await store.change((state) => {
+      for (const model of state.connections[0].models)
+        model.spec.baseUrl = 'https://chatgpt.com/backend-api';
+    });
+    const restarted = await f.create('fixture-owner', backend);
+    const stale = await restarted.resolve();
+    await assert.rejects(
+      createPiModelRuntime(stale),
+      /Reconnect your ChatGPT account in Settings > Models/,
+    );
+    assert.equal(restarted.view().connections[0].status, 'reconnect');
+    assert.equal(restarted.configured, false);
+    await assert.rejects(
+      restarted.resolve(),
+      /Reconnect the ChatGPT plan connection in Settings > Models/,
+    );
+
+    await signIn(restarted);
+    assert.deepEqual(
+      restarted.view().connections.map(({ id, status }) => ({ id, status })),
+      [{ id: chatgpt.id, status: 'connected' }],
+    );
+    assert.deepEqual(restarted.view().selection, selection);
+    await createPiModelRuntime(await restarted.resolve());
+    await stale.needsReconnect!();
+    assert.equal(restarted.view().connections[0].status, 'connected');
+
+    await (
+      await restarted.resolve()
+    ).needsReconnect!();
+    assert.equal(restarted.view().connections[0].status, 'reconnect');
+    const key = await restarted.addKey('openai', 'fixture-api-1111');
+    assert.equal(restarted.view().selection?.connectionId, key);
+    assert.equal(restarted.configured, true);
+    assert.equal(await restarted.addKey('openai', 'fixture-api-1111'), key);
+    assert.equal(restarted.view().connections.length, 2);
+    const chosen = restarted.view().selection!;
+    hidden = chosen.modelId;
+    await restarted.refreshCatalog(key);
+    hidden = undefined;
+    assert.deepEqual(restarted.view().selection, chosen);
+    assert.equal(restarted.configured, false);
+    await assert.rejects(restarted.resolve(), /selected model is unavailable/);
+    await restarted.refreshCatalog(key);
+    assert.equal(restarted.configured, true);
+
+    await store.change((state) => {
+      const [original] = state.connections;
+      const copies = [randomUUID(), randomUUID()].map((id) => ({
+        ...structuredClone(original),
+        id,
+        status: 'connected' as const,
+      }));
+      state.connections.push(...copies);
+      state.selection = { ...selection, connectionId: copies[1].id };
+    });
+    const duplicated = await f.create('fixture-owner', backend);
+    assert.equal(duplicated.view().connections.length, 4);
+    await signIn(duplicated);
+    assert.deepEqual(
+      duplicated.view().connections.map(({ id, status }) => ({ id, status })),
+      [
+        { id: chatgpt.id, status: 'connected' },
+        { id: key, status: 'connected' },
+      ],
+    );
+    assert.deepEqual(duplicated.view().selection, selection);
+    assert.equal(duplicated.configured, true);
+    assert.equal(await grants(), 2);
+
+    account = 'fixture-second-account';
+    await signIn(duplicated);
+    await signIn(duplicated);
+    const work = await duplicated.addKey('openai', 'fixture-api-2222');
+    assert.deepEqual(
+      duplicated.view().connections.map(({ label, keyEnding }) => [label, keyEnding]),
+      [
+        ['fixture-account@example.test', undefined],
+        ['OpenAI API', '1111'],
+        ['fixture-second-account@example.test', undefined],
+        ['OpenAI API', '2222'],
+      ],
+    );
+    assert.deepEqual(duplicated.view().selection, selection);
+    await duplicated.remove(work);
+    assert.equal(duplicated.view().connections.length, 3);
+    assert.deepEqual(duplicated.view().selection, selection);
+    assert.equal(await grants(), 3);
+
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => (entered = resolve));
+    held = {
+      access: ((await (await duplicated.resolve()).read()) as { access: string }).access,
+      entered,
+      release: new Promise((resolve) => (release = resolve)),
+    };
+    const racing = duplicated.refreshCatalog(chatgpt.id);
+    await reached;
+    account = 'fixture-account';
+    await signIn(duplicated);
+    release();
+    await assert.rejects(racing, /Reconnect/);
+    assert.equal(
+      duplicated.view().connections.find(({ id }) => id === chatgpt.id)?.status,
+      'connected',
+    );
+
+    revoked = true;
+    await assert.rejects(duplicated.refreshCatalog(chatgpt.id), /Reconnect/);
+    revoked = false;
+    assert.equal(
+      duplicated.view().connections.find(({ id }) => id === chatgpt.id)?.status,
+      'reconnect',
+    );
+    assert.equal(duplicated.configured, false);
   });
 });

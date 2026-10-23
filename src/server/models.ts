@@ -106,6 +106,66 @@ function keyCredential(
     throw new ConnectionError('Choose the model and enter its deployment name.');
   return { type: 'azure', url, key, model: settings.model, deployment };
 }
+
+function sameAccount(
+  row: ModelRecord,
+  provider: ModelProvider,
+  method: ModelMethod,
+  value: ModelCredential,
+) {
+  if (row.managed || row.provider !== provider || row.method !== method) return false;
+  const saved = row.credential;
+  if (value.type === 'oauth') return saved?.type === 'oauth' && saved.accountId === value.accountId;
+  if (value.type === 'endpoint') return saved?.type === 'endpoint' && saved.url === value.url;
+  return JSON.stringify(saved) === JSON.stringify(value);
+}
+
+function connectionLabel(provider: ModelProvider, method: ModelMethod, value: ModelCredential) {
+  if (value.type === 'oauth') return value.email ?? 'ChatGPT account';
+  if (value.type === 'endpoint') return new URL(value.url).host;
+  if (value.type === 'bedrock') return value.region;
+  if (value.type === 'azure') return value.deployment;
+  return modelSource({ provider, method });
+}
+
+function usable(
+  connections: Pick<ModelRecord, 'id' | 'status' | 'models'>[],
+  selection: ModelSelection | null,
+) {
+  return (
+    !!selection &&
+    connections.some(
+      (row) =>
+        row.id === selection.connectionId &&
+        row.status === 'connected' &&
+        row.models.some(
+          (model) =>
+            model.choice.id === selection.modelId &&
+            model.choice.efforts.includes(selection.effort),
+        ),
+    )
+  );
+}
+
+function selectedConnectionWorks(state: ModelState) {
+  return state.connections.some(
+    (row) => row.id === state.selection?.connectionId && row.status === 'connected',
+  );
+}
+
+function attention(row: Pick<ModelRecord, 'provider' | 'method' | 'managed' | 'status'>) {
+  const name = `the ${modelSource(row)} connection`;
+  return new ConnectionError(
+    row.status === 'loading'
+      ? `Load the models for ${name} in Settings > Models.`
+      : row.managed
+        ? `Refresh ${name} in Settings > Models.`
+        : row.method === 'api_key'
+          ? `Remove ${name} and add it again in Settings > Models.`
+          : `Reconnect ${name} in Settings > Models.`,
+  );
+}
+
 export function createModelService(options: {
   database: Pool;
   ownerId: string;
@@ -146,7 +206,7 @@ export function createModelService(options: {
       throw error;
     }
   }
-  let rows: ModelRecord[] = [];
+  let rows: (ModelRecord & { keyEnding?: string })[] = [];
   let selection: ModelSelection | null = null;
   let starting: Promise<unknown> = Promise.resolve();
   const pendingControllers = new Set<AbortController>();
@@ -200,7 +260,12 @@ export function createModelService(options: {
   }
   async function reload() {
     const state = await store.read();
-    rows = state.connections.map(({ credential: _credential, ...row }) => row);
+    rows = state.connections.map(({ credential: saved, ...row }) => {
+      const value = row.managed ? options.bootstrap?.credentials[row.provider] : saved;
+      return value?.type === 'api_key' || value?.type === 'bedrock'
+        ? { ...row, keyEnding: value.key.slice(-4) }
+        : row;
+    });
     selection = state.selection;
     options.changed?.();
   }
@@ -242,8 +307,7 @@ export function createModelService(options: {
     const result = await store.change(async (state) => {
       const row = state.connections.find((item) => item.id === id);
       if (!row) return {};
-      if (row.status === 'reconnect')
-        throw new ConnectionError('Reconnect the selected account in Settings > Models.');
+      if (row.status === 'reconnect') throw attention(row);
       try {
         const current = credential(row);
         if (current?.type !== 'oauth' || current.expires > Date.now() + 300000)
@@ -261,23 +325,52 @@ export function createModelService(options: {
               : 'The model service is temporarily unavailable. Try again.',
           );
         row.status = 'reconnect';
-        return { reconnect: true };
+        return { reconnect: row };
       }
     });
     if (result.reconnect) {
       await reload();
-      throw new ConnectionError('Reconnect the selected ChatGPT account in Settings > Models.');
+      throw attention(result.reconnect);
     }
     return result.value;
   }
-  async function catalog(provider: ModelProvider, method: ModelMethod, value?: ModelCredential) {
+  async function needsReconnect(
+    id: string,
+    seen: { models: ModelDefinition[]; credential?: ModelCredential },
+  ) {
+    try {
+      const flagged = await store.change((state) => {
+        const row = state.connections.find((item) => item.id === id);
+        if (
+          !row ||
+          row.managed ||
+          row.status !== 'connected' ||
+          JSON.stringify(row.models) !== JSON.stringify(seen.models) ||
+          (seen.credential && JSON.stringify(row.credential) !== JSON.stringify(seen.credential))
+        )
+          return false;
+        row.status = 'reconnect';
+        return true;
+      });
+      if (flagged) await reload();
+    } catch (error) {
+      logFailure('model_reconnect_flag_failed', error);
+    }
+  }
+  async function catalog(
+    provider: ModelProvider,
+    method: ModelMethod,
+    value?: ModelCredential,
+    rejected?: () => Promise<void>,
+  ) {
     try {
       return await backend.catalog(provider, method, value);
     } catch (error) {
+      if (error instanceof ModelAuthError && error.requiresReconnect) await rejected?.();
       throw new ConnectionError(
         error instanceof ModelAuthError
           ? error.message
-          : 'The model list could not be loaded. Try refreshing the connection.',
+          : 'The model list couldn’t be loaded. Try again.',
       );
     }
   }
@@ -300,7 +393,7 @@ export function createModelService(options: {
     method: ModelMethod,
     value: ModelCredential,
     definitions: ModelDefinition[],
-    id: string = randomUUID(),
+    id?: string,
     {
       managed = false,
       replace = false,
@@ -320,38 +413,41 @@ export function createModelService(options: {
       );
     if (status === 'connected' && !definitions.length)
       throw new ConnectionError('This connection has no supported models.');
-    await store.change((state) => {
-      const previous = state.connections.find((row) => row.id === id);
+    const saved = await store.change((state) => {
+      const previous = state.connections.find((row) =>
+        id ? row.id === id : !managed && sameAccount(row, provider, method, value),
+      );
       if (replace && !previous)
         throw new ConnectionError('This model connection was removed. Start a new connection.');
-      if (!previous && state.connections.length >= 20)
+      const duplicates = managed
+        ? []
+        : state.connections.filter(
+            (row) => row !== previous && sameAccount(row, provider, method, value),
+          );
+      if (!previous && state.connections.length - duplicates.length >= 20)
         throw new ConnectionError('Remove an unused model connection before adding another.');
-      const label =
-        value.type === 'oauth'
-          ? (value.email ?? 'ChatGPT account')
-          : value.type === 'endpoint'
-            ? new URL(value.url).host
-            : value.type === 'bedrock'
-              ? value.region
-              : value.type === 'azure'
-                ? value.deployment
-                : modelSource({ provider, method });
+      const working = status === 'loading' && previous?.status === 'connected';
       const row: ModelRecord = {
-        id,
+        id: previous?.id ?? id ?? randomUUID(),
         provider,
         method,
-        label,
-        models: definitions,
+        label: connectionLabel(provider, method, value),
+        models: working ? previous.models : definitions,
         managed,
-        status,
+        status: working ? 'connected' : status,
         ...(!managed ? { credential: value } : {}),
       };
-      if (previous) state.connections[state.connections.indexOf(previous)] = row;
-      else state.connections.push(row);
+      state.connections = state.connections.flatMap((item) =>
+        item === previous ? [row] : duplicates.includes(item) ? [] : [item],
+      );
+      if (!previous) state.connections.push(row);
+      if (state.selection && duplicates.some((item) => item.id === state.selection!.connectionId))
+        state.selection = { ...state.selection, connectionId: row.id };
       selectDefault(state, row);
+      return row.id;
     }, signal);
     await reload();
-    return id;
+    return saved;
   }
   function selectDefault(state: ModelState, row: ModelRecord) {
     const { provider, method, models: definitions, id, managed, status } = row;
@@ -370,7 +466,7 @@ export function createModelService(options: {
       preferred &&
       status === 'connected' &&
       (!managed || options.bootstrap?.provider === provider) &&
-      (!state.selectionSet || (subscription && state.selection === null))
+      (!state.selectionSet || (!managed && !selectedConnectionWorks(state)))
     ) {
       state.selection = {
         connectionId: id,
@@ -384,12 +480,13 @@ export function createModelService(options: {
     signal?.throwIfAborted();
     const snapshot = (await store.read()).connections.find((item) => item.id === id);
     if (!snapshot) throw new ConnectionError('This model connection is unavailable.');
-    if (!snapshot.managed && snapshot.status === 'reconnect')
-      throw new ConnectionError('Reconnect the selected account in Settings > Models.');
+    if (!snapshot.managed && snapshot.status === 'reconnect') throw attention(snapshot);
     const value = credential(snapshot);
     if (!value) throw new ConnectionError('This model connection is unavailable.');
     const previous = JSON.stringify(snapshot);
-    const definitions = await catalog(snapshot.provider, snapshot.method, value);
+    const definitions = await catalog(snapshot.provider, snapshot.method, value, () =>
+      needsReconnect(id, snapshot),
+    );
     if (!definitions.length) throw new ConnectionError('This connection has no supported models.');
     await store.change((state) => {
       const row = state.connections.find((item) => item.id === id);
@@ -398,7 +495,7 @@ export function createModelService(options: {
       signal?.throwIfAborted();
       row.models = definitions;
       row.status = 'connected';
-      if (value.type === 'oauth' && value.email) row.label = value.email;
+      row.label = connectionLabel(row.provider, row.method, value);
       selectDefault(state, row);
     }, signal);
     await reload();
@@ -573,19 +670,7 @@ export function createModelService(options: {
   }
   const service = {
     get configured() {
-      return (
-        !!selection &&
-        rows.some(
-          (row) =>
-            row.id === selection!.connectionId &&
-            row.status === 'connected' &&
-            row.models.some(
-              (model) =>
-                model.choice.id === selection!.modelId &&
-                model.choice.efforts.includes(selection!.effort),
-            ),
-        )
-      );
+      return usable(rows, selection);
     },
     get current() {
       return {
@@ -593,6 +678,7 @@ export function createModelService(options: {
           rows.find((row) => row.id === selection?.connectionId)?.provider ?? 'unconfigured',
         name: selection?.modelId ?? 'Unconfigured',
         configured: service.configured,
+        reconnect: rows.find((row) => row.id === selection?.connectionId)?.status === 'reconnect',
       };
     },
     onSecrets(observer: (values: string[]) => void) {
@@ -602,15 +688,18 @@ export function createModelService(options: {
     },
     view(): ModelsResponse {
       return {
-        connections: rows.map(({ id, provider, method, label, status, managed, models }) => ({
-          id,
-          provider,
-          method,
-          label,
-          status,
-          managed,
-          models: models.map((model) => model.choice),
-        })),
+        connections: rows.map(
+          ({ id, provider, method, label, status, managed, models, keyEnding }) => ({
+            id,
+            provider,
+            method,
+            label,
+            status,
+            managed,
+            models: models.map((model) => model.choice),
+            ...(keyEnding ? { keyEnding } : {}),
+          }),
+        ),
         selection,
       };
     },
@@ -677,15 +766,7 @@ export function createModelService(options: {
           throw new ConnectionError(
             'This server has no models nod can use. nod needs models with tool support.',
           );
-        const state = await store.read();
-        const same = state.connections.find(
-          (row) =>
-            row.provider === 'compatible' &&
-            !row.managed &&
-            row.credential?.type === 'endpoint' &&
-            row.credential.url === url,
-        )?.id;
-        return save('compatible', 'api_key', value, definitions, same, { replace: !!same });
+        return save('compatible', 'api_key', value, definitions);
       });
     },
     async select(input: ModelSelection) {
@@ -754,15 +835,15 @@ export function createModelService(options: {
         definition,
         effort: lightestEffort(definition.choice.efforts),
         read: () => read(row.id),
+        needsReconnect: (credential) => needsReconnect(row.id, { models: row.models, credential }),
       };
     },
     async resolve(auxiliary = false): Promise<ModelAccess> {
       const selected = selection && { ...selection };
-      const row = rows.find(
-        (row) => row.id === selected?.connectionId && row.status === 'connected',
-      );
+      const row = rows.find((row) => row.id === selected?.connectionId);
       if (!row || !selected)
         throw new ConnectionError('Open Settings > Models. Connect a service and choose a model.');
+      if (row.status !== 'connected') throw attention(row);
       const definition =
         (auxiliary
           ? row.models.find((model) => model.choice.id === memoryModels[row.provider])
@@ -780,6 +861,7 @@ export function createModelService(options: {
             definition.choice.efforts[0])
           : selected.effort,
         read: () => read(row.id),
+        needsReconnect: (credential) => needsReconnect(row.id, { models: row.models, credential }),
       };
     },
     start,
