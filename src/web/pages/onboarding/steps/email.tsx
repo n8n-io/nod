@@ -133,7 +133,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
           return true;
         }
         const app = result.apps.find((app) => app.hash === hash);
-        if (!app) {
+        if (!app || app.available === false) {
           settle('failed');
           return true;
         }

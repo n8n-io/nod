@@ -105,12 +105,14 @@
           : connection === 'cancelled'
             ? 'Sign-in cancelled'
             : connection === 'expired'
-              ? 'Sign-in link expired'
+              ? 'Sign-in link is no longer available'
               : 'Sign-in didn’t finish';
         document.getElementById('title').textContent = title;
         document.getElementById('message').textContent = succeeded
           ? 'You can close this window and return to nod.'
-          : 'Return to nod and try connecting again.';
+          : connection === 'expired'
+            ? 'Return to nod to check your connection. If it still needs sign-in, use the latest link or connect again.'
+            : 'Return to nod and try connecting again.';
         document.title = `${title} · nod`;
         try {
           history.replaceState(null, '', location.pathname);
@@ -122,7 +124,7 @@
             channel.close();
           }
         } catch {}
-        window.close();
+        if (succeeded) window.close();
       })();
     </script>
   </body>

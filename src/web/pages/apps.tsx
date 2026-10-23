@@ -411,7 +411,7 @@ export function Apps({
         if (controller.signal.aborted) return false;
         if (!result.completed.includes(hash)) {
           const app = result.apps.find((app) => app.hash === hash);
-          if (app) {
+          if (app && app.available !== false) {
             if (app.pairingConfirmed === true && !pairingConfirmed) {
               pairingConfirmed = true;
               setSignIn((current) =>

@@ -3363,61 +3363,172 @@ test('Composio inbox threads read the latest message from someone else and skip 
     assert.deepEqual(request.parameters, [{ in: 'query', name: 'format', value: 'full' }]);
 });
 
-test('OAuth completion pages preserve valid service identities and clear callback state before closing', async () => {
+test('OAuth completion pages clear callback state and close only successful consent', async (t) => {
   const { readFile } = await import('node:fs/promises');
   const { JSDOM } = await import('jsdom');
   const html = await readFile(new URL('../public/connected.html', import.meta.url), 'utf8');
   const attempt = 'a'.repeat(43);
-  for (const [service, expected] of [
-    ['gmail', 'gmail'],
-    ['notion_mcp', 'notion_mcp'],
-    ['linear_mcp2', 'linear_mcp2'],
-    ['fixture-desktop', 'fixture-desktop'],
-    ['a'.repeat(80), 'a'.repeat(80)],
-    ['a'.repeat(81), null],
-    ['a-'.repeat(21), null],
-    ['invalid_mixed-slug', null],
-    ['9gmail', null],
-    ['Gmail', null],
-    ['<svg onload="alert(1)">', null],
-  ] as const) {
-    const messages: unknown[] = [];
-    const operations: string[] = [];
-    let dispose = () => {};
-    const query = new URLSearchParams({ connection: 'connected', service, attempt });
-    const dom = new JSDOM(html, {
-      url: `http://127.0.0.1:4310/connected.html?${query}`,
-      runScripts: 'dangerously',
-      beforeParse(window) {
-        dispose = window.close.bind(window);
-        Reflect.set(
-          window,
-          'BroadcastChannel',
-          class {
-            constructor(name: string) {
-              assert.equal(name, 'nod.apps');
+  for (const outcome of ['connected', 'continued', 'cancelled', 'failed', 'expired'] as const)
+    await t.test(outcome, () => {
+      for (const [service, expected] of [
+        ['gmail', 'gmail'],
+        ['notion_mcp', 'notion_mcp'],
+        ['linear_mcp2', 'linear_mcp2'],
+        ['fixture-desktop', 'fixture-desktop'],
+        ['a'.repeat(80), 'a'.repeat(80)],
+        ['a'.repeat(81), null],
+        ['a-'.repeat(21), null],
+        ['invalid_mixed-slug', null],
+        ['9gmail', null],
+        ['Gmail', null],
+        ['<svg onload="alert(1)">', null],
+      ] as const) {
+        const messages: unknown[] = [];
+        const operations: string[] = [];
+        let dispose = () => {};
+        const query = new URLSearchParams({ connection: outcome, service, attempt });
+        const dom = new JSDOM(html, {
+          url: `http://127.0.0.1:4310/connected.html?${query}`,
+          runScripts: 'dangerously',
+          beforeParse(window) {
+            dispose = window.close.bind(window);
+            Reflect.set(
+              window,
+              'BroadcastChannel',
+              class {
+                constructor(name: string) {
+                  assert.equal(name, 'nod.apps');
+                  assert.equal(window.location.search, '');
+                }
+                postMessage(message: unknown) {
+                  messages.push(JSON.parse(JSON.stringify(message)));
+                  operations.push('message');
+                }
+                close() {
+                  operations.push('channel-close');
+                }
+              },
+            );
+            window.close = () => {
               assert.equal(window.location.search, '');
-            }
-            postMessage(message: unknown) {
-              messages.push(JSON.parse(JSON.stringify(message)));
-              operations.push('message');
-            }
-            close() {
-              operations.push('channel-close');
-            }
+              operations.push('window-close');
+            };
           },
-        );
-        window.close = () => {
-          assert.equal(window.location.search, '');
-          operations.push('window-close');
-        };
-      },
+        });
+        assert.deepEqual(messages, [{ connection: outcome, service: expected, attempt }]);
+        assert.deepEqual(operations, [
+          'message',
+          'channel-close',
+          ...(outcome === 'connected' || outcome === 'continued' ? ['window-close'] : []),
+        ]);
+        assert.equal(dom.window.document.querySelector('[onload]'), null);
+        dispose();
+      }
     });
-    assert.deepEqual(messages, [{ connection: 'connected', service: expected, attempt }]);
-    assert.deepEqual(operations, ['message', 'channel-close', 'window-close']);
-    assert.equal(dom.window.document.querySelector('[onload]'), null);
-    dispose();
+});
+
+test('Apps settles unavailable consent and retries the same account without accepting stale completion', () => {
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeout: 25_000,
+    encoding: 'utf8',
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/apps',pretendToBeVisual:true});
+for(const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','MutationObserver','getComputedStyle','sessionStorage'])Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location=window.location;
+globalThis.ResizeObserver=class{observe(){}disconnect(){}};
+globalThis.BroadcastChannel=class{close(){}};
+HTMLElement.prototype.scrollIntoView=function(){};
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+window.open=()=>({closed:false,opener:null,document:{body:{}},location:{},close(){}});
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {Apps}=await import('./src/web/pages/apps.tsx');
+const {pageDataCache}=await import('./src/web/lib/page-data-cache.ts');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+const connectionId='11111111-1111-4111-8111-111111111111';
+const account={slug:'gmail',name:'Gmail',status:'connected',connectionId,accountId:'synthetic-gmail',accountEmail:'work@example.test',canReconnect:true,reconnectRequired:true};
+const requests=[];
+let available=true;
+let completed=false;
+let hold=false;
+let release;
+let polls=0;
+window.fetch=globalThis.fetch=async(url,options={})=>{
+  const path=new URL(url,window.location.href).pathname;
+  const body=options.body?JSON.parse(options.body):{};
+  if(path==='/api/apps')return Response.json([account]);
+  if(path==='/api/apps/catalog')return Response.json([]);
+  if(path==='/api/apps/gmail/connect'){
+    requests.push(body);
+    return Response.json({url:'https://connect.composio.dev/link/synthetic-'+requests.length,attempt:String(requests.length).repeat(43)});
   }
+  if(path==='/api/apps/setup-status'){
+    polls++;
+    if(hold){hold=false;return new Promise(resolve=>{release=()=>resolve(Response.json({completed:body.hashes,apps:[]}));});}
+    return Response.json({completed:completed?body.hashes:[],apps:body.hashes.map(hash=>({hash,slug:'gmail',name:'Gmail',available,pairingConfirmed:true}))});
+  }
+  throw new Error('Unexpected fixture request '+path);
+};
+const settle=(ms=15)=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,ms));});
+const waitFor=async(condition,message)=>{for(let i=0;i<100&&!condition();i++)await settle();assert.ok(condition(),message);};
+const button=name=>[...document.querySelectorAll('button')].find(item=>(item.getAttribute('aria-label')??item.textContent.trim())===name);
+const click=async(name)=>{await waitFor(()=>button(name)&&!button(name).disabled,'Expected enabled '+name);await act(async()=>button(name).click());await settle();};
+const waiting=()=>document.querySelector('[role="dialog"] [role="status"]');
+const reconnect='Reconnect work@example.test to Gmail';
+const focus=async()=>{const before=polls;await act(async()=>window.dispatchEvent(new Event('focus')));await waitFor(()=>polls>before,'Focus must check the pending attempt');await settle();};
+const root=createRoot(document.getElementById('root'));
+await act(async()=>root.render(createElement(Apps,{onAsk(){assert.fail('No agent task should start');}})));
+await click('Manage Gmail accounts');
+await click(reconnect);
+await waitFor(waiting,'Consent must remain open while active');
+await focus();
+assert.ok(waiting(),'Available consent must remain open');
+available=undefined;
+await focus();
+assert.ok(waiting(),'Legacy pending metadata must remain usable');
+assert.equal(requests.length,1,'Polling must not restart authorization');
+available=false;
+await focus();
+await waitFor(()=>!waiting(),'Unavailable consent must stop waiting immediately');
+assert.ok(document.querySelector('[role="alert"]'),'Unavailable consent must expose recovery');
+assert.equal(requests.length,1,'Unavailable consent must not automatically retry');
+available=true;
+await click(reconnect);
+await waitFor(waiting,'An explicit retry must open a new attempt');
+assert.equal(document.querySelector('[role="alert"]'),null,'Retry must clear the previous failure');
+assert.deepEqual(requests,[{returnTo:'window',connectionId},{returnTo:'window',connectionId}]);
+completed=true;
+await focus();
+await waitFor(()=>!waiting(),'Confirmed consent must stop waiting');
+assert.equal(document.querySelector('[role="alert"]'),null,'Successful consent must not show a failure');
+completed=false;hold=true;
+await click(reconnect);
+await waitFor(()=>release,'The old attempt poll must be in flight');
+await click('Close');
+await click(reconnect);
+await waitFor(waiting,'A newer consent attempt must remain open');
+await act(async()=>release());
+await settle();
+assert.ok(waiting(),'A late completed poll cannot close a newer attempt');
+assert.equal(document.querySelector('[role="alert"]'),null);
+completed=true;
+await focus();
+await waitFor(()=>!waiting(),'The current attempt can still complete');
+assert.equal(requests.length,4);
+assert.ok(requests.every(request=>request.connectionId===connectionId));
+await act(async()=>root.unmount());
+pageDataCache.clear();
+dom.window.close();
+process.exit(0);
+`,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
 test(

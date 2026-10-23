@@ -5293,7 +5293,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 let root;
 let advances=0;
 const settle=(ms=15)=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,ms));});
-const waitFor=async(condition)=>{for(let i=0;i<100&&!condition();i++)await settle();assert.ok(condition(),'Expected the confirmed connection to advance its React step');};
+const waitFor=async(condition,message='Expected the confirmed connection to advance its React step')=>{for(let i=0;i<100&&!condition();i++)await settle();assert.ok(condition(),message);};
 const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent.trim()===text);
 const click=async(text)=>{await waitFor(()=>button(text)&&!button(text).disabled);await act(async()=>button(text).click());await settle();};
 async function mount(Component,arrived='forward') {
@@ -5315,6 +5315,8 @@ let failDisconnect=true;
 let gmailReconnect=false;
 let gmailCompleted=false;
 let gmailMissing=false;
+let gmailAvailable=true;
+const gmailRequests=[];
 let failApps=false;
 let failTelegram=true;
 let failChannelLoad=false;
@@ -5406,8 +5408,8 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
     disconnectPending=false;
     return Response.json({disconnected:true});
   }
-  if(path==='/api/apps/gmail/connect')return Response.json({url:'https://connect.composio.dev/link/fixture',attempt});
-  if(path==='/api/apps/setup-status')return Response.json({completed:gmailCompleted?body.hashes:[],apps:gmailMissing?[]:body.hashes.map(hash=>({hash,pairingConfirmed:true}))});
+  if(path==='/api/apps/gmail/connect'){gmailRequests.push(body);return Response.json({url:'https://connect.composio.dev/link/fixture-'+gmailRequests.length,attempt});}
+  if(path==='/api/apps/setup-status')return Response.json({completed:gmailCompleted?body.hashes:[],apps:gmailMissing?[]:body.hashes.map(hash=>({hash,pairingConfirmed:true,available:gmailAvailable}))});
   if(path==='/api/channels')return failChannelLoad?Response.json({error:'Fixture channel refresh failed'},{status:503}):Response.json({channels:[],inbox:[],deliveries:[],error:null});
   if(path==='/api/channel-settings')return Response.json({ready:true,channels:[telegram]});
   if(path==='/api/channel-settings/telegram/confirm'){
@@ -5524,6 +5526,28 @@ gmailMissing=true;
 await act(async()=>window.dispatchEvent(new Event('focus')));
 await waitFor(()=>document.body.textContent.includes('Gmail didn’t connect'));
 assert.equal(advances,0,'an absent attempt without completion remains a failure');
+gmailConnected=false;gmailCompleted=false;gmailMissing=false;gmailAvailable=true;
+await mount(Email);
+await click('Connect Gmail');
+await act(async()=>window.dispatchEvent(new Event('focus')));
+assert.ok(button('Cancel'),'Available consent must remain pending');
+assert.equal(advances,0);
+const pendingRequests=gmailRequests.length;
+gmailAvailable=false;
+await act(async()=>window.dispatchEvent(new Event('focus')));
+await waitFor(()=>button('Connect Gmail')&&!button('Connect Gmail').disabled,'Unavailable consent must stop waiting and offer a fresh sign-in');
+assert.equal(button('Cancel'),undefined,'Unavailable consent must stop waiting immediately');
+assert.ok(document.querySelector('[role="alert"]'),'Unavailable consent must expose recovery');
+assert.equal(gmailRequests.length,pendingRequests,'Unavailable consent must not retry automatically');
+assert.equal(advances,0,'Unavailable consent cannot finish onboarding');
+gmailAvailable=true;
+await click('Connect Gmail');
+assert.equal(gmailRequests.length,pendingRequests+1,'Explicit recovery must start fresh consent');
+assert.equal(document.querySelector('[role="alert"]'),null,'Retry clears the previous failure');
+gmailConnected=true;gmailCompleted=true;
+await act(async()=>window.dispatchEvent(new Event('focus')));
+await waitFor(()=>advances===1);
+assert.equal(document.querySelector('[role="alert"]'),null,'Confirmed retry must not show a failure');
 await mount(Telegram);
 await click('Confirm');
 assert.equal(advances,0);
