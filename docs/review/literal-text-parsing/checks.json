@@ -66,5 +66,33 @@
       "pages": 54,
       "internalLinks": "valid"
     }
+  },
+  "demo": {
+    "pr": "https://github.com/n8n-io/nod/pull/445",
+    "recordedAfterPrOpened": true,
+    "sourceCommit": "b3d6377f14ba693b0a5461ff9c7441a66d30550d",
+    "file": "demo.mp4",
+    "durationSeconds": 25.3,
+    "bytes": 422498,
+    "sha256": "7217d2ff35890cca01c5459fded6bf70b4bfceda25c278342f7f7913767933bf",
+    "video": {
+      "codec_name": "h264",
+      "width": 1280,
+      "height": 628,
+      "avg_frame_rate": "30/1"
+    },
+    "viewedFramesAtSeconds": [0, 4, 8, 12, 16, 20, 24],
+    "scenes": [
+      "Readable confirmation paragraphs",
+      "Paste a URL",
+      "Failed send restores the draft",
+      "Second send preserves the link",
+      "Rich feedback paste preserves the label and destination",
+      "Literal code and an artifact link"
+    ],
+    "captionStyle": "The review caption stays visible while the page scrolls. Product component styles are unchanged.",
+    "audio": false,
+    "liveModel": false,
+    "syntheticData": true
   }
 }

@@ -47,6 +47,14 @@ The browser checks cover plain and rich paste, a failed send, recovery, a second
 
 The screenshots show frontend layout. The sample confirmation is example text, not output from a live model. Prompt quality still needs a manual model review.
 
+## Demo
+
+[Watch the 25-second demo](demo.mp4). It was recorded after [PR #445](https://github.com/n8n-io/nod/pull/445) opened, from source commit `b3d6377f`.
+
+The demo shows paragraph spacing, URL paste, a failed send and recovery, rich feedback text, literal code and an artifact link. It uses the same synthetic fixture. The review caption stays visible as the page scrolls. The product components keep their normal styles.
+
+The export uses H.264 at 1280 × 628 pixels. Sampled frames were checked, and the full video decoded without errors. [Capture details](checks.json) include its hash and size.
+
 ## Design sources
 
 [remark-stringify](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify) owns Markdown escaping and code fences. [mdast-util-to-hast](https://github.com/syntax-tree/mdast-util-to-hast#fields-on-nodes) documents the destination override. [linkify-it](https://github.com/markdown-it/linkify-it) owns bare URL recognition.
