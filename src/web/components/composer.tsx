@@ -147,7 +147,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (!text) setText(saved.text);
       if (!replyTo) restoreReply?.(saved.reply);
       if (saved.missing.length) setError(`Attach these files again: ${saved.missing.join(', ')}`);
-      for (const item of saved.attachments) void checkArtifact(item);
+      void (async () => {
+        for (let start = 0; start < saved.attachments.length && mounted.current; start += 4)
+          await Promise.all(
+            saved.attachments
+              .slice(start, start + 4)
+              .filter((item) => attachmentValues.current.some((value) => value.id === item.id))
+              .map(checkArtifact),
+          );
+      })();
     }
   }, [editor]);
   useEffect(() => {

@@ -56,12 +56,16 @@ export function createArtifactFiles({ temporary, downloads, fetchArtifact }) {
         name = name.replace(/[<>:"|?*]/g, '_').replace(/[. ]+$/g, '');
         if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name = `_${name}`;
         if (!name || name === '.' || name === '..') name = 'download';
-        root ??= mkdtemp(join(temporary, 'nod-files-'));
-        const directory = join(await root, id);
-        shutdown.signal.throwIfAborted();
-        await mkdir(directory, { mode: 0o700, recursive: true });
-        const path = join(directory, name);
+        let directory;
         try {
+          root ??= mkdtemp(join(temporary, 'nod-files-')).catch((cause) => {
+            root = undefined;
+            throw cause;
+          });
+          directory = join(await root, id);
+          shutdown.signal.throwIfAborted();
+          await mkdir(directory, { mode: 0o700, recursive: true });
+          const path = join(directory, name);
           await pipeline(
             response.body,
             async function* (source) {
@@ -75,17 +79,18 @@ export function createArtifactFiles({ temporary, downloads, fetchArtifact }) {
             createWriteStream(path, { mode: 0o600, flags: 'wx' }),
             { signal: shutdown.signal },
           );
+          current.file = {
+            path,
+            directory,
+            name,
+            type: response.headers.get('content-type')?.split(';')[0] ?? '',
+          };
+          return current.file;
         } catch (cause) {
-          await rm(directory, { recursive: true, force: true });
+          await response.body.cancel().catch(() => {});
+          if (directory) await rm(directory, { recursive: true, force: true });
           throw cause;
         }
-        current.file = {
-          path,
-          directory,
-          name,
-          type: response.headers.get('content-type')?.split(';')[0] ?? '',
-        };
-        return current.file;
       })();
       entry.pending = pending;
       prepared.set(id, entry);

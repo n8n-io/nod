@@ -3320,24 +3320,35 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
         assert.equal(drafts.length, 0);
         assert.deepEqual([...new Set(revoked)].sort(), created.map((item) => item.url).sort());
         for (const item of created) assert.equal(revoked.filter((url) => url === item.url).length, 1);
-        localStorage.setItem('synthetic-owner.thread', JSON.stringify({ version: 1, text: 'Restored synthetic request', reply: null, attachments: [artifact], missing: [] }));
+        const restoredFiles = Array.from({ length: 5 }, (_, index) => {
+          const id = '00000000-0000-4000-8000-' + String(index + 1).padStart(12, '0');
+          return { ...artifact, id, url: '/api/artifacts/' + id, name: index === 0 ? artifact.name : 'Restored-' + index + '.txt' };
+        });
+        localStorage.setItem('synthetic-owner.thread', JSON.stringify({ version: 1, text: 'Restored synthetic request', reply: null, attachments: restoredFiles, missing: [] }));
         root = createRoot(document.getElementById('root'));
         closed = false;
         await act(async () => root.render(createElement(Fixture, { draftKey: 'synthetic-owner.thread' })));
-        await settle(() => requests.length === 5);
+        await settle(() => requests.length === 8);
         assert.equal(requests[4].url, artifact.url + '/metadata');
         assert.equal(document.querySelector('[aria-label="Send message"]').disabled, true);
         await submit();
         assert.equal(sends.length, 2);
+        assert.equal(requests.length, 8);
         await act(async () => requests[4].resolve(Response.json({ error: 'Synthetic offline check' }, { status: 503 })));
+        assert.equal(requests.length, 8);
+        await act(async () => {
+          for (let index = 1; index < 4; index++) requests[4 + index].resolve(Response.json(restoredFiles[index]));
+        });
+        await settle(() => requests.length === 9);
+        await act(async () => requests[8].resolve(Response.json(restoredFiles[4])));
         await settle(() => document.querySelector('[aria-label="Retry checking Review.txt"]'));
         assert.equal(JSON.parse(localStorage.getItem('synthetic-owner.thread')).attachments[0].id, artifact.id);
         await click('Retry checking Review.txt');
-        await settle(() => requests.length === 6);
-        await act(async () => requests[5].resolve(Response.json(artifact)));
+        await settle(() => requests.length === 10);
+        await act(async () => requests[9].resolve(Response.json(artifact)));
         await settle(() => !document.querySelector('[aria-label="Send message"]').disabled);
         await submit();
-        assert.deepEqual(sends[2], { text: 'Restored synthetic request', attachments: [artifact] });
+        assert.deepEqual(sends[2], { text: 'Restored synthetic request', attachments: restoredFiles });
       } finally {
         if (!closed) await act(async () => root.unmount());
         dom.window.close();

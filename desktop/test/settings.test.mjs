@@ -4190,6 +4190,33 @@ test('artifact exports keep owned bytes, safe names, separate saves and restrict
       fetchArtifact: async () => new Response('', { status: 404 }),
     });
     await assert.rejects(absent.prepare(randomUUID()), /no longer available/);
+    const blocked = join(root, 'not-a-directory');
+    await writeFile(blocked, 'Synthetic disk setup failure');
+    let cancelled = false;
+    const failed = createArtifactFiles({
+      temporary: blocked,
+      downloads: root,
+      fetchArtifact: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('Synthetic recovered download'));
+              controller.close();
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+        ),
+    });
+    const failedId = randomUUID();
+    await assert.rejects(failed.prepare(failedId));
+    assert.equal(cancelled, true);
+    await rm(blocked);
+    await mkdir(blocked);
+    const retried = await failed.prepare(failedId);
+    assert.equal(await readFile(retried.path, 'utf8'), 'Synthetic recovered download');
+    await failed.dispose();
     let source;
     const streaming = createArtifactFiles({
       temporary: root,
