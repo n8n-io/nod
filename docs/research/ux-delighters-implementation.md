@@ -71,10 +71,10 @@ Request `/__fixture/record` at that address to start a recording. Use the deskto
 
 ## Validation
 
-The later UX pass checked keyboard entry, focus recovery, narrow file panels, failed sends, failed title saves, and nested Escape behavior. It corrected the Undo notice, stale search results, reused file identity, and draft preview recovery. The code review also corrected draft parsing, schedule preview dates, image sizing, temporary file bounds, and portable filenames. Existing integration tests cover the added storage and file contracts.
+The later UX pass checked keyboard entry, focus recovery, narrow file panels, failed sends, failed title saves, and nested Escape behavior. It corrected the Undo notice, stale search results, reused file identity, and draft preview recovery. The code review also corrected draft parsing, schedule preview dates, image sizing, temporary file bounds, and portable filenames. Native downloads now stream to disk and remove partial files after cancellation. Restored files wait for a metadata check; a failed check keeps the reference for Retry. Long drafts and saved file lists restore without truncation. Search excerpts follow full-text matches, and ZIP names remain distinct on common case-insensitive file systems. Existing integration tests cover the added storage and file contracts.
 
 - **Source checks:** `pnpm run check` passed. Types, architecture boundaries, and formatting passed.
-- **Integration fixtures:** `pnpm run test:integration` passed all 622 tests, with no skips. The run used disposable PostgreSQL state, Chromium, and local provider fixtures.
+- **Integration fixtures:** `pnpm run test:integration` passed all 624 tests, with no skips. The run used disposable PostgreSQL state, Chromium, and local provider fixtures.
 - **Desktop fixtures:** `pnpm run desktop:test` passed 188 tests. Two platform tests were skipped. File export checks cover exact bytes, safe names, duplicate saves, missing files, and restricted native opening.
 - **Builds:** The app build and the docs build passed. All published internal docs links are valid. Vite reports the existing large-chunk warning.
 - **macOS UI checks:** Checked table and code Copy feedback, image copy and paste, selected-text replies, draft reload, attachment Undo, preview switching at 125% zoom, file reuse, native menus, save receipts, separate edited copies, search, Return, Commands, and ZIP export. The ZIP contains the two selected files. A native PDF drag back into chat supplies real file bytes.

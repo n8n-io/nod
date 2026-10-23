@@ -8,7 +8,6 @@ import TaskItem from '@tiptap/extension-task-item';
 import { Fragment, Slice } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
 import { safeMessageLink } from './message-links';
-import { readUiPreference } from './ui-preferences';
 import { parseComposerMarkdown } from './composer-markdown';
 
 export function clipboardFiles(clipboard: DataTransfer): File[] {
@@ -57,6 +56,7 @@ function markdownPasteSlice(editor: Editor, value: string) {
 export function createComposerExtensions(callbacks: {
   submit(): void;
   upload(files: File[]): void;
+  sendWithEnter?(): boolean;
   mode?: 'chat' | 'feedback';
   placeholder?: string | (() => string);
 }) {
@@ -138,7 +138,7 @@ export function createComposerExtensions(callbacks: {
                 if (callbacks.mode === 'feedback' && !event.metaKey && !event.ctrlKey) return false;
                 if (
                   callbacks.mode !== 'feedback' &&
-                  readUiPreference('nod.send-with-enter') === 'false' &&
+                  callbacks.sendWithEnter?.() === false &&
                   !event.metaKey &&
                   !event.ctrlKey
                 )

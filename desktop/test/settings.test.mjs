@@ -4190,6 +4190,37 @@ test('artifact exports keep owned bytes, safe names, separate saves and restrict
       fetchArtifact: async () => new Response('', { status: 404 }),
     });
     await assert.rejects(absent.prepare(randomUUID()), /no longer available/);
+    let source;
+    const streaming = createArtifactFiles({
+      temporary: root,
+      downloads: root,
+      fetchArtifact: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              source = controller;
+              controller.enqueue(new TextEncoder().encode('First streamed bytes'));
+            },
+          }),
+        ),
+    });
+    const streamId = randomUUID();
+    const pending = streaming.prepare(streamId);
+    const rejected = assert.rejects(pending, { name: 'AbortError' });
+    let partial;
+    for (let attempt = 0; attempt < 100 && !partial; attempt++) {
+      for (const name of await readdir(root)) {
+        const path = join(root, name, streamId, 'download');
+        if ((await readFile(path).catch(() => null))?.toString() === 'First streamed bytes')
+          partial = path;
+      }
+      if (!partial) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(partial);
+    source.enqueue(new TextEncoder().encode(' Later streamed bytes'));
+    await streaming.dispose();
+    await rejected;
+    await assert.rejects(readFile(partial), { code: 'ENOENT' });
   } finally {
     await files.dispose();
     await rm(root, { recursive: true, force: true });

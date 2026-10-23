@@ -216,8 +216,15 @@ export function MessageBubble({
   useEffect(() => {
     if (!quote) return;
     const clear = () => setQuote('');
+    const selectionChanged = () => {
+      if (selectedText(articleElement.current).trim().slice(0, 4000) !== quote) clear();
+    };
     window.addEventListener('scroll', clear, true);
-    return () => window.removeEventListener('scroll', clear, true);
+    document.addEventListener('selectionchange', selectionChanged);
+    return () => {
+      window.removeEventListener('scroll', clear, true);
+      document.removeEventListener('selectionchange', selectionChanged);
+    };
   }, [quote]);
   const [reaction, setReaction] = useState(message.reaction ?? null);
   const [reacting, setReacting] = useState(false);

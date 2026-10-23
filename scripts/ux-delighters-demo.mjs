@@ -6,6 +6,7 @@ import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { PgBoss } from 'pg-boss';
 import { registerArtifactFileHandlers } from '../desktop/main/artifact-file-handlers.mjs';
 
 async function main() {
@@ -96,12 +97,27 @@ async function main() {
       timeZone: 'Europe/Madrid',
       enabled: true,
       revision: 0,
-      nextRun: '2035-10-26T07:00:00.000Z',
+      nextRun: null,
       lastRun: null,
       baselineObservation: null,
       monthlyUsd: null,
     },
   ];
+  const scheduler = new PgBoss('postgres://fixture.invalid/fixture');
+  const previewSchedule = (schedule) => {
+    if (schedule.kind === 'once')
+      return schedule.runAt && new Date(schedule.runAt) > new Date() ? schedule.runAt : null;
+    return (
+      scheduler
+        .previewSchedule(schedule.cron, {
+          tz: schedule.timeZone,
+          count: 1,
+          from: new Date(),
+        })[0]
+        ?.toISOString() ?? null
+    );
+  };
+  schedules[0].nextRun = previewSchedule(schedules[0]);
   const events = new Set();
   const refresh = () => {
     for (const response of events) response.write('data: {"type":"refresh"}\n\n');
@@ -152,7 +168,7 @@ async function main() {
         });
         response.write('data: {"type":"refresh"}\n\n');
         events.add(response);
-        request.on('close', () => events.delete(response));
+        response.on('close', () => events.delete(response));
         return;
       }
       if (path === '/api/session')
@@ -262,15 +278,23 @@ async function main() {
         });
       if (path === '/api/models') return json({ providers: [], connections: [], selection: null });
       if (path === '/api/schedules') return json(schedules);
-      if (/^\/api\/schedules\/[^/]+\/preview$/.test(path))
-        return json({ nextRun: '2035-10-26T08:30:00.000Z' });
+      if (/^\/api\/schedules\/[^/]+\/preview$/.test(path)) {
+        const parts = [];
+        for await (const part of request) parts.push(part);
+        const body = JSON.parse(Buffer.concat(parts));
+        return json({ nextRun: previewSchedule({ ...schedules[0], ...body }) });
+      }
       if (/^\/api\/schedules\/[^/]+$/.test(path) && request.method === 'PATCH') {
         const parts = [];
         for await (const part of request) parts.push(part);
         const body = JSON.parse(Buffer.concat(parts));
-        if (body.title === 'Offline title')
+        const { expectedRevision, ...update } = body;
+        if (expectedRevision !== undefined && expectedRevision !== schedules[0].revision)
+          return json({ error: 'This schedule changed. Check its current timing.' }, 409);
+        if (update.title === 'Offline title')
           return json({ error: 'Synthetic connection failure. Your edit was kept.' }, 503);
-        Object.assign(schedules[0], body);
+        Object.assign(schedules[0], update);
+        schedules[0].nextRun = schedules[0].enabled ? previewSchedule(schedules[0]) : null;
         schedules[0].revision++;
         refresh();
         return json(schedules[0]);

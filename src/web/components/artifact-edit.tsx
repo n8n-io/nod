@@ -108,6 +108,7 @@ export function ArtifactExport({ files }: { files: ImagePreview[] }) {
       if (!items.length || items.reduce((sum, file) => sum + file.size, 0) > 90 * 1024 * 1024)
         throw new Error('Choose files with a total size of 90 MB or less.');
       const entries: Record<string, Uint8Array> = Object.create(null);
+      const names = new Set<string>();
       let total = 0;
       for (const item of items) {
         const response = await apiResponse(item.url);
@@ -115,8 +116,9 @@ export function ArtifactExport({ files }: { files: ImagePreview[] }) {
         let name = item.name.replace(/[\\/\x00-\x1f\x7f]/g, '_');
         if (!name || name === '.' || name === '..') name = 'file';
         const original = name;
-        for (let suffix = 2; name in entries; suffix++)
+        for (let suffix = 2; names.has(name.normalize('NFC').toLowerCase()); suffix++)
           name = original.replace(/(\.[^.]+)?$/, ` (${suffix})$1`);
+        names.add(name.normalize('NFC').toLowerCase());
         const bytes = new Uint8Array(await response.arrayBuffer());
         total += bytes.byteLength;
         if (total > 90 * 1024 * 1024)

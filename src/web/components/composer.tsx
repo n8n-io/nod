@@ -21,7 +21,7 @@ import { useArtifactDrawer } from './artifact-context';
 interface DraftAttachment {
   id: string;
   file?: File;
-  state: 'queued' | 'uploading' | 'failed' | 'ready';
+  state: 'checking' | 'queued' | 'uploading' | 'failed' | 'ready';
   error?: string;
   name: string;
   mimeType: string;
@@ -75,7 +75,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       restored?.attachments.map((artifact) => ({
         ...artifact,
         artifact,
-        state: 'ready',
+        state: 'checking',
       })) ?? [],
   );
   const drawer = useArtifactDrawer();
@@ -100,12 +100,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const actions = useRef({
     submit: () => {},
     upload: (_files: File[], _method: 'paste') => {},
+    sendWithEnter: (): boolean => true,
   });
   const extensions = useMemo(
     () =>
       createComposerExtensions({
         submit: () => actions.current.submit(),
         upload: (files) => actions.current.upload(files, 'paste'),
+        sendWithEnter: () => actions.current.sendWithEnter(),
       }),
     [],
   );
@@ -145,22 +147,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (!text) setText(saved.text);
       if (!replyTo) restoreReply?.(saved.reply);
       if (saved.missing.length) setError(`Attach these files again: ${saved.missing.join(', ')}`);
-      for (const item of saved.attachments)
-        void api<Artifact>(`${item.url}/metadata`)
-          .then((artifact) => {
-            if (mounted.current)
-              updateAttachments(
-                attachmentValues.current.map((value) =>
-                  value.id === item.id ? { ...value, artifact } : value,
-                ),
-              );
-          })
-          .catch(() => {
-            if (mounted.current) {
-              updateAttachments(attachmentValues.current.filter((value) => value.id !== item.id));
-              setError(`${item.name} is no longer available. Attach it again.`);
-            }
-          });
+      for (const item of saved.attachments) void checkArtifact(item);
     }
   }, [editor]);
   useEffect(() => {
@@ -213,12 +200,37 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     attachmentValues.current = values;
     setAttachments(values);
   }
+  async function checkArtifact(item: Artifact) {
+    updateAttachments(
+      attachmentValues.current.map((value) =>
+        value.id === item.id ? { ...value, state: 'checking', error: undefined } : value,
+      ),
+    );
+    try {
+      const artifact = await api<Artifact>(`${item.url}/metadata`);
+      if (mounted.current)
+        updateAttachments(
+          attachmentValues.current.map((value) =>
+            value.id === item.id ? { ...value, artifact, state: 'ready' } : value,
+          ),
+        );
+    } catch (cause) {
+      if (mounted.current)
+        updateAttachments(
+          attachmentValues.current.map((value) =>
+            value.id === item.id
+              ? { ...value, state: 'failed', error: errorMessage(cause) }
+              : value,
+          ),
+        );
+    }
+  }
   function releasePreview(item: DraftAttachment) {
     if (item.previewUrl && previewUrls.current.delete(item.previewUrl))
       URL.revokeObjectURL(item.previewUrl);
   }
   function removeAttachment(item: DraftAttachment) {
-    if (item.artifact) setRemoved(item);
+    if (item.state === 'ready') setRemoved(item);
     item.controller?.abort();
     if (item.controller) uploads.current.delete(item.controller);
     releasePreview(item);
@@ -277,6 +289,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }
   function retryAttachment(item: DraftAttachment) {
     if (attachmentValues.current.find((value) => value.id === item.id)?.state !== 'failed') return;
+    if (item.artifact && !item.file) {
+      void checkArtifact(item.artifact);
+      return;
+    }
     const controller = new AbortController();
     uploads.current.add(controller);
     const queued: DraftAttachment = { ...item, state: 'queued', error: undefined, controller };
@@ -345,7 +361,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     restoreFocus();
   }
   async function submit() {
-    if (!editor || !ready || attachmentValues.current.some((item) => !item.artifact)) return;
+    if (!editor || !ready || attachmentValues.current.some((item) => item.state !== 'ready'))
+      return;
     const sentText = composerMarkdown(editor.state.doc).trim();
     const sentAttachments = attachmentValues.current;
     if (!sentText && !sentAttachments.length) return;
@@ -379,6 +396,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   actions.current = {
     submit: () => void submit(),
     upload: (files, method) => void upload(files, method),
+    sendWithEnter: () => sendWithEnter,
   };
   useEffect(() => {
     const drop = (event: DragEvent) => {
@@ -409,7 +427,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       window.removeEventListener('dragover', over);
     };
   }, [editor]);
-  const pendingUploads = attachments.filter((item) => !item.artifact).length;
+  const pendingUploads = attachments.filter((item) => item.state !== 'ready').length;
   const images = useMemo(
     () =>
       attachments.flatMap((item): ImagePreview[] => {
@@ -521,15 +539,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               const preview = images.some((image) => image.id === item.id);
               const uploading = item.state === 'uploading' || item.state === 'queued';
               const status =
-                item.state === 'uploading'
-                  ? 'Uploading…'
-                  : item.state === 'queued'
-                    ? 'Waiting…'
-                    : item.state === 'failed'
-                      ? 'Upload failed'
-                      : item.size < 1024
-                        ? `${item.size} B`
-                        : fileSize(item.size);
+                item.state === 'checking'
+                  ? 'Checking…'
+                  : item.state === 'uploading'
+                    ? 'Uploading…'
+                    : item.state === 'queued'
+                      ? 'Waiting…'
+                      : item.state === 'failed'
+                        ? item.artifact
+                          ? 'Check failed'
+                          : 'Upload failed'
+                        : item.size < 1024
+                          ? `${item.size} B`
+                          : fileSize(item.size);
               return (
                 <div
                   className={`composer-file${item.state === 'failed' ? ' is-failed' : ''}`}
@@ -568,7 +590,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                       type="button"
                       className="composer-file-retry"
                       onClick={() => retryAttachment(item)}
-                      aria-label={`Retry uploading ${item.name}`}
+                      aria-label={`Retry ${item.artifact ? 'checking' : 'uploading'} ${item.name}`}
                       title={item.error}
                     >
                       <RotateCcw size={12} />

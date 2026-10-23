@@ -304,6 +304,8 @@ export function ScheduleTiming({
   const [previewError, setPreviewError] = useState('');
   useEffect(() => {
     const controller = new AbortController();
+    setNextRun(null);
+    setPreviewError('');
     const timer = setTimeout(() => {
       try {
         const body = {
@@ -325,6 +327,7 @@ export function ScheduleTiming({
           signal: controller.signal,
         })
           .then((result) => {
+            if (controller.signal.aborted) return;
             setNextRun(result.nextRun);
             setPreviewError('');
           })

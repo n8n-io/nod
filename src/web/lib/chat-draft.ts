@@ -16,7 +16,6 @@ export function readChatDraft(key: string): ChatDraft | null {
       !saved ||
       saved.version !== 1 ||
       typeof saved.text !== 'string' ||
-      saved.text.length > 100000 ||
       !Array.isArray(saved.attachments) ||
       !Array.isArray(saved.missing)
     )
@@ -30,19 +29,17 @@ export function readChatDraft(key: string): ChatDraft | null {
         typeof saved.reply.text === 'string'
           ? saved.reply
           : null,
-      attachments: saved.attachments
-        .filter(
-          (item: Artifact) =>
-            !!item &&
-            typeof item === 'object' &&
-            typeof item.id === 'string' &&
-            typeof item.name === 'string' &&
-            typeof item.mimeType === 'string' &&
-            typeof item.size === 'number' &&
-            ownedArtifactUrl(item.url),
-        )
-        .slice(0, 50),
-      missing: saved.missing.filter((name: unknown) => typeof name === 'string').slice(0, 50),
+      attachments: saved.attachments.filter(
+        (item: Artifact) =>
+          !!item &&
+          typeof item === 'object' &&
+          typeof item.id === 'string' &&
+          typeof item.name === 'string' &&
+          typeof item.mimeType === 'string' &&
+          typeof item.size === 'number' &&
+          ownedArtifactUrl(item.url),
+      ),
+      missing: saved.missing.filter((name: unknown) => typeof name === 'string'),
     };
   } catch {
     return null;

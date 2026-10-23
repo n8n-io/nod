@@ -13,7 +13,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
   const drawer = useArtifactDrawer();
   const [mode, setMode] = useState<'find' | 'commands' | null>(null);
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Message[]>([]);
+  const [results, setResults] = useState<Array<Message & { snippet?: string }>>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const active = useRef(0);
@@ -30,6 +30,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
       if (
         !(event.metaKey || event.ctrlKey) ||
         event.altKey ||
+        event.shiftKey ||
         event.isComposing ||
         event.repeat ||
         event.defaultPrevented ||
@@ -60,9 +61,12 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
     setResults([]);
     setLoading(true);
     const timer = setTimeout(() => {
-      void api<Message[]>(`/api/messages/search?q=${encodeURIComponent(query.trim())}`, {
-        signal: controller.signal,
-      })
+      void api<Array<Message & { snippet?: string }>>(
+        `/api/messages/search?q=${encodeURIComponent(query.trim())}`,
+        {
+          signal: controller.signal,
+        },
+      )
         .then((items) => {
           if (active.current === version) setResults(items);
         })
@@ -186,10 +190,14 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
           >
             {mode === 'find'
               ? results.map((message) => {
-                  const start = Math.max(
-                    0,
-                    message.text.toLocaleLowerCase().indexOf(query.trim().toLocaleLowerCase()) - 60,
-                  );
+                  const match = message.text
+                    .toLocaleLowerCase()
+                    .indexOf(query.trim().toLocaleLowerCase());
+                  const start = Math.max(0, match - 60);
+                  const snippet =
+                    match < 0 && message.snippet
+                      ? message.snippet
+                      : `${start > 0 ? '…' : ''}${message.text.slice(start, start + 220)}${message.text.length > start + 220 ? '…' : ''}`;
                   return (
                     <button
                       type="button"
@@ -205,11 +213,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
                       }}
                     >
                       <strong>{message.role === 'user' ? 'You' : 'nod'}</strong>
-                      <span>
-                        {start > 0 && '…'}
-                        {message.text.slice(start, start + 220)}
-                        {message.text.length > start + 220 && '…'}
-                      </span>
+                      <span>{snippet}</span>
                     </button>
                   );
                 })
@@ -226,7 +230,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
                     {command.label}
                   </button>
                 ))}
-            {mode === 'find' && query.trim() && !results.length && !loading && (
+            {mode === 'find' && query.trim() && !results.length && !loading && !error && (
               <p>No messages found.</p>
             )}
             {loading && <p role="status">Searching…</p>}

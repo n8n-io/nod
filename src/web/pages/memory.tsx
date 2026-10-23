@@ -223,7 +223,7 @@ function NoteDetail({
   }
   function save(event: FormEvent) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || (mode === 'edit' && !text.trim())) return;
     const body = mode === 'edit' ? { text: text.trim() } : { expires: expires || null };
     const unchanged = 'text' in body ? body.text === note.text : body.expires === note.expires;
     if (unchanged) setMode('view');
@@ -265,7 +265,8 @@ function NoteDetail({
             }
             if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
               event.preventDefault();
-              if (!busy && !event.nativeEvent.isComposing) event.currentTarget.requestSubmit();
+              if (!busy && text.trim() && !event.nativeEvent.isComposing)
+                event.currentTarget.requestSubmit();
             }
           }}
         >

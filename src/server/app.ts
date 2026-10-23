@@ -189,10 +189,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const { q } = z.object({ q: z.string().trim().min(1).max(200) }).parse(request.query);
     const thread = await activeThread(pool);
     const { rows } = await pool.query(
-      `SELECT ${messageFields} FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id WHERE m.owner_id=$1 AND m.thread_id=$2 AND (to_tsvector('english',m.text) @@ websearch_to_tsquery('english',$3) OR strpos(lower(m.text),lower($3))>0) ORDER BY m.created_at DESC,m.id DESC LIMIT 50`,
+      `SELECT ${messageFields},ts_headline('english',m.text,websearch_to_tsquery('english',$3),'StartSel="", StopSel="", MaxWords=35, MinWords=15, ShortWord=0') AS snippet FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id WHERE m.owner_id=$1 AND m.thread_id=$2 AND (to_tsvector('english',m.text) @@ websearch_to_tsquery('english',$3) OR strpos(lower(m.text),lower($3))>0) ORDER BY m.created_at DESC,m.id DESC LIMIT 50`,
       [ownerId, thread.id, q],
     );
-    return rows.map((row) => messageView(row));
+    return rows.map((row) => ({ ...messageView(row), snippet: row.snippet as string }));
   });
   app.get('/api/messages/around/:id', async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);

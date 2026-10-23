@@ -1,6 +1,7 @@
-import { constants } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { constants, createWriteStream } from 'node:fs';
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 
 export function createArtifactFiles({ temporary, downloads, fetchArtifact }) {
   let root;
@@ -39,22 +40,9 @@ export function createArtifactFiles({ temporary, downloads, fetchArtifact }) {
           }
         }
         const response = await fetchArtifact(id, shutdown.signal);
-        if (!response.ok) throw new Error('This file is no longer available.');
-        const chunks = [];
-        let size = 0;
-        const reader = response.body.getReader();
-        try {
-          while (true) {
-            shutdown.signal.throwIfAborted();
-            const { value, done } = await reader.read();
-            if (done) break;
-            size += value.byteLength;
-            if (size > 90 * 1024 * 1024) throw new Error('This file is too large.');
-            chunks.push(value);
-          }
-        } finally {
-          await reader.cancel();
-          reader.releaseLock();
+        if (!response.ok || !response.body) {
+          await response.body?.cancel();
+          throw new Error('This file is no longer available.');
         }
         let name = 'download';
         try {
@@ -73,7 +61,24 @@ export function createArtifactFiles({ temporary, downloads, fetchArtifact }) {
         shutdown.signal.throwIfAborted();
         await mkdir(directory, { mode: 0o700, recursive: true });
         const path = join(directory, name);
-        await writeFile(path, Buffer.concat(chunks), { mode: 0o600, flag: 'wx' });
+        try {
+          await pipeline(
+            response.body,
+            async function* (source) {
+              let size = 0;
+              for await (const chunk of source) {
+                size += chunk.byteLength;
+                if (size > 90 * 1024 * 1024) throw new Error('This file is too large.');
+                yield chunk;
+              }
+            },
+            createWriteStream(path, { mode: 0o600, flags: 'wx' }),
+            { signal: shutdown.signal },
+          );
+        } catch (cause) {
+          await rm(directory, { recursive: true, force: true });
+          throw cause;
+        }
         current.file = {
           path,
           directory,
