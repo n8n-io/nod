@@ -24,6 +24,7 @@ const reasons: Record<VaultActivityReason, string> = {
   background: 'Background work',
   injection: 'A page had instructions',
   unrequested: 'You didn’t mention it',
+  rule: 'Your rule',
   payment: 'You approved',
   code_typed: 'You approved',
   said_yes: 'You approved',

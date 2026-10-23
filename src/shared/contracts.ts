@@ -115,6 +115,7 @@ export type VaultActivityReason =
   | 'background'
   | 'injection'
   | 'unrequested'
+  | 'rule'
   | 'payment'
   | 'code_typed'
   | 'said_yes'

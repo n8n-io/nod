@@ -554,8 +554,10 @@ test(
       const reviews: Array<Record<string, any>> = [];
       const prompts: string[] = [];
       let aligned: boolean | string | ((input: Record<string, any>) => boolean) = false;
+      let ruled = false;
       t.beforeEach(() => {
         aligned = false;
+        ruled = false;
       });
       const replies: object[] = [];
       const replyAnswers: Record<string, string> = {
@@ -581,7 +583,7 @@ test(
           prompts.push(instructions);
           const yes =
             typeof aligned === 'function' ? aligned(input as Record<string, any>) : aligned;
-          return { run: yes };
+          return { run: yes, ...(ruled ? { rule: true } : {}) };
         },
       });
       const email = (to: string) => ({
@@ -888,7 +890,7 @@ test(
       );
 
       await t.test(
-        'owner rules reach the checker in chat, scheduled and background work, and only owners with rules get the rules prompt',
+        'owner rules reach the checker in chat, scheduled and background work, only owners with rules get the rules prompt, and only a real rule is named as the reason to ask',
         async () => {
           const setRules = (rules: string) =>
             db.pool.query(
@@ -904,22 +906,37 @@ test(
           assert.equal(reviews.at(-1)?.userRules, undefined);
           const plain = prompts.at(-1)!;
           assert.doesNotMatch(plain, /userRules/);
+          aligned = false;
+          ruled = true;
+          assert.deepEqual(await trust.check(chat, 'GMAIL_SEND_EMAIL', { ...send }), {
+            confirm: true,
+            reason: 'unrequested',
+          });
           const rules = 'Always ask me before sending any email.';
           await setRules(`  ${rules}\n`);
           aligned = (input) => input.userRules === undefined;
-          for (const [turn, reason] of [
-            [chat, 'unrequested'],
-            [await begin('Synthetic event', { source: 'event' }), 'background'],
-            [await begin('Synthetic scheduled work', { source: 'schedule' }), 'schedule'],
-          ] as const) {
+          for (const turn of [
+            chat,
+            await begin('Synthetic event', { source: 'event' }),
+            await begin('Synthetic scheduled work', { source: 'schedule' }),
+          ]) {
             assert.deepEqual(await trust.check(turn, 'GMAIL_SEND_EMAIL', send), {
               confirm: true,
-              reason,
+              reason: 'rule',
             });
             assert.equal(reviews.at(-1)?.userRules, rules);
             assert.ok(prompts.at(-1)!.startsWith(plain));
             assert.match(prompts.at(-1)!, /userRules/);
           }
+          ruled = false;
+          assert.deepEqual(
+            await trust.check(
+              await begin('Synthetic event', { source: 'event' }),
+              'GMAIL_SEND_EMAIL',
+              send,
+            ),
+            { confirm: true, reason: 'background' },
+          );
           await setRules('');
           await trust.check(chat, 'NOD_notification_preferences_update', {
             rules,
