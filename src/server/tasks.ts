@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { Task, TaskStatus } from '../shared/contracts.ts';
+import type { Task, TaskDetail, TaskStatus } from '../shared/contracts.ts';
+import { actionTitle, toolTitle } from './action-presentation.ts';
 import type { ChannelPresentation } from './channels.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
 import {
@@ -525,10 +526,15 @@ export function createTasks(options: {
       const task = (await read(pool, { id, closed: true }))[0];
       if (!task) throw failure('Task not found.', 404);
       const events = (
-        await pool.query(
+        await pool.query<TaskDetail['events'][number]>(
           `SELECT e.id,e.type,e.summary,e.site,e.run_id AS "runId",e.parent_run_id AS "parentRunId",e.created_at AS "createdAt"
          FROM turn_events e JOIN turns u ON u.id=e.turn_id
          WHERE u.task_id=$1 AND u.owner_id=$2 AND e.type IN ('step','tool_complete','tool_failed')
+           AND NOT (e.type='tool_complete' AND e.summary='apps')
+         UNION ALL
+         SELECT a.id,'action',a.action,NULL,NULL,NULL,a.created_at
+         FROM app_actions a JOIN turns u ON u.id=a.turn_id
+         WHERE u.task_id=$1 AND u.owner_id=$2 AND a.owner_id=$2
          UNION ALL
          SELECT m.id,'message',m.text,NULL,NULL,NULL,m.created_at
          FROM messages m JOIN turns u ON u.id=m.turn_id
@@ -536,7 +542,15 @@ export function createTasks(options: {
          ORDER BY 7,1`,
           [id, ownerId],
         )
-      ).rows;
+      ).rows.map((event) => {
+        if (event.type === 'action') {
+          const { app, label } = actionTitle(event.summary);
+          return { ...event, type: 'tool_complete', summary: app ? `${app}: ${label}` : label };
+        }
+        return event.type === 'message' || event.type === 'step'
+          ? event
+          : { ...event, summary: toolTitle(event.summary) };
+      });
       return { task, events };
     });
     app.post<{ Params: { id: string } }>('/api/tasks/:id/stop', async (request) => {

@@ -893,3 +893,16 @@
     animation: none;
   }
 }
+
+.message-receipt {
+  align-self: flex-start;
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-decoration: none;
+}
+.message-receipt:hover {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

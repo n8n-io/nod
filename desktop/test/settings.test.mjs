@@ -363,6 +363,7 @@ async function runningDesktop(
   }
   const windows = [];
   const children = [];
+  const helpers = [];
   const paths = new Map();
   const handlers = new Map();
   const rendererReady = (window) =>
@@ -494,15 +495,32 @@ async function runningDesktop(
         notifications.push(this);
       }
     },
+    MessageChannelMain: class {
+      port1 = { end: 'engine' };
+      port2 = { end: 'helper' };
+    },
     utilityProcess: {
-      fork(file, _args, options) {
+      fork(file, args, options) {
+        if (/[\\/]onepassword\.mjs$/.test(file)) {
+          const helper = Object.assign(new EventEmitter(), { file, args, options, sent: [] });
+          helper.postMessage = (message, transfer) => helper.sent.push({ message, transfer });
+          helper.kill = () => {
+            helper.killed = true;
+          };
+          helpers.push(helper);
+          return helper;
+        }
         assert.ok(allowStart, 'The healthy engine must not restart.');
         assert.ok(Object.values(options.env).every((value) => typeof value === 'string'));
         const child = new EventEmitter();
         assert.ok(file.endsWith('/engine.mjs') || file.endsWith('\\engine.mjs'));
         child.kind = 'engine';
         child.sent = [];
-        child.postMessage = (message) => child.sent.push(message);
+        child.transfers = [];
+        child.postMessage = (message, transfer) => {
+          child.sent.push(message);
+          if (transfer) child.transfers.push({ message, transfer });
+        };
         child.environment = options.env;
         child.port = options.env.PORT;
         child.stdout = { resume() {} };
@@ -668,6 +686,7 @@ async function runningDesktop(
     ...context.running,
     windows,
     children,
+    helpers,
     storage,
     handlers,
     notifications,
@@ -2383,6 +2402,43 @@ test('the engine token waits for the engine nod started to report its port', asy
   f.children[0].emit('exit', 1);
   assert.equal((await prepared).phase, 'error');
   assert.deepEqual(requests, []);
+});
+
+test('the engine reaches 1Password only through a separate helper that may load its library', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    allowStart: true,
+    environment: { HOME: '/Users/synthetic', OPENAI_API_KEY: 'sk-synthetic-provider-key' },
+  });
+  f.crash();
+  assert.equal((await f.prepare()).phase, 'ready');
+  const [engine] = f.children;
+  assert.equal(f.helpers.length, 0);
+  engine.emit('message', { type: 'nod-1password-open' });
+  assert.equal(f.helpers.length, 1);
+  const [helper] = f.helpers;
+  assert.match(helper.file, /[\\/]desktop[\\/]main[\\/]onepassword\.mjs$/);
+  assert.equal(helper.options.allowLoadingUnsignedLibraries, true);
+  assert.equal(helper.options.serviceName, 'nod 1Password');
+  assert.deepEqual(JSON.parse(JSON.stringify(helper.options.env)), { HOME: '/Users/synthetic' });
+  assert.deepEqual(JSON.parse(JSON.stringify(helper.args)), ['0.0.0-test']);
+  assert.deepEqual(JSON.parse(JSON.stringify(helper.sent)), [
+    { message: { type: 'nod-1password-port' }, transfer: [{ end: 'helper' }] },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(engine.transfers)), [
+    { message: { type: 'nod-1password-port' }, transfer: [{ end: 'engine' }] },
+  ]);
+  engine.emit('exit', 1);
+  assert.equal(helper.killed, true);
+});
+
+test('a stale engine cannot open a 1Password helper', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), { allowStart: true });
+  f.crash();
+  assert.equal((await f.prepare()).phase, 'ready');
+  const [stale] = f.children;
+  stale.emit('exit', 1);
+  stale.emit('message', { type: 'nod-1password-open' });
+  assert.equal(f.helpers.length, 0);
 });
 
 async function fixture(t, platform = 'win32') {

@@ -377,6 +377,12 @@ input[type='range']:disabled {
   line-height: 1.6;
   color: var(--muted-foreground);
 }
+.vault-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-control);
+}
 .form-stack {
   display: grid;
   gap: 16px;

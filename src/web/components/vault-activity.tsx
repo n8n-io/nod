@@ -9,6 +9,7 @@ import { api, errorMessage } from '../lib/api';
 import { formatDayLabel, formatTime, useDateFormat } from '../lib/date-format';
 import { originLabel } from '../lib/vault-name';
 import { Button, Notice } from './ui';
+import { becauseText } from '../lib/trust-because';
 
 const reasons: Record<VaultActivityReason, string> = {
   owner: 'You requested it',
@@ -94,6 +95,11 @@ export function VaultUse({ entry, open }: { entry: VaultActivityEntry; open?(): 
       <span className="vault-use-text">
         <b>{title(entry)}</b>
         <span>{[formatTime(entry.at, format), entry.task].filter(Boolean).join(' · ')}</span>
+        {entry.because && entry.because.kind !== 'approved' && (
+          <small className="usage-because" title={becauseText(entry.because)}>
+            {becauseText(entry.because)}
+          </small>
+        )}
       </span>
       <span className={`vault-pill ${tone}`}>{text}</span>
     </>

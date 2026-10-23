@@ -395,6 +395,14 @@ button.vault-use:focus-visible {
   color: var(--muted-foreground);
   font-size: 12px;
 }
+.vault-use-text .usage-because {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
 .vault-pill {
   padding: 2px 10px;
   border-radius: var(--radius-full);

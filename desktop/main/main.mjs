@@ -5,6 +5,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  MessageChannelMain,
   nativeImage,
   nativeTheme,
   Notification,
@@ -802,6 +803,29 @@ function baseEnvironment() {
   );
 }
 
+function openOnePassword(owner) {
+  const helper = utilityProcess.fork(
+    join(engineRoot, 'desktop', 'main', 'onepassword.mjs'),
+    [app.getVersion()],
+    {
+      cwd: engineRoot,
+      env: Object.fromEntries(
+        ['HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'SYSTEMROOT', 'TMPDIR', 'TEMP', 'TMP']
+          .concat(['PATH', 'LANG'])
+          .filter((key) => typeof process.env[key] === 'string')
+          .map((key) => [key, process.env[key]]),
+      ),
+      stdio: 'ignore',
+      serviceName: 'nod 1Password',
+      allowLoadingUnsignedLibraries: true,
+    },
+  );
+  const { port1, port2 } = new MessageChannelMain();
+  helper.postMessage({ type: 'nod-1password-port' }, [port2]);
+  owner.postMessage({ type: 'nod-1password-port' }, [port1]);
+  owner.once('exit', () => helper.kill());
+}
+
 async function profileOwner() {
   const path = join(profileRoot, 'profile.json');
   async function published() {
@@ -1325,6 +1349,7 @@ async function startEngine({ runtime, signal, pending = false }) {
     if (engine === child && message?.type === 'nod-ready' && message.port === port) {
       engineBound = true;
     }
+    if (engine === child && message?.type === 'nod-1password-open') openOnePassword(child);
   });
   child.stdout?.resume();
   let diagnostics = '';

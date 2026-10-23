@@ -50,7 +50,7 @@ A task checks in when its spending since your last message to it passes the amou
 
 ## Inspect task activity
 
-On the **Tasks** page, open a preview and select **Show activity**. The details show planned steps, nod's steps and messages, and the tool and helper steps between them. Select **Show in chat** to return to the task's message.
+On the **Tasks** page, open a preview and select **Show activity**. The details show planned steps, nod's steps and messages, and the tool and helper steps between them, such as _Searched the web_ or _Gmail: send email_. Select **Show in chat** to return to the task's message.
 
 ![An expanded task with steps, activity from tools and helpers, and task controls.](../../../assets/screens/task-sessions-activity.png)
 
@@ -66,7 +66,7 @@ nod previews Markdown files up to 4 MB. For a larger file, select **Download**.
 
 ![A task result open in the panel next to the chat, showing a Markdown document with a comparison table and assumptions.](../../../assets/screens/task-sessions-document.png)
 
-A finished card has **Schedule task**, which turns the same work into a [schedule](/use/schedules/).
+A finished card has **Schedule task**, which turns the same work into a [schedule](/use/schedules/). The task's last message carries a receipt of what it did and cost; select it to open that task in [Usage](/use/spending/).
 
 ## Use tasks on mobile
 

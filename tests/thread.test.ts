@@ -182,7 +182,7 @@ test(
       submitMessage: userMessages.submit,
       configuration: () => ({ ...configuration(), llmReady: true }),
       planningTasks: onboarding.planning,
-      messageCosts: async () => ({}),
+      receipts: async () => ({}),
     });
     onboarding.registerRoutes(app);
     const tasks = createTasks({ pool: db.pool, ownerId });

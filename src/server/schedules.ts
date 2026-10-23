@@ -71,6 +71,7 @@ export interface ScheduleDependencies {
   enqueueTurn: typeof enqueueTurn;
   refresh(): void;
   now?: () => Date;
+  sessionCosts?(sessionIds: string[]): Promise<Record<string, number | null>>;
 }
 
 interface ScheduleRow {
@@ -478,6 +479,34 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return result;
   }
 
+  async function monthlyUsd(row: ScheduleRow) {
+    if (row.kind !== 'recurring' || !row.enabled || !row.cron || !dependencies.sessionCosts)
+      return null;
+    const runs = (
+      await pool.query<{ turn_id: string }>(
+        `SELECT r.turn_id FROM schedule_runs r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
+         WHERE r.schedule_id=$1 AND r.owner_id=$2 AND u.status NOT IN ('queued','running','waiting')
+         ORDER BY r.scheduled_for DESC LIMIT 10`,
+        [row.id, ownerId],
+      )
+    ).rows;
+    const costs = await dependencies.sessionCosts(runs.map((run) => run.turn_id));
+    const priced = runs.flatMap((run) => {
+      const cost = costs[run.turn_id];
+      return typeof cost === 'number' ? [cost] : [];
+    });
+    if (!priced.length) return null;
+    const from = now();
+    const month = 30 * 86_400_000;
+    const upcoming = scheduler.previewSchedule(row.cron, { tz: row.timeZone, count: 200, from });
+    const last = upcoming.at(-1)?.getTime();
+    const count =
+      last !== undefined && last - from.getTime() < month
+        ? (upcoming.length * month) / Math.max(last - from.getTime(), 1)
+        : upcoming.filter((date) => date.getTime() - from.getTime() <= month).length;
+    return (priced.reduce((sum, cost) => sum + cost, 0) / priced.length) * count;
+  }
+
   async function value(row: ScheduleRow): Promise<Schedule> {
     return {
       id: row.id,
@@ -492,6 +521,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       nextRun: row.nextRun?.toISOString() ?? null,
       lastRun: (await history({ limit: 1 }, row.id)).runs[0] ?? null,
       baselineObservation: row.baselineObservation,
+      monthlyUsd: await monthlyUsd(row),
     };
   }
 

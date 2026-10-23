@@ -29,6 +29,8 @@ import { TelegramChatLink, useTelegramChatUrl } from './telegram-chat-link';
 import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
+import { money } from '../lib/money';
+import { navigate } from '../lib/navigation';
 
 const ReactionPicker = lazy(() => import('./emoji-picker'));
 const analyticsReactions: Record<string, ReactionAnalytics['reaction']> = {
@@ -520,6 +522,25 @@ export function MessageBubble({
             )}
           </div>
         </div>
+        {message.receipt && !streaming && (
+          <a
+            className="message-receipt"
+            href={`/usage?session=${message.receipt.sessionId}`}
+            onClick={(event) => {
+              event.preventDefault();
+              navigate(`/usage?session=${message.receipt!.sessionId}`);
+            }}
+          >
+            {[
+              ...message.receipt.actions.map((action) =>
+                action.count > 1 ? `${action.label} ×${action.count}` : action.label,
+              ),
+              message.receipt.costUsd === null ? '' : money(message.receipt.costUsd),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </a>
+        )}
         {error && <Notice>{error}</Notice>}
         {copied && (
           <span className="sr-only" role="status">

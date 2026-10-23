@@ -1,5 +1,15 @@
 export type TrustSource = 'chat' | 'task' | 'schedule' | 'event' | 'check' | 'resume';
 
+export interface TrustBecause {
+  kind: 'message' | 'schedule' | 'standing' | 'rule' | 'approved';
+  text?: string;
+}
+
+export interface TrustAction {
+  label: string;
+  because?: TrustBecause;
+}
+
 export interface TrustEntry {
   id: string;
   at: string;
@@ -8,7 +18,7 @@ export interface TrustEntry {
   channel: string;
   error: string | null;
   costUsd: number | null;
-  actions: string[];
+  actions: TrustAction[];
 }
 
 export interface TrustPage {

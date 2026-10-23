@@ -139,3 +139,13 @@
   stroke: var(--brand-pink);
   stroke-dasharray: 6 6;
 }
+
+.usage-filter {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.usage-filter button {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

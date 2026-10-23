@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { CalendarClock, MessageCircle, ScanSearch, Undo2, Zap } from '../components/icons';
 import type { TrustEntry, TrustPage, TrustSource, TrustView } from '../../shared/trust';
@@ -23,6 +23,8 @@ import {
 import { PageTitle } from '../components/page-title';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { VaultUse } from '../components/vault-activity';
+import { becauseText } from '../lib/trust-because';
+import { money } from '../lib/money';
 import { vaultItems } from './vault';
 
 const day = 86_400_000;
@@ -35,16 +37,6 @@ const sources: Record<TrustSource, { icon: typeof Zap; label: string }> = {
   check: { icon: ScanSearch, label: 'Activity check' },
   resume: { icon: Undo2, label: 'Approved action' },
 };
-
-function money(value: number) {
-  if (value > 0 && value < 0.01) return '<$0.01';
-  return formatNumber(value, {
-    style: 'currency',
-    currency: 'USD',
-    currencyDisplay: 'narrowSymbol',
-    minimumFractionDigits: Number.isInteger(value) && value >= 1 ? 0 : 2,
-  });
-}
 
 function date(ms: number, format: DateFormat) {
   return new Date(ms).toLocaleDateString(format.locale, {
@@ -437,7 +429,10 @@ function Sentence({
               placeholder="Whenever Ana sends an invoice, forward it to accounting@acme.com."
               hint="nod reads and drafts on its own, and does only what this says."
               remove="Stop"
-              onSaved={close}
+              onSaved={() => {
+                close();
+                onSaved();
+              }}
             />
           )}
         </Value>
@@ -453,7 +448,10 @@ function Sentence({
               placeholder="Always ask before sending email outside my company."
               hint="Say what nod may do without asking, or must ask you about first."
               remove="Clear"
-              onSaved={close}
+              onSaved={() => {
+                close();
+                onSaved();
+              }}
             />
           )}
         </Value>
@@ -472,7 +470,17 @@ function Sentence({
 function TrustRow({ entry }: { entry: TrustEntry }) {
   const format = useDateFormat();
   const { icon: Icon, label } = sources[entry.source];
-  const did = [...new Set(entry.actions)].join(', ');
+  const did = [...new Set(entry.actions.map((action) => action.label))].join(', ');
+  const explained = entry.actions.filter((action) => action.because);
+  const reasons = [
+    ...new Set(
+      explained.map((action) =>
+        new Set(explained.map((item) => item.label)).size > 1
+          ? `${action.label} · ${becauseText(action.because!)}`
+          : becauseText(action.because!),
+      ),
+    ),
+  ];
   return (
     <div className="vault-use">
       <span className="vault-glyph" aria-hidden="true">
@@ -484,6 +492,11 @@ function TrustRow({ entry }: { entry: TrustEntry }) {
           {[formatTime(entry.at, format), label].filter(Boolean).join(' · ')}
           {entry.error ? ` · ${entry.error}` : did ? ` · ${did}` : ''}
         </span>
+        {reasons.map((reason) => (
+          <small key={reason} className="usage-because" title={reason}>
+            {reason}
+          </small>
+        ))}
       </span>
       {entry.costUsd !== null && <span className="usage-row-cost">{money(entry.costUsd)}</span>}
     </div>
@@ -500,10 +513,12 @@ function Statement({
   view,
   vault,
   opener,
+  session,
 }: {
-  view: TrustView;
+  view: TrustPage;
   vault: VaultActivity;
   opener(entry: VaultActivityEntry): (() => void) | undefined;
+  session?: string;
 }) {
   const format = useDateFormat();
   const [trust, setTrust] = useState<Stream<TrustEntry>>(view);
@@ -535,7 +550,7 @@ function Statement({
     setLoading(true);
     setError('');
     const query = (next: { at: string; id: string }) =>
-      `at=${encodeURIComponent(next.at)}&id=${next.id}`;
+      `at=${encodeURIComponent(next.at)}&id=${next.id}${session ? `&session=${session}` : ''}`;
     try {
       const [olderTrust, olderUses] = await Promise.all([
         frontier(trust) === cutoff
@@ -601,7 +616,46 @@ function Statement({
   );
 }
 
+function SessionStatement({
+  session,
+  vault,
+  opener,
+  onClear,
+}: {
+  session: string;
+  vault: VaultActivity;
+  opener(entry: VaultActivityEntry): (() => void) | undefined;
+  onClear(): void;
+}) {
+  const page = usePageData<TrustPage>(`/api/trust/entries?session=${session}`);
+  const none = useMemo(() => ({ ...vault, entries: [], next: undefined }), [vault]);
+  if (page.error) return <Notice>{page.error}</Notice>;
+  if (!page.data) return <Loading label="Opening usage…" />;
+  return (
+    <>
+      <p className="usage-filter">
+        One task or run.{' '}
+        <button type="button" onClick={onClear}>
+          Show all
+        </button>
+      </p>
+      <Statement view={page.data} vault={none} opener={opener} session={session} />
+    </>
+  );
+}
+
+function sessionFilter() {
+  const match = /^\?session=([0-9a-f-]{36})$/.exec(
+    window.location.pathname === '/usage' ? window.location.search : '',
+  );
+  return match?.[1];
+}
+
 export function Usage({ hidden = false }: { hidden?: boolean }) {
+  const [session, setSession] = useState(sessionFilter);
+  useEffect(() => {
+    if (!hidden) setSession(sessionFilter());
+  }, [hidden]);
   const trust = usePageData<TrustView>('/api/trust');
   const vault = usePageData<VaultActivity>('/api/vault/activity');
   const preferences = usePageData<AccountPreferences>('/api/preferences');
@@ -644,9 +698,24 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
             vault={vault.data}
             rule={preferences.data.notificationRule}
             rules={preferences.data.rules}
-            onSaved={() => void trust.refresh()}
+            onSaved={() => {
+              void trust.refresh();
+              void preferences.refresh();
+            }}
           />
-          <Statement view={trust.data} vault={vault.data} opener={opener} />
+          {session ? (
+            <SessionStatement
+              session={session}
+              vault={vault.data}
+              opener={opener}
+              onClear={() => {
+                window.history.replaceState(null, '', '/usage');
+                setSession(undefined);
+              }}
+            />
+          ) : (
+            <Statement view={trust.data} vault={vault.data} opener={opener} />
+          )}
         </div>
       ) : error ? (
         <Notice>{error}</Notice>

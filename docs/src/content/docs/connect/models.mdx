@@ -168,6 +168,8 @@ Background work, such as memory upkeep, uses a smaller model from the same conne
 
 Two checks can use a decision model: reading whether your reply to a confirmation approves it, and checking whether an email nod reads through your apps gives access to an account. Without a decision model, the email check uses your connection's smaller background model. Your selected model decides whether an action can run, writes and fact-checks confirmation questions, and writes messages.
 
+Pick a capable model if nod acts for you: the [trust check](/trust/approvals/) runs on it. In our [decision evals](/contribute/evals/#quoted-reasons-on-23-october-2026), GPT-6.1 Sol, Claude Opus 5.5 and Claude Sonnet 5.5 approved nothing they shouldn't have, while Claude Haiku 5.5 let a few unlabelled buttons and one delete through.
+
 | Current connection   | Decision checks                                        |
 | -------------------- | ------------------------------------------------------ |
 | OpenAI API key       | GPT Decisions (`gpt-6-luna`) with the same key         |

@@ -14,7 +14,9 @@ nod itself doesn't charge you. Your model provider bills you for the requests no
 Open **Usage** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Linux app).
 
 - **The sentence at the top.** This month's spending, your monthly limit and when a task checks in, then what nod did this week, the [standing instruction](/trust/approvals/#standing-instructions) it follows on its own and [your rules](/trust/approvals/#your-rules). Select a value to see more or change it.
-- **The list.** Every request that cost money or acted in a connected app, and every sign-in and card use, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what nod did and the cost.
+- **The list.** Every request that cost money or acted in a connected app, and every sign-in and card use, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what nod did and the cost. Under an action nod took without asking, it shows the words that allowed it, such as _You said "Send Lena the report"_.
+
+A finished task or scheduled run ends with a quiet receipt under its last message in chat, such as _Gmail: send email ×2 · $0.38_. Select it to see only that work in **Usage**. Each recurring schedule on **Tasks** shows about what it costs a month, from the cost of its recent runs.
 
 Select this month's total to see a chart and a forecast, such as "On track for $12.40". Every app action is recorded, reads included.
 

@@ -22,6 +22,7 @@ export function VaultImportDialog({
     name: string;
     logins: ImportedLogin[];
     unreadable: number;
+    unusableKeys: number;
   } | null>(null);
   const [unreadable, setUnreadable] = useState(0);
   const [result, setResult] = useState<VaultImportResult | null>(null);
@@ -89,6 +90,9 @@ export function VaultImportDialog({
                 result.skipped + unreadable
                   ? `${formatNumber(result.skipped + unreadable)} skipped`
                   : '',
+                result.authenticatorKeys
+                  ? `${formatNumber(result.authenticatorKeys)} with authenticator codes`
+                  : '',
               ]
                 .filter(Boolean)
                 .join(' · ')}
@@ -131,6 +135,9 @@ export function VaultImportDialog({
                   {[
                     file.logins.length ? logins(file.logins.length) : 'No logins in this file',
                     file.unreadable ? `${formatNumber(file.unreadable)} can’t be read` : '',
+                    file.unusableKeys
+                      ? `${formatNumber(file.unusableKeys)} authenticator ${file.unusableKeys === 1 ? 'key' : 'keys'} nod can’t use`
+                      : '',
                   ]
                     .filter(Boolean)
                     .join(' · ')}

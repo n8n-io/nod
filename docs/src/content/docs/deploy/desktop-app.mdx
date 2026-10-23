@@ -30,14 +30,14 @@ flowchart LR
 <Tabs syncKey="os">
 <TabItem label="Mac" icon="apple">
 
-- Electron runs the app window and the nod server.
+- Electron runs the app window and the nod server. While you use 1Password, a separate helper talks to the 1Password app; it's the only nod process allowed to load 1Password's library.
 - Lima and Apple's Virtualization framework run a private Ubuntu virtual machine. It gets half your memory, between 3 and 6 GiB, and a 24 GiB disk that grows as it's used. Its first boot installs the firewall packages it needs from the runtime pack, and uses Ubuntu's package servers only if that installation fails.
 - The VM holds PostgreSQL and separate workspace and browser containers. Docker runs only inside the VM.
 
 </TabItem>
 <TabItem label="Windows" icon="seti:windows">
 
-- Electron runs the app window and the nod server.
+- Electron runs the app window and the nod server. While you use 1Password, a separate helper talks to the 1Password app.
 - A private WSL 2 distribution named `nod-<profile>` holds PostgreSQL and separate workspace and browser containers. Docker runs only inside it.
 - nod reaches PostgreSQL through WSL's localhost forwarding, on a loopback port it picks free at each launch.
 - nod doesn't change your default WSL distribution or global WSL settings.

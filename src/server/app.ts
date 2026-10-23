@@ -30,6 +30,7 @@ import type {
   Message,
   MessageHistoryPage,
   MessageReaction,
+  MessageReceipt,
   Turn,
 } from '../shared/contracts.ts';
 import type { createChatVerification } from './chat-verification.ts';
@@ -40,12 +41,12 @@ const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",m.created_at AS 
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',left(target.text,1000)) END AS "replyTo"`;
 function messageView(
   row: Message & { assistantReaction?: MessageReaction | null },
-  modelCostUsd?: number | null,
+  receipt?: MessageReceipt,
 ): Message {
   const { assistantReaction, ...message } = row;
   return {
     ...message,
-    ...(modelCostUsd !== undefined ? { modelCostUsd } : {}),
+    ...(receipt ? { receipt } : {}),
     reactions: [
       ...(message.reaction ? [{ actor: 'user' as const, reaction: message.reaction }] : []),
       ...(assistantReaction ? [{ actor: 'assistant' as const, reaction: assistantReaction }] : []),
@@ -69,9 +70,7 @@ export interface AppDependencies {
   taskLedger?: () => Promise<import('../shared/contracts.ts').Task[]>;
   activity?: () => Promise<Activity[]>;
   planningTasks?: () => boolean;
-  messageCosts?: (
-    turnIds: string[],
-  ) => Promise<Record<string, { messageId: string | null; costUsd: number | null }>>;
+  receipts?: (turnIds: string[]) => Promise<Record<string, MessageReceipt>>;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
@@ -153,8 +152,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
     ]);
     const hasEarlierMessages = messages.rows.length > 150;
     const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
-    const modelCosts = await dependencies
-      .messageCosts?.(
+    const receipts = await dependencies
+      .receipts?.(
         visibleMessages.map((message) => message.turnId).filter((id): id is string => !!id),
       )
       .catch(() => undefined);
@@ -167,13 +166,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       threadId: thread.id,
       tasks: await dependencies.taskLedger?.(),
       hasEarlierMessages,
-      messages: visibleMessages.map((message) => {
-        const cost = message.turnId ? modelCosts?.[message.turnId] : undefined;
-        return messageView(
-          message,
-          cost && cost.messageId === message.id ? cost.costUsd : undefined,
-        );
-      }),
+      messages: visibleMessages.map((message) => messageView(message, receipts?.[message.id])),
       turns: [...turns.rows, ...olderTurns],
       activity,
       verificationRequests,
@@ -203,17 +196,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
       [ownerId, query.before ?? null, query.beforeId ?? null, thread.id],
     );
     const page = rows.rows.slice(0, 60);
-    const modelCosts = await dependencies
-      .messageCosts?.(page.map((message) => message.turnId).filter((id): id is string => !!id))
+    const receipts = await dependencies
+      .receipts?.(page.map((message) => message.turnId).filter((id): id is string => !!id))
       .catch(() => undefined);
     return {
-      messages: page.reverse().map((message) => {
-        const cost = message.turnId ? modelCosts?.[message.turnId] : undefined;
-        return messageView(
-          message,
-          cost && cost.messageId === message.id ? cost.costUsd : undefined,
-        );
-      }),
+      messages: page.reverse().map((message) => messageView(message, receipts?.[message.id])),
       hasMore: rows.rows.length > 60,
     } satisfies MessageHistoryPage;
   });

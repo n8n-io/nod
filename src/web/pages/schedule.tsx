@@ -16,6 +16,7 @@ import {
   useDirectChange,
 } from '../components/plan-controls';
 import { Button } from '../components/ui';
+import { money } from '../lib/money';
 
 const historyPath = '/api/schedule-runs?limit=20';
 
@@ -56,6 +57,7 @@ export function ScheduleRow({
           <span>Next {date(schedule.nextRun)}</span>
         )}
         {schedule.timeZone !== dateFormat.timeZone && <span>{schedule.timeZone}</span>}
+        {schedule.monthlyUsd !== null && <span>≈{money(schedule.monthlyUsd)} a month</span>}
       </p>
       <PlanDetails
         label={schedule.title}

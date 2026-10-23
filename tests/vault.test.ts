@@ -40,6 +40,11 @@ import type {
   VaultLoginEntry,
 } from '../src/shared/contracts.ts';
 import { parsePasswordCsv } from '../src/shared/password-import.ts';
+import { authenticatorKey } from '../src/shared/authenticator-key.ts';
+import { authenticatorCode } from '../src/server/authenticator.ts';
+import { matchingWebsite } from '../src/providers/onepassword/websites.ts';
+import { createOnePassword, forkedOnePassword } from '../src/providers/onepassword/index.ts';
+import { PasswordManagerError, type PasswordManager } from '../src/ports/password-manager.ts';
 import { createPayments } from '../src/server/payments.ts';
 import type { CardEntry } from '../src/ports/computer.ts';
 
@@ -118,6 +123,172 @@ test('vault encryption binds the secret to its record, owner, and exact origin',
       Buffer.concat([nonce, shortTag.getAuthTag()]).toString('base64'),
     ),
   );
+});
+
+test('authenticator codes match RFC 6238 and only usable keys are accepted', () => {
+  const base32 = (text: string) => {
+    const bits = [...Buffer.from(text)].map((byte) => byte.toString(2).padStart(8, '0')).join('');
+    return (bits.match(/.{1,5}/g) ?? [])
+      .map((chunk) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'[parseInt(chunk.padEnd(5, '0'), 2)])
+      .join('');
+  };
+  const seeds = {
+    SHA1: '12345678901234567890',
+    SHA256: '12345678901234567890123456789012',
+    SHA512: '1234567890123456789012345678901234567890123456789012345678901234',
+  };
+  for (const [seconds, algorithm, code] of [
+    [59, 'SHA1', '94287082'],
+    [59, 'SHA256', '46119246'],
+    [59, 'SHA512', '90693936'],
+    [1111111109, 'SHA1', '07081804'],
+    [1111111111, 'SHA256', '67062674'],
+    [1234567890, 'SHA512', '93441116'],
+    [2000000000, 'SHA1', '69279037'],
+    [20000000000, 'SHA256', '77737706'],
+  ] as const) {
+    const key = authenticatorKey(
+      `otpauth://totp/RFC:test?secret=${base32(seeds[algorithm])}&algorithm=${algorithm.toLowerCase()}&digits=8&issuer=RFC`,
+    );
+    assert.ok(key);
+    assert.equal(authenticatorCode(key, seconds * 1000), code);
+  }
+  assert.equal(
+    authenticatorKey(' jbsw y3dp-ehpk 3pxp== '),
+    'otpauth://totp/?secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=6&period=30',
+  );
+  assert.equal(
+    authenticatorKey('OTPAUTH://totp/Shop:ana?secret=JBSWY3DPEHPK3PXP&period=60&digits=7'),
+    'otpauth://totp/?secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=7&period=60',
+  );
+  for (const unusable of [
+    '',
+    'JBSWY3DP',
+    'JBSWY3DPEHPK3PX1',
+    'otpauth://hotp/Shop?secret=JBSWY3DPEHPK3PXP&counter=1',
+    'otpauth://totp/Shop?secret=JBSWY3DPEHPK3PXP&algorithm=MD5',
+    'otpauth://totp/Shop?secret=JBSWY3DPEHPK3PXP&digits=9',
+    'otpauth://totp/Shop?secret=JBSWY3DPEHPK3PXP&period=0',
+    'otpauth://totp/Shop?issuer=Shop',
+    'steam://JBSWY3DPEHPK3PXP',
+  ])
+    assert.equal(authenticatorKey(unusable), undefined, unusable);
+});
+
+test('password exports carry usable authenticator keys and count the rest', () => {
+  const onePassword = parsePasswordCsv(
+    'Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes\n' +
+      'Bank,https://bank.example.test,ana@example.test,bank-synthetic,otpauth://totp/Bank:ana?secret=JBSWY3DPEHPK3PXP&issuer=Bank,false,false,,\n' +
+      'Shop,https://shop.example.test,ana@example.test,shop-synthetic,,false,false,,\n' +
+      'Game,https://game.example.test,ana,game-synthetic,steam://JBSWY3DPEHPK3PXP,false,false,,\n',
+  );
+  assert.deepEqual(
+    onePassword.logins.map((login) => [login.label, login.authenticatorKey]),
+    [
+      ['Bank', 'otpauth://totp/?secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=6&period=30'],
+      ['Shop', undefined],
+      ['Game', undefined],
+    ],
+  );
+  assert.equal(onePassword.unusableKeys, 1);
+  const bitwarden = parsePasswordCsv(
+    'folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n' +
+      ',,login,Mail,,,0,https://mail.example.test,ana,mail-synthetic,jbsw y3dp ehpk 3pxp\n',
+  );
+  assert.equal(
+    bitwarden.logins[0]?.authenticatorKey,
+    'otpauth://totp/?secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=6&period=30',
+  );
+  assert.equal(bitwarden.unusableKeys, 0);
+});
+
+test('a 1Password login applies only where 1Password itself would fill it', () => {
+  const anywhere = (url: string) => [{ url, autofillBehavior: 'AnywhereOnWebsite' }];
+  assert.equal(matchingWebsite(anywhere('github.com'), 'https://github.com'), 'github.com');
+  assert.equal(
+    matchingWebsite(anywhere('https://github.com/login'), 'https://gist.github.com'),
+    'https://github.com/login',
+  );
+  for (const page of [
+    'https://github.com.attacker.example',
+    'https://evilgithub.com',
+    'https://github.co',
+  ])
+    assert.equal(matchingWebsite(anywhere('https://github.com'), page), undefined, page);
+  assert.equal(
+    matchingWebsite(anywhere('https://alice.github.io'), 'https://bob.github.io'),
+    undefined,
+  );
+  const exact = [{ url: 'https://login.example.com', autofillBehavior: 'ExactDomain' }];
+  assert.equal(matchingWebsite(exact, 'https://login.example.com'), 'https://login.example.com');
+  assert.equal(matchingWebsite(exact, 'https://example.com'), undefined);
+  assert.equal(matchingWebsite(exact, 'https://login.example.com:8443'), undefined);
+  assert.equal(
+    matchingWebsite(
+      [{ url: 'https://example.com', autofillBehavior: 'Never' }],
+      'https://example.com',
+    ),
+    undefined,
+  );
+  assert.equal(
+    matchingWebsite(anywhere('android://key@com.example.app/'), 'https://example.com'),
+    undefined,
+  );
+});
+
+test('the real 1Password helper runs in its own process and fails clearly without the app', async () => {
+  const manager = createOnePassword({ open: forkedOnePassword('test') });
+  try {
+    await assert.rejects(
+      manager.logins('Synthetic account', 'https://example.com'),
+      (error: unknown) =>
+        error instanceof PasswordManagerError &&
+        error.reason === 'unavailable' &&
+        /1Password app/.test(error.message),
+    );
+  } finally {
+    await manager.close();
+  }
+  const running = async () =>
+    /onepassword\/helper\.ts test/.test((await runProcess('ps', ['-ax', '-o', 'command='])).stdout);
+  for (let attempt = 0; attempt < 50 && (await running()); attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await running(), false);
+});
+
+test('a stopped 1Password helper fails its request at once and the next request reopens it', async () => {
+  let opened = 0;
+  const manager = createOnePassword({
+    answerMs: 60_000,
+    open: async () => {
+      const dead = ++opened === 2;
+      const closed: Array<() => void> = [];
+      return {
+        send: () => {
+          if (!dead) closed.forEach((listener) => listener());
+        },
+        receive: () => {},
+        closed: (listener: () => void) => {
+          closed.push(listener);
+          if (dead) listener();
+        },
+        close: () => {},
+      };
+    },
+  });
+  try {
+    for (const _ of [1, 2]) {
+      const started = Date.now();
+      await assert.rejects(
+        manager.logins('Synthetic account', 'https://example.com'),
+        (error: unknown) => error instanceof PasswordManagerError && /stopped/.test(error.message),
+      );
+      assert.ok(Date.now() - started < 1_000);
+    }
+    assert.equal(opened, 2);
+  } finally {
+    await manager.close();
+  }
 });
 
 test('explicit card code replies keep private codes separate from ordinary numeric prose', () => {
@@ -1962,7 +2133,12 @@ test(
             },
           });
           assert.equal(imported.statusCode, 200);
-          assert.deepEqual(imported.json(), { imported: 2, existing: 2, skipped: 3 });
+          assert.deepEqual(imported.json(), {
+            imported: 2,
+            existing: 2,
+            skipped: 3,
+            authenticatorKeys: 0,
+          });
           assert.equal(imported.body.includes('secret'), false);
           const listed = (await app.inject({ url: '/api/vault', headers })).json<
             VaultLoginEntry[]
@@ -1979,10 +2155,433 @@ test(
           );
           assert.equal(JSON.stringify(stored.rows).includes('import-secret'), false);
           assert.equal(JSON.stringify(stored.rows).includes('fresh@example.test'), false);
+          const keyed = parsePasswordCsv(
+            'Title,Url,Username,Password,OTPAuth\n' +
+              'Kept,https://import.example.com,kept@example.test,kept-changed-secret,otpauth://totp/Kept?secret=JBSWY3DPEHPK3PXP\n' +
+              'Keyed,https://keyed.example.com,keyed@example.test,keyed-import-secret,JBSWY3DPEHPK3PXPJBSWY3DP\n',
+          );
+          const rekeyed = await app.inject({
+            method: 'POST',
+            url: '/api/vault/import',
+            headers,
+            payload: {
+              logins: [
+                ...keyed.logins,
+                {
+                  label: 'Bad key',
+                  origin: 'https://bad-key.example.com',
+                  username: 'bad@example.test',
+                  password: 'bad-key-import-secret',
+                  authenticatorKey: 'otpauth://hotp/Bad?secret=JBSWY3DPEHPK3PXP',
+                },
+              ],
+            },
+          });
+          assert.deepEqual(rekeyed.json(), {
+            imported: 1,
+            existing: 1,
+            skipped: 1,
+            authenticatorKeys: 2,
+          });
+          const relisted = (await app.inject({ url: '/api/vault', headers })).json<
+            VaultLoginEntry[]
+          >();
+          const keptAgain = relisted.find(
+            (entry) => entry.label === 'Kept' && entry.origin === 'https://import.example.com',
+          )!;
+          assert.equal((await read(keptAgain.id, 'details')).json().hasAuthenticator, true);
+          assert.equal(
+            (await read(keptAgain.id, 'password')).json().password,
+            'kept-original-secret',
+          );
+          assert.equal(
+            relisted.some((entry) => entry.label === 'Bad key'),
+            false,
+          );
+          const sealed = JSON.stringify((await pool.query('SELECT * FROM vault_entries')).rows);
+          assert.doesNotMatch(sealed, /JBSWY3DP|otpauth/i);
+          assert.doesNotMatch(JSON.stringify(relisted), /JBSWY3DP|otpauth|authenticator/i);
+        },
+      );
+
+      await t.test(
+        'an authenticator key is checked, kept, replaced and removed only on request',
+        async () => {
+          const entry = await save('Keyed');
+          const details = async () => (await read(entry.id, 'details')).json();
+          const change = (payload: Record<string, unknown>) =>
+            patch(entry.id, { label: 'Keyed', username: 'Keyed@example.test', ...payload });
+          assert.equal((await details()).hasAuthenticator, false);
+          const refused = await change({
+            authenticatorKey: 'otpauth://hotp/Keyed?secret=JBSWY3DPEHPK3PXP&counter=1',
+          });
+          assert.equal(refused.statusCode, 400);
+          assert.match(refused.json().error, /authenticator key/);
+          assert.equal((await details()).hasAuthenticator, false);
+          assert.equal((await change({ authenticatorKey: 'JBSWY3DPEHPK3PXP' })).statusCode, 200);
+          assert.equal((await details()).hasAuthenticator, true);
+          assert.equal((await change({ label: 'Renamed' })).statusCode, 200);
+          assert.equal((await details()).hasAuthenticator, true);
+          assert.equal((await read(entry.id, 'password')).json().password, 'Keyed-secret');
+          assert.equal((await change({ authenticatorKey: '' })).statusCode, 200);
+          assert.equal((await details()).hasAuthenticator, false);
+          assert.equal((await read(entry.id, 'password')).json().password, 'Keyed-secret');
+          const created = await app.inject({
+            method: 'POST',
+            url: '/api/vault',
+            headers,
+            payload: {
+              label: 'Unusable',
+              origin: 'https://unusable.example.test',
+              username: 'unusable@example.test',
+              password: 'unusable-secret',
+              authenticatorKey: 'steam://JBSWY3DPEHPK3PXP',
+            },
+          });
+          assert.equal(created.statusCode, 400);
+          assert.equal(
+            (
+              await pool.query('SELECT 1 FROM vault_entries WHERE origin=$1', [
+                'https://unusable.example.test',
+              ])
+            ).rowCount,
+            0,
+          );
         },
       );
     } finally {
       await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
+  'a saved authenticator key enters one current code for the account this task signed in with',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_vault_authenticator_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    try {
+      const { turn } = await seedTurns(pool);
+      const owner = 'local-development';
+      const origin = 'https://bank.example.test';
+      let observedOrigin = origin;
+      const injections: CredentialInjection[] = [];
+      const vault = await createVault(pool, {
+        requestKey: Buffer.alloc(32, 42),
+        keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 9) },
+        page: async () => ({ origin: observedOrigin, url: `${observedOrigin}/verify` }),
+        inject: async (input) => {
+          injections.push(input);
+          return { status: 'submitted' as const };
+        },
+        resume: async () => {},
+        retry: async () => {},
+      });
+      const authenticator =
+        'otpauth://totp/Bank:first?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Bank';
+      const first = await vault.saveLogin({
+        origin,
+        label: 'First',
+        username: 'first@bank.example.test',
+        password: 'first-synthetic-password',
+        authenticatorKey: authenticator,
+      });
+      const second = await vault.saveLogin({
+        origin,
+        label: 'Second',
+        username: 'second@bank.example.test',
+        password: 'second-synthetic-password',
+      });
+      const code = { origin, label: 'Bank code', kind: 'otp' as const, passwordSelector: '#code' };
+      const password = {
+        origin,
+        label: 'Bank',
+        kind: 'password' as const,
+        usernameSelector: '#user',
+        passwordSelector: '#password',
+      };
+      const current = () => authenticatorCode(authenticatorKey(authenticator)!);
+
+      await t.test('the code goes to the login this task entered, once per sign-in', async () => {
+        const task = await turn();
+        const realNow = Date.now;
+        Date.now = () => realNow() + 5_000;
+        try {
+          assert.equal(await vault.fillSaved(task, owner, first.id, password), true);
+        } finally {
+          Date.now = realNow;
+        }
+        assert.equal((await vault.authenticatorLogin(task, owner, origin))?.id, first.id);
+        const before = current();
+        assert.equal(await vault.fillAuthenticatorCode(task, owner, first.id, code), true);
+        const after = current();
+        const entered = injections.at(-1)!;
+        assert.equal(entered.kind, 'otp');
+        assert.equal(entered.password, undefined);
+        assert.match(entered.code!, /^\d{6}$/);
+        assert.ok([before, after].includes(entered.code!));
+        assert.equal(await vault.fillAuthenticatorCode(task, owner, first.id, code), false);
+        assert.equal(injections.filter((input) => input.kind === 'otp').length, 1);
+      });
+
+      await t.test('another account in the same task never receives the key', async () => {
+        const task = await turn();
+        assert.equal(await vault.fillSaved(task, owner, second.id, password), true);
+        assert.equal(await vault.authenticatorLogin(task, owner, origin), undefined);
+        assert.equal(await vault.authenticatorLogin(task, owner, origin, first.id), undefined);
+        const entered = injections.length;
+        await assert.rejects(
+          vault.fillAuthenticatorCode(task, owner, first.id, code),
+          /matches the account already entered/,
+        );
+        assert.equal(injections.length, entered);
+      });
+
+      await t.test('without a sign-in, only the named or single keyed login applies', async () => {
+        const task = await turn();
+        assert.equal((await vault.authenticatorLogin(task, owner, origin))?.id, first.id);
+        assert.equal(await vault.authenticatorLogin(task, owner, origin, second.id), undefined);
+        assert.equal(await vault.authenticatorLogin(task, 'another-owner', origin), undefined);
+        assert.equal(
+          await vault.authenticatorLogin(task, owner, 'https://other.example.test'),
+          undefined,
+        );
+        assert.equal(
+          await vault.fillAuthenticatorCode(task, owner, first.id, { ...code, emailCode: true }),
+          false,
+        );
+        const entered = injections.length;
+        observedOrigin = 'https://bank.example.test.attacker.example';
+        await assert.rejects(
+          vault.fillAuthenticatorCode(task, owner, first.id, code),
+          /origin changed/,
+        );
+        observedOrigin = origin;
+        assert.equal(injections.length, entered);
+        await vault.saveLogin({
+          origin,
+          label: 'Second',
+          username: 'second@bank.example.test',
+          password: 'second-synthetic-password',
+          authenticatorKey: 'JBSWY3DPEHPK3PXP',
+        });
+        assert.equal(await vault.authenticatorLogin(task, owner, origin), undefined);
+        assert.equal(
+          (await vault.authenticatorLogin(task, owner, origin, second.id))?.id,
+          second.id,
+        );
+      });
+
+      await t.test('the key stays sealed and out of every listing', async () => {
+        const sealed = JSON.stringify((await pool.query('SELECT * FROM vault_entries')).rows);
+        assert.doesNotMatch(sealed, /JBSWY3DP|otpauth/i);
+        assert.doesNotMatch(JSON.stringify(await vault.list()), /JBSWY3DP|otpauth|authenticator/i);
+        const uses = (
+          await pool.query("SELECT item_id FROM vault_uses WHERE kind='otp' ORDER BY created_at")
+        ).rows;
+        assert.deepEqual(uses, [{ item_id: first.id }]);
+      });
+    } finally {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
+  'a password manager login picked in the private form is saved sealed and entered once',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_vault_manager_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    const bare = Fastify();
+    try {
+      const { turn, wait } = await seedTurns(pool);
+      const owner = 'local-development';
+      const origin = 'https://bank.example.test';
+      const calls: string[] = [];
+      const injections: CredentialInjection[] = [];
+      const resumed: string[] = [];
+      const password = 'manager-synthetic-password';
+      const manager: PasswordManager = {
+        name: '1Password',
+        logins: async (account, site) => {
+          calls.push(`logins ${account} ${site}`);
+          if (account === 'Unreachable')
+            throw new PasswordManagerError('unavailable', 'The library did not load.');
+          return [
+            { id: 'v1/i1', title: 'Bank', username: 'owner@bank.example.test', website: origin },
+          ];
+        },
+        login: async (account, site, id) => {
+          calls.push(`login ${account} ${site} ${id}`);
+          if (id !== 'v1/i1')
+            throw new PasswordManagerError(
+              'missing',
+              'This 1Password login is not for this website.',
+            );
+          return {
+            title: 'Bank',
+            username: 'owner@bank.example.test',
+            password,
+            authenticatorKey: 'otpauth://totp/Bank:owner?secret=JBSWY3DPEHPK3PXP&issuer=Bank',
+          };
+        },
+        close: async () => {},
+      };
+      const options = {
+        requestKey: Buffer.alloc(32, 42),
+        keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 5) },
+        page: async () => ({ origin, url: `${origin}/login` }),
+        inject: async (input: CredentialInjection) => {
+          injections.push(input);
+          return { status: 'submitted' as const };
+        },
+        resume: async (turnId: string) => {
+          resumed.push(turnId);
+        },
+        retry: async () => {},
+      };
+      const vault = await createVault(pool, { ...options, passwordManager: manager });
+      vault.registerRoutes(app);
+      const request = {
+        origin,
+        label: 'Bank',
+        kind: 'password' as const,
+        usernameSelector: '#user',
+        passwordSelector: '#password',
+      };
+      const task = await turn();
+      const token = (await vault.request(task, owner, request)).url.split('/').at(-1)!;
+      await wait(task);
+      const path = `/api/credential-requests/${token}`;
+      const describe = async () => (await app.inject({ url: path })).json<CredentialRequest>();
+      const post = (suffix: string, payload: Record<string, unknown>) =>
+        app.inject({ method: 'POST', url: `${path}${suffix}`, payload });
+
+      await t.test('the form offers the manager and explains a missing app', async () => {
+        assert.deepEqual((await describe()).passwordManager, { name: '1Password' });
+        const failed = await post('/password-manager', { account: 'Unreachable' });
+        assert.equal(failed.statusCode, 502);
+        assert.match(failed.json().error, /Integrate with other apps/);
+        assert.deepEqual((await describe()).passwordManager, { name: '1Password' });
+        assert.equal((await post('/password-manager', { account: ' ' })).statusCode, 400);
+      });
+
+      await t.test('listing remembers the account and returns no secret', async () => {
+        const listed = await post('/password-manager', { account: 'Synthetic Family' });
+        assert.equal(listed.statusCode, 200);
+        assert.deepEqual(listed.json().logins, [
+          { id: 'v1/i1', title: 'Bank', username: 'owner@bank.example.test', website: origin },
+        ]);
+        assert.doesNotMatch(listed.body, /manager-synthetic-password|JBSWY3DP/);
+        assert.deepEqual((await describe()).passwordManager, {
+          name: '1Password',
+          account: 'Synthetic Family',
+        });
+        assert.equal(calls.at(-1), `logins Synthetic Family ${origin}`);
+      });
+
+      await t.test('a login for another website is refused before anything is saved', async () => {
+        const refused = await post('/password-manager/use', {
+          account: 'Synthetic Family',
+          id: 'v1/elsewhere',
+        });
+        assert.equal(refused.statusCode, 409);
+        assert.match(refused.json().error, /not for this website/);
+        assert.equal((await pool.query('SELECT 1 FROM vault_entries')).rowCount, 0);
+        assert.equal(injections.length, 0);
+      });
+
+      await t.test('the picked login is sealed with its key and entered once', async () => {
+        const used = await post('/password-manager/use', {
+          account: 'Synthetic Family',
+          id: 'v1/i1',
+        });
+        assert.equal(used.statusCode, 200, used.body);
+        assert.deepEqual(used.json(), { ok: true });
+        assert.equal(injections.length, 1);
+        assert.equal(calls.at(-1), `login Synthetic Family ${origin} v1/i1`);
+        assert.equal(injections[0]!.password, password);
+        assert.equal(injections[0]!.username, 'owner@bank.example.test');
+        assert.deepEqual(resumed, [task.turnId]);
+        const [saved] = await vault.list();
+        assert.equal(saved?.label, 'Bank');
+        assert.equal(saved?.origin, origin);
+        const { secret } = await vault.readCredential(saved!.id);
+        assert.equal(secret.password, password);
+        assert.ok(secret.authenticator);
+        const sealed = JSON.stringify((await pool.query('SELECT * FROM vault_entries')).rows);
+        assert.doesNotMatch(sealed, /manager-synthetic-password|JBSWY3DP|owner@bank/);
+        assert.equal((await describe()).status, 'filled');
+        assert.equal((await describe()).passwordManager, undefined);
+        const reads = calls.length;
+        const again = await post('/password-manager/use', {
+          account: 'Synthetic Family',
+          id: 'v1/i1',
+        });
+        assert.equal(again.statusCode, 409);
+        assert.equal(calls.length, reads);
+        assert.equal(injections.length, 1);
+      });
+
+      await t.test('other owners and nods without a manager get nothing', async () => {
+        const foreign = await turn('another-owner');
+        const foreignToken = (await vault.request(foreign, 'another-owner', request)).url
+          .split('/')
+          .at(-1)!;
+        await wait(foreign);
+        const before = calls.length;
+        assert.equal(
+          (
+            await app.inject({
+              method: 'POST',
+              url: `/api/credential-requests/${foreignToken}/password-manager`,
+              payload: { account: 'Synthetic Family' },
+            })
+          ).statusCode,
+          409,
+        );
+        assert.equal(calls.length, before);
+        const plain = await createVault(pool, options);
+        plain.registerRoutes(bare);
+        const next = await turn();
+        const plainToken = (await plain.request(next, owner, request)).url.split('/').at(-1)!;
+        await wait(next);
+        const described = (
+          await bare.inject({ url: `/api/credential-requests/${plainToken}` })
+        ).json<CredentialRequest>();
+        assert.equal(described.passwordManager, undefined);
+        assert.equal(
+          (
+            await bare.inject({
+              method: 'POST',
+              url: `/api/credential-requests/${plainToken}/password-manager`,
+              payload: { account: 'Synthetic Family' },
+            })
+          ).statusCode,
+          404,
+        );
+      });
+    } finally {
+      await app.close();
+      await bare.close();
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();

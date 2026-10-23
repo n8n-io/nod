@@ -1001,7 +1001,10 @@ test('engine source imports only production dependencies outside the development
   const repository = fileURLToPath(new URL('../../', import.meta.url));
   const manifest = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8'));
   const allowed = new Set([...Object.keys(manifest.dependencies), ...builtinModules]);
-  const files = [join(repository, 'desktop/main/engine.mjs')];
+  const files = [
+    join(repository, 'desktop/main/engine.mjs'),
+    join(repository, 'desktop/main/onepassword.mjs'),
+  ];
   const walk = async (directory) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);

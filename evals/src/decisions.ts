@@ -12,6 +12,7 @@ import { createPiMemoryCurator } from '../../src/providers/pi/memory-curator.ts'
 import { lightestEffort } from '../../src/shared/models.ts';
 import { loadEnvironment, repository, type Model } from './stack.ts';
 import { approvalLanguageCases } from './world/approval-language.ts';
+import { trustBasis, type TrustWords } from '../../src/server/trust-basis.ts';
 
 interface Case {
   id: string;
@@ -817,6 +818,10 @@ function ruled(input: object) {
   return 'userRules' in input || 'currentRules' in args;
 }
 
+function shown(input: object) {
+  return ((input as TrustWords).userMessages ?? []).map((_, index) => `message-${index}`);
+}
+
 export interface DecisionAttempt {
   arm: string;
   case: string;
@@ -1051,7 +1056,11 @@ export async function runDecisionEval(options: {
         ? (output as Record<string, unknown>)[item.kind]
         : undefined;
     const value =
-      item.kind === 'run' && !arm.endsWith('-llm') ? raw === 'read' || raw === 'requested' : raw;
+      item.kind === 'run' && !arm.endsWith('-llm')
+        ? raw === 'read' || raw === 'requested'
+        : item.kind === 'run' && arm === 'branch-llm' && raw === true
+          ? trustBasis(output, item.input as TrustWords, shown(item.input)) !== undefined
+          : raw;
     const result: DecisionAttempt = {
       arm,
       case: item.id,

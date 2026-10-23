@@ -8,7 +8,9 @@ import type { ProviderUsageEvent, UsageTelemetry } from '../ports/provider-usage
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel } from '../ports/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
-import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
+import type { TrustAction, TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
+import type { MessageReceipt } from '../shared/contracts.ts';
+import { becauseOf, type TrustBasis } from './trust-basis.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
@@ -117,6 +119,7 @@ export function createLedger({
       action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE app_actions DROP COLUMN IF EXISTS effect;
+    ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS basis jsonb;
     CREATE INDEX IF NOT EXISTS app_actions_owner_time ON app_actions(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS app_actions_turn ON app_actions(turn_id);
     CREATE TABLE IF NOT EXISTS spending_limits (
@@ -274,11 +277,11 @@ export function createLedger({
     };
   }
 
-  function action(turnId: string, name: string) {
+  function action(turnId: string, name: string, basis: TrustBasis) {
     return save(
-      `INSERT INTO app_actions(owner_id,turn_id,action)
-       SELECT $1,id,$3 FROM turns WHERE id=$2 AND owner_id=$1`,
-      [ownerId, turnId, name.slice(0, 200)],
+      `INSERT INTO app_actions(owner_id,turn_id,action,basis)
+       SELECT $1,id,$3,$4 FROM turns WHERE id=$2 AND owner_id=$1`,
+      [ownerId, turnId, name.slice(0, 200), JSON.stringify(basis)],
     );
   }
 
@@ -377,38 +380,84 @@ export function createLedger({
     );
   }
 
-  async function messageCosts(turnIds: string[]) {
+  async function sessionCosts(sessionIds: string[]): Promise<Record<string, number | null>> {
+    if (!sessionIds.length) return {};
+    const { rows } = await pool.query<{ sessionId: string; costUsd: number | null }>(
+      `SELECT u.session_id AS "sessionId",
+         CASE WHEN count(m.cost_usd)=count(*) THEN sum(m.cost_usd)::float8 END AS "costUsd"
+       FROM model_usage m JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+       WHERE m.owner_id=$1 AND u.session_id=ANY($2::uuid[]) GROUP BY u.session_id`,
+      [ownerId, [...new Set(sessionIds)]],
+    );
+    return Object.fromEntries(rows.map(({ sessionId, costUsd }) => [sessionId, costUsd]));
+  }
+
+  async function receipts(turnIds: string[]): Promise<Record<string, MessageReceipt>> {
     if (!turnIds.length) return {};
     const { rows } = await pool.query<{
-      turnId: string;
-      messageId: string | null;
-      costUsd: number | null;
+      sessionId: string;
+      messageId: string;
+      actions: string[] | null;
     }>(
-      `SELECT turn_id AS "turnId",
-         (SELECT id FROM messages m WHERE m.owner_id=$1 AND m.turn_id=model_usage.turn_id
-           AND m.role='assistant' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS "messageId",
-         CASE WHEN count(cost_usd)=count(*) THEN sum(cost_usd)::float8 END AS "costUsd"
-       FROM model_usage WHERE owner_id=$1 AND turn_id=ANY($2::uuid[]) GROUP BY turn_id`,
+      `WITH sessions AS (
+         SELECT DISTINCT u.session_id FROM turns u
+         WHERE u.owner_id=$1 AND u.id=ANY($2::uuid[]) AND u.session_id<>u.thread_id)
+       SELECT s.session_id AS "sessionId",
+         (SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+           WHERE m.owner_id=$1 AND u.session_id=s.session_id AND m.role='assistant' AND m.text<>''
+           ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS "messageId",
+         (SELECT array_agg(a.action ORDER BY a.created_at) FROM app_actions a
+           JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id
+           WHERE a.owner_id=$1 AND u.session_id=s.session_id
+             AND a.basis IS NOT NULL AND a.basis->>'kind'<>'read') AS actions
+       FROM sessions s
+       WHERE (SELECT u.source FROM turns u WHERE u.owner_id=$1 AND u.session_id=s.session_id
+           ORDER BY u.created_at,u.id LIMIT 1) IN ('task','schedule')
+         AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.session_id=s.session_id
+           AND u.status IN ('queued','running','waiting'))`,
       [ownerId, [...new Set(turnIds)]],
     );
+    const costs = await sessionCosts(rows.map((row) => row.sessionId));
     return Object.fromEntries(
-      rows.map(({ turnId, messageId, costUsd }) => [turnId, { messageId, costUsd }]),
+      rows.flatMap((row) => {
+        if (!row.messageId) return [];
+        const counts = new Map<string, number>();
+        for (const name of row.actions ?? []) {
+          const { app, label } = actionTitle(name);
+          const title = app ? `${app}: ${label}` : label;
+          counts.set(title, (counts.get(title) ?? 0) + 1);
+        }
+        return [
+          [
+            row.messageId,
+            {
+              sessionId: row.sessionId,
+              actions: [...counts].map(([label, count]) => ({ label, count })),
+              costUsd: costs[row.sessionId] ?? null,
+            },
+          ],
+        ];
+      }),
     );
   }
 
-  async function entries(before?: { at: string; id: string }) {
+  async function entries(before?: { at: string; id: string }, session?: string) {
     const { rows } = await pool.query(
       `SELECT u.id,u.source,u.source_id,u.channel,u.status,u.error,u.created_at,
          left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,
          (SELECT title FROM schedules WHERE owner_id=$1 AND id::text=split_part(u.source_id,':',2)) AS schedule,
-         (SELECT array_agg(action ORDER BY created_at) FROM app_actions WHERE turn_id=u.id) AS actions
+         (SELECT json_agg(json_build_object('action',a.action,'basis',a.basis,'said',m.id IS NOT NULL) ORDER BY a.created_at)
+           FROM app_actions a LEFT JOIN messages m ON a.basis->>'kind'='message'
+             AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid
+           WHERE a.turn_id=u.id) AS actions
        FROM turns u
        LEFT JOIN LATERAL (SELECT sum(cost_usd)::float8 AS cost,bool_or(cost_usd IS NULL) AS unpriced
          FROM model_usage WHERE turn_id=u.id) c ON true
        WHERE u.owner_id=$1 AND ($2::timestamptz IS NULL OR (u.created_at,u.id)<($2,$3::uuid))
+         AND ($4::uuid IS NULL OR u.session_id=$4)
          AND (c.cost>0 OR c.unpriced OR EXISTS(SELECT 1 FROM app_actions a WHERE a.turn_id=u.id))
        ORDER BY u.created_at DESC,u.id DESC LIMIT ${pageSize + 1}`,
-      [ownerId, before?.at ?? null, before?.id ?? null],
+      [ownerId, before?.at ?? null, before?.id ?? null, session ?? null],
     );
     const page = rows.slice(0, pageSize).map((row): TrustEntry => ({
       id: row.id,
@@ -417,10 +466,13 @@ export function createLedger({
       channel: String(row.channel).split(':')[0]!,
       error: row.status === 'failed' ? row.error : null,
       costUsd: row.cost,
-      actions: (row.actions ?? []).map((name: string) => {
-        const { app, label } = actionTitle(name);
-        return app ? `${app}: ${label}` : label;
-      }),
+      actions: (row.actions ?? []).map(
+        (item: { action: string; basis: TrustBasis | null; said: boolean }): TrustAction => {
+          const { app, label } = actionTitle(item.action);
+          const because = becauseOf(item.basis, item.said);
+          return { label: app ? `${app}: ${label}` : label, ...(because ? { because } : {}) };
+        },
+      ),
     }));
     const last = page.at(-1);
     return {
@@ -503,9 +555,21 @@ export function createLedger({
 
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/trust', () => read());
-    app.get('/api/trust/entries', (request) =>
-      entries(z.object({ at: z.iso.datetime(), id: z.uuid() }).strict().parse(request.query)),
-    );
+    app.get('/api/trust/entries', (request) => {
+      const query = z
+        .object({
+          at: z.iso.datetime().optional(),
+          id: z.uuid().optional(),
+          session: z.uuid().optional(),
+        })
+        .strict()
+        .refine((value) => Boolean(value.at) === Boolean(value.id))
+        .parse(request.query);
+      return entries(
+        query.at && query.id ? { at: query.at, id: query.id } : undefined,
+        query.session,
+      );
+    });
     app.put('/api/trust/limit', (request) => setLimits(request.body));
   }
 
@@ -545,7 +609,8 @@ export function createLedger({
     checkIn,
     limits,
     setLimits,
-    messageCosts,
+    sessionCosts,
+    receipts,
     withTurn: <T>(turnId: string, run: () => T) => activeTurn.run(turnId, run),
     withExecution: <T>(
       execution: ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>,
