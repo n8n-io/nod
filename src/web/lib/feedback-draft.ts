@@ -41,6 +41,7 @@ async function transaction(
   ownerId: string,
   mode: IDBTransactionMode,
   operation: (store: IDBObjectStore) => IDBRequest,
+  consume: (value: unknown, store: IDBObjectStore) => unknown = (value) => value,
 ) {
   if (!ownerId) throw new Error('A draft owner is required.');
   const db = await database();
@@ -63,10 +64,21 @@ async function transaction(
       reject(new Error('Draft storage is unavailable.'));
     };
     try {
-      const request = operation(tx.objectStore('drafts'));
+      const store = tx.objectStore('drafts');
+      const request = operation(store);
+      let value: unknown;
+      request.onsuccess = () => {
+        try {
+          value = consume(request.result, store);
+        } catch (cause) {
+          tx.abort();
+          finish();
+          reject(cause);
+        }
+      };
       tx.oncomplete = () => {
         finish();
-        resolve(request.result);
+        resolve(value);
       };
     } catch (cause) {
       tx.abort();
@@ -169,9 +181,39 @@ function decode(value: unknown, ownerId: string): FeedbackDraft | null {
   };
 }
 
+function encode(ownerId: string, draft: FeedbackDraft) {
+  return {
+    version: 1,
+    ownerId,
+    draft: {
+      ...draft,
+      attachments: draft.attachments.map((item) => ({
+        id: item.id,
+        file: storedFile(item.file),
+        ...(item.image
+          ? { image: { original: storedFile(item.image.original), marks: item.image.marks } }
+          : {}),
+      })),
+    },
+  };
+}
+
 export async function loadFeedbackDraft(ownerId: string) {
   await writes.get(ownerId)?.catch(() => {});
-  return decode(await transaction(ownerId, 'readonly', (store) => store.get(ownerId)), ownerId);
+  return transaction(
+    ownerId,
+    'readwrite',
+    (store) => store.get(ownerId),
+    (value, store) => {
+      const draft = decode(value, ownerId);
+      if (
+        draft &&
+        (value as { draft: { reportChoice?: unknown } }).draft.reportChoice === undefined
+      )
+        store.put(encode(ownerId, draft), ownerId);
+      return draft;
+    },
+  ) as Promise<FeedbackDraft | null>;
 }
 
 export function saveFeedbackDraft(ownerId: string, draft: FeedbackDraft | null) {
@@ -179,20 +221,7 @@ export function saveFeedbackDraft(ownerId: string, draft: FeedbackDraft | null) 
   const task = pending
     .catch(() => {})
     .then(async () => {
-      const value = draft && {
-        version: 1,
-        ownerId,
-        draft: {
-          ...draft,
-          attachments: draft.attachments.map((item) => ({
-            id: item.id,
-            file: storedFile(item.file),
-            ...(item.image
-              ? { image: { original: storedFile(item.image.original), marks: item.image.marks } }
-              : {}),
-          })),
-        },
-      };
+      const value = draft && encode(ownerId, draft);
       await transaction(ownerId, 'readwrite', (store) =>
         value ? store.put(value, ownerId) : store.delete(ownerId),
       );

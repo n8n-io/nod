@@ -50,22 +50,33 @@ async function request<T>(
     : (options.signal ?? undefined);
   let status = 0;
   const failure = (reason: string) => {
+    if (generation !== accountGeneration) return;
     const segment = path.split(/[/?]/)[2];
     const area =
       (
         {
           messages: 'chat',
+          thread: 'chat',
+          conversation: 'chat',
           state: 'chat',
           apps: 'apps',
           integrations: 'apps',
           models: 'models',
           browser: 'browser',
+          'browser-handoff': 'browser',
           channels: 'channels',
+          'channel-settings': 'channels',
           tasks: 'tasks',
           schedules: 'tasks',
+          'schedule-runs': 'tasks',
           usage: 'usage',
           vault: 'vault',
+          'credential-requests': 'vault',
+          'payment-requests': 'vault',
           preferences: 'settings',
+          privacy: 'settings',
+          configuration: 'settings',
+          trust: 'settings',
           account: 'settings',
           onboarding: 'onboarding',
           feedback: 'feedback',
@@ -110,8 +121,9 @@ async function request<T>(
       throw new DOMException('The account changed.', 'AbortError');
     return result;
   } catch (error) {
-    if (!signal?.aborted && generation === accountGeneration && (status === 0 || status < 400))
-      failure(status === 0 ? 'network' : 'invalid_response');
+    const timedOut = signal?.aborted && signal.reason?.name === 'TimeoutError';
+    if ((!signal?.aborted || timedOut) && (status === 0 || status < 400))
+      failure(timedOut ? 'timeout' : status === 0 ? 'network' : 'invalid_response');
     throw error;
   } finally {
     if (controller) privateRequests.delete(controller);

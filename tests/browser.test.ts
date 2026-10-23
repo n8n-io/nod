@@ -3681,6 +3681,20 @@ test('feedback draft storage isolates owners', async () => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
+      const raw = await new Promise((resolve, reject) => {
+        const tx = db.transaction('drafts', 'readonly');
+        const request = tx.objectStore('drafts').get('legacy-owner');
+        tx.oncomplete = () => resolve(request.result);
+        tx.onerror = reject;
+      });
+      assert.equal(raw.draft.reportChoice, null);
+      assert.deepEqual(raw.draft.attachments.map(item => item.id), ['log']);
+      assert.equal(await raw.draft.attachments[0].file.blob.text(), 'synthetic log');
+      assert.equal(JSON.stringify(raw).includes('nod-screenshot'), false);
+      await saveFeedbackDraft('racing-owner', legacy);
+      const newest = {...second, feedback:'Synthetic newer explicit draft'};
+      await Promise.all([loadFeedbackDraft('racing-owner'), saveFeedbackDraft('racing-owner', newest)]);
+      assert.equal((await loadFeedbackDraft('racing-owner')).feedback, newest.feedback);
       await new Promise((resolve, reject) => {
         const tx = db.transaction('drafts', 'readwrite');
         const store = tx.objectStore('drafts');

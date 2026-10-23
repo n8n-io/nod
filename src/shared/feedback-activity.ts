@@ -60,7 +60,7 @@ const fields: Record<string, Record<string, readonly unknown[] | number>> = {
     area: areas,
     method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'other'],
     status: 599,
-    reason: ['http', 'network', 'invalid_response'],
+    reason: ['http', 'network', 'timeout', 'invalid_response'],
   },
   nod_ui_error: { area: areas, action: actions },
   nod_connection_changed: {
@@ -135,11 +135,17 @@ export function parseFeedbackActivity(value: unknown): FeedbackActivity[] {
 export function createFeedbackActivity(source: FeedbackActivity['source']) {
   const entries: Array<{ at: number; event: string; properties: Record<string, string | number> }> =
     [];
+  let lastScreen: { at: number; value: string | number } | undefined;
   return {
     record(event: string, value: unknown) {
       const clean = properties(event, value);
       if (!clean) return;
-      entries.push({ at: Date.now(), event, properties: clean });
+      const at = Date.now();
+      if (event === 'screen') {
+        if (lastScreen?.value === clean.screen && at - lastScreen.at <= 1_800_000) return;
+        lastScreen = { at, value: clean.screen };
+      }
+      entries.push({ at, event, properties: clean });
       if (entries.length > 100) entries.shift();
     },
     snapshot(): FeedbackActivity[] {
@@ -150,6 +156,7 @@ export function createFeedbackActivity(source: FeedbackActivity['source']) {
     },
     clear() {
       entries.length = 0;
+      lastScreen = undefined;
     },
   };
 }

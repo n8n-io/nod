@@ -118,7 +118,7 @@ Ask nod to check the result in the app or website before you try again. See [One
 
 Select **Send feedback** in the chat. In the desktop app, it's also in the menu bar menu. The dialog names the recipient before you send: the nod team at n8n by default, or your operator's configured collector.
 
-Choose **Bug or issue** and describe what happened. **Include diagnostic report** starts selected for a new bug report. Your choice stays with a saved draft. Select **Review** to inspect it, or untick the checkbox to omit it. If preparation fails, select **Continue without report**. Reports are sent only with your feedback.
+Choose **Bug or issue** and describe what happened. **Include diagnostic report** starts selected for a new bug report. Your choice stays with a saved draft. Select **Review** to inspect it, or untick the checkbox to omit it. If preparation fails, select **Continue without report**. Your nod runtime prepares the report from permitted app activity metadata and stored technical data. Only **Send feedback** sends it to the configured feedback recipient.
 
 Screenshots aren't captured automatically. Check your feedback text and any files you add for personal information. Never add API keys, passwords, or your settings file.
 
@@ -139,11 +139,11 @@ The `nod-feedback-report-v2` JSON attachment helps the support team follow a fai
 | Channels             | Receiving and delivery states, with a permitted failure reason.                                                         |
 | App activity         | Recent screen categories, API failure categories and status codes, UI errors, and connection events.                    |
 
-Stored activity covers the latest 24 hours for your account across its conversations and background work. Each source includes at most 200 entries, or 400 for agent execution events. Connection and schedule sections show current state. Report-local labels preserve relationships between entries without exporting their real IDs. Activity uses relative ages and durations, not absolute timestamps.
+Database activity covers the latest 24 hours for your account across its conversations and background work. Each database section includes at most 200 entries, or 400 for agent execution events. Connection and schedule sections show current state. Report-local labels preserve relationships between entries without exporting their real IDs. Activity uses relative ages and durations, not absolute timestamps.
 
-App activity is held in memory for the current runtime and app window, for up to 30 minutes and 100 recent entries. It doesn't depend on usage analytics being enabled. Closing the app window or restarting the runtime clears that source's buffer. It doesn't contain request URLs, response bodies, error text, stack traces, or screen contents.
+App activity is held in memory for the current runtime and app window, for up to 30 minutes and 100 recent entries. It doesn't depend on usage analytics being enabled. Closing the app window or restarting the runtime clears that source's buffer. Dropped or expired app activity entries aren't marked in the report. It doesn't contain request URLs, response bodies, error text, stack traces, or screen contents.
 
-The report includes a coverage record for each stored source: whether it was collected, its entry count, and whether older entries were omitted. A failed source contributes no entries. The final attachment is capped at 512 KiB; older entries are removed if needed, and the report marks that truncation. An empty or incomplete section doesn't prove that no problem occurred.
+The report includes a coverage record for each database section: whether it was collected, its entry count, and whether older entries were omitted. An unavailable database section contributes no entries. These markers do not cover the app activity buffer. The final attachment is capped at 512 KiB. Older database entries are removed if needed, and their sections mark that truncation. An empty or incomplete section doesn't prove that no problem occurred.
 
 Chat text, prompts, tool arguments and results, workflow and execution payloads, file contents, account identifiers, custom model labels, and URLs are never selected for this report. This also means support can't reconstruct what you asked or what a tool returned. Describe the expected and observed behavior in your feedback, sharing only the context you're comfortable sending.
 

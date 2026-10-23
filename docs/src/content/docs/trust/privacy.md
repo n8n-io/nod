@@ -101,11 +101,11 @@ Before a trace leaves your computer, nod removes known secrets, your name, email
 
 The feedback dialog shows who receives your submission: the nod team at n8n by default, or your operator's configured collector.
 
-**Include diagnostic report** is selected for **Bug or issue**. The report is for support and debugging only. Select **Review** to inspect it, or untick the checkbox to leave it out. Your choice stays with the draft when you close or reload it. **Idea** and **Other** start without a report unless you choose to include one. Nothing is sent before you select **Send feedback**.
+**Include diagnostic report** is selected for **Bug or issue**. The report is for support and debugging only. Select **Review** to inspect it, or untick the checkbox to leave it out. Your choice stays with the draft when you close or reload it. **Idea** and **Other** start without a report unless you choose to include one. Preparing a report sends permitted app activity metadata to your nod runtime. The configured feedback recipient receives your submission only after you select **Send feedback**.
 
 The report contains technical metadata: activity counts, outcomes, timings, model usage counts, and connection health. It replaces internal execution IDs with temporary labels that only link entries within that report. Model and integration names are limited to known categories; custom labels are excluded. It contains no chat text, prompts, tool arguments or results, workflow or execution payloads, file contents, account names, addresses, or URLs. Absolute activity timestamps are excluded. Privacy comes from selecting permitted metadata, not from guessing which words are personal.
 
-The report includes bounded recent activity from your account's stored history, plus recent errors and navigation from the current app window and runtime. It says when a source is unavailable or older entries were omitted. See [Report contents and limits](/deploy/troubleshooting/#report-contents-and-limits).
+The report includes bounded recent activity from your account's stored history, plus recent errors and navigation from the current app window and runtime. Database sections say when a source is unavailable or older entries were omitted. The recent app activity buffer has fixed limits and no omission marker. See [Report contents and limits](/deploy/troubleshooting/#report-contents-and-limits).
 
 Screenshots aren't captured automatically. Your written feedback and any files you choose to add can contain personal information and are sent as you provide them. Review them before sending. Desktop submissions also include the app version and platform. Feedback does not change your usage analytics or conversation trace settings.
 

@@ -1,6 +1,7 @@
 import { useId, useMemo } from 'react';
 import { ChevronDown } from './icons';
 import type { FeedbackReport } from '../../shared/feedback';
+import { parseFeedbackActivity } from '../../shared/feedback-activity';
 import { Button, Checkbox } from './ui';
 
 type ReportRecord = Record<string, unknown>;
@@ -82,7 +83,7 @@ export function FeedbackDiagnostics({
     })),
     ...rows(data?.modelConnections),
   ];
-  const activity = rows(record(data?.appActivity)?.entries);
+  const activity = parseFeedbackActivity(record(data?.appActivity)?.entries).reverse();
   const coverage = record(data?.coverage);
   const sections = record(coverage?.sections);
   const unavailable = Object.values(sections ?? {}).some(
@@ -201,6 +202,51 @@ export function FeedbackDiagnostics({
                   ))}
                   {!connections.length && (
                     <p className="feedback-diagnostics-empty">No connections in this report.</p>
+                  )}
+                </div>
+              </details>
+              <details className="feedback-diagnostics-section">
+                <summary>
+                  <span>App activity</span>
+                  <ChevronDown size={14} aria-hidden="true" />
+                </summary>
+                <div className="feedback-diagnostics-items">
+                  {activity.map((event, index) => {
+                    const properties = event.properties;
+                    const context = label(
+                      properties.app,
+                      label(properties.area, label(properties.provider, 'App')),
+                    );
+                    const title =
+                      event.event === 'screen'
+                        ? `Opened ${label(String(properties.screen ?? '').slice(1), 'Chat')}`
+                        : event.event === 'request_failed'
+                          ? `${context} request failed`
+                          : event.event === 'nod_ui_error'
+                            ? `${context} error`
+                            : event.event === 'nod_service_used'
+                              ? `${context} action`
+                              : `${context} connection`;
+                    const details = [
+                      properties.status ?? properties.outcome,
+                      properties.failure_reason ?? properties.reason,
+                      properties.action,
+                    ]
+                      .filter((value) => value !== undefined)
+                      .map((value) => label(String(value), ''))
+                      .join(' · ');
+                    return (
+                      <div className="feedback-diagnostics-activity" key={index}>
+                        <span>
+                          {title}
+                          {details ? ` · ${details}` : ''}
+                        </span>
+                        <span>{Math.round(event.ageMs / 1000)} s ago</span>
+                      </div>
+                    );
+                  })}
+                  {!activity.length && (
+                    <p className="feedback-diagnostics-empty">No recent app activity.</p>
                   )}
                 </div>
               </details>

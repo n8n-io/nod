@@ -2533,6 +2533,8 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
   captureAnalytics('nod_ui_error', { area: 'chat', action: 'send' });
   assert.equal(requests, 0);
   await assert.rejects(api('/api/apps/private-account?secret=private'), /private person/);
+  for (let index = 0; index < 110; index++)
+    capturePageview(`/vault/private-person-${index}?secret=private`);
   assert.deepEqual(
     feedbackActivitySnapshot().map((row) => row.properties),
     [
@@ -2542,9 +2544,78 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
     ],
   );
   assert.ok(!JSON.stringify(feedbackActivitySnapshot()).includes('private'));
+  capturePageview('/apps');
+  capturePageview('/vault/private-person');
+  assert.equal(feedbackActivitySnapshot().filter((row) => row.event === 'screen').length, 3);
+  t.mock.timers.tick(1_800_001);
+  capturePageview('/vault/private-person');
+  assert.equal(feedbackActivitySnapshot().filter((row) => row.event === 'screen').length, 1);
   setRequestAccount('diagnostic-owner-two');
   assert.deepEqual(feedbackActivitySnapshot(), []);
+  capturePageview('/vault/private-person');
+  assert.equal(feedbackActivitySnapshot().length, 1);
+  feedbackActivity.clear();
+  for (const [path, area] of [
+    ['/api/thread/stop', 'chat'],
+    ['/api/browser-handoff/private-session/complete', 'browser'],
+    ['/api/channel-settings/private-channel', 'channels'],
+    ['/api/schedule-runs?limit=20', 'tasks'],
+    ['/api/credential-requests/private-request', 'vault'],
+    ['/api/payment-requests/private-request', 'vault'],
+  ]) {
+    await assert.rejects(api(path, { method: 'POST' }), /private person/);
+    assert.deepEqual(feedbackActivitySnapshot().at(-1)?.properties, {
+      area,
+      method: 'POST',
+      status: 503,
+      reason: 'http',
+    });
+  }
+  assert.ok(!JSON.stringify(feedbackActivitySnapshot()).includes('private'));
+  feedbackActivity.clear();
+  t.mock.method(
+    globalThis,
+    'fetch',
+    async (_path: string, options: RequestInit) =>
+      new Promise<Response>((_resolve, reject) =>
+        options.signal!.addEventListener('abort', () => reject(options.signal!.reason), {
+          once: true,
+        }),
+      ),
+  );
+  const timeout = new AbortController();
+  const timedRequest = api('/api/channels/private-recipient', { signal: timeout.signal });
+  timeout.abort(new DOMException(privateValue, 'TimeoutError'));
+  await assert.rejects(timedRequest, { name: 'TimeoutError' });
+  assert.deepEqual(
+    feedbackActivitySnapshot().map((row) => row.properties),
+    [{ area: 'channels', method: 'GET', status: 0, reason: 'timeout' }],
+  );
+  for (const changedOwner of [false, true]) {
+    const cancellation = new AbortController();
+    const cancelledRequest = api('/api/channels/private-recipient', {
+      signal: cancellation.signal,
+    });
+    if (changedOwner) setRequestAccount('diagnostic-owner-three');
+    else cancellation.abort();
+    await assert.rejects(cancelledRequest, { name: 'AbortError' });
+    assert.equal(feedbackActivitySnapshot().length, changedOwner ? 0 : 1);
+  }
   feedbackActivity.record('nod_ui_error', { area: 'settings', action: 'load' });
   setRequestAccount(null);
   assert.deepEqual(feedbackActivitySnapshot(), []);
+  for (const path of ['/api/session', '/api/access']) {
+    let respond: (response: Response) => void = () => {};
+    t.mock.method(
+      globalThis,
+      'fetch',
+      async () => new Promise<Response>((resolve) => (respond = resolve)),
+    );
+    setRequestAccount('diagnostic-owner-one');
+    const staleRequest = api(path);
+    setRequestAccount('diagnostic-owner-two');
+    respond(Response.json({ error: privateValue }, { status: 503 }));
+    await assert.rejects(staleRequest, /private person/);
+    assert.deepEqual(feedbackActivitySnapshot(), []);
+  }
 });
