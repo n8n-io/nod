@@ -45,6 +45,7 @@ import { type DiscoveredOAuthState } from '../src/ports/discovered.ts';
 import {
   IntegrationCatalogAccessDenied,
   IntegrationConnectionError,
+  IntegrationPermissionError,
   type IntegrationFile,
   type IntegrationProvider,
   type IntegrationService,
@@ -6899,6 +6900,141 @@ test('Composio catalog failures preserve owned accounts', async (t) => {
   assert.equal(listing.mock.callCount(), 1);
 });
 
+test(
+  'Gmail scope failures preserve the selected account and return permission recovery without repeating execution',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const database = await hostedDatabase();
+    t.after(() => database.close());
+    const client = new Composio({
+      apiKey: 'fixture-key-never-live',
+      baseURL: 'https://proxy.fixture.invalid',
+      allowTracking: false,
+      disableVersionCheck: true,
+      fileUploadDirs: false,
+    });
+    t.mock.method(client.getClient().toolkits, 'list', async () => ({
+      items: [],
+      next_cursor: null,
+    }));
+    let result: Record<string, unknown>;
+    const executed = t.mock.fn(
+      async (
+        _action: string,
+        _args: unknown,
+        selected: { account: string },
+        options: { maxRetries: number },
+      ) => {
+        assert.equal(selected.account, 'fixture-gmail-account');
+        assert.equal(options.maxRetries, 0);
+        return result;
+      },
+    );
+    t.mock.method(
+      client.sessions,
+      'create',
+      async (owner: string, configuration: { connectedAccounts: unknown }) => {
+        assert.equal(owner, 'local-development');
+        assert.deepEqual(configuration.connectedAccounts, { gmail: ['fixture-gmail-account'] });
+        return {
+          sessionId: 'fixture-permission-session',
+          search: async () => ({
+            success: true,
+            error: null,
+            results: [],
+            toolSchemas: {
+              GMAIL_FETCH_EMAILS: {
+                toolSlug: 'GMAIL_FETCH_EMAILS',
+                toolkit: 'gmail',
+                inputSchema: { type: 'object' },
+              },
+            },
+          }),
+          execute: executed,
+        };
+      },
+    );
+    t.mock.method(client.sessions, 'delete', async () => {});
+    const provider = createComposioProvider({
+      proxy: composioProxyFixture(client, 'local-development'),
+    });
+    const integrations = await createIntegrations(database.pool, {
+      ownerId: 'local-development',
+      provider,
+      baseUrl: 'http://localhost:4310',
+      wake: async () => assert.fail('A permission failure must not wake another turn.'),
+    });
+    const connectionId = randomUUID();
+    await database.pool.query(
+      `INSERT INTO app_connections(id,owner_id,slug,account_id,provider_id,account_active,account_checked_at,configuration_id)
+       VALUES($1,'local-development','gmail','fixture-gmail-account','composio',true,now(),$2),
+       ($3,'local-development','gmail','fixture-other-account','composio',true,now(),$2)`,
+      [connectionId, provider.configurationId, randomUUID()],
+    );
+    const search = await integrations.execute('local-development', 'SEARCH_TOOLS', {
+      query: 'Read Gmail messages',
+      connectionId,
+    });
+    assert.ok(Object.hasOwn((search as { tools: object }).tools, 'GMAIL_FETCH_EMAILS'));
+    const before = (await integrations.list('local-development', { refresh: false })).filter(
+      (connection) => connection.slug === 'gmail',
+    );
+    for (const resultType of ['completed', 'failed'])
+      await t.test(resultType, async () => {
+        result = {
+          data: {},
+          error: 'HTTP 403: Request had insufficient authentication scopes.',
+          resultType,
+        };
+        const previousCalls = executed.mock.callCount();
+        await assert.rejects(
+          integrations.execute('local-development', 'GMAIL_FETCH_EMAILS', { connectionId }),
+          (error: Error & { statusCode?: number }) => {
+            assert.equal(error.statusCode, 403);
+            assert.match(error.message, /insufficient authentication scopes/);
+            assert.ok(error.message.includes(connectionId));
+            assert.match(error.message, /gmail/i);
+            assert.match(error.message, /manage_apps/);
+            assert.match(error.message, /connect/);
+            assert.match(error.message, /config/i);
+            assert.match(error.message, /browser/i);
+            assert.doesNotMatch(error.message, /SEARCH_TOOLS/);
+            return true;
+          },
+        );
+        assert.equal(executed.mock.callCount(), previousCalls + 1);
+      });
+    await t.test('ordinary forbidden responses do not request reconnection', async () => {
+      result = { data: {}, error: 'HTTP 403: Permission denied.', resultType: 'failed' };
+      const previousCalls = executed.mock.callCount();
+      await assert.rejects(
+        integrations.execute('local-development', 'GMAIL_FETCH_EMAILS', { connectionId }),
+        (error: Error & { statusCode?: number }) => {
+          assert.equal(error.statusCode, 502);
+          assert.doesNotMatch(error.message, /manage_apps|reconnect/);
+          return true;
+        },
+      );
+      assert.equal(executed.mock.callCount(), previousCalls + 1);
+    });
+    result = {
+      data: { message: 'HTTP 403: Request had insufficient authentication scopes.' },
+      error: null,
+      resultType: 'completed',
+    };
+    assert.deepEqual(
+      await integrations.execute('local-development', 'GMAIL_FETCH_EMAILS', { connectionId }),
+      result,
+    );
+    assert.deepEqual(
+      (await integrations.list('local-development', { refresh: false })).filter(
+        (connection) => connection.slug === 'gmail',
+      ),
+      before,
+    );
+  },
+);
+
 test('Composio failure envelopes reject with the provider error', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
@@ -6959,6 +7095,7 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
     await t.test(`${name} preserves the missing and granted permissions`, async () => {
       result = failure;
       await assert.rejects(session.execute(action, {}, 'fixture-account'), (error: Error) => {
+        assert.ok(error instanceof IntegrationPermissionError);
         assert.match(error.message, /missing_scope/);
         assert.match(error.message, /canvases:write/);
         assert.match(error.message, /chat:write,channels:read/);
@@ -6966,6 +7103,78 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
       });
     });
   }
+  for (const [name, failure] of [
+    ['OAuth insufficient scope', { error: 'insufficient_scope', data: {} }],
+    [
+      'Gmail nested insufficient scopes detail',
+      {
+        error: null,
+        data: {
+          successful: false,
+          error: {
+            code: 403,
+            message: 'Request had insufficient authentication scopes.',
+            errors: [{ reason: 'insufficientPermissions' }],
+          },
+        },
+      },
+    ],
+    [
+      'Google structured scope reason',
+      {
+        error: null,
+        data: {
+          successful: false,
+          error: { code: 403, details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] },
+        },
+      },
+    ],
+    [
+      'Generic outer error preserves the nested Gmail scope detail',
+      {
+        error: 'Request failed',
+        data: {
+          successful: false,
+          error: {
+            code: 403,
+            message: 'Request had insufficient authentication scopes.',
+            errors: [{ reason: 'insufficientPermissions' }],
+          },
+        },
+        resultType: 'failed',
+      },
+    ],
+  ] as const)
+    await t.test(name, async () => {
+      result = { resultType: 'completed', ...failure };
+      await assert.rejects(
+        session.execute('GMAIL_FETCH_EMAILS', {}, 'fixture-account'),
+        IntegrationPermissionError,
+      );
+    });
+  for (const failure of [
+    { error: 'HTTP 403: Permission denied.', data: {} },
+    { error: null, data: { successful: false, error: { code: 403, message: 'Forbidden' } } },
+    {
+      error: null,
+      data: {
+        successful: false,
+        error: { code: 403, errors: [{ reason: 'insufficientPermissions' }] },
+      },
+    },
+  ]) {
+    result = { ...failure, resultType: 'completed' };
+    await assert.rejects(
+      session.execute('GMAIL_FETCH_EMAILS', {}, 'fixture-account'),
+      (error: Error) => !(error instanceof IntegrationPermissionError),
+    );
+  }
+  result = {
+    data: { successful: true, message: 'insufficient_scope ACCESS_TOKEN_SCOPE_INSUFFICIENT' },
+    error: null,
+    resultType: 'completed',
+  };
+  assert.deepEqual(await session.execute('GMAIL_FETCH_EMAILS', {}, 'fixture-account'), result);
   result = {
     error: `Permission denied. ${'x'.repeat(5000)}`,
     data: {
