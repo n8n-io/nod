@@ -535,10 +535,10 @@ export async function cancelTurns(
   const tasks = taskIds.length
     ? (
         await client.query(
-          "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND state='open' RETURNING title",
+          "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND state='open' RETURNING title,session_id",
           [taskIds, ownerId],
         )
-      ).rows.map((row) => row.title as string)
+      ).rows.map((row) => ({ title: row.title as string, sessionId: row.session_id as string }))
     : [];
   return {
     tasks,
