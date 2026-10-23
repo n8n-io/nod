@@ -520,7 +520,7 @@ async function initializeApplication(
   const artifacts = localArtifacts;
   const secrets = Object.entries(process.env)
     .filter(([key]) =>
-      /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|DESKTOP_AUTH_TOKEN|FEEDBACK_TOKEN|TRACES_TOKEN)$/.test(
+      /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|AUTH_TOKEN|FEEDBACK_TOKEN|TRACES_TOKEN)$/.test(
         key,
       ),
     )
