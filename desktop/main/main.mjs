@@ -1339,7 +1339,7 @@ async function startEngine({ runtime, signal, pending = false }) {
         /^(?:Error|TypeError|SyntaxError|ReferenceError|RangeError)(?::| \[)/.test(line) &&
         !line.includes('{')
       ) {
-        failure = line.replace(/^\w+(?: \[[^\]]*\])?: /, '');
+        failure = line.replace(/^\w+(?: \[[^\]]*\])?: /, '').replace(/https?:\/\/\S+/g, '<url>');
         void writeDiagnostic(line).catch(() => {});
       }
   });
