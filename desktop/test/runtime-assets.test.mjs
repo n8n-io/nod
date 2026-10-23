@@ -17,7 +17,7 @@ import {
 } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join, posix, resolve } from 'node:path';
+import { dirname, join, posix, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createDesktopLifecycle } from '../main/lifecycle.mjs';
@@ -2501,7 +2501,9 @@ test('runtime fingerprints cover dependencies and every source the images use, a
     return readdirSync(full, { recursive: true, withFileTypes: true })
       .filter((entry) => entry.isFile())
       .every((entry) =>
-        inputs.includes(posix.relative(repository, join(entry.parentPath, entry.name))),
+        inputs.includes(
+          relative(repository, join(entry.parentPath, entry.name)).replaceAll('\\', '/'),
+        ),
       );
   };
   for (const path of ['Dockerfile.workspace', 'Dockerfile.browser']) {
