@@ -11,15 +11,17 @@ Configure a source install or self-hosted server through environment variables. 
 
 - A source install reads `.env` in the repository folder. Git ignores it. `pnpm start` creates it from `.env.example`, readable only by you.
 - The [self-hosting stack](/deploy/self-host/) has its own `.env` in `deployment/self-host/`. Keep it private and include it in your backup.
-- A variable set in your shell wins over the same variable in `.env`. For the self-hosting stack, keep `NOD_AUTH_TOKEN`, `NOD_VAULT_KEY`, and `NOD_POSTGRES_PASSWORD` in `.env` and unset shell overrides before setup or Compose.
-- nod reads settings when it starts. Restart nod after you change one.
+- For a direct source install, a variable set in your shell wins over the same variable in the repository `.env`.
+- For the self-hosting stack, put application settings in its private `.env`. Compose does not forward arbitrary variables from your host shell. Keep `NOD_AUTH_TOKEN`, `NOD_VAULT_KEY`, and `NOD_POSTGRES_PASSWORD` in `.env` and unset shell overrides before setup or Compose.
+- nod reads settings when it starts. Restart a direct source process after changes. For Compose, run `docker compose up -d --wait` from the installation directory, adding `--profile https` before `up` when HTTPS is enabled. `docker compose restart` does not reload environment values.
 - Most things don't need a variable. You connect models, apps and channels in the app, and nod saves them encrypted.
 - The desktop app doesn't read `.env`. When connected to a server, it uses that server's configuration. Its server address and token are client settings.
 
 ```mermaid
 flowchart LR
-  shell[Shell variable]:::accent -- wins over --> file[.env]
+  shell["Direct source:<br/>shell variables"]:::accent -- take precedence over --> file[Repository .env]
   file --> server[nod server<br/>reads at start]
+  compose[Self-host stack .env] --> server
   app[Settings in the app] --> db[(Encrypted<br/>in the database)]
   db --> server
 ```

@@ -24,15 +24,15 @@ Choose a [cloud server](/deploy/providers/) or prepare a [Mac mini](/deploy/mac-
 
 ## Install a prebuilt bundle
 
-Use a successful **Self-host bundle** workflow artifact from the private [nod repository](https://github.com/n8n-io/nod/actions/workflows/self-host-bundle.yml). Choose `amd64` for Intel or AMD servers, or `arm64` for Apple Silicon and ARM servers. The Docker Engine must use Linux containers.
+Download a `server-<commit>` release from the private [nod releases](https://github.com/n8n-io/nod/releases), when one is available. Choose `amd64` for Intel or AMD servers, or `arm64` for Apple Silicon and ARM servers. The Docker Engine must use Linux containers.
 
-These are private build artifacts, not public releases. The workflow builds and checks each architecture natively before uploading its bundle. It retains artifacts for 14 days; keep the bundle with your backups. Check the workflow's source revision before downloading. Repository access is needed only on the computer downloading the artifact.
+For a revision without a server release, use a successful **Self-host bundle** [workflow run](https://github.com/n8n-io/nod/actions/workflows/self-host-bundle.yml). Workflow artifacts expire after 14 days; approved release assets remain available beyond that window. Both paths check each architecture natively and validate its standalone installer. Keep the downloaded bundle with your backups.
 
-Download only from the authenticated GitHub workflow. That run identifies the source; the bundle's checksums detect transfer corruption.
+Check the full source commit in the release tag or workflow run before downloading. Download only from authenticated GitHub; the bundle's checksums detect transfer corruption. Repository access is needed on the computer downloading the files. Maintainers can [prepare a private server release](/deploy/server-operations/#prepare-a-private-server-release) after approval; this does not make the repository public.
 
 <Steps>
 
-1. Download the artifact named `nod-server-linux-<architecture>-<commit>` from a successful workflow run. Extract the downloaded ZIP on your computer. It contains a `.tar.gz` bundle and its `.sha256` file.
+1. Download the `.tar.gz` bundle and matching `.sha256` file from the server release. If you use a workflow run, download the artifact named `nod-server-linux-<architecture>-<commit>` and extract its ZIP to get those two files.
 2. Transfer those two files to your server using SCP, SFTP, or your provider's file transfer. On a Mac mini, copy them to the Mac.
 3. Check the archive and unpack it. Replace the placeholders with the downloaded filename.
 

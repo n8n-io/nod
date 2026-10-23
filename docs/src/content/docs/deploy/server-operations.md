@@ -26,7 +26,7 @@ Start it again with `docker compose up -d --wait`. Don't use `docker compose dow
 
 ## Back up
 
-Wait for active work to finish. Keep your configuration in `.env`, remove shell overrides, and restart after configuration changes before making a backup. Backup and restore refuse `NOD_ENV_FILE` overrides in either the shell or saved configuration; they preserve the installation's `.env` only.
+Wait for active work to finish. Keep your configuration in `.env`, remove shell overrides, and apply configuration changes with `docker compose up -d --wait` before making a backup. Backup and restore refuse `NOD_ENV_FILE` overrides in either the shell or saved configuration; they preserve the installation's `.env` only.
 
 Choose a new backup directory whose parent already exists:
 
@@ -102,7 +102,7 @@ A restore returns data to the backup's point in time. It does not undo messages 
 
 ## Update a bundle
 
-1. Download the new [private bundle](/deploy/self-host/#install-a-prebuilt-bundle) for the same architecture. Check its workflow source revision and archive checksum.
+1. Download the new [private bundle](/deploy/self-host/#install-a-prebuilt-bundle) for the same architecture. Check the source commit in its release tag or workflow run, and verify the archive checksum.
 2. Back up the server. Keep the old bundle with that backup.
 3. Stop the whole stack with `docker compose --profile https stop`. This also includes Caddy when HTTPS is enabled.
 4. From the parent of your installation directory, unpack the new bundle over the existing directory. The bundle doesn't contain `.env` or your data volumes.
@@ -118,6 +118,16 @@ A restore returns data to the backup's point in time. It does not undo messages 
 5. Open nod, confirm its history and files, and check channel status.
 
 The `source-revision` file records the installed bundle revision. Don't change `COMPOSE_PROJECT_NAME` during an update: it selects your existing data volumes.
+
+## Prepare a private server release
+
+After maintainer approval, run the **Self-host bundle** workflow on `main` with **draft_release** selected. Normal pushes, pull requests and manual runs leave this option off and only create temporary workflow artifacts.
+
+Both native architecture builds, server checks and standalone installer checks must pass before the release job runs. That job uses the existing `release` environment and its protection rules. It verifies each archive's checksum, source commit and architecture, creates `server-<full-source-commit>`, uploads both bundles and checks GitHub's asset digests. The result is an unpublished draft in the private repository.
+
+Review the successful run, checksums and release notes before publishing the draft within the private repository. Drafts are only visible to maintainers; published releases are available to people with repository access. Neither step changes repository visibility. Release assets do not use the workflow's 14-day artifact retention.
+
+The workflow never publishes or replaces an existing tag, release or asset. If a run stops after creating a tag or draft, inspect that partial result before retrying; a rerun refuses to overwrite it. Keep your own copy of each installed bundle with its backup even after a release is available.
 
 ## Update a source installation
 
