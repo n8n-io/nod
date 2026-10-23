@@ -43,6 +43,7 @@ const numberOf = (jid: string | null | undefined) => {
   const normalized = jid ? jidNormalizedUser(jid) : '';
   return /^\d{7,15}@s\.whatsapp\.net$/.test(normalized) ? normalized.split('@')[0] : undefined;
 };
+const qrLifetimeMs = 60_000;
 
 export function whatsappText(text: string) {
   type Node = Root | Root['children'][number];
@@ -390,6 +391,7 @@ export function createWhatsAppLinkedTransport(options: {
       getMessage: async () => undefined,
       connectTimeoutMs: 30_000,
       defaultQueryTimeoutMs: 30_000,
+      qrTimeout: qrLifetimeMs,
       shouldIgnoreJid: (jid) => {
         if (jid === 'status@broadcast' || jid.endsWith('@g.us') || jid.endsWith('@newsletter'))
           return true;
@@ -425,7 +427,7 @@ export function createWhatsAppLinkedTransport(options: {
           ...state,
           state: 'awaiting_scan',
           qr: update.qr,
-          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          expiresAt: new Date(Date.now() + qrLifetimeMs).toISOString(),
         };
       if (update.connection === 'open') {
         if (!identity()) {

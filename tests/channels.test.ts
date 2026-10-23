@@ -326,6 +326,83 @@ test('audio waveform reads refuse foreign URLs, oversized streams, redirects and
     );
 });
 
+test('WhatsApp setup removes stale QR codes and recovers from failed and stalled reads', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import {mock} from 'node:test';
+      import {JSDOM} from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {url:'http://localhost/channels'});
+      Object.assign(globalThis, {window:dom.window,document:dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT:true,HTMLElement:dom.window.HTMLElement,
+        getComputedStyle:dom.window.getComputedStyle.bind(dom.window)});
+      const {createElement,act} = await import('react');
+      const {createRoot} = await import('react-dom/client');
+      const {WhatsAppSetup} = await import('./src/web/components/whatsapp-setup.tsx');
+      mock.timers.enable({apis:['Date','setTimeout'],now:Date.now()});
+      mock.method(AbortSignal,'timeout',ms=>{
+        const controller=new AbortController();
+        setTimeout(()=>controller.abort(new DOMException('Synthetic timeout','TimeoutError')),ms);
+        return controller.signal;
+      });
+      let mode='ready';
+      let pendingSignal;
+      let reads=0;
+      const code=(value,lifetime=60000)=>({state:'awaiting_scan',
+        pairingId:'11111111-1111-4111-8111-111111111111',
+        qr:value,expiresAt:new Date(Date.now()+lifetime).toISOString()});
+      let link=code('synthetic-first-qr');
+      globalThis.fetch=async (_url,options={})=>{
+        if(options.method==='DELETE') return Response.json({ok:true});
+        reads++;
+        if(mode==='failed') throw new Error('Synthetic connection failure');
+        if(mode==='stalled') return new Promise((resolve,reject)=>{
+          pendingSignal=options.signal;
+          options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true});
+        });
+        return Response.json(link);
+      };
+      const root=createRoot(document.querySelector('#root'));
+      const hasQr=()=>Boolean(document.querySelector('.telegram-setup-qr svg'));
+      const advance=async ms=>act(async()=>mock.timers.tick(ms));
+      try {
+        await act(async()=>root.render(createElement(WhatsAppSetup,{
+          setup:{provider:'whatsapp',enabled:true,mode:'linked'},
+          busy:false,ready:true,error:'',onSave:async()=>true,onRefresh:async()=>{},onCloud(){},onDone(){},
+        })));
+        assert.equal(hasQr(),true);
+        mode='failed';
+        await advance(2000);
+        assert.equal(hasQr(),false,'A failed read must remove the previous code.');
+        mode='ready';
+        link=code('synthetic-second-qr');
+        await advance(2000);
+        assert.equal(hasQr(),true);
+        mode='stalled';
+        await advance(2000);
+        const stalledAt=reads;
+        await advance(10000);
+        assert.equal(pendingSignal.aborted,true,'A stalled read must end.');
+        assert.equal(hasQr(),false);
+        mode='ready';
+        link=code('synthetic-third-qr',3000);
+        await advance(2000);
+        assert.ok(reads>stalledAt,'Polling must resume after a timeout.');
+        assert.equal(hasQr(),true);
+        await advance(1000);
+        assert.equal(hasQr(),false,'The code must disappear at expiry without another read.');
+      } finally {
+        await act(async()=>root.unmount());
+        mock.restoreAll();
+        mock.timers.reset();
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
 test('WhatsApp setup closes the replacement generation despite stale polls and late restart responses', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,

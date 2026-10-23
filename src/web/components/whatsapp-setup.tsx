@@ -57,7 +57,7 @@ export function WhatsAppSetup({
       try {
         if (restartPending.current) return;
         const next = await api<ChannelLinkStatus>('/api/channel-settings/whatsapp/pairing', {
-          signal: controller.signal,
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
           cache: 'no-store',
         });
         if (controller.signal.aborted || restartPending.current || version !== revision.current)
@@ -68,8 +68,10 @@ export function WhatsAppSetup({
           void onRefresh();
         currentLink.current = next;
       } catch (cause) {
-        if (!controller.signal.aborted && !restartPending.current && version === revision.current)
+        if (!controller.signal.aborted && !restartPending.current && version === revision.current) {
+          setLink((current) => (current ? { ...current, qr: undefined } : current));
           setFailure(errorMessage(cause));
+        }
       } finally {
         if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 2000);
       }
@@ -83,12 +85,27 @@ export function WhatsAppSetup({
     };
   }, [saved]);
 
+  useEffect(() => {
+    const expiresAt = link?.expiresAt;
+    if (!link?.qr || !expiresAt) return;
+    const timer = setTimeout(
+      () => {
+        setLink((current) =>
+          current?.expiresAt === expiresAt ? { ...current, qr: undefined } : current,
+        );
+      },
+      Math.max(0, Date.parse(expiresAt) - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [link?.qr, link?.expiresAt]);
+
   async function restart() {
     const pairingId = currentLink.current?.pairingId;
     if (busy || restartPending.current || !pairingId) return;
     restartPending.current = true;
     revision.current++;
     setRestarting(true);
+    setLink((current) => (current ? { ...current, qr: undefined } : current));
     try {
       const next = await api<ChannelLinkStatus>('/api/channel-settings/whatsapp/pairing', {
         method: 'POST',

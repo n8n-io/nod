@@ -28,7 +28,7 @@ const credentialUrl = /(?<![\w/])(?:[a-z][a-z\d+.-]*:)?\/\/[^/\s?#<>]*@/iu;
 const input = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
   z.object({ action: z.literal('reply'), ids: z.array(z.uuid()).min(1) }).strict(),
-  z.object({ action: z.literal('stop'), id: z.uuid() }).strict(),
+  z.object({ action: z.literal('stop'), id: z.uuid().optional() }).strict(),
   z
     .object({
       action: z.literal('start'),
@@ -283,7 +283,7 @@ export function createTasks(options: {
       )
     ).rows[0];
     if (!task) throw failure('Task not found.', 404);
-    const cancelled = await cancelTurns(client, threadId, task.session_id);
+    const cancelled = await cancelTurns(client, threadId, { sessionId: task.session_id });
     await client.query(
       "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2 AND state='open'",
       [id, ownerId],
@@ -313,6 +313,13 @@ export function createTasks(options: {
       if (current.task_id) throw failure('Use finish to close your own task.');
       if (current.session_id !== turn.threadId || !sourceMessageId)
         throw failure('Only the main chat can stop tasks.');
+      if (!request.id) {
+        const cancelled = await cancelTurns(client, turn.threadId, { background: true });
+        const sessions = new Set(cancelled.tasks.map((task) => task.sessionId));
+        const tasks = cancelled.tasks.map((task) => task.title);
+        const otherRuns = cancelled.browsers.filter((id) => !sessions.has(id)).length;
+        return { stopped: { tasks, otherRuns }, cancelled };
+      }
       const cancelled = await stop(client, request.id, turn.threadId);
       return { task: (await read(client, { id: request.id, closed: true }))[0], cancelled };
     }
@@ -636,7 +643,11 @@ export function createTasks(options: {
       await lockThread(client);
       return withTurnLock(turn.turnId, () => act(client, turn, raw, sourceMessageId), client);
     }, pool);
-    if ('cancelled' in result && result.cancelled) await afterStop(result.cancelled);
+    if ('cancelled' in result && result.cancelled) {
+      const { cancelled, ...shown } = result;
+      await afterStop(cancelled);
+      return shown;
+    }
     refresh();
     return result;
   }

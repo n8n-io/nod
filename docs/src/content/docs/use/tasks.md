@@ -46,7 +46,7 @@ Reply to a task message to continue that task. You can reply to its first messag
 
 An owner update has a revision. **Owner update queued** means the task has not received it at an execution boundary. An outside action that has already started can still finish. Other tasks continue while one task waits for your answer.
 
-Open a task preview and select **Stop** to stop that task and its helpers. Other tasks continue. The main Stop control stops active work and closes all open tasks. Reset also closes the old thread's open tasks.
+Open a task preview and select **Stop** to stop that task and its helpers. Other tasks continue. The main Stop control stops active work and closes all open tasks. You can also ask nod in the main chat to stop one task, or all background work, including scheduled runs and app checks. Reset also closes the old thread's open tasks.
 
 A task checks in when its spending since your last message to it passes the amount you set in **Usage**, $5 by default, and asks whether to keep going. See [Task check-ins](/use/spending/#task-check-ins).
 

@@ -1443,8 +1443,10 @@ test(
             false,
           );
           const parcel = await start('Watch the fixture parcel.', 'Fixture parcel');
+          const backgrounds: string[] = [];
           for (const source of ['event', 'schedule'] as const) {
             const background = await begin('Synthetic background work.', { source });
+            backgrounds.push(background.turnId);
             t.after(() => finish(background.turnId, 'cancelled'));
             await assert.rejects(
               tasks.execute(background, { action: 'stop', id: parcel.id }, null),
@@ -1457,6 +1459,7 @@ test(
             await assert.rejects(
               tasks.execute(background, { action: 'stop', id: parcel.id }, answer),
             );
+            await assert.rejects(tasks.execute(background, { action: 'stop' }, answer));
           }
           const stopper = await begin('Stop the fixture dentist task.');
           t.after(() => finish(stopper.turnId, 'cancelled'));
@@ -1491,6 +1494,24 @@ test(
               ])
             ).rowCount,
             0,
+          );
+          const everything = await begin('Stop everything you are doing.');
+          t.after(() => finish(everything.turnId, 'cancelled'));
+          const stopped = await tasks.execute(
+            everything,
+            { action: 'stop' },
+            (await row(everything.turnId)).message_id,
+          );
+          assert.deepEqual(Object.keys(stopped), ['stopped']);
+          assert.deepEqual((stopped as { stopped: { tasks: string[] } }).stopped.tasks, [
+            'Fixture parcel',
+          ]);
+          for (const turnId of backgrounds) assert.equal(await turnStatus(turnId), 'cancelled');
+          for (const turnId of [everything.turnId, reopen.turnId])
+            assert.equal(await turnStatus(turnId), 'running');
+          assert.equal(
+            (await db.pool.query('SELECT state FROM tasks WHERE id=$1', [parcel.id])).rows[0].state,
+            'cancelled',
           );
         },
       );

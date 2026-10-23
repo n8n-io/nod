@@ -514,25 +514,34 @@ export async function submitUserMessage(
   return result;
 }
 
-export async function cancelTurns(client: PoolClient, threadId: string, sessionId?: string) {
+export async function cancelTurns(
+  client: PoolClient,
+  threadId: string,
+  scope: { sessionId?: string; background?: boolean } = {},
+) {
+  const values = [threadId, ownerId, scope.sessionId ?? null, scope.background ?? false];
   const current = await client.query(
-    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND status IN ('queued','running','waiting') RETURNING id,session_id",
-    [threadId, ownerId, sessionId ?? null],
+    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting') RETURNING id,session_id",
+    values,
   );
   const taskIds = (
     await client.query(
       `SELECT DISTINCT to_jsonb(u)->>'task_id' AS id FROM turns u
-       WHERE u.thread_id=$1 AND u.owner_id=$2 AND ($3::uuid IS NULL OR u.session_id=$3)
+       WHERE u.thread_id=$1 AND u.owner_id=$2 AND ($3::uuid IS NULL OR u.session_id=$3) AND (NOT $4 OR u.session_id<>$1)
          AND to_jsonb(u)->>'task_id' IS NOT NULL`,
-      [threadId, ownerId, sessionId ?? null],
+      values,
     )
   ).rows.map((row) => row.id);
-  if (taskIds.length)
-    await client.query(
-      "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND state='open'",
-      [taskIds, ownerId],
-    );
+  const tasks = taskIds.length
+    ? (
+        await client.query(
+          "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND state='open' RETURNING title,session_id",
+          [taskIds, ownerId],
+        )
+      ).rows.map((row) => ({ title: row.title as string, sessionId: row.session_id as string }))
+    : [];
   return {
+    tasks,
     ids: current.rows.map((row) => row.id as string),
     browsers: [
       ...new Set(
