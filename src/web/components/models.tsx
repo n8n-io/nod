@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Check,
   ChevronDown,
@@ -788,14 +788,18 @@ export function ModelPicker({
   const [open, setOpen] = useState(false);
   const [manage, setManage] = useState(false);
   const [search, setSearch] = useState('');
+  const trigger = useRef<HTMLButtonElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   const selected = models.data?.selection;
   const connection = models.data?.connections.find((item) => item.id === selected?.connectionId);
   const model = connection?.models.find((item) => item.id === selected?.modelId);
   const canChoose = models.data?.connections.some(
     (source) => source.status === 'connected' && source.models.length > 0,
   );
-  const choices = (models.data?.connections ?? [])
-    .filter((source) => source.status === 'connected')
+  const connections = (models.data?.connections ?? []).filter(
+    (source) => source.status === 'connected',
+  );
+  const choices = connections
     .flatMap((source) => {
       const recommended = recommendedModel(source)?.id;
       return source.models.map((item) => ({
@@ -830,6 +834,7 @@ export function ModelPicker({
   return (
     <div className="model-picker">
       <Button
+        ref={trigger}
         type="button"
         variant="ghost"
         size="sm"
@@ -866,21 +871,38 @@ export function ModelPicker({
         </a>
       )}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="model-picker-dialog" aria-describedby="model-picker-description">
-          <DialogTitle>Choose model</DialogTitle>
+        <DialogContent
+          className="model-picker-dialog"
+          aria-describedby="model-picker-description"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (!manage) trigger.current?.focus();
+          }}
+        >
+          <DialogTitle>Choose a model</DialogTitle>
           <p id="model-picker-description" className="model-intro">
-            Models from your saved connections. Your choice applies to the next turn.
+            Your choice applies to your next message.
           </p>
           <SearchField
-            placeholder="Search models or services"
+            inputRef={searchInput}
+            placeholder="Search models or providers"
             aria-label="Search models"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            onClear={() => setSearch('')}
+            onClear={() => {
+              setSearch('');
+              searchInput.current?.focus();
+            }}
           />
           <div className="model-options">
             {choices.map(({ source, item, recommended }) => {
               const active = selected?.connectionId === source.id && selected.modelId === item.id;
+              const sharedLabel = connections.some(
+                (other) =>
+                  other.id !== source.id &&
+                  modelSource(other) === modelSource(source) &&
+                  other.label === source.label,
+              );
               return (
                 <button
                   type="button"
@@ -890,21 +912,23 @@ export function ModelPicker({
                   disabled={models.busy}
                   onClick={() => void choose(source, item.id, recommended)}
                 >
-                  <span>
-                    <strong>{item.name}</strong>
+                  <ModelProviderLogo provider={source.provider} size={24} />
+                  <span className="model-option-copy">
+                    <span className="model-option-heading">
+                      <strong>{item.name}</strong>
+                      {recommended && <span className="model-option-recommended">Recommended</span>}
+                    </span>
                     <small>
-                      {modelSource(source)}
+                      {source.method === 'subscription'
+                        ? 'ChatGPT'
+                        : modelProviderNames[source.provider]}
                       {source.label !== modelSource(source) ? ` · ${source.label}` : ''}
-                      {source.keyEnding ? ` · Key …${source.keyEnding}` : ''}
-                      {' · '}
-                      {Math.round(item.contextWindow / 1000)}k context
-                      {item.images ? ' · Images' : ''}
-                      {modelProviderInfo[source.provider]?.catalog === 'bundled'
-                        ? ' · Access checked on first use'
-                        : ''}
+                      {sharedLabel && source.keyEnding ? ` · Key …${source.keyEnding}` : ''}
                     </small>
                   </span>
-                  {active ? <Check size={16} /> : recommended && <small>Recommended</small>}
+                  <span className="model-option-status">
+                    {active && <Check size={18} aria-hidden="true" />}
+                  </span>
                 </button>
               );
             })}
@@ -930,7 +954,14 @@ export function ModelPicker({
         </DialogContent>
       </Dialog>
       <Dialog open={manage} onOpenChange={setManage}>
-        <DialogContent className="model-settings-dialog" aria-describedby={undefined}>
+        <DialogContent
+          className="model-settings-dialog"
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            trigger.current?.focus();
+          }}
+        >
           <DialogTitle>Models</DialogTitle>
           <ModelSettings />
         </DialogContent>

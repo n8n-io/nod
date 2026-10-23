@@ -592,6 +592,87 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
       .includes(search.trim().toLowerCase()),
   );
 
+  const list = (
+    <>
+      {expanded && (
+        <SearchField
+          inputRef={searchInput}
+          placeholder="Search providers"
+          aria-label="Search providers"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          onClear={() => setSearch('')}
+        />
+      )}
+      <ul className="ob-brain-providers" aria-label="AI providers">
+        {visible.map((item) => {
+          const existing = c.existing(item.provider);
+          return (
+            <li key={item.provider}>
+              <button
+                ref={(node) => {
+                  if (node) rows.current.set(item.provider, node);
+                  else rows.current.delete(item.provider);
+                }}
+                type="button"
+                className="ob-brain-provider"
+                disabled={c.locked}
+                onClick={() => {
+                  c.clearError();
+                  if (existing) c.open(existing.id);
+                  else setPicked(item.provider);
+                }}
+              >
+                <Logo provider={item.provider} />
+                <span className="ob-brain-provider-name">{item.name}</span>
+                {existing && (
+                  <span
+                    className="ob-brain-check"
+                    role="img"
+                    aria-label={
+                      modelProviderInfo[item.provider].catalog === 'bundled'
+                        ? 'Key saved'
+                        : 'Connected'
+                    }
+                  >
+                    <Check size={12} aria-hidden="true" />
+                  </span>
+                )}
+                <ChevronRight size={12} aria-hidden="true" />
+              </button>
+            </li>
+          );
+        })}
+        {!visible.length && <li className="ob-brain-empty">No providers match this search.</li>}
+        {!expanded && (
+          <li>
+            <button
+              type="button"
+              className="ob-brain-provider ob-brain-more"
+              disabled={c.locked}
+              onClick={() => setExpanded(true)}
+            >
+              <span className="ob-brain-lead" aria-hidden="true">
+                <ChevronDown size={12} />
+              </span>
+              <span className="ob-brain-provider-name">More providers</span>
+              <span className="ob-brain-more-logos" aria-hidden="true">
+                <Logo provider="deepseek" size={16} />
+                <Logo provider="mistral" size={16} />
+                <Logo provider="groq" size={16} />
+                <Logo provider="huggingface" size={16} />
+                <Logo provider="cloudflare-workers-ai" size={16} />
+                <Logo provider="qwen-token-plan" size={16} />
+                <Logo provider="xai" size={16} />
+                <Logo provider="kimi-coding" size={16} />
+              </span>
+            </button>
+          </li>
+        )}
+      </ul>
+    </>
+  );
+
   return (
     <section className="ob-step ob-brain" onClick={done ? undefined : skip} data-analytics-public>
       <Messages
@@ -619,113 +700,38 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
                   : 'Sign in again to keep using it.'}
               </p>
             )}
-            <Card page={page} direction={motion.direction}>
-              {view === 'done' ? (
-                <Connected c={c} />
-              ) : view === 'setup' ? (
-                <>
-                  <header className="ob-brain-header">
-                    <button
-                      type="button"
-                      className="ob-brain-back"
-                      aria-label="All providers"
-                      disabled={c.flow.pending || c.checking}
-                      onClick={back}
-                    >
-                      <ChevronLeft size={16} aria-hidden="true" />
-                    </button>
-                    <h3>
-                      <Logo provider={entry!.provider} />
-                      {entry!.name}
-                    </h3>
-                  </header>
-                  <div className="ob-brain-body">
-                    <Setup c={c} provider={entry!.provider} />
-                  </div>
-                </>
-              ) : (
-                <>
-                  {expanded && (
-                    <div className="ob-brain-search">
-                      <SearchField
-                        inputRef={searchInput}
-                        placeholder="Search providers"
-                        aria-label="Search providers"
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
-                        onClear={() => setSearch('')}
-                      />
+            {view === 'list' && expanded ? (
+              <div className="ob-brain-catalog">{list}</div>
+            ) : (
+              <Card page={page} direction={motion.direction}>
+                {view === 'done' ? (
+                  <Connected c={c} />
+                ) : view === 'setup' ? (
+                  <>
+                    <header className="ob-brain-header">
+                      <button
+                        type="button"
+                        className="ob-brain-back"
+                        aria-label="All providers"
+                        disabled={c.flow.pending || c.checking}
+                        onClick={back}
+                      >
+                        <ChevronLeft size={16} aria-hidden="true" />
+                      </button>
+                      <h3>
+                        <Logo provider={entry!.provider} />
+                        {entry!.name}
+                      </h3>
+                    </header>
+                    <div className="ob-brain-body">
+                      <Setup c={c} provider={entry!.provider} />
                     </div>
-                  )}
-                  <ul
-                    className={`ob-brain-providers${expanded ? ' expanded' : ''}`}
-                    aria-label="AI providers"
-                  >
-                    {visible.map((item) => {
-                      const existing = c.existing(item.provider);
-                      return (
-                        <li key={item.provider}>
-                          <button
-                            ref={(node) => {
-                              if (node) rows.current.set(item.provider, node);
-                              else rows.current.delete(item.provider);
-                            }}
-                            type="button"
-                            className="ob-brain-provider"
-                            disabled={c.locked}
-                            onClick={() => {
-                              c.clearError();
-                              if (existing) c.open(existing.id);
-                              else setPicked(item.provider);
-                            }}
-                          >
-                            <Logo provider={item.provider} />
-                            <span className="ob-brain-provider-name">{item.name}</span>
-                            {existing && (
-                              <span
-                                className="ob-brain-check"
-                                role="img"
-                                aria-label={
-                                  modelProviderInfo[item.provider].catalog === 'bundled'
-                                    ? 'Key saved'
-                                    : 'Connected'
-                                }
-                              >
-                                <Check size={12} aria-hidden="true" />
-                              </span>
-                            )}
-                            <ChevronRight size={12} aria-hidden="true" />
-                          </button>
-                        </li>
-                      );
-                    })}
-                    {!visible.length && (
-                      <li className="ob-brain-empty">No providers match this search.</li>
-                    )}
-                    {!expanded && (
-                      <li>
-                        <button
-                          type="button"
-                          className="ob-brain-provider ob-brain-more"
-                          disabled={c.locked}
-                          onClick={() => setExpanded(true)}
-                        >
-                          <span className="ob-brain-lead" aria-hidden="true">
-                            <ChevronDown size={12} />
-                          </span>
-                          <span className="ob-brain-provider-name">More providers</span>
-                          <span className="ob-brain-more-logos" aria-hidden="true">
-                            <Logo provider="amazon-bedrock" size={16} />
-                            <Logo provider="azure" size={16} />
-                            <Logo provider="compatible" size={16} />
-                          </span>
-                        </button>
-                      </li>
-                    )}
-                  </ul>
-                </>
-              )}
-            </Card>
+                  </>
+                ) : (
+                  list
+                )}
+              </Card>
+            )}
           </>
         )}
       </Rise>
