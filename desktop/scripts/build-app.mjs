@@ -215,6 +215,7 @@ const paths = await packager({
   prune: false,
   overwrite: true,
   icon,
+  protocols: [{ name: 'nod', schemes: ['nod'] }],
   extendInfo: {
     LSMinimumSystemVersion: minimumSystemVersion,
     ElectronSquirrelPreventDowngrades: true,

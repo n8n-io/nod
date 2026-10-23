@@ -43,6 +43,7 @@ type DesktopWindow = Window & {
     saveSettings(input: DesktopSettingsChange): Promise<DesktopSettings>;
     removeAllData(): Promise<void>;
     onOpenSettings(listener: (section: DesktopSettingsSection) => void): () => void;
+    onNavigate?(listener: (path: string) => void): () => void;
     openExternal(url: string): Promise<void>;
     getPreferences(): Promise<DesktopPreferences>;
     getFeedbackContext?(): Promise<DesktopFeedbackContext>;
@@ -68,6 +69,10 @@ export function desktopSettingsAvailable() {
 
 export function openDesktopSettings(section: DesktopSettingsSection = 'general') {
   window.dispatchEvent(new window.CustomEvent('nod:open-settings', { detail: section }));
+}
+
+export function subscribeDesktopNavigation(listener: (path: string) => void) {
+  return (window as DesktopWindow).nodDesktop?.onNavigate?.(listener);
 }
 
 export function subscribeDesktopSettings(listener: (section: DesktopSettingsSection) => void) {

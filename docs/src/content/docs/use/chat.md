@@ -58,6 +58,24 @@ nod sometimes reacts to your messages too, such as ✅ when you say yes to somet
 
 ## Open links in replies
 
+Links to nod screens open in the current window. A link to **Settings > Models** opens that Settings tab. Close Settings to return to the screen and control you used before. Browser Back and Forward also work.
+
+| To see or change                          | Open                                      |
+| ----------------------------------------- | ----------------------------------------- |
+| Your conversation                         | **Chat** in the sidebar                   |
+| Saved tasks                               | **Tasks** in the sidebar                  |
+| App connections                           | **Apps** in the sidebar                   |
+| Telegram and WhatsApp                     | **Channels** in the sidebar               |
+| Spending and activity                     | **Usage** in the sidebar                  |
+| Saved logins, cards, and browser sessions | **Vault** in the sidebar                  |
+| General preferences                       | **Settings** at the bottom of the sidebar |
+| Model connections and selection           | **Settings > Models**                     |
+| Saved notes and skills                    | **Settings > Memory**                     |
+
+In Telegram and WhatsApp, a screen link opens a public page. Select **Open in nod** on the computer where nod is installed. On a phone, use the location on that page to continue in nod on your computer. The link contains only the screen name. It cannot change settings or approve an action.
+
+You can also ask nod to change supported settings from any channel. For example, ask it to use a connected model, set quiet hours, change the time zone or clock format, or set a spending limit. nod uses its tools and reports the saved result. It asks when your request does not identify the target or value. Model sign-in and device settings, such as launch at login, still need the app.
+
 Hover over a link in one of nod's replies, or focus it with the keyboard, to see its full address. Select the address to open the page, or press Enter on the focused link. Press Escape to dismiss the address.
 
 Under a reply, nod lists the linked pages that publish a preview image, one row per page, in the order the links appear. Each row shows the link text, the page title when the page has one, and the full address as written in the reply. Hovering or focusing a link highlights its row, and hovering or focusing a row highlights its link. Rows appear as their images load. The first five rows show; select **Show more** for the rest. Links to pages without a preview image get no row, and links nod recognises as sign-in, Vault or payment pages are never previewed.

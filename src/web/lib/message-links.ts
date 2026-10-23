@@ -8,21 +8,13 @@ import rehypeSanitize from 'rehype-sanitize';
 import { SKIP, visit } from 'unist-util-visit';
 import { rehypeLocalLinks } from './markdown';
 import { isConnectionBridge } from './connection-url';
+import { appPagePath } from '../../shared/app-links';
 
 export type SetupKind = 'vault' | 'website' | 'app' | 'browser';
 type SafeLink =
   | { href: string; kind: 'artifact' | 'external' | 'navigation' }
   | { href: string; kind: 'setup'; setup: SetupKind };
 
-const navigationPaths = new Set([
-  '/',
-  '/apps',
-  '/tasks',
-  '/memory',
-  '/usage',
-  '/vault',
-  '/channels',
-]);
 const renamedPaths = new Map([
   ['/trust', '/usage'],
   ['/trust?add=login', '/vault?add=login'],
@@ -68,7 +60,7 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
   if (
     !absolute &&
     !localPath.test(value.split(/[?#]/, 1)[0]) &&
-    !navigationPaths.has(value) &&
+    !appPagePath(value) &&
     value !== '/vault?add=login' &&
     value !== '/vault?add=card' &&
     value !== '/browser' &&
@@ -108,10 +100,12 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
         : value.split(/[?#]/, 1)[0];
       if (
         url.origin === base.origin &&
-        navigationPaths.has(path) &&
-        navigationPaths.has(url.pathname)
+        !url.search &&
+        !url.hash &&
+        appPagePath(path) &&
+        appPagePath(path) === appPagePath(url.pathname)
       )
-        return { href: url.pathname, kind: 'navigation' };
+        return { href: appPagePath(path)!, kind: 'navigation' };
       if (url.origin !== base.origin || !localPath.test(path) || !localPath.test(url.pathname))
         return null;
       if (url.pathname.startsWith('/api/artifacts/'))

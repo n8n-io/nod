@@ -94,6 +94,7 @@ export const MessageText = memo(function MessageText({
                 <a
                   href={link.kind === 'external' ? href : link.href}
                   target={
+                    link.kind === 'navigation' ||
                     setup?.href.startsWith('/apps?connect=') ||
                     link.href.startsWith('/e2e/connect/')
                       ? undefined

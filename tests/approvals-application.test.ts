@@ -89,8 +89,26 @@ test(
     let repeatAfterConfirm: { action: string; args: Record<string, unknown> } | undefined;
     const prompts = new Map<string, string>();
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
+    const { createModelService } = await import('../src/server/models.ts');
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    const models = createModelService({
+      database: pool,
+      ownerId,
+      origin: `http://localhost:${port}`,
+      keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) },
+      backend: createPiModelBackend({
+        fetch: async (input) => {
+          assert.equal(String(input), 'https://api.openai.com/v1/models');
+          return Response.json({ data: [{ id: 'gpt-6.1-sol' }, { id: 'gpt-6-luna' }] });
+        },
+      }),
+    });
+    await models.initialize();
+    await models.addKey('openai', 'synthetic-model-key');
+    t.after(() => models.close());
     const application = await createApplication(
       {
+        models,
         agent: {
           async open(options) {
             const phase = phases.get(options.turnId) ?? 0;
@@ -408,6 +426,49 @@ test(
       );
     }
     try {
+      await t.test(
+        'model settings use the trust check and save only the approved selection',
+        async () => {
+          const before = models.view().selection;
+          const connection = models.view().connections[0]!;
+          const model = connection.models.find((item) => item.id !== before?.modelId)!;
+          const input = {
+            connectionId: connection.id,
+            modelId: model.id,
+            effort: model.efforts[0]!,
+          };
+          const turn = await propose('model_select', input);
+          const [card] = await approvalsFor(turn);
+          assert.equal(card.action, 'NOD_model_select');
+          assert.deepEqual(models.view().selection, before);
+          const response = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: card.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          await waitFor(response.json().turnId, 'succeeded');
+          assert.deepEqual(models.view().selection, input);
+          assert.equal((await approvalsFor(turn))[0].status, 'completed');
+          const directText = 'Use the first connected model again.';
+          asked.add(directText);
+          plans.set(directText, { action: 'model_select', args: { ...before! } });
+          const direct = await request('POST', '/api/messages', { text: directText });
+          await waitFor(direct.json().turnId, 'succeeded');
+          assert.deepEqual(models.view().selection, before);
+          assert.equal((await approvalsFor(direct.json().turnId)).length, 0);
+          await assert.rejects(
+            application.personal.manage('model_select', {
+              ...input,
+              connectionId: randomUUID(),
+            }),
+          );
+          assert.deepEqual(models.view().selection, before);
+          assert.doesNotMatch(
+            JSON.stringify(await application.personal.manage('models_get', {})),
+            /synthetic-model-key/,
+          );
+        },
+      );
       await t.test(
         'a compromised agent cannot send outside the account until the owner confirms',
         async () => {

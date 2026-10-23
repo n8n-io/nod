@@ -19,6 +19,7 @@ import type {
 } from '../ports/messaging.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import type { ChatConfirmationInput } from './approvals.ts';
+import { appPagePath, appPages, appPageUrl } from '../shared/app-links.ts';
 
 const replyCommand = /^\/(memory|context|usage)(?:@[A-Za-z0-9_]+)?$/i;
 const taskCommand = /^\/(tasks|status|stop)(?:@[A-Za-z0-9_]+)?$/i;
@@ -218,7 +219,12 @@ function channelText(text: string) {
   const safe = text
     .replace(
       /\[([^\]]*)\]\((https?:\/\/[^\s)]+|\/[^\s)]+)\)/g,
-      (match, label: string, url: string) => (privateUrl(url) ? label : match),
+      (match, label: string, url: string) => {
+        const path = appPagePath(url);
+        if (path)
+          return `${label === appPages[path] ? label : `${label} (${appPages[path]})`}: ${appPageUrl(path)}`;
+        return privateUrl(url) ? label : match;
+      },
     )
     .replace(
       /https?:\/\/[^\s)]+|\/(?:api\/artifacts|vault|trust|credentials|payments|approvals)[^\s)]*/g,
@@ -238,9 +244,10 @@ async function presentChannelText(
     .trim()
     .min(1)
     .parse(await present(threadId, input));
-  if (channelText(text).text !== text)
+  const safe = channelText(text);
+  if (safe.secureAction || safe.artifact)
     throw new Error('Channel presentation contains a private link.');
-  return text;
+  return safe.text;
 }
 
 export async function channelReply(

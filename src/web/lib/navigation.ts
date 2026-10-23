@@ -10,6 +10,7 @@ export const sidebarItems = [
 ] as const;
 
 export function navigate(path: string) {
+  if (window.location.pathname + window.location.search + window.location.hash === path) return;
   window.history.pushState(null, '', path);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }

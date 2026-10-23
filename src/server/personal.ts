@@ -8,6 +8,7 @@ import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { activeThreadSql } from './thread.ts';
 import { createSchedules, type ScheduleDependencies } from './schedules.ts';
 import type { MemoryChange } from './analytics.ts';
+import { modelSelectionInput, type createModelService } from './models.ts';
 
 export function profileNotes(profile: Record<string, unknown>) {
   return Object.entries(profile).flatMap(([field, value]) => {
@@ -41,6 +42,7 @@ export function profileNotes(profile: Record<string, unknown>) {
 type PersonalDependencies = ScheduleDependencies & {
   memory?: MemoryService;
   learnedSkills?: LearnedSkills;
+  models?: ReturnType<typeof createModelService>;
 };
 
 export function createPersonalService(dependencies: PersonalDependencies) {
@@ -79,6 +81,16 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       return input;
     }
     if (action === 'notification_preferences_update') return changed(preferences.validate(args));
+    if (action === 'model_select') {
+      const input = modelSelectionInput.parse(args);
+      const connection = dependencies.models
+        ?.view()
+        .connections.find((item) => item.id === input.connectionId && item.status === 'connected');
+      const model = connection?.models.find((item) => item.id === input.modelId);
+      if (!model?.efforts.includes(input.effort))
+        throw new Error('Choose an available model and effort from models_get.');
+      return input;
+    }
     if (action === 'schedule_create') return schedules.validateCreate(args);
     if (action === 'schedule_update') {
       const { id: rawId, ...raw } = args;
@@ -136,6 +148,20 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     },
   ) {
     if (action === 'notification_preferences_get') return preferences.get();
+    if (action === 'models_get') {
+      if (!dependencies.models) throw new Error('Model settings are unavailable.');
+      return dependencies.models.view();
+    }
+    if (action === 'model_select') {
+      const input = modelSelectionInput.parse(await validateReview(action, args));
+      await dependencies.models!.select(input);
+      dependencies.analytics?.({
+        event: 'nod_settings_updated',
+        properties: { section: 'models', operation: 'update' },
+      });
+      refresh();
+      return { selection: dependencies.models!.view().selection };
+    }
     if (action === 'notification_preferences_update') {
       const result = await preferences.update(args);
       refresh();

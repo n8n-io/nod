@@ -9,7 +9,7 @@ import {
   type BrowserStep,
   type RuntimeObservation,
 } from '../ports/agent.ts';
-import { lightestEffort, type ModelProvider } from '../shared/models.ts';
+import { lightestEffort, modelSource, type ModelProvider } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
 import {
@@ -659,6 +659,7 @@ async function initializeApplication(
     refresh,
     memory,
     learnedSkills,
+    models: adapters.models,
     consumers,
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
     sessionCosts: ledger.sessionCosts,
@@ -886,7 +887,7 @@ async function initializeApplication(
           ? vaultAccess.allow(args)
           : action === 'NOD_limits_update'
             ? ledger.setLimits(args)
-            : action.startsWith('NOD_memory_')
+            : action.startsWith('NOD_memory_') || action === 'NOD_model_select'
               ? withTurnLock(provenance.turnId, () =>
                   personal.manage(action.slice('NOD_'.length), args, provenance),
                 )
@@ -1196,6 +1197,7 @@ async function initializeApplication(
         if (
           [
             'notification_preferences_update',
+            'model_select',
             'schedule_create',
             'schedule_update',
             'schedule_cancel',
@@ -1222,8 +1224,20 @@ async function initializeApplication(
               : undefined;
           const rule = 'notificationRule' in input ? preferences?.notificationRule : undefined;
           const rules = 'rules' in input ? preferences?.rules : undefined;
+          const connection =
+            action === 'model_select'
+              ? adapters.models?.view().connections.find((item) => item.id === input.connectionId)
+              : undefined;
+          const targetModel = connection
+            ? {
+                service: modelSource(connection),
+                account: connection.label,
+                model: connection.models.find((item) => item.id === input.modelId)!.name,
+              }
+            : undefined;
           const verdict = await trust.check(turn, `NOD_${action}`, {
             ...input,
+            ...(targetModel ? { targetModel } : {}),
             ...(current ? { currentSchedule: current } : {}),
             ...(rule === undefined ? {} : { currentNotificationRule: rule }),
             ...(rules === undefined ? {} : { currentRules: rules }),
@@ -1249,6 +1263,7 @@ async function initializeApplication(
                 }
               : undefined,
             details: {
+              ...(targetModel ? { targetModel } : {}),
               ...(verdict.confirm ? { reason: verdict.reason } : {}),
               ...(current ? { schedule: current } : {}),
               ...(rule === undefined ? {} : { currentNotificationRule: rule }),

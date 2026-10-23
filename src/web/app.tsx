@@ -19,6 +19,7 @@ import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
 import { captureFeedbackScreenshot } from './lib/feedback-capture';
 import { navigate, sidebarItems } from './lib/navigation';
+import { appPagePath } from '../shared/app-links';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
@@ -38,6 +39,7 @@ import {
   onFeedbackRequested,
   subscribeDesktopFocusMessage,
   subscribeDesktopSettings,
+  subscribeDesktopNavigation,
 } from './lib/desktop';
 
 function replayingOnboarding(path: string) {
@@ -208,7 +210,6 @@ function Workspace({
                   onReadLatest={unread.markRead}
                   onFeedback={onFeedback}
                   onDismissFeedbackDiscovery={onDismissFeedbackDiscovery}
-                  onModels={(trigger) => account.onSettings('Models', trigger)}
                   requestedMessage={chatRequests[0]}
                   onRequestHandled={(id) =>
                     setChatRequests((current) => current.filter((request) => request.id !== id))
@@ -339,6 +340,23 @@ function AuthenticatedApp({
     setSettingsRequest((current) => current + 1);
     navigate(settingsPath(tab));
   };
+  const openPage = (value: string, trigger?: HTMLElement) => {
+    const destination = appPagePath(value);
+    if (!destination) return;
+    if (settingsPage(destination))
+      openSettings(
+        destination === '/settings/models'
+          ? 'Models'
+          : destination === '/settings/memory'
+            ? 'Memory'
+            : 'General',
+        trigger,
+      );
+    else {
+      navigate(destination);
+      window.requestAnimationFrame(() => document.getElementById('workspace')?.focus());
+    }
+  };
   useEffect(
     () =>
       subscribeDesktopSettings((section) =>
@@ -346,24 +364,37 @@ function AuthenticatedApp({
       ),
     [],
   );
+  useEffect(() => subscribeDesktopNavigation(openPage), []);
   useEffect(() => {
     if (path !== '/memory' || !session.settings!.onboardingCompleted) return;
     window.history.replaceState(null, '', '/settings/memory');
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, [path, session.settings!.onboardingCompleted]);
   useEffect(() => {
-    const openSettingsLink = (event: MouseEvent) => {
+    const openAppLink = (event: MouseEvent) => {
       const link =
-        event.target instanceof Element &&
-        event.target.closest<HTMLAnchorElement>('a[href="/memory"], a[href="/usage"]');
-      if (!link || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+        event.target instanceof Element && event.target.closest<HTMLAnchorElement>('a[href]');
+      if (
+        !link ||
+        event.defaultPrevented ||
+        event.button ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey ||
+        link.hasAttribute('download') ||
+        (link.target && link.target !== '_self')
+      )
         return;
+      const url = new URL(link.href);
+      if (url.origin !== window.location.origin || url.search || url.hash) return;
+      const destination = appPagePath(url.pathname);
+      if (!destination) return;
       event.preventDefault();
-      if (link.getAttribute('href') === '/usage') navigate('/usage');
-      else openSettings('Memory', link);
+      openPage(destination, link);
     };
-    document.addEventListener('click', openSettingsLink);
-    return () => document.removeEventListener('click', openSettingsLink);
+    document.addEventListener('click', openAppLink);
+    return () => document.removeEventListener('click', openAppLink);
   }, []);
   useEffect(() => {
     if (!desktopSettingsAvailable()) return;

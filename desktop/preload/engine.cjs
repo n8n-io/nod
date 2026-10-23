@@ -9,6 +9,8 @@ const invoke = (channel, ...values) =>
 
 const focusListeners = new Set();
 const settingsListeners = new Set();
+const navigationListeners = new Set();
+let pendingNavigation;
 const feedbackListeners = new Set();
 let pendingSettings;
 let pendingFeedback = false;
@@ -28,6 +30,12 @@ ipcRenderer.on('nod:settings:focus', (_event, section) => {
   else for (const listener of settingsListeners) listener(section);
 });
 
+ipcRenderer.on('nod:navigate', (_event, path) => {
+  if (typeof path !== 'string') return;
+  if (!navigationListeners.size) pendingNavigation = path;
+  else for (const listener of navigationListeners) listener(path);
+});
+
 ipcRenderer.on('nod:feedback:open', () => {
   if (!feedbackListeners.size) pendingFeedback = true;
   else for (const listener of feedbackListeners) listener();
@@ -43,6 +51,16 @@ contextBridge.exposeInMainWorld('nodDesktop', {
     return () => ipcRenderer.removeListener('nod:status', receive);
   },
   openSettings: (section = 'general') => invoke('nod:settings:open', section),
+  onNavigate: (listener) => {
+    if (typeof listener !== 'function') throw new TypeError('A navigation listener is required.');
+    navigationListeners.add(listener);
+    if (pendingNavigation !== undefined) {
+      const path = pendingNavigation;
+      pendingNavigation = undefined;
+      listener(path);
+    }
+    return () => navigationListeners.delete(listener);
+  },
   openExternal: (url) => invoke('nod:external', url),
   getSettings: () => invoke('nod:settings:get'),
   saveSettings: (input) => invoke('nod:settings:save', input),

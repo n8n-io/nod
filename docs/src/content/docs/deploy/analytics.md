@@ -141,11 +141,11 @@ Tools, confirmations and models:
 
 Settings, memory and schedules:
 
-| Event                  | When                                               | Properties                                                                                                                                                                      |
-| ---------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `nod_settings_updated` | A settings change succeeds                         | `section`: `account`, `preferences`, `channels`, `models`, `trust`, `memory`, `apps`; `operation`: `update`, `connect_started`, `disconnect`; `channel`: `telegram`, `whatsapp` |
-| `nod_memory_changed`   | A memory note or learned skill is saved or removed | `kind`: `note`, `skill`; `operation`: `save`, `forget`, `archive`, `clear`; `actor`: `owner`, `agent`, `background`. Never the note                                             |
-| `nod_schedule_changed` | A schedule change commits                          | `operation`: `create`, `update`, `delete`; `schedule_kind`: `once`, `recurring`; bounded `cadence`; `actor`: `user`, `agent`                                                    |
+| Event                  | When                                                              | Properties                                                                                                                                                                      |
+| ---------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nod_settings_updated` | A settings change succeeds, including a model selection from chat | `section`: `account`, `preferences`, `channels`, `models`, `trust`, `memory`, `apps`; `operation`: `update`, `connect_started`, `disconnect`; `channel`: `telegram`, `whatsapp` |
+| `nod_memory_changed`   | A memory note or learned skill is saved or removed                | `kind`: `note`, `skill`; `operation`: `save`, `forget`, `archive`, `clear`; `actor`: `owner`, `agent`, `background`. Never the note                                             |
+| `nod_schedule_changed` | A schedule change commits                                         | `operation`: `create`, `update`, `delete`; `schedule_kind`: `once`, `recurring`; bounded `cadence`; `actor`: `user`, `agent`                                                    |
 
 Apps, connections and Vault:
 

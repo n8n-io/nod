@@ -488,7 +488,35 @@ test('Save links open only an empty local form without accepting secret query da
 });
 
 test('only intended app paths and credential-free HTTP URLs become links', () => {
+  for (const path of [
+    '/',
+    '/tasks',
+    '/apps',
+    '/channels',
+    '/usage',
+    '/vault',
+    '/settings',
+    '/settings/models',
+    '/settings/memory',
+  ]) {
+    for (const value of [path, `${origin}${path}`]) {
+      assert.deepEqual(safeMessageLink(value, origin), { href: path, kind: 'navigation' });
+      const anchor = JSDOM.fragment(render(`[Open](${value})`)).querySelector('a');
+      assert.equal(anchor?.getAttribute('href'), path);
+      assert.equal(anchor?.getAttribute('target'), null);
+    }
+  }
+  assert.deepEqual(safeMessageLink('/memory', origin), {
+    href: '/settings/memory',
+    kind: 'navigation',
+  });
   for (const value of [
+    '/settings/unknown',
+    '/settings/models/../../api/vault',
+    '/settings/models?access=synthetic',
+    '/settings/models#access=synthetic',
+    `${origin}/settings/models?access=synthetic`,
+    `${origin}/settings/models#access=synthetic`,
     'javascript:alert(1)',
     'JaVaScRiPt:alert',
     'data:text/html,test',

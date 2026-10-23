@@ -2145,6 +2145,21 @@ test(
 );
 
 test('channel presentation isolates private links from the model and rejects unsafe generated output', async () => {
+  const modelsLink = await channelReply('Use [Reconnect](/settings/models).', {
+    threadId: 'owned-thread',
+  });
+  assert.match(
+    modelsLink,
+    /Reconnect \(Settings > Models\): https:\/\/nod-docs\.pages\.dev\/open\/#\/settings\/models/,
+  );
+  assert.doesNotMatch(modelsLink, /localhost|127\.0\.0\.1|nod:\/\//);
+  const informationLink = await channelReply('See [Usage](/usage).', { threadId: 'owned-thread' });
+  assert.match(informationLink, /Usage: https:\/\/nod-docs\.pages\.dev\/open\/#\/usage/);
+  const adapted = await channelReply('/credentials/request-id', {
+    threadId: 'owned-thread',
+    present: async () => 'Open [Settings > Models](/settings/models).',
+  });
+  assert.match(adapted, /https:\/\/nod-docs\.pages\.dev\/open\/#\/settings\/models/);
   const presentation: unknown[] = [];
   const present = async (threadId: string | null, input: unknown) => {
     presentation.push({ threadId, input });

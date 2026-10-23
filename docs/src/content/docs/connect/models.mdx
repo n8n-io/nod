@@ -7,7 +7,7 @@ sidebar:
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-nod needs a model connection to think and reply. You connect one or more services in **Models**, then choose the model nod uses for everything.
+nod needs a model connection to think and reply. Connect one or more services in **Settings > Models**, then choose the model nod uses.
 
 Your requests go to the service you connect. Paid providers bill you for use. To run a model on your own computer instead, see [Local models](/connect/local-models/).
 
@@ -32,7 +32,11 @@ Anthropic's [authentication conditions](https://code.claude.com/docs/en/legal-an
 
 ## Connect a service
 
-Open the account menu and select **Models**. Onboarding shows the same options before your first chat.
+Select **Settings** at the bottom of the sidebar, then **Models**. Onboarding shows the same options before your first chat.
+
+If a connection needs sign-in again, select **Reconnect** in **Settings > Models**. A recovery link in chat opens that screen.
+
+To change to an available model, you can also tell nod which model and service to use. This works in nod, Telegram, and WhatsApp. nod changes the saved selection for the next turn. Connecting a new service or signing in again still needs the private flow in the app.
 
 <Tabs syncKey="model-service">
 <TabItem label="OpenAI">

@@ -143,6 +143,17 @@ test('settings Escape preserves nested interactions and pending changes before r
       try {
         await act(async () => root.render(createElement(Fixture)));
         await settle(() => document.querySelector('button[aria-label="Settings"]'));
+        const link = document.createElement('a');
+        link.href = '/settings/models';
+        link.textContent = 'Synthetic screen link';
+        document.querySelector('#workspace').append(link);
+        link.focus();
+        await click(link);
+        await settle(() => window.location.pathname === '/settings/models');
+        await escape();
+        await settle(() => window.location.pathname === '/apps');
+        await settle(() => document.activeElement === link);
+        link.remove();
         const trigger = await open();
         await click(document.querySelector('[role="tab"][aria-label="Memory"]'));
         await escape();

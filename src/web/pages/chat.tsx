@@ -215,7 +215,6 @@ export function Chat({
   onRequestHandled,
   onFeedback,
   onDismissFeedbackDiscovery,
-  onModels,
 }: {
   ownerId: string;
   state: AppState;
@@ -230,7 +229,6 @@ export function Chat({
   onRequestHandled?(id: string): void;
   onFeedback?(): void;
   onDismissFeedbackDiscovery?(): void;
-  onModels?(trigger: HTMLElement): void;
 }) {
   const dateFormat = useDateFormat();
   const { data: connections } = usePageData<Connection[]>('/api/apps');
@@ -241,8 +239,8 @@ export function Chat({
     <div className="welcome model-setup">
       <BrandMark />
       <h2>Choose a model to start chatting</h2>
-      <Button variant="outline" onClick={(event) => onModels?.(event.currentTarget)}>
-        Open settings
+      <Button variant="outline" asChild>
+        <a href="/settings/models">Open Settings &gt; Models</a>
       </Button>
     </div>
   );

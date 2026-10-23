@@ -45,7 +45,7 @@ const keySchema = z
     deployment: z.string().trim().max(200).optional(),
   })
   .strict();
-const selectionSchema = z
+export const modelSelectionInput = z
   .object({
     connectionId: z.uuid(),
     modelId: z.string().min(1).max(200),
@@ -243,7 +243,7 @@ export function createModelService(options: {
       const row = state.connections.find((item) => item.id === id);
       if (!row) return {};
       if (row.status === 'reconnect')
-        throw new ConnectionError('Reconnect the selected account in Models.');
+        throw new ConnectionError('Reconnect the selected account in Settings > Models.');
       try {
         const current = credential(row);
         if (current?.type !== 'oauth' || current.expires > Date.now() + 300000)
@@ -266,7 +266,7 @@ export function createModelService(options: {
     });
     if (result.reconnect) {
       await reload();
-      throw new ConnectionError('Reconnect the selected ChatGPT account in Models.');
+      throw new ConnectionError('Reconnect the selected ChatGPT account in Settings > Models.');
     }
     return result.value;
   }
@@ -385,7 +385,7 @@ export function createModelService(options: {
     const snapshot = (await store.read()).connections.find((item) => item.id === id);
     if (!snapshot) throw new ConnectionError('This model connection is unavailable.');
     if (!snapshot.managed && snapshot.status === 'reconnect')
-      throw new ConnectionError('Reconnect the selected account in Models.');
+      throw new ConnectionError('Reconnect the selected account in Settings > Models.');
     const value = credential(snapshot);
     if (!value) throw new ConnectionError('This model connection is unavailable.');
     const previous = JSON.stringify(snapshot);
@@ -689,7 +689,7 @@ export function createModelService(options: {
       });
     },
     async select(input: ModelSelection) {
-      const value = selectionSchema.parse(input);
+      const value = modelSelectionInput.parse(input);
       await store.change((state) => {
         const row = state.connections.find((item) => item.id === value.connectionId);
         const model =
@@ -762,13 +762,15 @@ export function createModelService(options: {
         (row) => row.id === selected?.connectionId && row.status === 'connected',
       );
       if (!row || !selected)
-        throw new ConnectionError('Connect a model service and choose a model in Models.');
+        throw new ConnectionError('Open Settings > Models. Connect a service and choose a model.');
       const definition =
         (auxiliary
           ? row.models.find((model) => model.choice.id === memoryModels[row.provider])
           : undefined) ?? row.models.find((model) => model.choice.id === selected.modelId);
       if (!definition || (!definition.choice.efforts.includes(selected.effort) && !auxiliary))
-        throw new ConnectionError('The selected model is unavailable. Choose another model.');
+        throw new ConnectionError(
+          'The selected model is unavailable. Choose another model in Settings > Models.',
+        );
       return {
         provider: row.provider,
         method: row.method,
@@ -819,7 +821,7 @@ export function createModelService(options: {
           return service.view();
         });
         routes.put('/api/models/selection', async (request) => {
-          await service.select(selectionSchema.parse(request.body));
+          await service.select(modelSelectionInput.parse(request.body));
           return service.view();
         });
         routes.delete<{ Params: { id: string } }>(
