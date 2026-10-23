@@ -514,17 +514,22 @@ export async function submitUserMessage(
   return result;
 }
 
-export async function cancelTurns(client: PoolClient, threadId: string, sessionId?: string) {
+export async function cancelTurns(
+  client: PoolClient,
+  threadId: string,
+  scope: { sessionId?: string; background?: boolean } = {},
+) {
+  const values = [threadId, ownerId, scope.sessionId ?? null, scope.background ?? false];
   const current = await client.query(
-    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND status IN ('queued','running','waiting') RETURNING id,session_id",
-    [threadId, ownerId, sessionId ?? null],
+    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting') RETURNING id,session_id",
+    values,
   );
   const taskIds = (
     await client.query(
       `SELECT DISTINCT to_jsonb(u)->>'task_id' AS id FROM turns u
-       WHERE u.thread_id=$1 AND u.owner_id=$2 AND ($3::uuid IS NULL OR u.session_id=$3)
+       WHERE u.thread_id=$1 AND u.owner_id=$2 AND ($3::uuid IS NULL OR u.session_id=$3) AND (NOT $4 OR u.session_id<>$1)
          AND to_jsonb(u)->>'task_id' IS NOT NULL`,
-      [threadId, ownerId, sessionId ?? null],
+      values,
     )
   ).rows.map((row) => row.id);
   if (taskIds.length)
