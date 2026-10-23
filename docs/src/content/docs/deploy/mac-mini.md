@@ -15,7 +15,7 @@ Run the self-hosting stack on a Mac mini to keep nod on your own hardware and re
 4. Keep the Mac awake while you want nod to run. After a power loss or restart, sign in and confirm Docker and nod have started.
 5. Follow [Host your own server](/deploy/self-host/) using a dedicated folder for this installation.
 
-The server's Linux containers run in Docker's virtual machine. You don't need to run nod's local desktop assistant on the Mac mini too.
+The server's Linux containers run in Docker's virtual machine. Apple silicon uses the Linux ARM64 bundle; Intel uses Linux AMD64. This is the same stack used on a Linux server. You don't need to run nod's local desktop assistant on the Mac mini too.
 
 :::note[Desktop or server]
 The desktop app's local assistant and the self-hosting stack have separate data. Connecting the desktop app to your server does not copy its local conversation or saved accounts.

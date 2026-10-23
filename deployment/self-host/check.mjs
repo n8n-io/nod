@@ -172,6 +172,49 @@ try {
     200,
   );
   console.log('Shell PORT override, Bearer, web cookie, and Host/Origin authentication passed.');
+  const providerKeys = JSON.parse(
+    await command([
+      'exec',
+      `${project}-server-1`,
+      'node',
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      "import {modelProviderInfo} from './src/shared/models.ts';console.log(JSON.stringify(Object.values(modelProviderInfo).map(provider=>provider.env)))",
+    ]),
+  );
+  const providerEnvironment = Object.fromEntries(
+    providerKeys.map((key) => [key, `synthetic-${randomBytes(24).toString('hex')}`]),
+  );
+  const savedEnvironment = await readFile(envFile, 'utf8');
+  try {
+    await writeFile(
+      envFile,
+      [
+        savedEnvironment,
+        ...Object.entries(providerEnvironment).map(([key, value]) => `${key}=${value}`),
+        '',
+      ].join('\n'),
+      { mode: 0o600 },
+    );
+    for (const service of ['server', 'workspace', 'browser'])
+      await compose(
+        'run',
+        '--rm',
+        '--no-deps',
+        '--entrypoint',
+        'node',
+        service,
+        '-e',
+        `const assert=require('node:assert/strict');for(const [key,value] of Object.entries(${JSON.stringify(providerEnvironment)}))assert.equal(process.env[key],${service === 'server' ? 'value' : 'undefined'},key);`,
+      );
+  } finally {
+    await writeFile(envFile, savedEnvironment, { mode: 0o600 });
+  }
+  console.log(
+    `${providerKeys.length} provider credential variables reach only the server container.`,
+  );
   const runtimeAddress = (
     await command([
       'inspect',

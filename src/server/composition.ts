@@ -9,7 +9,13 @@ import {
   type BrowserStep,
   type RuntimeObservation,
 } from '../ports/agent.ts';
-import { lightestEffort, modelSource, type ModelProvider } from '../shared/models.ts';
+import {
+  apiKeyModelProviders,
+  lightestEffort,
+  modelProviderInfo,
+  modelProviders,
+  modelSource,
+} from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
 import {
@@ -77,7 +83,7 @@ import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createOpenRouterTranscriptionProvider } from '../providers/openrouter/speech.ts';
 import { createImageAnalysis } from './images.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
-import { createModelService, endpointAddress } from './models.ts';
+import { createModelService, endpointAddress, modelKeyCredential } from './models.ts';
 import { createIntegrationBrowser } from './integration-browser.ts';
 import { createIntegrationIdentityCheckpoint } from './integration-identity.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
@@ -121,7 +127,7 @@ import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
 import { createPool, initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
 import { createIntegrations, initializeIntegrationSchema } from './integrations.ts';
-import { createErrorRedactor } from './redaction.ts';
+import { createErrorRedactor, environmentSecrets } from './redaction.ts';
 import { createLedger, limitsInput } from './ledger.ts';
 import { usageFileName, usagePdf } from './usage-report.ts';
 import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
@@ -192,6 +198,50 @@ export interface ApplicationAdapters {
   model: { provider: string; name: string; configured: boolean; reconnect?: boolean };
 }
 
+export function modelEnvironment(
+  env: Record<string, string | undefined>,
+): NonNullable<Parameters<typeof createModelService>[0]['bootstrap']> {
+  const provider = z.enum(modelProviders).parse(env.LLM_PROVIDER || 'openai');
+  const endpoint =
+    env.OPENAI_COMPATIBLE_BASE_URL && endpointAddress(env.OPENAI_COMPATIBLE_BASE_URL);
+  if (env.OPENAI_COMPATIBLE_BASE_URL && !endpoint)
+    throw new Error(
+      'OPENAI_COMPATIBLE_BASE_URL must be a plain http or https address, such as http://localhost:11434/v1.',
+    );
+  return {
+    provider,
+    model: env.LLM_MODEL || undefined,
+    credentials: {
+      ...Object.fromEntries(
+        apiKeyModelProviders.flatMap((id) => {
+          const key = env[modelProviderInfo[id].env]?.trim();
+          if (!key) return [];
+          return [
+            [
+              id,
+              modelKeyCredential(id, key, {
+                region: env.AWS_REGION,
+                url: env.AZURE_OPENAI_ENDPOINT,
+                model: env.AZURE_OPENAI_MODEL,
+                deployment: env.AZURE_OPENAI_DEPLOYMENT,
+                accountId: env.CLOUDFLARE_ACCOUNT_ID,
+                gatewayId: env.CLOUDFLARE_GATEWAY_ID,
+              }),
+            ],
+          ];
+        }),
+      ),
+      ...(endpoint && {
+        compatible: {
+          type: 'endpoint',
+          url: endpoint,
+          ...(env.OPENAI_COMPATIBLE_API_KEY && { key: env.OPENAI_COMPATIBLE_API_KEY }),
+        },
+      }),
+    },
+  };
+}
+
 export function createDefaultAdapters(
   env: Record<string, string | undefined> = process.env,
 ): ApplicationAdapters {
@@ -205,16 +255,9 @@ export function createDefaultAdapters(
     !env.NOD_FEEDBACK_RECEIPT_URL_PREFIX
   )
     throw new Error('Set NOD_FEEDBACK_RECEIPT_URL_PREFIX when using a custom feedback intake.');
-  const provider = env.LLM_PROVIDER || 'openai';
-  if (!['openai', 'anthropic', 'openrouter', 'compatible'].includes(provider))
-    throw new Error('LLM_PROVIDER must be openai, anthropic, openrouter or compatible.');
-  const endpoint =
-    env.OPENAI_COMPATIBLE_BASE_URL && endpointAddress(env.OPENAI_COMPATIBLE_BASE_URL);
-  if (env.OPENAI_COMPATIBLE_BASE_URL && !endpoint)
-    throw new Error(
-      'OPENAI_COMPATIBLE_BASE_URL must be a plain http or https address, such as http://localhost:11434/v1.',
-    );
-  const model = env.LLM_MODEL || agentModels[provider as keyof typeof agentModels];
+  const bootstrap = modelEnvironment(env);
+  const { provider } = bootstrap;
+  const model = bootstrap.model || agentModels[provider];
   const keyStore = checkedKeyStore(
     pool,
     env.NOD_VAULT_KEY
@@ -236,26 +279,7 @@ export function createDefaultAdapters(
     keyStore,
     backend: createPiModelBackend(),
     origin: publicOrigin,
-    bootstrap: {
-      provider: provider as ModelProvider,
-      model,
-      credentials: {
-        ...(env.OPENAI_API_KEY && { openai: { type: 'api_key', key: env.OPENAI_API_KEY } }),
-        ...(env.ANTHROPIC_API_KEY && {
-          anthropic: { type: 'api_key', key: env.ANTHROPIC_API_KEY },
-        }),
-        ...(env.OPENROUTER_API_KEY && {
-          openrouter: { type: 'api_key', key: env.OPENROUTER_API_KEY },
-        }),
-        ...(endpoint && {
-          compatible: {
-            type: 'endpoint',
-            url: endpoint,
-            ...(env.OPENAI_COMPATIBLE_API_KEY && { key: env.OPENAI_COMPATIBLE_API_KEY }),
-          },
-        }),
-      },
-    },
+    bootstrap,
     changed: refresh,
   });
   const openAISpeech = createOpenAISpeechProvider({
@@ -518,20 +542,7 @@ async function initializeApplication(
   await adapters.initialize?.();
   await initializeThreads();
   const artifacts = localArtifacts;
-  const secrets = Object.entries(process.env)
-    .filter(([key]) =>
-      /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|AUTH_TOKEN|FEEDBACK_TOKEN|TRACES_TOKEN)$/.test(
-        key,
-      ),
-    )
-    .flatMap(([, value]) => (value ? [value] : []));
-  if (process.env.DATABASE_URL) {
-    secrets.push(process.env.DATABASE_URL);
-    try {
-      const password = decodeURIComponent(new URL(process.env.DATABASE_URL).password);
-      if (password) secrets.push(password);
-    } catch {}
-  }
+  const secrets = environmentSecrets(process.env);
   adapters.models?.onSecrets((values) => {
     for (const value of values) if (!secrets.includes(value)) secrets.push(value);
   });

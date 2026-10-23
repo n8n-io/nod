@@ -84,7 +84,7 @@ Tests use synthetic data and disposable databases. They never call a live model 
 
 **Does nod train on our data?** nod doesn't train models, and n8n doesn't use conversation traces to train AI models. The model provider you connect processes requests under its own terms.
 
-**Can we choose the model?** Yes. Users connect OpenAI, Anthropic, OpenRouter, Amazon Bedrock, Google Vertex AI, Azure OpenAI or a ChatGPT Plus or Pro plan. They can also add an OpenAI-compatible server, such as Ollama, at an address reachable from nod's server. The trust check then runs on that model. Operators can also provide server-managed keys. There's no setting yet that limits which providers users can add.
+**Can we choose the model?** Yes. Users choose from the [supported model services](/connect/models/), including ChatGPT plan sign-in. They can also add an OpenAI-compatible server, such as Ollama, at an address reachable from nod's server. The trust check then runs on that model. Operators can provide [environment settings](/connect/models/#set-connections-in-server-settings) for every API-key provider and OpenAI-compatible server. There's no setting yet that limits which providers users can add.
 
 **Is there single sign-on or an admin console?** No. Each local or self-hosted assistant belongs to one person. A self-hosted server uses one access token across that person's clients. There are no organization accounts.
 
