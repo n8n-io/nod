@@ -8,6 +8,7 @@ Setup, use and how the system works are in the docs site, whose pages live in `d
 - Keep keys, credentials and private user content out of Git, logs, prompts, test fixtures and client configuration. No tool returns a saved password, code or card to Pi.
 - No code comments or JSDoc.
 - Prefer deleting to patching ceremony. Breaking changes are fine; keep the code small.
+- Keep prototypes, internal research, plans, review notes and validation artifacts outside the repository.
 - Use synthetic data and disposable database schemas. Never reset the normal local database, and never call a live model, connected account or real recipient from a test.
 - Analytics events follow [Change analytics](docs/src/content/docs/contribute/analytics.md): bounded values only, no content, and the user-facing event list and any PostHog dashboard whose answer changes are updated in the same change.
 - Documentation lives only in `docs/`. When setup, behaviour or a safety rule changes, update the matching page in the same change and follow [Write docs](docs/src/content/docs/contribute/write-docs.mdx). Package READMEs stay short pointers to the docs.

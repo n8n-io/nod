@@ -17,6 +17,5 @@ The dev server opens at `http://localhost:4321/`. The build fails on a broken li
 | `src/styles/theme.css`     | The nod theme, from the n8n brand palette.                                                        |
 | `src/pages/waitlist.astro` | The waitlist page at `/waitlist/`. Sign-ups go to the waitlist workflow on n8n, then Customer.io. |
 | `astro.config.mjs`         | Sidebar sections, plugins and the site address.                                                   |
-| `research/`                | Hash evidence the secret-scanning self-test reads.                                                |
 
 Read [Write docs](src/content/docs/contribute/write-docs.mdx) for the house style, the page template, components and diagrams.
