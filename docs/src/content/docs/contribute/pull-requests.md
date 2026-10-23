@@ -109,8 +109,6 @@ GitHub doesn't trigger workflows from a merge made with `GITHUB_TOKEN`, so the w
 Dependabot doesn't update Python packages installed inline in Dockerfiles, tools downloaded by pinned workflow commands, or the desktop runtime's custom build lock. Update those by hand.
 :::
 
-Known vulnerabilities that reach only the docs site and have no usable fix are listed in [`docs/osv-scanner.toml`](https://github.com/n8n-io/nod/blob/main/docs/osv-scanner.toml), each with its reason and a review date. OSV-Scanner and OpenSSF Scorecard skip them until that date.
-
 ## Related resources
 
 - [Contribute to nod](/contribute/)
