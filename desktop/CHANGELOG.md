@@ -2,6 +2,27 @@
 
 Releases from before the rename to nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.2.2 - 2026-10-23
+
+### Features
+
+- **trust:** Owner rules the trust check applies to every action. [#426](https://github.com/n8n-io/nod/pull/426) (09147f6)
+
+### Fixes
+
+- **desktop:** Start after updating with apps connected before 0.2. [#428](https://github.com/n8n-io/nod/pull/428) (770e64f)
+- **evals:** Keep overnight release checks valid. [#425](https://github.com/n8n-io/nod/pull/425) (d5d1244)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.2.1...770e64ff65339a35b64bcea26f76d63c1a81fec5)
+
+<details>
+<summary>Build details</summary>
+
+Source: `770e64ff65339a35b64bcea26f76d63c1a81fec5`
+Previous release: `nod-v0.2.1`
+
+</details>
+
 ## 0.2.1 - 2026-10-22
 
 ### Features
