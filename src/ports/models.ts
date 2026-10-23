@@ -37,7 +37,7 @@ export interface ModelAccess {
   definition: ModelDefinition;
   effort: ModelEffort;
   read(): Promise<ModelCredential | undefined>;
-  needsReconnect?(): Promise<void>;
+  needsReconnect?(credential?: ModelCredential): Promise<void>;
 }
 
 export interface ModelBackend {

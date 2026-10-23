@@ -2285,18 +2285,25 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     let down = false;
     let revoked = false;
     let hidden: string | undefined;
+    let held: { access: string; entered(): void; release: Promise<void> } | undefined;
     const backend = {
       ...f.backend,
       signIn: stubSignIn(async () => ({
         ...subscriptionCredential(),
+        access: `fixture-access-${randomUUID()}`,
         accountId: account,
         email: `${account}@example.test`,
       })),
-      catalog: (
+      catalog: async (
         provider: Parameters<typeof f.backend.catalog>[0],
         method: Parameters<typeof f.backend.catalog>[1],
         credential?: Parameters<typeof f.backend.catalog>[2],
       ) => {
+        if (credential?.type === 'oauth' && credential.access === held?.access) {
+          held.entered();
+          await held.release;
+          throw new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
+        }
         if (down) throw new Error('fixture-catalog-outage');
         if (revoked && method === 'subscription')
           throw new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
@@ -2428,6 +2435,25 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(duplicated.view().connections.length, 3);
     assert.deepEqual(duplicated.view().selection, selection);
     assert.equal(await grants(), 3);
+
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => (entered = resolve));
+    held = {
+      access: ((await (await duplicated.resolve()).read()) as { access: string }).access,
+      entered,
+      release: new Promise((resolve) => (release = resolve)),
+    };
+    const racing = duplicated.refreshCatalog(chatgpt.id);
+    await reached;
+    account = 'fixture-account';
+    await signIn(duplicated);
+    release();
+    await assert.rejects(racing, /Reconnect/);
+    assert.equal(
+      duplicated.view().connections.find(({ id }) => id === chatgpt.id)?.status,
+      'connected',
+    );
 
     revoked = true;
     await assert.rejects(duplicated.refreshCatalog(chatgpt.id), /Reconnect/);

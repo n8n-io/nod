@@ -334,7 +334,10 @@ export function createModelService(options: {
     }
     return result.value;
   }
-  async function needsReconnect(id: string, models: ModelDefinition[]) {
+  async function needsReconnect(
+    id: string,
+    seen: { models: ModelDefinition[]; credential?: ModelCredential },
+  ) {
     try {
       const flagged = await store.change((state) => {
         const row = state.connections.find((item) => item.id === id);
@@ -342,7 +345,8 @@ export function createModelService(options: {
           !row ||
           row.managed ||
           row.status !== 'connected' ||
-          JSON.stringify(row.models) !== JSON.stringify(models)
+          JSON.stringify(row.models) !== JSON.stringify(seen.models) ||
+          (seen.credential && JSON.stringify(row.credential) !== JSON.stringify(seen.credential))
         )
           return false;
         row.status = 'reconnect';
@@ -481,7 +485,7 @@ export function createModelService(options: {
     if (!value) throw new ConnectionError('This model connection is unavailable.');
     const previous = JSON.stringify(snapshot);
     const definitions = await catalog(snapshot.provider, snapshot.method, value, () =>
-      needsReconnect(id, snapshot.models),
+      needsReconnect(id, snapshot),
     );
     if (!definitions.length) throw new ConnectionError('This connection has no supported models.');
     await store.change((state) => {
@@ -831,7 +835,7 @@ export function createModelService(options: {
         definition,
         effort: lightestEffort(definition.choice.efforts),
         read: () => read(row.id),
-        needsReconnect: () => needsReconnect(row.id, row.models),
+        needsReconnect: (credential) => needsReconnect(row.id, { models: row.models, credential }),
       };
     },
     async resolve(auxiliary = false): Promise<ModelAccess> {
@@ -857,7 +861,7 @@ export function createModelService(options: {
             definition.choice.efforts[0])
           : selected.effort,
         read: () => read(row.id),
-        needsReconnect: () => needsReconnect(row.id, row.models),
+        needsReconnect: (credential) => needsReconnect(row.id, { models: row.models, credential }),
       };
     },
     start,

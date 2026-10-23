@@ -843,8 +843,8 @@ export async function createPiModelRuntime(
 ) {
   const subscription = access.method === 'subscription';
   const provider = access.provider;
-  const reconnect = async () => {
-    await access.needsReconnect?.();
+  const reconnect = async (credential?: ModelCredential) => {
+    await access.needsReconnect?.(credential);
     return new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
   };
   if (
@@ -863,7 +863,7 @@ export async function createPiModelRuntime(
       if (!credential) throw new Error('The selected model connection is unavailable.');
       if (subscription) {
         const parsed = chatgptCredentialSchema.safeParse(credential);
-        if (!parsed.success) throw await reconnect();
+        if (!parsed.success) throw await reconnect(credential);
         const value = parsed.data;
         for (const secret of [value.access, value.refresh, value.idToken]) secrets.add(secret);
         return { type: 'oauth', access: value.access, refresh: '', expires: value.expires };
