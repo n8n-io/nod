@@ -3415,7 +3415,7 @@ test('feedback defaults, restored consent and report failures never send unselec
       };
       const send = () => document.querySelector('.feedback-footer button[type="submit"]');
       const draft = (category, reportChoice = null) => ({ category, reportChoice, feedback: 'Synthetic bug description', attachments: [], pendingId: null });
-      const snapshot = { id: '00000000-0000-4000-8000-000000000001', expiresAt: '2099-01-01T00:00:00Z', content: JSON.stringify({format:'nod-feedback-report-v2', coverage:{hours:24,contentIncluded:false,truncated:false,sections:{}}, messages:[{role:'user',characters:20}],turns:[{source:'user',status:'failed'}],execution:[],connections:[]}) };
+      const snapshot = { id: '00000000-0000-4000-8000-000000000001', expiresAt: '2099-01-01T00:00:00Z', content: JSON.stringify({format:'nod-feedback-report-v2', coverage:{hours:24,contentIncluded:false,truncated:false,sections:{}}, messages:[{role:'user',characters:20}],turns:[{source:'user',status:'failed'}],execution:[],connections:[],appActivity:{entries:[{source:'app',ageMs:1000,event:'screen',properties:{screen:'/apps'}},{source:'app',ageMs:2000,event:'request_failed',properties:{area:'apps',method:'GET',status:503,reason:'http'}}]}}) };
       try {
         await render('defaults');
         assert.equal(choice().checked, true);
@@ -3451,6 +3451,9 @@ test('feedback defaults, restored consent and report failures never send unselec
         await settle(() => !send().disabled);
         await click('Review');
         assert.equal(document.querySelector('[aria-label="Diagnostic report"] pre')?.textContent, snapshot.content);
+        const activity = [...document.querySelectorAll('.feedback-diagnostics-items')].find(section => section.textContent.includes('503'));
+        assert.ok(activity);
+        assert.equal(activity.querySelectorAll('.feedback-diagnostics-activity').length, 2);
         await act(async () => send().click());
         await settle(() => submissions.length === 2);
         assert.equal(submissions[1].reportId, snapshot.id);
