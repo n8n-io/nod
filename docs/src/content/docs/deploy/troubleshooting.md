@@ -57,7 +57,7 @@ Select **Reconnect to server** and enter the same server address and `NOD_AUTH_T
 
 Your assistant, chats, files and connected accounts are on the server. Reconnecting keeps them and your separate local assistant. Do not delete your local profile or reset the server to fix this error.
 
-When nod asks you to unlock your system key store, unlock it and retry. Your saved token stays in place.
+On macOS, unlock your Mac keychain, then quit and reopen nod. On Windows and Linux, unlock your system key store and retry. Your saved token stays in place.
 
 ### Not enough free space to install the runtime
 
