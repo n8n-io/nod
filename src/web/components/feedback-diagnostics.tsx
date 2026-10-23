@@ -25,8 +25,10 @@ function label(value: unknown, fallback: string) {
 export function feedbackReportData(content: string) {
   try {
     const data = record(JSON.parse(content));
-    return data?.format === 'nod-feedback-report-v2' &&
-      record(data.coverage)?.contentIncluded === false
+    const coverage = record(data?.coverage);
+    return data?.format === 'nod-feedback-report-v3' &&
+      ((coverage?.contentIncluded === true && coverage.redaction === 'best-effort') ||
+        (coverage?.contentIncluded === false && coverage.redaction === 'unavailable'))
       ? data
       : null;
   } catch {
@@ -69,6 +71,14 @@ export function FeedbackDiagnostics({
   const messages = rows(data?.messages);
   const turns = rows(data?.turns).reverse();
   const execution = rows(data?.execution).reverse();
+  const logs = rows(data?.logs).reverse();
+  const toolEvents = logs.filter(
+    (entry) => entry.event === 'tool_start' || entry.event === 'tool_end',
+  );
+  const failures = [
+    ...logs.filter((entry) => entry.event !== 'tool_start' && entry.event !== 'tool_end'),
+    ...rows(data?.clientErrors).reverse(),
+  ];
   const connections: ReportRecord[] = [
     ...rows(data?.connections),
     ...rows(data?.browserConnections),
@@ -114,8 +124,9 @@ export function FeedbackDiagnostics({
         )}
       </div>
       <p className="feedback-diagnostics-disclosure">
-        App activity, errors and connection health for support and debugging; no chat text, account
-        details or file contents.
+        Recent messages, tool inputs and results, logs and app activity help us fix bugs and improve
+        nod. Known secrets and personal details are masked. Redaction can miss information; review
+        before sending or uncheck to leave the report out.
       </p>
       {included && error && (
         <div className="feedback-diagnostics-error" role="alert">
@@ -154,7 +165,70 @@ export function FeedbackDiagnostics({
                   : '.'}
                 {coverage?.truncated === true ? ' Some older activity was omitted.' : ''}
                 {unavailable ? ' Some diagnostics are unavailable.' : ''}
+                {coverage?.redaction === 'unavailable'
+                  ? ' Message content and logs were omitted because redaction was unavailable.'
+                  : ''}
               </p>
+              <details className="feedback-diagnostics-section feedback-diagnostics-raw">
+                <summary>
+                  <span>Messages ({messages.length})</span>
+                  <ChevronDown size={14} aria-hidden="true" />
+                </summary>
+                <div className="feedback-diagnostics-items">
+                  {messages.map((message, index) => (
+                    <div key={index}>
+                      <div className="feedback-diagnostics-activity">
+                        <span>{label(message.role, 'Message')}</span>
+                        <span>{String(message.turnId ?? '')}</span>
+                      </div>
+                      <pre>
+                        {typeof message.text === 'string' ? message.text : '[content omitted]'}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              </details>
+              {[
+                { title: 'Tool inputs and results', entries: toolEvents },
+                { title: 'Recent logs', entries: failures },
+              ].map(({ title, entries }) => (
+                <details
+                  className="feedback-diagnostics-section feedback-diagnostics-raw"
+                  key={title}
+                >
+                  <summary>
+                    <span>
+                      {title} ({entries.length})
+                    </span>
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </summary>
+                  <div className="feedback-diagnostics-items">
+                    {entries.map((entry, index) => (
+                      <details key={index}>
+                        <summary>
+                          <span>
+                            {label(
+                              record(entry.data)?.tool,
+                              label(record(entry.data)?.event, label(entry.event, 'Event')),
+                            )}
+                            {entry.event === 'tool_start'
+                              ? ' · Input'
+                              : record(entry.data)?.status
+                                ? ` · ${label(record(entry.data)?.status, 'Result')}`
+                                : ''}{' '}
+                            · {String(entry.callId ?? entry.turnId ?? '')}
+                          </span>
+                          <span>{Math.round(Number(entry.ageMs ?? 0) / 1000)} s ago</span>
+                        </summary>
+                        <pre>{JSON.stringify(entry, null, 2)}</pre>
+                      </details>
+                    ))}
+                    {!entries.length && (
+                      <p className="feedback-diagnostics-empty">No recent entries.</p>
+                    )}
+                  </div>
+                </details>
+              ))}
               <details className="feedback-diagnostics-section">
                 <summary>
                   <span>Chat and agent activity</span>

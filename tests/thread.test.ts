@@ -1501,9 +1501,14 @@ test(
           await waitFor(settled(failed.turnId));
           await delay(1200);
           const lines = logged.mock.calls.map((call) => String(call.arguments[0]));
-          const failure = lines.find((line) => line.includes(failed.turnId));
-          assert.match(failure ?? '', /Error \| code=E_SYNTHETIC/);
+          const failure = lines.find((line) => line.includes('turn_failed'));
+          assert.deepEqual(JSON.parse(failure ?? '{}'), {
+            event: 'turn_failed',
+            name: 'Error',
+            code: 'E_SYNTHETIC',
+          });
           assert.doesNotMatch(failure ?? '', /private-fixture/);
+          assert.ok(!failure?.includes(failed.turnId));
           const row = (
             await db.pool.query('SELECT status,error FROM turns WHERE id=$1', [failed.turnId])
           ).rows[0];
@@ -1599,6 +1604,7 @@ test(
                   );
                 return mode === 'invalid' ? ' ' : completeText;
               };
+              const logStart = logged.mock.calls.length;
               let failed: { threadId: string; turnId: string };
               if (mode.startsWith('resume')) {
                 const parent = await thread.submitUserMessage('Synthetic parent request.');
@@ -1619,7 +1625,9 @@ test(
                 };
               } else failed = await thread.submitUserMessage('runtime-failure');
               await waitFor(() =>
-                logged.mock.calls.some((call) => String(call.arguments[0]).includes(failed.turnId)),
+                logged.mock.calls
+                  .slice(logStart)
+                  .some((call) => String(call.arguments[0]).includes('turn_failed')),
               );
               assert.equal(presented, 1);
               assert.equal(
@@ -1673,7 +1681,11 @@ test(
         assert.doesNotThrow(() =>
           db.pool.emit('error', Object.assign(new Error('private-fixture'), { code: '57P01' })),
         );
-        assert.match(String(logged.mock.calls[0].arguments[0]), /Error 57P01/);
+        assert.deepEqual(JSON.parse(String(logged.mock.calls[0].arguments[0])), {
+          event: 'database_idle_error',
+          name: 'Error',
+          code: '57P01',
+        });
         assert.doesNotMatch(String(logged.mock.calls[0].arguments[0]), /private-fixture/);
       });
 
@@ -3935,8 +3947,8 @@ test(
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await feedbackFixture(t);
-    const first = await f.open(randomUUID(), async (activity: unknown) =>
-      JSON.stringify({ activity }),
+    const first = await f.open(randomUUID(), async (activity, errors, errorsAvailable) =>
+      JSON.stringify({ activity, errors, errorsAvailable }),
     );
     const second = await f.open();
     const snapshot = (
@@ -3970,7 +3982,26 @@ test(
           properties: { area: 'chat', action: 'send' },
         },
       ],
+      errors: [],
+      errorsAvailable: false,
     });
+    for (const payload of [
+      { errors: [] },
+      { errors: [], errorsAvailable: false },
+      { errors: [{ type: 'error', message: 'Synthetic client error', ageMs: 1000 }] },
+    ]) {
+      const response = await first.app.inject({
+        method: 'POST',
+        url: '/api/feedback/report',
+        payload,
+      });
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(JSON.parse(response.json().content), {
+        activity: [],
+        errors: payload.errors,
+        errorsAvailable: payload.errorsAvailable ?? true,
+      });
+    }
     const input = f.submission({
       reportId: snapshot.id,
       appVersion: 'Private version canary',
@@ -4012,7 +4043,7 @@ test(
 );
 
 test(
-  'feedback diagnostics retain operational evidence without exporting content or owner identifiers',
+  'feedback diagnostics retain redacted content and operational evidence without owner identifiers',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await feedbackFixture(t);
@@ -4047,13 +4078,21 @@ test(
       'Marta Vidal',
       'someone.unknown@example.com',
       'Rua da Piedade 37',
-      'a private medical condition',
       '4111 1111 1111 1111',
       'synthetic-password/123',
       'https://customer.example.com/private?token=secret',
       '/Users/customer/private.pdf',
     ];
-    const privateText = privateValues.join(' | ');
+    const privateText = JSON.stringify({
+      name: privateValues[0],
+      email: privateValues[1],
+      address: privateValues[2],
+      cardNumber: privateValues[3],
+      password: privateValues[4],
+      url: privateValues[5],
+      path: privateValues[6],
+      message: 'Gmail fetch failed with HTTP 503 after 4321 ms.',
+    });
     await f.pool.query(
       `INSERT INTO turns VALUES($1,$2,NULL,$3,'task','web','failed',$4,true,'approval',now()-interval '5 minutes',now()-interval '4 minutes',now()-interval '3 minutes'),
        ($5,$6,NULL,$7,'user','telegram','succeeded',$4,false,NULL,now(),now(),now())`,
@@ -4173,6 +4212,53 @@ test(
         [channelId],
       );
     }
+    const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+    const { createFeedbackRedactor } = await import('../src/server/feedback-redaction.ts');
+    const logRoot = await mkdtemp(join(tmpdir(), 'feedback-rich-'));
+    const redactor = createFeedbackRedactor({
+      secrets: ['synthetic-password/123'],
+      profile: { names: ['Marta Vidal'], region: 'PT' },
+    });
+    const journal = await createFeedbackLog({
+      dataRoot: logRoot,
+      ownerId,
+      sanitize: redactor.value,
+    });
+    t.after(async () => {
+      await journal.close();
+      await rm(logRoot, { recursive: true, force: true });
+    });
+    const scope = { turnId, sessionId, runId: childRun, parentRunId: mainRun, callId };
+    journal.record(
+      'tool_start',
+      {
+        tool: 'apps',
+        input: {
+          action: 'GMAIL_FETCH',
+          email: 'someone.unknown@example.com',
+          query: 'Find the failed workflow',
+        },
+      },
+      scope,
+    );
+    journal.record(
+      'tool_end',
+      {
+        tool: 'apps',
+        status: 'failed',
+        output: {
+          statusCode: 503,
+          message: 'Service unavailable',
+          token: 'synthetic-password/123',
+        },
+        durationMs: 4321,
+      },
+      scope,
+    );
+    journal.record('failure', {
+      event: 'request_failed',
+      error: new Error('Gmail fetch failed with HTTP 503 for Marta Vidal'),
+    });
     const options = {
       pool: f.pool,
       ownerId,
@@ -4194,12 +4280,17 @@ test(
           properties: { screen: '/apps', url: privateText },
         },
       ],
-      profile: () => {
-        throw new Error('Profiles must not be read');
-      },
-      sessionEntries: () => {
-        throw new Error('Session transcripts must not be read');
-      },
+      logs: () => journal.snapshot(),
+      errors: [
+        {
+          type: 'render' as const,
+          ageMs: 1000,
+          message: 'Could not open account for someone.unknown@example.com',
+          stack: 'Error: connection view unavailable',
+        },
+      ],
+      secrets: ['synthetic-password/123'],
+      profile: async () => ({ names: ['Marta Vidal'], region: 'PT' }),
     };
     const encoded = await buildFeedbackReport(options);
     for (const omitted of [
@@ -4222,8 +4313,11 @@ test(
       assert.ok(!encoded.includes(omitted), omitted);
     assert.doesNotMatch(encoded, /\d{4}-\d{2}-\d{2}T/);
     const report = JSON.parse(encoded);
-    assert.equal(report.format, 'nod-feedback-report-v2');
-    assert.equal(report.coverage.contentIncluded, false);
+    assert.equal(report.format, 'nod-feedback-report-v3');
+    assert.equal(report.coverage.contentIncluded, true);
+    assert.equal(report.coverage.redaction, 'best-effort');
+    assert.match(report.messages[0].text, /Gmail fetch failed with HTTP 503/);
+    assert.match(report.turns[0].error, /Gmail fetch failed with HTTP 503/);
     assert.ok(
       Object.values(report.coverage.sections).every(
         (section: any) => section.status === 'collected',
@@ -4257,6 +4351,27 @@ test(
     );
     assert.equal(report.modelUsage.length, 1);
     assert.equal(report.modelUsage[0].runId, child.runId);
+    assert.equal(report.logs.length, 3);
+    assert.equal(report.logs[0].runId, child.runId);
+    assert.equal(report.logs[0].parentRunId, child.parentRunId);
+    assert.equal(report.logs[0].callId, report.logs[1].callId);
+    assert.equal(report.logs[0].data.tool, 'apps');
+    assert.equal(report.logs[0].data.input.query, 'Find the failed workflow');
+    assert.equal(report.logs[1].data.output.statusCode, 503);
+    assert.match(report.logs[2].data.error.message, /Gmail fetch failed with HTTP 503/);
+    assert.equal(report.clientErrors.length, 1);
+    assert.match(report.clientErrors[0].data.message, /Could not open account/);
+    for (const input of [
+      { errors: undefined, errorsAvailable: undefined },
+      { errors: options.errors, errorsAvailable: false },
+    ]) {
+      const unavailable = JSON.parse(await buildFeedbackReport({ ...options, ...input }));
+      assert.equal(unavailable.coverage.sections.clientErrors.status, 'unavailable');
+      assert.deepEqual(unavailable.clientErrors, []);
+    }
+    const emptyErrors = JSON.parse(await buildFeedbackReport({ ...options, errors: [] }));
+    assert.equal(emptyErrors.coverage.sections.clientErrors.status, 'collected');
+    assert.deepEqual(emptyErrors.clientErrors, []);
     assert.equal(report.modelUsage[0].inputTokens, 123);
     assert.equal(report.modelUsage[0].modelFamily, 'gpt');
     assert.equal(report.modelUsage[0].durationMs, 4321);
@@ -4308,6 +4423,41 @@ test(
     const invalidCost = JSON.parse(await buildFeedbackReport(options));
     assert.equal(invalidCost.modelUsage[0].costUsd, null);
     assert.equal(invalidCost.modelUsage[0].estimateUsd, null);
+    const unavailableRedaction = [
+      {
+        profile: async () => {
+          throw new Error('Profile unavailable');
+        },
+      },
+      { profile: async () => ({ names: [123] as unknown as string[] }) },
+      { profile: async () => ({ names: Array.from({ length: 101 }, () => 'Marta Vidal') }) },
+      { profile: async () => ({ names: ['Marta Vidal'.repeat(50)] }) },
+      { secrets: Array.from({ length: 257 }, (_, index) => `synthetic-secret-${index}`) },
+    ];
+    for (const unavailable of unavailableRedaction) {
+      let readLogs = false;
+      const fallback = JSON.parse(
+        await buildFeedbackReport({
+          ...options,
+          ...unavailable,
+          logs: async () => {
+            readLogs = true;
+            return journal.snapshot();
+          },
+        }),
+      );
+      assert.equal(fallback.coverage.contentIncluded, false);
+      assert.equal(fallback.coverage.redaction, 'unavailable');
+      assert.equal(fallback.coverage.sections.clientErrors.status, 'unavailable');
+      assert.equal(fallback.coverage.sections.logs.status, 'unavailable');
+      assert.equal(readLogs, false);
+      assert.deepEqual(fallback.clientErrors, []);
+      assert.deepEqual(fallback.logs, []);
+      assert.ok(fallback.messages.every((row: any) => !('text' in row)));
+      assert.ok(fallback.turns.every((row: any) => !('error' in row)));
+      assert.equal(fallback.turns[0].status, 'failed');
+      assert.equal(fallback.modelUsage[0].inputTokens, 123);
+    }
     await f.pool.query('DROP TABLE model_usage');
     const unavailable = JSON.parse(await buildFeedbackReport(options));
     assert.equal(unavailable.coverage.sections.modelUsage.status, 'unavailable');
@@ -4330,6 +4480,283 @@ test(
     );
   },
 );
+
+test('feedback journal redacts before persistence, survives restart, rotates and expires within its owner', async (t) => {
+  const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+  const { createRedactor } = await import('../src/server/redaction.ts');
+  const { createPersonalDataRedactor, withoutPersonalFields } =
+    await import('../src/server/personal-data.ts');
+  const { stat } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'feedback-log-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let now = 1_800_000_000_000;
+  const secret = 'synthetic-private-token';
+  const privateText = `Marta Vidal marta.vidal@example.com ${secret}`;
+  const redact = createRedactor([secret]);
+  const personal = createPersonalDataRedactor({ names: ['Marta Vidal'], region: 'PT' });
+  const options = {
+    dataRoot: root,
+    ownerId: 'synthetic-private-owner',
+    sanitize: (value: unknown) => withoutPersonalFields(redact(value), personal),
+    now: () => now,
+    maxFileBytes: 4096,
+    maxFiles: 2,
+    snapshotLimit: 5,
+  };
+  const first = await createFeedbackLog(options);
+  const turnId = randomUUID();
+  first.record(
+    'failure',
+    {
+      message: `Provider failed for ${privateText}`,
+      stack: `Error: Provider failed for ${privateText}\n    at operation (runtime.js:12:4)`,
+    },
+    { turnId, callId: 'call_synthetic-123' },
+  );
+  const initial = await first.snapshot();
+  assert.equal(initial.entries.length, 1);
+  assert.equal(initial.entries[0].scope.turnId, turnId);
+  assert.ok(JSON.stringify(initial.entries).includes('runtime.js:12:4'));
+  const parent = join(root, 'feedback-logs');
+  const [ownerDirectory] = await readdir(parent);
+  assert.match(ownerDirectory, /^[a-f0-9]{64}$/);
+  const directory = join(parent, ownerDirectory);
+  const persisted = await readFile(join(directory, 'journal-0.jsonl'), 'utf8');
+  for (const privateValue of [secret, 'Marta', 'Vidal', 'marta.vidal@example.com'])
+    assert.ok(!persisted.includes(privateValue), privateValue);
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(parent)).mode & 0o777, 0o700);
+    assert.equal((await stat(directory)).mode & 0o777, 0o700);
+    assert.equal((await stat(join(directory, 'journal-0.jsonl'))).mode & 0o777, 0o600);
+  }
+  await first.close();
+  const reopened = await createFeedbackLog(options);
+  t.after(() => reopened.close());
+  assert.deepEqual((await reopened.snapshot()).entries, initial.entries);
+  const other = await createFeedbackLog({ ...options, ownerId: 'another-synthetic-owner' });
+  t.after(() => other.close());
+  other.record('activity', { status: 'failed', owner: 'other-owner-only' });
+  assert.equal((await other.snapshot()).entries.length, 1);
+  assert.ok(!JSON.stringify(await reopened.snapshot()).includes('other-owner-only'));
+  for (let index = 0; index < 14; index++) {
+    now++;
+    reopened.record('tool_end', { name: 'browser', sequence: index, output: 'x'.repeat(1000) });
+  }
+  const rotated = await reopened.snapshot();
+  assert.equal((rotated.entries.at(-1)!.data as { sequence: number }).sequence, 13);
+  assert.ok(rotated.entries.length <= 5);
+  assert.equal(rotated.coverage.truncated, true);
+  const files = await readdir(directory);
+  assert.ok(files.length <= 2);
+  assert.ok(files.every((name) => /^journal-\d\.jsonl$/.test(name)));
+  for (const name of files) assert.ok((await stat(join(directory, name))).size <= 4096);
+  now += 86_400_001;
+  assert.deepEqual((await reopened.snapshot()).entries, []);
+  assert.deepEqual(await readdir(directory), []);
+  reopened.record('tool_end', { status: 'succeeded' });
+  assert.equal((await reopened.snapshot()).entries.length, 1);
+});
+
+test('feedback journal bounds pending writes, reports unavailable redaction and repairs interrupted JSONL', async (t) => {
+  const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+  const { appendFile } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'feedback-log-queue-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let release!: () => void;
+  let entered!: () => void;
+  let bothEntered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const concurrent = new Promise<void>((resolve) => {
+    bothEntered = resolve;
+  });
+  let calls = 0;
+  let fails = false;
+  const options = {
+    dataRoot: root,
+    ownerId: 'synthetic-owner',
+    maxPending: 2,
+    sanitize: async (value: unknown) => {
+      entered();
+      if (++calls === 2) bothEntered();
+      await waiting;
+      if (fails) throw new Error('Synthetic private redaction failure');
+      return JSON.parse(JSON.stringify(value).replaceAll('synthetic-secret', '[redacted]'));
+    },
+  };
+  const log = await createFeedbackLog(options);
+  const input = { input: 'synthetic-secret', sequence: 1, nested: { operation: 'original' } };
+  let getterCalls = 0;
+  Object.defineProperty(input, 'getter', {
+    enumerable: true,
+    get() {
+      getterCalls++;
+      throw new Error('Must not execute a payload getter');
+    },
+  });
+  log.record('tool_start', input);
+  input.nested.operation = 'mutated';
+  await started;
+  const parent = join(root, 'feedback-logs');
+  const [ownerDirectory] = await readdir(parent);
+  const directory = join(parent, ownerDirectory);
+  assert.deepEqual(await readdir(directory), []);
+  log.record('tool_end', { output: 'synthetic-secret', sequence: 2 });
+  log.record('failure', { message: 'queue-overflow' });
+  await concurrent;
+  release();
+  const flushed = await log.snapshot();
+  assert.equal(flushed.entries.length, 2);
+  assert.equal(flushed.coverage.dropped, 1);
+  assert.equal(flushed.coverage.truncated, true);
+  assert.equal(getterCalls, 0);
+  assert.equal((flushed.entries[0].data as typeof input).nested.operation, 'original');
+  assert.ok(!JSON.stringify(flushed).includes('synthetic-secret'));
+  fails = true;
+  log.record('failure', { message: 'must-not-persist' });
+  const failed = await log.snapshot();
+  assert.equal(failed.coverage.dropped, 2);
+  assert.equal(failed.coverage.unavailable, true);
+  assert.ok(!JSON.stringify(failed).includes('must-not-persist'));
+  await log.close();
+  fails = false;
+  await appendFile(join(directory, 'journal-0.jsonl'), '{"event":');
+  const reopened = await createFeedbackLog(options);
+  t.after(() => reopened.close());
+  const recovered = await reopened.snapshot();
+  assert.equal(recovered.entries.length, 2);
+  assert.equal(recovered.coverage.dropped, 1);
+  assert.equal(recovered.coverage.truncated, true);
+  assert.equal(recovered.coverage.unavailable, true);
+  reopened.record('tool_end', { status: 'succeeded' });
+  assert.equal((await reopened.snapshot()).entries.length, 3);
+  const lines = (await readFile(join(directory, 'journal-0.jsonl'), 'utf8')).trim().split('\n');
+  assert.equal(lines.length, 3);
+  for (const line of lines) JSON.parse(line);
+});
+
+test('feedback journal bounds detached data and timed-out sanitizers without serial timeout delays', async (t) => {
+  const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+  const root = await mkdtemp(join(tmpdir(), 'feedback-log-timeout-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const captured: unknown[] = [];
+  const log = await createFeedbackLog({
+    dataRoot: root,
+    ownerId: 'synthetic-owner',
+    maxPending: 2,
+    sanitize: (value) => {
+      captured.push(value);
+      return new Promise(() => {});
+    },
+  });
+  t.after(() => log.close());
+  const oversized = 'x'.repeat(31_995) + 'synthetic-secret';
+  const data = {
+    error: new Error('Synthetic provider failure'),
+    oversized,
+    fields: Array.from({ length: 2000 }, () => 'x'.repeat(1000)),
+  };
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  log.record('failure', data);
+  log.record('tool_end', data);
+  await Promise.resolve();
+  assert.equal(captured.length, 2);
+  for (const value of captured) {
+    assert.ok(JSON.stringify(value).length < 100_000);
+    assert.match((value as any).error.message, /Synthetic provider failure/);
+    assert.match((value as any).error.stack, /thread.test.ts/);
+    assert.equal((value as any).oversized, '[omitted]');
+  }
+  t.mock.timers.tick(3000);
+  const snapshot = await log.snapshot();
+  assert.deepEqual(snapshot.entries, []);
+  assert.equal(snapshot.coverage.dropped, 2);
+  assert.equal(snapshot.coverage.truncated, true);
+  assert.equal(snapshot.coverage.unavailable, true);
+  log.record('activity', { status: 'failed' });
+  const exhausted = await log.snapshot();
+  assert.equal(captured.length, 2);
+  assert.equal(exhausted.coverage.dropped, 3);
+});
+
+test('feedback journal removes expired files while idle and stops maintenance on close', async (t) => {
+  const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+  const root = await mkdtemp(join(tmpdir(), 'feedback-log-idle-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  let now = 1_800_000_000_000;
+  const log = await createFeedbackLog({
+    dataRoot: root,
+    ownerId: 'synthetic-owner',
+    sanitize: (value) => value,
+    now: () => now,
+  });
+  t.after(() => log.close());
+  log.record('activity', { status: 'failed' });
+  assert.equal((await log.snapshot()).entries.length, 1);
+  const parent = join(root, 'feedback-logs');
+  const [ownerDirectory] = await readdir(parent);
+  const directory = join(parent, ownerDirectory);
+  now += 86_400_001;
+  t.mock.timers.tick(60_000);
+  for (let attempt = 0; attempt < 100 && (await readdir(directory)).length; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(await readdir(directory), []);
+  log.record('activity', { status: 'succeeded' });
+  assert.equal((await log.snapshot()).entries.length, 1);
+  await log.close();
+  now += 86_400_001;
+  t.mock.timers.tick(60_000);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal((await readdir(directory)).length, 1);
+});
+
+test('feedback journal refuses symlinked locations and linked files without changing their targets', async (t) => {
+  if (process.platform === 'win32') return;
+  const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+  const { link, mkdir, stat, symlink } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'feedback-log-links-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const target of ['root', 'parent', 'owner', 'file', 'hardlink']) {
+    await t.test(target, async () => {
+      const outside = join(root, `${target}-outside`);
+      const dataRoot = join(root, `${target}-data`);
+      await mkdir(outside);
+      const original = join(outside, 'original');
+      await writeFile(original, 'Untouched synthetic content', { mode: 0o644 });
+      if (target === 'root') await symlink(outside, dataRoot);
+      else await mkdir(dataRoot);
+      const options = { dataRoot, ownerId: 'synthetic-owner', sanitize: (value: unknown) => value };
+      if (target === 'parent') await symlink(outside, join(dataRoot, 'feedback-logs'));
+      else if (target !== 'root') {
+        const initialized = await createFeedbackLog(options);
+        await initialized.close();
+        const parent = join(dataRoot, 'feedback-logs');
+        const [ownerDirectory] = await readdir(parent);
+        const directory = join(parent, ownerDirectory);
+        if (target === 'owner') {
+          await rm(directory, { recursive: true });
+          await symlink(outside, directory);
+        } else if (target === 'file') await symlink(original, join(directory, 'journal-0.jsonl'));
+        else await link(original, join(directory, 'journal-0.jsonl'));
+      }
+      const log = await createFeedbackLog(options);
+      log.record('failure', { message: 'Must not reach the target' });
+      const snapshot = await log.snapshot();
+      assert.equal(snapshot.coverage.unavailable, true);
+      assert.equal(snapshot.coverage.dropped, 1);
+      assert.deepEqual(snapshot.entries, []);
+      assert.equal(await readFile(original, 'utf8'), 'Untouched synthetic content');
+      assert.equal((await stat(original)).mode & 0o777, 0o644);
+      assert.deepEqual(await readdir(outside), ['original']);
+      await log.close();
+    });
+  }
+});
 
 async function conversationAnalyticsFixture(t: TestContext) {
   const schema = `test_analytics_${randomUUID().replaceAll('-', '')}`;

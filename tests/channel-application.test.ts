@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -303,6 +303,26 @@ test(
     let incomingFile: MessagingAttachment | undefined;
     let voiceCalls = 0;
     let modelConfigured = false;
+    const { createModelService } = await import('../src/server/models.ts');
+    const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    await createDatabaseModelStore({
+      database: pool,
+      ownerId: 'route-fixture',
+      keyStore,
+    }).initialize();
+    const models = createModelService({
+      database: pool,
+      ownerId: 'route-fixture',
+      keyStore,
+      backend: {} as never,
+      origin: `http://localhost:${port}`,
+    });
+    let publishSecrets: (values: string[]) => void;
+    const onSecrets = models.onSecrets;
+    t.mock.method(models, 'onSecrets', (observer: (values: string[]) => void) => {
+      publishSecrets = observer;
+      return onSecrets(observer);
+    });
     const voiceUsageId = randomUUID();
     const adapters: ApplicationAdapters = {
       onboardingCurator: {
@@ -350,6 +370,7 @@ test(
         image: async () => null,
       },
       keyStore,
+      models,
       model: {
         provider: 'fixture',
         name: 'fixture',
@@ -429,32 +450,154 @@ test(
       cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
     };
     try {
-      const { createModelService } = await import('../src/server/models.ts');
-      const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
-      await createDatabaseModelStore({
-        database: pool,
-        ownerId: 'route-fixture',
-        keyStore,
-      }).initialize();
-      createModelService({
-        database: pool,
-        ownerId: 'route-fixture',
-        keyStore,
-        backend: {} as never,
-        origin: headers.origin,
-      }).register(application.app);
+      const { logFailure } = await import('../src/server/failure-log.ts');
+      let failureText = 'Synthetic burst failed';
+      application.app.get('/api/diagnostics-burst', async () => {
+        for (let index = 0; index < 20; index++)
+          logFailure('fixture_burst', new Error(failureText));
+        return { ok: true };
+      });
+      application.app.get('/api/diagnostics-fixture/:id', async () => {
+        throw new Error('Synthetic app render failed for example.person@example.com');
+      });
       await application.app.ready();
+      const failedRequest = await application.app.inject({
+        url: '/api/diagnostics-fixture/synthetic-private-record?email=other.person@example.com',
+        headers,
+      });
+      assert.equal(failedRequest.statusCode, 500);
       const diagnostics = await application.app.inject({
         method: 'POST',
         url: '/api/feedback/report',
         headers,
-        payload: {},
+        payload: {
+          errors: [
+            {
+              type: 'render',
+              ageMs: 100,
+              message: 'View failed for example.person@example.com',
+              stack: 'Error: synthetic renderer stack',
+            },
+          ],
+        },
       });
       assert.equal(diagnostics.statusCode, 200);
       const diagnosticReport = JSON.parse(diagnostics.json().content);
-      assert.equal(diagnosticReport.coverage.contentIncluded, false);
+      assert.equal(diagnosticReport.coverage.contentIncluded, true);
+      const failure = diagnosticReport.logs.find(
+        (entry: any) => entry.data?.event === 'request_failed',
+      );
+      assert.ok(failure);
+      assert.match(failure.data.error.message, /Synthetic app render failed/);
+      assert.equal(failure.data.context.status, 500);
+      assert.equal(failure.data.context.operation, 'api diagnostics-fixture :id');
+      assert.match(diagnosticReport.clientErrors[0].data.message, /View failed/);
+      assert.doesNotMatch(
+        diagnostics.json().content,
+        /example.person@example.com|other.person@example.com|synthetic-private-record/,
+      );
       for (const [name, section] of Object.entries(diagnosticReport.coverage.sections))
         assert.equal((section as { status: string }).status, 'collected', name);
+      const logDirectory = join(
+        dataRoot,
+        'feedback-logs',
+        createHash('sha256').update('local-development').digest('hex'),
+      );
+      const journal = async () =>
+        (
+          await Promise.all(
+            (await readdir(logDirectory))
+              .filter((name) => name.endsWith('.jsonl'))
+              .map((name) => readFile(join(logDirectory, name), 'utf8')),
+          )
+        )
+          .join('')
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line));
+      const flushJournal = async () => {
+        assert.equal(
+          (
+            await application.app.inject({
+              method: 'POST',
+              url: '/api/feedback/report',
+              headers,
+              payload: {},
+            })
+          ).statusCode,
+          200,
+        );
+      };
+      let profileReads = 0;
+      let releaseProfile!: () => void;
+      const profileGate = new Promise<void>((resolve) => {
+        releaseProfile = resolve;
+      });
+      const query = pool.query.bind(pool);
+      const profileQuery = t.mock.method(pool, 'query', async (...args: any[]) => {
+        if (String(args[0]).includes('FROM preferences WHERE owner_id=$1')) {
+          profileReads++;
+          await profileGate;
+        }
+        return (query as any)(...args);
+      });
+      try {
+        assert.equal(
+          (await application.app.inject({ url: '/api/diagnostics-burst', headers })).statusCode,
+          200,
+        );
+        assert.equal(profileReads, 1);
+      } finally {
+        releaseProfile();
+        profileQuery.mock.restore();
+      }
+      await flushJournal();
+      assert.equal(
+        (await journal()).filter((entry) => entry.data?.event === 'fixture_burst').length,
+        20,
+      );
+      adapters.integrations.configured = true;
+      const connectionId = randomUUID();
+      await pool.query(
+        `INSERT INTO app_connections(id,owner_id,slug,account_id,provider_id,account_name)
+         VALUES($1,'local-development','gmail','fixture-account','fixture','Maribel Exampleton')`,
+        [connectionId],
+      );
+      await application.triage.updatePreferences({ locale: 'en-US' });
+      publishSecrets!(['synthetic-updated-key']);
+      failureText = 'Synthetic updated failure for Maribel Exampleton: synthetic-updated-key';
+      assert.equal(
+        (await application.app.inject({ url: '/api/diagnostics-burst', headers })).statusCode,
+        200,
+      );
+      await flushJournal();
+      const updatedEntries = (await journal()).filter((entry) =>
+        entry.data?.error?.message?.includes('Synthetic updated failure'),
+      );
+      assert.equal(updatedEntries.length, 20);
+      assert.doesNotMatch(
+        JSON.stringify(updatedEntries),
+        /Maribel|Exampleton|synthetic-updated-key/,
+      );
+      publishSecrets!(['synthetic-newest-key']);
+      failureText =
+        'Synthetic credential update failure for Maribel Exampleton: synthetic-updated-key synthetic-newest-key';
+      assert.equal(
+        (await application.app.inject({ url: '/api/diagnostics-burst', headers })).statusCode,
+        200,
+      );
+      await flushJournal();
+      const credentialEntries = (await journal()).filter((entry) =>
+        entry.data?.error?.message?.includes('Synthetic credential update failure'),
+      );
+      assert.equal(credentialEntries.length, 20);
+      assert.doesNotMatch(
+        JSON.stringify(credentialEntries),
+        /Maribel|Exampleton|synthetic-updated-key|synthetic-newest-key/,
+      );
+      await pool.query('DELETE FROM app_connections WHERE id=$1', [connectionId]);
+      adapters.integrations.configured = false;
       assert.equal(
         (
           await application.app.inject({

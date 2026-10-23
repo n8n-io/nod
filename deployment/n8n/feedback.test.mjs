@@ -126,6 +126,74 @@ test('feedback bytes and metadata are bound to the canonical hash', () => {
   );
 });
 
+test('rich v3 reports preserve exact bytes through webhook validation and private upload at the report limit', () => {
+  const validate = new Function(
+    '$input',
+    'require',
+    feedbackWorkflowNodes().find((node) => node.name === 'Validate feedback').parameters.jsCode,
+  );
+  const require = createRequire(import.meta.url);
+  const report = {
+    format: 'nod-feedback-report-v3',
+    purpose: 'support-debugging-and-product-improvement',
+    coverage: { hours: 24, contentIncluded: true, redaction: 'best-effort' },
+    messages: [{ id: 'm1', role: 'user', text: 'Synthetic request for [person].' }],
+    logs: [
+      {
+        event: 'tool_start',
+        runId: 'r1',
+        data: { name: 'browser', input: { action: 'snapshot' } },
+      },
+      { event: 'tool_end', runId: 'r1', data: { output: 'Synthetic redacted result café' } },
+      { event: 'request_failed', data: { message: 'Synthetic failure', status: 503 } },
+    ],
+    padding: '',
+  };
+  const maximum = 512 * 1024;
+  const base = JSON.stringify(report);
+  const boundary = JSON.stringify({
+    ...report,
+    padding: 'x'.repeat(maximum - Buffer.byteLength(base)),
+  });
+  assert.equal(Buffer.byteLength(boundary), maximum);
+  const manualFiles = [
+    file('a'.repeat(2 * 1024 * 1024), 'text/plain', 'synthetic-first.txt'),
+    file('b'.repeat(2 * 1024 * 1024), 'text/plain', 'synthetic-second.txt'),
+  ];
+  for (const content of [base, boundary]) {
+    const original = file(content, 'application/json', 'nod-diagnostic-report.json');
+    const body = envelope({ computerName: null, report: original, attachments: manualFiles });
+    const request = validate({ first: () => ({ json: { body } }) }, require)[0].json;
+    assert.equal(request.action, 'submit');
+    assert.equal(request.files.length, 3);
+    assert.ok(!request.description.includes('Synthetic redacted result café'));
+    assert.equal(request.files[0].size, Buffer.byteLength(content));
+    for (const [index, expected] of [original, ...manualFiles].entries()) {
+      const prepared = prepareFeedbackUpload(upload, request.files[index], request, hashFeedback);
+      const delivered = Buffer.from(prepared.binary.file.data, 'base64');
+      assert.equal(prepared.binary.file.data, expected.data);
+      assert.equal(prepared.binary.file.mimeType, expected.mimeType);
+      assert.equal(prepared.binary.file.fileName, expected.name);
+      assert.equal(prepared.json.attachment.metadata.sha256, hashFeedback(delivered));
+      assert.equal(prepared.json.attachment.metadata.nodPayloadHash, body.payloadHash);
+      assert.equal(prepared.json.attachment.metadata.nodFileIndex, index);
+    }
+    assert.equal(JSON.parse(Buffer.from(request.files[0].data, 'base64')).format, report.format);
+  }
+  const oversized = JSON.stringify({
+    ...report,
+    padding: report.padding + 'x'.repeat(maximum - Buffer.byteLength(base)) + 'é',
+  });
+  assert.equal(Buffer.byteLength(oversized), maximum + 2);
+  const rejected = validate(
+    { first: () => ({ json: { body: envelope({ report: file(oversized) }) } }) },
+    require,
+  )[0].json;
+  assert.equal(rejected.httpStatus, 400);
+  assert.equal(rejected.receipt.status, 'rejected');
+  assert.equal(rejected.files, undefined);
+});
+
 test('feedback rejects malformed and oversized content before Linear', () => {
   const cases = [
     { feedback: ' ' },
