@@ -35,7 +35,7 @@ Markdown source can contain valid escapes. The contract is unchanged text, forma
 
 ## Checks
 
-The full integration suite passes all 622 tests, with no skips. Type checks, formatting, the app build and the docs build pass. The docs build checks all 54 pages and their internal links.
+The full integration suite passes all 623 tests, with no skips. Type checks, formatting, the app build and the docs build pass. The docs build checks all 54 pages and their internal links.
 
 The focused URL suite passes all 18 tests. It includes 150 generated strings with punctuation and Unicode. It checks repeated recovery, query strings, IPv6, artifact paths, reference links, code fences and safe rendering.
 
@@ -110,4 +110,4 @@ The start message provides the task's acknowledgement. The coordinator does not 
 
 ## Validation note
 
-One full rerun failed during concurrent private-storage initialization. The storage adapter and lock code are unchanged by this PR. The same existing test passed 12 focused runs against a disposable PostgreSQL instance. The full suite is checked again before merge.
+One full rerun failed during concurrent private-storage initialization. The storage adapter and lock code are unchanged by this PR. The same existing test passed 12 focused runs against a disposable PostgreSQL instance. After the task changes and the merge from main, the final full run passed all 623 tests, with no failures or skips.
