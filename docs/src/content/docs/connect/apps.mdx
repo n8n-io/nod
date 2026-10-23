@@ -56,6 +56,8 @@ The connection service's operator selects the Composio auth configuration and sc
 
 When an action needs a missing permission, nod is instructed to explain the blocked action, preserve prepared work and compare supported recovery options. It asks before changing the requested result, method or account unless you already chose that recovery path.
 
+A connected account can still lack permission for an action. When the provider reports insufficient scopes, nod keeps the account connected and gives account-specific recovery guidance. Browser sign-in doesn't add permissions to that API connection. Other permitted actions remain available.
+
 ## Every action goes through the trust check
 
 Reads and drafts run directly. Any other action runs directly only when it's part of what you asked for, or what a schedule's instruction, your [standing instruction](/trust/approvals/#standing-instructions) or [your rules](/trust/approvals/#your-rules) allow. Otherwise, or when a rule says to ask first, nod asks you first. See [Approvals and the trust check](/trust/approvals/).
