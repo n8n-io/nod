@@ -220,6 +220,10 @@ export async function initializeIntegrationSchema(pool: Pool) {
       owner_id text NOT NULL, link_hash text NOT NULL,
       PRIMARY KEY (owner_id,link_hash)
     );
+    CREATE TABLE IF NOT EXISTS app_setup_links (
+      owner_id text NOT NULL, link_hash text NOT NULL, slug text NOT NULL,
+      PRIMARY KEY (owner_id,link_hash)
+    );
     CREATE TABLE IF NOT EXISTS integration_events (
       id text PRIMARY KEY, owner_id text NOT NULL, summary text NOT NULL, state text NOT NULL DEFAULT 'queued',
       slug text, account_id text, trigger_id text, claimed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
@@ -239,6 +243,9 @@ export async function initializeIntegrationSchema(pool: Pool) {
       ADD COLUMN IF NOT EXISTS inbox_poll_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_claim_id text,
       ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false;
+    INSERT INTO app_setup_links(owner_id,link_hash,slug)
+      SELECT owner_id,setup_link_hash,slug FROM app_connections WHERE setup_link_hash IS NOT NULL
+      ON CONFLICT DO NOTHING;
     DO $$ BEGIN
       IF to_regclass('direct_oauth_accounts') IS NOT NULL THEN
         IF to_regclass('vault_app_grants') IS NOT NULL THEN
@@ -865,6 +872,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             replacement ? normalizedEmail(replacement.account_email!) : null,
           ],
         );
+        await client.query(
+          'INSERT INTO app_setup_links(owner_id,link_hash,slug) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',
+          [configuredOwner, createHash('sha256').update(redirect.href).digest('hex'), slug],
+        );
         if (provider.configurationId !== configurationId)
           throw new IntegrationError(
             'Your app connection changed while this was starting. Try again.',
@@ -1015,6 +1026,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           'This connection attempt was replaced. Use the newest sign-in link.',
           409,
         );
+      await pool.query(
+        'INSERT INTO app_setup_links(owner_id,link_hash,slug) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',
+        [configuredOwner, createHash('sha256').update(redirect.href).digest('hex'), slug],
+      );
       return {
         url: attempt.url,
         ...(returnTo === 'window' ? { attempt: nonce } : {}),
@@ -1922,14 +1937,18 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             hash: string;
             slug: string;
             completed: boolean;
+            available: boolean;
             provider_id: string;
             configuration_id: string | null;
           }>(
-            `SELECT link_hash AS hash,'' AS slug,true AS completed,NULL AS provider_id,NULL AS configuration_id FROM app_setup_completions
+            `SELECT link_hash AS hash,'' AS slug,true AS completed,false AS available,NULL AS provider_id,NULL AS configuration_id FROM app_setup_completions
              WHERE owner_id=$1 AND link_hash=ANY($2::text[])
              UNION ALL
-             SELECT setup_link_hash AS hash,slug,false AS completed,provider_id,configuration_id FROM app_connections
-             WHERE owner_id=$1 AND setup_link_hash=ANY($2::text[]) AND callback_expires>now() AND NOT revoked`,
+             SELECT l.link_hash AS hash,l.slug,false AS completed,
+               coalesce(c.callback_expires>now() AND NOT c.revoked,false) AS available,c.provider_id,c.configuration_id
+             FROM app_setup_links l LEFT JOIN app_connections c ON c.owner_id=l.owner_id AND c.setup_link_hash=l.link_hash
+             WHERE l.owner_id=$1 AND l.link_hash=ANY($2::text[])
+               AND NOT EXISTS(SELECT 1 FROM app_setup_completions done WHERE done.owner_id=l.owner_id AND done.link_hash=l.link_hash)`,
             [configuredOwner, hashes],
           ),
           options.discovered?.setupServices(connectionIds, hashes) ?? [],
@@ -1937,7 +1956,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         const pairingHash = pairingUrl
           ? createHash('sha256').update(pairingUrl).digest('hex')
           : undefined;
-        const pendingPairing = links.rows.find((row) => !row.completed && row.hash === pairingHash);
+        const pendingPairing = links.rows.find((row) => row.available && row.hash === pairingHash);
         const connectionStatus =
           pairingUrl && pendingPairing && configurationMatches(pendingPairing)
             ? await providerForRow(pendingPairing)
@@ -1960,6 +1979,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               hash: row.hash,
               slug: row.slug,
               name: 'name' in row && typeof row.name === 'string' ? row.name : info.name,
+              ...('available' in row ? { available: row.available } : {}),
               ...(info.logoUrl ? { logoUrl: info.logoUrl } : {}),
               ...(connectionStatus?.pairingConfirmed && row.hash === pairingHash
                 ? { pairingConfirmed: true }
