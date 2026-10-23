@@ -1,0 +1,73 @@
+{
+  "date": "2026-10-23",
+  "source_revision": "fecf1785e408f9fa747848634b57a8a11b834daa",
+  "scope": "Prebuilt distribution and remote-client acceptance before subsequent Pi, HTTP deadline, and desktop recovery changes.",
+  "environments": [
+    {
+      "host": "local macOS Docker Desktop",
+      "architecture": "linux/arm64",
+      "docker": "28.5.1",
+      "checks": [
+        "private bundle generation",
+        "wrong architecture and corrupt bundle refusal before creating secrets",
+        "fresh installation and private generated secrets",
+        "bearer and browser-cookie authentication",
+        "Host and Origin validation",
+        "workspace execution and browser bridge",
+        "secret and runtime network isolation",
+        "container replacement preserves data",
+        "access-token rotation revokes bearer and cookie access",
+        "reinstall preserves configuration",
+        "backup and fresh-project restore preserve PostgreSQL, server state, workspace, browser, keys and permissions"
+      ]
+    },
+    {
+      "host": "AWS EC2 free-plan test VM",
+      "os": "Ubuntu 24.04",
+      "architecture": "linux/amd64",
+      "docker": "29.8.2",
+      "compose": "5.6.1",
+      "installation": "source build",
+      "checks": [
+        "fresh and updated Compose stack reaches healthy status",
+        "bearer and browser-cookie authentication",
+        "Host and Origin validation",
+        "workspace execution and browser bridge",
+        "secret and runtime network isolation",
+        "container replacement preserves data",
+        "access-token rotation revokes bearer and cookie access",
+        "web onboarding opens through a private SSH tunnel",
+        "source Electron desktop opens remote onboarding",
+        "saved desktop access token survives a cold restart after reconnecting"
+      ]
+    }
+  ],
+  "ci": {
+    "run": "https://github.com/n8n-io/nod/actions/runs/40009648836",
+    "tested_merge_revision": "472c64cea332eb58c0d116c9fb7435a950d35186",
+    "platforms": ["linux/amd64", "linux/arm64"],
+    "checks": [
+      "native image builds",
+      "full stack acceptance",
+      "standalone installer acceptance",
+      "private artifact upload"
+    ]
+  },
+  "observed_failure": {
+    "revision": "25861df2dfd123104826d795b0582e37b8159d81",
+    "environment": "AWS Linux AMD64",
+    "cause": "A checkout with umask 077 produced a root-owned package.json that the non-root server could not read.",
+    "repair_revision": "591a4ad7",
+    "repair": "Set final server image COPY ownership to node:node; CI now builds with source package.json mode 0600.",
+    "verified_revision": "fecf1785e408f9fa747848634b57a8a11b834daa"
+  },
+  "limits": [
+    "No public-domain HTTPS acceptance",
+    "No VM reboot acceptance yet",
+    "No live model request or Telegram/WhatsApp recipient delivery",
+    "Source Electron acceptance is not signed packaged-app acceptance",
+    "Initial native saved-token decryption failure was recovered by reconnecting; its original cause remains unconfirmed",
+    "Railway and DigitalOcean deployment remain pending account access",
+    "This is historical evidence for the revisions above, not final-head validation"
+  ]
+}

@@ -770,7 +770,7 @@ test('the normal engine uses the release boundary for analytics during first set
       });
       try {
         await f.launch();
-        await f.settle();
+        await f.prepare();
         assert.deepEqual(
           f.children.map((child) => child.kind),
           ['engine'],
@@ -808,7 +808,7 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
     assert.fail('No credentials are needed before storage.');
   try {
     await f.launch();
-    await f.settle();
+    await f.prepare();
     assert.equal(f.children.length, 0);
     assert.equal(f.status().needsWsl, true);
     assert.equal(f.windows.filter((window) => window.isVisible()).length, 1);
@@ -858,8 +858,8 @@ test('native Welcome is visible before storage and system-key access and accepts
     assert.equal(f.children.length, 0);
     storage.resolve();
     await f.settle();
-    assert.equal(unlocked, 1);
-    assert.equal(f.children.length, 1);
+    assert.equal(unlocked, 0);
+    assert.equal(f.children.length, 0);
     assert.equal(f.windows[0].isDestroyed(), false);
     assert.deepEqual((await f.storage.store.get()).welcome, { usageData: true, continued: false });
   } finally {
@@ -1097,14 +1097,15 @@ test('quitting while macOS keychain access is pending never forks a late setup p
     return unlocked.promise;
   };
   try {
-    const launching = f.launch();
+    await f.launch();
+    const preparing = f.prepare();
     await accessed.promise;
     const window = f.windows.find((candidate) => candidate.isVisible());
     assert.ok(window);
     assert.equal(f.status().unlockingKeys, true);
     const closing = f.close();
     unlocked.resolve(true);
-    await Promise.all([launching, closing]);
+    await Promise.all([preparing, closing]);
     assert.equal(f.children.length, 0);
     assert.equal((await f.storage.store.get()).onboardingCompleted, false);
   } finally {
@@ -1124,7 +1125,7 @@ test('native key-store failure needs an explicit retry and never completes onboa
     failing ? Promise.reject(new Error('Synthetic key-store denial')) : environment();
   try {
     await f.launch();
-    await f.settle();
+    await f.prepare();
     assert.equal(f.status().phase, 'error');
     assert.equal(f.children.length, 0);
     assert.equal((await f.storage.store.get()).onboardingCompleted, false);
@@ -1706,7 +1707,7 @@ test('failed Welcome transfer preserves the saved answer and retries without a s
       choice,
     );
     assert.equal(writes, 0);
-    await assert.rejects(f.handlers.get('nod:prepare')(event));
+    assert.equal((await f.handlers.get('nod:prepare')(event)).phase, 'error');
     assert.deepEqual((await f.storage.store.get()).welcome, choice);
     assert.equal(shell.isDestroyed(), false);
     failing = false;
@@ -1866,7 +1867,7 @@ test('session reconciliation retries after runtime startup without rebuilding th
       };
       try {
         await f.launch();
-        await f.settle();
+        await f.prepare();
         assert.equal(f.status().phase, 'error');
         assert.equal(reads, 2);
         assert.equal(attempts, 1);
@@ -2097,6 +2098,7 @@ test('native quit aborts storage startup without creating a late engine', async 
     },
   });
   await f.launch();
+  void f.prepare();
   for (let i = 0; !signal && i < 100; i++) await new Promise((r) => setTimeout(r, 10));
   assert.ok(signal);
   const closing = f.close();
@@ -2590,6 +2592,34 @@ test('server connections encrypt their token, preserve local keys, and never rev
   assert.deepEqual(await f.reopen().environment(), environment);
 });
 
+test('a fresh desktop connects to a server without creating a local Vault, owner, or runtime', async (t) => {
+  const f = await runningDesktop(
+    t,
+    async () =>
+      Response.json({ user: { id: 'server-owner' }, settings: { onboardingCompleted: true } }),
+    {
+      initialState: 'fresh',
+      prepareRuntime: () => assert.fail('Choosing a server must not prepare a local runtime.'),
+    },
+  );
+  f.storage.store.environment = () => assert.fail('A remote client needs no local Vault key.');
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.children.length, 0);
+    const token = randomBytes(32).toString('base64url');
+    await f.storage.store.saveConnection({ url: 'https://assistant.example.test', token });
+    assert.equal((await f.prepare()).phase, 'ready');
+    const saved = JSON.parse(await readFile(f.storage.path, 'utf8'));
+    assert.deepEqual(Object.keys(saved.secrets), ['serverToken']);
+    await assert.rejects(readFile(join(f.profileRoot, 'profile.json')), { code: 'ENOENT' });
+    await assert.rejects(readdir(join(f.profileRoot, 'integration-identity')), { code: 'ENOENT' });
+    assert.equal(f.children.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
 test('the remote desktop starts without a local runtime and fences tokens to its trusted origin and frame', async (t) => {
   const storedProfile = await fixture(t);
   const token = randomBytes(32).toString('base64url');
@@ -2658,6 +2688,53 @@ test('the remote desktop starts without a local runtime and fences tokens to its
     await f.engineRequest('/api/preferences');
     assert.equal(requests.at(-1).options.headers.Authorization, `Bearer ${token}`);
     assert.equal(requests.at(-1).options.redirect, 'error');
+  } finally {
+    await f.close();
+  }
+});
+
+test('an unreadable server token can be replaced without resetting the local Vault or starting a runtime', async (t) => {
+  const storedProfile = await fixture(t, 'darwin');
+  const environment = await storedProfile.store.environment();
+  const token = randomBytes(32).toString('base64url');
+  const url = 'https://assistant.example.test';
+  await storedProfile.store.saveConnection({ url, token });
+  const saved = JSON.parse(await readFile(storedProfile.path, 'utf8'));
+  saved.secrets.serverToken = randomBytes(48).toString('base64');
+  await writeFile(storedProfile.path, JSON.stringify(saved));
+  storedProfile.store = storedProfile.reopen();
+  const previous = await readFile(storedProfile.path, 'utf8');
+  await assert.rejects(storedProfile.store.connection(), { code: 'NOD_SERVER_TOKEN_UNAVAILABLE' });
+  const f = await runningDesktop(
+    t,
+    async () =>
+      Response.json({ user: { id: 'server-owner' }, settings: { onboardingCompleted: true } }),
+    {
+      storedProfile,
+      initialState: 'fresh',
+      prepareRuntime: () => assert.fail('Token recovery must not start a local runtime.'),
+    },
+  );
+  try {
+    await f.launch();
+    await f.settle();
+    assert.equal(f.status().phase, 'error');
+    assert.equal(f.status().needsServerConnection, true);
+    assert.equal(await readFile(storedProfile.path, 'utf8'), previous);
+    f.showConnectionSettings();
+    const window = f.windows.at(-1);
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(await f.handlers.get('nod:connection:get')(event))),
+      { url },
+    );
+    await f.storage.store.saveConnection({ url, token });
+    assert.deepEqual(await storedProfile.reopen().connection(), { url, token });
+    assert.equal((await f.prepare()).phase, 'ready', JSON.stringify(f.status()));
+    assert.equal(f.status().needsServerConnection, false);
+    assert.deepEqual(await storedProfile.reopen().environment(), environment);
+    assert.equal(f.children.length, 0);
+    assert.ok(!(await readFile(storedProfile.path, 'utf8')).includes(token));
   } finally {
     await f.close();
   }
@@ -3984,6 +4061,101 @@ test('native download attempts remain exclusive until their terminal event and r
   wrong.dispose();
 });
 
+async function updatePreparation({
+  settings,
+  windows,
+  directory,
+  resourcesPath,
+  request,
+  runtime,
+}) {
+  const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('          prepareRuntime: async (candidate, signal) => {');
+  const callback = source.slice(
+    start,
+    source.indexOf('          restart: restartForUpdate,', start),
+  );
+  return runInNewContext(
+    `({${callback.replaceAll('await import(', 'await loadRuntime(')}}).prepareRuntime`,
+    {
+      settings,
+      windows,
+      windowsUpdates: directory,
+      engineRoot: resourcesPath,
+      pathToFileURL,
+      join,
+      engine: undefined,
+      closingEngine: false,
+      pendingPreload: undefined,
+      loadRuntime: async (url) =>
+        url.endsWith('/windows.mjs')
+          ? {
+              stageWindowsUpdate: (candidate, options) =>
+                stageWindowsUpdate(candidate, { ...options, fetch: request }),
+            }
+          : { prepareRuntimeUpdate: runtime },
+      preloadUpdateImages: () => assert.fail('An unopened runtime cannot preload images.'),
+    },
+  );
+}
+
+test('Mac app updates prepare local runtime assets only after choosing this computer', async (t) => {
+  for (const mode of [
+    'remote',
+    'remote-with-local-profile',
+    'unchosen',
+    'local-onboarding',
+    'local-complete',
+  ]) {
+    const storage = await fixture(t);
+    if (mode.startsWith('remote'))
+      await storage.store.saveConnection({
+        url: 'https://assistant.example.test',
+        token: randomBytes(32).toString('base64url'),
+      });
+    if (mode === 'local-onboarding')
+      await storage.store.save({ welcome: { usageData: false, continued: true } });
+    if (mode === 'local-complete' || mode === 'remote-with-local-profile')
+      await storage.store.save({
+        notifications: true,
+        launchAtLogin: true,
+        onboardingCompleted: true,
+      });
+    storage.encryption.isEncryptionAvailable = () =>
+      assert.fail('Update checks need no saved keys.');
+    const candidate = {
+      version: '0.2.0',
+      feedUrl: 'https://updates.example.invalid/pinned',
+      runtime: { id: 'synthetic-runtime' },
+    };
+    const prepared = [];
+    const downloads = [];
+    const native = new EventEmitter();
+    native.setFeedURL = ({ url }) => downloads.push(url);
+    native.checkForUpdates = () =>
+      queueMicrotask(() => native.emit('update-downloaded', {}, '', 'nod 0.2.0'));
+    const updater = createDesktopUpdater({
+      source: { latest: async () => candidate },
+      currentVersion: '0.1.0',
+      native,
+      prepareRuntime: await updatePreparation({
+        settings: storage.store,
+        windows: false,
+        resourcesPath: dirname(storage.path),
+        runtime: async (runtime) => {
+          prepared.push(runtime.id);
+          return {};
+        },
+      }),
+      restart: async () => {},
+    });
+    t.after(() => updater.dispose());
+    assert.equal(await updater.check(), candidate);
+    assert.deepEqual(downloads, [candidate.feedUrl]);
+    assert.deepEqual(prepared, mode.startsWith('local-') ? [candidate.runtime.id] : []);
+  }
+});
+
 test('Windows downloads stage the verified installer and fetch the runtime pack only when it changed', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'nod-windows-update-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -4082,6 +4254,45 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
   for (const [name, value] of Object.entries(bytes))
     assert.deepEqual(await readFile(join(directory, '0.2.0', name)), value);
 
+  for (const mode of ['remote', 'remote-with-local-profile', 'unchosen', 'local']) {
+    const storage = await fixture(t);
+    if (mode.startsWith('remote'))
+      await storage.store.saveConnection({
+        url: 'https://assistant.example.test',
+        token: randomBytes(32).toString('base64url'),
+      });
+    if (mode === 'local')
+      await storage.store.save({ welcome: { usageData: false, continued: true } });
+    if (mode === 'remote-with-local-profile')
+      await storage.store.save({
+        notifications: true,
+        launchAtLogin: true,
+        onboardingCompleted: true,
+      });
+    storage.encryption.isEncryptionAvailable = () =>
+      assert.fail('Update checks need no saved keys.');
+    const prepare = await updatePreparation({
+      settings: storage.store,
+      windows: true,
+      directory,
+      resourcesPath,
+      request,
+    });
+    downloads.length = 0;
+    await prepare(candidate);
+    assert.deepEqual(
+      downloads,
+      mode === 'local'
+        ? ['nod-Runtime-win32-x64.tar.gz', 'nod-Setup-x64.exe']
+        : ['nod-Setup-x64.exe'],
+    );
+    assert.deepEqual((await readdir(join(directory, '0.2.0'))).sort(), [...downloads].sort());
+    assert.deepEqual(
+      await readFile(join(directory, '0.2.0', 'nod-Setup-x64.exe')),
+      bytes['nod-Setup-x64.exe'],
+    );
+  }
+
   const source = createUpdateSource({ sourceUrl: base, os: 'win32', fetch: request });
   const runtime = {
     releaseTag: 'nod-v0.2.0',
@@ -4096,8 +4307,12 @@ test('Windows downloads stage the verified installer and fetch the runtime pack 
   );
 
   served['nod-Setup-x64.exe'] = Buffer.alloc(bytes['nod-Setup-x64.exe'].length, 'x');
-  await assert.rejects(stageWindowsUpdate(candidate, { directory, resourcesPath, fetch: request }));
-  await assert.rejects(stat(directory), { code: 'ENOENT' });
+  for (const includeRuntime of [true, false]) {
+    await assert.rejects(
+      stageWindowsUpdate(candidate, { directory, resourcesPath, fetch: request, includeRuntime }),
+    );
+    await assert.rejects(stat(directory), { code: 'ENOENT' });
+  }
 
   release.assets[1].digest = `sha256:${'e'.repeat(64)}`;
   await assert.rejects(
@@ -4255,6 +4470,7 @@ test('native readiness notification waits for full runtime readiness and reaches
       try {
         await f.storage.store.save({ notifications: scenario.enabled });
         await f.launch();
+        void f.prepare();
         await storage.promise;
         const window = f.windows[0];
         window.focused = scenario.focused;

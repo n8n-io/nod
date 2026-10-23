@@ -104,7 +104,7 @@ A restore returns data to the backup's point in time. It does not undo messages 
 
 1. Download the new [private bundle](/deploy/self-host/#install-a-prebuilt-bundle) for the same architecture. Check its workflow source revision and archive checksum.
 2. Back up the server. Keep the old bundle with that backup.
-3. Stop the stack with `docker compose stop`.
+3. Stop the whole stack with `docker compose --profile https stop`. This also includes Caddy when HTTPS is enabled.
 4. From the parent of your installation directory, unpack the new bundle over the existing directory. The bundle doesn't contain `.env` or your data volumes.
 
    ```sh title="Parent of the installation directory"

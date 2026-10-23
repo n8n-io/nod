@@ -64,7 +64,7 @@ docker version
 docker compose version
 ```
 
-The current nod installation builds images from source. A 2 GB VM may run out of memory during those builds. For an experiment, prepare images on a machine with the same Linux architecture and transfer them privately with Docker's image export/import tools. After loading the images, use `docker compose up -d --no-build --wait`. Keep the server configuration and token private.
+Use the [prebuilt bundle](/deploy/self-host/#install-a-prebuilt-bundle) matching the VM's Linux architecture. A 2 GB VM may run out of memory when building from source, and a successful installation does not establish that it has enough memory for your browser tasks. Keep the server configuration and token private.
 
 Use a persistent VPS for an unattended assistant. Don't keep the only copy of your conversation, credentials, or files in a disposable trial VM. These Railway instructions describe the platform constraints; they do not establish a verified nod deployment there.
 

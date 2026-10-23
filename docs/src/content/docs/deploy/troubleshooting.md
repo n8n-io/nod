@@ -51,6 +51,12 @@ Every release is notarized by Apple. If macOS still blocks it, open **System Set
 
 macOS can ask again after nod is re-signed. Approve it in the macOS dialog. Never type your Mac password into the nod chat.
 
+### nod could not unlock your saved server token
+
+Select **Reconnect to server** and enter the same server address and `NOD_AUTH_TOKEN`. The app checks the connection before saving the token again in your computer's secure storage. If macOS asks for Keychain access, allow it there.
+
+Your assistant, chats, files and connected accounts are on the server. Reconnecting keeps them and your separate local assistant. Do not delete your local profile or reset the server to fix this error.
+
 ### Not enough free space to install the runtime
 
 On a Mac, the message says how much free space nod needs and how much more to free. nod needs room for the extracted runtime plus 512 MiB. Free that space, then retry. Your conversations and settings are kept.

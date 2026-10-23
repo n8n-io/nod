@@ -1035,6 +1035,7 @@ async function startRemote(connection) {
   update({
     phase: 'ready',
     message: 'Connected to your server.',
+    needsServerConnection: false,
     engineReady: true,
     runtime: { phase: 'ready', message: 'Your server is ready.' },
   });
@@ -1591,6 +1592,7 @@ async function prepare(options = {}) {
     update({
       phase: 'preparing',
       windowError: undefined,
+      needsServerConnection: false,
       message: status.runtime.message,
       progress: status.runtime.progress,
       needsRuntimeArchive: false,
@@ -1611,6 +1613,7 @@ async function prepare(options = {}) {
         error: bounded(error.message),
         needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
         needsWsl: error.code === 'NOD_WSL_REQUIRED',
+        needsServerConnection: error.code === 'NOD_SERVER_TOKEN_UNAVAILABLE',
       });
       return status;
     })
@@ -1716,6 +1719,9 @@ else {
           currentVersion: app.getVersion(),
           native: windows ? undefined : autoUpdater,
           prepareRuntime: async (candidate, signal) => {
+            const saved = await settings.get();
+            const includeRuntime =
+              !saved.serverUrl && (saved.onboardingCompleted || saved.welcome?.continued === true);
             if (windows) {
               const { stageWindowsUpdate } = await import(
                 pathToFileURL(join(engineRoot, 'desktop/runtime/windows.mjs')).href
@@ -1724,8 +1730,10 @@ else {
                 directory: windowsUpdates,
                 resourcesPath: engineRoot,
                 signal,
+                includeRuntime,
               });
             }
+            if (!includeRuntime) return;
             const { prepareRuntimeUpdate } = await import(
               pathToFileURL(join(engineRoot, 'desktop/runtime/assets.mjs')).href
             );
@@ -1983,7 +1991,12 @@ else {
         applyPreferences(saved);
         guidedStartup = !saved.serverUrl && !saved.onboardingCompleted;
         await showSettings('general', true);
-        if (setupWindow && !setupWindow.isDestroyed()) void prepare();
+        if (
+          setupWindow &&
+          !setupWindow.isDestroyed() &&
+          (saved.serverUrl || saved.onboardingCompleted || saved.welcome?.continued)
+        )
+          void prepare();
       } catch (error) {
         showSettings('general', true);
         update({ phase: 'error', message: bounded(error.message), error: bounded(error.message) });

@@ -13,16 +13,16 @@ Your requests go to the service you connect. Paid providers bill you for use. To
 
 ## Supported connections
 
-| Service           | How you connect                        | Default model                |
-| ----------------- | -------------------------------------- | ---------------------------- |
-| OpenAI            | API key                                | GPT-6.1 Sol, high effort     |
-| ChatGPT           | ChatGPT Plus or Pro, in local nod only | GPT-6 Sol, high effort       |
-| Anthropic         | API key                                | Claude Opus 5.5, high effort |
-| OpenRouter        | API key, or sign in with your browser  | GPT-6.1 Sol, high effort     |
-| Amazon Bedrock    | API key and Region                     | You choose                   |
-| Google Vertex AI  | API key                                | You choose                   |
-| Azure OpenAI      | Endpoint, deployment and API key       | The deployment's model       |
-| OpenAI-compatible | Server address, in local nod only      | You choose                   |
+| Service           | How you connect                       | Default model                |
+| ----------------- | ------------------------------------- | ---------------------------- |
+| OpenAI            | API key                               | GPT-6.1 Sol, high effort     |
+| ChatGPT           | ChatGPT Plus or Pro                   | GPT-6 Sol, high effort       |
+| Anthropic         | API key                               | Claude Opus 5.5, high effort |
+| OpenRouter        | API key, or sign in with your browser | GPT-6.1 Sol, high effort     |
+| Amazon Bedrock    | API key and Region                    | You choose                   |
+| Google Vertex AI  | API key                               | You choose                   |
+| Azure OpenAI      | Endpoint, deployment and API key      | The deployment's model       |
+| OpenAI-compatible | Server address                        | You choose                   |
 
 You can switch to any other model the service offers.
 
@@ -61,7 +61,7 @@ To change to an available model, you can also tell nod which model and service t
 
 nod uses OpenAI's [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) for open-source and locally hosted apps. Requests go to the OpenAI API and use your plan's included usage. ChatGPT lists nod under [Settings → Usage](https://chatgpt.com/settings/usage), where you can see and limit its usage or disconnect it. It needs ChatGPT Plus or Pro. On other plans, OpenAI's consent page says a required permission isn't available, and the sign-in fails. In a workspace your organization manages, an admin has to allow third-party apps first, or OpenAI says your organization hasn't enabled access for this app. Otherwise, connect an OpenAI API key instead.
 
-ChatGPT sign-in listens for the browser on port `1455` of your computer. If another program uses that port, nod stops with an error before it opens OpenAI.
+ChatGPT sign-in listens on port `1455` where nod's server runs. If another program uses that port, nod stops with an error before it opens OpenAI. When connecting to a remote server, the final browser address may not load on your device. Copy that full address into **Callback URL** in nod and select **Complete sign-in**. The server checks the sign-in and stores the connection; you do not need to expose port `1455` publicly.
 
 A ChatGPT connection made with an earlier version of nod needs one reconnect in **Settings > Models**.
 

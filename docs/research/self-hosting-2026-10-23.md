@@ -66,15 +66,13 @@ Docker supports Ubuntu on [AMD64 and ARM64](https://docs.docker.com/engine/insta
 
 For a Mac mini, Docker Desktop's [startup setting](https://docs.docker.com/desktop/settings-and-maintenance/settings/#general) starts on sign-in. Document this limit and wake/power behavior rather than promising unattended boot recovery.
 
-## Minimum prebuilt installation proposal
+## Private prebuilt installation
 
-This is proposed work, not a published artifact or available installation command. The source repository is private. Do not publish its images, source, or bundles publicly as a shortcut around authentication.
+The source repository is private. The implementation packages architecture-specific bundles with the server, browser and workspace images, operations scripts, source revision, image identities and SHA-256 checksums. The installer verifies these, creates or preserves private configuration, and starts Compose without compiling. Public helper images remain pinned by digest.
 
-The smallest useful release unit is an architecture-specific bundle containing the three tested images (server, browser, workspace), the Compose stack and operations scripts, and a manifest with the source revision, architecture, image identities, and archive checksums. Public helper images remain pinned by digest. The existing desktop release workflow already exports tested browser/workspace image archives; reuse that packaging approach and add the server image.
+[The first successful private workflow](https://github.com/n8n-io/nod/actions/runs/40009648836) built and tested both Linux architectures natively and uploaded their bundles. These are private CI artifacts, not public releases. Authorized operators download them to their own computer and transfer them through SSH; the server needs no GitHub credential. Artifact checksums detect corruption; source authenticity comes from selecting the authenticated workflow and checking its revision.
 
-Add a single installer that accepts a locally supplied bundle, verifies its manifest and architecture, loads the images, creates or preserves private `.env` secrets, and starts Compose with `--no-build --wait`. It should print the canonical address and access instructions without printing credentials. The same bundle must support a matching fresh restore. Keep source building as an explicit developer path.
-
-While the repository remains private, authorized operators can download a private CI artifact on their own computer and transfer it through SSH. This avoids putting a GitHub credential on the server. Prepare and test the packaging locally first; private CI artifact distribution is a separate release step. A public anonymous installer is not available until release visibility is intentionally changed.
+The [environment evidence](self-hosting-environments-2026-10-23.json) records the exact tested revisions, local ARM64 bundle acceptance, AWS AMD64 stack acceptance, and remaining limits. Later fixes need their own validation; this evidence does not claim final-head or public-release readiness.
 
 A later registry path can use versioned AMD64/ARM64 images pinned by digest. [GitHub Container Registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry) supports anonymous pulls for public packages; private pulls require package access and authentication. Public package visibility must be an explicit release decision, not inferred from a successful private build.
 

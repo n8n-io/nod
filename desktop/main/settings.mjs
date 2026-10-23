@@ -209,9 +209,17 @@ export function createSettingsStore(path, encryption, platform = process.platfor
     connection() {
       return exclusive(async () => {
         const value = await read();
-        return value.serverUrl
-          ? { url: value.serverUrl, token: await reveal(value.secrets.serverToken) }
-          : null;
+        if (!value.serverUrl) return null;
+        try {
+          return { url: value.serverUrl, token: await reveal(value.secrets.serverToken) };
+        } catch {
+          throw Object.assign(
+            new Error(
+              'nod could not unlock your saved server token. Reconnect with your server’s authentication token.',
+            ),
+            { code: 'NOD_SERVER_TOKEN_UNAVAILABLE' },
+          );
+        }
       });
     },
     saveConnection(input) {

@@ -103,6 +103,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   const app = Fastify({
     logger: false,
     bodyLimit: 256 * 1024,
+    requestTimeout: 120_000,
     trustProxy: false,
     forceCloseConnections: true,
   });

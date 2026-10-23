@@ -18,6 +18,7 @@ type RuntimeStatus = {
   progress?: number;
   needsWsl?: boolean;
   needsRuntimeArchive?: boolean;
+  needsServerConnection?: boolean;
 };
 
 type Status = RuntimeStatus & {
@@ -376,6 +377,10 @@ function Startup() {
               disabled={busy}
               onClick={() =>
                 void run(async () => {
+                  if (failure.needsServerConnection) {
+                    await desktop.openConnectionSettings();
+                    return;
+                  }
                   if (settingsError || (firstSetup && !welcome)) {
                     const [preferences, settings] = await Promise.all([
                       desktop.getPreferences(),
@@ -390,7 +395,11 @@ function Startup() {
                 })
               }
             >
-              {busy ? 'Trying again…' : 'Try again'}
+              {busy
+                ? 'Trying again…'
+                : failure.needsServerConnection
+                  ? 'Reconnect to server'
+                  : 'Try again'}
             </button>
             {(failure.needsWsl || runtime?.needsWsl) && (
               <button
