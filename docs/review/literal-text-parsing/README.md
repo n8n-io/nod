@@ -50,11 +50,15 @@ The screenshots show frontend layout. The sample confirmation is example text, n
 
 ## Demo
 
-[Watch the 25-second demo](demo.mp4). It was recorded after [PR #445](https://github.com/n8n-io/nod/pull/445) opened, from source commit `b3d6377f`.
+[Watch the 29-second cadence and parsing demo](cadence-demo.mp4). A copy is on the Desktop as `nod-cadence-and-parsing-demo.mp4`.
 
-The demo shows paragraph spacing, URL paste, a failed send and recovery, rich feedback text, literal code and an artifact link. It uses the same synthetic fixture. The review caption stays visible as the page scrolls. The product components keep their normal styles.
+This recording uses the real Chat page, its activity indicator and the Markdown file preview. It shows an opening message, a useful partial result while activity continues, and a finished plan. A routine check changes activity without adding a message. The URL and literal code stay intact in chat and in the file preview.
 
-The export uses H.264 at 1280 × 628 pixels. Sampled frames were checked, and the full video decoded without errors. [Capture details](checks.json) include its hash and size.
+Assistant replies and API responses are scripted. The recording illustrates the intended cadence. It does not measure live model behavior or perceived speed. The short scene timings do not set a production message interval.
+
+Product components came from `976963f1`. The [capture fixture](cadence.tsx) is included with the video. Its hash and export checks are in [the manifest](checks.json).
+
+The [earlier 25-second parsing demo](demo.mp4) also shows failed-send recovery and rich feedback paste. It was recorded after [PR #445](https://github.com/n8n-io/nod/pull/445) opened, from source commit `b3d6377f`.
 
 ## Design sources
 
@@ -77,3 +81,21 @@ A [2021 study with 360 participants](https://doi.org/10.1145/3472307.3484181) fo
 The evidence does not show that all activity indicators make an agent feel slower. [A CHI 2026 study](https://arxiv.org/abs/2602.04138) found that hiding time feedback made waits feel longer and less clear. [Operational transparency research](https://www.hbs.edu/faculty/Pages/item.aspx?num=40158) also found that visible work could increase perceived value. That is a different measure from perceived speed.
 
 nod's design choice is to deliver meaningful, verified partial results in chat while keeping routine activity available. Each result states what is complete and what remains. These studies do not prove that this message design improves nod's perceived speed, and they do not measure a dopamine effect. That needs a user study.
+
+## Prompt consistency review
+
+The writing style and delivery rules now have separate scopes. The runtime receives both. The confirmation and notice writer receives only the writing style, because it returns one text value for one purpose.
+
+| Surface                          | Result                                                                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Shared writing style             | One source for voice, paragraph breaks and readable detail. It contains no instruction to send another message.                                              |
+| Runtime personality and prompt   | One cadence rule for useful milestones. The runtime prompt explains how to send them. The fixed word target and forced status before every step are removed. |
+| Message tool                     | Delivers a verified partial result, important change or needed decision. Routine narration stays in activity.                                                |
+| Unsolicited updates              | The rule to reduce unanswered updates applies only to work nod starts on its own. It does not suppress requested results.                                    |
+| Confirmation and channel notices | Keep their one-message JSON contract. The action review still checks the frozen facts.                                                                       |
+| Background schedules and events  | Keep routine progress private. Their standing instruction controls delivery.                                                                                 |
+| Setup interview                  | Keeps its own short welcome and question flow, its one-question rule and its bounded message array. It does not receive the long-task cadence rule.          |
+| Task and file skills             | Their final-delivery rules do not forbid useful milestones during the work. Writing on the user's behalf follows the recipient's style.                      |
+| Runtime docs                     | The Message cadence section now includes milestones and removes the requirement for a status before every step.                                              |
+
+Cubic also flagged the old `++text++` underline paste shortcut. Its removal is intentional under CommonMark. The old editor already saved underline as `<u>text</u>`. That form and the formatting toolbar still work. The chat guide now states this behavior.

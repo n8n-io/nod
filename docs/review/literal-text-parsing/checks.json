@@ -94,5 +94,40 @@
     "audio": false,
     "liveModel": false,
     "syntheticData": true
+  },
+  "cadenceDemo": {
+    "file": "cadence-demo.mp4",
+    "desktopFile": "nod-cadence-and-parsing-demo.mp4",
+    "productSourceCommit": "976963f174404b876d041d8aa5a827f263594099",
+    "fixture": "cadence.tsx",
+    "fixtureSha256": "f7dbe3fe3c3b3e5f8919eec077a776478ef33665d64fafd13c7bdf010dd54f94",
+    "durationSeconds": 28.566667,
+    "video": {
+      "codec_name": "h264",
+      "width": 1278,
+      "height": 716,
+      "avg_frame_rate": "30/1"
+    },
+    "bytes": 743428,
+    "sha256": "c7b80effd19c712b83633b681cd3959a7cdc40b292d03b3f2c126045c864d283",
+    "reviewedFramesAtSeconds": [0, 4, 8, 12, 16, 20, 24, 27],
+    "checks": {
+      "realChatPage": true,
+      "activityVisibleWithMilestone": true,
+      "assistantMessages": 3,
+      "routineCheckAddsNoMessage": true,
+      "activityClearsAtEnd": true,
+      "chatAndArtifactHrefMatchInput": true,
+      "literalCodeMatchesInput": true,
+      "realArtifactPreview": true,
+      "composerFullyVisible": true,
+      "horizontalOverflow": false,
+      "fullVideoDecode": "passed"
+    },
+    "limits": [
+      "Assistant text and API responses are scripted and synthetic.",
+      "This does not measure live model behavior or perceived speed.",
+      "The short demo timings do not define a production message interval."
+    ]
   }
 }
