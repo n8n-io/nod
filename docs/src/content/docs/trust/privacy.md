@@ -1,11 +1,11 @@
 ---
 title: Your data and privacy
-description: Where nod keeps your data, what leaves your computer and to whom, and how to delete it.
+description: Where nod keeps your data, what it sends to other services, and how to delete it.
 sidebar:
   order: 11
 ---
 
-This page explains where nod keeps your data, what leaves your computer and to whom, and how to delete it.
+This page explains where nod keeps your data, what it sends to other services, and how to delete it.
 
 Local desktop and source installs keep nod's database, workspace and browser on your computer. With a [self-hosted server](/deploy/self-host/), the server stores them along with your model credentials and Composio identity. Web and desktop clients reach that same assistant. Anyone administering the server or its storage may have access to its data.
 
@@ -32,13 +32,14 @@ Unsent chat drafts stay in app or browser storage on this device, for your accou
 
 Desktop file actions prepare private copies in the system temporary folder. The cache holds up to eight files. Saving creates a separate file in Downloads. Temporary copies remain until cache eviction or app shutdown. A forced stop can leave a temporary copy behind.
 
-## What leaves your computer
+## What nod sends to other services
 
 For a remote assistant, model and app requests originate from the server. Desktop update checks, media playback and client analytics originate from the device you use.
 
 ```mermaid
 flowchart LR
-  nod[nod on your computer]:::accent
+  client[Desktop or web client]:::accent
+  client -- assistant requests --> nod["nod runtime<br/>on your computer or server"]:::accent
   nod -- prompts and results --> model[Model and decision providers]
   nod -- app actions with nod's connection --> managed["Configured connection service"]
   managed --> apps[Composio and<br/>your apps]
@@ -46,8 +47,9 @@ flowchart LR
   nod -- your chats --> chat[Telegram, WhatsApp]
   nod -- browsing --> web[Websites]
   nod -- searches --> search[Web search]
-  nod -- update checks and downloads --> n8n[n8n]:::muted
-  nod -. opt-in analytics .-> n8n[n8n]:::muted
+  client -- desktop update checks and downloads --> n8n[n8n]:::muted
+  client -. opt-in client analytics .-> n8n
+  nod -. opt-in runtime analytics .-> n8n
   nod -. opt-in traces .-> n8n[n8n]:::muted
   nod -. feedback you send .-> feedback[Configured feedback recipient]:::muted
 ```
