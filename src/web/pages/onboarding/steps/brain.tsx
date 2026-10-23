@@ -14,10 +14,19 @@ import {
   LoaderCircle,
 } from '../../../components/icons';
 import type { ModelConnection, ModelProvider, ModelsResponse } from '../../../../shared/models';
-import { modelSource } from '../../../../shared/models';
-import { agentModels } from '../../../../shared/model-defaults';
-import { Button, Input } from '../../../components/ui';
-import { CloudKeyFields, ModelPicker } from '../../../components/models';
+import {
+  modelProviderInfo,
+  modelProviderNames,
+  modelProviders,
+  modelSource,
+} from '../../../../shared/models';
+import { Button, Input, SearchField } from '../../../components/ui';
+import {
+  CloudKeyFields,
+  ModelKeyHelp,
+  ModelPicker,
+  ModelProviderLogo,
+} from '../../../components/models';
 import {
   keyConnection,
   keySettingsReady,
@@ -25,6 +34,7 @@ import {
   modelReady,
   modelSelection,
   noKeySettings,
+  recommendedModel,
   useModelSignIn,
   useModels,
   type KeySettings,
@@ -39,28 +49,13 @@ const sequence: RevealStep[] = [{ typing: 450 }, { wait: 200 }, { wait: 300 }];
 
 type SignInProvider = 'openai' | 'openrouter';
 
-const providers: { provider: ModelProvider; name: string; common?: boolean }[] = [
-  { provider: 'openai', name: 'OpenAI', common: true },
-  { provider: 'anthropic', name: 'Anthropic', common: true },
-  { provider: 'openrouter', name: 'OpenRouter', common: true },
-  { provider: 'google-vertex', name: 'Google Vertex AI' },
-  { provider: 'amazon-bedrock', name: 'Amazon Bedrock' },
-  { provider: 'azure', name: 'Azure OpenAI' },
-  { provider: 'compatible', name: 'Your own server' },
-];
+const providers = modelProviders.map((provider) => ({
+  provider,
+  name: provider === 'compatible' ? 'Your own server' : modelProviderNames[provider],
+  common: modelProviderInfo[provider].common,
+}));
 
 const common = providers.filter((item) => item.common);
-const uncommon = providers.filter((item) => !item.common);
-
-const keyLinks: Record<ModelProvider, string> = {
-  openai: 'platform.openai.com/api-keys',
-  anthropic: 'console.anthropic.com/settings/keys',
-  openrouter: 'openrouter.ai/keys',
-  'amazon-bedrock': 'console.aws.amazon.com/bedrock',
-  'google-vertex': 'console.cloud.google.com/apis/credentials',
-  azure: 'ai.azure.com',
-  compatible: '',
-};
 
 const placeholders: Partial<Record<ModelProvider, string>> = {
   openai: 'sk-…',
@@ -78,23 +73,12 @@ function signsIn(provider: ModelProvider): provider is SignInProvider {
   return provider === 'openai' || provider === 'openrouter';
 }
 
-function noDefault(source: ModelConnection) {
-  return (
-    (source.provider === 'amazon-bedrock' || source.provider === 'google-vertex') &&
-    source.models.length > 1
-  );
-}
-
 function ownerChooses(source: ModelConnection) {
-  return noDefault(source) || (source.provider === 'compatible' && source.models.length > 1);
+  return ['amazon-bedrock', 'compatible'].includes(source.provider) && source.models.length > 1;
 }
 
 function recommended(source: ModelConnection) {
-  return (
-    (source.method === 'subscription' && source.models.find((item) => item.id === 'gpt-6-sol')) ||
-    source.models.find((item) => item.id === agentModels[source.provider]) ||
-    (noDefault(source) ? undefined : source.models[0])
-  );
+  return ownerChooses(source) ? undefined : recommendedModel(source);
 }
 
 function useConnect() {
@@ -140,7 +124,11 @@ function useConnect() {
     if (submitting.current) return false;
     const value = key.trim();
     const endpoint = provider === 'compatible';
-    const detailed = endpoint || provider === 'amazon-bedrock' || provider === 'azure';
+    const detailed =
+      endpoint ||
+      ['amazon-bedrock', 'azure', 'cloudflare-workers-ai', 'cloudflare-ai-gateway'].includes(
+        provider,
+      );
     if (endpoint && !url.trim()) return (setKeyError('Enter the server address first.'), false);
     if (!keySettingsReady(provider, settings))
       return (setKeyError('Fill in every field first.'), false);
@@ -213,13 +201,7 @@ function useConnect() {
 type Connect = ReturnType<typeof useConnect>;
 
 function Logo({ provider, size = 20 }: { provider: ModelProvider; size?: number }) {
-  return (
-    <span
-      className={`ob-brain-logo ${provider}`}
-      style={{ width: size, height: size }}
-      aria-hidden="true"
-    />
-  );
+  return <ModelProviderLogo provider={provider} size={size} />;
 }
 
 function Problem({ children }: { children?: string }) {
@@ -238,11 +220,11 @@ function Spinner() {
   );
 }
 
-function ConnectButton({ checking }: { checking: boolean }) {
+function ConnectButton({ checking, saved = false }: { checking: boolean; saved?: boolean }) {
   return (
     <Button type="submit" variant="outline" disabled={checking}>
       {checking && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
-      {checking ? 'Checking' : 'Connect'}
+      {checking ? (saved ? 'Saving' : 'Checking') : saved ? 'Save key' : 'Connect'}
     </Button>
   );
 }
@@ -342,7 +324,12 @@ function KeyForm({
           spellCheck={false}
           maxLength={32000}
           placeholder={placeholders[provider]}
-          autoFocus={autoFocus && provider !== 'amazon-bedrock' && provider !== 'azure'}
+          autoFocus={
+            autoFocus &&
+            !['amazon-bedrock', 'azure', 'cloudflare-workers-ai', 'cloudflare-ai-gateway'].includes(
+              provider,
+            )
+          }
           value={key}
           disabled={c.checking}
           aria-invalid={!!c.keyError}
@@ -352,16 +339,13 @@ function KeyForm({
             c.clearError();
           }}
         />
-        <ConnectButton checking={c.checking} />
+        <ConnectButton
+          checking={c.checking}
+          saved={modelProviderInfo[provider].catalog === 'bundled'}
+        />
       </div>
       <Problem>{c.keyError}</Problem>
-      <p className="ob-brain-note">
-        Get a key at{' '}
-        <a href={`https://${keyLinks[provider]}`} target="_blank" rel="noreferrer">
-          {keyLinks[provider].split('/')[0]}
-        </a>{' '}
-        · Encrypted on this computer. Never shown to the AI.
-      </p>
+      <ModelKeyHelp provider={provider} className="ob-brain-note" />
     </form>
   );
 }
@@ -475,7 +459,11 @@ function Setup({ c, provider }: { c: Connect; provider: ModelProvider }) {
 
 function Connected({ c }: { c: Connect }) {
   const source = c.shown!;
-  const choosing = source.status === 'connected' && !c.ready && ownerChooses(source);
+  const saved = modelProviderInfo[source.provider]?.catalog === 'bundled';
+  const choosing =
+    source.status === 'connected' &&
+    !c.ready &&
+    (ownerChooses(source) || (!c.recommendation && source.models.length > 0));
   const missing = source.status === 'connected' && !c.ready && !c.recommendation && !choosing;
   return (
     <div className="ob-brain-connected">
@@ -485,7 +473,7 @@ function Connected({ c }: { c: Connect }) {
         </span>
         <div className="ob-brain-status-text">
           <p className="ob-brain-title">
-            Connected to{' '}
+            {saved ? 'Key saved for ' : 'Connected to '}
             <span data-analytics-private>
               {source.provider === 'compatible' ? source.label : modelSource(source)}
             </span>
@@ -497,7 +485,9 @@ function Connected({ c }: { c: Connect }) {
                 ? 'Choose the model I should use.'
                 : missing
                   ? 'The default model isn’t available for this account.'
-                  : 'I’ll use this model for every reply. You can change it any time.'}
+                  : saved
+                    ? 'Access checked on first use. You can change the model any time.'
+                    : 'I’ll use this model for every reply. You can change it any time.'}
           </p>
         </div>
       </div>
@@ -561,8 +551,10 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   const c = useConnect();
   const [picked, setPicked] = useState<ModelProvider>();
   const [expanded, setExpanded] = useState(false);
+  const [search, setSearch] = useState('');
   const [restore, setRestore] = useState<ModelProvider>();
   const rows = useRef(new Map<ModelProvider, HTMLButtonElement>());
+  const searchInput = useRef<HTMLInputElement>(null);
   const entry = providers.find((item) => item.provider === picked);
   const view: View = c.shown ? 'done' : entry ? 'setup' : 'list';
   const page = view === 'setup' ? `setup:${entry!.provider}` : view;
@@ -577,7 +569,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   }
 
   useEffect(() => {
-    if (expanded) rows.current.get(uncommon[0].provider)?.focus();
+    if (expanded) searchInput.current?.focus();
   }, [expanded]);
 
   useEffect(() => {
@@ -594,6 +586,92 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   }
 
   const keepCurrent = view === 'list' ? c.keepCurrent : undefined;
+  const visible = (expanded ? providers : common).filter((item) =>
+    `${item.name} ${item.provider === 'compatible' ? 'Ollama LM Studio vLLM local server' : item.provider}`
+      .toLowerCase()
+      .includes(search.trim().toLowerCase()),
+  );
+
+  const list = (
+    <>
+      {expanded && (
+        <SearchField
+          inputRef={searchInput}
+          placeholder="Search providers"
+          aria-label="Search providers"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          onClear={() => setSearch('')}
+        />
+      )}
+      <ul className="ob-brain-providers" aria-label="AI providers">
+        {visible.map((item) => {
+          const existing = c.existing(item.provider);
+          return (
+            <li key={item.provider}>
+              <button
+                ref={(node) => {
+                  if (node) rows.current.set(item.provider, node);
+                  else rows.current.delete(item.provider);
+                }}
+                type="button"
+                className="ob-brain-provider"
+                disabled={c.locked}
+                onClick={() => {
+                  c.clearError();
+                  if (existing) c.open(existing.id);
+                  else setPicked(item.provider);
+                }}
+              >
+                <Logo provider={item.provider} />
+                <span className="ob-brain-provider-name">{item.name}</span>
+                {existing && (
+                  <span
+                    className="ob-brain-check"
+                    role="img"
+                    aria-label={
+                      modelProviderInfo[item.provider].catalog === 'bundled'
+                        ? 'Key saved'
+                        : 'Connected'
+                    }
+                  >
+                    <Check size={12} aria-hidden="true" />
+                  </span>
+                )}
+                <ChevronRight size={12} aria-hidden="true" />
+              </button>
+            </li>
+          );
+        })}
+        {!visible.length && <li className="ob-brain-empty">No providers match this search.</li>}
+        {!expanded && (
+          <li>
+            <button
+              type="button"
+              className="ob-brain-provider ob-brain-more"
+              disabled={c.locked}
+              onClick={() => setExpanded(true)}
+            >
+              <span className="ob-brain-lead" aria-hidden="true">
+                <ChevronDown size={12} />
+              </span>
+              <span className="ob-brain-provider-name">More providers</span>
+              <span className="ob-brain-more-logos" aria-hidden="true">
+                <Logo provider="deepseek" size={16} />
+                <Logo provider="mistral" size={16} />
+                <Logo provider="groq" size={16} />
+                <Logo provider="huggingface" size={16} />
+                <Logo provider="cloudflare-workers-ai" size={16} />
+                <Logo provider="qwen-token-plan" size={16} />
+                <Logo provider="xai" size={16} />
+                <Logo provider="kimi-coding" size={16} />
+              </span>
+            </button>
+          </li>
+        )}
+      </ul>
+    </>
+  );
 
   return (
     <section className="ob-step ob-brain" onClick={done ? undefined : skip} data-analytics-public>
@@ -615,90 +693,45 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
           <>
             {c.expired && (
               <p className="ob-brain-expired">
-                Your {modelSource(c.expired)} sign-in for{' '}
-                <span data-analytics-private>{c.expired.label}</span> expired. Sign in again to keep
-                using it.
+                Your {modelSource(c.expired)} connection for{' '}
+                <span data-analytics-private>{c.expired.label}</span> needs attention.{' '}
+                {c.expired.method === 'api_key'
+                  ? 'Add the connection again to keep using it.'
+                  : 'Sign in again to keep using it.'}
               </p>
             )}
-            <Card page={page} direction={motion.direction}>
-              {view === 'done' ? (
-                <Connected c={c} />
-              ) : view === 'setup' ? (
-                <>
-                  <header className="ob-brain-header">
-                    <button
-                      type="button"
-                      className="ob-brain-back"
-                      aria-label="All providers"
-                      disabled={c.flow.pending || c.checking}
-                      onClick={back}
-                    >
-                      <ChevronLeft size={16} aria-hidden="true" />
-                    </button>
-                    <h3>
-                      <Logo provider={entry!.provider} />
-                      {entry!.name}
-                    </h3>
-                  </header>
-                  <div className="ob-brain-body">
-                    <Setup c={c} provider={entry!.provider} />
-                  </div>
-                </>
-              ) : (
-                <ul className="ob-brain-providers" aria-label="AI providers">
-                  {(expanded ? providers : common).map((item) => {
-                    const existing = c.existing(item.provider);
-                    return (
-                      <li key={item.provider}>
-                        <button
-                          ref={(node) => {
-                            if (node) rows.current.set(item.provider, node);
-                            else rows.current.delete(item.provider);
-                          }}
-                          type="button"
-                          className="ob-brain-provider"
-                          disabled={c.locked}
-                          onClick={() => {
-                            c.clearError();
-                            if (existing) c.open(existing.id);
-                            else setPicked(item.provider);
-                          }}
-                        >
-                          <Logo provider={item.provider} />
-                          <span className="ob-brain-provider-name">{item.name}</span>
-                          {existing && (
-                            <span className="ob-brain-check" role="img" aria-label="Connected">
-                              <Check size={12} aria-hidden="true" />
-                            </span>
-                          )}
-                          <ChevronRight size={12} aria-hidden="true" />
-                        </button>
-                      </li>
-                    );
-                  })}
-                  {!expanded && (
-                    <li>
+            {view === 'list' && expanded ? (
+              <div className="ob-brain-catalog">{list}</div>
+            ) : (
+              <Card page={page} direction={motion.direction}>
+                {view === 'done' ? (
+                  <Connected c={c} />
+                ) : view === 'setup' ? (
+                  <>
+                    <header className="ob-brain-header">
                       <button
                         type="button"
-                        className="ob-brain-provider ob-brain-more"
-                        disabled={c.locked}
-                        onClick={() => setExpanded(true)}
+                        className="ob-brain-back"
+                        aria-label="All providers"
+                        disabled={c.flow.pending || c.checking}
+                        onClick={back}
                       >
-                        <span className="ob-brain-lead" aria-hidden="true">
-                          <ChevronDown size={12} />
-                        </span>
-                        <span className="ob-brain-provider-name">More providers</span>
-                        <span className="ob-brain-more-logos" aria-hidden="true">
-                          {uncommon.map((item) => (
-                            <Logo key={item.provider} provider={item.provider} size={16} />
-                          ))}
-                        </span>
+                        <ChevronLeft size={16} aria-hidden="true" />
                       </button>
-                    </li>
-                  )}
-                </ul>
-              )}
-            </Card>
+                      <h3>
+                        <Logo provider={entry!.provider} />
+                        {entry!.name}
+                      </h3>
+                    </header>
+                    <div className="ob-brain-body">
+                      <Setup c={c} provider={entry!.provider} />
+                    </div>
+                  </>
+                ) : (
+                  list
+                )}
+              </Card>
+            )}
           </>
         )}
       </Rise>

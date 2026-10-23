@@ -2631,13 +2631,21 @@ test('OpenRouter requests in both formats make one provider attempt', async () =
       if (String(input) === 'https://openrouter.ai/api/v1/key')
         return Response.json({ data: { is_management_key: false } });
       return Response.json({
-        data: ['openai/gpt-6.1-sol', 'anthropic/claude-opus-5.5'].map((id) => ({
+        data: [
+          'openai/gpt-6.1-sol',
+          'anthropic/claude-opus-5.5',
+          'google/gemini-3.1-flash-lite-image',
+          'fixture/media-generator',
+        ].map((id) => ({
           id,
           name: id,
           context_length: 100000,
           supported_parameters: ['tools', 'reasoning'],
           reasoning: { supported_efforts: ['low', 'medium', 'high'] },
-          architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+          architecture: {
+            input_modalities: ['text', 'image'],
+            output_modalities: id === 'fixture/media-generator' ? ['text', 'image'] : ['text'],
+          },
           pricing: { prompt: '0.000002', completion: '0.00001' },
         })),
       });
@@ -2647,6 +2655,7 @@ test('OpenRouter requests in both formats make one provider attempt', async () =
     type: 'api_key',
     key: 'fixture-router-key',
   });
+  assert.equal(definitions.length, 2);
   const apis = new Set<string>();
   for (const definition of definitions) {
     const { runtime, model } = await createPiModelRuntime({
@@ -3125,6 +3134,728 @@ test('LM Studio servers list tool-trained chat models with their loaded context 
       ['fixture/unlisted', false, 128_000, `http://127.0.0.1:${port}/v1`],
     ],
   );
+});
+
+test('native provider discovery uses owned keys, bounded Google pagination and tool-capable account models', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const calls: string[] = [];
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      calls.push(url.href);
+      assert.equal(init?.redirect, 'error');
+      const headers = new Headers(init?.headers);
+      if (url.hostname === 'generativelanguage.googleapis.com') {
+        assert.equal(url.pathname, '/v1beta/models');
+        assert.equal(headers.get('authorization'), null);
+        if (headers.get('x-goog-api-key') !== 'fixture-google-key')
+          return Response.json({ error: { message: 'fixture-rejected-key' } }, { status: 400 });
+        return Response.json(
+          url.searchParams.get('pageToken') === 'next&private=1'
+            ? {
+                models: [
+                  {
+                    name: 'models/gemini-2.5-pro',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                  {
+                    name: 'models/gemini-2.5-flash',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                ],
+              }
+            : {
+                models: [
+                  {
+                    name: 'models/gemini-2.5-flash',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                  {
+                    name: 'models/gemini-3.1-flash-lite-image',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                  {
+                    name: 'models/gemini-3.1-flash-live-preview',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                  { name: 'models/gemini-4-argon', supportedGenerationMethods: ['countTokens'] },
+                  {
+                    name: 'models/../../evil.test?key=fixture-google-key',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                ],
+                nextPageToken: 'next&private=1',
+              },
+        );
+      }
+      assert.equal(url.href, 'https://api.mistral.ai/v1/models');
+      assert.equal(headers.get('authorization'), 'Bearer fixture-mistral-key');
+      return Response.json({
+        data: [
+          {
+            id: 'mistral-large-latest',
+            capabilities: { completion_chat: true, function_calling: true },
+          },
+          {
+            id: 'codestral-latest',
+            capabilities: { completion_chat: true, function_calling: false },
+          },
+          {
+            id: 'mistral-small-latest',
+            archived: true,
+            capabilities: { completion_chat: true, function_calling: true },
+          },
+          {
+            id: 'mistral-medium-latest',
+            capabilities: { completion_chat: false, function_calling: true },
+          },
+        ],
+      });
+    },
+  });
+  const google = await backend.catalog('google', 'api_key', {
+    type: 'api_key',
+    key: 'fixture-google-key',
+  });
+  assert.deepEqual(google.map(({ choice }) => choice.id).sort(), [
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+  ]);
+  assert.ok(google.every(({ spec }) => spec.api === 'google-generative-ai'));
+  const mistral = await backend.catalog('mistral', 'api_key', {
+    type: 'api_key',
+    key: 'fixture-mistral-key',
+  });
+  assert.deepEqual(
+    mistral.map(({ choice }) => choice.id),
+    ['mistral-large-latest'],
+  );
+  assert.equal(mistral[0].spec.api, 'mistral-conversations');
+  await assert.rejects(
+    backend.catalog('google', 'api_key', { type: 'api_key', key: 'fixture-rejected-key' }),
+    (error: Error) =>
+      /didn’t accept/.test(error.message) && !error.message.includes('fixture-rejected-key'),
+  );
+  assert.equal(new URL(calls[1]).searchParams.get('private'), null);
+  const before = calls.length;
+  await assert.rejects(
+    backend.catalog('unregistered' as 'google', 'api_key', {
+      type: 'api_key',
+      key: 'fixture-google-key',
+    }),
+  );
+  assert.equal(calls.length, before);
+  let pages = 0;
+  const repeating = createPiModelBackend({
+    fetch: async () => {
+      pages++;
+      return Response.json({ models: [], nextPageToken: 'repeated' });
+    },
+  });
+  await assert.rejects(
+    repeating.catalog('google', 'api_key', { type: 'api_key', key: 'fixture-google-key' }),
+  );
+  assert.equal(pages, 2);
+});
+
+test('native provider streams retain Google, Anthropic and OpenAI tool protocols and exact credential destinations', async (t) => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const { DefaultResourceLoader, SettingsManager } =
+    await import('@earendil-works/pi-coding-agent');
+  const directory = await mkdtemp(join(tmpdir(), 'nod-provider-contract-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const backend = createPiModelBackend({
+    fetch: async () => {
+      throw new Error('Unexpected catalog request.');
+    },
+  });
+  const cases = [
+    {
+      provider: 'google',
+      id: 'gemini-2.5-flash',
+      host: 'generativelanguage.googleapis.com',
+      path: '/v1beta/models/gemini-2.5-flash:streamGenerateContent',
+      header: 'x-goog-api-key',
+      prefix: '',
+    },
+    {
+      provider: 'minimax',
+      id: 'MiniMax-M3',
+      host: 'api.minimax.io',
+      path: '/anthropic/v1/messages',
+      header: 'x-api-key',
+      prefix: '',
+    },
+    {
+      provider: 'groq',
+      id: 'openai/gpt-oss-120b',
+      host: 'api.groq.com',
+      path: '/openai/v1/chat/completions',
+      header: 'authorization',
+      prefix: 'Bearer ',
+    },
+    {
+      provider: 'ant-ling',
+      id: 'Ling-3.1-flash',
+      host: 'api.ant-ling.com',
+      path: '/v1/chat/completions',
+      header: 'authorization',
+      prefix: 'Bearer ',
+      effort: 'medium',
+    },
+    {
+      provider: 'ant-ling',
+      id: 'Ling-3.1-flash',
+      host: 'api.ant-ling.com',
+      path: '/v1/chat/completions',
+      header: 'authorization',
+      prefix: 'Bearer ',
+      effort: 'off',
+    },
+  ] as const;
+  for (const entry of cases) {
+    const definition = (await backend.catalog(entry.provider, 'api_key')).find(
+      ({ choice }) => choice.id === entry.id,
+    )!;
+    assert.ok(definition, entry.provider);
+    const effort = 'effort' in entry ? entry.effort : 'medium';
+    if (entry.provider === 'ant-ling')
+      assert.deepEqual(definition.choice.efforts, ['off', 'medium']);
+    const key = `fixture-${entry.provider}-key`;
+    const { runtime, model } = await createPiModelRuntime({
+      provider: entry.provider,
+      method: 'api_key',
+      definition,
+      effort,
+      read: async () => ({ type: 'api_key', key }),
+    });
+    const sent: unknown[] = [];
+    let executed = 0;
+    const settingsManager = SettingsManager.inMemory({
+      retry: { enabled: false },
+      compaction: { enabled: false },
+    });
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: directory,
+      agentDir: directory,
+      settingsManager,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      systemPrompt: 'Use the synthetic fixture tool, then report its result.',
+    });
+    await resourceLoader.reload();
+    const { session } = await createAgentSession({
+      cwd: directory,
+      agentDir: directory,
+      settingsManager,
+      resourceLoader,
+      sessionManager: SessionManager.inMemory(directory),
+      modelRuntime: runtime,
+      model,
+      thinkingLevel: effort,
+      tools: ['inspect_fixture'],
+      customTools: [
+        {
+          name: 'inspect_fixture',
+          label: 'Inspect fixture',
+          description: 'Read a synthetic fixture.',
+          parameters: Type.Object({ path: Type.String() }),
+          execute: async (_id, args) => {
+            assert.deepEqual(args, { path: 'fixture.txt' });
+            executed++;
+            return { content: [{ type: 'text', text: 'fixture-result' }], details: {} };
+          },
+        },
+      ],
+    });
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      assert.equal(url.hostname, entry.host);
+      assert.equal(url.pathname, entry.path);
+      const headers = new Headers(
+        init?.headers ?? (input instanceof Request ? input.headers : undefined),
+      );
+      assert.equal(headers.get(entry.header), entry.prefix + key);
+      const body = JSON.parse(
+        String(init?.body ?? (input instanceof Request ? await input.text() : '{}')),
+      );
+      sent.push(body);
+      if (entry.provider === 'ant-ling') {
+        assert.deepEqual(body.thinking, { type: effort === 'off' ? 'disabled' : 'enabled' });
+        assert.equal(body.reasoning, undefined);
+        assert.equal(body.reasoning_effort, undefined);
+      }
+      const finished = sent.length > 1;
+      if (finished) assert.match(JSON.stringify(body), /fixture-result/);
+      let events: unknown[];
+      if (entry.provider === 'google') {
+        assert.equal(body.tools[0].functionDeclarations[0].name, 'inspect_fixture');
+        events = [
+          {
+            candidates: [
+              {
+                content: {
+                  role: 'model',
+                  parts: finished
+                    ? [{ text: 'Fixture inspected.' }]
+                    : [
+                        {
+                          functionCall: { name: 'inspect_fixture', args: { path: 'fixture.txt' } },
+                        },
+                      ],
+                },
+                finishReason: 'STOP',
+              },
+            ],
+            usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 4, totalTokenCount: 14 },
+          },
+        ];
+      } else if (entry.provider === 'minimax') {
+        assert.equal(body.tools[0].name, 'inspect_fixture');
+        events = [
+          {
+            type: 'message_start',
+            message: {
+              id: 'msg_fixture',
+              type: 'message',
+              role: 'assistant',
+              model: entry.id,
+              content: [],
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 10, output_tokens: 0 },
+            },
+          },
+          {
+            type: 'content_block_start',
+            index: 0,
+            content_block: finished
+              ? { type: 'text', text: '' }
+              : {
+                  type: 'tool_use',
+                  id: 'call_fixture',
+                  name: 'inspect_fixture',
+                  input: {},
+                },
+          },
+          {
+            type: 'content_block_delta',
+            index: 0,
+            delta: finished
+              ? { type: 'text_delta', text: 'Fixture inspected.' }
+              : { type: 'input_json_delta', partial_json: '{"path":"fixture.txt"}' },
+          },
+          { type: 'content_block_stop', index: 0 },
+          {
+            type: 'message_delta',
+            delta: { stop_reason: finished ? 'end_turn' : 'tool_use' },
+            usage: { output_tokens: 4 },
+          },
+          { type: 'message_stop' },
+        ];
+      } else {
+        assert.equal(body.tools[0].function.name, 'inspect_fixture');
+        events = [
+          {
+            id: 'chat_fixture',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: entry.id,
+            choices: [
+              {
+                index: 0,
+                delta: finished
+                  ? { role: 'assistant', content: 'Fixture inspected.' }
+                  : {
+                      role: 'assistant',
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: 'call_fixture',
+                          type: 'function',
+                          function: {
+                            name: 'inspect_fixture',
+                            arguments: '{"path":"fixture.txt"}',
+                          },
+                        },
+                      ],
+                    },
+                finish_reason: finished ? 'stop' : 'tool_calls',
+              },
+            ],
+          },
+        ];
+      }
+      return new Response(
+        events
+          .map(
+            (event) =>
+              `${entry.provider === 'minimax' ? `event: ${(event as { type: string }).type}\n` : ''}data: ${JSON.stringify(event)}\n\n`,
+          )
+          .join('') + (entry.provider === 'groq' ? 'data: [DONE]\n\n' : ''),
+        { headers: { 'content-type': 'text/event-stream' } },
+      );
+    }) as typeof fetch;
+    try {
+      await session.prompt('Inspect the fixture file.');
+      const message = session.messages.find((message) => message.role === 'assistant');
+      assert.ok(message?.role === 'assistant');
+      assert.equal(message.stopReason, 'toolUse', message.errorMessage);
+      assert.equal(executed, 1);
+      assert.equal(sent.length, 2);
+      const call = message.content.find((block) => block.type === 'toolCall');
+      assert.equal(call?.name, 'inspect_fixture');
+      assert.deepEqual(call?.arguments, { path: 'fixture.txt' });
+      const reply = session.messages.at(-1);
+      assert.ok(reply?.role === 'assistant');
+      assert.equal(reply.stopReason, 'stop', reply.errorMessage);
+      assert.equal(
+        reply.content
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text)
+          .join(''),
+        'Fixture inspected.',
+      );
+      assert.ok(!JSON.stringify(sent).includes(key));
+    } finally {
+      globalThis.fetch = original;
+      session.dispose();
+    }
+  }
+});
+
+test('native account catalogs never send a provider key to a different service or accept a failed listing', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const { apiKeyModelProviders, modelProviderInfo } = await import('../src/shared/models.ts');
+  const cases = [
+    ['xai', 'https://api.x.ai/v1/models'],
+    ['groq', 'https://api.groq.com/openai/v1/models'],
+    ['cerebras', 'https://api.cerebras.ai/v1/models'],
+    ['deepseek', 'https://api.deepseek.com/models'],
+    ['moonshotai', 'https://api.moonshot.ai/v1/models'],
+    ['moonshotai-cn', 'https://api.moonshot.cn/v1/models'],
+    ['together', 'https://api.together.xyz/v1/models'],
+  ] as const;
+  for (const [provider, destination] of cases) {
+    let status = 200;
+    const key = `fixture-${provider}-key`;
+    const backend = createPiModelBackend({
+      fetch: async (input, init) => {
+        assert.equal(String(input), destination);
+        assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+        assert.equal(init?.redirect, 'error');
+        if (status !== 200) return Response.json({ message: `Synthetic ${key}` }, { status });
+        const [allowed, unavailable] = await backend.catalog(provider, 'api_key');
+        const data = [
+          { id: allowed.choice.id },
+          { id: unavailable.choice.id, active: false },
+          { id: 'models/../../private' },
+        ];
+        return Response.json(provider === 'together' ? data : { data });
+      },
+    });
+    const models = await backend.catalog(provider, 'api_key', { type: 'api_key', key });
+    assert.equal(models.length, 1);
+    assert.equal(models[0].spec.provider, provider);
+    for (status of [401, 403, 429, 503, 307]) {
+      await assert.rejects(
+        backend.catalog(provider, 'api_key', { type: 'api_key', key }),
+        (error: Error) => !error.message.includes(key),
+      );
+    }
+  }
+  const bundled = createPiModelBackend({
+    fetch: async () => {
+      throw new Error('A bundled catalog must not send a key.');
+    },
+  });
+  for (const provider of apiKeyModelProviders.filter(
+    (provider) => modelProviderInfo[provider].catalog === 'bundled',
+  )) {
+    const models = await bundled.catalog(provider, 'api_key', {
+      type: 'api_key',
+      key: 'fixture-bundled-key',
+    });
+    assert.ok(models.length > 0, provider);
+    assert.ok(
+      models.every(({ spec }) => spec.provider === provider),
+      provider,
+    );
+  }
+});
+
+test('Radius uses its account catalog, rejects moved gateways and streams tool calls with redacted failures', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const key = 'fixture-radius-key';
+  let destination = 'https://radius.pi.dev/v1';
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      assert.equal(String(input), 'https://radius.pi.dev/v1/config');
+      assert.equal(init?.redirect, 'error');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      const model = {
+        id: 'fixture-account-model',
+        name: 'Fixture account model',
+        reasoning: true,
+        input: ['text', 'image'],
+        cost: { input: 2, output: 4, cacheRead: 1, cacheWrite: 2 },
+        contextWindow: 64000,
+        maxTokens: 8000,
+        thinkingLevelMap: { medium: 'balanced', high: 'deep' },
+      };
+      return Response.json({
+        baseUrl: destination,
+        models: [model, { ...model, id: 'bad/../../model' }, { ...model, id: 'image-generator' }],
+      });
+    },
+  });
+  const definitions = await backend.catalog('radius', 'api_key', { type: 'api_key', key });
+  assert.deepEqual(
+    definitions.map(({ choice }) => choice.id),
+    ['fixture-account-model'],
+  );
+  destination = 'https://untrusted.example/v1';
+  await assert.rejects(backend.catalog('radius', 'api_key', { type: 'api_key', key }));
+  const { runtime, model } = await createPiModelRuntime({
+    provider: 'radius',
+    method: 'api_key',
+    definition: definitions[0],
+    effort: 'medium',
+    read: async () => ({ type: 'api_key', key }),
+  });
+  let calls = 0;
+  const prompt = {
+    messages: [{ role: 'user' as const, content: 'Inspect the fixture.', timestamp: 1 }],
+    tools: [
+      {
+        name: 'inspect_fixture',
+        description: 'Inspect a fixture.',
+        parameters: Type.Object({ path: Type.String() }),
+      },
+    ],
+  };
+  const answer = await runtime.completeSimple(model, prompt, {
+    fetch: async (input, init) => {
+      calls++;
+      assert.equal(String(input), 'https://radius.pi.dev/v1/messages');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      assert.equal(init?.redirect, 'error');
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.model, 'fixture-account-model');
+      assert.equal(body.context.messages[0].toolsAdded[0].name, 'inspect_fixture');
+      assert.ok(!JSON.stringify(body).includes(key));
+      const events = [
+        { type: 'start' },
+        {
+          type: 'toolcall_start',
+          contentIndex: 0,
+          id: 'fixture-call',
+          toolName: 'inspect_fixture',
+        },
+        { type: 'toolcall_delta', contentIndex: 0, delta: '{"path":"fixture.txt"}' },
+        {
+          type: 'toolcall_end',
+          contentIndex: 0,
+          toolCall: {
+            type: 'toolCall',
+            id: 'fixture-call',
+            name: 'inspect_fixture',
+            arguments: { path: 'fixture.txt' },
+          },
+        },
+        {
+          type: 'done',
+          reason: 'toolUse',
+          usage: {
+            input: 10,
+            output: 4,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 14,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        },
+      ];
+      return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''), {
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    },
+  });
+  assert.equal(answer.stopReason, 'toolUse', answer.errorMessage);
+  assert.deepEqual(answer.content[0], {
+    type: 'toolCall',
+    id: 'fixture-call',
+    name: 'inspect_fixture',
+    arguments: { path: 'fixture.txt' },
+  });
+  const failure = await runtime.completeSimple(model, prompt, {
+    maxRetries: 5,
+    fetch: async () => {
+      calls++;
+      return Response.json({ error: { message: `Synthetic failure ${key}` } }, { status: 503 });
+    },
+  });
+  assert.equal(failure.stopReason, 'error');
+  assert.ok(!JSON.stringify(failure).includes(key));
+  assert.equal(calls, 2);
+});
+
+test('Cloudflare catalogs and streams use only the owned account and gateway with no ambient fallback', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const accountId = 'a'.repeat(32);
+  const key = 'fixture-cloudflare-key';
+  const credential = { type: 'cloudflare' as const, accountId, gatewayId: 'owned-gateway', key };
+  const catalogCalls: string[] = [];
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      catalogCalls.push(url.href);
+      assert.equal(url.origin, 'https://api.cloudflare.com');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      assert.equal(init?.redirect, 'error');
+      if (url.pathname.endsWith('/ai/models/search')) {
+        assert.equal(url.pathname, `/client/v4/accounts/${accountId}/ai/models/search`);
+        return Response.json({
+          success: true,
+          result: [
+            {
+              name:
+                url.searchParams.get('page') === '1'
+                  ? '@cf/openai/gpt-oss-120b'
+                  : '@cf/moonshotai/kimi-k2.6',
+            },
+          ],
+          result_info: { total_pages: 2 },
+        });
+      }
+      assert.equal(
+        url.pathname,
+        `/client/v4/accounts/${accountId}/ai-gateway/gateways/owned-gateway`,
+      );
+      return Response.json({ success: true, result: { id: 'owned-gateway' } });
+    },
+  });
+  const workers = await backend.catalog('cloudflare-workers-ai', 'api_key', credential);
+  assert.equal(workers.length, 2);
+  const gateway = await backend.catalog('cloudflare-ai-gateway', 'api_key', credential);
+  const count = catalogCalls.length;
+  await assert.rejects(
+    backend.catalog('cloudflare-workers-ai', 'api_key', { ...credential, accountId: '../wrong' }),
+  );
+  await assert.rejects(
+    backend.catalog('cloudflare-ai-gateway', 'api_key', { ...credential, gatewayId: undefined }),
+  );
+  assert.equal(catalogCalls.length, count);
+  const previous = {
+    account: process.env.CLOUDFLARE_ACCOUNT_ID,
+    gateway: process.env.CLOUDFLARE_GATEWAY_ID,
+    key: process.env.CLOUDFLARE_API_KEY,
+  };
+  process.env.CLOUDFLARE_ACCOUNT_ID = 'b'.repeat(32);
+  process.env.CLOUDFLARE_GATEWAY_ID = 'ambient-gateway';
+  process.env.CLOUDFLARE_API_KEY = 'fixture-ambient-key';
+  let calls = 0;
+  try {
+    for (const [provider, definition, destination] of [
+      [
+        'cloudflare-workers-ai',
+        workers.find(({ choice }) => choice.id === '@cf/openai/gpt-oss-120b')!,
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`,
+      ],
+      [
+        'cloudflare-ai-gateway',
+        gateway.find(({ choice }) => choice.id === 'claude-sonnet-5-5')!,
+        `https://gateway.ai.cloudflare.com/v1/${accountId}/owned-gateway/anthropic/v1/messages?beta=true`,
+      ],
+      [
+        'cloudflare-ai-gateway',
+        gateway.find(({ choice }) => choice.id === 'gpt-6.1-sol')!,
+        `https://gateway.ai.cloudflare.com/v1/${accountId}/owned-gateway/openai/responses`,
+      ],
+    ] as const) {
+      assert.ok(definition);
+      const { runtime, model } = await createPiModelRuntime({
+        provider,
+        method: 'api_key',
+        definition,
+        effort: 'medium',
+        read: async () => credential,
+      });
+      let observed: { url: string; redirect?: RequestRedirect; headers: Headers } | undefined;
+      const failure = await runtime.completeSimple(
+        model,
+        { messages: [{ role: 'user', content: 'Synthetic fixture', timestamp: 1 }] },
+        {
+          maxRetries: 5,
+          fetch: async (input, init) => {
+            calls++;
+            observed = {
+              url: String(input),
+              redirect: init?.redirect,
+              headers: new Headers(init?.headers),
+            };
+            return Response.json(
+              { error: { message: `Synthetic failure ${key}` } },
+              { status: 503 },
+            );
+          },
+        },
+      );
+      assert.ok(observed);
+      assert.equal(observed.url, destination);
+      assert.equal(observed.redirect, 'error');
+      assert.equal(
+        observed.headers.get(
+          provider === 'cloudflare-workers-ai' ? 'authorization' : 'cf-aig-authorization',
+        ),
+        `Bearer ${key}`,
+      );
+      if (provider === 'cloudflare-ai-gateway') {
+        assert.equal(observed.headers.get('authorization'), null);
+        assert.equal(observed.headers.get('x-api-key'), null);
+      }
+      assert.equal(failure.stopReason, 'error');
+      assert.match(failure.errorMessage ?? '', /Synthetic failure/);
+      assert.ok(!JSON.stringify(failure).includes(key));
+    }
+    assert.equal(calls, 3);
+    const missingAccount = await createPiModelRuntime({
+      provider: 'cloudflare-ai-gateway',
+      method: 'api_key',
+      definition: gateway[0],
+      effort: 'medium',
+      read: async () => ({ type: 'api_key', key }),
+    });
+    const refused = await missingAccount.runtime.completeSimple(
+      missingAccount.model,
+      { messages: [{ role: 'user', content: 'Synthetic fixture', timestamp: 1 }] },
+      {
+        fetch: async () => {
+          calls++;
+          return new Response(null, { status: 503 });
+        },
+      },
+    );
+    assert.equal(refused.stopReason, 'error');
+    assert.match(refused.errorMessage ?? '', /Cloudflare connection is unavailable/);
+    assert.equal(calls, 3);
+  } finally {
+    for (const [name, value] of Object.entries({
+      CLOUDFLARE_ACCOUNT_ID: previous.account,
+      CLOUDFLARE_GATEWAY_ID: previous.gateway,
+      CLOUDFLARE_API_KEY: previous.key,
+    })) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
 });
 
 test('cloud connections list only the account’s models and send each key only to its service', async () => {

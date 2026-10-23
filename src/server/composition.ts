@@ -9,7 +9,13 @@ import {
   type BrowserStep,
   type RuntimeObservation,
 } from '../ports/agent.ts';
-import { lightestEffort, modelSource, type ModelProvider } from '../shared/models.ts';
+import {
+  apiKeyModelProviders,
+  lightestEffort,
+  modelProviderInfo,
+  modelProviders,
+  modelSource,
+} from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
 import {
@@ -77,7 +83,7 @@ import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createOpenRouterTranscriptionProvider } from '../providers/openrouter/speech.ts';
 import { createImageAnalysis } from './images.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
-import { createModelService, endpointAddress } from './models.ts';
+import { createModelService, endpointAddress, modelKeyCredential } from './models.ts';
 import { createIntegrationBrowser } from './integration-browser.ts';
 import { createIntegrationIdentityCheckpoint } from './integration-identity.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
@@ -200,16 +206,14 @@ export function createDefaultAdapters(
     !env.NOD_FEEDBACK_RECEIPT_URL_PREFIX
   )
     throw new Error('Set NOD_FEEDBACK_RECEIPT_URL_PREFIX when using a custom feedback intake.');
-  const provider = env.LLM_PROVIDER || 'openai';
-  if (!['openai', 'anthropic', 'openrouter', 'compatible'].includes(provider))
-    throw new Error('LLM_PROVIDER must be openai, anthropic, openrouter or compatible.');
+  const provider = z.enum(modelProviders).parse(env.LLM_PROVIDER || 'openai');
   const endpoint =
     env.OPENAI_COMPATIBLE_BASE_URL && endpointAddress(env.OPENAI_COMPATIBLE_BASE_URL);
   if (env.OPENAI_COMPATIBLE_BASE_URL && !endpoint)
     throw new Error(
       'OPENAI_COMPATIBLE_BASE_URL must be a plain http or https address, such as http://localhost:11434/v1.',
     );
-  const model = env.LLM_MODEL || agentModels[provider as keyof typeof agentModels];
+  const model = env.LLM_MODEL || agentModels[provider];
   const keyStore = checkedKeyStore(
     pool,
     env.NOD_VAULT_KEY
@@ -232,16 +236,28 @@ export function createDefaultAdapters(
     backend: createPiModelBackend(),
     origin: publicOrigin,
     bootstrap: {
-      provider: provider as ModelProvider,
-      model,
+      provider,
+      model: env.LLM_MODEL || undefined,
       credentials: {
-        ...(env.OPENAI_API_KEY && { openai: { type: 'api_key', key: env.OPENAI_API_KEY } }),
-        ...(env.ANTHROPIC_API_KEY && {
-          anthropic: { type: 'api_key', key: env.ANTHROPIC_API_KEY },
-        }),
-        ...(env.OPENROUTER_API_KEY && {
-          openrouter: { type: 'api_key', key: env.OPENROUTER_API_KEY },
-        }),
+        ...Object.fromEntries(
+          apiKeyModelProviders.flatMap((id) => {
+            const key = env[modelProviderInfo[id].env]?.trim();
+            if (!key) return [];
+            return [
+              [
+                id,
+                modelKeyCredential(id, key, {
+                  region: env.AWS_REGION,
+                  url: env.AZURE_OPENAI_ENDPOINT,
+                  model: env.AZURE_OPENAI_MODEL,
+                  deployment: env.AZURE_OPENAI_DEPLOYMENT,
+                  accountId: env.CLOUDFLARE_ACCOUNT_ID,
+                  gatewayId: env.CLOUDFLARE_GATEWAY_ID,
+                }),
+              ],
+            ];
+          }),
+        ),
         ...(endpoint && {
           compatible: {
             type: 'endpoint',

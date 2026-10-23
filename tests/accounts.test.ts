@@ -964,6 +964,13 @@ describe('analytics privacy', () => {
           report?.({
             ...usage,
             id: randomUUID(),
+            provider: 'radius',
+            model: 'acme-private-acquisition-canary',
+            durationMs: 0,
+          });
+          report?.({
+            ...usage,
+            id: randomUUID(),
             provider: 'openai',
             model: 'gpt-6-sol',
             durationMs: 0,
@@ -1002,6 +1009,14 @@ describe('analytics privacy', () => {
         },
         {
           ...shared,
+          provider: 'radius',
+          model: 'custom',
+          input_tokens: 0,
+          output_tokens: 0,
+          pricing: 'unavailable',
+        },
+        {
+          ...shared,
           provider: 'openai',
           model: 'gpt-6-sol',
           input_tokens: 0,
@@ -1011,6 +1026,7 @@ describe('analytics privacy', () => {
         },
       ],
     );
+    assert.ok(!JSON.stringify(captured).includes('acme-private-acquisition-canary'));
   });
 });
 
@@ -1384,6 +1400,178 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       };
     };
   }
+
+  test('native provider connections keep owned credentials private and preserve the selected model', async (t) => {
+    const f = await fixture(t);
+    const { apiKeyModelProviders } = await import('../src/shared/models.ts');
+    const backend = {
+      ...f.backend,
+      catalog: (provider: import('../src/shared/models.ts').ModelProvider) =>
+        f.backend.catalog(provider, 'api_key'),
+    };
+    const owner = await f.create('fixture-provider-owner', backend);
+    const other = await f.create('fixture-provider-other', backend);
+    const app = Fastify();
+    owner.register(app);
+    t.after(() => app.close());
+    let original: import('../src/shared/models.ts').ModelSelection | null = null;
+    for (const provider of apiKeyModelProviders) {
+      const key = `fixture-private-${provider}-key`;
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/models/keys',
+        payload: {
+          provider,
+          key,
+          ...(provider === 'amazon-bedrock' ? { region: 'eu-west-1' } : {}),
+          ...(provider === 'azure'
+            ? {
+                url: 'https://fixture.openai.azure.com',
+                model: 'gpt-6.1-sol',
+                deployment: 'fixture-deployment',
+              }
+            : {}),
+          ...(provider.startsWith('cloudflare-')
+            ? {
+                accountId: 'ABCDEF0123456789ABCDEF0123456789',
+                ...(provider === 'cloudflare-ai-gateway' ? { gatewayId: 'fixture-gateway' } : {}),
+              }
+            : {}),
+        },
+      });
+      assert.equal(response.statusCode, 200, `${provider}: ${response.body}`);
+      assert.ok(!response.body.includes(key));
+      const connection = owner.view().connections.find((item) => item.provider === provider)!;
+      assert.ok(connection);
+      if (!original) original = owner.view().selection;
+      assert.deepEqual(owner.view().selection, original);
+      const choice = connection.models[0];
+      await assert.rejects(
+        other.select({
+          connectionId: connection.id,
+          modelId: choice.id,
+          effort: choice.efforts[0],
+        }),
+      );
+    }
+    assert.equal(owner.view().connections.length, apiKeyModelProviders.length);
+    assert.deepEqual(other.view(), { connections: [], selection: null });
+    const stored = JSON.stringify([
+      (await f.database.query('SELECT * FROM model_connections')).rows,
+      (await f.database.query('SELECT * FROM vault_app_grants')).rows,
+    ]);
+    assert.ok(!stored.includes('fixture-private-'));
+    const cloud = owner
+      .view()
+      .connections.find((item) => item.provider === 'cloudflare-ai-gateway')!;
+    const choice = cloud.models[0];
+    await owner.select({ connectionId: cloud.id, modelId: choice.id, effort: choice.efforts[0] });
+    const captured = await owner.resolve();
+    assert.deepEqual(await captured.read(), {
+      type: 'cloudflare',
+      key: 'fixture-private-cloudflare-ai-gateway-key',
+      accountId: 'abcdef0123456789abcdef0123456789',
+      gatewayId: 'fixture-gateway',
+    });
+    await owner.remove(cloud.id);
+    assert.equal(await captured.read(), undefined);
+  });
+
+  test('model setup chooses capable defaults, preserves explicit choices and requires valid cloud accounts', async (t) => {
+    const f = await fixture(t);
+    const backend = {
+      ...f.backend,
+      catalog: (provider: import('../src/shared/models.ts').ModelProvider) =>
+        f.backend.catalog(provider, 'api_key'),
+    };
+    const google = await f.create('fixture-google-default', backend);
+    await google.addKey('google', 'fixture-google-key');
+    assert.equal(google.view().selection?.modelId, 'gemini-3.8-flash');
+    assert.equal(google.view().selection?.effort, 'medium');
+    const chosen = google.view().selection!;
+    await google.addKey('mistral', 'fixture-mistral-key');
+    assert.deepEqual(google.view().selection, chosen);
+    const paidGoogle = await f.create('fixture-google-paid-choice', {
+      ...backend,
+      catalog: async () =>
+        (await backend.catalog('google')).filter(
+          (definition) => definition.choice.id === 'gemini-4-argon',
+        ),
+    });
+    const paidConnection = await paidGoogle.addKey('google', 'fixture-google-paid-key');
+    assert.equal(paidGoogle.view().selection, null);
+    assert.equal(paidGoogle.configured, false);
+    await paidGoogle.select({
+      connectionId: paidConnection,
+      modelId: 'gemini-4-argon',
+      effort: 'medium',
+    });
+    assert.equal(paidGoogle.configured, true);
+    assert.equal((await paidGoogle.resolve()).definition.choice.id, 'gemini-4-argon');
+    const bedrock = await f.create('fixture-bedrock-default', backend);
+    await bedrock.addKey('amazon-bedrock', 'fixture-bedrock-key', { region: 'eu-west-1' });
+    assert.equal(bedrock.view().selection, null);
+    const explicit = await f.create('fixture-explicit-default', backend, {
+      provider: 'google',
+      model: 'fixture-unavailable-model',
+      credentials: { google: { type: 'api_key', key: 'fixture-managed-key' } },
+    });
+    assert.equal(explicit.configured, false);
+    assert.equal(explicit.view().selection, null);
+    const fallbackBackend = {
+      ...backend,
+      catalog: async () =>
+        [
+          {
+            choice: {
+              id: 'fixture-small',
+              name: 'Small',
+              efforts: ['off'] as const,
+              images: false,
+              contextWindow: 8000,
+            },
+            spec: {},
+          },
+          {
+            choice: {
+              id: 'fixture-capable',
+              name: 'Capable',
+              efforts: ['low', 'high'] as const,
+              images: true,
+              contextWindow: 262144,
+            },
+            spec: {},
+          },
+        ].map((definition) => ({
+          ...definition,
+          choice: { ...definition.choice, efforts: [...definition.choice.efforts] },
+        })),
+    };
+    const fallback = await f.create('fixture-fallback-default', fallbackBackend);
+    await fallback.addKey('deepseek', 'fixture-fallback-key');
+    assert.equal(fallback.view().selection?.modelId, 'fixture-small');
+    assert.equal(fallback.view().selection?.effort, 'off');
+    const subscription = await f.create('fixture-subscription-default', {
+      ...backend,
+      signIn: stubSignIn(async () => subscriptionCredential()),
+    });
+    const signIn = await subscription.start('openai');
+    await subscription.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${signIn.attempt}&code=fixture`),
+    );
+    assert.equal(subscription.view().selection?.modelId, 'gpt-6-sol');
+    const count = google.view().connections.length;
+    for (const settings of [
+      {},
+      { accountId: 'not-an-account', gatewayId: 'fixture-gateway' },
+      { accountId: '0123456789abcdef0123456789abcdef' },
+      { accountId: '0123456789abcdef0123456789abcdef', gatewayId: '../other-gateway' },
+    ])
+      await assert.rejects(
+        google.addKey('cloudflare-ai-gateway', 'fixture-rejected-key', settings),
+      );
+    assert.equal(google.view().connections.length, count);
+  });
 
   test('image fallback uses owned connected models without changing the chat selection and reads current credentials', async (t) => {
     const f = await fixture(t);

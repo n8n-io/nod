@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { posthogConfig, type AnalyticsConfiguration } from '../shared/analytics.ts';
+import { apiKeyModelProviders } from '../shared/models.ts';
 
 import {
   analyticsEvent,
@@ -74,24 +75,19 @@ async function installationId(root: string, supplied?: string) {
     .toLowerCase();
 }
 
-const hostedProviders = {
-  openai: 'openai',
-  anthropic: 'anthropic',
-  openrouter: 'openrouter',
-  'amazon-bedrock': 'amazon-bedrock',
-  'google-vertex': 'google-vertex',
-  azure: 'azure',
-  typesafe: 'typesafe',
-} as const;
+const hostedProvider = z.enum([...apiKeyModelProviders, 'typesafe']);
 
 export function analyticsModel(provider: string, model?: string) {
-  const hosted = Object.hasOwn(hostedProviders, provider)
-    ? hostedProviders[provider as keyof typeof hostedProviders]
-    : undefined;
+  const hosted = hostedProvider.safeParse(provider).data;
   return {
     provider: hosted ?? (provider === 'compatible' ? ('compatible' as const) : ('other' as const)),
     ...(model
-      ? { model: hosted && /^[a-z0-9][a-z0-9._:/-]{0,119}$/.test(model) ? model : 'custom' }
+      ? {
+          model:
+            hosted && hosted !== 'radius' && /^[a-z0-9][a-z0-9._:/-]{0,119}$/.test(model)
+              ? model
+              : 'custom',
+        }
       : {}),
   };
 }

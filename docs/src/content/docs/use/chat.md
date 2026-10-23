@@ -92,7 +92,7 @@ You can also ask nod to change supported settings from any channel. For example,
 
 Hover over a link in one of nod's replies, or focus it with the keyboard, to see its full address. Select the address to open the page, or press Enter on the focused link. Press Escape to dismiss the address.
 
-Under a reply, nod lists the linked pages that publish a preview image, one row per page, in the order the links appear. Each row shows the link text, the page title when the page has one, and the full address as written in the reply. Hovering or focusing a link highlights its row, and hovering or focusing a row highlights its link. Rows appear as their images load. The first five rows show; select **Show more** for the rest. Links to pages without a preview image get no row, and links nod recognises as sign-in, Vault or payment pages are never previewed.
+Under a reply, nod lists the linked pages that publish a preview image, one row per page, in the order the links appear. Each row keeps the link text as its title and shows the full address as written in the reply. If the link text is just the address, the row uses the public page title when available. Private pages can publish a generic website title, so previews never add it beneath a named link. Hovering or focusing a link highlights its row, and hovering or focusing a row highlights its link. Rows appear as their images load. The first five rows show; select **Show more** for the rest. Links to pages without a preview image get no row, and links nod recognises as sign-in, Vault or payment pages are never previewed.
 
 When a video page offers a player, such as YouTube or Vimeo, select the play button on its row to watch it in the chat. Your browser doesn't load the player until you select play.
 
