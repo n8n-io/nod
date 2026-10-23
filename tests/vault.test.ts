@@ -5304,6 +5304,8 @@ async function mount(Component,arrived='forward') {
   await settle();
 }
 const connection={id:'fixture-model',provider:'anthropic',method:'api_key',status:'connected',label:'Fixture model',managed:false,models:[{id:'fixture-model-name',name:'Fixture',efforts:['off'],images:false,contextWindow:32000}]};
+let keyResponse=connection;
+const keyRequests=[];
 let models={connections:[],selection:null};
 let failKey=true;
 let select;
@@ -5389,8 +5391,9 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
   if(path==='/api/onboarding/suggestions')return Response.json({ok:true});
   if(path==='/api/models')return Response.json(models);
   if(path==='/api/models/keys'){
+    keyRequests.push(body);
     if(failKey)return Response.json({error:'Fixture key rejected'},{status:503});
-    models={connections:[connection],selection:null};
+    models={connections:[keyResponse],selection:null};
     return Response.json(models);
   }
   if(path==='/api/models/selection')return new Promise(resolve=>{select=()=>{models={...models,selection:body};resolve(Response.json(models));};});
@@ -5455,6 +5458,60 @@ await waitFor(canContinue);
 assert.equal(advances,0,'a finished sign-in waits for Continue');
 await click('Continue');
 assert.equal(advances,1);
+select=undefined;
+models={connections:[{...connection,provider:'openai',method:'subscription',models:['gpt-6.1-sol','gpt-6-sol'].map(id=>({...connection.models[0],id,efforts:['high']}))}],selection:null};
+await mount(Brain,'back');
+await waitFor(()=>select);
+await act(async()=>select());
+await waitFor(canContinue);
+assert.equal(models.selection.modelId,'gpt-6-sol','ChatGPT keeps its subscription-specific recommendation');
+const editInput=async(input,value)=>{
+  assert.ok(input);
+  await act(async()=>{
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+  });
+};
+const labeledInput=label=>[...document.querySelectorAll('label')].find(item=>item.querySelector('.field-label')?.textContent===label)?.querySelector('input');
+for(const scenario of [
+  {id:'cloudflare-workers-ai',search:'Cloudflare Workers',name:'Cloudflare Workers AI',fields:{accountId:'a'.repeat(32)}},
+  {id:'cloudflare-ai-gateway',search:'Cloudflare AI Gateway',name:'Cloudflare AI Gateway',fields:{accountId:'b'.repeat(32),gatewayId:'synthetic-gateway'}},
+  {id:'google',name:'Google Gemini',model:'gemini-3.8-flash',fields:{},efforts:['low','medium','high'],effort:'medium'},
+  {id:'google',name:'Google Gemini',model:'gemini-4-argon',fields:{},efforts:['low','medium','high'],effort:'medium',manual:true},
+  {id:'baseten',search:'Baseten',name:'Baseten',fields:{},saved:true},
+  {id:'amazon-bedrock',search:'Amazon Bedrock',name:'Amazon Bedrock',fields:{region:'eu-west-1'},manual:true},
+]){
+  models={connections:[],selection:null};
+  select=undefined;
+  keyResponse={...connection,provider:scenario.id,models:[{...connection.models[0],id:scenario.model??connection.models[0].id,efforts:scenario.efforts??['off']}]};
+  if(scenario.manual)keyResponse.models.push({...keyResponse.models[0],id:'fixture-second-model'});
+  await mount(Brain,'back');
+  if(scenario.search){
+    await click('More providers');
+    await editInput(document.querySelector('[aria-label="Search providers"]'),scenario.search);
+  }
+  await provider(scenario.name);
+  await waitFor(()=>document.querySelector('#ob-brain-key-'+scenario.id));
+  for(const [name,value] of Object.entries(scenario.fields)){
+    const labels={accountId:'Account ID',gatewayId:'Gateway ID',region:'Region'};
+    await editInput(labeledInput(labels[name]),value);
+  }
+  await editInput(document.querySelector('#ob-brain-key-'+scenario.id),'synthetic-model-key');
+  await click(scenario.saved?'Save key':'Connect');
+  assert.deepEqual(keyRequests.at(-1),{provider:scenario.id,key:'synthetic-model-key',...scenario.fields});
+  if(scenario.manual){
+    await settle(50);
+    assert.equal(select,undefined,'A provider without a safe default requires an explicit model choice');
+    assert.equal(canContinue(),false);
+    assert.ok(button('Choose a model')&&!button('Choose a model').disabled,'Manual choice remains available when the recommended model is missing');
+  }else{
+    await waitFor(()=>select);
+    assert.equal(canContinue(),false,'saving a provider still waits for model selection');
+    await act(async()=>select());
+    await waitFor(canContinue);
+    assert.equal(models.selection.effort,scenario.effort??'off');
+  }
+}
 disconnectPending=true;
 await mount(Email);
 await waitFor(()=>button('Retry disconnection'));

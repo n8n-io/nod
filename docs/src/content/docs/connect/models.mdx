@@ -1,6 +1,6 @@
 ---
 title: Models
-description: Connect OpenAI, Anthropic, OpenRouter, Amazon Bedrock, Google Vertex AI, Azure OpenAI, a ChatGPT plan or a local model, choose the model nod uses, and see where your keys are kept.
+description: Connect a model service or local server, choose capable defaults, and manage the accounts nod uses.
 sidebar:
   order: 1
 ---
@@ -13,26 +13,36 @@ Your requests go to the service you connect. Paid providers bill you for use. To
 
 ## Supported connections
 
-| Service           | How you connect                        | Default model                |
-| ----------------- | -------------------------------------- | ---------------------------- |
-| OpenAI            | API key                                | GPT-6.1 Sol, high effort     |
-| ChatGPT           | ChatGPT Plus or Pro, in local nod only | GPT-6 Sol, high effort       |
-| Anthropic         | API key                                | Claude Opus 5.5, high effort |
-| OpenRouter        | API key, or sign in with your browser  | GPT-6.1 Sol, high effort     |
-| Amazon Bedrock    | API key and Region                     | You choose                   |
-| Google Vertex AI  | API key                                | You choose                   |
-| Azure OpenAI      | Endpoint, deployment and API key       | The deployment's model       |
-| OpenAI-compatible | Server address, in local nod only      | You choose                   |
+Search the provider list to connect any of these services. Regional and token-plan entries use the key issued for that particular service.
 
-You can switch to any other model the service offers.
+| Connection                         | Setup                                                     | Initial choice                           |
+| ---------------------------------- | --------------------------------------------------------- | ---------------------------------------- |
+| Google Gemini                      | [AI Studio API key](https://aistudio.google.com/api-keys) | Gemini 3.8 Flash, medium effort          |
+| OpenAI / ChatGPT                   | API key or existing ChatGPT sign-in                       | GPT-6.1 Sol / GPT-6 Sol, high effort     |
+| Anthropic                          | API key                                                   | Claude Opus 5.5, high effort             |
+| OpenRouter                         | API key or browser sign-in                                | GPT-6.1 Sol, high effort                 |
+| Google Vertex AI                   | Vertex API key                                            | Gemini 4 Argon, medium effort            |
+| Amazon Bedrock                     | API key and Region                                        | You choose the model and routing profile |
+| Azure OpenAI                       | Endpoint, deployment, model, and API key                  | The deployment's model                   |
+| Cloudflare Workers AI / AI Gateway | Token, account ID, and gateway ID for AI Gateway          | Kimi K2.7 Code / GPT-6.1 Sol             |
+| Other named providers              | Service-specific API key                                  | A capable model from that connection     |
+| OpenAI-compatible                  | Server address and optional key                           | A model offered by the server            |
 
-:::note[Why there's no Claude subscription]
-Anthropic's [authentication conditions](https://code.claude.com/docs/en/legal-and-compliance) don't let a Claude plan supply model access to nod. Use an Anthropic API key or OpenRouter for Claude models.
+Other providers include Ant Ling, Baseten, Cerebras, DeepSeek, Fireworks AI, Groq, Hugging Face, Kimi Coding China, Meta, MiniMax, Mistral, Moonshot AI, NVIDIA, OpenCode Zen and Go, Qwen Token Plan, Radius, Together AI, Vercel AI Gateway, xAI, Xiaomi MiMo and token plans, and Z.AI. The picker includes their supported regional variants.
+
+When an account model list is available, nod loads it. For services with only a bundled catalog, nod says **Key saved** and checks access on first use. Neither a catalog nor a saved key proves that your account has credit or permission to run every listed model.
+
+You can change the initial choice. nod preserves a working choice when you add another connection. If a preferred model is missing, nod prefers a model that supports images and reasoning from the same connection. Bedrock keeps its explicit model choice because profiles can change where requests are processed.
+
+:::note[Google free access]
+Create a Gemini API key with your Google account in AI Studio. Gemini 3.8 Flash has a [free tier](https://ai.google.dev/gemini-api/docs/pricing), subject to project quotas and availability; Gemini 4 Argon needs paid API access. The free tier has different data-use terms, so review Google's terms before sending private material.
 :::
+
+Google does not permit third-party assistants to reuse [Gemini CLI OAuth](https://geminicli.com/docs/resources/faq/). A Gemini app subscription is not a nod sign-in option. Anthropic's [authentication conditions](https://code.claude.com/docs/en/legal-and-compliance) also require an API connection for Claude in nod.
 
 ## Connect a service
 
-Select **Settings** at the bottom of the sidebar, then **Models**. Onboarding shows the same options before your first chat.
+Select **Settings** at the bottom of the sidebar, then **Models**. Search for a service or select a common provider. Onboarding shows the same options before your first chat.
 
 If a connection stops working, its row in **Settings > Models** says what it needs: **Reconnect** a sign-in, or remove a key or server connection and add it again. When it's the connection you selected, chat links to that screen.
 
@@ -86,6 +96,36 @@ A ChatGPT connection made with an earlier version of nod needs one reconnect in 
 </Steps>
 
 nod lists the OpenRouter models that support text and tools.
+
+</TabItem>
+<TabItem label="Google Gemini">
+
+<Steps>
+
+1. Select **Google Gemini**, then open the link to create a key in AI Studio.
+2. Copy the key into **Google Gemini API key** and select **Save connection**.
+3. Keep Gemini 3.8 Flash for a capable starting choice, or choose another listed model.
+
+</Steps>
+
+The key is separate from Google identity sign-in. Free-tier quotas can limit long tasks; inspect your project's limits in AI Studio if Google reports that a quota is exhausted.
+
+</TabItem>
+<TabItem label="Other services">
+
+<Steps>
+
+1. Search for your provider in **Models**.
+2. Open its key page if you need a key, then paste the key into the private field.
+3. Select **Save key** or **Save connection**, then use the recommended model or choose another.
+
+</Steps>
+
+For Cloudflare, enter the **Account ID**. AI Gateway also needs the **Gateway ID**, with unified billing or upstream credentials already configured in Cloudflare. Each saved connection keeps its own account and gateway. For a regional or token-plan provider, use the matching region and plan's key.
+
+Workers AI tokens need [Workers AI Read and Edit](https://developers.cloudflare.com/workers-ai/get-started/rest-api/) permissions. AI Gateway tokens need [AI Gateway Read](https://developers.cloudflare.com/api/resources/ai_gateway/methods/get/) to check the connection and [AI Gateway Run](https://developers.cloudflare.com/ai-gateway/configuration/authentication/) to run models. Cloudflare's **Create authentication token** action grants Run; add Read before connecting it here.
+
+Kimi Coding China uses Kimi's China endpoint. Its key must be valid for that region; this connection does not support the international Kimi Coding endpoint.
 
 </TabItem>
 <TabItem label="Amazon Bedrock">
@@ -178,16 +218,11 @@ Two checks can use a decision model: reading whether your reply to a confirmatio
 
 Pick a capable model if nod acts for you: the [trust check](/trust/approvals/) runs on it. In our [decision evals](/contribute/evals/#quoted-reasons-on-23-october-2026), GPT-6.1 Sol, Claude Opus 5.5 and Claude Sonnet 5.5 approved nothing they shouldn't have, while Claude Haiku 5.5 let a few unlabelled buttons and one delete through.
 
-| Current connection   | Decision checks                                        |
-| -------------------- | ------------------------------------------------------ |
-| OpenAI API key       | GPT Decisions (`gpt-6-luna`) with the same key         |
-| OpenRouter           | Jev (`typesafe/jev-1.13`) with the same OpenRouter key |
-| Anthropic directly   | Your selected model                                    |
-| ChatGPT subscription | Your selected model                                    |
-| Amazon Bedrock       | Your selected model                                    |
-| Google Vertex AI     | Your selected model                                    |
-| Azure OpenAI         | Your selected model                                    |
-| OpenAI-compatible    | Your selected model                                    |
+| Current connection     | Decision checks                                        |
+| ---------------------- | ------------------------------------------------------ |
+| OpenAI API key         | GPT Decisions (`gpt-6-luna`) with the same key         |
+| OpenRouter             | Jev (`typesafe/jev-1.13`) with the same OpenRouter key |
+| Every other connection | Your selected model                                    |
 
 These calls are billed through the connection that runs them. GPT Decisions is paid API use, separate from a ChatGPT subscription. OpenRouter sends the checks to TypeSafe, even when you selected a chat model from another provider. See [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) and [Jev on OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/).
 
@@ -203,22 +238,65 @@ Spoken replies need an OpenAI API key in server settings (`OPENAI_API_KEY`). An 
 
 In a source install, you can add connections in `.env` instead. They show **Server settings** in **Models**, and you remove them from `.env`, not from the app.
 
-| Setting                      | What it does                                                                                                |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `OPENAI_API_KEY`             | Adds an OpenAI connection. Also enables voice.                                                              |
-| `ANTHROPIC_API_KEY`          | Adds an Anthropic connection.                                                                               |
-| `OPENROUTER_API_KEY`         | Adds an OpenRouter connection.                                                                              |
-| `OPENAI_COMPATIBLE_BASE_URL` | Adds an [OpenAI-compatible server](/connect/local-models/), such as `http://localhost:11434/v1` for Ollama. |
-| `OPENAI_COMPATIBLE_API_KEY`  | The key for that server, if it needs one.                                                                   |
-| `LLM_PROVIDER`               | Sets the first choice: `openai` (default), `anthropic`, `openrouter` or `compatible`.                       |
-| `LLM_MODEL`                  | Sets the first model. Leave it empty for the service default, or the server's first model.                  |
+Set `LLM_PROVIDER` to a provider ID below and add its key variable. Leave `LLM_MODEL` empty for the service's recommended model, or set an explicit model ID. A model you choose in the app takes priority.
+
+| Provider ID                  | Service                     | Key variable                         |
+| ---------------------------- | --------------------------- | ------------------------------------ |
+| `openai`                     | OpenAI                      | `OPENAI_API_KEY`                     |
+| `anthropic`                  | Anthropic                   | `ANTHROPIC_API_KEY`                  |
+| `google`                     | Google Gemini               | `GEMINI_API_KEY`                     |
+| `openrouter`                 | OpenRouter                  | `OPENROUTER_API_KEY`                 |
+| `amazon-bedrock`             | Amazon Bedrock              | `AWS_BEARER_TOKEN_BEDROCK`           |
+| `google-vertex`              | Google Vertex AI            | `GOOGLE_CLOUD_API_KEY`               |
+| `azure`                      | Azure OpenAI                | `AZURE_OPENAI_API_KEY`               |
+| `ant-ling`                   | Ant Ling                    | `ANT_LING_API_KEY`                   |
+| `baseten`                    | Baseten                     | `BASETEN_API_KEY`                    |
+| `cerebras`                   | Cerebras                    | `CEREBRAS_API_KEY`                   |
+| `cloudflare-workers-ai`      | Cloudflare Workers AI       | `CLOUDFLARE_WORKERS_AI_API_KEY`      |
+| `cloudflare-ai-gateway`      | Cloudflare AI Gateway       | `CLOUDFLARE_AI_GATEWAY_API_KEY`      |
+| `deepseek`                   | DeepSeek                    | `DEEPSEEK_API_KEY`                   |
+| `fireworks`                  | Fireworks AI                | `FIREWORKS_API_KEY`                  |
+| `groq`                       | Groq                        | `GROQ_API_KEY`                       |
+| `huggingface`                | Hugging Face                | `HF_TOKEN`                           |
+| `kimi-coding`                | Kimi Coding China           | `KIMI_API_KEY`                       |
+| `meta`                       | Meta                        | `META_API_KEY`                       |
+| `minimax`                    | MiniMax                     | `MINIMAX_API_KEY`                    |
+| `minimax-cn`                 | MiniMax China               | `MINIMAX_CN_API_KEY`                 |
+| `mistral`                    | Mistral                     | `MISTRAL_API_KEY`                    |
+| `moonshotai`                 | Moonshot AI                 | `MOONSHOT_API_KEY`                   |
+| `moonshotai-cn`              | Moonshot AI China           | `MOONSHOT_CN_API_KEY`                |
+| `nvidia`                     | NVIDIA                      | `NVIDIA_API_KEY`                     |
+| `opencode`                   | OpenCode Zen                | `OPENCODE_API_KEY`                   |
+| `opencode-go`                | OpenCode Go                 | `OPENCODE_GO_API_KEY`                |
+| `qwen-token-plan`            | Qwen Token Plan             | `QWEN_TOKEN_PLAN_API_KEY`            |
+| `qwen-token-plan-cn`         | Qwen Token Plan China       | `QWEN_TOKEN_PLAN_CN_API_KEY`         |
+| `qwen-token-plan-individual` | Qwen Token Plan Individual  | `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY` |
+| `radius`                     | Radius                      | `RADIUS_API_KEY`                     |
+| `together`                   | Together AI                 | `TOGETHER_API_KEY`                   |
+| `vercel-ai-gateway`          | Vercel AI Gateway           | `AI_GATEWAY_API_KEY`                 |
+| `xai`                        | xAI                         | `XAI_API_KEY`                        |
+| `xiaomi`                     | Xiaomi MiMo                 | `XIAOMI_API_KEY`                     |
+| `xiaomi-token-plan-ams`      | Xiaomi Token Plan Amsterdam | `XIAOMI_TOKEN_PLAN_AMS_API_KEY`      |
+| `xiaomi-token-plan-cn`       | Xiaomi Token Plan China     | `XIAOMI_TOKEN_PLAN_CN_API_KEY`       |
+| `xiaomi-token-plan-sgp`      | Xiaomi Token Plan Singapore | `XIAOMI_TOKEN_PLAN_SGP_API_KEY`      |
+| `zai`                        | Z.AI                        | `ZAI_API_KEY`                        |
+| `zai-coding-cn`              | Z.AI Coding China           | `ZAI_CODING_CN_API_KEY`              |
+
+Additional settings:
+
+| Service           | Settings                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------- |
+| Amazon Bedrock    | `AWS_REGION`; choose `LLM_MODEL` explicitly if you want a server-selected profile                 |
+| Azure OpenAI      | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_MODEL`, `AZURE_OPENAI_DEPLOYMENT`                          |
+| Cloudflare        | `CLOUDFLARE_ACCOUNT_ID`; AI Gateway also needs `CLOUDFLARE_GATEWAY_ID`                            |
+| OpenAI-compatible | `LLM_PROVIDER=compatible`, `OPENAI_COMPATIBLE_BASE_URL`, and optional `OPENAI_COMPATIBLE_API_KEY` |
 
 ```sh title=".env"
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=<your-key>
+LLM_PROVIDER=google
+GEMINI_API_KEY=<your-key>
 ```
 
-A model you choose in the app takes priority over `LLM_PROVIDER` and `LLM_MODEL`. Restart nod after you edit `.env`. Amazon Bedrock, Google Vertex AI and Azure OpenAI connect in **Models** only.
+Restart nod after editing `.env`. Regional providers use separate key variables so one region's key isn't automatically sent to another region. These connections don't inherit host-wide AWS profiles or Google service account files.
 
 ## Where your keys go
 

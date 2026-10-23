@@ -15,6 +15,51 @@
 .model-services {
   border-top: 1px solid var(--border);
 }
+.model-provider-search {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.model-provider-search > .search-field {
+  flex: 1 1 220px;
+}
+.model-provider-options {
+  max-height: 360px;
+  overflow-y: auto;
+  border-block: 1px solid var(--border);
+}
+.model-provider-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px;
+  border: 0;
+  border-radius: var(--menu-item-radius);
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-control);
+  text-align: left;
+  cursor: pointer;
+}
+.model-provider-option > span:nth-child(2) {
+  flex: 1;
+}
+.model-provider-option:hover:not(:disabled) {
+  background: var(--nav-hover);
+}
+.model-provider-option:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.model-provider-option:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .model-service {
   padding: 16px 0;
   border-bottom: 1px solid var(--border);
@@ -77,11 +122,17 @@
 .model-provider-logo.amazon-bedrock {
   mask-image: url('/logos/amazon-bedrock.svg');
 }
+.model-provider-logo.google,
 .model-provider-logo.google-vertex {
   mask-image: url('/logos/google-vertex.svg');
 }
 .model-provider-logo.azure {
   mask-image: url('/logos/azure.svg');
+}
+.model-provider-logo.generic {
+  display: grid;
+  place-items: center;
+  background: none;
 }
 .model-key-form {
   display: grid;
@@ -178,7 +229,8 @@
   margin-top: 16px;
 }
 .model-footnote a,
-.model-sign-in a {
+.model-sign-in a,
+.model-key-note a {
   color: var(--foreground);
   text-decoration: underline;
   text-underline-offset: 3px;

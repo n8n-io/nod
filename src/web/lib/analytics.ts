@@ -1,5 +1,6 @@
 import type { CaptureResult, PostHog } from 'posthog-js';
 import { posthogConfig, type AnalyticsConfiguration } from '../../shared/analytics';
+import { modelProviders, type ModelProvider } from '../../shared/models';
 import { desktopSettingsAvailable } from './desktop';
 import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
 
@@ -38,15 +39,7 @@ type AnalyticsEvents = {
     result: 'opened' | 'needs_access_setup';
   };
   nod_model_selected: {
-    provider:
-      | 'openai'
-      | 'anthropic'
-      | 'openrouter'
-      | 'amazon-bedrock'
-      | 'google-vertex'
-      | 'azure'
-      | 'compatible'
-      | 'other';
+    provider: ModelProvider | 'other';
     entry: 'settings' | 'onboarding';
     recommended: boolean;
   };
@@ -104,16 +97,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     result: ['opened', 'needs_access_setup'],
   },
   nod_model_selected: {
-    provider: [
-      'openai',
-      'anthropic',
-      'openrouter',
-      'amazon-bedrock',
-      'google-vertex',
-      'azure',
-      'compatible',
-      'other',
-    ],
+    provider: [...modelProviders, 'other'],
     entry: ['settings', 'onboarding'],
     recommended: [true, false],
   },

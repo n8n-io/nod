@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { modelProviders } from '../shared/models.ts';
 
 export const analyticsVersion = z
   .string()
@@ -211,28 +212,10 @@ export const analyticsTool = z.enum([
   'web',
   'other',
 ]);
-export const analyticsModelProvider = z.enum([
-  'openai',
-  'anthropic',
-  'openrouter',
-  'amazon-bedrock',
-  'google-vertex',
-  'azure',
-  'typesafe',
-  'compatible',
-  'other',
-]);
+export const analyticsModelProvider = z.enum([...modelProviders, 'typesafe', 'other']);
 const analyticsModel = z.string().regex(/^[a-z0-9][a-z0-9._:/-]{0,119}$/);
 const modelConnectionProperties = z.object({
-  provider: z.enum([
-    'openai',
-    'anthropic',
-    'openrouter',
-    'amazon-bedrock',
-    'google-vertex',
-    'azure',
-    'compatible',
-  ]),
+  provider: z.enum(modelProviders),
   method: z.enum(['api_key', 'subscription', 'oauth']),
 });
 const turnProperties = z.object({

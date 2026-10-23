@@ -2,37 +2,6 @@
   margin-top: 0;
   margin-bottom: auto;
 }
-.ob-brain-logo {
-  display: block;
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  background: currentColor;
-  mask-size: contain;
-  mask-position: center;
-  mask-repeat: no-repeat;
-}
-.ob-brain-logo.openai {
-  mask-image: url('/logos/chatgpt.svg');
-}
-.ob-brain-logo.anthropic {
-  mask-image: url('/logos/anthropic.svg');
-}
-.ob-brain-logo.openrouter {
-  mask-image: url('/logos/openrouter.svg');
-}
-.ob-brain-logo.compatible {
-  mask-image: url('/logos/server.svg');
-}
-.ob-brain-logo.amazon-bedrock {
-  mask-image: url('/logos/amazon-bedrock.svg');
-}
-.ob-brain-logo.google-vertex {
-  mask-image: url('/logos/google-vertex.svg');
-}
-.ob-brain-logo.azure {
-  mask-image: url('/logos/azure.svg');
-}
 .ob-brain-status {
   display: flex;
   flex-wrap: wrap;
@@ -175,6 +144,18 @@
   margin: 0;
   padding: 4px;
   list-style: none;
+}
+.ob-brain-search {
+  padding: 12px 16px 8px;
+}
+.ob-brain-providers.expanded {
+  max-height: 320px;
+  overflow-y: auto;
+}
+.ob-brain-empty {
+  padding: 16px 12px;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
 }
 .ob-brain-providers > li {
   position: relative;
