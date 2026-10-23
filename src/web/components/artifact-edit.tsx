@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, apiResponse, errorMessage } from '../lib/api';
 import { ownedArtifactUrl } from '../lib/attachment-url';
 import type { Artifact } from '../../shared/contracts';
@@ -10,9 +10,13 @@ export function ArtifactEdit({ item, onClose }: { item: ImagePreview; onClose():
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(true);
+  const editor = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     void load();
   }, [item.id]);
+  useEffect(() => {
+    if (error && !busy) editor.current?.focus({ preventScroll: true });
+  }, [error, busy]);
   async function load() {
     setBusy(true);
     setError('');
@@ -68,7 +72,9 @@ export function ArtifactEdit({ item, onClose }: { item: ImagePreview; onClose():
         </Button>
       ) : (
         <textarea
+          ref={editor}
           autoFocus
+          disabled={busy}
           className="input"
           aria-label="File text"
           value={text}
@@ -101,7 +107,7 @@ export function ArtifactExport({ files }: { files: ImagePreview[] }) {
       );
       if (!items.length || items.reduce((sum, file) => sum + file.size, 0) > 90 * 1024 * 1024)
         throw new Error('Choose files with a total size of 90 MB or less.');
-      const entries: Record<string, Uint8Array> = {};
+      const entries: Record<string, Uint8Array> = Object.create(null);
       let total = 0;
       for (const item of items) {
         const response = await apiResponse(item.url);
@@ -135,7 +141,7 @@ export function ArtifactExport({ files }: { files: ImagePreview[] }) {
     <details
       className="artifact-export"
       onKeyDown={(event) => {
-        if (event.key === 'Escape') {
+        if (event.key === 'Escape' && event.currentTarget.open) {
           event.preventDefault();
           event.stopPropagation();
           event.currentTarget.open = false;

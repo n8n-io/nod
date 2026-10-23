@@ -43,7 +43,12 @@ export function ScheduleRow({
           <InlineName
             value={schedule.title}
             label="schedule title"
-            save={(title) => change.apply({ title }, 'Title updated.', { title: schedule.title })}
+            save={async (title) => {
+              const error = await change.apply({ title }, 'Title updated.', {
+                title: schedule.title,
+              });
+              if (error) throw new Error(error);
+            }}
           />
         </h2>
         <span className="saved-plan-status">

@@ -116,17 +116,22 @@
   flex: none;
   align-items: center;
   gap: 12px;
-  height: 56px;
-  padding: 0 8px 0 16px;
+  height: auto;
+  min-height: 56px;
+  flex-wrap: wrap;
+  padding: 8px 8px 8px 16px;
   border-bottom: 1px solid var(--border);
 }
 
 :root[data-desktop='true'] .artifact-drawer-header {
-  height: var(--desktop-titlebar-height);
+  height: auto;
+  min-height: var(--desktop-titlebar-height);
   -webkit-app-region: drag;
 }
 
-:root[data-desktop='true'] .artifact-drawer-header :is(button, a, .artifact-drawer-nav span) {
+:root[data-desktop='true']
+  .artifact-drawer-header
+  :is(button, a, select, summary, input, [draggable], .artifact-drawer-nav span) {
   -webkit-app-region: no-drag;
 }
 
@@ -138,7 +143,7 @@
 .artifact-drawer-title {
   display: grid;
   flex: 1;
-  min-width: 0;
+  min-width: 100px;
 }
 
 .artifact-drawer-title h2,
@@ -165,6 +170,10 @@
   flex: none;
   align-items: center;
   gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .artifact-drawer-nav {

@@ -434,15 +434,11 @@ export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity
       (a, b) =>
         order.indexOf(a.status) - order.indexOf(b.status) || b.updatedAt.localeCompare(a.updatedAt),
     );
-  if (interacting)
-    open.sort((a, b) => {
-      const position = (id: string) => {
-        const index = stableOrder.current.indexOf(id);
-        return index < 0 ? Number.MAX_SAFE_INTEGER : index;
-      };
-      return position(a.id) - position(b.id);
-    });
-  else stableOrder.current = open.map((task) => task.id);
+  if (interacting) {
+    for (const task of open)
+      if (!stableOrder.current.includes(task.id)) stableOrder.current.push(task.id);
+    open.sort((a, b) => stableOrder.current.indexOf(a.id) - stableOrder.current.indexOf(b.id));
+  } else stableOrder.current = open.map((task) => task.id);
   const upcoming = (schedules.data ?? [])
     .filter((schedule) => schedule.enabled && schedule.nextRun)
     .sort((a, b) => a.nextRun!.localeCompare(b.nextRun!) || a.id.localeCompare(b.id));

@@ -15,7 +15,7 @@
   display: block;
 }
 
-.attachment-image-gallery.is-single:has(> .is-image) {
+.attachment-image-gallery.is-single:has(> .attachment-image-item > .is-image) {
   width: fit-content;
   max-width: min(100%, 320px);
 }
@@ -33,7 +33,7 @@
   cursor: zoom-in;
 }
 
-.attachment-image-gallery.is-single:has(> .is-sticker) {
+.attachment-image-gallery.is-single:has(> .attachment-image-item > .is-sticker) {
   width: 180px;
 }
 

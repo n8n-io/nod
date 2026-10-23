@@ -825,6 +825,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         .parse(request.body);
       const next = updateValue(previous, input);
       validateTiming(next, false);
+      if (next.kind === 'once' && next.runAt && new Date(next.runAt) <= now())
+        return { nextRun: null };
       return {
         nextRun:
           nextOccurrence({

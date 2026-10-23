@@ -12,6 +12,7 @@ export function InlineName({
   save(value: string): Promise<void>;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
+  const field = useRef<HTMLInputElement>(null);
   const wasEditing = useRef(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -21,6 +22,9 @@ export function InlineName({
     if (!editing && wasEditing.current) trigger.current?.focus({ preventScroll: true });
     wasEditing.current = editing;
   }, [editing]);
+  useEffect(() => {
+    if (error && !busy) field.current?.focus({ preventScroll: true });
+  }, [error, busy]);
   if (!editing)
     return (
       <button
@@ -60,6 +64,7 @@ export function InlineName({
       }}
     >
       <Input
+        ref={field}
         autoFocus
         value={draft}
         maxLength={160}

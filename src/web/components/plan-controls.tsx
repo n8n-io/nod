@@ -205,7 +205,9 @@ export function useDirectChange(id: string) {
           : {}),
       });
     } catch (cause) {
-      showToast({ id: Date.now(), text: errorMessage(cause), failed: true });
+      const error = errorMessage(cause);
+      showToast({ id: Date.now(), text: error, failed: true });
+      return error;
     } finally {
       setBusy(false);
     }
@@ -357,7 +359,15 @@ export function ScheduleTiming({
       className="schedule-timing"
       aria-label={`Timing for ${schedule.title}`}
       onKeyDown={(event) => {
-        if (event.key === 'Escape' && !change.busy) {
+        if (
+          event.key === 'Escape' &&
+          !event.defaultPrevented &&
+          !change.busy &&
+          !(
+            event.target instanceof Element &&
+            event.target.closest('[data-radix-popper-content-wrapper]')
+          )
+        ) {
           event.preventDefault();
           event.stopPropagation();
           setDraft(initial);
@@ -382,10 +392,14 @@ export function ScheduleTiming({
                 }),
           };
           setError('');
-          void change.apply(body, `Updated ${schedule.title}.`, {
-            timeZone: schedule.timeZone,
-            ...(schedule.kind === 'once' ? { runAt: schedule.runAt } : { cron: schedule.cron }),
-          });
+          void change
+            .apply(body, `Updated ${schedule.title}.`, {
+              timeZone: schedule.timeZone,
+              ...(schedule.kind === 'once' ? { runAt: schedule.runAt } : { cron: schedule.cron }),
+            })
+            .then((error) => {
+              if (error) setError(error);
+            });
         } catch (cause) {
           setError(errorMessage(cause));
         }

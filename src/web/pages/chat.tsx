@@ -926,6 +926,7 @@ export function Chat({
   }
   const chatActions = (
     <>
+      <ChatTools files={files} tasks={state.tasks} />
       {import.meta.env?.DEV === true && state.configuration.conversationResetEnabled && (
         <Button
           type="button"
@@ -949,7 +950,6 @@ export function Chat({
   return (
     <PrivateEntryWorkspace key={`${ownerId}.${threadId}`} active={visible}>
       <ArtifactWorkspace className="chat-page" files={files}>
-        <ChatTools files={files} tasks={state.tasks} />
         {desktopSettingsAvailable() ? (
           <>
             <h1 className="sr-only">Chat</h1>
@@ -1136,7 +1136,7 @@ export function Chat({
                         message.turnId || persistedIds.has(message.id)
                           ? (quote?: string) => {
                               taskReply.current = null;
-                              setReplyTo(quote ? { ...message, text: quote } : message);
+                              setReplyTo(quote?.trim() ? { ...message, text: quote } : message);
                               composer.current?.focus();
                             }
                           : undefined

@@ -79,6 +79,19 @@ export interface AppDependencies {
 export async function createApp(dependencies: AppDependencies = {}) {
   const publicConfiguration = dependencies.configuration ?? configuration;
   const artifacts = dependencies.artifacts ?? localArtifacts;
+  async function messageViews(
+    rows: Array<Message & { assistantReaction?: MessageReaction | null }>,
+  ) {
+    const [receipts, questions] = await Promise.all([
+      dependencies
+        .receipts?.(rows.map((message) => message.turnId).filter((id): id is string => !!id))
+        .catch(() => undefined),
+      dependencies.questionStates?.(rows.map((message) => message.id)).catch(() => undefined),
+    ]);
+    return rows.map((message) =>
+      messageView(message, receipts?.[message.id], questions?.[message.id]),
+    );
+  }
   const app = Fastify({
     logger: false,
     bodyLimit: 256 * 1024,
@@ -155,26 +168,16 @@ export async function createApp(dependencies: AppDependencies = {}) {
     ]);
     const hasEarlierMessages = messages.rows.length > 150;
     const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
-    const receipts = await dependencies
-      .receipts?.(
-        visibleMessages.map((message) => message.turnId).filter((id): id is string => !!id),
-      )
-      .catch(() => undefined);
     const recentIds = new Set(turns.rows.map((turn) => turn.id));
     const olderTurns = await messageTurns(
       thread.id,
       visibleMessages.map((message) => message.turnId).filter((id) => id && !recentIds.has(id)),
     );
-    const questions = await dependencies
-      .questionStates?.(visibleMessages.map((message) => message.id))
-      .catch(() => undefined);
     return {
       threadId: thread.id,
       tasks: await dependencies.taskLedger?.(),
       hasEarlierMessages,
-      messages: visibleMessages.map((message) =>
-        messageView(message, receipts?.[message.id], questions?.[message.id]),
-      ),
+      messages: await messageViews(visibleMessages),
       turns: [...turns.rows, ...olderTurns],
       activity,
       verificationRequests,
@@ -205,7 +208,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       `SELECT ${messageFields} FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.created_at BETWEEN $3::timestamptz-interval '1 day' AND $3::timestamptz+interval '1 day' ORDER BY (m.id=$4) DESC,abs(extract(epoch FROM m.created_at-$3::timestamptz)),m.id LIMIT 60`,
       [ownerId, thread.id, hit.created_at, id],
     );
-    return rows.map((row) => messageView(row));
+    return messageViews(rows);
   });
   app.get('/api/messages', async (request) => {
     const query = z
@@ -229,16 +232,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
       [ownerId, query.before ?? null, query.beforeId ?? null, thread.id],
     );
     const page = rows.rows.slice(0, 60);
-    const receipts = await dependencies
-      .receipts?.(page.map((message) => message.turnId).filter((id): id is string => !!id))
-      .catch(() => undefined);
-    const questions = await dependencies
-      .questionStates?.(page.map((message) => message.id))
-      .catch(() => undefined);
     return {
-      messages: page
-        .reverse()
-        .map((message) => messageView(message, receipts?.[message.id], questions?.[message.id])),
+      messages: await messageViews(page.reverse()),
       hasMore: rows.rows.length > 60,
     } satisfies MessageHistoryPage;
   });

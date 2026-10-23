@@ -191,11 +191,24 @@ async function main() {
         const parts = [];
         for await (const part of request) parts.push(part);
         const body = JSON.parse(Buffer.concat(parts));
+        if (body.text === 'Try a failed send')
+          return json({ error: 'Synthetic connection failure. Your draft was kept.' }, 503);
         const turnId = randomUUID();
+        const replyTo = messages.find((message) => message.id === body.replyToMessageId);
         messages.push({
           id: body.clientMessageId,
           text: body.text,
           role: 'user',
+          ...(replyTo
+            ? {
+                replyToMessageId: replyTo.id,
+                replyTo: {
+                  id: replyTo.id,
+                  role: replyTo.role,
+                  text: body.replyQuote ?? replyTo.text.slice(0, 1000),
+                },
+              }
+            : {}),
           attachments: body.attachmentIds.map((id) => files.get(id).artifact),
           turnId,
           createdAt: new Date().toISOString(),
@@ -210,6 +223,8 @@ async function main() {
         const marker = data.indexOf('\r\n\r\n');
         const head = data.subarray(0, marker).toString();
         const name = /filename="([^"]+)"/.exec(head)?.[1] ?? 'file.txt';
+        if (name === 'unavailable.txt')
+          return json({ error: 'Synthetic upload failure. Choose Retry to try again.' }, 503);
         const type = /Content-Type: ([^\r]+)/i.exec(head)?.[1] ?? 'text/plain';
         const boundary = /boundary=(.+)/.exec(request.headers['content-type'])?.[1];
         const end = data.lastIndexOf(Buffer.from(`\r\n--${boundary}`));
@@ -252,7 +267,10 @@ async function main() {
       if (/^\/api\/schedules\/[^/]+$/.test(path) && request.method === 'PATCH') {
         const parts = [];
         for await (const part of request) parts.push(part);
-        Object.assign(schedules[0], JSON.parse(Buffer.concat(parts)));
+        const body = JSON.parse(Buffer.concat(parts));
+        if (body.title === 'Offline title')
+          return json({ error: 'Synthetic connection failure. Your edit was kept.' }, 503);
+        Object.assign(schedules[0], body);
         schedules[0].revision++;
         refresh();
         return json(schedules[0]);

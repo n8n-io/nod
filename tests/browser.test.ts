@@ -3264,6 +3264,14 @@ test('composer uploads preserve retry bytes, cancellation, previews and failed-s
         }
         await act(async () => requests[1].resolve(Response.json(artifact)));
         await settle(() => drafts[0]?.downloadUrl === artifact.url);
+        const native = [];
+        window.nodDesktop = { fileAction: async (...args) => { native.push(args); } };
+        const { prepareFile, reuseFile } = await import('./src/web/components/file-actions.tsx');
+        prepareFile(drafts[0]);
+        assert.deepEqual(native, [[artifact.id, 'prepare']]);
+        await act(async () => reuseFile(drafts[0]));
+        assert.equal(drafts.length, 1);
+        delete window.nodDesktop;
         assert.equal(document.querySelector('[aria-label="Send message"]').disabled, false);
         await submit();
         await settle(
@@ -4725,6 +4733,12 @@ test('chat draft recovery isolates owners and excludes private verification repl
       assert.deepEqual(readChatDraft('owner-a.thread-a'), draft);
       assert.equal(readChatDraft('owner-b.thread-a'), null);
       assert.equal(readChatDraft('owner-a.thread-b'), null);
+      const replyOnly = { ...draft, text: '', attachments: [], missing: [] };
+      writeChatDraft('owner-a.thread-a', replyOnly);
+      assert.deepEqual(readChatDraft('owner-a.thread-a'), replyOnly);
+      const file = { id: '00000000-0000-4000-8000-000000000001', name: 'report.pdf', mimeType: 'application/pdf', size: 5, url: '/api/artifacts/00000000-0000-4000-8000-000000000001' };
+      localStorage.setItem('owner-a.thread-a', JSON.stringify({ ...draft, version: 1, attachments: [null, {}, file] }));
+      assert.deepEqual(readChatDraft('owner-a.thread-a'), { ...draft, attachments: [file] });
       writeChatDraft('owner-a.thread-a', { ...draft, text: 'The code is 731408' }, true);
       assert.equal(readChatDraft('owner-a.thread-a'), null);
       writeChatDraft('owner-a.thread-a', { ...draft, text: '731408' });

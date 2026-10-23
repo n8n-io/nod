@@ -370,7 +370,7 @@ test(
             timeZone: 'Europe/Lisbon',
           });
           assert.equal(preview.statusCode, 200);
-          assert.ok(preview.json().nextRun);
+          assert.equal(preview.json().nextRun, '2035-10-29T10:30:00.000Z');
           assert.deepEqual(
             (await request('GET', '/api/schedules'))
               .json()
@@ -476,6 +476,9 @@ test(
           assert.equal(history[0]!.status, 'queued');
           assert.equal((await saved(schedule.id)).enabled, false);
           assert.equal((await saved(schedule.id)).nextRun, null);
+          const preview = await request('POST', `/api/schedules/${schedule.id}/preview`, {});
+          assert.equal(preview.statusCode, 200);
+          assert.equal(preview.json().nextRun, null);
           assert.equal((await saved(schedule.id)).lastRun?.id, history[0]!.id);
           await personal.initialize({ workers: false });
           await deliver([job]);

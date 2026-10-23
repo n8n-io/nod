@@ -9,24 +9,33 @@ import { errorMessage } from '../lib/api';
 import { Button } from './ui';
 
 export function reuseFile(item: ImagePreview) {
-  if (!ownedArtifactUrl(item.url)) return;
-  window.dispatchEvent(new CustomEvent('nod:attach-artifact', { detail: item }));
+  const artifact = artifactFromPreview(item);
+  if (!ownedArtifactUrl(artifact.url)) return;
+  window.dispatchEvent(new CustomEvent('nod:attach-artifact', { detail: artifact }));
 }
 
 export function fileDrag(event: React.DragEvent, item: ImagePreview) {
-  if (!ownedArtifactUrl(item.url)) return;
-  event.dataTransfer.setData('application/x-nod-artifact', JSON.stringify(item));
-  event.dataTransfer.setData('text/uri-list', new URL(item.url, location.origin).href);
+  const artifact = artifactFromPreview(item);
+  if (!ownedArtifactUrl(artifact.url)) return;
+  event.dataTransfer.setData('application/x-nod-artifact', JSON.stringify(artifact));
+  event.dataTransfer.setData('text/uri-list', new URL(artifact.url, location.origin).href);
   event.dataTransfer.effectAllowed = 'copy';
   if (desktopFilesAvailable()) {
     event.preventDefault();
-    void desktopFileAction(item.id, 'drag').catch((cause) =>
+    void desktopFileAction(artifact.id, 'drag').catch((cause) =>
       window.dispatchEvent(new CustomEvent('nod:file-notice', { detail: errorMessage(cause) })),
     );
   }
 }
 
+export function prepareFile(item: ImagePreview) {
+  const artifact = artifactFromPreview(item);
+  if (desktopFilesAvailable() && ownedArtifactUrl(artifact.url))
+    void desktopFileAction(artifact.id, 'prepare').catch(() => {});
+}
+
 export function FileActions({ item }: { item: ImagePreview }) {
+  const artifact = artifactFromPreview(item);
   const actions = useRef<HTMLSpanElement>(null);
   const activeId = useRef(item.id);
   activeId.current = item.id;
@@ -50,26 +59,26 @@ export function FileActions({ item }: { item: ImagePreview }) {
     };
     target.addEventListener('contextmenu', open);
     return () => target.removeEventListener('contextmenu', open);
-  }, [item.id, item.url, image]);
+  }, [item.id, item.url, item.downloadUrl, image]);
   useEffect(() => {
     if (!notice || notice === 'Saved to Downloads') return;
     const timer = setTimeout(() => setNotice(''), 5000);
     return () => clearTimeout(timer);
   }, [notice]);
-  if (!ownedArtifactUrl(item.url)) return null;
+  if (!ownedArtifactUrl(artifact.url)) return null;
   async function run(action: string) {
     if (action === 'reuse') {
       reuseFile(item);
       return;
     }
     const id = item.id;
-    setBusy(true);
+    if (activeId.current === id) setBusy(true);
     try {
       if (action === 'copy') {
-        await copyImage(item.url);
+        await copyImage(artifact.url);
         if (activeId.current === id) setNotice('Image copied');
       } else {
-        await desktopFileAction(item.id, action as 'save' | 'open' | 'show' | 'prepare');
+        await desktopFileAction(artifact.id, action as 'save' | 'open' | 'show' | 'prepare');
         if (activeId.current === id) setNotice(action === 'save' ? 'Saved to Downloads' : '');
       }
     } catch (cause) {
@@ -80,7 +89,7 @@ export function FileActions({ item }: { item: ImagePreview }) {
   }
   async function menu() {
     try {
-      const action = await nativeFileMenu(item.id, image);
+      const action = await nativeFileMenu(artifact.id, image);
       if (action) await run(action);
     } catch (cause) {
       setNotice(errorMessage(cause));
@@ -134,7 +143,7 @@ export function FileActions({ item }: { item: ImagePreview }) {
         </>
       ) : (
         <a
-          href={item.url}
+          href={artifact.url}
           download={item.name}
           aria-label={`Download ${item.name}`}
           title="Download"
@@ -147,12 +156,12 @@ export function FileActions({ item }: { item: ImagePreview }) {
           {notice}
           {notice === 'Saved to Downloads' && (
             <>
-              <button type="button" onClick={() => void run('open')}>
+              <Button type="button" variant="ghost" size="sm" onClick={() => void run('open')}>
                 Open
-              </button>
-              <button type="button" onClick={() => void run('show')}>
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => void run('show')}>
                 Show in folder
-              </button>
+              </Button>
             </>
           )}
         </span>
@@ -162,11 +171,12 @@ export function FileActions({ item }: { item: ImagePreview }) {
 }
 
 export function artifactFromPreview(item: ImagePreview): Artifact {
+  const url = item.downloadUrl && ownedArtifactUrl(item.downloadUrl) ? item.downloadUrl : item.url;
   return {
-    id: item.id,
+    id: ownedArtifactUrl(url) ? url.slice('/api/artifacts/'.length) : item.id,
     name: item.name,
     mimeType: item.mimeType ?? 'application/octet-stream',
     size: item.size,
-    url: item.url,
+    url,
   };
 }

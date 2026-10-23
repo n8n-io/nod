@@ -916,16 +916,20 @@
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
-.file-actions .button {
+.file-actions > .button {
   width: 28px;
   height: 28px;
 }
 .file-action-notice {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   font-size: 12px;
+  flex-basis: 100%;
 }
 .file-action-notice button,
 .composer-send-preference {
@@ -974,11 +978,10 @@
   padding: 6px 10px;
 }
 .chat-tools {
-  position: absolute;
-  top: 12px;
-  right: 150px;
-  display: flex;
-  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  gap: 2px;
 }
 .chat-tool-results {
   display: flex;
@@ -1090,16 +1093,17 @@
   flex: 1;
   min-width: 120px;
 }
+.inline-name-form > .notice {
+  flex-basis: 100%;
+  margin: 0;
+}
 @media (hover: none) {
   .attachment-image-item .file-actions {
     opacity: 1;
   }
 }
 @media (max-width: 600px) {
-  .chat-tools {
-    right: 128px;
-  }
-  .artifact-drawer-header .file-actions .button {
+  .artifact-drawer-header .file-actions > .button {
     width: 24px;
   }
 }
@@ -1109,35 +1113,12 @@
   }
 }
 
-.artifact-drawer-header {
-  height: auto;
-  min-height: 56px;
-  flex-wrap: wrap;
-  padding-block: 8px;
-}
-:root[data-desktop='true'] .artifact-drawer-header {
-  height: auto;
-  min-height: var(--desktop-titlebar-height);
-}
-.artifact-drawer-header :is(select, summary, input) {
-  -webkit-app-region: no-drag;
-}
-.artifact-drawer-title {
-  min-width: 100px;
-}
-.artifact-drawer-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
 .message-delivery {
   font-size: 11px;
   color: var(--text-secondary);
   margin-inline-end: 8px;
 }
 
-.artifact-drawer-header [draggable] {
-  -webkit-app-region: no-drag;
-}
 .message-question-state {
   display: block;
   margin-top: 4px;

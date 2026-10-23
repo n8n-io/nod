@@ -17,6 +17,14 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const active = useRef(0);
+  const previousFocus = useRef<HTMLElement | null>(null);
+  const actionTaken = useRef(false);
+  function open(mode: 'find' | 'commands') {
+    previousFocus.current = document.activeElement as HTMLElement | null;
+    actionTaken.current = false;
+    setQuery('');
+    setMode(mode);
+  }
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (
@@ -34,8 +42,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
         (desktopSettingsAvailable() && event.key.toLowerCase() === 'f')
       ) {
         event.preventDefault();
-        setQuery('');
-        setMode(event.key.toLowerCase() === 'f' ? 'find' : 'commands');
+        open(event.key.toLowerCase() === 'f' ? 'find' : 'commands');
       }
     };
     window.addEventListener('keydown', key);
@@ -50,8 +57,9 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
       return;
     }
     const controller = new AbortController();
+    setResults([]);
+    setLoading(true);
     const timer = setTimeout(() => {
-      setLoading(true);
       void api<Message[]>(`/api/messages/search?q=${encodeURIComponent(query.trim())}`, {
         signal: controller.signal,
       })
@@ -74,16 +82,28 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
   const selectedFile = files.find((file) => file.id === drawer.selectedId);
   const commands = [
     ...(selectedFile
-      ? [{ label: 'Use selected file in message', action: () => reuseFile(selectedFile) }]
+      ? [
+          {
+            id: 'reuse',
+            label: 'Use selected file in message',
+            action: () => reuseFile(selectedFile),
+          },
+        ]
       : []),
     ...sidebarItems.map((item) => ({
+      id: item.path,
       label: `Open ${item.label}`,
       action: () => navigate(item.path),
     })),
-    ...files.map((file) => ({ label: `Preview ${file.name}`, action: () => drawer.open(file.id) })),
+    ...files.map((file) => ({
+      id: file.id,
+      label: `Preview ${file.name}`,
+      action: () => drawer.open(file.id),
+    })),
     ...tasks
       .filter((task) => task.messageId)
       .map((task) => ({
+        id: task.id,
         label: `Go to ${task.title}`,
         action: () =>
           window.dispatchEvent(
@@ -101,10 +121,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
           size="icon"
           aria-label="Find in conversation"
           title="Find in conversation"
-          onClick={() => {
-            setQuery('');
-            setMode('find');
-          }}
+          onClick={() => open('find')}
         >
           <Search size={16} />
         </Button>
@@ -113,10 +130,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
           size="icon"
           aria-label="Commands"
           title="Commands (⌘/Ctrl K)"
-          onClick={() => {
-            setQuery('');
-            setMode('commands');
-          }}
+          onClick={() => open('commands')}
         >
           <List size={16} />
         </Button>
@@ -127,21 +141,33 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
           if (!open) setMode(null);
         }}
       >
-        <DialogContent>
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (!actionTaken.current && previousFocus.current?.isConnected)
+              previousFocus.current.focus({ preventScroll: true });
+          }}
+        >
           <DialogTitle>{mode === 'find' ? 'Find in conversation' : 'Commands'}</DialogTitle>
           <Input
             autoFocus
             aria-label={mode === 'find' ? 'Search all messages' : 'Search commands'}
             placeholder={mode === 'find' ? 'Search all messages' : 'Go to a page, file, or task'}
             value={query}
+            maxLength={200}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'ArrowDown') {
+              if (
+                !event.nativeEvent.isComposing &&
+                !event.repeat &&
+                ['ArrowDown', 'Enter'].includes(event.key)
+              ) {
                 event.preventDefault();
-                event.currentTarget
+                const first = event.currentTarget
                   .closest('[role="dialog"]')
-                  ?.querySelector<HTMLButtonElement>('.chat-tool-results button')
-                  ?.focus();
+                  ?.querySelector<HTMLButtonElement>('.chat-tool-results button');
+                if (event.key === 'Enter') first?.click();
+                else first?.focus();
               }
             }}
           />
@@ -159,26 +185,40 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
             }}
           >
             {mode === 'find'
-              ? results.map((message) => (
-                  <button
-                    type="button"
-                    key={message.id}
-                    onClick={() => {
-                      setMode(null);
-                      window.dispatchEvent(
-                        new CustomEvent('nod:focus-message', { detail: { messageId: message.id } }),
-                      );
-                    }}
-                  >
-                    <strong>{message.role === 'user' ? 'You' : 'nod'}</strong>
-                    <span>{message.text.slice(0, 220)}</span>
-                  </button>
-                ))
+              ? results.map((message) => {
+                  const start = Math.max(
+                    0,
+                    message.text.toLocaleLowerCase().indexOf(query.trim().toLocaleLowerCase()) - 60,
+                  );
+                  return (
+                    <button
+                      type="button"
+                      key={message.id}
+                      onClick={() => {
+                        actionTaken.current = true;
+                        setMode(null);
+                        window.dispatchEvent(
+                          new CustomEvent('nod:focus-message', {
+                            detail: { messageId: message.id },
+                          }),
+                        );
+                      }}
+                    >
+                      <strong>{message.role === 'user' ? 'You' : 'nod'}</strong>
+                      <span>
+                        {start > 0 && '…'}
+                        {message.text.slice(start, start + 220)}
+                        {message.text.length > start + 220 && '…'}
+                      </span>
+                    </button>
+                  );
+                })
               : commands.map((command) => (
                   <button
                     type="button"
-                    key={command.label}
+                    key={command.id}
                     onClick={() => {
+                      actionTaken.current = true;
                       setMode(null);
                       command.action();
                     }}
@@ -190,6 +230,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
               <p>No messages found.</p>
             )}
             {loading && <p role="status">Searching…</p>}
+            {mode === 'commands' && !commands.length && <p>No commands found.</p>}
           </div>
         </DialogContent>
       </Dialog>

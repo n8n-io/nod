@@ -67,11 +67,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   },
   ref,
 ) {
-  const restored = useRef(draftKey ? readChatDraft(draftKey) : null);
+  const [restored] = useState(() => (draftKey ? readChatDraft(draftKey) : null));
   const restoredOnce = useRef(false);
   const [attachments, setAttachments] = useState<DraftAttachment[]>(
     () =>
-      restored.current?.attachments.map((artifact) => ({
+      restored?.attachments.map((artifact) => ({
         ...artifact,
         artifact,
         state: 'ready',
@@ -139,7 +139,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(() => {
     if (restoredOnce.current || !editor) return;
     restoredOnce.current = true;
-    const saved = restored.current;
+    const saved = restored;
     attachmentValues.current = attachments;
     if (saved) {
       if (!text) setText(saved.text);
@@ -179,13 +179,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(() => {
     const receive = (event: Event) => {
       const item = (event as CustomEvent<ImagePreview>).detail;
+      if (!item || !validArtifact(item.url)) return;
+      const artifact = artifactFromPreview(item);
       if (
-        !item ||
-        !validArtifact(item.url) ||
-        attachmentValues.current.some((value) => value.id === item.id)
+        attachmentValues.current.some(
+          (value) => value.id === artifact.id || value.artifact?.id === artifact.id,
+        )
       )
         return;
-      const artifact = artifactFromPreview(item);
       updateAttachments([...attachmentValues.current, { ...artifact, artifact, state: 'ready' }]);
       focus();
     };
@@ -348,6 +349,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const sequence = ++sends.current;
     pendingSends.current++;
     setError('');
+    setRemoved(null);
     if (draftKey) writeChatDraft(draftKey, null);
     editor.commands.clearContent();
     updateAttachments([]);
@@ -435,26 +437,30 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     <div className="composer-wrap">
       {error && <Notice>{error}</Notice>}
       {removed && (
-        <Notice kind="info">
+        <Notice
+          kind="info"
+          onDismiss={() => {
+            setRemoved(null);
+            focus();
+          }}
+        >
           Attachment removed.{' '}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={() => {
               if (!attachmentValues.current.some((item) => item.id === removed.id))
-                updateAttachments([...attachmentValues.current, removed]);
+                updateAttachments([
+                  ...attachmentValues.current,
+                  { ...removed, previewUrl: undefined },
+                ]);
               setRemoved(null);
               focus();
             }}
           >
             Undo
-          </button>
-          <button
-            type="button"
-            aria-label="Dismiss attachment notice"
-            onClick={() => setRemoved(null)}
-          >
-            Dismiss
-          </button>
+          </Button>
         </Notice>
       )}
       {replyTo && (

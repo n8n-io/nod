@@ -1,7 +1,6 @@
 import { Play } from './icons';
 import { useEffect, useRef } from 'react';
-import { FileActions, fileDrag } from './file-actions';
-import { desktopFileAction, desktopFilesAvailable } from '../lib/desktop';
+import { FileActions, fileDrag, prepareFile } from './file-actions';
 import type { Artifact } from '../../shared/contracts';
 import { ownedArtifactUrl } from '../lib/attachment-url';
 import { attachmentKind, previewableImage, vectorImage } from '../lib/attachment-kind';
@@ -147,10 +146,7 @@ export function ImageGallery({ images }: { images: ImagePreview[] }) {
           <button
             draggable
             onDragStart={(event) => fileDrag(event, image)}
-            onPointerEnter={() => {
-              if (desktopFilesAvailable())
-                void desktopFileAction(image.id, 'prepare').catch(() => {});
-            }}
+            onPointerEnter={() => prepareFile(image)}
             type="button"
             className={`attachment-image-tile is-${attachmentKind(image.mimeType ?? 'image/png', image.name)}${image.source === 'sticker' ? ' is-sticker' : ''}${drawer.selectedId === image.id ? ' is-selected' : ''}`}
             key={image.id}

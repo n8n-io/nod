@@ -33,7 +33,7 @@ import {
 } from './attachment-images';
 import AttachmentData, { PreviewUnavailable } from './attachment-data';
 import PdfPreview from './attachment-pdf';
-import { FileActions, fileDrag } from './file-actions';
+import { FileActions, fileDrag, prepareFile } from './file-actions';
 import { ArtifactEdit, ArtifactExport } from './artifact-edit';
 import { apiResponse } from '../lib/api';
 import { Button } from './ui';
@@ -72,6 +72,8 @@ function ImageView({
       data-artifact-scroll=""
     >
       <img
+        draggable
+        onDragStart={(event) => fileDrag(event, item)}
         src={item.url}
         alt={item.name}
         className={vectorImage(item.mimeType ?? '', item.name) ? 'is-vector' : undefined}
@@ -80,7 +82,10 @@ function ImageView({
           onDetail(`${image.naturalWidth} × ${image.naturalHeight}`);
           setZoomable(!fits(image));
         }}
-        onPointerEnter={(event) => setZoomable(zoomed || !fits(event.currentTarget))}
+        onPointerEnter={(event) => {
+          prepareFile(item);
+          setZoomable(zoomed || !fits(event.currentTarget));
+        }}
         onError={onError}
         onClick={(event) => {
           const image = event.currentTarget;
@@ -537,13 +542,17 @@ function ArtifactDrawer({
       )}
       <div className="artifact-drawer-panel">
         <header className="artifact-drawer-header">
-          <FileGlyph
-            name={current.name}
-            mimeType={current.mimeType ?? ''}
+          <span
             className="artifact-drawer-glyph"
-          />
+            draggable
+            title={`Drag ${current.name}`}
+            onPointerEnter={() => prepareFile(current)}
+            onDragStart={(event) => fileDrag(event, current)}
+          >
+            <FileGlyph name={current.name} mimeType={current.mimeType ?? ''} />
+          </span>
           <div className="artifact-drawer-title">
-            <h2 title={current.name} draggable onDragStart={(event) => fileDrag(event, current)}>
+            <h2 title={current.name}>
               {items.length > 1 ? (
                 <select
                   aria-label="Choose a file"

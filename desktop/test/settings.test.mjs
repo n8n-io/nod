@@ -4142,6 +4142,7 @@ test('artifact exports keep owned bytes, safe names, separate saves and restrict
   const { createArtifactFiles, canOpenArtifact } = await import('../main/artifact-files.mjs');
   const root = await mkdtemp(join(tmpdir(), 'nod-artifact-contract-'));
   let requests = 0;
+  let filename = '../report.pdf';
   const files = createArtifactFiles({
     temporary: root,
     downloads: join(root, 'Downloads'),
@@ -4150,7 +4151,7 @@ test('artifact exports keep owned bytes, safe names, separate saves and restrict
       return new Response('synthetic PDF bytes', {
         headers: {
           'content-type': 'application/pdf',
-          'content-disposition': "attachment; filename*=UTF-8''..%2Freport.pdf",
+          'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
         },
       });
     },
@@ -4173,6 +4174,16 @@ test('artifact exports keep owned bytes, safe names, separate saves and restrict
     assert.equal(canOpenArtifact(first), true);
     assert.equal(canOpenArtifact({ name: 'report.desktop', type: 'application/pdf' }), false);
     assert.equal(canOpenArtifact({ name: 'report.pdf', type: 'text/html' }), false);
+    filename = 'report:Q4?.pdf';
+    assert.equal((await files.prepare(randomUUID())).name, 'report_Q4_.pdf');
+    filename = 'CON.pdf';
+    assert.equal((await files.prepare(randomUUID())).name, '_CON.pdf');
+    const pinnedId = randomUUID();
+    const pinned = await files.path(pinnedId);
+    const evicted = await files.prepare(randomUUID());
+    for (let index = 0; index < 9; index++) await files.prepare(randomUUID());
+    await assert.rejects(readFile(evicted.path), { code: 'ENOENT' });
+    assert.equal(await readFile(pinned.path, 'utf8'), 'synthetic PDF bytes');
     const absent = createArtifactFiles({
       temporary: root,
       downloads: root,

@@ -24,6 +24,10 @@ Unfinished setup interviews are encrypted in your installation’s private stora
 
 For what nod stores and how long it keeps it, see the [Security review guide](/trust/security-review/#what-nod-stores).
 
+Unsent chat drafts stay in app or browser storage on this device, for your account and conversation. They include text, reply targets, and uploaded file references. Private entry fields and recognized verification replies are excluded.
+
+Desktop file actions prepare private copies in the system temporary folder. The cache holds up to eight files. Saving creates a separate file in Downloads. Temporary copies remain until cache eviction or app shutdown. A forced stop can leave a temporary copy behind.
+
 ## What leaves your computer
 
 ```mermaid

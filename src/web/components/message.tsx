@@ -202,7 +202,7 @@ export function MessageBubble({
   const [quote, setQuote] = useState('');
   const [quotePoint, setQuotePoint] = useState({ left: 0, top: 0 });
   function selectQuote() {
-    const value = selectedText(articleElement.current).slice(0, 4000);
+    const value = selectedText(articleElement.current).trim().slice(0, 4000);
     const range = window.getSelection()?.rangeCount ? window.getSelection()!.getRangeAt(0) : null;
     if (value && range && typeof range.getBoundingClientRect === 'function') {
       const box = range.getBoundingClientRect();

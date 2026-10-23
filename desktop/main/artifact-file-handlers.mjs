@@ -37,16 +37,28 @@ export function registerArtifactFileHandlers({ isEngine, origin, token, window, 
   const artifactFiles = createArtifactFiles({
     temporary: app.getPath('temp'),
     downloads: app.getPath('downloads'),
-    fetchArtifact: (id) => {
+    fetchArtifact: (id, signal) => {
       if (!window() || !origin()) throw new Error('The workspace is unavailable.');
       return fetch(`${origin()}/api/artifacts/${id}`, {
         redirect: 'error',
         headers: { 'x-nod-desktop-token': token() },
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
       });
     },
   });
-  app.on('will-quit', () => void artifactFiles.dispose().catch(() => {}));
+  let disposed = false;
+  let disposal;
+  app.on('will-quit', (event) => {
+    if (disposed) return;
+    event.preventDefault();
+    disposal ??= artifactFiles
+      .dispose()
+      .catch(() => {})
+      .finally(() => {
+        disposed = true;
+        app.quit();
+      });
+  });
   ipcMain.handle('nod:file:action', async (event, id, action) => {
     if (!isEngine(event) || !['prepare', 'drag', 'save', 'open', 'show'].includes(action))
       throw new Error('This action is unavailable.');
@@ -60,8 +72,13 @@ export function registerArtifactFileHandlers({ isEngine, origin, token, window, 
       headers: { 'x-nod-desktop-token': token() },
       signal: AbortSignal.timeout(10000),
     });
+    await access.arrayBuffer();
     if (!access.ok || !isEngine(event)) throw new Error('This file is no longer available.');
     if (action === 'save') return artifactFiles.save(id);
+    if (action === 'prepare') {
+      await artifactFiles.prepare(id);
+      return;
+    }
     const file = await artifactFiles.path(id);
     if (!isEngine(event)) throw new Error('This action is unavailable.');
     if (action === 'drag')

@@ -33,6 +33,8 @@ export function readChatDraft(key: string): ChatDraft | null {
       attachments: saved.attachments
         .filter(
           (item: Artifact) =>
+            !!item &&
+            typeof item === 'object' &&
             typeof item.id === 'string' &&
             typeof item.name === 'string' &&
             typeof item.mimeType === 'string' &&
@@ -51,7 +53,7 @@ export function writeChatDraft(key: string, draft: ChatDraft | null, privateRepl
   try {
     if (
       !draft ||
-      (!draft.text && !draft.attachments.length && !draft.missing.length) ||
+      (!draft.text && !draft.reply && !draft.attachments.length && !draft.missing.length) ||
       (privateReply && classifyVerificationReply(draft.text).kind !== 'ordinary') ||
       /^\s*\d{4,8}\s*[.!]?\s*$/.test(draft.text) ||
       securityCodeIn(draft.text)

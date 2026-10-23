@@ -347,6 +347,7 @@ test(
     assert.equal(dataRoot, join(fixtureRoot, '.local'));
     let messages: ReturnType<typeof thread.createUserMessageService>;
     const app = await createApp({
+      questionStates: (ids) => approvals.states(ids),
       submitMessage: (text, attachments, options) => messages.submit(text, attachments, options),
       configuration: () => configuration({ llmReady: true }),
     });
@@ -2046,6 +2047,13 @@ test(
           assert.deepEqual(await approvals.states([confirmed.confirmation_message_id]), {
             [confirmed.confirmation_message_id]: 'confirmed',
           });
+          assert.equal(
+            (await request('GET', `/api/messages/around/${confirmed.confirmation_message_id}`))
+              .json()
+              .find((message: { id: string }) => message.id === confirmed.confirmation_message_id)
+              .questionState,
+            'confirmed',
+          );
           assert.equal(confirmed.execution_turn_id, accepted.turnId);
           assert.equal((await row(accepted.turnId)).channel, channel);
           const before = calls.length;

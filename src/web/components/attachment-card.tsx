@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FileActions, fileDrag } from './file-actions';
-import { desktopFileAction, desktopFilesAvailable } from '../lib/desktop';
+import { FileActions, fileDrag, prepareFile } from './file-actions';
 import type { Artifact, Message } from '../../shared/contracts';
 import { attachmentKind, fileSize, fileType } from '../lib/attachment-kind';
 import { FileGlyph } from './attachment-glyph';
@@ -138,9 +137,7 @@ function DocumentCard({
     <div
       draggable
       onDragStart={(event) => fileDrag(event, item)}
-      onPointerEnter={() => {
-        if (desktopFilesAvailable()) void desktopFileAction(item.id, 'prepare').catch(() => {});
-      }}
+      onPointerEnter={() => prepareFile(item)}
       className={`attachment-card is-${attachmentKind(mimeType, item.name) ?? 'file'}${selected ? ' is-selected' : ''}`}
     >
       <button
@@ -191,10 +188,11 @@ function messageFiles(attachments: Artifact[]) {
 }
 
 export function conversationFiles(messages: Pick<Message, 'attachments'>[]) {
-  return messages.flatMap((message) => {
+  const files = messages.flatMap((message) => {
     const { visual, rest } = messageFiles(message.attachments);
     return [...visual, ...rest];
   });
+  return [...new Map(files.map((file) => [file.id, file])).values()];
 }
 
 export function MessageAttachments({

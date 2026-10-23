@@ -9,7 +9,7 @@ The branch is `feat/native-ux-delighters`. Its base is `95796c6d` on `main`. The
 | ID  | Result                                                                                                                                                                   |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | D01 | Save the draft on this device for the account and thread. Restore text, reply, and checked uploaded files. Request the original file again after an interrupted upload.  |
-| D02 | Drag an owned artifact from a card, image, or preview title through Electron's native file drag API. Prepare real bytes in a private temporary folder.                   |
+| D02 | Drag an owned artifact from a card, image, or preview file icon through Electron's native file drag API. Prepare real bytes in a private temporary folder.               |
 | D03 | Copy a raster image as PNG clipboard data at its original resolution. Keep alpha. Show a failure when the clipboard is unavailable.                                      |
 | D04 | Copy safe rendered HTML and plain text. Copy tables as tab-separated cells. Keep Copy Markdown as a separate action.                                                     |
 | D05 | Accept file drops across chat. Add them to the draft once. Keep private entry and browser handoff separate.                                                              |
@@ -50,7 +50,7 @@ The four larger ideas also have a bounded implementation:
 
 ## Data and execution boundaries
 
-The desktop bridge takes an artifact ID and a fixed action. It takes no host path or destination URL. The main process checks the engine frame and owner access. File bytes stay in a private temporary directory until the user copies or saves them. Native Open accepts a fixed set of document and raster image types.
+The desktop bridge takes an artifact ID and a fixed action. It takes no host path or destination URL. The main process checks the engine frame and owner access. The private temporary cache holds up to eight files. Active file actions protect their copy from eviction for five minutes. Saving creates a separate Downloads copy. Temporary copies remain until cache eviction or app shutdown. Shutdown cancels unfinished preparation before cleanup. A forced stop can leave temporary copies behind. Native Open accepts a fixed set of document and raster image types.
 
 Selected reply text is message data. It does not replace the owner's words or the original replied message in the trust check. Confirmation status comes from owner-scoped approval rows. It does not add a way to run an action.
 
@@ -71,11 +71,13 @@ Request `/__fixture/record` at that address to start a recording. Use the deskto
 
 ## Validation
 
+The later UX pass checked keyboard entry, focus recovery, narrow file panels, failed sends, failed title saves, and nested Escape behavior. It corrected the Undo notice, stale search results, reused file identity, and draft preview recovery. The code review also corrected draft parsing, schedule preview dates, image sizing, temporary file bounds, and portable filenames. Existing integration tests cover the added storage and file contracts.
+
 - **Source checks:** `pnpm run check` passed. Types, architecture boundaries, and formatting passed.
 - **Integration fixtures:** `pnpm run test:integration` passed all 622 tests, with no skips. The run used disposable PostgreSQL state, Chromium, and local provider fixtures.
 - **Desktop fixtures:** `pnpm run desktop:test` passed 188 tests. Two platform tests were skipped. File export checks cover exact bytes, safe names, duplicate saves, missing files, and restricted native opening.
 - **Builds:** The app build and the docs build passed. All published internal docs links are valid. Vite reports the existing large-chunk warning.
 - **macOS UI checks:** Checked table and code Copy feedback, image copy and paste, selected-text replies, draft reload, attachment Undo, preview switching at 125% zoom, file reuse, native menus, save receipts, separate edited copies, search, Return, Commands, and ZIP export. The ZIP contains the two selected files. A native PDF drag back into chat supplies real file bytes.
-- **Video:** [Desktop demo](../review/ux-delighters/desktop.mp4) is a 57-second recording of the actual Electron page with synthetic data. Its frames were inspected. It shows the main chat and file flows. System menus and Finder are outside the page capture.
+- **Video:** [Desktop demo](../review/ux-delighters/desktop.mp4) is a 64-second recording of the actual Electron page with synthetic data. Its frames were inspected. It shows the main chat and file flows. System menus and Finder are outside the page capture.
 - **Device limits:** A completed Finder or Explorer drop still needs a separate check. Native drag, clipboard target formats, and system menus also need checks on Windows and Linux. This review does not establish results on those systems or on touch devices.
 - **Live checks:** None. No live model, connected account, recipient, or normal local database was used.
