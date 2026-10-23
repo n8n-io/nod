@@ -77,16 +77,6 @@
   font-weight: 500;
   line-height: 1.4;
 }
-.message-link-preview-copy span {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--text-secondary);
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
 .message-link-preview-copy small {
   font-size: 11px;
   line-height: 1.4;
