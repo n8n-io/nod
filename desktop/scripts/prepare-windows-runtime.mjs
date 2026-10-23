@@ -9,6 +9,7 @@ import { createGzip } from 'node:zlib';
 import { assetHash } from '../runtime/assets.mjs';
 import { copyBundleSource } from './engine-dependencies.mjs';
 import { run } from './release-tools.mjs';
+import { runtimeInputs } from './runtime-inputs.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const assets = resolve(
@@ -105,5 +106,10 @@ manifest.guest = {
   sha256: await assetHash(file),
 };
 await writeFile(join(assets, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+const { fingerprint } = await runtimeInputs('win32-x64');
+await writeFile(
+  join(assets, `runtime-win32-x64-${fingerprint}.json`),
+  JSON.stringify({ ...manifest, fingerprint }, null, 2) + '\n',
+);
 await rm(context, { recursive: true, force: true });
 console.log(`Windows runtime ready: ${assets}`);

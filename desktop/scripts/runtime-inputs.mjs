@@ -31,6 +31,12 @@ const inputs = [
   'src/providers/docker/install-rtk.sh',
   'src/providers/docker/save-video.py',
 ];
+const windowsInputs = [
+  'desktop/runtime/Dockerfile.windows',
+  'desktop/runtime/windows-guest.py',
+  'desktop/scripts/engine-dependencies.mjs',
+  'desktop/scripts/prepare-windows-runtime.mjs',
+];
 export const browserEntries = [
   'src/providers/container-browser/worker.ts',
   'src/providers/container-browser/bridge.ts',
@@ -57,7 +63,7 @@ export function runtimePlatform(env = process.env) {
   return target;
 }
 
-export async function runtimeInputs() {
+export async function runtimeInputs(platform = runtimePlatform()) {
   const entries = [];
   async function collect(path) {
     const full = join(repository, path);
@@ -77,26 +83,30 @@ export async function runtimeInputs() {
     for (const child of children.sort((a, b) => a.name.localeCompare(b.name)))
       await collect(`${path}/${child.name}`);
   }
-  for (const input of [...inputs, ...(await browserSources())]) await collect(input);
-  const configuration = JSON.parse(
-    await readFile(join(repository, 'desktop/package.json'), 'utf8'),
-  );
-  entries.push(['@electron/osx-sign', configuration.devDependencies['@electron/osx-sign']]);
-  const signingMode =
-    process.env.NOD_SIGNING_MODE || (process.env.NOD_SIGNING_IDENTITY ? 'self-signed' : 'ad-hoc');
-  if (!['ad-hoc', 'self-signed', 'developer-id'].includes(signingMode))
-    throw new Error('Unknown runtime signing mode.');
-  if (signingMode !== 'ad-hoc') {
-    const identity = process.env.NOD_SIGNING_IDENTITY?.trim();
-    const certificate = process.env.NOD_SIGNING_CERTIFICATE_SHA256?.toLowerCase();
-    if (!identity || /[\r\n\0]/.test(identity) || !/^[a-f0-9]{64}$/.test(certificate || ''))
-      throw new Error(
-        'Signed runtime inputs require the permanent identity and certificate SHA256.',
-      );
-    entries.push(['signing.identity', identity], ['signing.certificateSha256', certificate]);
+  const windows = platform === 'win32-x64';
+  for (const input of [...inputs, ...(windows ? windowsInputs : []), ...(await browserSources())])
+    await collect(input);
+  if (!windows) {
+    const configuration = JSON.parse(
+      await readFile(join(repository, 'desktop/package.json'), 'utf8'),
+    );
+    entries.push(['@electron/osx-sign', configuration.devDependencies['@electron/osx-sign']]);
+    const signingMode =
+      process.env.NOD_SIGNING_MODE || (process.env.NOD_SIGNING_IDENTITY ? 'self-signed' : 'ad-hoc');
+    if (!['ad-hoc', 'self-signed', 'developer-id'].includes(signingMode))
+      throw new Error('Unknown runtime signing mode.');
+    if (signingMode !== 'ad-hoc') {
+      const identity = process.env.NOD_SIGNING_IDENTITY?.trim();
+      const certificate = process.env.NOD_SIGNING_CERTIFICATE_SHA256?.toLowerCase();
+      if (!identity || /[\r\n\0]/.test(identity) || !/^[a-f0-9]{64}$/.test(certificate || ''))
+        throw new Error(
+          'Signed runtime inputs require the permanent identity and certificate SHA256.',
+        );
+      entries.push(['signing.identity', identity], ['signing.certificateSha256', certificate]);
+    }
+    entries.push(['signing.mode', signingMode]);
   }
-  entries.push(['signing.mode', signingMode]);
-  entries.push(['target:platform', runtimePlatform()]);
+  entries.push(['target:platform', platform]);
   entries.sort(([left], [right]) => left.localeCompare(right));
   const lock = JSON.parse(
     await readFile(join(repository, 'desktop/scripts/runtime-build-lock.json'), 'utf8'),
@@ -104,7 +114,7 @@ export async function runtimeInputs() {
   const fingerprint = createHash('sha256').update(JSON.stringify(entries)).digest('hex');
   return {
     fingerprint,
-    platform: runtimePlatform(),
+    platform,
     minimumSystemVersion: lock.minimumSystemVersion,
     inputs: entries.map(([path]) => path),
   };
