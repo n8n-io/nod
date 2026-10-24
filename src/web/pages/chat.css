@@ -799,17 +799,6 @@
   margin-left: auto;
   font-weight: 400;
 }
-.task-source-gmail {
-  width: 16px;
-  height: 16px;
-  background: url('/logos/gmail.svg') center / contain no-repeat;
-}
-.task-source-telegram {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--telegram);
-}
 .task-title {
   margin: 0;
   font-size: var(--text-body);

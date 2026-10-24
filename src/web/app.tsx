@@ -310,6 +310,14 @@ function AuthenticatedApp({
   const [finishingOnboarding, setFinishingOnboarding] = useState(false);
   const onboarding =
     finishingOnboarding || !session.settings!.onboardingCompleted || replayingOnboarding(path);
+  useEffect(() => {
+    if (
+      !onboarding ||
+      path === '/browser' ||
+      /^\/(vault|credentials|payments)\/[^/]+\/?$/.test(path)
+    )
+      desktopRendererReady();
+  }, [onboarding, path]);
   const [settingsRequest, setSettingsRequest] = useState(0);
   const settingsTab: AccountTab =
     path === '/settings/models' ? 'Models' : path === '/settings/memory' ? 'Memory' : 'General';
@@ -549,8 +557,8 @@ function AccountApp({
 }) {
   const { session } = sessionState;
   useEffect(() => {
-    if (!sessionState.loading) desktopRendererReady();
-  }, [sessionState.loading]);
+    if (!sessionState.loading && (!session?.user || !session.settings)) desktopRendererReady();
+  }, [sessionState.loading, session?.user, session?.settings]);
   const legacyBrowserLink = /^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/.test(path);
   useLayoutEffect(() => {
     if (sessionState.loading || !session?.user) return;

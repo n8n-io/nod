@@ -35,17 +35,38 @@ export function ownText(body: string) {
     .trim();
 }
 
-export async function learnWritingStyle(
+export function createWritingStyleLearning(options: {
+  memory: MemoryService;
+  curator: MemoryCurator;
+}) {
+  return {
+    enabled: () => options.memory.enabled(),
+    ready: () => options.curator.configured,
+    learn: (
+      read: (signal: AbortSignal) => Promise<SentEmail[]>,
+      stop?: AbortSignal,
+      validate?: (signal: AbortSignal) => Promise<void>,
+    ) => learnWritingStyle(options, read, stop, validate),
+  };
+}
+
+async function learnWritingStyle(
   options: { memory: MemoryService; curator: MemoryCurator },
   read: (signal: AbortSignal) => Promise<SentEmail[]>,
   stop?: AbortSignal,
+  validate?: (signal: AbortSignal) => Promise<void>,
 ) {
   try {
     if (!options.curator.configured || !(await options.memory.enabled())) return;
     const signal = AbortSignal.any([AbortSignal.timeout(90_000), ...(stop ? [stop] : [])]);
+    signal.throwIfAborted();
     let total = 0;
     const emails = [];
-    for (const email of await read(signal)) {
+    const sent = await read(signal);
+    signal.throwIfAborted();
+    await validate?.(signal);
+    if (!(await options.memory.enabled())) return;
+    for (const email of sent) {
       if (email.automated || [email.from, ...email.to].some((at) => automatedAddress.test(at)))
         continue;
       const text = ownText(email.text).slice(0, maxEmail);
@@ -63,11 +84,15 @@ export async function learnWritingStyle(
       });
     }
     if (!emails.length) return;
+    signal.throwIfAborted();
     const reply = z
       .object({ style: line(560).refine((text) => !/@|https?:\/\//.test(text)) })
       .safeParse(
         await options.curator.curate({ task: 'style', instructions, input: { emails } }, signal),
       );
+    signal.throwIfAborted();
+    await validate?.(signal);
+    signal.throwIfAborted();
     if (reply.success) await options.memory.style(`Writing style: ${reply.data.style}`);
   } catch {}
 }

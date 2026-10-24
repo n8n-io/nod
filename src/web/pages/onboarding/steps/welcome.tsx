@@ -1,172 +1,34 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { NodGlyph, Rise, type GlyphReaction } from '../../../components/motion';
+import { useEffect } from 'react';
+import { NodGlyph } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import type { StepProps } from '..';
-import { errorMessage } from '../../../lib/api';
-import { posthogConfig } from '../../../../shared/analytics';
-import { Bubble, Messages, PreferenceBubble, useReveal, type RevealStep } from '../motion';
 
-const sequence: RevealStep[] = [
-  { wait: 40 },
-  { wait: 60 },
-  { wait: 600 },
-  { wait: 450, typing: 400 },
-  { wait: 120, typing: 300 },
-  { wait: 120, typing: 250 },
-  { wait: 120, typing: 300 },
-  { wait: 160 },
-];
-
-export function Welcome({ arrived, onNext, usage }: StepProps) {
-  const [saving, setSaving] = useState<boolean | null>(null);
-  const pending = useRef<Promise<boolean> | null>(null);
-  const [error, setError] = useState('');
-  const [reaction, setReaction] = useState<GlyphReaction | null>(null);
-  const enabled = saving ?? usage?.enabled ?? false;
-  const section = useRef<HTMLElement>(null);
-  const slot = useRef<HTMLSpanElement>(null);
-  const [offset, setOffset] = useState({ dx: 0, dy: 0 });
-  const {
-    revealed: stage,
-    typing,
-    played,
-    done,
-    replay,
-    skip,
-  } = useReveal(sequence, {
-    enabled: arrived === 'forward',
-  });
+export function Welcome({ onNext }: StepProps) {
   useEffect(() => {
     const press = (event: KeyboardEvent) => {
-      if (event.key !== 'Enter' || event.target !== document.body || event.repeat) return;
-      if (done) void next();
+      const surface =
+        event.target === document.body || event.target === document.querySelector('.ob-main');
+      if (event.key !== 'Enter' || !surface || event.repeat) return;
+      onNext();
     };
     window.addEventListener('keydown', press);
     return () => window.removeEventListener('keydown', press);
-  }, [done, onNext]);
-  async function change(value: boolean) {
-    if (!usage || saving !== null) return;
-    setSaving(value);
-    setError('');
-    setReaction((current) => ({ kind: value ? 'on' : 'off', count: (current?.count ?? 0) + 1 }));
-    const save = usage.onChange(value).then(
-      () => true,
-      (cause) => {
-        setError(errorMessage(cause));
-        return false;
-      },
-    );
-    pending.current = save;
-    await save;
-    pending.current = null;
-    setSaving(null);
-  }
-  async function next() {
-    if (pending.current && !(await pending.current)) return;
-    onNext();
-  }
-  useLayoutEffect(() => {
-    if (stage !== 1 || !section.current || !slot.current) return;
-    const area = section.current.getBoundingClientRect();
-    const target = slot.current.getBoundingClientRect();
-    const scale = area.width / (section.current.offsetWidth || area.width) || 1;
-    setOffset({
-      dx: Math.round((area.left + area.width / 2 - target.left - target.width / 2) / scale),
-      dy: Math.round((area.top + area.height / 2 - target.top - target.height / 2) / scale),
-    });
-  }, [stage]);
-  const away = `translate(${offset.dx}px, ${offset.dy}px)`;
-  const avatar: CSSProperties =
-    stage === 0
-      ? { opacity: 0, transition: 'none' }
-      : stage === 1
-        ? { opacity: 0, transform: `${away} scale(1.8)`, transition: 'none' }
-        : stage === 2
-          ? {
-              transform: `${away} scale(3)`,
-              transition: 'transform 640ms var(--ease-pop), opacity 300ms ease-out',
-            }
-          : {
-              transform: 'translate(0, 0) scale(1)',
-              transition: 'transform 500ms var(--ease-travel)',
-            };
+  }, [onNext]);
+
   return (
-    <section
-      ref={section}
-      className={`ob-step ob-welcome${stage === 0 ? ' ob-welcome-reset' : ''}`}
-      data-analytics-public
-      onClick={done ? undefined : skip}
-    >
-      <Messages
-        revealed={Math.max(0, stage - 3)}
-        typing={typing}
-        avatar={
-          <span ref={slot} className="ob-avatar ob-welcome-slot">
-            <button
-              type="button"
-              className="ob-welcome-avatar"
-              style={avatar}
-              title="Say hi again"
-              aria-label="Say hi again"
-              onClick={(event) => {
-                event.stopPropagation();
-                replay();
-              }}
-            >
-              <NodGlyph mode={typing ? 'thinking' : 'idle'} reaction={reaction} />
-            </button>
-          </span>
-        }
-        items={[
-          <Bubble>
-            <span className="ob-greeting-title">
-              <span
-                className={`ob-wave-hand${played && stage >= 4 ? ' waving' : ''}`}
-                aria-hidden="true"
-              >
-                👋
-              </span>
-              Hey, I’m nod.
-            </span>
-            <span className="ob-greeting-sub">
-              Your personal assistant for <strong>work and life</strong>.
-            </span>
-          </Bubble>,
-          <Bubble>
-            I run on <strong>your computer</strong> and work in{' '}
-            <strong>the apps you already use</strong>. Let’s get to know each other a bit first, so
-            I can really help.
-          </Bubble>,
-          <Bubble>
-            I’m <strong>built to check with you before I send, post or delete</strong> anything you
-            didn’t ask for.
-          </Bubble>,
-          ...(usage
-            ? [
-                <PreferenceBubble
-                  label="Share usage data"
-                  link={
-                    <a href={posthogConfig.docsUrl} target="_blank" rel="noreferrer">
-                      What’s shared
-                    </a>
-                  }
-                  checked={enabled}
-                  saving={saving !== null}
-                  error={error}
-                  onChange={(value) => void change(value)}
-                >
-                  Help us make nod better by sharing how you use it. Never your messages.
-                </PreferenceBubble>,
-              ]
-            : []),
-        ]}
-      />
-      <Rise show={done} className="ob-welcome-cta">
-        <Button className="ob-next" onClick={() => void next()}>
-          Let’s go
-        </Button>
-        <p className="ob-welcome-reassurance">You can change your choices later in Settings.</p>
-      </Rise>
+    <section className="ob-step ob-welcome" data-analytics-public>
+      <div className="ob-welcome-content">
+        <h1 className="ob-welcome-wordmark" aria-label="nod">
+          <NodGlyph size={80} mode="bounce" className="ob-welcome-mark" />
+          <span aria-hidden="true">nod</span>
+        </h1>
+        <p className="ob-welcome-copy">
+          Real tasks, done for you, on your
+          <br className="ob-welcome-break" /> computer, with your permission.
+        </p>
+        <Button onClick={onNext}>Get started</Button>
+      </div>
+      <p className="ob-welcome-note">This is a preview version of nod, developed by n8n</p>
     </section>
   );
 }

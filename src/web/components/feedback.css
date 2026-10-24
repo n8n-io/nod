@@ -271,10 +271,10 @@
 .feedback-discovery-hint::before {
   content: '';
   position: absolute;
-  top: -5px;
-  left: calc(var(--hint-arrow) - 4px);
-  width: 8px;
-  height: 8px;
+  top: -8px;
+  left: calc(var(--hint-arrow) - 7px);
+  width: 14px;
+  height: 14px;
   border-left: 1px solid var(--hint-border);
   border-top: 1px solid var(--hint-border);
   background: var(--hint-background);

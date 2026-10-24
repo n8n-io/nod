@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { NodGlyph } from './motion';
+import { desktopLinksAvailable } from '../lib/desktop';
 
 export function SetupProgress({
   title,
@@ -15,9 +16,9 @@ export function SetupProgress({
   children?: ReactNode;
 }) {
   const panel = useRef<HTMLElement>(null);
-  const percent =
-    !error && typeof progress === 'number' && Number.isFinite(progress)
-      ? Math.round(Math.max(0, Math.min(1, progress)) * 100)
+  const fraction =
+    typeof progress === 'number' && Number.isFinite(progress)
+      ? Math.max(0, Math.min(1, progress))
       : undefined;
 
   useEffect(() => {
@@ -27,7 +28,7 @@ export function SetupProgress({
   return (
     <main className="setup-progress" ref={panel} tabIndex={-1} aria-label={title}>
       <div className="setup-progress-content">
-        <NodGlyph key={error ? 'error' : 'loading'} size={80} mode={error ? 'still' : 'thinking'} />
+        <NodGlyph size={112} mode={error ? 'still' : 'bounce'} className="setup-progress-mark" />
         <div
           className="setup-progress-message"
           data-analytics-private
@@ -37,14 +38,21 @@ export function SetupProgress({
           {description && <p>{description}</p>}
           {error && <p data-analytics-private>{error}</p>}
         </div>
-        {percent !== undefined && (
-          <div className="setup-progress-download">
-            <progress aria-label="Download progress" max={100} value={percent} />
-            <span aria-hidden="true">{percent}%</span>
-          </div>
+        {fraction !== undefined && !error && (
+          <progress
+            className="setup-progress-download"
+            aria-label="Download progress"
+            max={1}
+            value={fraction}
+          />
         )}
         {children && <div className="setup-progress-actions">{children}</div>}
       </div>
+      <p className="setup-progress-note">
+        {desktopLinksAvailable() && 'Your workspace, browser and data stay on this computer. '}
+        Your chosen AI providers process requests; browsing and connected apps contact external
+        services.
+      </p>
     </main>
   );
 }

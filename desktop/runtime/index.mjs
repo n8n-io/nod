@@ -221,8 +221,8 @@ async function prepare(options, onComputerStart) {
   });
   let downloading = runtimeAssets.paths.length > 0;
   let waiting;
-  const status = (phase, message, progress) => {
-    const value = { phase, message, ...(progress === undefined ? {} : { progress }) };
+  const status = (phase, message, stage = 'computer') => {
+    const value = { phase, message, stage };
     if (downloading) waiting = value;
     else onStatus(value);
   };
@@ -350,7 +350,7 @@ async function prepare(options, onComputerStart) {
   } catch {}
   await checkDisk(!exists);
   if (!exists) {
-    status('preparing', 'Preparing your private computer…', 0.08);
+    status('preparing', 'Preparing your private computer…');
     const config = guestConfiguration({
       assets,
       imageDigest: manifest.guest.sha256,
@@ -392,7 +392,7 @@ async function prepare(options, onComputerStart) {
       await rename(temporary, vmConfigPath);
     }
   }
-  status('starting', 'Starting your private computer…', 0.18);
+  status('starting', 'Starting your private computer…');
   onComputerStart();
   await runLima(['start', '--tty=false', vm], { timeout: 600_000 });
   if (!options.preserveRuntimeCache) await removeUnmountedRuntimes(assets).catch(() => {});
@@ -631,7 +631,7 @@ export async function finishRuntime({
   onStorageReady,
   runtimeReady,
 }) {
-  status('starting', 'Preparing secure storage and tools…', 0.24);
+  status('starting', 'Preparing secure storage and tools…', 'storage');
   const images = {};
   const loadImage = (name) => {
     images[name] = Promise.resolve().then(() => prepareImage?.(name));
@@ -666,6 +666,7 @@ export async function finishRuntime({
   const storage = storageReady.get(resolve(dataRoot));
   const port =
     process.platform === 'win32' ? (storage?.port ?? (await availablePort())) : saved.port;
+  status('starting', 'Starting your database…', 'storage');
   const postgres = await replaceContainer(
     runDocker,
     names.postgres,
@@ -695,6 +696,7 @@ export async function finishRuntime({
     },
   );
   const databaseUrl = `postgresql://nod:${saved.password}@127.0.0.1:${port}/nod`;
+  status('starting', 'Waiting for your database to be ready…', 'storage');
   try {
     await waitFor(
       () => runDocker(['exec', names.postgres, 'pg_isready', '-U', 'nod', '-d', 'nod']),
@@ -787,7 +789,7 @@ exec "$docker" "$@"
   signal?.throwIfAborted();
   await onStorageReady?.(runtime);
   signal?.throwIfAborted();
-  status('starting', 'Preparing your workspace…', 0.82);
+  status('starting', 'Preparing your workspace…', 'workspace');
   await images.workspace;
   await replaceContainer(
     runDocker,
@@ -816,7 +818,7 @@ exec "$docker" "$@"
     ],
     { command: ['infinity'] },
   );
-  status('starting', 'Preparing your browser…', 0.9);
+  status('starting', 'Preparing your browser…', 'browser');
   await images.browser;
   await replaceContainer(runDocker, names.browser, image('browser'), [
     '--network',
@@ -862,7 +864,7 @@ exec "$docker" "$@"
   );
   await runtimeReady;
   await removeStaleImages(runDocker, runGuest, manifest).catch(() => {});
-  status('ready', 'Your private computer is ready.', 1);
+  status('ready', 'Your private computer is ready.', 'ready');
   return runtime;
 }
 

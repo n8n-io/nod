@@ -16,33 +16,33 @@
     "sha256": "de54e37157f45a43f42f6271302372d95c0eb992cc35ecaee74989bb14058c94"
   },
   "guest": {
-    "url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261001/ubuntu-24.04-minimal-cloudimg-arm64.img",
-    "sha256": "fbf6b15c50c474dc6dee5b3c74da212bb687a2625e877227828e6492d88dc151"
+    "url": "https://cloud-images.ubuntu.com/minimal/releases/resolute/release-20261017/ubuntu-26.04-minimal-cloudimg-arm64.img",
+    "sha256": "330e91ac203e1d1baac821f493ee6da3e85b5f2c5c3d659c8541b58bb2c5435a"
   },
   "guestPackages": [
     {
-      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/i/iptables/iptables_1.8.10-3ubuntu2_arm64.deb",
-      "sha256": "cbaacdb34f19a9b29f569205cdbf1e5851f63fde60777c5cf539a2b46c0c2fc7"
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/i/iptables/iptables_1.8.11-2ubuntu3_arm64.deb",
+      "sha256": "9bd09e64fe6ddb0a1c4b8a79becdc02ef17655c3cfd5cc750c0523a8e5044681"
     },
     {
-      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/i/iptables/libip4tc2_1.8.10-3ubuntu2_arm64.deb",
-      "sha256": "e692da5dffee228ed346474a6e9e21511acbb7329bc304b4ae6dbbc25b2831a2"
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/i/iptables/libip4tc2_1.8.11-2ubuntu3_arm64.deb",
+      "sha256": "59dce7c6db3edc1b60ef61730932470d9906e03249d837c0a18e6f75e9bb0912"
     },
     {
-      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/i/iptables/libip6tc2_1.8.10-3ubuntu2_arm64.deb",
-      "sha256": "4438956b281410ee6d58ce59d1f9588e30f4abf7167e110fdb4f26a99fa5dee7"
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/i/iptables/libip6tc2_1.8.11-2ubuntu3_arm64.deb",
+      "sha256": "af9da146906c2685304e4fd14c74a026204a712284a81e310c439aa91a5a5b9d"
     },
     {
-      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libn/libnftnl/libnftnl11_1.2.6-2build1_arm64.deb",
-      "sha256": "678792e1aa102892b594e0ee13ee93b763011674bddba800a3974a68a83c6ed1"
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libn/libnftnl/libnftnl11_1.3.1-1_arm64.deb",
+      "sha256": "e4a5df487f49cd366f1d9c25b540fe0a44edfc2d7d468bb827da7f683efa1618"
     },
     {
-      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libn/libnfnetlink/libnfnetlink0_1.0.2-2build1_arm64.deb",
-      "sha256": "c7c64d90793ce4d7df262aad50d99eb45ca848fa9421f1bccb22665c350bdb2f"
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libn/libnfnetlink/libnfnetlink0_1.0.2-3build1_arm64.deb",
+      "sha256": "2a10983ed6ecdb688ab95ed8e39424f68e4c291596b5841330a9d5e95295c492"
     },
     {
-      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libn/libnetfilter-conntrack/libnetfilter-conntrack3_1.0.9-6build1_arm64.deb",
-      "sha256": "7b152f919dbd3ffd9ca3ac95d96fdac0cdd139656eb284a0abbc46fce6063301"
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libn/libnetfilter-conntrack/libnetfilter-conntrack3_1.1.1-1_arm64.deb",
+      "sha256": "8f911d2b9d3f303159f22283979804a83a733d9438cb99a108ab92500287257b"
     }
   ],
   "x64": {
@@ -63,33 +63,33 @@
       "sha256": "5c0d19f31fece1accd0358bb8cff591fe25d7b6cba19f0fd412cbfdc07f75ff6"
     },
     "guest": {
-      "url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261001/ubuntu-24.04-minimal-cloudimg-amd64.img",
-      "sha256": "a8eb6570f87a941f3de2e000c046b9367f8ab1423756a94830d454fae8ad80ff"
+      "url": "https://cloud-images.ubuntu.com/minimal/releases/resolute/release-20261017/ubuntu-26.04-minimal-cloudimg-amd64.img",
+      "sha256": "7bdaa53cf909472929f353e19efc9b7bbe30fb7acc05c033ce7b8d46dd62d38d"
     },
     "guestPackages": [
       {
-        "url": "https://archive.ubuntu.com/ubuntu/pool/main/i/iptables/iptables_1.8.10-3ubuntu2_amd64.deb",
-        "sha256": "d341e8ffc42ca035f5aa0fd9a798c8d2b2edb019225dc11f4dac16edf9c57840"
+        "url": "https://archive.ubuntu.com/ubuntu/pool/main/i/iptables/iptables_1.8.11-2ubuntu3_amd64.deb",
+        "sha256": "187b16f9375f53ce6a1618a29de52bb177b620589ada29e4a3e25de5d594e66f"
       },
       {
-        "url": "https://archive.ubuntu.com/ubuntu/pool/main/i/iptables/libip4tc2_1.8.10-3ubuntu2_amd64.deb",
-        "sha256": "eb381f8ff0469534df3f1b146c3eb8baa6e36f8cfcdf2e3e039398322930d0a4"
+        "url": "https://archive.ubuntu.com/ubuntu/pool/main/i/iptables/libip4tc2_1.8.11-2ubuntu3_amd64.deb",
+        "sha256": "be25148d60125f6866dfa7940f3f1371fff4b0e8a1a9500780ad50cb8aaa0895"
       },
       {
-        "url": "https://archive.ubuntu.com/ubuntu/pool/main/i/iptables/libip6tc2_1.8.10-3ubuntu2_amd64.deb",
-        "sha256": "b98b88eb6aa14a902ea1aebc3b12ddd140572545ae1fc6428cb0868c31671d05"
+        "url": "https://archive.ubuntu.com/ubuntu/pool/main/i/iptables/libip6tc2_1.8.11-2ubuntu3_amd64.deb",
+        "sha256": "3d9fdb3171f1167ab3f5182de11db63bcd27aae71838618f3d46806b3134428e"
       },
       {
-        "url": "https://archive.ubuntu.com/ubuntu/pool/main/libn/libnftnl/libnftnl11_1.2.6-2build1_amd64.deb",
-        "sha256": "e5bde5c9cbb95082700011f0b7ef2c0a41900b0a9fd7434f6e90448e2a7b4e50"
+        "url": "https://archive.ubuntu.com/ubuntu/pool/main/libn/libnftnl/libnftnl11_1.3.1-1_amd64.deb",
+        "sha256": "a2f4d4a4ce3fac7e473c8de60a3d8948a58e9850cd8e2ced17263aa73dda7199"
       },
       {
-        "url": "https://archive.ubuntu.com/ubuntu/pool/main/libn/libnfnetlink/libnfnetlink0_1.0.2-2build1_amd64.deb",
-        "sha256": "f557a287af2ca00df5dbf632c6b77d77479139ffb51c83e3de9766eb609b5d63"
+        "url": "https://archive.ubuntu.com/ubuntu/pool/main/libn/libnfnetlink/libnfnetlink0_1.0.2-3build1_amd64.deb",
+        "sha256": "e76b638fef2c1ebf78260972a52c4716df5752b29a952aeddc0c091a74f179c2"
       },
       {
-        "url": "https://archive.ubuntu.com/ubuntu/pool/main/libn/libnetfilter-conntrack/libnetfilter-conntrack3_1.0.9-6build1_amd64.deb",
-        "sha256": "6d32a4c4618eb7d6c0d989591d28637a9acdfa86dfe22e42e9ac9cc25d882a97"
+        "url": "https://archive.ubuntu.com/ubuntu/pool/main/libn/libnetfilter-conntrack/libnetfilter-conntrack3_1.1.1-1_amd64.deb",
+        "sha256": "facfd45a7cf6bab8ef30adbe693d6486f22e5253263f9d53b4e70b53f768970e"
       }
     ]
   }

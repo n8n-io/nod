@@ -102,7 +102,7 @@ import { coreSkills } from '../runtime/prompt.ts';
 import { createApp } from './app.ts';
 import { credentialRequestKey } from './access.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
-import { learnWritingStyle } from './writing-style.ts';
+import { createWritingStyleLearning } from './writing-style.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals, turnOrigin } from './approvals.ts';
@@ -704,6 +704,7 @@ async function initializeApplication(
   await memoryStore.initialize();
   await importMemoryFile(memoryStore, join(dataRoot, 'objects', 'memory'));
   const memory = createMemoryService({ pool, ownerId, store: memoryStore });
+  const writingStyle = createWritingStyleLearning({ memory, curator });
   const communication = createCommunication({
     pool,
     ownerId,
@@ -815,8 +816,7 @@ async function initializeApplication(
     readWorkspaceFile: (turn, path, maxBytes) =>
       workspace.readArtifact(turn.threadId, path, maxBytes, 'attachment'),
     resumeConnection: resumeAfterConnection,
-    learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
-    briefInbox: (read, stop) => onboardingSuggestions.briefInbox(read, stop),
+    writingStyle,
     wake: triage.triageEvent,
     refresh,
     baseUrl: publicOrigin,
@@ -1046,16 +1046,76 @@ async function initializeApplication(
   const onboardingSuggestions = createOnboardingSuggestions({
     ownerId,
     curator: onboardingCurator,
+    timeZone: async () => (await getPreferences()).timeZone,
     mailCheck,
     answers: async () =>
       (await memory.load()).entries
         .filter((entry) => entry.origin === 'stated' && entry.slug === 'onboarding')
         .map((entry) => entry.text),
-    gmail: async () =>
-      (await integrations.connectedApps()).some(
-        (app) => app.slug === 'gmail' && app.status === 'connected',
-      ),
-    inbox: integrations.inboxSnippets,
+    signal: closing.signal,
+    discovery: {
+      accounts: async () => {
+        const connected = (await integrations.list(ownerId, { refresh: false })).filter(
+          (account) =>
+            account.status === 'connected' &&
+            !account.savedLogin &&
+            !account.disconnectPending &&
+            account.connectionId,
+        );
+        const accounts = await Promise.all(
+          connected.map(async (account) => {
+            const binding = await integrations.binding(account.connectionId!);
+            return binding
+              ? {
+                  connectionId: account.connectionId!,
+                  binding,
+                  slug: account.slug,
+                  name: account.name,
+                }
+              : undefined;
+          }),
+        );
+        return accounts.filter((account) => account !== undefined);
+      },
+      search: async (account, signal) => {
+        signal.throwIfAborted();
+        if ((await integrations.binding(account.connectionId)) !== account.binding)
+          throw new Error('This connected account changed.');
+        return integrations.execute(
+          ownerId,
+          'SEARCH_TOOLS',
+          {
+            connectionId: account.connectionId,
+            query: `${account.name} recent activity messages events tasks projects documents`,
+          },
+          undefined,
+          signal,
+        );
+      },
+      read: async (account, tool, args, signal) => {
+        signal.throwIfAborted();
+        if (
+          (await integrations.binding(account.connectionId)) !== account.binding ||
+          !(await trust.readOnly(
+            tool.action,
+            args,
+            { description: tool.description, inputSchema: tool.schema },
+            signal,
+          ))
+        )
+          throw new Error('This discovery action is unavailable.');
+        signal.throwIfAborted();
+        if ((await integrations.binding(account.connectionId)) !== account.binding)
+          throw new Error('This connected account changed.');
+        return integrations.execute(ownerId, tool.action, args, undefined, signal, account.binding);
+      },
+      current: async (accounts, client) => {
+        for (const account of accounts)
+          if ((await integrations.binding(account.connectionId, client)) !== account.binding)
+            return false;
+        return true;
+      },
+    },
     telegram: async () =>
       Boolean(
         (await channelSettings?.status())?.channels.some(
@@ -1237,10 +1297,17 @@ async function initializeApplication(
     resume: resumeAfterPayment,
     record: (turn, entry, client) => vaultAccess.record(turn, entry, client),
   });
-  const userMessages = createUserMessageService({
+  const submittedMessages = createUserMessageService({
     confirmAction: approvals.chat,
     taskReply: tasks.resolveReply,
   });
+  const userMessages = {
+    ...submittedMessages,
+    submit: (...args: Parameters<typeof submittedMessages.submit>) => {
+      onboardingSuggestions.cancel();
+      return submittedMessages.submit(...args);
+    },
+  };
   if (options.workers !== false) {
     await triage.initializeHeartbeat();
     await initializeMemoryLearning({ boss, consumers, run: learning.run });
@@ -1641,8 +1708,10 @@ async function initializeApplication(
     });
   }
   const welcome = async () => {
-    if (adapters.model.configured)
+    if (adapters.model.configured) {
+      void admission.run(integrations.resumeWritingStyle)?.catch(() => {});
       await onboardingSuggestions.complete((await ownerNames().catch(() => []))[0]);
+    }
   };
   const app = await createApp({
     failureLog: diagnostics.failure,
@@ -1715,12 +1784,7 @@ async function initializeApplication(
     developerIds: desktopMode ? new Set() : new Set([ownerId]),
     start: welcome,
     prepare: prepareRuntime,
-    onboardingMissing: async () =>
-      !adapters.model.configured
-        ? 'brain'
-        : (await integrations.list(ownerId, { refresh: false })).some(connectedGmail)
-          ? null
-          : 'email',
+    onboardingMissing: async () => (adapters.model.configured ? null : 'brain'),
     traces: adapters.traces?.available ?? false,
     onTraces: (enabled) => adapters.traces?.configure({ enabled }),
   }).register(app);
@@ -1743,7 +1807,6 @@ async function initializeApplication(
     pool,
     keyStore: adapters.keyStore,
     curator: onboardingCurator,
-    brief: onboardingSuggestions.currentBrief,
   }).registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
   tasks.registerRoutes(app);
@@ -1878,6 +1941,8 @@ async function initializeApplication(
     await channelSettings?.recover();
   }
   await onboardingSuggestions.initialize();
+  if (adapters.model.configured)
+    void admission.run(integrations.resumeWritingStyle)?.catch(() => {});
   let closingConsumers: Promise<void> | undefined;
   app.addHook('preClose', async () => {
     closing.abort();

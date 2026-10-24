@@ -152,7 +152,8 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   const dataRoot = resolve(options.dataRoot || options.root);
   const resourcesPath = resolve(options.resourcesPath || options.resources);
   const signal = options.signal;
-  const status = options.onStatus || options.onProgress || (() => {});
+  const onStatus = options.onStatus || options.onProgress || (() => {});
+  const status = (value) => onStatus({ stage: 'computer', ...value });
   const hostEnvironment = windowsEnvironment();
   const wsl = join(hostEnvironment.SYSTEMROOT, 'System32/wsl.exe');
   try {
@@ -383,7 +384,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       execute(docker, args, { env: dockerEnvironment, signal, ...extra }),
     runGuest,
     signal,
-    status: (phase, message, progress) => status({ phase, message, progress }),
+    status: (phase, message, stage) => status({ phase, message, stage }),
     prepareImage: async (name) => {
       await execute(
         wsl,

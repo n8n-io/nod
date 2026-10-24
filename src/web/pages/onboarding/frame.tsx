@@ -4,11 +4,21 @@ import { onboardingSteps, type OnboardingStep } from '../../../shared/onboarding
 import { NodGlyph } from '../../components/motion';
 import { Button } from '../../components/ui';
 
-export type DisplayStep = OnboardingStep | 'notifications' | 'launchAtLogin' | 'computer';
+export type DisplayStep = OnboardingStep | 'launchAtLogin' | 'computer';
+
+const stepNames: Record<DisplayStep, string> = {
+  welcome: 'Welcome to nod',
+  intro: 'Meet nod',
+  email: 'Connect your email',
+  calendar: 'Connect your calendar',
+  brain: 'Connect an AI provider',
+  apps: 'Connect your tools',
+  launchAtLogin: 'Open at login',
+  computer: 'Let nod help on your Mac',
+};
 
 export const desktopOnboardingSteps: readonly DisplayStep[] = [
   ...onboardingSteps,
-  'notifications',
   'launchAtLogin',
   'computer',
 ];
@@ -28,8 +38,9 @@ export function OnboardingFrame({
   mainRef?: Ref<HTMLElement>;
   children: ReactNode;
 }) {
-  const welcome = step === 'welcome';
-  const index = steps.indexOf(step);
+  const welcome = step === 'welcome' || step === 'intro';
+  const progressSteps = steps.filter((item) => item !== 'welcome' && item !== 'intro');
+  const index = progressSteps.findIndex((item) => item === step);
   return (
     <div className="ob" data-step={step}>
       <header className="ob-header">
@@ -44,17 +55,15 @@ export function OnboardingFrame({
         <div
           className="ob-dots"
           role={welcome ? undefined : 'img'}
-          aria-label={welcome ? undefined : `Step ${index} of ${steps.length - 1}`}
+          aria-label={welcome ? undefined : `Step ${index + 1} of ${progressSteps.length}`}
         >
           {!welcome &&
-            steps
-              .slice(1)
-              .map((dot, at) => (
-                <span
-                  key={dot}
-                  data-state={at + 1 < index ? 'done' : at + 1 === index ? 'current' : 'next'}
-                />
-              ))}
+            progressSteps.map((dot, at) => (
+              <span
+                key={dot}
+                data-state={at < index ? 'done' : at === index ? 'current' : 'next'}
+              />
+            ))}
         </div>
         <div className="ob-header-end" data-analytics-public>
           {!welcome && onFeedback && (
@@ -72,7 +81,7 @@ export function OnboardingFrame({
           )}
         </div>
       </header>
-      <main className="ob-main" ref={mainRef}>
+      <main className="ob-main" ref={mainRef} tabIndex={-1} aria-label={stepNames[step]}>
         {children}
       </main>
     </div>

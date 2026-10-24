@@ -16,6 +16,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { EventEmitter, getEventListeners } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -354,6 +355,7 @@ async function runningDesktop(
     initialState = 'running',
     storedProfile,
     prepareRuntime,
+    onPhase,
     nativePageLoaded,
     enginePageLoaded,
     readyRenderers = true,
@@ -508,6 +510,10 @@ async function runningDesktop(
     createDesktopLifecycle: (options) =>
       createDesktopLifecycle({
         ...options,
+        onPhase: (value) => {
+          options.onPhase?.(value);
+          onPhase?.(value);
+        },
         prepareRuntime: async (options) => {
           await mkdir(join(paths.get('userData'), 'profiles', 'local'), { recursive: true });
           if (prepareRuntime) return prepareRuntime(options);
@@ -520,7 +526,9 @@ async function runningDesktop(
     safeStorage: storage.encryption,
     Notification: class extends EventEmitter {
       static isSupported() {
-        return notificationsSupported;
+        return typeof notificationsSupported === 'function'
+          ? notificationsSupported()
+          : notificationsSupported;
       }
       show() {
         notifications.push(this);
@@ -814,12 +822,14 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
 
 test('native Welcome is visible before storage and system-key access and accepts only nonsecret choices', async (t) => {
   const storage = deferred();
+  let preparing = false;
   const loaded = deferred();
   const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
     initialState: 'fresh',
     allowStart: true,
     nativePageLoaded: loaded.promise,
     prepareRuntime: async ({ onStorageReady }) => {
+      preparing = true;
       await storage.promise;
       const runtime = { env: {} };
       await onStorageReady(runtime);
@@ -836,6 +846,9 @@ test('native Welcome is visible before storage and system-key access and accepts
   try {
     const launched = f.launch();
     for (let i = 0; !f.windows.length && i < 50; i++) await new Promise((r) => setTimeout(r, 10));
+    for (let i = 0; !preparing && i < 50; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(preparing, true);
+    assert.equal(f.windows[0].isVisible(), false);
     assert.equal(unlocked, 0);
     loaded.resolve();
     await launched;
@@ -861,6 +874,110 @@ test('native Welcome is visible before storage and system-key access and accepts
     loaded.resolve();
     storage.resolve();
     await f.close();
+  }
+});
+
+test('Get started waits for storage and preserves consent while later services prepare', async (t) => {
+  const output = await mkdtemp(join(tmpdir(), 'nod-native-storage-gate-'));
+  t.after(() => rm(output, { recursive: true, force: true }));
+  await buildDesktopUI(output);
+  const html = await readFile(join(output, 'index.html'), 'utf8');
+  const script = await readFile(join(output, 'setup.js'), 'utf8');
+  for (const scenario of ['ready', 'waiting', 'retry']) {
+    await t.test(scenario, async (t) => {
+      const page = new JSDOM(html, {
+        url: 'file:///synthetic/setup.html?firstSetup=true',
+        runScripts: 'outside-only',
+      });
+      t.after(() => page.window.close());
+      page.window.matchMedia = () => ({ matches: true });
+      const runtime = deferred();
+      const calls = [];
+      const choices = [];
+      let publish;
+      let saved = { usageData: false, continued: false };
+      page.window.nodDesktop = {
+        onStatus(listener) {
+          publish = listener;
+        },
+        onPreferences() {},
+        getPreferences: async () => ({ theme: 'light' }),
+        getSettings: async () => ({ welcome: saved }),
+        status: async () => ({
+          phase: 'preparing',
+          engineReady: scenario === 'ready',
+          runtime: { phase: 'preparing', stage: 'storage' },
+        }),
+        prepare(options) {
+          calls.push(options);
+          return runtime.promise;
+        },
+        async saveSettings({ welcome }) {
+          choices.push(welcome);
+          saved = { ...welcome };
+          return { welcome: saved };
+        },
+      };
+      page.window.eval(script);
+      const settle = async (predicate) => {
+        for (let attempt = 0; attempt < 100 && !predicate(); attempt++)
+          await new Promise((accept) => setTimeout(accept, 10));
+        assert.ok(predicate());
+      };
+      await settle(() => page.window.document.querySelector('[data-step="welcome"] button'));
+      let waited = false;
+      const observer = new page.window.MutationObserver(() => {
+        waited ||= Boolean(page.window.document.querySelector('.setup-progress'));
+      });
+      observer.observe(page.window.document, { childList: true, subtree: true });
+      t.after(() => observer.disconnect());
+      page.window.document.querySelector('[data-step="welcome"] button').click();
+      if (scenario === 'ready') {
+        await settle(() => page.window.document.querySelector('[role="switch"]'));
+        assert.equal(waited, false);
+      } else {
+        await settle(() => page.window.document.querySelector('.setup-progress'));
+        assert.equal(page.window.document.querySelector('[role="switch"]'), null);
+        assert.equal(choices.length, 0);
+        assert.equal(calls.length, 0);
+        if (scenario === 'retry') {
+          publish({ phase: 'error', engineReady: false, error: 'Synthetic storage unavailable' });
+          await settle(() => page.window.document.querySelector('[role="alert"]'));
+          page.window.document.querySelector('.recovery-actions button').click();
+          page.window.document.querySelector('.recovery-actions button').click();
+          await settle(() => calls.length === 1);
+          assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ retry: true }]);
+        }
+        publish({
+          phase: 'preparing',
+          engineReady: true,
+          runtime: { phase: 'preparing', stage: 'workspace' },
+        });
+        await settle(() => page.window.document.querySelector('[role="switch"]'));
+        assert.equal(page.window.document.querySelector('.setup-progress'), null);
+      }
+      page.window.document.querySelector('[role="switch"]').click();
+      await settle(() => choices.length === 1);
+      assert.deepEqual(JSON.parse(JSON.stringify(choices)), [
+        { usageData: true, continued: false },
+      ]);
+      waited = false;
+      page.window.document.querySelector('.ob-introduction-cta button').click();
+      await settle(() => choices.length === 2);
+      assert.deepEqual(JSON.parse(JSON.stringify(choices[1])), {
+        usageData: true,
+        continued: true,
+      });
+      await settle(() => calls.length === (scenario === 'retry' ? 2 : 1));
+      assert.ok(page.window.document.querySelector('.ob-introduction'));
+      assert.equal(page.window.document.querySelector('.setup-progress'), null);
+      assert.equal(waited, false);
+      runtime.resolve({ phase: 'ready', engineReady: true, runtime: { phase: 'ready' } });
+      await new Promise((accept) => setTimeout(accept, 20));
+      assert.ok(page.window.document.querySelector('.ob-introduction'));
+      assert.equal(page.window.document.querySelector('.setup-progress'), null);
+      assert.equal(waited, false);
+    });
   }
 });
 
@@ -935,7 +1052,7 @@ test('native startup recovery keeps current status and serializes retry, prerequ
           ?.textContent.includes('Synthetic retry failed'),
       );
       publish({ phase: 'preparing', runtime: { phase: 'downloading', progress: 0.42 } });
-      await settle(() => page.window.document.querySelector('progress')?.value === 42);
+      await settle(() => page.window.document.querySelector('progress')?.value === 0.42);
       assert.equal(page.window.document.querySelector('[role="alert"]'), null);
       assert.equal(page.window.document.querySelector('button'), null);
       publish({ phase: 'error', error: 'Synthetic prerequisite failure', needsWsl: true });
@@ -1513,6 +1630,20 @@ test('native windows wait for owned renderer readiness before replacing startup'
         assert.ok(engine);
         assert.equal(engine.isVisible(), false);
         assert.equal(setup.isDestroyed(), false);
+        if (scenario === 'early-load-failure') {
+          let transferred = false;
+          void f.handlers
+            .get('nod:prepare')({
+              sender: setup.webContents,
+              senderFrame: setup.webContents.mainFrame,
+            })
+            .then(() => {
+              transferred = true;
+            });
+          for (let i = 0; !transferred && i < 20; i++)
+            await new Promise((accept) => setTimeout(accept, 10));
+          assert.equal(transferred, true);
+        }
         if (scenario !== 'early-load-failure') await f.settle();
         assert.equal(engine.isVisible(), false);
         const frame = engine.webContents.mainFrame;
@@ -1559,8 +1690,15 @@ test('native windows wait for owned renderer readiness before replacing startup'
               { sender: recovery.webContents, senderFrame: recovery.webContents.mainFrame },
               { retry: true },
             );
-          if (scenario === 'early-load-failure') await new Promise(setImmediate);
-          else await retry;
+          if (scenario === 'early-load-failure') {
+            let finished = false;
+            void retry.then(() => {
+              finished = true;
+            });
+            for (let i = 0; !finished && i < 20; i++)
+              await new Promise((accept) => setTimeout(accept, 10));
+            assert.equal(finished, true);
+          } else await retry;
           const replacement = f.windows.find((window) => window.url && !window.isDestroyed());
           assert.ok(replacement);
           assert.notEqual(replacement, engine);
@@ -1655,7 +1793,6 @@ test('a missing native setup renderer offers explicit recovery without hidden ke
           readyRenderers: false,
           nativePageLoaded: () => (reopened ? Promise.resolve() : loaded.promise),
           prepareRuntime: async ({ onStorageReady }) => {
-            assert.ok(retryAllowed, 'Runtime startup must wait for explicit retry.');
             const runtime = { env: {} };
             await onStorageReady(runtime);
             return runtime;
@@ -1693,6 +1830,7 @@ test('a missing native setup renderer offers explicit recovery without hidden ke
           assert.equal(prompts.length, 1);
         }
         await launched;
+        await f.settle();
         assert.equal(prompts.length, 1);
         assert.equal(window.isDestroyed(), true);
         assert.equal(f.children.length, 0);
@@ -1967,7 +2105,7 @@ test('session reconciliation retries after runtime startup without rebuilding th
           },
         },
       );
-      await f.storage.store.save({ notifications: true, launchAtLogin: true });
+      await f.storage.store.save({ notifications: false, launchAtLogin: true });
       const save = f.storage.store.save;
       f.storage.store.save = async (value) => {
         if (value.onboardingCompleted && failing && failure === 'settings')
@@ -1994,6 +2132,7 @@ test('session reconciliation retries after runtime startup without rebuilding th
         assert.equal(stopped, 0);
         assert.equal(f.children.length, 1);
         assert.equal((await f.storage.store.get()).onboardingCompleted, true);
+        assert.equal((await f.storage.store.get()).notifications, false);
         assert.equal(
           f.children[0].sent.filter((message) => message.type === 'nod-runtime-ready').length,
           1,
@@ -2143,6 +2282,113 @@ test('workspace failure leaves the pending backend intact and an explicit retry 
     assert.ok(f.windows.some((window) => window.url));
   } finally {
     await f.close();
+  }
+});
+
+test('an engine exit after a workspace failure retains its cause until an explicit recovery', async (t) => {
+  let attempts = 0;
+  const f = await runningDesktop(
+    t,
+    async (url) =>
+      Response.json(
+        url.endsWith('/api/account') ? { settings: { usageData: false } } : { ok: true },
+      ),
+    {
+      initialState: 'fresh',
+      allowStart: true,
+      prepareRuntime: async ({ onStorageReady }) => {
+        const runtime = { env: {} };
+        await onStorageReady(runtime);
+        if (++attempts === 1) throw new Error('Synthetic runtime storage is full');
+        return runtime;
+      },
+    },
+  );
+  try {
+    await f.storage.store.save({ welcome: { usageData: false, continued: true } });
+    await f.launch();
+    await f.settle();
+    assert.equal(f.status().phase, 'error');
+    const cause = f.status().error;
+    assert.equal(cause, 'Synthetic runtime storage is full');
+    f.children[0].emit('exit', 1);
+    assert.equal(f.status().error, cause);
+    assert.equal(f.status().engineReady, false);
+    await new Promise(setImmediate);
+    const shell = f.windows.find((window) => window.path && !window.isDestroyed());
+    assert.ok(shell?.isVisible());
+    assert.equal(attempts, 1);
+    assert.equal(f.children.length, 1);
+    const event = { sender: shell.webContents, senderFrame: shell.webContents.mainFrame };
+    await f.handlers.get('nod:prepare')(event, { retry: true });
+    assert.equal(f.status().phase, 'ready');
+    assert.equal(f.status().engineReady, true);
+    assert.equal(f.status().error, undefined);
+    assert.equal(attempts, 2);
+    assert.equal(f.children.length, 2);
+  } finally {
+    await f.close();
+  }
+});
+
+test('an engine exit during warmup retains its error and waits for one explicit restart', async (t) => {
+  for (const earlyRetry of [false, true]) {
+    await t.test(earlyRetry ? 'retry during warmup' : 'retry after warmup', async (t) => {
+      const connected = deferred();
+      const workspace = deferred();
+      let progress;
+      let preparations = 0;
+      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+        initialState: 'fresh',
+        allowStart: true,
+        prepareRuntime: async ({ onStorageReady, onStatus }) => {
+          preparations++;
+          progress = onStatus;
+          const runtime = { env: {} };
+          await onStorageReady(runtime);
+          connected.resolve();
+          await workspace.promise;
+          onStatus({ phase: 'preparing', stage: 'browser', message: 'Synthetic browser setup' });
+          return runtime;
+        },
+      });
+      try {
+        await f.launch();
+        await connected.promise;
+        assert.equal(f.children.length, 1);
+        f.children[0].stderr.emit('data', Buffer.from('Error: Synthetic engine warmup failure\n'));
+        f.children[0].emit('exit', 1);
+        const failure = f.status().error;
+        assert.equal(failure, 'Synthetic engine warmup failure');
+        progress({ phase: 'preparing', stage: 'workspace', message: 'Synthetic workspace setup' });
+        assert.equal(f.status().phase, 'error');
+        assert.equal(f.status().error, failure);
+        const retry = () => Promise.all([f.prepare({ retry: true }), f.prepare({ retry: true })]);
+        const pending = earlyRetry ? retry() : null;
+        await new Promise(setImmediate);
+        assert.equal(f.children.length, 1);
+        workspace.resolve();
+        if (pending) await pending;
+        else {
+          await f.settle();
+          assert.equal(f.children.length, 1);
+          assert.equal(f.status().phase, 'error');
+          assert.equal(f.status().error, failure);
+          await f.prepare();
+          assert.equal(f.children.length, 1);
+          assert.equal(f.status().error, failure);
+          await retry();
+        }
+        assert.equal(preparations, 1);
+        assert.equal(f.children.length, 2);
+        assert.equal(f.status().phase, 'ready');
+        assert.equal(f.status().engineReady, true);
+        assert.equal(f.status().error, undefined);
+      } finally {
+        workspace.resolve();
+        await f.close();
+      }
+    });
   }
 });
 
@@ -2302,6 +2548,79 @@ test('native quit aborts storage startup without creating a late engine', async 
     f.children.map((child) => child.kind),
     [],
   );
+});
+
+test('native quit drains startup while its initial renderer is still pending', async (t) => {
+  for (const result of ['loaded late', 'failed late']) {
+    await t.test(result, async (t) => {
+      const loaded = deferred();
+      const waiting = deferred();
+      let signal;
+      let stopped = 0;
+      let completed = 0;
+      const f = await runningDesktop(
+        t,
+        async () => assert.fail('No engine may start while quitting.'),
+        {
+          initialState: 'fresh',
+          allowStart: true,
+          nativePageLoaded: () => loaded.promise,
+          onPhase: ({ phase, state }) => {
+            if (phase === 'engine-start' && state === 'started') waiting.resolve();
+          },
+          prepareRuntime: async ({ signal: value, onStorageReady }) => {
+            signal = value;
+            const runtime = { env: {}, close: async () => stopped++ };
+            try {
+              await onStorageReady(runtime);
+              return runtime;
+            } catch (error) {
+              await runtime.close();
+              throw error;
+            }
+          },
+        },
+      );
+      await f.storage.store.save({ theme: 'dark' });
+      f.storage.store.environment = () => assert.fail('Quit must not request Keychain access.');
+      let closing;
+      let deadline;
+      const launching = f.launch();
+      try {
+        await waiting.promise;
+        assert.equal(f.windows[0].isVisible(), false);
+        const before = await readFile(f.storage.path, 'utf8');
+        closing = f.quit(() => completed++);
+        const settled = await Promise.race([
+          closing.then(() => true),
+          new Promise((resolve) => {
+            deadline = setTimeout(() => resolve(false), 1000);
+          }),
+        ]);
+        assert.equal(settled, true, 'Quit waited for its initial setup renderer.');
+        clearTimeout(deadline);
+        assert.equal(stopped, 1);
+        assert.equal(completed, 1);
+        assert.equal(signal.aborted, true);
+        assert.equal(getEventListeners(signal, 'abort').length, 0);
+        assert.equal(f.children.length, 0);
+        if (result === 'failed late') loaded.reject(new Error('Synthetic late renderer failure.'));
+        else loaded.resolve();
+        await launching;
+        await f.settle();
+        assert.equal(await readFile(f.storage.path, 'utf8'), before);
+        assert.equal(f.status().phase, 'closing');
+        assert.equal(f.children.length, 0);
+        await assert.rejects(readFile(join(f.profileRoot, 'profile.json')), { code: 'ENOENT' });
+      } finally {
+        clearTimeout(deadline);
+        loaded.resolve();
+        await launching;
+        await closing;
+        await f.close();
+      }
+    });
+  }
 });
 
 test('native quit drains pending Keychain startup without approval or late vault writes', async (t) => {
@@ -2824,6 +3143,100 @@ test('the engine token waits for the engine nod started to report its port', asy
   f.children[0].emit('exit', 1);
   assert.equal((await prepared).phase, 'error');
   assert.deepEqual(requests, []);
+});
+
+test('a failed backend launch preserves saved setup and one retry starts one replacement', async (t) => {
+  const f = await runningDesktop(
+    t,
+    async (url) =>
+      Response.json(
+        url.endsWith('/api/account') ? { settings: { usageData: true } } : { ok: true },
+      ),
+    { initialState: 'fresh', allowStart: true, reportReady: false },
+  );
+  const choice = { usageData: true, continued: true };
+  await f.storage.store.save({ welcome: choice });
+  try {
+    await f.launch();
+    for (let attempt = 0; !f.children.length && attempt < 100; attempt++)
+      await new Promise((accept) => setTimeout(accept, 10));
+    assert.equal(f.children.length, 1);
+    f.children[0].stderr.emit('data', Buffer.from('Error: Synthetic backend startup failure\n'));
+    f.children[0].emit('exit', 1);
+    assert.equal(f.status().error, 'Synthetic backend startup failure');
+    await f.settle();
+    assert.equal(f.status().engineReady, false);
+    assert.match(f.status().error, /Synthetic backend startup failure/);
+    assert.deepEqual((await f.storage.store.get()).welcome, choice);
+    await new Promise((accept) => setTimeout(accept, 25));
+    assert.equal(f.children.length, 1);
+    const shell = f.windows.find((window) => window.path && !window.isDestroyed());
+    const event = { sender: shell.webContents, senderFrame: shell.webContents.mainFrame };
+    const retried = Promise.all([
+      f.handlers.get('nod:prepare')(event, { retry: true }),
+      f.handlers.get('nod:prepare')(event, { retry: true }),
+    ]);
+    for (let attempt = 0; f.children.length < 2 && attempt < 100; attempt++)
+      await new Promise((accept) => setTimeout(accept, 10));
+    assert.equal(f.children.length, 2);
+    f.children[1].emit('message', { type: 'nod-ready', port: Number(f.children[1].port) });
+    await retried;
+    assert.equal(f.children.length, 2);
+    assert.equal(f.status().phase, 'ready');
+    assert.equal(f.status().engineReady, true);
+    assert.deepEqual((await f.storage.store.get()).welcome, { ...choice, acknowledged: true });
+    assert.ok(f.windows.some((window) => window.url?.endsWith('/onboarding?welcome=complete')));
+  } finally {
+    await f.close();
+  }
+});
+
+test('late startup responses cannot make an exited engine ready or block its explicit retry', async (t) => {
+  for (const endpoint of ['/api/health', '/api/session']) {
+    await t.test(endpoint, async (t) => {
+      const requested = deferred();
+      const response = deferred();
+      let held = false;
+      const f = await runningDesktop(
+        t,
+        async (url) => {
+          if (!held && url.endsWith(endpoint)) {
+            held = true;
+            requested.resolve();
+            await response.promise;
+          }
+          return Response.json(
+            url.endsWith('/api/account') ? { settings: { usageData: false } } : { ok: true },
+          );
+        },
+        { initialState: 'fresh', allowStart: true },
+      );
+      try {
+        await f.storage.store.save({ welcome: { usageData: false, continued: true } });
+        await f.launch();
+        await requested.promise;
+        f.children[0].stderr.emit('data', Buffer.from('Error: Synthetic startup response lost\n'));
+        f.children[0].emit('exit', 1);
+        response.resolve();
+        await f.settle();
+        assert.equal(f.status().phase, 'error');
+        assert.equal(f.status().engineReady, false);
+        assert.equal(f.status().error, 'Synthetic startup response lost');
+        assert.equal(f.children.length, 1);
+        const shell = f.windows.find((window) => window.path && !window.isDestroyed());
+        await f.handlers.get('nod:prepare')(
+          { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
+          { retry: true },
+        );
+        assert.equal(f.status().phase, 'ready');
+        assert.equal(f.status().engineReady, true);
+        assert.equal(f.children.length, 2);
+      } finally {
+        response.resolve();
+        await f.close();
+      }
+    });
+  }
 });
 
 test('the engine reaches 1Password only through a separate helper that may load its library', async (t) => {
@@ -4338,35 +4751,39 @@ test('Intel updates use their own app assets and an official nod runtime release
   await assert.rejects(f.source.latest('0.1.0'));
 });
 
-test('desktop preference choices resume durably and cannot skip or regress explicit consent', async (t) => {
+test('desktop preference choices resume durably without requiring notifications or regressing consent', async (t) => {
   const f = await fixture(t);
-  assert.equal((await f.store.get()).onboardingPreferenceStep, 'notifications');
+  assert.equal((await f.store.get()).onboardingPreferenceStep, 'launchAtLogin');
   await assert.rejects(f.store.save({ onboardingCompleted: true }));
   await assert.rejects(f.store.save({ notifications: true, onboardingCompleted: true }));
   assert.equal((await f.store.get()).onboardingCompleted, false);
-  await assert.rejects(f.store.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' }));
-  await assert.rejects(f.store.save({ onboardingPreferenceStep: 'launchAtLogin' }));
+  await assert.rejects(f.store.save({ onboardingPreferenceStep: 'complete' }));
   await assert.rejects(
-    f.store.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' }),
+    f.store.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' }),
   );
-  await f.store.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' });
+  await f.store.save({ notifications: false });
+  const legacy = JSON.parse(await readFile(f.path, 'utf8'));
+  legacy.onboardingPreferenceStep = 'notifications';
+  await writeFile(f.path, JSON.stringify(legacy));
   const reopened = f.reopen();
-  assert.equal((await reopened.get()).notifications, true);
+  assert.equal((await reopened.get()).notifications, false);
   assert.equal((await reopened.get()).onboardingPreferenceStep, 'launchAtLogin');
-  await reopened.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' });
   await assert.rejects(
-    reopened.save({ notifications: false, onboardingPreferenceStep: 'launchAtLogin' }),
-  );
-  await assert.rejects(
-    reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' }),
+    reopened.save({ notifications: true, onboardingPreferenceStep: 'launchAtLogin' }),
   );
   await reopened.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' });
   await reopened.save({ launchAtLogin: true, onboardingPreferenceStep: 'complete' });
   assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
+  assert.equal((await f.reopen().get()).notifications, false);
+  await assert.rejects(
+    reopened.save({ launchAtLogin: false, onboardingPreferenceStep: 'complete' }),
+  );
+  await assert.rejects(reopened.save({ onboardingPreferenceStep: 'notifications' }));
+  await reopened.save({ onboardingCompleted: true });
+  assert.equal((await f.reopen().get()).onboardingCompleted, true);
+  assert.equal((await f.reopen().get()).notifications, false);
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
   delete saved.onboardingPreferenceStep;
-  saved.onboardingCompleted = true;
-  saved.notifications = false;
   saved.launchAtLogin = false;
   await writeFile(f.path, JSON.stringify(saved));
   assert.equal((await f.reopen().get()).onboardingPreferenceStep, 'complete');
@@ -4408,15 +4825,13 @@ test('desktop preference steps and completion require the owned normal app and d
         await assert.rejects(
           save(
             { ...event, senderFrame: { url: window.url } },
-            { notifications: true, onboardingPreferenceStep: 'launchAtLogin' },
+            { launchAtLogin: true, onboardingPreferenceStep: 'complete' },
           ),
         );
         await assert.rejects(save(event, { welcome: { usageData: true, continued: true } }));
         await assert.rejects(save(event, { onboardingCompleted: true }));
-        await assert.rejects(
-          save(event, { notifications: false, onboardingPreferenceStep: 'launchAtLogin' }),
-        );
-        await save(event, { notifications: true, onboardingPreferenceStep: 'launchAtLogin' });
+        await save(event, { notifications: false });
+        assert.equal((await f.storage.reopen().get()).notifications, false);
         await assert.rejects(
           save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' }),
           /login items/,
@@ -4438,10 +4853,15 @@ test('desktop preference steps and completion require the owned normal app and d
         }
         loginStatus = {};
         await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
+        await save(event, { launchAtLogin: true, onboardingPreferenceStep: 'complete' });
         assert.equal((await f.storage.reopen().get()).onboardingPreferenceStep, 'complete');
+        assert.equal((await f.storage.reopen().get()).notifications, false);
+        await assert.rejects(save(event, { onboardingCompleted: true }));
+        assert.equal((await f.storage.reopen().get()).onboardingCompleted, false);
         completed = true;
         await save(event, { onboardingCompleted: true });
         assert.equal((await f.storage.reopen().get()).onboardingCompleted, true);
+        assert.equal((await f.storage.reopen().get()).notifications, false);
         await assert.rejects(save(event, { onboardingCompleted: false }));
       } finally {
         await f.close();
@@ -4495,6 +4915,110 @@ test('native readiness notification waits for full runtime readiness and reaches
         resources.resolve();
         await f.close();
       }
+    });
+  }
+});
+
+test('the first notification request is durable and preserves explicit or legacy choices', async (t) => {
+  const f = await fixture(t);
+  await f.store.save({ launchAtLogin: true, onboardingCompleted: true });
+  assert.equal((await f.store.get()).notifications, false);
+  assert.equal('notificationRequest' in (await f.store.get()), false);
+  const claims = await Promise.all(
+    Array.from({ length: 4 }, () => f.store.claimNotificationRequest()),
+  );
+  assert.equal(claims.filter(Boolean).length, 1);
+  assert.equal(JSON.parse(await readFile(f.path, 'utf8')).notificationRequest, 'requested');
+  assert.equal(await f.reopen().claimNotificationRequest(), false);
+  await f.store.save({ notifications: false });
+  assert.equal((await f.store.finishNotificationRequest('requested')).notifications, false);
+  assert.equal(await f.reopen().claimNotificationRequest(), false);
+  await assert.rejects(f.store.save({ notificationRequest: 'pending' }));
+  const legacy = JSON.parse(await readFile(f.path, 'utf8'));
+  delete legacy.notificationRequest;
+  await writeFile(f.path, JSON.stringify(legacy));
+  const previous = f.reopen();
+  assert.equal(await previous.claimNotificationRequest(), false);
+  assert.equal((await previous.get()).notifications, false);
+  for (const status of ['unsupported', 'failed']) {
+    const next = await fixture(t);
+    assert.equal(await next.store.claimNotificationRequest(), true);
+    assert.equal((await next.store.finishNotificationRequest(status)).notifications, false);
+    assert.equal(await next.reopen().claimNotificationRequest(), false);
+  }
+});
+
+test('the first introduction requests native notifications only from its owned renderer once per profile', async (t) => {
+  for (const outcome of ['requested', 'unsupported', 'failed']) {
+    await t.test(outcome, async (t) => {
+      const stored = await fixture(t);
+      await stored.store.save({ launchAtLogin: true, onboardingCompleted: true });
+      const messageId = randomUUID();
+      let probes = 0;
+      const calls = [];
+      const f = await runningDesktop(
+        t,
+        async (url, options) => {
+          calls.push({ path: new URL(url).pathname, method: options?.method ?? 'GET' });
+          return Response.json({ messageId, settings: { onboardingCompleted: true } });
+        },
+        {
+          storedProfile: stored,
+          notificationsSupported: () => {
+            probes++;
+            assert.equal(
+              JSON.parse(readFileSync(stored.path, 'utf8')).notificationRequest,
+              'requested',
+            );
+            if (outcome === 'failed') throw new Error('Synthetic notification API unavailable');
+            return outcome === 'requested';
+          },
+        },
+      );
+      f.showEngine();
+      const window = f.windows.at(-1);
+      const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+      const request = f.handlers.get('nod:notifications:request');
+      assert.equal(probes, 0);
+      await assert.rejects(request({ ...event, sender: {} }, messageId));
+      await assert.rejects(request({ ...event, senderFrame: { ...event.senderFrame } }, messageId));
+      await assert.rejects(request(event, 'invalid'));
+      await assert.rejects(request(event, randomUUID()));
+      assert.equal(probes, 0);
+      assert.equal((await f.storage.store.get()).notifications, false);
+      const responses = await Promise.all([request(event, messageId), request(event, messageId)]);
+      assert.deepEqual(responses.map((value) => value.status).sort(), [outcome, 'skipped'].sort());
+      assert.ok(probes >= 1);
+      const attempted = probes;
+      assert.equal((await f.storage.reopen().get()).notifications, outcome === 'requested');
+      assert.equal((await request(event, messageId)).status, 'skipped');
+      assert.equal(probes, attempted);
+      assert.equal(f.notifications.length, 0);
+      assert.ok(calls.every((call) => call.method === 'GET'));
+      assert.ok(calls.every((call) => call.path === '/api/onboarding/introduction'));
+      f.crash();
+      await f.close();
+      const restarted = await runningDesktop(t, async () => Response.json({ messageId }), {
+        storedProfile: f.storage,
+        notificationsSupported: () =>
+          assert.fail('A replay must not request native permission again'),
+      });
+      restarted.showEngine();
+      const reopenedWindow = restarted.windows.at(-1);
+      assert.equal(
+        (
+          await restarted.handlers.get('nod:notifications:request')(
+            {
+              sender: reopenedWindow.webContents,
+              senderFrame: reopenedWindow.webContents.mainFrame,
+            },
+            messageId,
+          )
+        ).status,
+        'skipped',
+      );
+      restarted.crash();
+      await restarted.close();
     });
   }
 });

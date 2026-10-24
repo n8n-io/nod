@@ -13,9 +13,10 @@ import type {
 } from '../../shared/contracts';
 import type { SuggestedTask, TaskSuggestions } from '../../shared/onboarding';
 import type { TrustView } from '../../shared/trust';
-import { integrationServices } from '../../shared/integrations';
+import { integrationMetadata, integrationServices } from '../../shared/integrations';
 import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
 import { ChatTools } from '../components/chat-tools';
+import { ServiceLogo } from '../components/service-logo';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { TaskCard } from './tasks';
 import { MessageBubble } from '../components/message';
@@ -23,6 +24,7 @@ import { conversationFiles } from '../components/attachment-card';
 import { ArtifactWorkspace } from '../components/artifact-drawer';
 import { PrivateEntryWorkspace } from '../components/private-entry';
 import { ChatTurnRail } from '../components/chat-turn-rail';
+import { ChatNotifications } from '../components/chat-notifications';
 import { BrandMark } from '../components/brand';
 import { FeedbackLauncher } from '../components/feedback-discovery';
 import {
@@ -72,7 +74,6 @@ function Welcome() {
     </div>
   );
 }
-const taskSources = { gmail: 'Gmail', web: 'For you', telegram: 'Telegram' } as const;
 function Working({ item, label = 'nod is working' }: { item?: Activity; label?: string }) {
   const detail = item?.step || item?.site;
   const text = item?.title || detail;
@@ -114,12 +115,14 @@ function Working({ item, label = 'nod is working' }: { item?: Activity; label?: 
 function TaskCards({
   id,
   suggestions,
+  connections,
   status,
   disabled,
   onStart,
 }: {
   id: string;
   suggestions: TaskSuggestions;
+  connections: Connection[];
   status(task: SuggestedTask): 'idle' | 'working' | 'waiting' | 'done';
   disabled: boolean;
   onStart(task: SuggestedTask, position: number): void;
@@ -146,6 +149,7 @@ function TaskCards({
         <div className="task-cards">
           {suggestions.tasks.map((task, index) => {
             const state = status(task);
+            const connection = connections.find((entry) => entry.slug === task.source);
             return (
               <Rise
                 key={task.id}
@@ -158,9 +162,20 @@ function TaskCards({
                   {task.source === 'web' ? (
                     <User size={14} aria-hidden="true" />
                   ) : (
-                    <span className={`task-source-${task.source}`} aria-hidden="true" />
+                    <ServiceLogo
+                      slug={task.source}
+                      logoUrl={
+                        task.source === 'telegram' ? '/logos/telegram.svg' : connection?.logoUrl
+                      }
+                      connectionId={connection?.connectionId}
+                      size={16}
+                    />
                   )}
-                  {taskSources[task.source]}
+                  {task.source === 'web'
+                    ? 'For you'
+                    : task.source === 'telegram'
+                      ? 'Telegram'
+                      : integrationMetadata(task.source, connection).name}
                   {task.kind && (
                     <span className="task-kind">
                       {task.kind === 'ongoing' ? 'Ongoing' : 'Right now'}
@@ -342,10 +357,14 @@ export function Chat({
   const [welcoming, setWelcoming] = useState(
     () => allMessages.length === 0 && !working && state.configuration.llmReady,
   );
+  const introduction = usePageData<{ messageId: string | null }>('/api/onboarding/introduction');
   useEffect(() => {
     if (!welcoming) return;
     void post('/api/account/welcome', {})
-      .then(() => refresh())
+      .then(() => {
+        void introduction.refresh();
+        return refresh();
+      })
       .catch((cause) => setError(errorMessage(cause)))
       .finally(() => setWelcoming(false));
   }, []);
@@ -1072,6 +1091,7 @@ export function Chat({
                     <TaskCards
                       id={message.id}
                       suggestions={message.suggestions}
+                      connections={connections ?? []}
                       status={(task) =>
                         taskStatus(
                           task,
@@ -1143,6 +1163,9 @@ export function Chat({
                       }
                     />
                   )}
+                  {message.id === introduction.data?.messageId && (
+                    <ChatNotifications messageId={message.id} />
+                  )}
                 </Fragment>
               ))}
               {planning ? (
@@ -1150,9 +1173,7 @@ export function Chat({
                   <div className="assistant-mark" aria-hidden="true">
                     <NodGlyph size={24} mode="thinking" />
                   </div>
-                  <span className="task-bubble">
-                    Pulling together a few ideas from what you told me…
-                  </span>
+                  <span className="task-bubble">Pulling together a few ideas to get started…</span>
                 </div>
               ) : (
                 <>

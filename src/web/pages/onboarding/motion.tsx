@@ -58,7 +58,9 @@ export function useReveal(
   useEffect(() => {
     if (done) return;
     const press = (event: KeyboardEvent) => {
-      if (event.key === 'Enter' && event.target === document.body && !event.repeat) skip();
+      const surface =
+        event.target === document.body || event.target === document.querySelector('.ob-main');
+      if (event.key === 'Enter' && surface && !event.repeat) skip();
     };
     window.addEventListener('keydown', press);
     return () => window.removeEventListener('keydown', press);
@@ -237,6 +239,7 @@ export function Footer({
   nextLabel = 'Continue',
   nextDisabled = false,
   busy = false,
+  summary,
 }: {
   show?: boolean;
   onBack?(): void;
@@ -247,6 +250,7 @@ export function Footer({
   nextLabel?: ReactNode;
   nextDisabled?: boolean;
   busy?: boolean;
+  summary?: ReactNode;
 }) {
   return (
     <div className="ob-footer" data-analytics-public>
@@ -256,6 +260,7 @@ export function Footer({
         </Button>
       )}
       <div className="ob-footer-end">
+        {summary && <div className="ob-footer-summary">{summary}</div>}
         {onSkip && (
           <Button variant="ghost" onClick={onSkip} disabled={!show || busy}>
             {skipLabel}
