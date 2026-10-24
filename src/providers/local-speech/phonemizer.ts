@@ -1,6 +1,9 @@
 import { fork } from 'node:child_process';
 
-export function phonemizeEnglish(text: string, voice: 'en-us' | 'en-gb'): Promise<string> {
+export function phonemizeSpeech(
+  text: string,
+  voice: 'en-us' | 'en-gb' | 'es' | 'fr-fr' | 'hi' | 'it',
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ELECTRON_RUN_AS_NODE: '1' };
     for (const name of ['PATH', 'SystemRoot', 'TEMP', 'TMP', 'TMPDIR', 'LANG'])

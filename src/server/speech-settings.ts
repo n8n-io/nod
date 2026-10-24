@@ -70,22 +70,28 @@ export function registerSpeechSettings(
     }
   });
   app.post('/api/speech/preview', async (request, reply) => {
-    const { voice, locale } = z
-      .object({ voice: z.string().max(80).nullable(), locale: z.string().max(35).optional() })
+    const { voice, locale, text } = z
+      .object({
+        voice: z.string().max(80).nullable(),
+        locale: z.string().max(35).optional(),
+        text: z.string().trim().min(1).max(500).optional(),
+      })
       .strict()
       .parse(request.body);
     const chosen = speech.voices.find((item) => item.id === (voice ?? speech.defaultVoice));
-    if (voice && !chosen) return reply.code(400).send({ error: 'Choose an available voice.' });
+    if (!chosen) return reply.code(400).send({ error: 'Choose an available voice.' });
     if (preview) return reply.code(409).send({ error: 'A voice preview is already playing.' });
     const controller = new AbortController();
     preview = controller;
     const stop = () => controller.abort();
     reply.raw.once('close', stop);
     try {
-      const language = (chosen?.language ?? locale ?? 'en').toLowerCase().split('-')[0];
-      const audio = await speech.synthesize(previews[language] ?? previews.en, controller.signal, {
-        ...(voice ? { voice } : {}),
-      });
+      const language = (chosen.language ?? locale ?? 'en').toLowerCase().split('-')[0];
+      const audio = await speech.synthesize(
+        text ?? previews[language] ?? previews.en,
+        controller.signal,
+        { voice: chosen.id },
+      );
       return reply.header('Cache-Control', 'no-store').type(audio.mimeType).send(audio.bytes);
     } finally {
       reply.raw.off('close', stop);

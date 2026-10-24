@@ -170,9 +170,9 @@ This version exports model spans only. It does not export metrics, logs, browser
 
 ## Local speech
 
-Owners can prepare local speech from chat or **Settings → General → Voice**. nod downloads pinned Whisper and Kokoro models into its data directory and runs them in a separate process on the runtime host. Audio is processed in memory. The worker receives no provider keys or connected account credentials. Local voices speak English or Brazilian Portuguese. When you enable local audio without a connected speech service, nod picks a voice matching your browser’s language when one is available. If you access a source install from another device, inference still runs on the computer hosting nod.
+Owners can prepare local speech from chat or **Settings → General → Voice**. nod downloads pinned Whisper and Kokoro models into its data directory and runs them in a separate process on the runtime host. Audio is processed in memory. The worker receives no provider keys or connected account credentials. Local voices speak English, Spanish, French, Hindi, Italian or Brazilian Portuguese. When you enable local audio without a connected speech service, nod picks a voice matching your browser’s language when one is available. If you access a source install from another device, inference still runs on the computer hosting nod.
 
-A connected OpenRouter or OpenAI speech service is selected before local speech for automatic voices. Selecting a local voice explicitly uses local speech for both transcription and replies. nod does not change providers automatically after a failed paid request.
+A connected OpenRouter or OpenAI speech service is selected before local speech for the default voice. Selecting a local voice explicitly uses local speech for both transcription and replies. nod does not change providers automatically after a failed paid request.
 
 ## Related resources
 

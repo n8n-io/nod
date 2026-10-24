@@ -10,7 +10,7 @@ import {
   StyleTextToSpeech2Model,
 } from '@huggingface/transformers';
 import { phonemize } from '@pedrobef/vozz/g2p';
-import { phonemizeEnglish } from './phonemizer.ts';
+import { phonemizeSpeech } from './phonemizer.ts';
 import { localSpeechModels } from './models.ts';
 import { decodeLocalAudio } from './audio.ts';
 import { localSpeechCacheMarker, matchesSpeechFile, verifySpeechCache } from './cache.ts';
@@ -26,6 +26,22 @@ let transcriber: Awaited<ReturnType<typeof createTranscriber>> | undefined;
 let synthesizer: Awaited<ReturnType<typeof createSynthesizer>> | undefined;
 let busy = false;
 const voiceStyles = new Map<string, Float32Array>();
+const voiceLanguages = {
+  af_heart: 'en-us',
+  af_bella: 'en-us',
+  bf_emma: 'en-gb',
+  bm_george: 'en-gb',
+  pf_dora: 'pt-br',
+  pm_alex: 'pt-br',
+  ef_dora: 'es',
+  em_alex: 'es',
+  ff_siwis: 'fr-fr',
+  hf_alpha: 'hi',
+  hm_omega: 'hi',
+  if_sara: 'it',
+  im_nicola: 'it',
+} as const;
+type LocalVoice = keyof typeof voiceLanguages;
 
 async function createSynthesizer() {
   const path = join(cacheDir, 'kokoro');
@@ -113,9 +129,8 @@ async function prepare(id: number) {
 }
 
 async function generate(text: string, voice: LocalVoice) {
-  const phonemes = voice.startsWith('p')
-    ? phonemize(text)
-    : await phonemizeEnglish(text, voice.startsWith('a') ? 'en-us' : 'en-gb');
+  const language = voiceLanguages[voice];
+  const phonemes = language === 'pt-br' ? phonemize(text) : await phonemizeSpeech(text, language);
   const { input_ids } = synthesizer!.tokenizer(phonemes, { truncation: false });
   const length = input_ids.dims.at(-1)!;
   if (length > 512) throw new Error('length');
@@ -133,8 +148,6 @@ async function generate(text: string, voice: LocalVoice) {
   });
   return new RawAudio(waveform.data, 24000);
 }
-
-type LocalVoice = 'af_heart' | 'af_bella' | 'bf_emma' | 'bm_george' | 'pf_dora' | 'pm_alex';
 
 async function synthesize(text: string, voice: LocalVoice) {
   const chunks: Float32Array[] = [];
@@ -239,9 +252,7 @@ process.on('message', async (raw: unknown) => {
         typeof message.text === 'string' &&
         message.text.trim() &&
         message.text.length <= 4096 &&
-        ['af_heart', 'af_bella', 'bf_emma', 'bm_george', 'pf_dora', 'pm_alex'].includes(
-          message.voice ?? '',
-        )
+        Object.hasOwn(voiceLanguages, message.voice ?? '')
       ) {
         const bytes = await synthesize(message.text, message.voice as LocalVoice);
         process.send!({ id: message.id, type: 'audio', bytes });

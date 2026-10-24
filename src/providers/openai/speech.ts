@@ -13,6 +13,24 @@ export function createOpenAISpeechProvider(options: {
   fetch?: typeof fetch;
 }): SpeechProvider {
   const request = options.fetch ?? fetch;
+  const speechModel = options.speechModel || 'gpt-4o-mini-tts';
+  const voices = speechVoices.filter(
+    (voice) =>
+      voice.engine === 'OpenAI' &&
+      (!['tts-1', 'tts-1-hd'].includes(speechModel) ||
+        [
+          'openai:alloy',
+          'openai:ash',
+          'openai:coral',
+          'openai:echo',
+          'openai:fable',
+          'openai:onyx',
+          'openai:nova',
+          'openai:sage',
+          'openai:shimmer',
+        ].includes(voice.id)),
+  );
+  const defaultVoice = `openai:${options.voice ?? 'coral'}`;
   async function headers() {
     const key = typeof options.apiKey === 'function' ? await options.apiKey() : options.apiKey;
     if (!key) throw new Error('Speech is not configured.');
@@ -49,8 +67,8 @@ export function createOpenAISpeechProvider(options: {
   }
   return {
     id: 'openai',
-    voices: speechVoices.filter((voice) => voice.engine === 'OpenAI'),
-    defaultVoice: `openai:${options.voice ?? 'coral'}`,
+    voices,
+    defaultVoice,
     get configured() {
       return options.configured?.() ?? Boolean(options.apiKey);
     },
@@ -124,13 +142,10 @@ export function createOpenAISpeechProvider(options: {
     },
     async synthesize(text, signal, report, synthesis) {
       signal?.throwIfAborted();
-      const selected = synthesis?.voice
-        ? speechVoices.find((voice) => voice.id === synthesis.voice && voice.engine === 'OpenAI')
-        : undefined;
-      if (synthesis?.voice !== undefined && !selected)
-        throw new Error('That voice is unavailable.');
-      const voice = selected?.id.split(':')[1] ?? options.voice ?? 'coral';
-      const model = options.speechModel || 'gpt-4o-mini-tts';
+      const selected = voices.find((voice) => voice.id === (synthesis?.voice ?? defaultVoice));
+      if (!selected) throw new Error('That voice is unavailable.');
+      const voice = selected.id.split(':')[1];
+      const model = speechModel;
       return measured(model, 'synthesize', signal, report, async (usage) => {
         const authorization = await headers();
         signal?.throwIfAborted();

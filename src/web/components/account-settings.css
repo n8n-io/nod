@@ -367,17 +367,26 @@
 }
 
 .voice-settings .account-preference-row > .input,
-.voice-settings-choice {
+.voice-settings-preview {
   width: min(320px, 60%);
 }
-.voice-settings-choice {
-  display: flex;
-  align-items: center;
+.voice-settings-preview {
+  display: grid;
+  min-width: 0;
+  justify-items: end;
   gap: 8px;
 }
-.voice-settings-choice .input {
-  min-width: 0;
-  flex: 1;
+.voice-settings-preview .input {
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+  line-height: 1.5;
+}
+.voice-settings-phrase {
+  align-items: start;
+}
+.voice-settings-phrase > label {
+  padding-top: 8px;
 }
 .voice-settings .field-hint {
   line-height: 1.5;
@@ -406,7 +415,7 @@
 }
 @container account-settings (max-width: 400px) {
   .voice-settings .account-preference-row > .input,
-  .voice-settings-choice {
+  .voice-settings-preview {
     width: 100%;
   }
 }

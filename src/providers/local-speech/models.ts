@@ -111,6 +111,41 @@ export const localSpeechModels = [
         size: 522240,
         sha256: '0175c753f59c54e7fd5a995bedef0c5ff2fb67e0043dd3dcb2ae74ec2acbeb2a',
       },
+      {
+        path: 'voices/ef_dora.bin',
+        size: 522240,
+        sha256: 'f66ec66bd295acb18372e37008533a9a3228483ccd294e7538d5d9294ac9a532',
+      },
+      {
+        path: 'voices/em_alex.bin',
+        size: 522240,
+        sha256: '27809e9eafdcbcfff90a3016c697568676531de2a2c39cee29c96c7bd6b83e95',
+      },
+      {
+        path: 'voices/ff_siwis.bin',
+        size: 522240,
+        sha256: 'a35f5675ad08948e326ae75fd0ea16ba5d0042e4f76b5f3d1df77d0a48c54861',
+      },
+      {
+        path: 'voices/hf_alpha.bin',
+        size: 522240,
+        sha256: '040be6a4425411cc01fda5fd06693c76bfa78572632852bc8cda9c99232ffb56',
+      },
+      {
+        path: 'voices/hm_omega.bin',
+        size: 522240,
+        sha256: 'b02d9222d9ed00ce26b302173a862c2c93f96cc40b5c422b8d14910b9ff34137',
+      },
+      {
+        path: 'voices/if_sara.bin',
+        size: 522240,
+        sha256: '409b69248798fcdc2542330c76953d230710f19b057e59cb82fdc3c4cf71265c',
+      },
+      {
+        path: 'voices/im_nicola.bin',
+        size: 522240,
+        sha256: 'bc578e510d52a96d6940d46f12e96d7b3df00905dbea075113226d100e6e1ab0',
+      },
     ],
   },
 ] as const;

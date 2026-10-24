@@ -3398,6 +3398,118 @@ test('Telegram chat cards require paired owned metadata and preserve ordinary li
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
 
+test('voice previews bind the chosen phrase and voice, cancelling stale playback on edits and close', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'https://nod.fixture.invalid' });
+      Object.assign(globalThis, { window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage });
+      for (const name of ['Node','Element','HTMLElement','HTMLTextAreaElement','Event'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      Object.defineProperty(navigator, 'language', { configurable: true, value: 'pt-PT' });
+      const requests = [], players = [], revoked = [];
+      URL.createObjectURL = () => 'blob:preview-' + players.length;
+      URL.revokeObjectURL = url => revoked.push(url);
+      globalThis.Audio = function(url) {
+        const player = document.createElement('audio');
+        player.src = url;
+        player.playing = false;
+        player.play = async () => { player.playing = true; };
+        player.pause = () => { player.playing = false; };
+        player.load = () => {};
+        players.push(player);
+        return player;
+      };
+      let settings = { transcription: true, synthesis: true, speechReply: 'voice', speechVoice: null,
+        defaultVoice: 'openai:coral', voices: [
+          { id: 'openai:coral', name: 'Coral', description: 'Warm and friendly', engine: 'OpenAI' },
+          { id: 'local:pf_dora', name: 'Dora', description: 'Brazilian Portuguese', engine: 'Local', language: 'pt-BR' },
+        ] };
+      globalThis.fetch = (path, options) => {
+        if (path === '/api/speech') return Promise.resolve(Response.json(settings));
+        if (path === '/api/preferences') {
+          settings = { ...settings, ...JSON.parse(options.body) };
+          return Promise.resolve(Response.json(settings));
+        }
+        assert.equal(path, '/api/speech/preview');
+        return new Promise(resolve => requests.push({ options, resolve }));
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { VoiceSettings } = await import('./src/web/components/voice-settings.tsx');
+      let root = createRoot(document.querySelector('#root'));
+      const render = () => act(async () => root.render(createElement(VoiceSettings, { onBusyChange() {}, onModels() {} })));
+      const settle = async check => {
+        for (let i = 0; i < 100 && !check(); i++)
+          await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+        assert.ok(check(), 'Expected voice preview interaction to settle');
+      };
+      const edit = value => act(async () => {
+        const input = document.querySelector('textarea');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      const preview = () => act(async () => document.querySelector('[aria-label="Preview voice"]').click());
+      const resolve = index => act(async () => requests[index].resolve(new Response(new Blob(['Synthetic audio'], { type: 'audio/wav' }))));
+      try {
+        await render();
+        await settle(() => document.querySelector('textarea'));
+        await edit('  مرحباً، كيف حالك؟  ');
+        await preview();
+        assert.deepEqual(JSON.parse(requests[0].options.body), { voice: 'openai:coral', locale: 'pt-PT', text: 'مرحباً، كيف حالك؟' });
+        await edit('Olá, esta é uma frase de teste.');
+        assert.equal(requests[0].options.signal.aborted, true);
+        await resolve(0);
+        assert.equal(players.length, 0);
+        await preview();
+        await resolve(1);
+        assert.equal(players[0].playing, true);
+        const firstUrl = players[0].src;
+        await edit('Outra frase.');
+        assert.equal(players[0].playing, false);
+        assert.equal(players[0].getAttribute('src'), null);
+        assert.equal(revoked.filter(url => url === firstUrl).length, 1);
+        await preview();
+        await act(async () => {
+          const voice = document.querySelector('select[id$="-voice"]');
+          voice.value = 'local:pf_dora';
+          voice.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        assert.equal(requests[2].options.signal.aborted, true);
+        await resolve(2);
+        assert.equal(players.length, 1);
+        await settle(() => !document.querySelector('[aria-label="Preview voice"]').disabled);
+        await preview();
+        assert.deepEqual(JSON.parse(requests[3].options.body), { voice: 'local:pf_dora', locale: 'pt-PT', text: 'Outra frase.' });
+        await resolve(3);
+        assert.equal(players[1].playing, true);
+        const secondUrl = players[1].src;
+        await act(async () => root.unmount());
+        assert.equal(players[1].playing, false);
+        assert.equal(revoked.filter(url => url === secondUrl).length, 1);
+        root = createRoot(document.querySelector('#root'));
+        await render();
+        await settle(() => document.querySelector('textarea'));
+        await edit('   ');
+        await preview();
+        assert.deepEqual(JSON.parse(requests[4].options.body), { voice: 'local:pf_dora', locale: 'pt-PT' });
+        await act(async () => root.unmount());
+        assert.equal(requests[4].options.signal.aborted, true);
+        await resolve(4);
+        assert.equal(players.length, 2);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
 test('composer preserves keyboard shortcuts, upload retries, previews and failed-send recovery', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,

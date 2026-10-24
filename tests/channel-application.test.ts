@@ -20,6 +20,7 @@ import { analyticsRoutes, createAnalytics } from '../src/server/analytics.ts';
 import { gunzipSync } from 'node:zlib';
 import { createChannelSessionStore } from '../src/server/channel-session.ts';
 import { createSpeech } from '../src/server/speech.ts';
+import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
 import { registerSpeechSettings } from '../src/server/speech-settings.ts';
 import type { createPreferencesStore } from '../src/server/preferences.ts';
 
@@ -34,7 +35,8 @@ test('speech previews reject unavailable voices, serialize generation and releas
     finish = resolve;
   });
   const signals: AbortSignal[] = [];
-  const voices: string[] = [];
+  const requests: Array<{ text: string; voice: string | undefined }> = [];
+  let defaultVoice: string | undefined = 'openai:coral';
   const app = Fastify();
   registerSpeechSettings(app, {
     preferences: { get: async () => ({ locale: 'pt-PT' }) } as ReturnType<
@@ -43,13 +45,16 @@ test('speech previews reject unavailable voices, serialize generation and releas
     speech: createSpeech({
       id: 'fixture',
       configured: true,
+      get defaultVoice() {
+        return defaultVoice;
+      },
       voices: [
         { id: 'openai:coral', name: 'Coral', description: 'Synthetic voice', engine: 'OpenAI' },
       ],
-      synthesize: async (_text, signal, _report, options) => {
+      synthesize: async (text, signal, _report, options) => {
         calls++;
         signals.push(signal!);
-        voices.push(options!.voice!);
+        requests.push({ text, voice: options?.voice });
         if (calls === 1) {
           started();
           await held;
@@ -67,11 +72,11 @@ test('speech previews reject unavailable voices, serialize generation and releas
     finish();
     await app.close();
   });
-  const send = (voice: string, signal?: AbortSignal) =>
+  const send = (voice: string | null, signal?: AbortSignal, extra: Record<string, unknown> = {}) =>
     fetch(origin + '/api/speech/preview', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ voice }),
+      body: JSON.stringify({ voice, ...extra }),
       signal,
     });
   assert.equal((await send('elevenlabs:sarah')).status, 400);
@@ -90,7 +95,112 @@ test('speech previews reject unavailable voices, serialize generation and releas
   assert.equal(next.headers.get('cache-control'), 'no-store');
   assert.equal(next.headers.get('content-type'), 'audio/wav');
   assert.equal(await next.text(), 'synthetic-audio');
-  assert.deepEqual(voices, ['openai:coral', 'openai:coral']);
+  assert.deepEqual(
+    requests.map((request) => request.voice),
+    ['openai:coral', 'openai:coral'],
+  );
+  await t.test(
+    'custom previews bound text before generation and retain the chosen voice',
+    async () => {
+      const before = calls;
+      for (const text of ['', '   ', 'x'.repeat(501), 42]) {
+        assert.equal((await send('openai:coral', undefined, { text })).ok, false);
+        assert.equal(calls, before);
+      }
+      const text = 'Olá! Posso ajudar com o teu próximo projeto.';
+      const response = await send('openai:coral', undefined, { text: `  ${text}  `, locale: 'ja' });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.deepEqual(requests.at(-1), { text, voice: 'openai:coral' });
+    },
+  );
+  await t.test('automatic previews pass the resolved default voice explicitly', async () => {
+    assert.equal((await send(null)).status, 200);
+    assert.equal(requests.at(-1)?.voice, 'openai:coral');
+  });
+  await t.test('unavailable automatic voices never reach synthesis', async () => {
+    const before = calls;
+    for (const missing of [undefined, 'openai:missing']) {
+      defaultVoice = missing;
+      assert.equal((await send(null)).status, 400);
+      assert.equal(calls, before);
+    }
+  });
+});
+
+test('OpenAI previews preserve configured voices and enforce the selected speech model', async (t) => {
+  const requests: unknown[] = [];
+  let keyRequests = 0;
+  const endpoint = Fastify();
+  endpoint.post('/v1/audio/speech', async (request, reply) => {
+    assert.equal(request.headers.authorization, 'Bearer synthetic-speech-key');
+    requests.push(request.body);
+    return reply.type('audio/ogg').send(Buffer.from('synthetic-preview'));
+  });
+  const origin = await endpoint.listen({ host: '127.0.0.1', port: 0 });
+  t.after(() => endpoint.close());
+  for (const model of ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd']) {
+    await t.test(model, async () => {
+      const provider = createOpenAISpeechProvider({
+        apiKey: async () => {
+          keyRequests++;
+          return 'synthetic-speech-key';
+        },
+        speechModel: model,
+        voice: 'alloy',
+        fetch: async (input, init) => {
+          assert.equal(String(input), 'https://api.openai.com/v1/audio/speech');
+          return fetch(origin + '/v1/audio/speech', init);
+        },
+      });
+      const app = Fastify();
+      registerSpeechSettings(app, {
+        speech: createSpeech(provider),
+        preferences: {
+          get: async () => ({ speechVoice: null, speechReply: 'voice' }),
+        } as ReturnType<typeof createPreferencesStore>,
+      });
+      try {
+        const text = 'Bonjour, je peux vous aider.';
+        const preview = (voice: string | null) =>
+          app.inject({
+            method: 'POST',
+            url: '/api/speech/preview',
+            payload: { voice, text },
+          });
+        const response = await preview(null);
+        assert.equal(response.statusCode, 200, response.body);
+        assert.equal(response.body, 'synthetic-preview');
+        assert.deepEqual(requests.at(-1), {
+          model,
+          input: text,
+          voice: 'alloy',
+          response_format: 'opus',
+        });
+        const before = requests.length;
+        const keysBefore = keyRequests;
+        if (model === 'gpt-4o-mini-tts') {
+          assert.equal((await preview('openai:marin')).statusCode, 200);
+          assert.deepEqual(requests.at(-1), {
+            model,
+            input: text,
+            voice: 'marin',
+            response_format: 'opus',
+          });
+        } else {
+          assert.equal((await preview('openai:marin')).statusCode, 400);
+          await assert.rejects(
+            provider.synthesize(text, undefined, undefined, { voice: 'openai:marin' }),
+            /unavailable/,
+          );
+          assert.equal(requests.length, before);
+          assert.equal(keyRequests, keysBefore);
+        }
+      } finally {
+        await app.close();
+      }
+    });
+  }
 });
 
 test('analytics drops revoked owner queues while preserving another owner and rechecks dispatch consent', async (t) => {

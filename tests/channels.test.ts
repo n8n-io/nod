@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
 import { fork } from 'node:child_process';
 import { PassThrough } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
@@ -24,6 +25,7 @@ import { createSpeech } from '../src/server/speech.ts';
 import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
 import { createLocalSpeechProvider } from '../src/providers/local-speech/index.ts';
 import { decodeLocalAudio } from '../src/providers/local-speech/audio.ts';
+import { phonemizeSpeech } from '../src/providers/local-speech/phonemizer.ts';
 import {
   createOpenRouterSpeechProvider,
   createOpenRouterTranscriptionProvider,
@@ -1614,6 +1616,31 @@ test('OpenRouter speech refuses failed, empty, oversized and non-audio responses
   await assert.rejects(late.synthesize('Synthetic reply.', abortWhileResolvingKey.signal), {
     name: 'AbortError',
   });
+});
+
+test('local pronunciation uses each bundled language dictionary and preserves Kokoro phonemes', async () => {
+  const cases = [
+    ['en-us', 'red fox', 'ɹˈɛd fˈɑːks'],
+    ['en-gb', 'red fox', 'ɹˈɛd fˈɒks'],
+    ['es', 'rojo chico', 'rˈoxo ʧˈiko'],
+    ['fr-fr', 'Bonjour Jean', 'bɔ̃ʒˈuʁ ʒˈɑ̃'],
+    ['hi', 'नमस्ते दुनिया', 'nəmˈʌsteː dˈʊnɪjˌaː'],
+    ['it', 'Ciao ragazzo', 'ʧˈao raɡˈaʦːo'],
+  ] as const;
+  for (const [language, text, expected] of cases)
+    assert.equal(await phonemizeSpeech(text, language), expected, language);
+  await assert.rejects(phonemizeSpeech('x'.repeat(2_001), 'en-us'));
+  const unsupported = await runProcess(
+    process.execPath,
+    [
+      '--import',
+      import.meta.resolve('tsx'),
+      fileURLToPath(new URL('../src/providers/local-speech/phonemizer-worker.ts', import.meta.url)),
+    ],
+    { input: JSON.stringify({ text: 'Synthetic words', voice: 'missing' }), timeoutMs: 15_000 },
+  );
+  assert.equal(unsupported.exitCode, 1);
+  assert.equal(unsupported.stdout, '');
 });
 
 test('local speech setup keeps each caller cancellable and stops only after the last caller leaves', async (t) => {

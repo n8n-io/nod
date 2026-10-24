@@ -17,6 +17,12 @@ interface SpeechSettings {
   local?: { state: 'not_downloaded' | 'downloading' | 'ready' | 'failed'; progress?: number };
 }
 
+const languageNames = new Intl.DisplayNames('en', { type: 'language' });
+
+function voiceLanguage(voice: SpeechVoice) {
+  return voice.language ? languageNames.of(voice.language) : 'Multilingual';
+}
+
 export function VoiceSettings({
   onBusyChange,
   onModels,
@@ -35,6 +41,7 @@ export function VoiceSettings({
   const [saving, setSaving] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [phrase, setPhrase] = useState('');
   const [error, setError] = useState('');
   const [preparing, setPreparing] = useState(false);
   const prepareRequest = useRef<AbortController | null>(null);
@@ -45,7 +52,13 @@ export function VoiceSettings({
   function stop() {
     previewRequest.current?.abort();
     previewRequest.current = null;
-    audio.current?.pause();
+    if (audio.current) {
+      audio.current.onended = null;
+      audio.current.onerror = null;
+      audio.current.pause();
+      audio.current.removeAttribute('src');
+      audio.current.load();
+    }
     audio.current = null;
     if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
     previewUrl.current = null;
@@ -117,9 +130,10 @@ export function VoiceSettings({
       if (!controller.signal.aborted) setSaving(false);
     }
   }
-  const selected = data?.speechVoice ?? data?.defaultVoice ?? data?.voices[0]?.id;
-  const automatic = data?.voices.find((item) => item.id === data.defaultVoice);
+  const selected = data?.speechVoice ?? data?.defaultVoice;
+  const defaultVoice = data?.voices.find((item) => item.id === data.defaultVoice);
   const voice = data?.voices.find((item) => item.id === selected);
+  useEffect(() => stop(), [selected]);
   async function preview() {
     if (!data?.synthesis) return;
     stop();
@@ -130,7 +144,11 @@ export function VoiceSettings({
     try {
       const response = await apiResponse('/api/speech/preview', {
         method: 'POST',
-        body: JSON.stringify({ voice: data.speechVoice, locale: navigator.language }),
+        body: JSON.stringify({
+          voice: selected ?? null,
+          locale: navigator.language,
+          text: phrase.trim() || undefined,
+        }),
         signal: controller.signal,
       });
       if (!response.ok) {
@@ -183,34 +201,61 @@ export function VoiceSettings({
           </div>
           <div className="account-preference-row account-picker-row">
             <label htmlFor={`${id}-voice`}>Assistant voice</label>
-            <div className="voice-settings-choice">
-              <select
-                id={`${id}-voice`}
+            <select
+              id={`${id}-voice`}
+              className="input"
+              value={data.speechVoice ?? ''}
+              disabled={saving}
+              onChange={(event) => void save({ speechVoice: event.target.value || null })}
+            >
+              <option value="">Default{defaultVoice ? ` (${defaultVoice.name})` : ''}</option>
+              {data.speechVoice && !voice && (
+                <option value={data.speechVoice}>Voice unavailable</option>
+              )}
+              {[...new Set(data.voices.map((item) => item.engine))].map((engine) => (
+                <optgroup key={engine} label={engine}>
+                  {data.voices
+                    .filter((item) => item.engine === engine)
+                    .map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name} · {voiceLanguage(item)}
+                      </option>
+                    ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <p id={`${id}-language`} className="field-hint">
+            {voice
+              ? voice.language
+                ? voice.description
+                : `${voice.description}. Follows your conversation’s language.`
+              : data.speechVoice
+                ? 'Choose an available voice to hear a preview.'
+                : 'Preview the default voice.'}
+          </p>
+          <div className="account-preference-row account-picker-row voice-settings-phrase">
+            <label htmlFor={`${id}-phrase`}>Try a phrase</label>
+            <div className="voice-settings-preview">
+              <textarea
+                id={`${id}-phrase`}
                 className="input"
-                value={data.speechVoice ?? ''}
-                disabled={saving}
-                onChange={(event) => void save({ speechVoice: event.target.value || null })}
-              >
-                <option value="">Automatic{automatic ? ` (${automatic.name})` : ''}</option>
-                {data.speechVoice && !voice && (
-                  <option value={data.speechVoice}>Voice unavailable</option>
-                )}
-                {[...new Set(data.voices.map((item) => item.engine))].map((engine) => (
-                  <optgroup key={engine} label={engine}>
-                    {data.voices
-                      .filter((item) => item.engine === engine)
-                      .map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                  </optgroup>
-                ))}
-              </select>
+                dir="auto"
+                rows={2}
+                maxLength={500}
+                value={phrase}
+                placeholder="Write something in your language"
+                aria-describedby={`${id}-language`}
+                onChange={(event) => {
+                  stop();
+                  setPhrase(event.target.value);
+                  setError('');
+                }}
+              />
               <Button
                 type="button"
                 variant="outline"
-                size="icon"
+                size="sm"
                 disabled={saving || (!!data.speechVoice && !voice)}
                 aria-label={playing || previewing ? 'Stop voice preview' : 'Preview voice'}
                 onClick={() => (playing || previewing ? stop() : void preview())}
@@ -222,16 +267,13 @@ export function VoiceSettings({
                 ) : (
                   <Play size={16} solid />
                 )}
+                {playing || previewing ? 'Stop preview' : 'Preview voice'}
               </Button>
             </div>
           </div>
-          <p className="field-hint">
-            {voice
-              ? `${voice.description}. AI-generated voice.`
-              : data.speechVoice
-                ? 'Choose an available voice to hear a preview.'
-                : 'Preview the automatic voice. AI-generated voice.'}
-          </p>
+          {selected?.startsWith('openai:') && (
+            <p className="field-hint">OpenAI voices are generated by AI.</p>
+          )}
         </>
       ) : (
         <p className="field-hint">
@@ -255,7 +297,7 @@ export function VoiceSettings({
               <p className="field-hint">
                 {data.local.state === 'ready'
                   ? 'Local audio is ready. Choose a local voice to use it.'
-                  : 'No extra account needed. Download local audio once (about 180 MB).'}
+                  : 'Download local audio once (about 180 MB) for English, Portuguese, Spanish, French, Hindi, and Italian. No account needed.'}
               </p>
               {data.local.state !== 'ready' && (
                 <div className="voice-settings-download">
