@@ -585,6 +585,7 @@ test(
       assert.equal(await profileTable(), null);
       assert.equal(await remembered(), true);
       await t.test('setup requires a model and finishes without a connected inbox', async () => {
+        await pool.query('DELETE FROM messages WHERE owner_id=$1', [ownerId]);
         const session = async () =>
           (await application.app.inject({ method: 'GET', url: '/api/session', headers })).json();
         const complete = () =>

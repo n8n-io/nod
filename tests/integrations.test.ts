@@ -6263,6 +6263,15 @@ test(
                   annotations: { readOnlyHint: true },
                 },
                 { name: 'find_user', description: 'Find a user by display name', inputSchema: {} },
+                {
+                  name: 'search_issues',
+                  description: 'Search issues by text',
+                  inputSchema: {
+                    type: 'object',
+                    properties: { query: { type: 'string' } },
+                    required: ['query'],
+                  },
+                },
               ],
             };
           },
@@ -6476,6 +6485,25 @@ test(
           ?.tools?.map((tool) => tool.name),
         ['list_records'],
       );
+      const onboardingQuery =
+        'Fixture app recent activity messages events tasks projects documents';
+      const scopedCatalog = await discovered.search(onboardingQuery, connectionId);
+      const available = scopedCatalog.accounts[0].paths.find((path) => path.id === mcpPath);
+      assert.ok(available && 'tools' in available);
+      assert.deepEqual(
+        available.tools.map((tool) => tool.name),
+        ['list_records', 'find_user', 'search_issues'],
+      );
+      assert.deepEqual(available.tools.find((tool) => tool.name === 'search_issues')?.inputSchema, {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+      });
+      const missing = await discovered.search('unmatched lookup', connectionId);
+      assert.deepEqual(
+        missing.accounts[0].paths.flatMap((path) => ('tools' in path ? path.tools : [])),
+        [],
+      );
       assert.equal(cliCalls, 0);
       await assert.rejects(
         discovered.execute(
@@ -6526,6 +6554,13 @@ test(
         await outcome;
       }
       blocked = undefined;
+      const unscopedCatalog = await discovered.search(onboardingQuery);
+      assert.deepEqual(
+        unscopedCatalog.accounts.flatMap((account) =>
+          account.paths.flatMap((path) => ('tools' in path ? path.tools : [])),
+        ),
+        [],
+      );
       assert.deepEqual(cliRuns, [
         { id: cliPath, command: 'fixturecli', source: { npm: '@fixture/cli@1.2.3' } },
       ]);

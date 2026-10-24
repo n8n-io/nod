@@ -1909,6 +1909,7 @@ test(
           assert.deepEqual(planInputs[0], {
             owner: ownerId,
             input: {
+              today: new Date().toISOString().slice(0, 10),
               answers: [`Working on: a synthetic newsletter for ${ownerId}`],
               apps: [{ slug: 'gmail', name: 'Gmail' }],
               sources: ['gmail', 'web'],
@@ -2022,6 +2023,7 @@ test(
             assert.deepEqual(initial, {
               owner: firstOwner,
               input: {
+                today: new Date().toISOString().slice(0, 10),
                 answers: [`Working on: a synthetic newsletter for ${firstOwner}`],
                 apps: [{ slug: 'slack', name: 'Slack' }],
                 sources: ['slack', 'web'],
@@ -2031,6 +2033,7 @@ test(
             assert.deepEqual(planInputs.at(-1), {
               owner: otherOwner,
               input: {
+                today: new Date().toISOString().slice(0, 10),
                 answers: [`Working on: a synthetic newsletter for ${otherOwner}`],
                 apps: [{ slug: 'notion', name: 'Notion' }],
                 sources: ['notion', 'web'],
@@ -2055,6 +2058,7 @@ test(
             assert.deepEqual(planInputs.at(-1), {
               owner: firstOwner,
               input: {
+                today: new Date().toISOString().slice(0, 10),
                 answers: [`Working on: a synthetic newsletter for ${firstOwner}`],
                 apps: [{ slug: 'googlecalendar', name: 'Google Calendar' }],
                 sources: ['googlecalendar', 'web'],

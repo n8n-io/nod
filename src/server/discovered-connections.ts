@@ -1086,27 +1086,30 @@ export async function createDiscoveredConnections(
               };
             try {
               const { tools: available, instructions } = await catalog(row, path, signal);
+              const accountMatch = score(row.service) || score(row.name);
+              const matching = available
+                .map((tool) => ({ tool, score: score(`${tool.name} ${tool.description ?? ''}`) }))
+                .filter((entry) => entry.score)
+                .sort((left, right) => right.score - left.score)
+                .map(({ tool }) => tool);
+              const tools =
+                matching.length || !connectionId || !accountMatch ? matching : available;
               return {
                 id: path.id,
                 kind: path.kind,
                 endpoint: path.endpoint,
                 ...(instructions ? { instructions } : {}),
-                ...(score(row.service) || score(row.name)
+                ...(accountMatch
                   ? {
                       toolNames: available.slice(0, 200).map((tool) => tool.name),
                       toolCount: available.length,
                     }
                   : {}),
-                tools: available
-                  .map((tool) => ({ tool, score: score(`${tool.name} ${tool.description ?? ''}`) }))
-                  .filter((entry) => entry.score)
-                  .sort((left, right) => right.score - left.score)
-                  .slice(0, 25)
-                  .map(({ tool }) => ({
-                    name: tool.name,
-                    description: tool.description,
-                    inputSchema: tool.inputSchema,
-                  })),
+                tools: tools.slice(0, 25).map((tool) => ({
+                  name: tool.name,
+                  description: tool.description,
+                  inputSchema: tool.inputSchema,
+                })),
               };
             } catch {
               signal?.throwIfAborted();
