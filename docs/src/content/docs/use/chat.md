@@ -36,7 +36,7 @@ When a visual makes an answer easier to understand, nod can include images, maps
 
 Each visual stays beside its explanation. Source links let you check the details, and changing information can include when nod checked it. Charts also show the underlying numbers. An illustrative seat plan doesn't establish availability. A proposed booking stays an option until nod has evidence of confirmation.
 
-Telegram and WhatsApp receive the answer and visual details as text, with source links and supported image attachments. The interactive version stays in nod's chat.
+Telegram and WhatsApp receive the answer and visual details as text, with source links. Telegram and the WhatsApp QR connection also receive image attachments up to 50 MB each. With the WhatsApp Cloud API, open nod to see images. Interactive visuals stay in nod's chat.
 
 ## Listen to audio
 

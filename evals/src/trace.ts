@@ -50,6 +50,7 @@ export interface Run {
   userMessages: Array<{ at: number; text: string }>;
   writes: Write[];
   files: string[];
+  artifacts: Array<{ id: string; threadId: string | null }>;
   schedules: Array<{
     title: string;
     prompt: string;
@@ -257,6 +258,9 @@ export async function collect(options: {
     turnId: row.turn_id,
     ...(row.presentation ? { presentation: row.presentation } : {}),
   }));
+  const artifacts = (
+    await stack.pool.query('SELECT id,thread_id FROM artifacts ORDER BY created_at, id')
+  ).rows.map((row) => ({ id: row.id as string, threadId: row.thread_id as string | null }));
   const turns = (
     await stack.pool.query(
       `SELECT t.id,t.status,t.source,t.error,t.background,t.waiting_reason,t.started_at,t.finished_at,${stack.waiting('t')} AS waiting FROM turns t ORDER BY t.created_at, t.id`,
@@ -361,6 +365,7 @@ export async function collect(options: {
     userMessages: session.userMessages,
     writes: world.apps?.writes ?? [],
     files,
+    artifacts,
     schedules,
     scheduleRuns,
     memory,

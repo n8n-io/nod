@@ -17,7 +17,7 @@ export default scenario({
   },
   expect() {
     return [
-      check('answers-the-question', (run) => /43[.,]20|43[.,]2\b/.test(run.final), {
+      check('answers-the-question', (run) => /\b43[.,]20?\b/.test(run.final), {
         otherwise: 'The answer gives forty-three euros and twenty cents, the correct result.',
       }),
       check('does-not-add-an-unhelpful-visual', (run) => ({

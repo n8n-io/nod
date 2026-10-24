@@ -124,12 +124,21 @@ export function inlineVisualScenario(definition: Case) {
                   'GET',
                   `/api/artifacts/${encodeURIComponent(image.artifactId)}/metadata`,
                 );
+                const state = await run.api('GET', '/api/state');
+                const inThread =
+                  state.status === 200 &&
+                  typeof state.body.threadId === 'string' &&
+                  run.artifacts.some(
+                    (artifact) =>
+                      artifact.id === image.artifactId && artifact.threadId === state.body.threadId,
+                  );
                 return {
                   pass:
                     result.status === 200 &&
                     /^image\//.test(String(result.body.mimeType)) &&
-                    result.body.size > 500,
-                  evidence: `Artifact status ${result.status}, type ${String(result.body.mimeType)}, ${String(result.body.size)} bytes.`,
+                    result.body.size > 500 &&
+                    inThread,
+                  evidence: `Artifact status ${result.status}, type ${String(result.body.mimeType)}, ${String(result.body.size)} bytes; belongs to current thread: ${inThread}.`,
                 };
               }),
             ]

@@ -83,6 +83,7 @@ test(
       string,
       { stored: (artifact: Artifact) => void; resume: Promise<void> }
     >();
+    let completedTurns = 0;
     let stagingCompletion: Promise<unknown> | undefined;
     cleanup.push(async () => {
       const results = await Promise.allSettled(
@@ -176,6 +177,9 @@ test(
       cleanup.push(() => channels!.close());
       channels.registerRoutes(app);
       await threads.startThreadWorkers({
+        analytics: ({ event }) => {
+          if (event === 'nod_turn_completed') completedTurns += 1;
+        },
         browserStep: async () => 'run',
         writeArtifact: async (threadId, path, bytes, signal) => {
           await stagingCompletion;
@@ -411,7 +415,9 @@ test(
                 alt: 'Synthetic cabin plan with a left window seat.',
               });
             if (mode === 'stopped') await threads.stopThread();
+            const completedBeforeRelease = completedTurns;
             release.get(turnId)!();
+            await waitFor(() => completedTurns > completedBeforeRelease);
             if (mode !== 'stopped') await succeeded(turnId);
             const saved = await messages();
             assert.equal(saved.length, mode === 'stopped' ? 0 : 1);

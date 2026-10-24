@@ -246,7 +246,20 @@ function Places({ visual }: { visual: Visual<'map'> }) {
   const [map, setMap] = useState(false);
   const place = visual.places.find((item) => item.id === selected)!;
   const latitudes = visual.places.map((item) => item.latitude);
-  const longitudes = visual.places.map((item) => item.longitude);
+  const normalized = visual.places.map((item) => (item.longitude + 360) % 360);
+  const ordered = [...normalized].sort((a, b) => a - b);
+  let start = ordered[0]!;
+  let largestGap = 0;
+  ordered.forEach((longitude, index) => {
+    const next = ordered[(index + 1) % ordered.length]! + (index === ordered.length - 1 ? 360 : 0);
+    if (next - longitude > largestGap) {
+      largestGap = next - longitude;
+      start = ordered[(index + 1) % ordered.length]!;
+    }
+  });
+  const longitudes = normalized.map((longitude) =>
+    longitude < start ? longitude + 360 : longitude,
+  );
   const west = Math.min(...longitudes),
     east = Math.max(...longitudes);
   const south = Math.min(...latitudes),
@@ -285,7 +298,7 @@ function Places({ visual }: { visual: Visual<'map'> }) {
                   type="button"
                   className="place-pin"
                   style={{
-                    left: `${50 + ((item.longitude - (west + east) / 2) / span) * 68}%`,
+                    left: `${50 + ((longitudes[index]! - (west + east) / 2) / span) * 68}%`,
                     top: `${50 - ((item.latitude - (south + north) / 2) / span) * 62}%`,
                   }}
                   aria-label={`Show ${item.name}`}

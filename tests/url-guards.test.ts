@@ -912,12 +912,15 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
     'javascript:alert(1)',
     'data:text/html,hello',
     'http://example.com',
+    'HTTP://example.com',
     'https://127.0.0.1',
+    'HTTPS://127.0.0.1',
     'https://169.254.169.254/latest',
     'https://[::1]',
     'https://localhost',
     'https://private.internal',
     'https://user:pass@example.com',
+    'HTTPS://user:pass@example.com',
     'https://example.com:8443',
     'https://example.com/?access_token=private',
     'https://example.com/api/artifacts/private',
@@ -940,6 +943,13 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
       false,
       url,
     );
+  }
+  for (const scheme of ['HTTPS', 'hTtPs']) {
+    const normalized = presentationSchema.parse({
+      ...diagram,
+      sources: [{ label: 'Source', url: `${scheme}://EXAMPLE.COM/Route` }],
+    });
+    assert.equal(normalized.sources[0]?.url, 'https://example.com/Route');
   }
   for (const fragment of [
     'token=synthetic-secret',
@@ -977,6 +987,19 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
     'Service (request) → Service (answer)',
   ])
     assert.ok(diagramText.includes(detail), detail);
+  const collisionText = presentationText(
+    presentationSchema.parse({
+      ...diagram,
+      nodes: [
+        { id: 'request', label: 'Service' },
+        { id: 'answer', label: 'Service' },
+        { id: 'literal', label: 'Service (request)' },
+      ],
+      edges: [...diagram.edges, { from: 'answer', to: 'literal' }],
+    }),
+  );
+  assert.ok(collisionText.includes('[request] Service → [answer] Service'));
+  assert.ok(collisionText.includes('[answer] Service → [literal] Service (request)'));
   for (const value of [
     { ...diagram, version: 2 },
     { ...diagram, type: 'html', html: '<script>alert(1)</script>' },

@@ -56,13 +56,15 @@ export default scenario({
       check('reads-and-cites-the-source', (run) => ({
         pass:
           run.visits.some((visit) => visit.host === host && visit.path === '/revenue/2026') &&
+          run.visits.every((visit) => ['GET', 'HEAD'].includes(visit.method)) &&
+          run.writes.length === 0 &&
           presentations(run).some(
             (item) =>
               item.type === 'chart' &&
               Array.isArray(item.sources) &&
               item.sources.some((entry) => entry?.url === source),
           ),
-        evidence: `${run.visits.length} source requests; ${JSON.stringify(presentations(run).map((item) => item.sources))}.`,
+        evidence: `${run.visits.length} source requests; ${run.writes.length} external writes; ${JSON.stringify(presentations(run).map((item) => item.sources))}.`,
       })),
       judge(
         'shows-the-observed-values-and-the-zero',

@@ -9,7 +9,7 @@ const text = (length: number) =>
     .refine((value) => Boolean(value.trim()));
 const id = text(40).regex(/^[A-Za-z0-9_-]+$/);
 const url = text(2048)
-  .refine((value) => value.startsWith('https://') && Boolean(previewableUrl(value)), {
+  .refine((value) => Boolean(previewableUrl(value)?.startsWith('https://')), {
     message: 'Use a public HTTPS source without credentials or private links.',
   })
   .transform((value) => previewableUrl(value)!);
@@ -260,7 +260,7 @@ export function presentationText(value: Presentation) {
       );
   }
   if (value.type === 'diagram') {
-    const labels = new Map(
+    let labels = new Map(
       value.nodes.map((node) => [
         node.id,
         value.nodes.some((other) => other.id !== node.id && other.label === node.label)
@@ -268,6 +268,8 @@ export function presentationText(value: Presentation) {
           : node.label,
       ]),
     );
+    if (new Set(labels.values()).size !== labels.size)
+      labels = new Map(value.nodes.map((node) => [node.id, `[${node.id}] ${node.label}`]));
     for (const node of value.nodes)
       lines.push([labels.get(node.id), node.detail].filter(Boolean).join(': '));
     for (const edge of value.edges)
