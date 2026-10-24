@@ -13,13 +13,13 @@ nod follows your conversation language, including questions, confirmations and c
 
 ## Send a message
 
-Type in the message box and press Enter. Press Shift+Enter for a new line. Select **↵ Send** in the composer to use Enter for a new line and Command/Ctrl+Enter to send.
+Type in the message box and press Enter. Press Shift+Enter for a new line.
 
 You can paste Markdown or formatted text. Chat, feedback and message display use the same CommonMark parser, with GitHub Flavored Markdown support. When you send a message or restore an unsent draft, the serializer preserves the meaning of text and links. Markdown can use escapes for literal characters. These escapes do not change the displayed text or a link's destination. Code stays literal, including text that looks like a link or a code fence.
 
 Use the formatting toolbar to underline text. Pasted `<u>text</u>` also keeps its underline. The old `++text++` shortcut stays literal under CommonMark.
 
-- **Attach files.** Select **Attach files**, paste an image or drop files anywhere in the conversation. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. nod gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
+- **Attach files.** Paste an image or drop files anywhere in the conversation. Each file stays inside the composer while it uploads. Select it to open the same file viewer used for sent attachments, or retry or remove a failed upload. Each file can be 90 MB or smaller. nod gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
 - **Reply to a message.** Hover over a message and select its arrow, or right-click inside the bubble, then select **Reply** or **Copy**. On touch screens, use the visible arrow. The time appears in the bottom-right corner of each bubble.
 
 Your unfinished draft stays on this device for your account and conversation. After a reload, nod restores its text, reply target, and available uploaded files. It checks saved files before you can send them. If a check fails, select **Retry** or remove the file. An interrupted upload needs the original file again. Private entry values and recognized verification replies are excluded. A file that exceeds the limit is rejected individually; other valid files stay attached. Removing an uploaded draft file offers **Undo**.

@@ -56,7 +56,6 @@ function markdownPasteSlice(editor: Editor, value: string) {
 export function createComposerExtensions(callbacks: {
   submit(): void;
   upload(files: File[]): void;
-  sendWithEnter?(): boolean;
   mode?: 'chat' | 'feedback';
   placeholder?: string | (() => string);
 }) {
@@ -136,13 +135,6 @@ export function createComposerExtensions(callbacks: {
                   return editor.commands.setHardBreak();
                 }
                 if (callbacks.mode === 'feedback' && !event.metaKey && !event.ctrlKey) return false;
-                if (
-                  callbacks.mode !== 'feedback' &&
-                  callbacks.sendWithEnter?.() === false &&
-                  !event.metaKey &&
-                  !event.ctrlKey
-                )
-                  return false;
                 event.preventDefault();
                 callbacks.submit();
                 return true;
