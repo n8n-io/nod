@@ -1616,6 +1616,77 @@ test('OpenRouter speech refuses failed, empty, oversized and non-audio responses
   });
 });
 
+test('local speech setup keeps each caller cancellable and stops only after the last caller leaves', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-speech-setup-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const worker = join(root, 'worker.mjs');
+  await writeFile(
+    worker,
+    `
+    let id;
+    process.on('message', (message) => {
+      if (message.method === 'prepare') {
+        id = message.id;
+        process.send({ id, type: 'progress', progress: 1 });
+      } else if (message.method === 'finish') process.send({ id, type: 'ready' });
+    });
+  `,
+  );
+  for (const cancelledIndex of [1, 0, 'both', 'close'] as const) {
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const children: ReturnType<typeof fork>[] = [];
+    const provider = createLocalSpeechProvider({
+      cacheDir: join(root, String(cancelledIndex)),
+      fork: (_path, args, options) => {
+        const child = fork(worker, args, options);
+        children.push(child);
+        child.once('message', () => started());
+        return child;
+      },
+    });
+    try {
+      const controllers = [new AbortController(), new AbortController()];
+      const results = controllers.map((controller) =>
+        provider.prepare(controller.signal).then(
+          () => 'ready',
+          (error: Error) => error.name,
+        ),
+      );
+      await running;
+      if (cancelledIndex === 'close') {
+        await provider.close();
+        assert.deepEqual(await Promise.all(results), ['Error', 'Error']);
+      } else if (cancelledIndex === 'both') {
+        const exited = new Promise<void>((resolve) => children[0].once('exit', () => resolve()));
+        controllers[0].abort();
+        controllers[1].abort();
+        assert.deepEqual(await Promise.all(results), ['AbortError', 'AbortError']);
+        await exited;
+        assert.equal(provider.status().state, 'not_downloaded');
+      } else {
+        controllers[cancelledIndex].abort();
+        assert.equal(
+          await Promise.race([
+            results[cancelledIndex],
+            new Promise<string>((resolve) => setTimeout(() => resolve('still waiting'), 500)),
+          ]),
+          'AbortError',
+        );
+        assert.equal(children[0].signalCode, null);
+        children[0].send({ method: 'finish' });
+        assert.equal(await results[1 - cancelledIndex], 'ready');
+        assert.equal(provider.configured, true);
+      }
+      assert.equal(children.length, 1);
+    } finally {
+      await provider.close();
+    }
+  }
+});
+
 test('on-device speech starts only when enabled, isolates the worker environment, and kills cancelled work without replay', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'nod-speech-worker-'));
   const worker = join(root, 'worker.mjs');
@@ -1692,7 +1763,7 @@ test('on-device speech starts only when enabled, isolates the worker environment
   await assert.rejects(provider.prepare());
 });
 
-test('on-device speech decodes a real WAV into bounded mono samples and refuses unsupported recordings', async () => {
+test('on-device speech decodes a real WAV into bounded mono samples and refuses unsupported recordings', async (t) => {
   const samples = 48000;
   const wav = Buffer.alloc(44 + samples * 4);
   wav.write('RIFF', 0);
@@ -1724,6 +1795,45 @@ test('on-device speech decodes a real WAV into bounded mono samples and refuses 
   await assert.rejects(decodeLocalAudio(muted, 'audio/wav'), { message: 'silence' });
   await assert.rejects(decodeLocalAudio(wav, 'audio/mp4'));
   await assert.rejects(decodeLocalAudio(Buffer.alloc(0), 'audio/wav'));
+  await t.test('padded metadata leaves the decoded samples unchanged', async () => {
+    const metadata = Buffer.alloc(10);
+    metadata.write('JUNK');
+    metadata.writeUInt32LE(1, 4);
+    metadata[8] = 65;
+    const padded = Buffer.concat([wav.subarray(0, 12), metadata, wav.subarray(12)]);
+    padded.writeUInt32LE(padded.length - 8, 4);
+    assert.deepEqual(await decodeLocalAudio(padded, 'audio/wav'), decoded);
+  });
+  const extensible = Buffer.concat([wav.subarray(0, 36), Buffer.alloc(24), wav.subarray(36)]);
+  extensible.writeUInt32LE(extensible.length - 8, 4);
+  extensible.writeUInt32LE(40, 16);
+  extensible.writeUInt16LE(0xfffe, 20);
+  extensible.writeUInt16LE(22, 36);
+  extensible.writeUInt16LE(16, 38);
+  extensible.writeUInt32LE(3, 40);
+  extensible.writeUInt32LE(1, 44);
+  Buffer.from('00001000800000aa00389b71', 'hex').copy(extensible, 48);
+  assert.deepEqual(await decodeLocalAudio(extensible, 'audio/wav'), decoded);
+  for (const [offset, value] of [
+    [36, 21],
+    [36, 24],
+    [38, 0],
+    [38, 17],
+    [40, 7],
+    [42, 0x8000],
+    [46, 1],
+    [58, 0],
+  ])
+    await t.test(`invalid extensible field at ${offset} is rejected`, async () => {
+      const invalid = Buffer.from(extensible);
+      invalid.writeUInt16LE(value, offset);
+      await assert.rejects(decodeLocalAudio(invalid, 'audio/wav'), { message: 'format' });
+    });
+  await t.test('truncated data is rejected', async () => {
+    await assert.rejects(decodeLocalAudio(wav.subarray(0, wav.length - 4), 'audio/wav'), {
+      message: 'format',
+    });
+  });
 });
 
 test('OpenRouter transcribes with its own current key, bounds responses, and reports cost without content', async () => {

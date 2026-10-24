@@ -3434,15 +3434,16 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
       const microphoneRequests = [], recorders = [];
+      let captureType = 'audio/mp4', speechFormat;
       Object.defineProperty(navigator, 'mediaDevices', {
         value: { getUserMedia: () => new Promise((resolve, reject) => microphoneRequests.push({ resolve, reject })) },
       });
       globalThis.MediaRecorder = class {
-        static isTypeSupported(type) { return type === 'audio/mp4'; }
+        static isTypeSupported(type) { return type === captureType; }
         state = 'inactive';
         constructor(stream, options) {
           this.stream = stream;
-          this.mimeType = options.mimeType;
+          this.mimeType = options.mimeType ?? captureType;
           recorders.push(this);
         }
         start() { this.state = 'recording'; }
@@ -3477,7 +3478,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       };
       URL.revokeObjectURL = (url) => revoked.push(url);
       fetch = (url, options) => {
-        if (url === '/api/speech') return Promise.resolve(Response.json({ transcription: true }));
+        if (url === '/api/speech') return Promise.resolve(Response.json({ transcription: true, transcriptionFormat: speechFormat }));
         return new Promise((resolve, reject) => {
           assert.ok(url === '/api/uploads' || url.endsWith('/metadata'));
           assert.equal(options.headers.get('X-nod-Account'), 'synthetic-owner');
@@ -3833,13 +3834,81 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         assert.equal(recorders.length, 3);
         await click('Discard recording');
         assert.equal(revoked.filter((url) => url === retained.url).length, 1);
+        speechFormat = 'wav';
+        captureType = 'audio/wav';
+        await act(async () => window.dispatchEvent(new Event('focus')));
+        await click('Record an audio message');
+        const nativeWave = microphone();
+        await act(async () => microphoneRequests[6].resolve(nativeWave));
+        await act(async () =>
+          Array.from(document.querySelectorAll('button')).find((button) => button.textContent === 'Stop recording').click(),
+        );
+        assert.equal(nativeWave.track.stopped, true);
+        await settle(() => document.querySelector('audio') && !document.querySelector('[aria-label="Send audio message"]')?.disabled);
+        await submit();
+        assert.equal(sends.at(-1).recording.type, 'audio/wav');
+        assert.equal(sends.at(-1).recording.name, 'Voice message.wav');
+        await settle(() => !document.querySelector('audio'));
+        captureType = 'audio/mp4';
+        let conversionFails = true, contextsClosed = 0;
+        globalThis.AudioContext = class {
+          async decodeAudioData(bytes) {
+            assert.equal(new TextDecoder().decode(bytes), 'synthetic audio');
+            if (conversionFails) throw new Error('Synthetic decode failure');
+            return { duration: 1 };
+          }
+          async close() { contextsClosed++; }
+        };
+        globalThis.OfflineAudioContext = class {
+          constructor(channels, frames, rate) {
+            assert.equal(channels, 1);
+            assert.equal(frames, 16000);
+            assert.equal(rate, 16000);
+          }
+          createBufferSource() { return { connect() {}, start() {} }; }
+          async startRendering() {
+            const samples = new Float32Array(16000);
+            samples.set([-1, -0.5, 0, 0.5, 1]);
+            return { getChannelData: () => samples };
+          }
+        };
+        await click('Record an audio message');
+        const needsConversion = microphone();
+        await act(async () => microphoneRequests[7].resolve(needsConversion));
+        await act(async () =>
+          Array.from(document.querySelectorAll('button')).find((button) => button.textContent === 'Stop recording').click(),
+        );
+        assert.equal(needsConversion.track.stopped, true);
+        await settle(() => document.querySelector('audio') && document.querySelector('[aria-label="Prepare audio message"]'));
+        const unconverted = created.at(-1);
+        assert.equal(unconverted.file.type, 'audio/mp4');
+        assert.equal(revoked.includes(unconverted.url), false);
+        const beforeConversionSend = sends.length;
+        conversionFails = false;
+        await submit();
+        await settle(() => document.querySelector('[aria-label="Send audio message"]'));
+        assert.equal(sends.length, beforeConversionSend);
+        assert.equal(revoked.filter((url) => url === unconverted.url).length, 1);
+        const converted = created.at(-1);
+        assert.equal(converted.file.type, 'audio/wav');
+        const wave = new DataView(await converted.file.arrayBuffer());
+        assert.equal(new TextDecoder().decode(new Uint8Array(wave.buffer, 0, 4)), 'RIFF');
+        assert.equal(wave.getUint16(22, true), 1);
+        assert.equal(wave.getUint32(24, true), 16000);
+        assert.equal(wave.getUint32(40, true), 32000);
+        assert.deepEqual(Array.from({ length: 5 }, (_, index) => wave.getInt16(44 + index * 2, true)), [-32768, -16384, 0, 16383, 32767]);
+        assert.ok(contextsClosed >= 3);
+        await submit();
+        assert.equal(sends.length, beforeConversionSend + 1);
+        assert.equal(sends.at(-1).recording, converted.file);
+        await settle(() => !document.querySelector('audio'));
         await click('Record an audio message');
         await act(async () => root.unmount());
         closed = true;
         const afterUnmount = microphone();
-        await act(async () => microphoneRequests[6].resolve(afterUnmount));
+        await act(async () => microphoneRequests[8].resolve(afterUnmount));
         assert.equal(afterUnmount.track.stopped, true);
-        assert.equal(recorders.length, 3);
+        assert.equal(recorders.length, 5);
       } finally {
         if (!closed) await act(async () => root.unmount());
         dom.window.close();

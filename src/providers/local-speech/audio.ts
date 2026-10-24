@@ -1,39 +1,85 @@
 export async function decodeLocalAudio(bytes: Uint8Array, mimeType: string) {
-  const input = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let input = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const mime = mimeType.split(';')[0].trim();
   if (mime === 'audio/wav' || mime === 'audio/x-wav') {
     const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
-    let valid = false;
-    let data = false;
+    if (
+      input.length < 12 ||
+      view.getUint32(0, false) !== 0x52494646 ||
+      view.getUint32(8, false) !== 0x57415645
+    )
+      throw new Error('format');
+    let formatChunk: Uint8Array | undefined;
+    let dataChunk: Uint8Array | undefined;
+    let alignment = 0;
+    let byteRate = 0;
     for (let offset = 12; offset + 8 <= input.length;) {
       const chunk = view.getUint32(offset, false);
       const size = view.getUint32(offset + 4, true);
-      if (chunk === 0x64617461) {
-        data = true;
-        break;
-      }
-      if (size % 2 || offset + 8 + size > input.length) throw new Error('format');
+      const end = offset + 8 + size + (size % 2);
+      if (end > input.length) throw new Error('format');
       if (chunk === 0x666d7420) {
-        if (size < 16 || offset + 8 + size > input.length) throw new Error('format');
+        if (formatChunk || size < 16) throw new Error('format');
         let format = view.getUint16(offset + 8, true);
-        if (format === 0xfffe && size >= 40) format = view.getUint16(offset + 32, true);
         const channels = view.getUint16(offset + 10, true);
         const rate = view.getUint32(offset + 12, true);
-        const alignment = view.getUint16(offset + 20, true);
+        byteRate = view.getUint32(offset + 16, true);
+        alignment = view.getUint16(offset + 20, true);
         const depth = view.getUint16(offset + 22, true);
-        valid =
-          channels >= 1 &&
-          channels <= 8 &&
-          rate >= 8000 &&
-          rate <= 192000 &&
-          alignment === (channels * depth) / 8 &&
-          ((format === 1 && [8, 16, 24, 32].includes(depth)) ||
-            (format === 3 && [32, 64].includes(depth)));
-        if (!valid) throw new Error('format');
+        if (format === 0xfffe) {
+          if (size < 40) throw new Error('format');
+          const extension = view.getUint16(offset + 24, true);
+          const precision = view.getUint16(offset + 26, true);
+          const mask = view.getUint32(offset + 28, true);
+          format = view.getUint32(offset + 32, true);
+          let speakers = 0;
+          for (let remaining = mask; remaining; remaining &= remaining - 1) speakers++;
+          if (
+            extension < 22 ||
+            extension > size - 18 ||
+            !precision ||
+            precision > depth ||
+            (format === 3 && precision !== depth) ||
+            mask & ~0x3ffff ||
+            (speakers && speakers !== channels) ||
+            view.getUint32(offset + 36, false) !== 0x00001000 ||
+            view.getUint32(offset + 40, false) !== 0x800000aa ||
+            view.getUint32(offset + 44, false) !== 0x00389b71
+          )
+            throw new Error('format');
+        }
+        if (
+          channels < 1 ||
+          channels > 8 ||
+          rate < 8000 ||
+          rate > 192000 ||
+          alignment !== (channels * depth) / 8 ||
+          byteRate !== rate * alignment ||
+          !(
+            (format === 1 && [8, 16, 24, 32].includes(depth)) ||
+            (format === 3 && [32, 64].includes(depth))
+          )
+        )
+          throw new Error('format');
+        formatChunk = input.slice(offset, offset + 24);
+        const formatView = new DataView(formatChunk.buffer);
+        formatView.setUint32(4, 16, true);
+        formatView.setUint16(8, format, true);
+      } else if (chunk === 0x64617461) {
+        if (!formatChunk || !size || size % alignment) throw new Error('format');
+        if (size / byteRate > 300) throw new Error('length');
+        dataChunk = input.subarray(offset, end);
+        break;
       }
-      offset += 8 + size;
+      offset = end;
     }
-    if (!valid || !data) throw new Error('format');
+    if (!formatChunk || !dataChunk) throw new Error('format');
+    const normalized = new Uint8Array(12 + formatChunk.length + dataChunk.length);
+    normalized.set(input.subarray(0, 12));
+    normalized.set(formatChunk, 12);
+    normalized.set(dataChunk, 12 + formatChunk.length);
+    new DataView(normalized.buffer).setUint32(4, normalized.length - 8, true);
+    input = normalized;
   }
   const codec =
     mime === 'audio/wav' || mime === 'audio/x-wav'

@@ -25,6 +25,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { create } from 'tar';
 import { copyBundleSource, copyEngineDependencies } from '../scripts/engine-dependencies.mjs';
+import { copySpeechSources } from '../scripts/speech-sources.mjs';
 import {
   assetHash,
   ensureRuntimeAssets,
@@ -40,6 +41,67 @@ import {
   prepareRelease,
 } from '../../.github/scripts/prepare-desktop-release.mjs';
 import { verifyRuntimeRelease } from '../scripts/release-tools.mjs';
+
+test('speech distribution includes matching source and license and rejects changed archives', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-speech-sources-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dependency = join(root, 'node_modules', '@spelling-creator', 'spellophone');
+  await mkdir(dependency, { recursive: true });
+  await mkdir(join(root, 'desktop', 'licenses'), { recursive: true });
+  await writeFile(join(dependency, 'package.json'), JSON.stringify({ version: '0.2.1' }));
+  await writeFile(join(dependency, 'LICENSE'), 'Synthetic license fixture');
+  await writeFile(join(root, 'desktop', 'licenses', 'speech.md'), 'Synthetic source notice');
+  const bytes = Buffer.from('Synthetic corresponding source archive');
+  const archives = [
+    {
+      file: 'source.tar.gz',
+      url: 'https://source.example.invalid/pinned-source',
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    },
+  ];
+  const target = join(root, 'engine');
+  const cacheDir = join(root, 'cache');
+  let calls = 0;
+  const download = async (url, options) => {
+    calls++;
+    assert.equal(url, archives[0].url);
+    assert.equal(options.redirect, 'error');
+    return new Response(bytes);
+  };
+  await copySpeechSources({ root, target, cacheDir, archives, fetch: download });
+  const sources = join(target, 'licenses', 'speech');
+  assert.deepEqual(await readFile(join(sources, 'source.tar.gz')), bytes);
+  assert.equal(await readFile(join(sources, 'GPL-3.0.txt'), 'utf8'), 'Synthetic license fixture');
+  assert.equal(await readFile(join(sources, 'NOTICE.md'), 'utf8'), 'Synthetic source notice');
+  await copySpeechSources({ root, target, cacheDir, archives, fetch: download });
+  assert.equal(calls, 1);
+  await writeFile(join(cacheDir, 'source.tar.gz'), 'corrupt');
+  await assert.rejects(
+    copySpeechSources({
+      root,
+      target,
+      cacheDir,
+      archives,
+      fetch: async () => new Response('corrupt'),
+    }),
+    /checksum mismatch/,
+  );
+  await assert.rejects(
+    copySpeechSources({
+      root,
+      target,
+      archives,
+      fetch: async () => new Response(Buffer.alloc(200)),
+    }),
+    /too large/,
+  );
+  await writeFile(join(dependency, 'package.json'), JSON.stringify({ version: '9.0.0' }));
+  await assert.rejects(
+    copySpeechSources({ root, target, cacheDir, archives, fetch: download }),
+    /do not match/,
+  );
+});
 
 async function releaseRepository(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-release-history-')));

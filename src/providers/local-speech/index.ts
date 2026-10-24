@@ -26,6 +26,11 @@ type Job = {
   reject(error: Error): void;
   cleanup(): void;
 };
+type Preparation = {
+  promise: Promise<void>;
+  controller: AbortController;
+  callers: number;
+};
 
 export function createLocalSpeechProvider(options: {
   cacheDir: string;
@@ -43,7 +48,7 @@ export function createLocalSpeechProvider(options: {
   const queue: Job[] = [];
   let nextId = 0;
   let idle: ReturnType<typeof setTimeout> | undefined;
-  let preparing: Promise<void> | undefined;
+  let preparing: Preparation | undefined;
   let closed = false;
   const cached = verifySpeechCache(options.cacheDir).then((ready) => {
     if (ready && !closed && status.state === 'not_downloaded') status = { state: 'ready' };
@@ -238,6 +243,32 @@ export function createLocalSpeechProvider(options: {
     }
   }
 
+  function waitForPreparation(preparation: Preparation, signal?: AbortSignal) {
+    preparation.callers++;
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', abort);
+        preparation.callers--;
+        if (error) reject(error);
+        else resolve();
+      };
+      const abort = () => {
+        finish(new DOMException('The speech request was cancelled.', 'AbortError'));
+        if (!preparation.callers && preparing === preparation) {
+          preparing = undefined;
+          status = { state: 'not_downloaded' };
+          preparation.controller.abort();
+        }
+      };
+      signal?.addEventListener('abort', abort, { once: true });
+      preparation.promise.then(() => finish(), finish);
+      if (signal?.aborted) abort();
+    });
+  }
+
   return {
     id: 'local',
     voices,
@@ -255,21 +286,28 @@ export function createLocalSpeechProvider(options: {
       signal?.throwIfAborted();
       if (closed) throw new Error('Local speech is closed.');
       if (status.state === 'ready') return;
-      if (preparing) return preparing;
+      if (preparing) return waitForPreparation(preparing, signal);
       status = { state: 'downloading', progress: 0 };
-      preparing = (async () => {
+      const preparation: Preparation = {
+        controller: new AbortController(),
+        callers: 0,
+        promise: Promise.resolve(),
+      };
+      preparing = preparation;
+      preparation.promise = (async () => {
         try {
           await mkdir(options.cacheDir, { recursive: true });
-          await call({ method: 'prepare' }, signal);
-          status = { state: 'ready' };
+          await call({ method: 'prepare' }, preparation.controller.signal);
+          if (preparing === preparation) status = { state: 'ready' };
         } catch (error) {
-          status = { state: signal?.aborted ? 'not_downloaded' : 'failed' };
+          if (preparing === preparation)
+            status = { state: preparation.controller.signal.aborted ? 'not_downloaded' : 'failed' };
           throw error;
         } finally {
-          preparing = undefined;
+          if (preparing === preparation) preparing = undefined;
         }
       })();
-      return preparing;
+      return waitForPreparation(preparation, signal);
     },
     async synthesize(text, signal, report, synthesis) {
       signal?.throwIfAborted();

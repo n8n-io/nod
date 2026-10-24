@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
 import { cp, readFile, readlink } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { copySpeechSources } from './speech-sources.mjs';
 
 export function copyBundleSource(source, target, filter = () => true) {
   const root = resolve(source);
@@ -59,6 +60,8 @@ export async function copyEngineDependencies({
     (!values.includes(`!${actual}`) &&
       (!values.some((value) => !value.startsWith('!')) || values.includes(actual)));
   const packages = await productionPackages(resolve(root));
+  if ([...packages].some((path) => basename(path) === 'phonemizer'))
+    throw new Error('The opaque phonemizer package cannot be included in the desktop runtime.');
   await copyBundleSource(join(root, 'node_modules'), join(target, 'node_modules'), async (path) => {
     const normalized = path.replaceAll('\\', '/');
     const name = basename(path);
@@ -92,4 +95,6 @@ export async function copyEngineDependencies({
     );
     return !tuiBinary || tuiBinary[1] === `${platform}-${arch}`;
   });
+  if ([...packages].some((path) => path.endsWith(`${sep}@spelling-creator${sep}spellophone`)))
+    await copySpeechSources({ root, target });
 }

@@ -150,7 +150,10 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
   async function prepare() {
     const value = recordingValue.current;
     if (!value) return null;
-    if (currentFormat.current !== 'wav' || value.file.type === 'audio/wav') return value.file;
+    if (currentFormat.current !== 'wav' || value.file.type === 'audio/wav') {
+      changePhase('preview');
+      return value.file;
+    }
     const operation = generation.current;
     const account = requestAccountVersion();
     let context: AudioContext | undefined;
@@ -268,7 +271,13 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
           return;
         }
         const type = recorder.mimeType || capture.chunks[0]?.type || mimeType || 'audio/webm';
-        const extension = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+        const extension = type.includes('mp4')
+          ? 'm4a'
+          : type.includes('ogg')
+            ? 'ogg'
+            : type.includes('wav')
+              ? 'wav'
+              : 'webm';
         const file = new File(capture.chunks, `Voice message.${extension}`, { type });
         const url = URL.createObjectURL(file);
         previewUrl.current = url;

@@ -1,9 +1,16 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { env, pipeline, RawAudio, Tensor } from '@huggingface/transformers';
-import { KokoroTTS } from 'kokoro-js';
+import {
+  env,
+  pipeline,
+  RawAudio,
+  Tensor,
+  AutoTokenizer,
+  StyleTextToSpeech2Model,
+} from '@huggingface/transformers';
 import { phonemize } from '@pedrobef/vozz/g2p';
+import { phonemizeEnglish } from './phonemizer.ts';
 import { localSpeechModels } from './models.ts';
 import { decodeLocalAudio } from './audio.ts';
 import { localSpeechCacheMarker, matchesSpeechFile, verifySpeechCache } from './cache.ts';
@@ -16,9 +23,20 @@ env.useFSCache = false;
 env.cacheDir = cacheDir;
 env.backends.onnx.logLevel = 'error';
 let transcriber: Awaited<ReturnType<typeof createTranscriber>> | undefined;
-let synthesizer: KokoroTTS | undefined;
+let synthesizer: Awaited<ReturnType<typeof createSynthesizer>> | undefined;
 let busy = false;
-const portugueseVoices = new Map<string, Float32Array>();
+const voiceStyles = new Map<string, Float32Array>();
+
+async function createSynthesizer() {
+  const path = join(cacheDir, 'kokoro');
+  const model = await StyleTextToSpeech2Model.from_pretrained(path, {
+    dtype: 'q8',
+    device: 'cpu',
+    local_files_only: true,
+  });
+  const tokenizer = await AutoTokenizer.from_pretrained(path, { local_files_only: true });
+  return { model, tokenizer };
+}
 
 function createTranscriber() {
   return pipeline('automatic-speech-recognition', join(cacheDir, 'whisper'), {
@@ -32,10 +50,7 @@ function createTranscriber() {
 async function load() {
   if (!transcriber && !(await verifySpeechCache(cacheDir, false))) throw new Error('cache');
   transcriber ??= await createTranscriber();
-  synthesizer ??= await KokoroTTS.from_pretrained(join(cacheDir, 'kokoro'), {
-    dtype: 'q8',
-    device: 'cpu',
-  });
+  synthesizer ??= await createSynthesizer();
 }
 
 async function prepare(id: number) {
@@ -97,17 +112,18 @@ async function prepare(id: number) {
   await rename(join(cacheDir, 'ready.json.download'), join(cacheDir, 'ready.json'));
 }
 
-async function generatePortuguese(text: string, voice: 'pf_dora' | 'pm_alex') {
-  const { input_ids } = synthesizer!.tokenizer(phonemize(text), { truncation: false });
+async function generate(text: string, voice: LocalVoice) {
+  const phonemes = voice.startsWith('p')
+    ? phonemize(text)
+    : await phonemizeEnglish(text, voice.startsWith('a') ? 'en-us' : 'en-gb');
+  const { input_ids } = synthesizer!.tokenizer(phonemes, { truncation: false });
   const length = input_ids.dims.at(-1)!;
   if (length > 512) throw new Error('length');
-  let styles = portugueseVoices.get(voice);
+  let styles = voiceStyles.get(voice);
   if (!styles) {
-    const bytes = await readFile(
-      new URL(`../voices/${voice}.bin`, import.meta.resolve('kokoro-js')),
-    );
+    const bytes = await readFile(join(cacheDir, 'kokoro', 'voices', `${voice}.bin`));
     styles = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
-    portugueseVoices.set(voice, styles);
+    voiceStyles.set(voice, styles);
   }
   const offset = Math.min(Math.max(length - 2, 0), 509) * 256;
   const { waveform } = await synthesizer!.model({
@@ -132,10 +148,7 @@ async function synthesize(text: string, voice: LocalVoice) {
       if (/[\uD800-\uDBFF]/.test(remaining[end - 1])) end--;
     }
     const part = remaining.slice(0, end);
-    const audio =
-      voice === 'pf_dora' || voice === 'pm_alex'
-        ? await generatePortuguese(part, voice)
-        : await synthesizer!.generate(part, { voice });
+    const audio = await generate(part, voice);
     remaining = remaining.slice(end).trimStart();
     count += audio.audio.length;
     if (count > 24000 * 300) throw new Error('length');
