@@ -42,8 +42,10 @@ function ownedAccount(connection: Connection) {
 
 function connectionMessage(service: PersonalProvider, result?: string) {
   if (result === 'cancelled') return 'Sign-in cancelled. You can try again.';
-  if (result === 'failed' || result === 'expired')
-    return `${providerNames[service]} didn’t connect. Try again?`;
+  if (result === 'expired')
+    return 'This sign-in link is no longer active. Try again with a new window.';
+  if (result === 'failed')
+    return `${providerNames[service]} didn’t connect. Try again with a new sign-in window.`;
   return '';
 }
 
@@ -174,8 +176,8 @@ export function PersonalConnection({
           return true;
         }
         const app = result.apps.find((app) => app.hash === hash);
-        if (!app) {
-          settle('failed');
+        if (!app || app.available === false) {
+          settle('expired');
           return true;
         }
         if (app.pairingConfirmed === true && !confirmed) {
@@ -487,18 +489,12 @@ export function PersonalConnection({
               {pending && provider === slug ? (
                 <div
                   className="ob-personal-actions"
-                  data-recovery={
-                    stale ||
-                    pollFailing ||
-                    (pending === 'waiting' && signInUrl && !pairingConfirmed && !signInOpened)
-                      ? true
-                      : undefined
-                  }
+                  data-recovery={stale || pollFailing || pending === 'waiting' ? true : undefined}
                 >
                   <Button variant="ghost" size="sm" onClick={cancel}>
                     Cancel
                   </Button>
-                  {stale || pollFailing ? (
+                  {stale || pollFailing || (pending === 'waiting' && signInOpened) ? (
                     <Button
                       variant="secondary"
                       size="sm"
@@ -566,7 +562,7 @@ export function PersonalConnection({
                   disabled={!canConnect(slug) || Boolean(pending)}
                   onClick={() => void connect(slug)}
                 >
-                  {reconnect ? 'Reconnect' : 'Connect'}
+                  {error && provider === slug ? 'Try again' : reconnect ? 'Reconnect' : 'Connect'}
                 </Button>
               )}
               {disconnections.map((connection) => (

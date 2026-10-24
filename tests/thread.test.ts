@@ -2098,6 +2098,7 @@ test(
           t.mock.timers.enable({ apis: ['Date'], now: instant });
           for (const mode of [
             'mixed',
+            'large',
             'unknown',
             'invalid',
             'refused',
@@ -2115,11 +2116,12 @@ test(
             t.mock.timers.setTime(instant.getTime());
             const expectedToday = mode === 'mixed' ? '2026-10-23' : '2026-10-24';
             const owner = `synthetic-discovery-${mode}`;
-            const accounts = ['slack', 'slack', 'fixture-mcp'].map((slug, index) => ({
+            const slugs = ['slack', 'slack', 'fixture-mcp'];
+            const accounts = Array.from({ length: mode === 'large' ? 30 : 3 }, (_, index) => ({
               connectionId: randomUUID(),
               binding: `binding-${index}`,
-              slug,
-              name: slug,
+              slug: slugs[index % slugs.length]!,
+              name: slugs[index % slugs.length]!,
             }));
             const active = new Map<string, string>(
               accounts.map((account) => [account.connectionId, account.binding]),
@@ -2164,6 +2166,15 @@ test(
                   }
                   if (task === 'brief') {
                     briefs.push(input);
+                    if (mode === 'large') {
+                      const line = 'Synthetic project "status" \\ next step. '.repeat(30);
+                      return {
+                        summary: line,
+                        waiting: Array.from({ length: 5 }, () => line),
+                        recurring: Array.from({ length: 5 }, () => line),
+                        upcoming: Array.from({ length: 5 }, () => line),
+                      };
+                    }
                     return {
                       summary: JSON.stringify(input).includes('Maple')
                         ? 'Maple launch needs a decision.'
@@ -2300,7 +2311,24 @@ test(
                 [owner],
               )
             ).rows;
-            if (['mixed', 'unavailable', 'legacy_cache'].includes(mode)) {
+            if (mode === 'large') {
+              assert.equal(calls.length, accounts.length);
+              assert.equal(briefs.length, accounts.length);
+              assert.ok(plannerBriefs.length > 0 && plannerBriefs.length < accounts.length);
+              assert.ok(JSON.stringify(plannerBriefs).length <= 40_000);
+              assert.deepEqual(
+                new Set(plannerBriefs.map((brief) => brief.source)),
+                new Set(['slack', 'fixture-mcp']),
+              );
+              assert.deepEqual(Object.keys(plannerBriefs[0]!).sort(), [
+                'recurring',
+                'source',
+                'summary',
+                'upcoming',
+                'waiting',
+              ]);
+              assert.equal(posted.length, 1);
+            } else if (['mixed', 'unavailable', 'legacy_cache'].includes(mode)) {
               assert.deepEqual(
                 [...new Set(calls.map((call) => call.account))].sort(),
                 accounts

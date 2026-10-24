@@ -16,14 +16,26 @@ import { ServiceLogo } from '../components/service-logo';
 import { AppConnectionDialog, type AppSignIn } from '../components/app-connection-dialog';
 import { AppDiscoveryDialog } from '../components/app-discovery-dialog';
 import { AppAccountManager } from '../components/app-account-manager';
-import { api, errorMessage } from '../lib/api';
+import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { searchApps } from '../lib/app-search';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
-import { connectionGroups, connectionIssue, removeConnection } from '../lib/secondary-pages';
+import {
+  connectionGroups,
+  connectionIdentity,
+  connectionIssue,
+  removeConnection,
+} from '../lib/secondary-pages';
 import { usePageData } from '../hooks/use-page-data';
 import { analyticsForCurrentSession, captureAnalytics } from '../lib/analytics';
 import { Button, Checkbox, Loading, Notice, SearchField } from '../components/ui';
+
+function accountLabel(account: Connection) {
+  const identity = connectionIdentity(account);
+  return account.slug === 'notion' && identity.secondary
+    ? `${identity.primary} · ${identity.secondary}`
+    : (identity.secondary ?? identity.primary);
+}
 
 function categoryKey(value: string) {
   const key = value.trim().toLocaleLowerCase();
@@ -202,9 +214,16 @@ export function Apps({
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(24);
   const [error, setError] = useState('');
-  const [connectErrorService, setConnectErrorService] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
-  const [signIn, setSignIn] = useState<AppSignIn & { attempt?: string }>();
+  const [signIn, setSignIn] = useState<
+    AppSignIn & {
+      attempt?: string;
+      error?: string;
+      connection: Connection;
+      entry: 'apps' | 'manage';
+      addAccount: boolean;
+    }
+  >();
   const [manageService, setManageService] = useState<string | null>(null);
   const [pointerRestoredService, setPointerRestoredService] = useState<string | null>(null);
   const discoveryId = new URLSearchParams(window.location.search).get('connect');
@@ -225,7 +244,6 @@ export function Apps({
     category: (group.service.categories ?? []).join(' '),
   }));
   const managed = groups.find((group) => group.key === manageService);
-  const manageError = managed?.key === connectErrorService ? error : '';
   const categories = [
     ...new Set(groups.flatMap(({ service }) => (service.categories ?? []).map(categoryKey))),
   ].sort((left, right) => categoryLabel(left).localeCompare(categoryLabel(right)));
@@ -298,12 +316,27 @@ export function Apps({
   }, []);
   useEffect(() => () => actionRequest.current?.abort(), []);
   useEffect(() => {
-    if (!signIn?.url) return;
+    if (!signIn?.url || signIn.outcome) return;
     const url = signIn.url;
     const controller = new AbortController();
     let checking: Promise<boolean> | undefined;
     let poll: number | undefined;
     let pairingConfirmed = signIn.pairingConfirmed === true;
+    const settle = (outcome: NonNullable<AppSignIn['outcome']>) => {
+      if (controller.signal.aborted) return;
+      controller.abort();
+      actionRequest.current?.abort();
+      actionRequest.current = null;
+      setBusy('');
+      setSignIn((current) =>
+        current?.url === url &&
+        current.service === signIn.service &&
+        current.attempt === signIn.attempt
+          ? { ...current, outcome }
+          : current,
+      );
+      void refresh();
+    };
     const read = async () => {
       try {
         const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url));
@@ -319,7 +352,7 @@ export function Apps({
         if (controller.signal.aborted) return false;
         if (!result.completed.includes(hash)) {
           const app = result.apps.find((app) => app.hash === hash);
-          if (app) {
+          if (app && app.available !== false) {
             if (app.pairingConfirmed === true && !pairingConfirmed) {
               pairingConfirmed = true;
               setSignIn((current) =>
@@ -333,12 +366,10 @@ export function Apps({
             }
             return false;
           }
-          setConnectErrorService(signIn.service.replace(/_mcp$/, ''));
-          setError('Sign-in wasn’t completed. Try connecting again.');
+          settle('unavailable');
+          return true;
         }
-        controller.abort();
-        closeSignIn();
-        void refresh();
+        settle('connected');
         return true;
       } catch {
         return false;
@@ -368,10 +399,7 @@ export function Apps({
     const timeout = window.setTimeout(() => {
       void check().then((completed) => {
         if (completed || controller.signal.aborted) return;
-        controller.abort();
-        closeSignIn();
-        setConnectErrorService(signIn.service.replace(/_mcp$/, ''));
-        setError('The sign-in link expired. Try connecting again.');
+        settle('unavailable');
       });
     }, 10 * 60_000);
     const channel =
@@ -381,23 +409,24 @@ export function Apps({
         event: MessageEvent<{ service?: string; attempt?: string; connection?: string } | null>,
       ) => {
         if (
+          controller.signal.aborted ||
           !signIn.attempt ||
           event.data?.attempt !== signIn.attempt ||
           event.data.service !== signIn.service ||
           !['connected', 'cancelled', 'failed', 'expired'].includes(event.data.connection ?? '')
         )
           return;
-        controller.abort();
-        closeSignIn();
-        if (event.data.connection !== 'connected') {
-          setConnectErrorService(signIn.service.replace(/_mcp$/, ''));
-          setError(
-            event.data.connection === 'cancelled'
-              ? 'Connection cancelled. Try again.'
-              : 'The app could not connect. Try again.',
-          );
+        if (event.data.connection === 'connected') {
+          void check();
+          return;
         }
-        void refresh();
+        settle(
+          event.data.connection === 'cancelled'
+            ? 'cancelled'
+            : event.data.connection === 'expired'
+              ? 'unavailable'
+              : 'failed',
+        );
       };
     return () => {
       controller.abort();
@@ -407,8 +436,13 @@ export function Apps({
       document.removeEventListener('visibilitychange', visible);
       channel?.close();
     };
-  }, [signIn?.url, signIn?.service, signIn?.attempt, refresh]);
-  async function connect(connection: Connection, entry: 'apps' | 'manage', addAccount = false) {
+  }, [signIn?.url, signIn?.service, signIn?.attempt, signIn?.outcome, refresh]);
+  async function connect(
+    connection: Connection,
+    entry: 'apps' | 'manage',
+    addAccount = false,
+    restarting?: typeof signIn,
+  ) {
     if (actionRequest.current || locked) return;
     const capture = analyticsForCurrentSession();
     capture('nod_app_connect_clicked', { entry, result: 'opened' });
@@ -433,12 +467,17 @@ export function Apps({
         : `connect:${connection.slug}`,
     );
     setError('');
-    setSignIn({
+    const context = {
       service: connection.slug,
       name: connection.name,
       logoUrl: connection.logoUrl,
+      accountLabel: !addAccount && connection.connectionId ? accountLabel(connection) : undefined,
+      connection,
+      entry,
+      addAccount,
       opened: false,
-    });
+    };
+    setSignIn(context);
     try {
       const result = await api<{ url: string; attempt?: string }>(
         `/api/apps/${encodeURIComponent(connection.slug)}/connect`,
@@ -446,6 +485,7 @@ export function Apps({
           method: 'POST',
           body: JSON.stringify({
             returnTo: 'window',
+            ...(restarting?.attempt ? { restartAttempt: restarting.attempt } : {}),
             ...(!addAccount || connection.accessPaths?.length
               ? { connectionId: connection.connectionId }
               : {}),
@@ -478,14 +518,7 @@ export function Apps({
       }
       if (result.attempt !== undefined && !/^[A-Za-z0-9_-]{43}$/.test(result.attempt))
         throw new Error('The app sign-in could not be opened. Try again.');
-      const pending = {
-        service: connection.slug,
-        name: connection.name,
-        logoUrl: connection.logoUrl,
-        url,
-        attempt: result.attempt,
-        opened: false,
-      };
+      const pending = { ...context, url, attempt: result.attempt };
       flushSync(() => setSignIn(pending));
       let opened = false;
       if (external) {
@@ -507,9 +540,11 @@ export function Apps({
     } catch (cause) {
       popup?.close();
       if (request.signal.aborted || actionRequest.current !== request) return;
-      setSignIn(undefined);
-      setConnectErrorService(connection.slug.replace(/_mcp$/, ''));
-      setError(errorMessage(cause));
+      setSignIn(
+        restarting && cause instanceof ApiError && cause.status === 409
+          ? restarting
+          : { ...context, outcome: 'failed', error: errorMessage(cause) },
+      );
       capture('nod_ui_error', { area: 'apps', action: 'connect' });
       setBusy('');
     } finally {
@@ -629,7 +664,7 @@ export function Apps({
         <PageTitle path="/apps" />
       </header>
       {configuration && <SetupNotice configuration={configuration} />}
-      {error && !manageError && <Notice onDismiss={() => setError('')}>{error}</Notice>}
+      {error && <Notice onDismiss={() => setError('')}>{error}</Notice>}
       {loadError && (
         <Notice>
           {loadError}{' '}
@@ -915,7 +950,14 @@ export function Apps({
       <AppConnectionDialog
         signIn={signIn}
         opening={Boolean(busy)}
+        error={signIn?.error}
         onClose={closeSignIn}
+        onRetry={() => {
+          if (!signIn) return;
+          const { connection, entry, addAccount } = signIn;
+          closeSignIn();
+          void connect(connection, entry, addAccount, signIn.outcome ? undefined : signIn);
+        }}
         onOpened={() =>
           setSignIn((current) =>
             current && current === signIn ? { ...current, opened: true } : current,
@@ -930,7 +972,6 @@ export function Apps({
         group={managed}
         suspended={Boolean(signIn) || Boolean(discoveryId)}
         busy={locked}
-        error={manageError}
         titleRef={manageTitle}
         onDismissError={() => setError('')}
         onClose={() => setManageService(null)}

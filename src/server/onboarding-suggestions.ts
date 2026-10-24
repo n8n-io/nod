@@ -432,13 +432,17 @@ export function createOnboardingSuggestions(options: {
         }
       }),
     );
-    const current = [];
-    for (const item of evidence) if (await active(item.account)) current.push(item);
+    const briefs: Array<Brief & { source: string }> = [];
+    for (const item of evidence) {
+      const brief = { source: item.account.slug, ...item.brief };
+      if ((await active(item.account)) && JSON.stringify([...briefs, brief]).length <= briefLimit)
+        briefs.push(brief);
+    }
     const available = [];
     for (const account of accounts) if (await active(account)) available.push(account);
     return {
       accounts: available,
-      briefs: current.map(({ account, brief }) => ({ source: account.slug, ...brief })),
+      briefs,
     };
   }
 

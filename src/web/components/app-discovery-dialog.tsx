@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ExternalLink } from './icons';
+import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
@@ -17,10 +18,12 @@ import {
 
 type Discovery = {
   name: string;
+  service?: string;
   needsAddress?: boolean;
   localAddress?: string;
   oauthStatus?: 'pending' | 'connected' | 'cancelled' | 'failed' | null;
   authorizationUrl?: string;
+  attempt?: string;
   callbackUrl?: string;
   setupUrl?: string;
   setupText?: string;
@@ -36,6 +39,7 @@ type Discovery = {
     clientIdRequired?: boolean;
   }>;
 };
+type DiscoverySignIn = AppSignIn & { attempt?: string };
 
 function readCheckUrl(path: Discovery['paths'][number]) {
   if (!path.testPath || !path.endpoint) return null;
@@ -65,6 +69,13 @@ export function AppDiscoveryDialog({
   const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
   const [version, setVersion] = useState(0);
+  const [clientId, setClientId] = useState('');
+  const [instanceUrl, setInstanceUrl] = useState('');
+  const [signIn, setSignIn] = useState<DiscoverySignIn>();
+  const [unavailable, setUnavailable] = useState(false);
+  const pending = useRef<DiscoverySignIn | undefined>(undefined);
+  const loaded = useRef(false);
+  const editing = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
   const action = useRef<AbortController | null>(null);
   const read = useRef<AbortController | null>(null);
@@ -81,13 +92,36 @@ export function AppDiscoveryDialog({
     connected.current();
   };
 
+  function show(value: DiscoverySignIn | undefined) {
+    pending.current = value;
+    setSignIn(value);
+  }
+
+  function identity(value: Discovery): AppSignIn {
+    const endpoint = value.paths[0]?.endpoint;
+    return {
+      service: value.service ?? 'mcp',
+      name: value.name,
+      accountLabel: endpoint ? (URL.parse(endpoint)?.host ?? endpoint) : undefined,
+      opened: true,
+    };
+  }
+
+  function close() {
+    action.current?.abort();
+    read.current?.abort();
+    if (pending.current?.outcome === 'connected') finish();
+    else onClose();
+  }
+
   useEffect(() => () => action.current?.abort(), []);
   useEffect(() => {
     let timer: number | undefined;
     let checks = 0;
     async function check() {
       window.clearTimeout(timer);
-      if (action.current || document.visibilityState !== 'visible') return;
+      if (action.current || pending.current?.outcome || document.visibilityState !== 'visible')
+        return;
       read.current?.abort();
       const controller = new AbortController();
       read.current = controller;
@@ -99,23 +133,40 @@ export function AppDiscoveryDialog({
         if (controller.signal.aborted) return;
         setDiscovery(value);
         setLoadError('');
-        if (value.oauthStatus === 'connected') {
-          finish();
-          return;
+        if (!loaded.current) {
+          loaded.current = true;
+          setInstanceUrl(value.localAddress ?? '');
         }
-        if (value.oauthStatus === 'cancelled' || value.oauthStatus === 'failed')
-          setError(
-            value.oauthStatus === 'cancelled'
-              ? 'Connection cancelled. Try again.'
-              : 'The app could not connect. Try again.',
-          );
-        if (value.oauthStatus === 'pending' && checks++ < 120)
+        if (editing.current) return;
+        const current = pending.current;
+        if (value.oauthStatus) {
+          setError('');
+          const replaced =
+            current?.url && value.authorizationUrl && current.url !== value.authorizationUrl;
+          show({
+            ...identity(value),
+            ...current,
+            url: value.authorizationUrl ?? current?.url,
+            attempt: value.attempt,
+            outcome: replaced
+              ? 'unavailable'
+              : value.oauthStatus === 'pending'
+                ? undefined
+                : value.oauthStatus,
+          });
+        } else if (current) show({ ...current, outcome: 'unavailable' });
+        if (value.oauthStatus === 'pending' && !pending.current?.outcome && checks++ < 120)
           timer = window.setTimeout(() => void check(), 5000);
       } catch (cause) {
         if (!controller.signal.aborted) {
-          if (cause instanceof ApiError && [404, 410].includes(cause.status))
-            setDiscovery(undefined);
+          if (cause instanceof ApiError && [404, 410].includes(cause.status)) {
+            setUnavailable(true);
+            if (pending.current) show({ ...pending.current, outcome: 'unavailable' });
+            else setDiscovery(undefined);
+          }
           setLoadError(errorMessage(cause));
+          if (pending.current && !pending.current.outcome && checks++ < 120)
+            timer = window.setTimeout(() => void check(), 5000);
         }
       }
     }
@@ -176,24 +227,25 @@ export function AppDiscoveryDialog({
     const values = new FormData(form);
     const token = String(values.get('token') ?? '').trim();
     const typed = String(values.get('instanceUrl') ?? '').trim();
+    setInstanceUrl(typed);
     const external = desktopLinksAvailable();
     const popup = token || external ? null : window.open('about:blank', '_blank');
     if (popup) popup.opener = null;
-    if (!token && !external && !popup) {
-      setError('Allow pop-ups for nod, then try again.');
-      return;
-    }
     const controller = new AbortController();
     action.current = controller;
     read.current?.abort();
     setSaving(true);
     setError('');
     try {
-      const result = await api<{ url?: string }>(
+      const result = await api<{ url?: string; attempt?: string }>(
         `/api/apps/discovery/${encodeURIComponent(id)}/instance`,
         {
           method: 'POST',
-          body: JSON.stringify({ instanceUrl: typed, ...(token ? { token } : {}) }),
+          body: JSON.stringify({
+            instanceUrl: typed,
+            ...(token ? { token } : {}),
+            returnTo: 'window',
+          }),
           signal: controller.signal,
         },
       );
@@ -212,9 +264,24 @@ export function AppDiscoveryDialog({
         window.location.origin,
         /^https?:\/\//i.test(typed) ? typed : `http://${typed}`,
       );
-      if (external) await openConnection(url);
-      else if (popup && !popup.closed) popup.location.href = url;
-      else throw new Error('The sign-in window was closed. Try again.');
+      const next = {
+        ...identity(discovery),
+        accountLabel: typed,
+        url,
+        attempt: result.attempt,
+        opened: false,
+      };
+      show(next);
+      let opened = false;
+      if (external) {
+        await openConnection(url);
+        opened = true;
+      } else if (popup && !popup.closed) {
+        popup.location.href = url;
+        opened = true;
+      }
+      if (controller.signal.aborted) return;
+      show({ ...next, opened });
       setDiscovery((value) =>
         value ? { ...value, oauthStatus: 'pending', authorizationUrl: url } : value,
       );
@@ -224,6 +291,7 @@ export function AppDiscoveryDialog({
       for (const input of form.querySelectorAll('input[type="password"]'))
         if (input instanceof HTMLInputElement) input.value = '';
       setError(errorMessage(cause));
+      if (pending.current) show({ ...pending.current, outcome: 'failed' });
     } finally {
       if (action.current === controller) action.current = null;
       if (!controller.signal.aborted) {
@@ -233,45 +301,83 @@ export function AppDiscoveryDialog({
     }
   }
 
-  async function authorize(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (action.current || !discovery) return;
-    const clientId = new FormData(event.currentTarget).get('clientId');
+  async function authorize(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    if (action.current || !discovery || unavailable) return;
+    editing.current = false;
+    const enteredClientId = event
+      ? String(new FormData(event.currentTarget).get('clientId') ?? '').trim()
+      : clientId;
+    setClientId(enteredClientId);
     const external = desktopLinksAvailable();
     const popup = external ? null : window.open('about:blank', '_blank');
     if (popup) popup.opener = null;
-    if (!external && !popup) {
-      setError('Allow pop-ups for nod, then try again.');
-      return;
-    }
     const controller = new AbortController();
     action.current = controller;
     read.current?.abort();
     setSaving(true);
     setError('');
+    const previous = pending.current;
+    const restartAttempt =
+      previous?.attempt ?? (discovery.oauthStatus === 'pending' ? discovery.attempt : null) ?? null;
+    if (previous) show({ ...previous, url: undefined, outcome: undefined, opened: false });
     try {
-      const result =
-        discovery.oauthStatus === 'pending' && discovery.authorizationUrl
-          ? { url: discovery.authorizationUrl }
-          : await api<{ url: string }>(`/api/apps/discovery/${encodeURIComponent(id)}/authorize`, {
-              method: 'POST',
-              body: JSON.stringify(clientId ? { clientId } : {}),
-              signal: controller.signal,
-            });
+      const result = await api<{ url: string; attempt?: string }>(
+        `/api/apps/discovery/${encodeURIComponent(id)}/authorize`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            ...(enteredClientId ? { clientId: enteredClientId } : {}),
+            returnTo: 'window',
+            restart: true,
+            restartAttempt,
+          }),
+          signal: controller.signal,
+        },
+      );
       if (controller.signal.aborted) {
         popup?.close();
         return;
       }
-      const url = connectionUrl(result.url, window.location.origin, paths[0]?.endpoint);
-      if (external) await openConnection(url);
-      else if (popup && !popup.closed) popup.location.href = url;
-      else throw new Error('The sign-in window was closed. Try again.');
+      const url = connectionUrl(
+        result.url,
+        window.location.origin,
+        paths[0]?.endpoint ||
+          (instanceUrl
+            ? /^https?:\/\//i.test(instanceUrl)
+              ? instanceUrl
+              : `http://${instanceUrl}`
+            : undefined),
+      );
+      const next = { ...identity(discovery), url, attempt: result.attempt, opened: false };
+      show(next);
+      let opened = false;
+      if (external) {
+        await openConnection(url);
+        opened = true;
+      } else if (popup && !popup.closed) {
+        popup.location.href = url;
+        opened = true;
+      }
+      if (controller.signal.aborted) return;
+      show({ ...next, opened });
       setDiscovery((value) =>
         value ? { ...value, oauthStatus: 'pending', authorizationUrl: url } : value,
       );
     } catch (cause) {
       popup?.close();
-      if (!controller.signal.aborted) setError(errorMessage(cause));
+      if (!controller.signal.aborted) {
+        if (cause instanceof ApiError && [404, 410].includes(cause.status)) {
+          setUnavailable(true);
+          setError('');
+          show({ ...identity(discovery), ...previous, outcome: 'unavailable' });
+        } else if (cause instanceof ApiError && cause.status === 409 && previous)
+          show({ ...previous, outcome: undefined });
+        else {
+          setError(errorMessage(cause));
+          if (pending.current) show({ ...pending.current, outcome: 'failed' });
+        }
+      }
     } finally {
       if (action.current === controller) action.current = null;
       if (!controller.signal.aborted) {
@@ -280,6 +386,37 @@ export function AppDiscoveryDialog({
       }
     }
   }
+
+  function retry() {
+    if (paths[0]?.clientIdRequired && pending.current?.outcome) {
+      editing.current = true;
+      show(undefined);
+      setError('');
+      return;
+    }
+    void authorize();
+  }
+
+  if (signIn)
+    return (
+      <AppConnectionDialog
+        signIn={signIn}
+        opening={saving}
+        error={error}
+        onClose={close}
+        onOpened={() => {
+          if (pending.current) show({ ...pending.current, opened: true });
+        }}
+        onRetry={unavailable ? undefined : retry}
+        onCloseAutoFocus={(event) => {
+          const target = returnFocus?.();
+          if (target?.isConnected) {
+            event.preventDefault();
+            target.focus();
+          }
+        }}
+      />
+    );
 
   return (
     <Dialog
@@ -368,9 +505,9 @@ export function AppDiscoveryDialog({
                 hint={discovery.localAddress && 'Found on this computer.'}
               >
                 <Input
-                  key={discovery.localAddress}
                   name="instanceUrl"
-                  defaultValue={discovery.localAddress}
+                  value={instanceUrl}
+                  onChange={(event) => setInstanceUrl(event.target.value)}
                   required
                   maxLength={2048}
                   placeholder="https://you.app.n8n.cloud"
@@ -403,20 +540,18 @@ export function AppDiscoveryDialog({
                 <Field label="Client ID">
                   <Input
                     name="clientId"
+                    value={clientId}
+                    onChange={(event) => setClientId(event.target.value)}
                     required
                     maxLength={500}
                     autoComplete="off"
-                    disabled={saving || discovery.oauthStatus === 'pending'}
+                    disabled={saving}
                   />
                 </Field>
               )}
               {discovery.callbackUrl && <p>Set the app callback URL to {discovery.callbackUrl}.</p>}
               <Button type="submit" disabled={saving}>
-                {saving
-                  ? 'Opening sign-in…'
-                  : discovery.oauthStatus === 'pending'
-                    ? 'Continue sign-in'
-                    : `Continue to ${discovery.name}`}
+                {saving ? 'Opening sign-in…' : `Continue to ${discovery.name}`}
               </Button>
             </form>
           ) : (
