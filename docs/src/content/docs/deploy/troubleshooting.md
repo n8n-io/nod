@@ -51,6 +51,8 @@ Every release is notarized by Apple. If macOS still blocks it, open **System Set
 
 macOS can ask again after nod is re-signed. Approve it in the macOS dialog. Never type your Mac password into the nod chat.
 
+While the keychain unlocks, nod keeps the startup screen and **Server connection** available. If it keeps waiting, check for a macOS prompt, unlock your keychain, then quit and reopen nod.
+
 ### nod could not unlock your saved server token
 
 Select **Reconnect to server** and enter the same server address and `NOD_AUTH_TOKEN`. The app checks the connection before saving the token again in your computer's secure storage. If macOS asks for Keychain access, allow it there.

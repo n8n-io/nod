@@ -1172,7 +1172,8 @@ test('native startup preserves saved metadata failures until retry without repla
       };
       await settle(() => publish);
       publish({ phase: 'ready' });
-      assert.equal(acknowledgments, 0);
+      await settle(() => acknowledgments === 1);
+      assert.equal(consentRendered, false);
       metadata.reject(new page.window.Error('Synthetic saved metadata failure'));
       await settle(() => page.window.document.querySelector('[role="alert"]'));
       publish({ phase: 'preparing' });
@@ -3063,6 +3064,125 @@ test('the remote desktop starts without a local runtime and fences tokens to its
     assert.equal(requests.at(-1).options.headers.Authorization, `Bearer ${token}`);
     assert.equal(requests.at(-1).options.redirect, 'error');
   } finally {
+    await f.close();
+  }
+});
+
+test('remote setup remains visible and navigable while the encrypted server token waits for macOS storage', async (t) => {
+  const output = await mkdtemp(join(tmpdir(), 'nod-native-remote-unlock-'));
+  t.after(() => rm(output, { recursive: true, force: true }));
+  await buildDesktopUI(output);
+  const html = await readFile(join(output, 'index.html'), 'utf8');
+  const script = await readFile(join(output, 'setup.js'), 'utf8');
+  const storedProfile = await fixture(t, 'darwin');
+  await storedProfile.store.saveConnection({
+    url: 'https://assistant.example.test',
+    token: randomBytes(32).toString('base64url'),
+  });
+  const saved = await readFile(storedProfile.path, 'utf8');
+  const accessed = deferred();
+  const unlocked = deferred();
+  let unlocks = 0;
+  storedProfile.encryption.isAsyncEncryptionAvailable = () => {
+    unlocks++;
+    accessed.resolve();
+    return unlocked.promise;
+  };
+  const f = await runningDesktop(
+    t,
+    async () => assert.fail('A pending server token must not reach the network.'),
+    {
+      storedProfile,
+      initialState: 'fresh',
+      readyRenderers: false,
+      prepareRuntime: () => assert.fail('A remote client must not prepare a local runtime.'),
+    },
+  );
+  const settle = async (predicate) => {
+    for (let attempt = 0; attempt < 100 && !predicate(); attempt++)
+      await new Promise((accept) => setTimeout(accept, 10));
+    assert.ok(predicate());
+  };
+  function mount(window) {
+    const page = new JSDOM(html, {
+      url: `file:///synthetic/setup.html?${new URLSearchParams(window.query)}`,
+      runScripts: 'outside-only',
+    });
+    t.after(() => page.window.close());
+    page.window.matchMedia = () => ({ matches: false });
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    const invoke = async (name) => f.handlers.get(name)(event);
+    const send = window.webContents.send;
+    let statusListener;
+    let preferencesListener;
+    window.webContents.send = (channel, value) => {
+      send(channel, value);
+      if (channel === 'nod:status') statusListener?.(value);
+      if (channel === 'nod:preferences') preferencesListener?.(value);
+    };
+    page.window.nodDesktop = {
+      ready: () => invoke('nod:renderer-ready'),
+      status: () => invoke('nod:status'),
+      getSettings: () => invoke('nod:settings:get'),
+      getPreferences: () => invoke('nod:preferences:get'),
+      getConnection: () => invoke('nod:connection:get'),
+      openConnectionSettings: () => invoke('nod:connection:open'),
+      closeConnectionSettings: () => invoke('nod:connection:close'),
+      onStatus(listener) {
+        statusListener = listener;
+        return () => {
+          statusListener = undefined;
+        };
+      },
+      onPreferences(listener) {
+        preferencesListener = listener;
+        return () => {
+          preferencesListener = undefined;
+        };
+      },
+    };
+    page.window.eval(script);
+    return page;
+  }
+  const launched = f.launch();
+  try {
+    await accessed.promise;
+    const startupWindow = f.windows.at(-1);
+    const startup = mount(startupWindow);
+    await settle(() => startupWindow.isVisible());
+    assert.ok(startup.window.document.querySelector('[role="status"]'));
+    assert.equal(startup.window.document.querySelector('.ob-welcome'), null);
+    assert.equal(f.status().unlockingKeys, true);
+    startup.window.document.querySelector('.server-entry').click();
+    await settle(() => f.windows.length === 2);
+    const connectionWindow = f.windows.at(-1);
+    const connection = mount(connectionWindow);
+    await settle(() => connectionWindow.isVisible());
+    assert.equal(startupWindow.isDestroyed(), true);
+    assert.ok(
+      [...connection.window.document.querySelectorAll('input')].every((input) => input.disabled),
+    );
+    assert.equal(connection.window.document.querySelector('button[type="submit"]').disabled, true);
+    const back = connection.window.document.querySelector('.server-actions button');
+    assert.equal(back.disabled, false);
+    back.click();
+    await settle(() => f.windows.length === 3);
+    const reopenedWindow = f.windows.at(-1);
+    const reopened = mount(reopenedWindow);
+    await settle(() => reopenedWindow.isVisible());
+    assert.equal(connectionWindow.isDestroyed(), true);
+    unlocked.resolve(false);
+    await f.settle();
+    await settle(() => reopened.window.document.querySelector('[role="alert"]'));
+    assert.equal(f.status().unlockingKeys, false);
+    assert.equal(f.status().windowError, undefined);
+    assert.equal(reopenedWindow.isDestroyed(), false);
+    assert.equal(unlocks, 1);
+    assert.equal(f.children.length, 0);
+    assert.equal(await readFile(storedProfile.path, 'utf8'), saved);
+  } finally {
+    unlocked.resolve(false);
+    await launched;
     await f.close();
   }
 });

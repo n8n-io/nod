@@ -95,10 +95,7 @@ function ConnectionSetup() {
         if (active) setError('Your saved connection could not be opened.');
       })
       .finally(() => {
-        if (active) {
-          setLoading(false);
-          void desktop.ready?.();
-        }
+        if (active) setLoading(false);
       });
     return () => {
       active = false;
@@ -199,7 +196,6 @@ function Startup() {
   );
   const [busy, setBusy] = useState(false);
   const [recovering, setRecovering] = useState(false);
-  const [initialized, setInitialized] = useState(false);
   const [settingsError, setSettingsError] = useState('');
   const [welcome, setWelcome] = useState<WelcomeChoice | null>(null);
   const currentWelcome = useRef<WelcomeChoice | null>(null);
@@ -224,41 +220,33 @@ function Startup() {
       if (active) setStatus(value);
     });
     const stopPreferences = desktop.onPreferences(applyPreferences);
-    void Promise.all([
-      desktop.status().then(
-        (value) => {
-          if (active && !receivedStatus) setStatus(value);
-        },
-        () => {
-          if (active && !receivedStatus)
-            setStatus({ phase: 'error', error: 'nod could not start. Try again.' });
-        },
-      ),
-      Promise.all([desktop.getPreferences(), desktop.getSettings()])
-        .then(([preferences, settings]) => {
-          if (!active) return;
-          applyPreferences(preferences);
-          if (firstSetup) {
-            localChoiceSaved.current = Boolean(settings.welcome);
-            acceptWelcome(settings.welcome ?? { usageData: false, continued: false });
-          }
-        })
-        .catch(() => {
-          if (active) setSettingsError('Your saved settings could not be opened. Try again.');
-        }),
-    ]).then(() => {
-      if (active) setInitialized(true);
-    });
+    void desktop.status().then(
+      (value) => {
+        if (active && !receivedStatus) setStatus(value);
+      },
+      () => {
+        if (active && !receivedStatus)
+          setStatus({ phase: 'error', error: 'nod could not start. Try again.' });
+      },
+    );
+    void Promise.all([desktop.getPreferences(), desktop.getSettings()])
+      .then(([preferences, settings]) => {
+        if (!active) return;
+        applyPreferences(preferences);
+        if (firstSetup) {
+          localChoiceSaved.current = Boolean(settings.welcome);
+          acceptWelcome(settings.welcome ?? { usageData: false, continued: false });
+        }
+      })
+      .catch(() => {
+        if (active) setSettingsError('Your saved settings could not be opened. Try again.');
+      });
     return () => {
       active = false;
       stopStatus?.();
       stopPreferences?.();
     };
   }, []);
-
-  useEffect(() => {
-    if (initialized) void desktop?.ready?.();
-  }, [initialized]);
 
   useEffect(() => {
     if (welcomeStep === 'waiting' && status.engineReady) setWelcomeStep('intro');
@@ -502,7 +490,12 @@ function Startup() {
   );
 }
 
+function Setup() {
+  useEffect(() => {
+    void desktop?.ready?.();
+  }, []);
+  return parameters.get('server') === 'true' ? <ConnectionSetup /> : <Startup />;
+}
+
 initializeFocusVisibility();
-createRoot(document.getElementById('root')!).render(
-  parameters.get('server') === 'true' ? <ConnectionSetup /> : <Startup />,
-);
+createRoot(document.getElementById('root')!).render(<Setup />);

@@ -1621,8 +1621,15 @@ async function prepare(options = {}) {
   }
   if (options?.retry === true) engineFailure = undefined;
   preparing = (async () => {
+    if (status.remote)
+      update({
+        phase: 'starting',
+        unlockingKeys: true,
+        message: 'Unlocking your saved server token…',
+      });
     const connection = await settings.connection();
     if (quitting) return status;
+    if (status.unlockingKeys) update({ unlockingKeys: false });
     if (connection) return startRemote(connection);
     update({
       phase: 'preparing',
