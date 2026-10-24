@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
-import { ArrowUp, X, RotateCcw, CornerUpLeft, Square } from './icons';
+import { ArrowUp, Paperclip, X, RotateCcw, CornerUpLeft, Square } from './icons';
 import type { Artifact, Message } from '../../shared/contracts';
 import { fileBytes } from '../../shared/files';
 import { api, errorMessage } from '../lib/api';
@@ -80,6 +80,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const drawer = useArtifactDrawer();
   const [error, setError] = useState('');
   const [removed, setRemoved] = useState<DraftAttachment | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const mounted = useRef(true);
   const attachmentValues = useRef<DraftAttachment[]>([]);
@@ -302,8 +303,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     );
     void queueUploads([queued]);
   }
-  function upload(files: File[], method: 'drop' | 'paste') {
+  function upload(files: File[], method: 'picker' | 'drop' | 'paste') {
     if (!files.length) return;
+    if (fileInput.current) fileInput.current.value = '';
     const rejected = files.filter((file) => file.size > fileBytes);
     setError('');
     if (rejected.length) {
@@ -311,7 +313,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         `${rejected.map((file) => file.name).join(', ')} must be ${fileBytes / 1024 / 1024} MB or smaller. The other files were kept.`,
       );
       files = files.filter((file) => file.size <= fileBytes);
-      if (!files.length) return;
+      if (!files.length) {
+        restoreFocus();
+        return;
+      }
     }
     const first = files[0];
     captureAnalytics('nod_attachment_added', {
@@ -624,6 +629,27 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           Enter to send. Shift or Alt plus Enter for a new line or list item.
         </span>
         <div className="composer-tools">
+          <div className="composer-left">
+            <input
+              ref={fileInput}
+              type="file"
+              tabIndex={-1}
+              multiple
+              className="sr-only"
+              aria-label="Choose files"
+              onChange={(event) => void upload(Array.from(event.target.files ?? []), 'picker')}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Attach files"
+              title="Attach files or paste an image"
+              onClick={() => fileInput.current?.click()}
+            >
+              <Paperclip size={16} />
+            </Button>
+          </div>
           <div className="composer-right">
             {onStop && (
               <Button

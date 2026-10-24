@@ -3464,6 +3464,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       const { createElement, useState, act } = await import('react');
       const { createRoot } = await import('react-dom/client');
       const { Composer } = await import('./src/web/components/composer.tsx');
+      const { fileBytes } = await import('./src/shared/files.ts');
       const { ArtifactDrawerContext } = await import('./src/web/components/artifact-context.tsx');
       const { setRequestAccount } = await import('./src/web/lib/api.ts');
       setRequestAccount('synthetic-owner');
@@ -3507,6 +3508,18 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         const button = document.querySelector('[aria-label="' + label + '"]');
         assert.ok(button, label);
         await act(async () => button.click());
+      };
+      const choose = async (files) => {
+        const button = document.querySelector('[aria-label="Attach files"]');
+        await act(async () => button.focus());
+        assert.equal(document.activeElement, button);
+        const input = document.querySelector('input[type="file"]');
+        let pickerOpened = false;
+        input.addEventListener('click', () => { pickerOpened = true; }, { once: true });
+        await click('Attach files');
+        assert.equal(pickerOpened, true);
+        Object.defineProperty(input, 'files', { configurable: true, value: files });
+        await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
       };
       const upload = async (files, method = 'paste') => {
         const event = new Event(method, { bubbles: true, cancelable: true });
@@ -3593,9 +3606,18 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => replaceText('Synthetic review request'));
         sends.length = 0;
         result = { sent: false, restoreText: true };
+        const oversized = new File(['Synthetic oversized file'], 'Too large.txt', { type: 'text/plain' });
+        Object.defineProperty(oversized, 'size', { value: fileBytes + 1 });
+        await choose([oversized]);
+        await settle(() => document.activeElement === document.querySelector('[contenteditable]'));
+        assert.equal(currentText, 'Synthetic review request');
+        assert.equal(document.querySelector('[contenteditable]').textContent, 'Synthetic review request');
+        assert.equal(requests.length, 0);
+        assert.equal(sends.length, 0);
+        assert.equal(drafts.length, 0);
         const first = new File(['Synthetic review file'], 'Review.txt', { type: 'text/plain' });
         const second = new File(['Queued file'], 'Queued.txt', { type: 'text/plain' });
-        await upload([first, second]);
+        await choose([first, second]);
         await settle(() => requests.length === 1);
         assert.equal(drafts.length, 2);
         assert.equal(drafts[0].downloadUrl, undefined);
