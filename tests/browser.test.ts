@@ -3500,12 +3500,15 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       let drafts = [],
         result = { sent: false, restoreText: true },
         currentText,
+        changeActive,
         replaceText;
       const setDrafts = (value) => {
         drafts = value;
       };
       function Fixture({ draftKey } = {}) {
         const [text, setText] = useState(draftKey ? '' : 'Synthetic review request');
+        const [active, setActive] = useState(true);
+        changeActive = setActive;
         currentText = text;
         replaceText = setText;
         return createElement(
@@ -3513,6 +3516,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
           { value: { selectedId: null, open: (...args) => opened.push(args), setDrafts } },
           createElement(Composer, {
             draftKey,
+            active,
             ready: true,
             text,
             setText,
@@ -3806,12 +3810,36 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await settle(() => changedOwner.track.stopped);
         assert.equal(document.querySelector('audio'), null);
         await click('Record an audio message');
+        await act(async () => changeActive(false));
+        const afterLeaving = microphone();
+        await act(async () => microphoneRequests[4].resolve(afterLeaving));
+        assert.equal(afterLeaving.track.stopped, true);
+        await act(async () => changeActive(true));
+        assert.equal(recorders.length, 2);
+        assert.ok(document.querySelector('[aria-label="Record an audio message"]'));
+        await act(async () => replaceText('Keep this draft while navigating'));
+        await click('Record an audio message');
+        const beforeLeaving = microphone();
+        await act(async () => microphoneRequests[5].resolve(beforeLeaving));
+        await act(async () => changeActive(false));
+        assert.equal(beforeLeaving.track.stopped, true);
+        assert.equal(document.querySelector('audio'), null);
+        const retained = created.at(-1);
+        assert.equal(revoked.includes(retained.url), false);
+        await act(async () => changeActive(true));
+        await settle(() => document.querySelector('audio'));
+        assert.equal(document.querySelector('audio').src, retained.url);
+        assert.equal(currentText, 'Keep this draft while navigating');
+        assert.equal(recorders.length, 3);
+        await click('Discard recording');
+        assert.equal(revoked.filter((url) => url === retained.url).length, 1);
+        await click('Record an audio message');
         await act(async () => root.unmount());
         closed = true;
         const afterUnmount = microphone();
-        await act(async () => microphoneRequests[4].resolve(afterUnmount));
+        await act(async () => microphoneRequests[6].resolve(afterUnmount));
         assert.equal(afterUnmount.track.stopped, true);
-        assert.equal(recorders.length, 2);
+        assert.equal(recorders.length, 3);
       } finally {
         if (!closed) await act(async () => root.unmount());
         dom.window.close();

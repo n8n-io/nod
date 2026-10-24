@@ -148,6 +148,7 @@ export function VoiceSettings({
         stop();
         setError('The voice preview could not play. Try again.');
       };
+      document.querySelectorAll('audio').forEach((element) => element.pause());
       await player.play();
       controller.signal.throwIfAborted();
       setPreviewing(false);

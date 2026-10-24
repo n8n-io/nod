@@ -1272,6 +1272,7 @@ export function Chat({
           <div hidden={!state.configuration.llmReady && !working && !sending}>
             <Composer
               key={`${ownerId}.${threadId}`}
+              active={visible}
               ref={composer}
               draftKey={`nod.chat-draft.${ownerId}.${threadId}`}
               privateReply={Boolean(state.verificationRequests?.length)}

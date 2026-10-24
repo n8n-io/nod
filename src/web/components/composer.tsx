@@ -42,6 +42,7 @@ export type ComposerSendResult =
   { sent: true } | { sent: false; restoreText: boolean; restoreRecording?: boolean };
 
 interface ComposerProps {
+  active?: boolean;
   draftKey?: string;
   privateReply?: boolean;
   restoreReply?(reply: Pick<Message, 'id' | 'role' | 'text'> | null): void;
@@ -57,6 +58,7 @@ interface ComposerProps {
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   {
+    active = true,
     ready,
     text,
     setText,
@@ -92,7 +94,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     transcriptionFormat?: 'wav';
     local?: { state: 'not_downloaded' | 'downloading' | 'ready' | 'failed'; progress?: number };
   }>('/api/speech');
-  const recorder = useVoiceRecorder(draftKey, speech?.transcriptionFormat);
+  const recorder = useVoiceRecorder(draftKey, speech?.transcriptionFormat, active);
   const [showAudioSetup, setShowAudioSetup] = useState(false);
   const [preparingAudio, setPreparingAudio] = useState(false);
   const audioSetup = useRef<AbortController | null>(null);
@@ -213,6 +215,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       previewUrls.current.clear();
     };
   }, []);
+  useEffect(() => {
+    if (active) return;
+    audioSetup.current?.abort();
+    audioSetup.current = null;
+    setPreparingAudio(false);
+    setShowAudioSetup(false);
+  }, [active]);
   useEffect(() => {
     if (
       !showAudioSetup ||
@@ -630,14 +639,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           void upload(Array.from(event.dataTransfer.files), 'drop');
         }}
       >
-        <VoiceRecorder
-          recorder={recorder}
-          sending={sendingAudio}
-          onDiscard={() => {
-            recorder.discard();
-            focus();
-          }}
-        />
+        {active && (
+          <VoiceRecorder
+            recorder={recorder}
+            sending={sendingAudio}
+            onDiscard={() => {
+              recorder.discard();
+              focus();
+            }}
+          />
+        )}
         {showAudioSetup && speech?.local && (
           <VoiceSetup
             ready={speech.transcription}

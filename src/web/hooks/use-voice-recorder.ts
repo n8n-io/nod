@@ -92,7 +92,7 @@ function microphoneError(error: unknown) {
   return 'The recording could not start. Check your microphone and try again.';
 }
 
-export function useVoiceRecorder(scope?: string, targetFormat?: 'wav') {
+export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled = true) {
   const [phase, setPhase] = useState<RecordingPhase>('idle');
   const [recording, setRecording] = useState<Recording | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -107,8 +107,10 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav') {
   const phaseRef = useRef<RecordingPhase>('idle');
   const currentScope = useRef(scope);
   const currentFormat = useRef(targetFormat);
+  const currentEnabled = useRef(enabled);
   currentScope.current = scope;
   currentFormat.current = targetFormat;
+  currentEnabled.current = enabled;
   const supported =
     typeof MediaRecorder !== 'undefined' &&
     typeof navigator !== 'undefined' &&
@@ -196,6 +198,7 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav') {
   }
 
   async function start() {
+    if (!currentEnabled.current) return;
     if (phaseRef.current !== 'idle' && phaseRef.current !== 'preview') return;
     if (!supported) {
       setError('This browser cannot record audio. Try another browser.');
@@ -214,7 +217,8 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav') {
       if (
         operation !== generation.current ||
         account !== requestAccountVersion() ||
-        startedScope !== currentScope.current
+        startedScope !== currentScope.current ||
+        !currentEnabled.current
       ) {
         for (const track of stream.getTracks()) track.stop();
         return;
@@ -310,6 +314,12 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav') {
       if (operation === generation.current) fail(microphoneError(cause));
     }
   }
+
+  useEffect(() => {
+    if (enabled) return;
+    if (phaseRef.current === 'recording') stop();
+    else if (phaseRef.current === 'requesting') discard();
+  }, [enabled]);
 
   useEffect(() => {
     discard();
