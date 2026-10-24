@@ -3508,6 +3508,15 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         assert.ok(button, label);
         await act(async () => button.click());
       };
+      const choose = async (files) => {
+        const input = document.querySelector('input[type="file"]');
+        let pickerOpened = false;
+        input.addEventListener('click', () => { pickerOpened = true; }, { once: true });
+        await click('Attach files');
+        assert.equal(pickerOpened, true);
+        Object.defineProperty(input, 'files', { configurable: true, value: files });
+        await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+      };
       const upload = async (files, method = 'paste') => {
         const event = new Event(method, { bubbles: true, cancelable: true });
         Object.defineProperty(event, method === 'paste' ? 'clipboardData' : 'dataTransfer', {
@@ -3595,7 +3604,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         result = { sent: false, restoreText: true };
         const first = new File(['Synthetic review file'], 'Review.txt', { type: 'text/plain' });
         const second = new File(['Queued file'], 'Queued.txt', { type: 'text/plain' });
-        await upload([first, second]);
+        await choose([first, second]);
         await settle(() => requests.length === 1);
         assert.equal(drafts.length, 2);
         assert.equal(drafts[0].downloadUrl, undefined);
