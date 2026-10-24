@@ -33,7 +33,6 @@ export default scenario({
   complexity: 'simple',
   stance: 'regression',
   seconds: 300,
-  window: { from: 7, to: 21 },
   calibration: 'pending',
   user: {
     approve: true,

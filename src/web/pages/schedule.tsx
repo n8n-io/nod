@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CalendarClock, Sparkles } from 'lucide-react';
+import { CalendarClock, Sparkles } from '../components/icons';
 import type { Schedule, ScheduleHistory, ScheduleRun } from '../../shared/contracts';
 import { StatusIcon, statusLabels } from '../components/turn-status';
 import { usePageData } from '../hooks/use-page-data';
@@ -16,6 +16,8 @@ import {
   useDirectChange,
 } from '../components/plan-controls';
 import { Button } from '../components/ui';
+import { InlineName } from '../components/inline-name';
+import { money } from '../lib/money';
 
 const historyPath = '/api/schedule-runs?limit=20';
 
@@ -37,7 +39,18 @@ export function ScheduleRow({
   return (
     <article className="saved-plan">
       <div className="saved-plan-title">
-        <h2>{schedule.title}</h2>
+        <h2>
+          <InlineName
+            value={schedule.title}
+            label="schedule title"
+            save={async (title) => {
+              const error = await change.apply({ title }, 'Title updated.', {
+                title: schedule.title,
+              });
+              if (error) throw new Error(error);
+            }}
+          />
+        </h2>
         <span className="saved-plan-status">
           {!schedule.enabled ? 'Paused' : schedule.kind === 'once' ? 'One time' : 'Recurring'}
         </span>
@@ -56,6 +69,7 @@ export function ScheduleRow({
           <span>Next {date(schedule.nextRun)}</span>
         )}
         {schedule.timeZone !== dateFormat.timeZone && <span>{schedule.timeZone}</span>}
+        {schedule.monthlyUsd !== null && <span>≈{money(schedule.monthlyUsd)} a month</span>}
       </p>
       <PlanDetails
         label={schedule.title}
@@ -91,7 +105,7 @@ export function ScheduleRow({
       </PlanDetails>
       {asking && (
         <AskNod
-          subject={{ title: schedule.title }}
+          subject={{ kind: 'schedule', title: schedule.title }}
           onAsk={onAsk}
           onClose={() => setAsking(false)}
         />

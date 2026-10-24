@@ -1,5 +1,16 @@
 import type { Root, Text, Element } from 'hast';
+import type { Root as MarkdownRoot } from 'mdast';
+import remarkInlineLinks from 'remark-inline-links';
 import { SKIP, visit } from 'unist-util-visit';
+
+export function remarkLinkDestinations() {
+  return (tree: MarkdownRoot) => {
+    remarkInlineLinks()(tree);
+    visit(tree, 'link', (node) => {
+      node.data = { ...node.data, hProperties: { ...node.data?.hProperties, href: node.url } };
+    });
+  };
+}
 
 function unlinkCode(node: Element) {
   node.children = node.children.flatMap((child) => {

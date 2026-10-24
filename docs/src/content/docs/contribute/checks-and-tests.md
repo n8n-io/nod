@@ -45,6 +45,8 @@ Secret scanning skips its generic keyword check in tests and fixtures. Known key
 
 The [capability evals](/contribute/evals/) call live models, so they aren't part of these checks. They run nightly and on request.
 
+When the evaluation harness changes, CI starts PostgreSQL for its database checks. These checks use synthetic data and disposable schemas.
+
 ## Integration tests
 
 `pnpm run test:integration` runs every test file in Linux, with Chromium and a throwaway PostgreSQL database. It never uses your local database or credentials.
@@ -58,6 +60,8 @@ flowchart LR
 ```
 
 The network has no internet access, and your source folders are mounted read-only. The run fails if any test is skipped.
+
+Wait for a controlled frame to finish loading before checking an old control binding. A reload can still show the previous document while navigation is pending.
 
 ## Write tests that catch real regressions
 

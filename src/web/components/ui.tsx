@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Slot } from '@radix-ui/react-slot';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { cva, type VariantProps } from 'class-variance-authority';
-import { LoaderCircle, Search, X } from 'lucide-react';
+import { LoaderCircle, Search, X } from './icons';
 import { cn } from '../lib/utils';
 
 const buttonVariants = cva('button', {

@@ -70,6 +70,28 @@ export async function createChatVerification(
     message_id uuid PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     request_id text NOT NULL, status text NOT NULL DEFAULT 'pending', code_fingerprint text NOT NULL
   )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS chat_verification_questions (
+    message_id uuid PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    request_id text NOT NULL
+  )`);
+  async function bindQuestion(
+    turnId: string,
+    messageId: string,
+    database: Pick<PoolClient, 'query'> = pool,
+  ) {
+    await database.query(
+      `WITH pending AS (
+         SELECT r.id FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
+         JOIN messages m ON m.turn_id=u.id AND m.thread_id=r.thread_id AND m.owner_id=r.owner_id
+         WHERE m.id=$1 AND m.owner_id=$2 AND m.turn_id=$3 AND m.role='assistant'
+           AND r.status='pending' AND (r.kind<>'payment' OR u.channel='web')
+           AND ${waitingTurnSql('u', 'credentials')}
+       ) INSERT INTO chat_verification_questions(message_id,request_id)
+         SELECT $1,id FROM pending WHERE (SELECT count(*) FROM pending)=1
+         ON CONFLICT(message_id) DO NOTHING`,
+      [messageId, options.ownerId, turnId],
+    );
+  }
   let fingerprintKey: Promise<Buffer> | undefined;
   async function fingerprint(code: string, input: VerificationInput) {
     fingerprintKey ??= options.keyStore
@@ -183,16 +205,31 @@ export async function createChatVerification(
         return response;
       }
       let turnId: string | undefined;
+      let requestId = input.verificationRequestId;
       if (input.replyToMessageId) {
         const target = (
           await client.query(
-            `SELECT u.id FROM messages m JOIN turns u ON u.id=m.turn_id
+            `SELECT u.id,q.request_id FROM messages m JOIN turns u ON u.id=m.turn_id
+             LEFT JOIN chat_verification_questions q ON q.message_id=m.id
              WHERE m.id=$1 AND m.owner_id=$2 AND u.owner_id=$2 AND u.channel=$3 AND m.thread_id=$4`,
             [input.replyToMessageId, options.ownerId, channel, thread.id],
           )
         ).rows[0];
         if (!target) throw conflict('The reply is unavailable in this conversation.');
         turnId = target.id;
+        if (target.request_id) {
+          if (requestId && requestId !== target.request_id) throw conflict(unavailableMessage);
+          requestId = target.request_id;
+        } else if (
+          requestId ||
+          (
+            await client.query(
+              `SELECT 1 FROM ${codeRequests} WHERE owner_id=$1 AND thread_id=$2 AND turn_id=$3 LIMIT 1`,
+              [options.ownerId, thread.id, turnId],
+            )
+          ).rowCount
+        )
+          throw conflict(unavailableMessage);
       }
       const requests = await client.query<{
         id: string;
@@ -205,10 +242,10 @@ export async function createChatVerification(
            AND ${waitingTurnSql('u', 'credentials')}
            AND ($3::uuid IS NULL OR r.turn_id=$3) AND ($4::text IS NULL OR r.id=$4)
            ORDER BY u.created_at,r.id LIMIT 2`,
-        [options.ownerId, channel, turnId ?? null, input.verificationRequestId ?? null, thread.id],
+        [options.ownerId, channel, turnId ?? null, requestId ?? null, thread.id],
       );
       if (!requests.rowCount) {
-        if (input.verificationRequestId) throw conflict(unavailableMessage);
+        if (requestId) throw conflict(unavailableMessage);
         const waiting = (
           await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
             `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
@@ -341,5 +378,5 @@ export async function createChatVerification(
     return response;
   }
 
-  return { pending, accept };
+  return { pending, accept, bindQuestion };
 }

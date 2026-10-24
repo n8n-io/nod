@@ -3,6 +3,9 @@ import type { ModelChoice, ModelProvider, ModelMethod, ModelEffort } from '../sh
 export type ModelCredential =
   | { type: 'api_key'; key: string }
   | { type: 'endpoint'; url: string; key?: string }
+  | { type: 'bedrock'; key: string; region: string }
+  | { type: 'cloudflare'; key: string; accountId: string; gatewayId?: string }
+  | { type: 'azure'; url: string; key: string; model: string; deployment: string }
   | {
       type: 'oauth';
       access: string;
@@ -35,6 +38,7 @@ export interface ModelAccess {
   definition: ModelDefinition;
   effort: ModelEffort;
   read(): Promise<ModelCredential | undefined>;
+  needsReconnect?(credential?: ModelCredential): Promise<void>;
 }
 
 export interface ModelBackend {

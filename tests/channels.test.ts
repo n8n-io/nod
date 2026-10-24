@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { EventEmitter } from 'node:events';
+import { createServer } from 'node:http';
+import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
@@ -11,6 +15,462 @@ import { locksTable } from '../src/server/locks.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
+import { createWhatsAppLinkedTransport } from '../src/providers/chat-sdk/whatsapp.ts';
+import { combineMessagingTransports } from '../src/providers/chat-sdk/combined.ts';
+import { createChannelSessionStore } from '../src/server/channel-session.ts';
+import { createChannelMedia } from '../src/server/channel-media.ts';
+import { createSpeech } from '../src/server/speech.ts';
+import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
+import { createOpenRouterTranscriptionProvider } from '../src/providers/openrouter/speech.ts';
+import { createArtifactService } from '../src/server/artifacts.ts';
+import { mkdtemp, rm, readdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Artifact } from '../src/shared/contracts.ts';
+import type { InboundMessage } from '../src/ports/messaging.ts';
+import { getHttpStream } from '@whiskeysockets/baileys';
+import { spendingLimitReached } from '../src/server/ledger.ts';
+import { ChannelMediaFailure } from '../src/server/channel-media.ts';
+import { runProcess } from '../src/providers/process.ts';
+import { loadAudioWaveform } from '../src/web/lib/audio-waveform.ts';
+import { contactCards } from '../src/shared/channel-content.ts';
+import { contactAttachment } from '../src/providers/chat-sdk/content.ts';
+import { gzipSync } from 'node:zlib';
+import { decodeSticker } from '../src/web/lib/sticker.ts';
+
+test('TGS previews decode vector animation and refuse expansion, expression and external asset input', async () => {
+  const animation = { v: '5.7.4', w: 512, h: 512, fr: 60, ip: 0, op: 180, layers: [], assets: [] };
+  const decode = (value: unknown, signal = new AbortController().signal) =>
+    decodeSticker(gzipSync(JSON.stringify(value)), signal);
+  assert.deepEqual(await decode(animation), animation);
+  const emptyMetadata = {
+    ...animation,
+    fonts: { list: [] },
+    chars: [],
+    segments: [],
+    slots: {},
+    layers: [{ ty: 4, ef: [], masksProperties: [], shapes: [] }],
+  };
+  assert.deepEqual(await decode(emptyMetadata), emptyMetadata);
+  for (const change of [
+    { w: 100_000 },
+    { op: 181 },
+    { fr: 0 },
+    { fonts: {} },
+    { slots: { S: { p: { k: Array.from({ length: 1000 }, () => 1) } } } },
+    { __complete: true },
+    { layers: [{ ty: 4, tt: 1, tp: 2 }] },
+    { layers: [{ ty: 0, refId: 'large', w: 1e9, h: 1e9 }], assets: [{ id: 'large', layers: [] }] },
+    { layers: [{ ty: 0, completed: true, layers: [{ ind: 1 }, { ind: 1 }] }] },
+    {
+      layers: [
+        {
+          ty: 4,
+          shapes: [
+            {
+              ty: 'sh',
+              ks: {
+                a: 0,
+                k: {
+                  c: true,
+                  v: [
+                    [0, 0],
+                    [0, 0],
+                  ],
+                  i: [
+                    [0, 0],
+                    [0, 0],
+                  ],
+                  o: [
+                    [0, 0],
+                    [0, 0],
+                  ],
+                },
+              },
+            },
+            ...Array.from({ length: 40 }, () => ({ ty: 'rd', r: { a: 0, k: 10 } })),
+          ],
+        },
+      ],
+    },
+    {
+      layers: [
+        {
+          ty: 4,
+          shapes: [
+            ...Array.from({ length: 400 }, () => ({
+              ty: 'el',
+              p: { a: 0, k: [0, 0] },
+              s: { a: 0, k: [20, 20] },
+            })),
+            ...Array.from({ length: 400 }, () => ({ ty: 'fl', c: { a: 0, k: [1, 0, 0, 1] } })),
+          ],
+        },
+      ],
+    },
+    { assets: [{ id: 'image', p: 'https://example.test/private', u: '' }] },
+    { layers: [{ ks: { x: 'while(true){}' } }] },
+    { layers: [{ ty: 4, shapes: [{ ty: 'rp', c: { a: 0, k: 1e12 } }] }] },
+    { layers: [{ ty: 4, shapes: [{ ty: 'zz', r: { a: 0, k: 1e12 } }] }] },
+    { layers: [{ ty: 4, shapes: [{ ty: 'sr', pt: { a: 0, k: 1e12 } }] }] },
+    { layers: [{ ty: 4, shapes: [{ ty: 'gf', g: { p: 1e12, k: { a: 0, k: [] } } }] }] },
+    { layers: [{ ty: 4, shapes: [{ ty: 'gf', g: { p: '1000000000', k: { a: 0, k: [] } } }] }] },
+    { layers: [{ ty: 4, ks: { p: { k: { 0: 1, length: 1e9 } } } }] },
+    {
+      layers: [{ ty: 0, refId: 'loop' }],
+      assets: [{ id: 'loop', layers: [{ ty: 0, refId: 'loop' }] }],
+    },
+    { layers: [{ ty: 0, refId: 'missing' }] },
+    {
+      layers: [
+        { ty: 4, ind: 1, parent: 2 },
+        { ty: 4, ind: 2, parent: 1 },
+      ],
+    },
+    { layers: [{ ty: 4, ind: '1', parent: 1 }] },
+    {
+      layers: [
+        { ty: 4, ind: 1 },
+        { ty: 4, ind: 1 },
+      ],
+    },
+    { layers: [JSON.parse('{"__proto__":{"p":"private"}}')] },
+    { layers: Array.from({ length: 100_001 }, () => 0) },
+    { data: 'x'.repeat(4_000_001) },
+  ])
+    await assert.rejects(decode({ ...animation, ...change }));
+  const nested = {
+    ...animation,
+    layers: [{ ty: 0, refId: 'shape' }],
+    assets: [{ id: 'shape', layers: [{ ty: 4, shapes: [{ ty: 'el' }] }] }],
+  };
+  assert.deepEqual(await decode(nested), nested);
+  await assert.rejects(
+    decode({
+      ...animation,
+      layers: [{ ty: 0, refId: 'level0' }],
+      assets: Array.from({ length: 20 }, (_, index) => ({
+        id: `level${index}`,
+        layers:
+          index === 19
+            ? [{ ty: 4, shapes: [{ ty: 'el' }] }]
+            : Array.from({ length: 2 }, () => ({ ty: 0, refId: `level${index + 1}` })),
+      })),
+    }),
+  );
+  await assert.rejects(decodeSticker(new Uint8Array([1, 2, 3]), new AbortController().signal));
+  await assert.rejects(
+    decodeSticker(
+      gzipSync(
+        '{"w":512,"h":512,"fr":60,"ip":0,"op":180,"layers":[{"ty":4,"ks":{"p":{"k":[1e400,0]}}}]}',
+      ),
+      new AbortController().signal,
+    ),
+  );
+  const stopped = new AbortController();
+  stopped.abort();
+  await assert.rejects(decode(animation, stopped.signal), { name: 'AbortError' });
+});
+
+test('contact previews read vCard 2.1, 3.0 and 4.0 without treating field values as markup or links', () => {
+  const text = [
+    'BEGIN:VCARD',
+    'VERSION:2.1',
+    'FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:Synthetic =C3=\r\n =85ngstr=C3=B6m',
+    'TEL;CELL:+34600000000',
+    'END:VCARD',
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    'N:Doe\\;Smith;Alex;;Dr.;',
+    'ORG:Synthetic\\;Co;Research',
+    'TITLE:Engineer',
+    'ADR:;;Example\\; Street;City;;;Country',
+    'item1.EMAIL:fixture@example.test',
+    'URL:javascript:alert(1)',
+    'END:VCARD',
+    'BEGIN:VCARD',
+    'VERSION:4.0',
+    'FN:Synthetic <Contact>',
+    'TEL;VALUE=uri:tel:+34600000001',
+    'EMAIL:mailto:other@example.test',
+    'END:VCARD',
+  ].join('\r\n');
+  const cards = contactCards(text);
+  assert.equal(cards.length, 3);
+  assert.equal(cards[0].name, 'Synthetic Ångström');
+  assert.equal(cards[1].name, 'Dr. Alex Doe;Smith');
+  assert.equal(cards[1].organization, 'Synthetic;Co · Research');
+  assert.equal(cards[1].title, 'Engineer');
+  assert.deepEqual(cards[1].addresses, ['Example; Street, City, Country']);
+  assert.deepEqual(cards[1].urls, ['javascript:alert(1)']);
+  assert.equal(cards[2].name, 'Synthetic <Contact>');
+  assert.deepEqual(cards[2].phones, ['+34600000001']);
+  assert.deepEqual(cards[2].emails, ['other@example.test']);
+  const start = performance.now();
+  assert.equal(
+    contactCards(
+      'BEGIN:VCARD\r\nX-BAD' + '\r\n A'.repeat(100_000) + '\r\nFN:Synthetic\r\nEND:VCARD',
+    )[0].name,
+    'Synthetic',
+  );
+  assert.ok(performance.now() - start < 5000);
+  assert.deepEqual(
+    contactCards('BEGIN:VCARD\r\nFN:First\r\nBEGIN:VCARD\r\nFN:Second\r\nEND:VCARD'),
+    [],
+  );
+});
+
+test('audio waveform reads refuse foreign URLs, oversized streams, redirects and cancelled work', async (t) => {
+  const ids = Array.from({ length: 5 }, () => randomUUID());
+  const opus = (count: number, granule = 0n) => {
+    const head = Buffer.alloc(19);
+    head.write('OpusHead');
+    head[8] = 1;
+    head[9] = 1;
+    const packets = [
+      head,
+      Buffer.from('OpusTags'),
+      ...Array.from({ length: count }, () => Buffer.from([25, 0])),
+    ];
+    return Buffer.concat(
+      packets.map((packet, index) => {
+        const page = Buffer.alloc(28 + packet.length);
+        page.write('OggS');
+        page[5] = index === 0 ? 2 : index === packets.length - 1 ? 4 : 0;
+        page.writeBigUInt64LE(granule, 6);
+        page.writeUInt32LE(1, 14);
+        page.writeUInt32LE(index, 18);
+        page[26] = 1;
+        page[27] = packet.length;
+        packet.copy(page, 28);
+        let crc = 0;
+        for (const byte of page) {
+          crc ^= byte << 24;
+          for (let bit = 0; bit < 8; bit++) crc = (crc << 1) ^ (crc < 0 ? 0x04c11db7 : 0);
+        }
+        page.writeUInt32LE(crc >>> 0, 22);
+        return page;
+      }),
+    );
+  };
+  let reads = 0;
+  let redirectReads = 0;
+  let started!: () => void;
+  const held = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const server = createServer((request, response) => {
+    reads++;
+    if (request.url === `/api/artifacts/${ids[0]}`) {
+      response.writeHead(200, { 'Content-Type': 'audio/ogg' });
+      response.end(Buffer.alloc(25 * 1024 * 1024 + 1));
+    } else if (request.url === `/api/artifacts/${ids[1]}`) {
+      response.writeHead(200, { 'Content-Type': 'audio/ogg' });
+      response.write('OggS');
+      started();
+    } else if (request.url === `/api/artifacts/${ids[2]}`) {
+      response.writeHead(302, { Location: '/foreign' });
+      response.end();
+    } else if (
+      request.url === `/api/artifacts/${ids[3]}` ||
+      request.url === `/api/artifacts/${ids[4]}`
+    ) {
+      response.writeHead(200, { 'Content-Type': 'audio/ogg' });
+      response.end(request.url.endsWith(ids[3]) ? opus(5001) : opus(1, 0x100000000n));
+    } else {
+      redirectReads++;
+      response.end();
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const address = server.address() as { port: number };
+  const original = globalThis.fetch;
+  globalThis.fetch = (input, options) =>
+    original(new URL(String(input), `http://127.0.0.1:${address.port}`), options);
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const url = `/api/artifacts/${ids[0]}`;
+  for (const input of [
+    { url: 'https://example.invalid/private.ogg', size: 10, duration: 1 },
+    { url, size: 25 * 1024 * 1024 + 1, duration: 1 },
+    { url, size: 10, duration: Infinity },
+    { url, size: 10, duration: 601 },
+  ])
+    await assert.rejects(
+      loadAudioWaveform(input.url, input.size, input.duration, new AbortController().signal),
+      /Waveform unavailable/,
+    );
+  assert.equal(reads, 0);
+  await assert.rejects(
+    loadAudioWaveform(url, 10, 1, new AbortController().signal),
+    /too large to preview/,
+  );
+  const controller = new AbortController();
+  const pending = loadAudioWaveform(`/api/artifacts/${ids[1]}`, 10, 1, controller.signal);
+  await held;
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  await assert.rejects(
+    loadAudioWaveform(`/api/artifacts/${ids[2]}`, 10, 1, new AbortController().signal),
+  );
+  assert.equal(redirectReads, 0);
+  for (const id of ids.slice(3))
+    await assert.rejects(
+      loadAudioWaveform(`/api/artifacts/${id}`, 100, 1, new AbortController().signal),
+      /Waveform unavailable/,
+    );
+});
+
+test('WhatsApp setup removes stale QR codes and recovers from failed and stalled reads', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import {mock} from 'node:test';
+      import {JSDOM} from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {url:'http://localhost/channels'});
+      Object.assign(globalThis, {window:dom.window,document:dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT:true,HTMLElement:dom.window.HTMLElement,
+        getComputedStyle:dom.window.getComputedStyle.bind(dom.window)});
+      const {createElement,act} = await import('react');
+      const {createRoot} = await import('react-dom/client');
+      const {WhatsAppSetup} = await import('./src/web/components/whatsapp-setup.tsx');
+      mock.timers.enable({apis:['Date','setTimeout'],now:Date.now()});
+      mock.method(AbortSignal,'timeout',ms=>{
+        const controller=new AbortController();
+        setTimeout(()=>controller.abort(new DOMException('Synthetic timeout','TimeoutError')),ms);
+        return controller.signal;
+      });
+      let mode='ready';
+      let pendingSignal;
+      let reads=0;
+      const code=(value,lifetime=60000)=>({state:'awaiting_scan',
+        pairingId:'11111111-1111-4111-8111-111111111111',
+        qr:value,expiresAt:new Date(Date.now()+lifetime).toISOString()});
+      let link=code('synthetic-first-qr');
+      globalThis.fetch=async (_url,options={})=>{
+        if(options.method==='DELETE') return Response.json({ok:true});
+        reads++;
+        if(mode==='failed') throw new Error('Synthetic connection failure');
+        if(mode==='stalled') return new Promise((resolve,reject)=>{
+          pendingSignal=options.signal;
+          options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true});
+        });
+        return Response.json(link);
+      };
+      const root=createRoot(document.querySelector('#root'));
+      const hasQr=()=>Boolean(document.querySelector('.telegram-setup-qr svg'));
+      const advance=async ms=>act(async()=>mock.timers.tick(ms));
+      try {
+        await act(async()=>root.render(createElement(WhatsAppSetup,{
+          setup:{provider:'whatsapp',enabled:true,mode:'linked'},
+          busy:false,ready:true,error:'',onSave:async()=>true,onRefresh:async()=>{},onCloud(){},onDone(){},
+        })));
+        assert.equal(hasQr(),true);
+        mode='failed';
+        await advance(2000);
+        assert.equal(hasQr(),false,'A failed read must remove the previous code.');
+        mode='ready';
+        link=code('synthetic-second-qr');
+        await advance(2000);
+        assert.equal(hasQr(),true);
+        mode='stalled';
+        await advance(2000);
+        const stalledAt=reads;
+        await advance(10000);
+        assert.equal(pendingSignal.aborted,true,'A stalled read must end.');
+        assert.equal(hasQr(),false);
+        mode='ready';
+        link=code('synthetic-third-qr',3000);
+        await advance(2000);
+        assert.ok(reads>stalledAt,'Polling must resume after a timeout.');
+        assert.equal(hasQr(),true);
+        await advance(1000);
+        assert.equal(hasQr(),false,'The code must disappear at expiry without another read.');
+      } finally {
+        await act(async()=>root.unmount());
+        mock.restoreAll();
+        mock.timers.reset();
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
+test('WhatsApp setup closes the replacement generation despite stale polls and late restart responses', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import {JSDOM} from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {url:'http://localhost/channels'});
+      Object.assign(globalThis, {window:dom.window,document:dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT:true,HTMLElement:dom.window.HTMLElement,
+        getComputedStyle:dom.window.getComputedStyle.bind(dom.window)});
+      const {createElement,act} = await import('react');
+      const {createRoot} = await import('react-dom/client');
+      const {WhatsAppSetup} = await import('./src/web/components/whatsapp-setup.tsx');
+      const sleep = globalThis.setTimeout;
+      const clear = globalThis.clearTimeout;
+      let poll;
+      globalThis.setTimeout = (fn,ms,...args) => ms===2000 ? (poll=fn,{poll:true}) : sleep(fn,ms,...args);
+      globalThis.clearTimeout = id => {if(!id?.poll) clear(id);};
+      const settle = async check => {
+        for(let i=0;i<100&&!check();i++) await act(async()=>{await new Promise(resolve=>sleep(resolve,5));});
+        assert.ok(check(),'The setup request did not settle.');
+      };
+      for(const closeDuringRestart of [false,true]) {
+        const oldId='11111111-1111-4111-8111-111111111111';
+        const nextId='22222222-2222-4222-8222-222222222222';
+        const old={state:'expired',pairingId:oldId};
+        const next={state:'awaiting_scan',pairingId:nextId,qr:'synthetic-invalid-qr'};
+        let reads=0,resolvePost,resolvePoll;
+        const cancelled=[];
+        globalThis.fetch=async (_url,options={})=>{
+          if(options.method==='DELETE') {
+            cancelled.push(JSON.parse(options.body).pairingId);
+            return Response.json({ok:true});
+          }
+          if(options.method==='POST') {
+            assert.equal(JSON.parse(options.body).pairingId,oldId);
+            return new Promise(resolve=>{resolvePost=()=>resolve(Response.json(next));});
+          }
+          if(++reads===1) return Response.json(old);
+          return new Promise(resolve=>{resolvePoll=()=>resolve(Response.json(old));});
+        };
+        const root=createRoot(document.querySelector('#root'));
+        await act(async()=>root.render(createElement(WhatsAppSetup,{
+          setup:{provider:'whatsapp',enabled:true,mode:'linked',connectionState:'expired'},
+          busy:false,ready:true,error:'',onSave:async()=>true,onRefresh:async()=>{},onCloud(){},onDone(){},
+        })));
+        const restart=()=>[...document.querySelectorAll('button')].find(button=>button.textContent.includes('Start again'));
+        await settle(()=>restart()&&!restart().disabled);
+        if(!closeDuringRestart) {
+          await act(async()=>poll());
+          await settle(()=>Boolean(resolvePoll));
+        }
+        await act(async()=>restart().click());
+        await settle(()=>Boolean(resolvePost));
+        if(closeDuringRestart) await act(async()=>root.unmount());
+        await act(async()=>resolvePost());
+        if(resolvePoll) await act(async()=>resolvePoll());
+        if(!closeDuringRestart) await act(async()=>root.unmount());
+        await settle(()=>cancelled.includes(nextId));
+        assert.equal(cancelled.at(-1),nextId);
+      }
+      globalThis.setTimeout=sleep;
+      globalThis.clearTimeout=clear;
+      dom.window.close();
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
 
 const attachment = (name: string, mimeType: string, text: string) => ({
   name,
@@ -33,10 +493,1235 @@ const fixtureEnv = {
   WHATSAPP_POLICY_CONFIRMED: 'true',
 };
 
+test('the pinned WhatsApp download refuses redirects and stops before response headers on abort', async (t) => {
+  let redirected = 0;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const server = createServer((request, response) => {
+    if (request.url === '/redirect') {
+      response.writeHead(302, { Location: '/other' });
+      response.end();
+    } else if (request.url === '/held') {
+      entered();
+    } else {
+      redirected++;
+      response.end('synthetic data');
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const origin = `http://127.0.0.1:${address.port}`;
+  await assert.rejects(getHttpStream(origin + '/redirect', { redirect: 'error' }));
+  assert.equal(redirected, 0);
+  const controller = new AbortController();
+  const pending = getHttpStream(origin + '/held', { signal: controller.signal });
+  await waiting;
+  controller.abort();
+  await assert.rejects(pending, /abort/i);
+});
+
+test('Signal session changes never write key material to the process console', (t) => {
+  const require = createRequire(import.meta.url);
+  const { SessionRecord } = require('libsignal');
+  const output: unknown[][] = [];
+  for (const method of ['info', 'warn', 'error', 'log'] as const)
+    t.mock.method(console, method, (...args: unknown[]) => {
+      output.push(args);
+    });
+  const record = new SessionRecord();
+  const entry = SessionRecord.createEntry();
+  entry.indexInfo = { closed: -1, baseKey: Buffer.from('synthetic-private-session-key') };
+  record.closeSession(entry);
+  record.openSession(entry);
+  assert.equal(entry.indexInfo.closed, -1);
+  assert.deepEqual(output, []);
+});
+
+test(
+  'WhatsApp links privately, admits only its owner, fences echoes across restart, and reconnects without repeating sends',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_whatsapp_link_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+    const key = Buffer.alloc(32, 7);
+    try {
+      for (const mode of ['bot', 'self-chat'] as const)
+        await t.test(mode, async () => {
+          type Options = Parameters<typeof createWhatsAppLinkedTransport>[0];
+          type Factory = NonNullable<Options['createSocket']>;
+          const sockets: { events: EventEmitter; config: Parameters<Factory>[0] }[] = [];
+          const sent: {
+            jid: string;
+            content: Record<string, unknown>;
+            id: string;
+            quoted: unknown;
+          }[] = [];
+          const collected: InboundMessage[] = [];
+          const reacted: string[] = [];
+          const presence: string[][] = [];
+          let downloads = 0;
+          let logouts = 0;
+          let failSend = false;
+          let failClear = false;
+          let failLogout = false;
+          let abortDownload: AbortController | undefined;
+          let lateStream: PassThrough | undefined;
+          let oversizedDownload = false;
+          const own = mode === 'self-chat' ? '12345678' : '99999999';
+          const owner = '12345678';
+          const accountId = `linked:${own}`;
+          const jid = `${owner}@s.whatsapp.net`;
+          const store = createChannelSessionStore({ pool, ownerId: `fixture-${mode}`, keyStore });
+          const createSocket: Factory = (config) => {
+            const events = new EventEmitter();
+            sockets.push({ events, config });
+            return {
+              ev: events,
+              user: { id: `${own}:1@s.whatsapp.net`, lid: '55555555@lid', name: 'Fixture' },
+              signalRepository: {
+                lidMapping: {
+                  getPNForLID: async (lid: string) =>
+                    ['55555555@lid', '66666666@lid'].includes(lid) ? jid : null,
+                },
+              },
+              end: () => {},
+              logout: async () => {
+                logouts++;
+                if (failLogout) throw new Error('Synthetic sign-out response was lost.');
+              },
+              sendPresenceUpdate: async (state: string, destination: string) => {
+                presence.push([state, destination]);
+              },
+              sendMessage: async (
+                destination: string,
+                content: Record<string, unknown>,
+                input: { messageId: string; quoted?: unknown },
+              ) => {
+                sent.push({ jid: destination, content, id: input.messageId, quoted: input.quoted });
+                if (failSend) throw new Error('The provider may have accepted this message.');
+                return { key: { id: input.messageId } };
+              },
+            } as unknown as ReturnType<Factory>;
+          };
+          const download = (async () => {
+            downloads++;
+            const stream = new PassThrough();
+            if (abortDownload) {
+              lateStream = stream;
+              abortDownload.abort();
+            } else
+              stream.end(
+                oversizedDownload
+                  ? Buffer.alloc(50 * 1024 * 1024 + 1)
+                  : Buffer.from('synthetic image'),
+              );
+            return stream;
+          }) as NonNullable<Options['download']>;
+          const open = () =>
+            createWhatsAppLinkedTransport({
+              mode,
+              allowedNumber: owner,
+              store: {
+                async open() {
+                  const session = await store.open();
+                  return {
+                    ...session,
+                    async clear() {
+                      if (failClear) {
+                        failClear = false;
+                        throw new Error('Synthetic key deletion failure.');
+                      }
+                      await session.clear();
+                    },
+                  };
+                },
+              },
+              createSocket,
+              download,
+            });
+          let transport = open();
+          try {
+            const initial = await transport.pairing!();
+            assert.ok(initial.pairingId);
+            assert.equal(sockets[0].config.logger?.level, 'silent');
+            assert.equal(sockets[0].config.maxMsgRetryCount, 0);
+            assert.equal(sockets[0].config.shouldSyncHistoryMessage?.({}), false);
+            sockets[0].events.emit('connection.update', { qr: 'synthetic-qr' });
+            assert.equal((await transport.pairing!()).qr, 'synthetic-qr');
+            assert.equal(await transport.cancelPairing!('another-setup'), false);
+            const me = { id: `${own}:1@s.whatsapp.net`, lid: '55555555@lid', name: 'Fixture' };
+            sockets[0].events.emit('creds.update', { me, registered: true });
+            sockets[0].events.emit('connection.update', { connection: 'open' });
+            assert.equal((await transport.pairing!()).qr, undefined);
+            assert.equal(await transport.cancelPairing!(initial.pairingId!), false);
+            assert.equal(await transport.cancelPairing!(initial.pairingId!, true), false);
+            await sockets[0].config.auth.keys.set({
+              session: { fixture: Uint8Array.from([1, 2, 3]) },
+            });
+            const envelope = (id: string, remoteJid = jid, fromMe = mode === 'self-chat') => ({
+              key: { id, remoteJid, fromMe },
+              messageTimestamp: Math.floor(Date.now() / 1000),
+              message: { conversation: 'Fixture request' },
+            });
+            sockets[0].events.emit('messages.upsert', {
+              type: 'notify',
+              messages: [
+                envelope('owner'),
+                envelope('intruder', '87654321@s.whatsapp.net', false),
+                envelope('group', '12345678@g.us'),
+                { ...envelope('old'), messageTimestamp: Math.floor(Date.now() / 1000) - 3600 },
+                {
+                  ...envelope('image'),
+                  message: {
+                    imageMessage: {
+                      caption: 'Inspect this image',
+                      mimetype: 'image/jpeg',
+                      fileLength: 15,
+                      url: 'https://mmg.whatsapp.net/fixture',
+                    },
+                  },
+                },
+                {
+                  ...envelope('reaction'),
+                  message: { reactionMessage: { key: { id: 'task-prompt' }, text: '👍' } },
+                },
+                {
+                  ...envelope('quoted'),
+                  message: {
+                    extendedTextMessage: {
+                      text: 'Continue this task',
+                      contextInfo: { stanzaId: 'task-prompt' },
+                    },
+                  },
+                },
+                envelope('lid', '55555555@lid'),
+                ...(mode === 'self-chat'
+                  ? [
+                      {
+                        ...envelope('other-lid', '66666666@lid'),
+                        key: {
+                          id: 'other-lid',
+                          remoteJid: '66666666@lid',
+                          remoteJidAlt: jid,
+                          fromMe: true,
+                        },
+                      },
+                    ]
+                  : []),
+              ],
+            });
+            sockets[0].events.emit('messages.upsert', {
+              type: 'append',
+              requestId: 'history-request',
+              messages: [envelope('history')],
+            });
+            await transport.poll!(
+              async (message) => {
+                collected.push(message);
+              },
+              undefined,
+              async (reaction) => {
+                reacted.push(reaction.messageId);
+              },
+            );
+            assert.deepEqual(
+              collected.map((message) => message.messageId),
+              ['owner', 'image', 'quoted', 'lid'],
+            );
+            assert.equal(collected[2].replyToMessageId, 'task-prompt');
+            assert.deepEqual(reacted, ['task-prompt']);
+            assert.equal(downloads, 0);
+            assert.deepEqual(
+              Buffer.from(await collected[1].attachments![0].read()),
+              Buffer.from('synthetic image'),
+            );
+            assert.equal(downloads, 1);
+            oversizedDownload = true;
+            await assert.rejects(collected[1].attachments![0].read(), /too large/);
+            oversizedDownload = false;
+            abortDownload = new AbortController();
+            const late = collected[1].attachments![0].read(abortDownload.signal);
+            const release = setTimeout(() => lateStream?.end(), 100);
+            try {
+              await assert.rejects(late);
+              assert.equal(lateStream?.destroyed, true);
+            } finally {
+              clearTimeout(release);
+              lateStream?.destroy();
+              abortDownload = undefined;
+            }
+            sockets[0].events.emit('messages.upsert', {
+              type: 'notify',
+              messages: [
+                {
+                  ...envelope('bad-media'),
+                  message: {
+                    imageMessage: { mimetype: 'image/jpeg', url: 'http://127.0.0.1/private' },
+                  },
+                },
+              ],
+            });
+            await transport.poll!(async (message) => {
+              collected.push(message);
+            });
+            await assert.rejects(collected.at(-1)!.attachments![0].read(), /address/);
+            assert.equal(downloads, 3);
+            const contact =
+              'BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Synthetic Contact\r\nTEL:+34600000000\r\nEND:VCARD';
+            sockets[0].events.emit('messages.upsert', {
+              type: 'notify',
+              messages: [
+                {
+                  ...envelope('sticker-message'),
+                  message: {
+                    stickerMessage: {
+                      mimetype: 'image/webp',
+                      fileLength: 15,
+                      contextInfo: { stanzaId: 'task-prompt' },
+                    },
+                  },
+                },
+                {
+                  ...envelope('location-message'),
+                  message: {
+                    locationMessage: {
+                      degreesLatitude: 41.4,
+                      degreesLongitude: 2.17,
+                      name: 'Synthetic park',
+                      address: 'Synthetic address',
+                      contextInfo: { stanzaId: 'task-prompt' },
+                    },
+                  },
+                },
+                {
+                  ...envelope('contact-message'),
+                  message: {
+                    contactsArrayMessage: {
+                      contacts: [{ displayName: 'Synthetic Contact', vcard: contact }],
+                      contextInfo: { stanzaId: 'task-prompt' },
+                    },
+                  },
+                },
+                {
+                  ...envelope('foreign-location', '87654321@s.whatsapp.net', false),
+                  message: { locationMessage: { degreesLatitude: 0, degreesLongitude: 0 } },
+                },
+              ],
+            });
+            await transport.poll!(async (message) => {
+              collected.push(message);
+            });
+            const shared = collected.slice(-3);
+            assert.deepEqual(
+              shared.map((message) => message.attachments![0].source),
+              ['sticker', 'location', 'contact'],
+            );
+            assert.ok(shared.every((message) => message.replyToMessageId === 'task-prompt'));
+            assert.equal(
+              JSON.parse(Buffer.from(await shared[1].attachments![0].read()).toString()).name,
+              'Synthetic park',
+            );
+            assert.equal(
+              contactCards(Buffer.from(await shared[2].attachments![0].read()).toString())[0].name,
+              'Synthetic Contact',
+            );
+            assert.equal(downloads, 3);
+            await combineMessagingTransports(transport).presence!({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              messageId: 'owner',
+              status: 'Synthetic live work',
+            });
+            assert.deepEqual(presence, [['composing', jid]]);
+            if (mode === 'self-chat') {
+              await assert.rejects(
+                transport.post({
+                  channelId: 'whatsapp',
+                  accountId,
+                  threadId: '66666666@lid',
+                  text: 'Private result',
+                }),
+                /target is unavailable/,
+              );
+              assert.equal(sent.length, 0);
+            }
+            const result = await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: '**Task complete**',
+              replyToMessageId: 'task-prompt',
+              replyToText: 'Fixture task question',
+              attachments: [attachment('reply.ogg', 'audio/ogg', 'synthetic voice')],
+            });
+            assert.equal(sent[0].content.text, '*Task complete*');
+            assert.equal(sent[1].content.ptt, true);
+            assert.deepEqual(
+              result.ids,
+              sent.map((message) => message.id),
+            );
+            assert.equal(
+              (sent[0].quoted as { message: { conversation: string } }).message.conversation,
+              'Fixture task question',
+            );
+            const beforeImage = sent.length;
+            const imageReply = await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: '**Image result**',
+              attachments: [attachment('result.png', 'image/png', 'synthetic image')],
+            });
+            assert.equal(sent.length, beforeImage + 1);
+            assert.equal(sent.at(-1)!.content.caption, '*Image result*');
+            assert.equal(sent.at(-1)!.content.text, undefined);
+            assert.deepEqual(imageReply.ids, [sent.at(-1)!.id]);
+            await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: '',
+              attachments: [attachment('contact.vcf', 'text/vcard', contact)],
+              replyToMessageId: 'task-prompt',
+            });
+            assert.equal(
+              (sent.at(-1)!.content.contacts as { contacts: { vcard: string }[] }).contacts[0]
+                .vcard,
+              contact,
+            );
+            await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: '',
+              attachments: [
+                attachment(
+                  'location.json',
+                  'application/json',
+                  JSON.stringify({ latitude: 41.4, longitude: 2.17 }),
+                ),
+              ],
+            });
+            assert.equal(
+              (sent.at(-1)!.content.location as { degreesLatitude: number }).degreesLatitude,
+              41.4,
+            );
+            await transport.post({
+              channelId: 'whatsapp',
+              accountId,
+              threadId: jid,
+              text: '',
+              attachments: [
+                attachment(
+                  'name-only.vcf',
+                  'text/vcard',
+                  'BEGIN:VCARD\r\nFN:Synthetic\r\nEND:VCARD',
+                ),
+              ],
+            });
+            assert.equal(sent.at(-1)!.content.contacts, undefined);
+            assert.ok(sent.at(-1)!.content.document);
+            failSend = true;
+            await assert.rejects(
+              transport.post({
+                channelId: 'whatsapp',
+                accountId,
+                threadId: jid,
+                text: 'Uncertain fixture reply',
+              }),
+            );
+            const uncertainId = sent.at(-1)!.id;
+            failSend = false;
+            await transport.close();
+            await assert.rejects(
+              Promise.resolve(
+                sockets[0].config.auth.keys.set({ session: { fixture: Uint8Array.from([9]) } }),
+              ),
+            );
+            transport = open();
+            await transport.pairing!();
+            const resumed = sockets.at(-1)!;
+            assert.deepEqual(
+              Buffer.from((await resumed.config.auth.keys.get('session', ['fixture'])).fixture),
+              Buffer.from([1, 2, 3]),
+            );
+            resumed.events.emit('connection.update', { connection: 'open' });
+            const beforeEcho = collected.length;
+            resumed.events.emit('messages.upsert', {
+              type: 'notify',
+              messages: [envelope(uncertainId), envelope(result.id)],
+            });
+            await transport.poll!(async (message) => {
+              collected.push(message);
+            });
+            assert.equal(collected.length, beforeEcho);
+            const beforeDisconnect = sockets.length;
+            resumed.events.emit('connection.update', {
+              connection: 'close',
+              lastDisconnect: { error: { output: { statusCode: 428 } } },
+            });
+            assert.equal((await transport.pairing!()).state, 'disconnected');
+            assert.equal(
+              await transport.cancelPairing!((await transport.pairing!()).pairingId!),
+              false,
+            );
+            const attempts = sent.length;
+            await assert.rejects(
+              transport.post({
+                channelId: 'whatsapp',
+                accountId,
+                threadId: jid,
+                text: 'Wait for connection',
+              }),
+            );
+            const deadline = Date.now() + 5000;
+            while (sockets.length === beforeDisconnect && Date.now() < deadline)
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            assert.ok(sockets.length > beforeDisconnect);
+            sockets.at(-1)!.events.emit('connection.update', { connection: 'open' });
+            assert.equal(sent.length, attempts);
+            assert.equal((await transport.pairing!()).state, 'connected');
+            failClear = true;
+            failLogout = true;
+            await assert.rejects(transport.unlink!(), /key deletion failure/);
+            assert.equal((await transport.pairing!()).state, 'failed');
+            assert.equal(transport.channels[0].available, false);
+            await transport.unlink!();
+            await transport.unlink!();
+            assert.equal(logouts, 1);
+            assert.equal(
+              (
+                await pool.query(
+                  'SELECT count(*)::int AS n FROM channel_session_keys WHERE owner_id=$1',
+                  [`fixture-${mode}`],
+                )
+              ).rows[0].n,
+              0,
+            );
+            assert.equal((await transport.pairing!()).state, 'logged_out');
+            assert.equal(
+              await transport.cancelPairing!((await transport.pairing!()).pairingId!, true),
+              true,
+            );
+          } finally {
+            await transport.close();
+          }
+        });
+    } finally {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test('Telegram media keeps native replies and checks the sender before any download', async () => {
+  const bytes = Buffer.from('synthetic image bytes');
+  const requests: string[] = [];
+  let filePath = 'photos/fixture.jpg';
+  const transport = createChatSdkTransport({} as pg.Pool, fixtureEnv, {
+    fetch: async (input, init) => {
+      requests.push(String(input));
+      if (String(input).endsWith('/getFile')) {
+        assert.ok(['fixture-image', 'preview'].includes(JSON.parse(String(init?.body)).file_id));
+        return Response.json({
+          ok: true,
+          result: { file_path: filePath, file_size: bytes.length },
+        });
+      }
+      assert.equal(
+        String(input),
+        'https://api.telegram.org/file/bot987:fixture-not-live/photos/fixture.jpg',
+      );
+      assert.equal(init?.redirect, 'error');
+      return new Response(bytes);
+    },
+  });
+  const receive = (message: object) =>
+    transport.receive({
+      channelId: 'telegram',
+      method: 'POST',
+      query: {},
+      headers: { 'x-telegram-bot-api-secret-token': fixtureEnv.TELEGRAM_WEBHOOK_SECRET_TOKEN },
+      body: Buffer.from(JSON.stringify({ update_id: 123, message })),
+    });
+  const message = {
+    message_id: 42,
+    date: Math.floor(Date.now() / 1000),
+    from: { id: 123456, is_bot: false, first_name: 'Fixture' },
+    chat: { id: 123456, type: 'private' },
+    caption: 'Read this image',
+    photo: [{ file_id: 'fixture-image', file_size: bytes.length }],
+    reply_to_message: { message_id: 41 },
+  };
+  const result = await receive(message);
+  assert.equal(result.messages?.length, 1);
+  assert.equal(result.messages[0].text, 'Read this image');
+  assert.equal(result.messages[0].replyToMessageId, '123456:41');
+  assert.equal(requests.length, 0);
+  assert.deepEqual(Buffer.from(await result.messages[0].attachments![0].read()), bytes);
+  requests.length = 0;
+  assert.equal(
+    (
+      await receive({
+        ...message,
+        from: { ...message.from, id: 654321 },
+        chat: { ...message.chat, id: 654321 },
+      })
+    ).messages?.length,
+    0,
+  );
+  assert.equal(
+    (await receive({ ...message, chat: { id: -123456, type: 'group' } })).messages?.length,
+    0,
+  );
+  assert.equal(requests.length, 0);
+  filePath = '../../private-fixture';
+  await assert.rejects(result.messages[0].attachments![0].read(), /unavailable/);
+  assert.equal(requests.length, 1);
+  requests.length = 0;
+  const oversized = await receive({
+    ...message,
+    photo: [{ file_id: 'fixture-image', file_size: 21 * 1024 * 1024 }],
+  });
+  await assert.rejects(oversized.messages![0].attachments![0].read(), /too large/);
+  const media = createChannelMedia({
+    artifacts: {
+      storeArtifact: async () => {
+        throw new Error('No oversized file can be stored.');
+      },
+    },
+    speech: {
+      transcribe: async () => {
+        throw new Error('No oversized file can be transcribed.');
+      },
+    },
+  });
+  await assert.rejects(
+    media.prepare(oversized.messages![0].attachments!, new AbortController().signal),
+    (error: unknown) =>
+      error instanceof ChannelMediaFailure &&
+      error.reason === 'too_large' &&
+      error.fileLimitMb === 20,
+  );
+  assert.equal(requests.length, 0);
+  const voice = await receive({
+    ...message,
+    photo: undefined,
+    caption: undefined,
+    voice: { file_id: 'fixture-voice', file_size: 12 },
+  });
+  assert.equal(voice.messages![0].attachments![0].voice, true);
+  assert.equal(voice.messages![0].text, '');
+  for (const [payload, source] of [
+    [{ location: { latitude: 41.4, longitude: 2.17 } }, 'location'],
+    [
+      {
+        venue: {
+          location: { latitude: 41.4, longitude: 2.17 },
+          title: 'Synthetic park',
+          address: 'Synthetic address',
+        },
+      },
+      'location',
+    ],
+    [
+      { contact: { first_name: 'Synthetic', last_name: 'Contact', phone_number: '+34600000000' } },
+      'contact',
+    ],
+    [
+      {
+        sticker: { file_id: 'fixture-sticker', file_size: 12, is_animated: false, is_video: false },
+      },
+      'sticker',
+    ],
+  ] as const) {
+    const shared = await receive({ ...message, photo: undefined, caption: undefined, ...payload });
+    assert.equal(shared.messages![0].attachments![0].source, source);
+    assert.equal(shared.messages![0].replyToMessageId, '123456:41');
+    if (source !== 'sticker') {
+      const content = Buffer.from(await shared.messages![0].attachments![0].read()).toString(
+        'utf8',
+      );
+      if (source === 'location') assert.equal(JSON.parse(content).latitude, 41.4);
+      else assert.equal(contactCards(content)[0].phones[0], '+34600000000');
+    }
+    assert.equal(
+      (
+        await receive({
+          ...message,
+          photo: undefined,
+          ...payload,
+          from: { ...message.from, id: 654321 },
+          chat: { ...message.chat, id: 654321 },
+        })
+      ).messages?.length,
+      0,
+    );
+  }
+  const animated = await receive({
+    ...message,
+    photo: undefined,
+    sticker: {
+      file_id: 'animation',
+      file_size: 12,
+      is_animated: true,
+      thumbnail: { file_id: 'preview', file_size: 12 },
+    },
+  });
+  assert.deepEqual(
+    animated.messages![0].attachments!.map((file) => [file.mimeType, file.source]),
+    [
+      ['application/x-tgsticker', 'sticker'],
+      ['image/jpeg', 'sticker-preview'],
+    ],
+  );
+  filePath = 'photos/fixture.jpg';
+  assert.deepEqual(Buffer.from(await animated.messages![0].attachments![1].read()), bytes);
+  requests.length = 0;
+  assert.equal(
+    (await receive({ ...message, photo: undefined, location: { latitude: 91, longitude: 2.17 } }))
+      .messages?.length,
+    0,
+  );
+  assert.equal(requests.length, 0);
+});
+
+test('speech uses a bounded transcription request and generates Ogg voice output without exposing credentials', async () => {
+  const bytes = Buffer.from('synthetic voice bytes');
+  const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  let key: string | undefined;
+  const provider = createOpenAISpeechProvider({
+    apiKey: async () => key,
+    configured: () => Boolean(key),
+    fetch: async (input, init) => {
+      assert.equal(init?.redirect, 'error');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      if (String(input).endsWith('/transcriptions')) {
+        assert.ok(init?.body instanceof FormData);
+        assert.equal(init.body.get('model'), 'gpt-transcribe');
+        assert.equal(init.body.get('response_format'), 'json');
+        const file = init.body.get('file');
+        assert.ok(file instanceof File);
+        assert.deepEqual(Buffer.from(await file.arrayBuffer()), bytes);
+        return Response.json({
+          text: 'Read the attached image.',
+          usage: { type: 'duration', seconds: 60 },
+        });
+      }
+      assert.equal(JSON.parse(String(init?.body)).response_format, 'opus');
+      return new Response(bytes);
+    },
+  });
+  const speech = createSpeech({
+    ...provider,
+    get configured() {
+      return provider.configured;
+    },
+    transcribe: (audio, signal) =>
+      provider.transcribe!(audio, signal, (event) => usage.push(event)),
+    synthesize: (text, signal) => provider.synthesize(text, signal, (event) => usage.push(event)),
+  });
+  await assert.rejects(speech.transcribe({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }));
+  key = 'fixture-never-live';
+  assert.equal(
+    await speech.transcribe({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }),
+    'Read the attached image.',
+  );
+  assert.deepEqual(await speech.synthesize('Fixture reply'), {
+    bytes,
+    mimeType: 'audio/ogg',
+    fileName: 'reply.ogg',
+  });
+  await assert.rejects(
+    speech.transcribe({ bytes: Buffer.alloc(1), mimeType: 'text/plain', name: 'voice.txt' }),
+  );
+  assert.equal(usage.length, 2);
+  assert.notEqual(usage[0].id, usage[1].id);
+  assert.equal(usage[0].costUsd, 0.0045);
+  assert.equal(usage[1].costUsd, null);
+  assert.doesNotMatch(
+    JSON.stringify(usage),
+    /fixture-never-live|Read the attached image|synthetic voice bytes/,
+  );
+  key = 'fixture-rotated';
+  await speech.synthesize('Synthetic changed key');
+  key = undefined;
+  await assert.rejects(speech.synthesize('Synthetic removed key'));
+  let cancelled = 0;
+  const failed = createOpenAISpeechProvider({
+    apiKey: 'fixture-never-live',
+    fetch: async () =>
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled++;
+          },
+        }),
+        { status: 503 },
+      ),
+  });
+  await assert.rejects(failed.transcribe!({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }));
+  await assert.rejects(failed.synthesize('Synthetic provider error'));
+  assert.equal(cancelled, 2);
+});
+
+test('OpenRouter transcribes with its own current key, bounds responses, and reports cost without content', async () => {
+  const audio = { bytes: Buffer.from('Synthetic voice'), mimeType: 'audio/ogg', name: 'voice.ogg' };
+  let key: string | undefined;
+  let calls = 0;
+  let failure: 'status' | 'size' | 'abort' | undefined;
+  let cancelled = 0;
+  const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  const controller = new AbortController();
+  const provider = createOpenRouterTranscriptionProvider({
+    apiKey: async () => key,
+    configured: () => Boolean(key),
+    model: 'qwen/qwen3-asr-1.7b',
+    fetch: async (url, init) => {
+      calls++;
+      assert.equal(String(url), 'https://openrouter.ai/api/v1/audio/transcriptions');
+      assert.equal(init?.redirect, 'error');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      assert.ok(init?.body instanceof FormData);
+      assert.equal(init.body.get('model'), 'qwen/qwen3-asr-1.7b');
+      assert.equal(init.body.get('response_format'), 'json');
+      const file = init.body.get('file');
+      assert.ok(file instanceof File);
+      assert.deepEqual(Buffer.from(await file.arrayBuffer()), audio.bytes);
+      if (failure === 'abort') {
+        controller.abort();
+        init.signal!.throwIfAborted();
+      }
+      if (failure)
+        return new Response(
+          new ReadableStream({
+            start(stream) {
+              if (failure === 'size') stream.enqueue(Buffer.alloc(1024 * 1024 + 1));
+            },
+            cancel() {
+              cancelled++;
+            },
+          }),
+          { status: failure === 'status' ? 503 : 200 },
+        );
+      return Response.json({
+        text: 'Synthetic transcript.',
+        usage: { cost: 0.001, input_tokens: 30, output_tokens: 5 },
+      });
+    },
+  });
+  const service = createSpeech({
+    id: 'fixture',
+    configured: false,
+    get transcriptionConfigured() {
+      return provider.configured;
+    },
+    transcribe: (audio, signal) => provider.transcribe(audio, signal, (event) => usage.push(event)),
+    synthesize: async () => {
+      throw new Error('No speech output in this fixture.');
+    },
+  });
+  await assert.rejects(service.transcribe(audio));
+  assert.equal(calls, 0);
+  key = 'fixture-openrouter-first';
+  assert.equal(await service.transcribe(audio), 'Synthetic transcript.');
+  await assert.rejects(service.synthesize('Synthetic reply'));
+  assert.equal(calls, 1);
+  assert.equal(usage[0].provider, 'openrouter');
+  assert.equal(usage[0].model, 'qwen/qwen3-asr-1.7b');
+  assert.equal(usage[0].costUsd, 0.001);
+  assert.equal(usage[0].pricing, 'reported');
+  assert.equal(usage[0].inputTokens, 30);
+  assert.equal(usage[0].outputTokens, 5);
+  key = 'fixture-openrouter-rotated';
+  await service.transcribe(audio);
+  key = undefined;
+  await assert.rejects(service.transcribe(audio));
+  assert.equal(calls, 2);
+  key = 'fixture-openrouter-rotated';
+  for (failure of ['status', 'size', 'abort'] as const)
+    await assert.rejects(service.transcribe(audio, controller.signal));
+  assert.equal(calls, 5);
+  assert.equal(cancelled, 2);
+  assert.deepEqual(
+    usage.map((event) => event.status),
+    ['succeeded', 'succeeded', 'failed', 'failed', 'cancelled'],
+  );
+  assert.doesNotMatch(
+    JSON.stringify(usage),
+    /fixture-openrouter|Synthetic voice|Synthetic transcript/,
+  );
+});
+
+test(
+  'channel media joins concurrent duplicates, persists owned files, rejects other senders, and does not replay after restart',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_channel_receive_media_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const root = await mkdtemp(join(tmpdir(), 'nod-channel-media-'));
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+      await rm(root, { recursive: true, force: true });
+    });
+    const owner = 'fixture-owner';
+    const threadId = await createFixtureTables(pool, owner);
+    await pool.query(
+      'CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid,name text,mime_type text,size int,storage_path text)',
+    );
+    const artifacts = createArtifactService({ database: pool, ownerId: owner, localRoot: root });
+    let reads = 0;
+    let message: InboundMessage;
+    const submissions: { text: string; attachments: Artifact[] }[] = [];
+    const privateCodes: string[] = [];
+    const presentations: { kind: string; reason?: string }[] = [];
+    let voiceFailure: Error | undefined;
+    let modelConfigured = true;
+    let verificationPending = false;
+    let speechConfigured = true;
+    let transcript = '483729';
+    const speech = createSpeech({
+      id: 'fixture',
+      get configured() {
+        return speechConfigured;
+      },
+      synthesize: async () => {
+        throw new Error('Not used by the fixture.');
+      },
+      transcribe: async () => {
+        if (voiceFailure) throw voiceFailure;
+        return transcript;
+      },
+    });
+    const transport = (): MessagingTransport => ({
+      channels: [
+        {
+          id: 'telegram',
+          status: 'configured',
+          accountId: 'fixture-account',
+          allowedSenderIds: ['fixture-sender'],
+          missing: [],
+        },
+      ],
+      receive: async (input) => ({
+        status: 200,
+        body: 'ok',
+        messages: [{ ...message, ...JSON.parse(Buffer.from(input.body).toString()) }],
+      }),
+      post: async () => ({ id: 'fixture-reply' }),
+      close: async () => {},
+    });
+    const open = async () => {
+      const app = Fastify();
+      const channels = await createChannels(pool, {
+        ownerId: owner,
+        transport: transport(),
+        intervalMs: 600_000,
+        subscribe: () => () => {},
+        media: createChannelMedia({ artifacts, speech }),
+        modelConfigured: () => modelConfigured,
+        verificationPending: async () => verificationPending,
+        activeThread: async () => ({ id: threadId }),
+        present: async (_thread, presentation) => {
+          presentations.push(presentation);
+          return 'Fixture media notice';
+        },
+        answer: async () => {
+          throw new Error('A file must not approve an action.');
+        },
+        acceptVerification: async (text) => {
+          privateCodes.push(text);
+          return { messageText: 'Code entered privately.' };
+        },
+        submit: async (text, sourceId, client, channel, _messageId, answer, _reply, files) => {
+          assert.equal(answer, undefined);
+          submissions.push({ text, attachments: files ?? [] });
+          return fixtureTurn(client, threadId, owner, channel, sourceId);
+        },
+      });
+      channels.registerRoutes(app);
+      return { app, channels };
+    };
+    let fixture = await open();
+    t.after(() => fixture.app.close());
+    const send = () =>
+      fixture.app.inject({ method: 'POST', url: '/api/webhooks/telegram', payload: {} });
+    const file = {
+      ...attachment('image.png', 'image/png', 'fixture image'),
+      read: async () => {
+        reads++;
+        return Buffer.from('fixture image');
+      },
+    };
+    message = {
+      channelId: 'telegram',
+      accountId: 'fixture-account',
+      senderId: 'intruder',
+      messageId: 'foreign',
+      threadId: 'fixture-chat',
+      text: '',
+      attachments: [file],
+      sentAt: new Date(),
+    };
+    await Promise.all(Array.from({ length: 32 }, send));
+    assert.equal(reads, 0);
+    message = {
+      ...message,
+      senderId: 'fixture-sender',
+      messageId: 'owned-image',
+      text: 'Inspect this image',
+    };
+    const concurrent = await Promise.all(Array.from({ length: 64 }, send));
+    assert.ok(concurrent.every((response) => response.statusCode === 200));
+    await fixture.channels.drain();
+    assert.equal(reads, 1);
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0].text, 'Inspect this image');
+    assert.equal(submissions[0].attachments.length, 1);
+    assert.deepEqual(
+      await artifacts.readArtifact(submissions[0].attachments[0].id),
+      Buffer.from('fixture image'),
+    );
+    await fixture.app.close();
+    fixture = await open();
+    await Promise.all(Array.from({ length: 32 }, send));
+    await fixture.channels.drain();
+    assert.equal(reads, 1);
+    assert.equal(submissions.length, 1);
+    message = {
+      ...message,
+      messageId: 'private-voice',
+      text: '',
+      attachments: [{ ...file, name: 'voice.ogg', mimeType: 'audio/ogg', voice: true }],
+    };
+    await send();
+    await fixture.channels.drain();
+    assert.deepEqual(privateCodes, ['483729']);
+    assert.equal(submissions.length, 1);
+    assert.equal(
+      (await pool.query('SELECT count(*)::int AS count FROM artifacts')).rows[0].count,
+      1,
+    );
+    const receipt = (
+      await pool.query('SELECT text,attachments FROM channel_inbox WHERE source_id=$1', [
+        'channel:telegram:fixture-account:private-voice',
+      ])
+    ).rows[0];
+    assert.equal(receipt.text, 'Code entered privately.');
+    assert.deepEqual(receipt.attachments, []);
+    assert.equal(
+      JSON.stringify((await pool.query('SELECT text FROM channel_inbox')).rows).includes('483729'),
+      false,
+    );
+    const sendId = (messageId: string) =>
+      fixture.app.inject({
+        method: 'POST',
+        url: '/api/webhooks/telegram',
+        payload: { messageId },
+      });
+    voiceFailure = new Error(spendingLimitReached);
+    await sendId('limited-voice');
+    await fixture.channels.drain();
+    assert.ok(
+      presentations.some(
+        (item) => item.kind === 'media_failure' && item.reason === 'spending_limit',
+      ),
+    );
+    voiceFailure = undefined;
+    transcript = 'x'.repeat(100_001);
+    await sendId('long-transcript');
+    await fixture.channels.drain();
+    assert.ok(
+      presentations.some(
+        (item) => item.kind === 'media_failure' && item.reason === 'text_too_long',
+      ),
+    );
+    const originalAttachments = message.attachments;
+    message = { ...message, attachments: [attachment('empty.png', 'image/png', '')] };
+    await sendId('empty-image');
+    await fixture.channels.drain();
+    assert.equal(presentations.at(-1)?.reason, 'unavailable');
+    message = { ...message, attachments: originalAttachments };
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let active = 0;
+    let peak = 0;
+    message = {
+      ...message,
+      text: 'Inspect this image',
+      attachments: [
+        {
+          ...file,
+          read: async () => {
+            reads++;
+            active++;
+            peak = Math.max(peak, active);
+            if (active === 4) entered();
+            await held;
+            active--;
+            return Buffer.from('fixture image');
+          },
+        },
+      ],
+    };
+    const load = Array.from({ length: 4 }, (_, index) => sendId(`load-${index}`));
+    try {
+      await started;
+      assert.equal((await sendId('overflow')).statusCode, 503);
+      assert.equal(peak, 4);
+    } finally {
+      release();
+    }
+    assert.ok((await Promise.all(load)).every((response) => response.statusCode === 200));
+    await fixture.channels.drain();
+    assert.equal(submissions.length, 5);
+    assert.equal((await sendId('overflow')).statusCode, 200);
+    await fixture.channels.drain();
+    assert.equal(submissions.length, 6);
+    await pool.query(
+      "ALTER TABLE channel_inbox ADD CONSTRAINT reject_media_receipt CHECK(source_id NOT LIKE '%rollback-file')",
+    );
+    assert.equal((await sendId('rollback-file')).statusCode, 503);
+    const stored = (
+      await pool.query('SELECT count(*)::int AS count FROM artifacts WHERE owner_id=$1', [owner])
+    ).rows[0].count;
+    assert.equal((await readdir(join(root, 'artifacts'))).length, stored);
+    message = {
+      ...message,
+      messageId: 'sticker-message',
+      text: '',
+      attachments: [
+        { ...attachment('sticker.webp', 'image/webp', 'synthetic sticker'), source: 'sticker' },
+      ],
+    };
+    await send();
+    await fixture.channels.drain();
+    assert.equal(submissions.at(-1)!.text, '');
+    assert.equal(submissions.at(-1)!.attachments[0].source, 'sticker');
+    message = { ...message, messageId: 'photo-without-caption', attachments: [file] };
+    await send();
+    await fixture.channels.drain();
+    assert.equal(submissions.at(-1)!.text, '');
+    assert.equal(submissions.at(-1)!.attachments[0].mimeType, 'image/png');
+    assert.deepEqual(
+      await artifacts.readArtifact(submissions.at(-1)!.attachments[0].id),
+      Buffer.from('fixture image'),
+    );
+    const cards = Array.from(
+      { length: 17 },
+      (_, index) =>
+        `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Synthetic Contact ${index}\r\nTEL:+34600000000\r\nNOTE:${index ? 'Synthetic note' : 'x'.repeat(300_000)}\r\nEND:VCARD`,
+    );
+    message = { ...message, messageId: 'shared-contacts', attachments: contactAttachment(cards) };
+    await send();
+    await fixture.channels.drain();
+    const contacts = submissions.at(-1)!.attachments[0];
+    assert.equal(contacts.source, 'contact');
+    const savedCards = (await artifacts.readArtifact(contacts.id)).toString('utf8');
+    assert.equal(savedCards, cards.join('\r\n'));
+    assert.equal(contactCards(savedCards).length, 17);
+    assert.equal(contactAttachment(['', '  ']).length, 0);
+    assert.equal(
+      contactCards('BEGIN:VCARD\r\nN:Doe;John;Quincy;Dr.;Jr.\r\nTEL:+34600000000\r\nEND:VCARD')[0]
+        .name,
+      'Dr. John Quincy Doe Jr.',
+    );
+    const beforeVoice = reads;
+    const beforeSubmissions = submissions.length;
+    message = {
+      ...message,
+      messageId: 'voice-without-model',
+      attachments: [{ ...file, name: 'voice.ogg', mimeType: 'audio/ogg', voice: true }],
+    };
+    modelConfigured = false;
+    await send();
+    await send();
+    await fixture.channels.drain();
+    assert.equal(reads, beforeVoice);
+    assert.equal(submissions.length, beforeSubmissions);
+    const notices = (
+      await pool.query(
+        "SELECT text FROM messages WHERE role='assistant' AND text LIKE 'Connect a model service%'",
+      )
+    ).rows;
+    assert.equal(notices.length, 1);
+    verificationPending = true;
+    speechConfigured = false;
+    const beforeNotice = presentations.length;
+    await sendId('voice-no-model-no-speech');
+    await fixture.channels.drain();
+    assert.equal(presentations.length, beforeNotice);
+    speechConfigured = true;
+    transcript = 'Synthetic ordinary voice request';
+    const beforeOrdinary = submissions.length;
+    await sendId('ordinary-voice-without-model');
+    await fixture.channels.drain();
+    assert.equal(submissions.length, beforeOrdinary);
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT 1 FROM channel_inbox WHERE text LIKE '%Synthetic ordinary voice request%'",
+        )
+      ).rowCount,
+      0,
+    );
+    transcript = '483729';
+    const codeCount = privateCodes.length;
+    const artifactCount = (await pool.query('SELECT count(*)::int AS count FROM artifacts')).rows[0]
+      .count;
+    await sendId('voice-code-without-model');
+    await fixture.channels.drain();
+    assert.equal(privateCodes.length, codeCount + 1);
+    assert.equal(privateCodes.at(-1), transcript);
+    assert.equal(
+      (await pool.query('SELECT count(*)::int AS count FROM artifacts')).rows[0].count,
+      artifactCount,
+    );
+    assert.equal(
+      (await pool.query("SELECT 1 FROM channel_inbox WHERE text LIKE '%483729%'")).rowCount,
+      0,
+    );
+    verificationPending = false;
+    modelConfigured = true;
+    speechConfigured = false;
+    await sendId('voice-without-speech');
+    await fixture.channels.drain();
+    assert.equal(presentations.at(-1)?.reason, 'speech_setup_required');
+  },
+);
+
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`${locksTable};
     CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
-    CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
+    CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,handoff_browser_id text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
     CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,delivered_channel text,assistant_reaction text,assistant_reacted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
@@ -76,6 +1761,9 @@ test(
     const sent: Array<{ channelId: string; accountId: string; threadId: string; text: string }> =
       [];
     let injections = 0;
+    let modelReady = true;
+    let voiceHold: Promise<void> | undefined;
+    let voiceStarted: (() => void) | undefined;
     let verification: Awaited<ReturnType<typeof createChatVerification>> | undefined;
     let beginHeld!: () => void;
     let releaseHeld!: () => void;
@@ -106,6 +1794,13 @@ test(
                 senderId: 'fixture-owner',
                 threadId: 'fixture-thread',
                 ...input,
+                ...(input.voice
+                  ? {
+                      attachments: [
+                        { ...attachment('voice.ogg', 'audio/ogg', 'synthetic voice'), voice: true },
+                      ],
+                    }
+                  : {}),
                 sentAt: new Date(),
               },
             ],
@@ -123,7 +1818,25 @@ test(
       const channels = await createChannels(pool, {
         ownerId: 'local-development',
         transport: transport(),
+        modelConfigured: () => modelReady,
+        verificationPending: async (channel) =>
+          Boolean((await verification?.pending(channel))?.length),
+        media: createChannelMedia({
+          artifacts: {
+            storeArtifact: async () => {
+              throw new Error('Private voice must not be stored.');
+            },
+          },
+          speech: {
+            transcribe: async () => {
+              voiceStarted?.();
+              await voiceHold;
+              return '481927';
+            },
+          },
+        }),
         present: async (thread) => {
+          assert.equal(modelReady, true);
           assert.equal(thread, threadId);
           return 'Usa o pedido de verificação na conversa correspondente.';
         },
@@ -314,10 +2027,163 @@ test(
         "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
         [codeTurnId],
       );
-      assert.equal((await send('vault-code', 'Código: 481 927')).statusCode, 200);
+      modelReady = false;
+      assert.equal((await send('vault-code', '', 'telegram', { voice: true })).statusCode, 200);
+      modelReady = true;
       await fixture.channels.drain();
       assert.equal(vaultInjections, 1);
       assert.deepEqual(submitted, ['2026']);
+      const oldQuestion = randomUUID();
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','assistant','Synthetic code question',$2,$3)",
+        [oldQuestion, threadId, codeTurnId],
+      );
+      await pool.query(
+        "INSERT INTO channel_outbox(message_id,source_id,state,provider_message_id,provider_message_ids) VALUES($1,'channel:telegram:fixture-account:private-code','sent','native-old-question',ARRAY['native-old-question'])",
+        [oldQuestion],
+      );
+      const nextCodeTurn = await fixtureTurn(
+        pool,
+        threadId,
+        'local-development',
+        accepted[0].channel,
+        null,
+        'running',
+      );
+      await pool.query('UPDATE turns SET background=true,started_at=now() WHERE id=$1', [
+        nextCodeTurn,
+      ]);
+      await vault.request({ threadId, turnId: nextCodeTurn }, 'local-development', {
+        origin: 'https://1.1.1.1',
+        label: 'Other synthetic sign-in',
+        kind: 'otp',
+        passwordSelector: '#code',
+      });
+      await pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
+        [nextCodeTurn],
+      );
+      for (const target of ['native-old-question', 'unknown-native-question']) {
+        await send(`reply-${target}`, '481927', 'telegram', { replyToMessageId: target });
+        await fixture.channels.drain();
+        assert.equal(vaultInjections, 1);
+      }
+      const nextQuestion = randomUUID();
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','assistant','Other synthetic code question',$2,$3)",
+        [nextQuestion, threadId, nextCodeTurn],
+      );
+      await pool.query(
+        "INSERT INTO channel_outbox(message_id,source_id,state,provider_message_id,provider_message_ids) VALUES($1,'channel:telegram:fixture-account:private-code','sent','native-current-question',ARRAY['native-current-question'])",
+        [nextQuestion],
+      );
+      await verification.bindQuestion(nextCodeTurn, nextQuestion);
+      await send('reply-current-code', '481927', 'telegram', {
+        replyToMessageId: 'native-current-question',
+      });
+      await fixture.channels.drain();
+      assert.equal(vaultInjections, 2);
+      await pool.query(
+        "UPDATE turns SET status='running',waiting_reason=NULL,finished_at=NULL WHERE id=$1",
+        [nextCodeTurn],
+      );
+      await vault.request({ threadId, turnId: nextCodeTurn }, 'local-development', {
+        origin: 'https://1.1.1.1',
+        label: 'Next step in the same sign-in',
+        kind: 'otp',
+        passwordSelector: '#code',
+      });
+      await pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
+        [nextCodeTurn],
+      );
+      await send('reply-closed-same-turn', '481927', 'telegram', {
+        replyToMessageId: 'native-current-question',
+      });
+      await fixture.channels.drain();
+      assert.equal(vaultInjections, 2);
+      const finalQuestion = randomUUID();
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','assistant','Next synthetic code question',$2,$3)",
+        [finalQuestion, threadId, nextCodeTurn],
+      );
+      await pool.query(
+        "INSERT INTO channel_outbox(message_id,source_id,state,provider_message_id,provider_message_ids) VALUES($1,'channel:telegram:fixture-account:private-code','sent','native-next-question',ARRAY['native-next-question'])",
+        [finalQuestion],
+      );
+      await verification.bindQuestion(nextCodeTurn, finalQuestion);
+      await send('reply-next-code', '481927', 'telegram', {
+        replyToMessageId: 'native-next-question',
+      });
+      await fixture.channels.drain();
+      assert.equal(vaultInjections, 3);
+      assert.doesNotMatch(
+        JSON.stringify(
+          (await pool.query('SELECT text FROM channel_inbox UNION ALL SELECT text FROM messages'))
+            .rows,
+        ),
+        /481927/,
+      );
+      await pool.query(
+        "UPDATE turns SET status='running',waiting_reason=NULL,finished_at=NULL WHERE id=$1",
+        [nextCodeTurn],
+      );
+      await vault.request({ threadId, turnId: nextCodeTurn }, 'local-development', {
+        origin: 'https://1.1.1.1',
+        label: 'Synthetic held voice',
+        kind: 'otp',
+        passwordSelector: '#code',
+      });
+      await pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
+        [nextCodeTurn],
+      );
+      modelReady = false;
+      assert.equal(
+        (
+          await send('unknown-native-voice', '', 'telegram', {
+            voice: true,
+            replyToMessageId: 'unknown-native-question',
+          })
+        ).statusCode,
+        200,
+      );
+      await fixture.channels.drain();
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT o.state FROM channel_outbox o JOIN channel_inbox i USING(source_id) WHERE i.source_id LIKE '%:unknown-native-voice'",
+          )
+        ).rows[0].state,
+        'sent',
+      );
+      let releaseVoice!: () => void;
+      const beganVoice = new Promise<void>((resolve) => {
+        voiceStarted = resolve;
+      });
+      voiceHold = new Promise<void>((resolve) => {
+        releaseVoice = resolve;
+      });
+      const voice = send('closed-during-voice', '', 'telegram', { voice: true });
+      await beganVoice;
+      await pool.query(
+        "UPDATE credential_requests SET status='submitted' WHERE turn_id=$1 AND status='pending'",
+        [nextCodeTurn],
+      );
+      modelReady = true;
+      releaseVoice();
+      assert.equal((await voice).statusCode, 200);
+      await fixture.channels.drain();
+      assert.equal(vaultInjections, 3);
+      assert.deepEqual(submitted, ['2026']);
+      assert.deepEqual(
+        (
+          await pool.query(
+            "SELECT state,text FROM channel_inbox WHERE source_id LIKE '%:closed-during-voice'",
+          )
+        ).rows,
+        [{ state: 'discarded', text: '' }],
+      );
       assert.doesNotMatch(
         JSON.stringify(
           (await pool.query('SELECT text FROM channel_inbox UNION ALL SELECT text FROM messages'))
@@ -356,6 +2222,21 @@ test(
 );
 
 test('channel presentation isolates private links from the model and rejects unsafe generated output', async () => {
+  const modelsLink = await channelReply('Use [Reconnect](/settings/models).', {
+    threadId: 'owned-thread',
+  });
+  assert.match(
+    modelsLink,
+    /Reconnect \(Settings > Models\): https:\/\/nod-docs\.pages\.dev\/open\/#\/settings\/models/,
+  );
+  assert.doesNotMatch(modelsLink, /localhost|127\.0\.0\.1|nod:\/\//);
+  const informationLink = await channelReply('See [Usage](/usage).', { threadId: 'owned-thread' });
+  assert.match(informationLink, /Usage: https:\/\/nod-docs\.pages\.dev\/open\/#\/usage/);
+  const adapted = await channelReply('/credentials/request-id', {
+    threadId: 'owned-thread',
+    present: async () => 'Open [Settings > Models](/settings/models).',
+  });
+  assert.match(adapted, /https:\/\/nod-docs\.pages\.dev\/open\/#\/settings\/models/);
   const presentation: unknown[] = [];
   const present = async (threadId: string | null, input: unknown) => {
     presentation.push({ threadId, input });
@@ -520,6 +2401,7 @@ test(
     });
     const threadId = await createFixtureTables(pool, 'local-development');
     const sent: { provider: string; body: Record<string, unknown> }[] = [];
+    const handoffPresentations: unknown[] = [];
     const whatsappFileId = randomUUID();
     let providerCalls = 0;
     let failSend = false;
@@ -576,6 +2458,7 @@ test(
       ownerId: 'local-development',
       present: async (_thread, input) => {
         assert.doesNotMatch(JSON.stringify(input), /private-token|api\/artifacts/);
+        if (input.kind === 'delivery' && input.secureAction) handoffPresentations.push(input);
         return 'Continua na aplicação nod.';
       },
       transport: createChatSdkTransport(pool, fixtureEnv),
@@ -938,6 +2821,36 @@ test(
         );
       assert.ok(parts.length > 1 && parts.every((part) => part.length <= 4096));
       assert.ok(paragraphs.every((paragraph) => parts.some((part) => part.includes(paragraph))));
+
+      for (const [sourceId, provider] of [
+        ['channel:telegram:987:123456:10', 'telegram'],
+        ['channel:whatsapp:555000:wamid.good', 'whatsapp'],
+      ]) {
+        const before: number = sent.length;
+        await pool.query('UPDATE channel_inbox SET received_at=now() WHERE source_id=$1', [
+          sourceId,
+        ]);
+        await addReply(sourceId, 'The website needs sign-in.');
+        const handoff = await addReply(
+          sourceId,
+          'Complete sign-in on this page, then return control.',
+        );
+        await pool.query(
+          "UPDATE turns SET status='waiting',waiting_reason='question',handoff_browser_id=session_id::text WHERE id=(SELECT turn_id FROM messages WHERE id=$1)",
+          [handoff],
+        );
+        const presented = handoffPresentations.length;
+        await channels.drain();
+        assert.equal(sent.length, before + 2);
+        assert.equal(sent.at(-1)?.provider, provider);
+        assert.match(JSON.stringify(sent.at(-1)?.body), /Continua na aplicação nod/);
+        assert.match(JSON.stringify(sent.at(-2)?.body), /The website needs sign-in/);
+        assert.equal(handoffPresentations.length, presented + 1);
+        assert.doesNotMatch(
+          JSON.stringify(sent.slice(before)),
+          /\/browser|handoff_browser_id|Complete sign-in/,
+        );
+      }
 
       failSend = true;
       const uncertainId = await addReply('channel:telegram:987:123456:10');

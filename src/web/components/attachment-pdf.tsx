@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { FileText, Minus, Plus } from 'lucide-react';
+import { FileText, Minus, Plus } from './icons';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import { localPreviewUrl, ownedArtifactUrl } from '../lib/attachment-url';
 import { Button } from './ui';

@@ -1,0 +1,49 @@
+---
+import appPages from '../../../src/shared/app-pages.json';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Open in nod</title>
+  </head>
+  <body>
+    <main>
+      <span class="brand">nod</span>
+      <h1>Open in nod</h1>
+      <p id="location">Open nod on your computer.</p>
+      <a id="open" hidden>Open in nod</a>
+      <p>On a phone? Open nod on the computer where you installed it, then go to the location above.</p>
+      <p id="fallback">If the link does not open nod, use the same location in the app.</p>
+    </main>
+    <script define:vars={{ appPages }}>
+      const path = window.location.hash.slice(1);
+      if (Object.hasOwn(appPages, path)) {
+        const link = document.getElementById('open');
+        link.href = `nod://open${path}`;
+        link.hidden = false;
+        document.getElementById('location').textContent = `nod > ${appPages[path]}`;
+      } else {
+        document.getElementById('location').textContent = 'This app link is not valid. Open nod on your computer.';
+        document.getElementById('fallback').hidden = true;
+      }
+    </script>
+  </body>
+</html>
+
+<style>
+  :global(html) { color-scheme: light dark; }
+  :global(body) { margin: 0; font: 17px/1.6 system-ui, sans-serif; background: light-dark(#fafafa, #191919); color: light-dark(#222, #eee); }
+  main { max-width: 32rem; margin: 12vh auto; padding: 1.5rem; }
+  .brand { font-weight: 700; font-size: 1.5rem; }
+  h1 { font-size: 2rem; line-height: 1.2; margin-top: 2rem; }
+  p { color: light-dark(#555, #bbb); }
+  #location { color: inherit; font-weight: 600; }
+  a { display: inline-block; padding: .6rem 1rem; border: 1px solid currentColor; border-radius: .5rem; color: inherit; text-decoration: none; }
+  a[hidden] { display: none; }
+  a:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+</style>

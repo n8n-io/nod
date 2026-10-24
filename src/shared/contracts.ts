@@ -1,4 +1,5 @@
 import type { TaskSuggestions } from './onboarding';
+import type { TrustBecause } from './trust';
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'waiting' | 'failed' | 'cancelled';
 export interface Artifact {
   id: string;
@@ -6,7 +7,14 @@ export interface Artifact {
   mimeType: string;
   size: number;
   url: string;
-  source?: 'browser_screenshot' | 'computer_screenshot' | 'computer_file';
+  source?:
+    | 'browser_screenshot'
+    | 'computer_screenshot'
+    | 'computer_file'
+    | 'sticker'
+    | 'sticker-preview'
+    | 'location'
+    | 'contact';
 }
 export type MessageReaction = string;
 export type AgentReactionResult =
@@ -22,13 +30,20 @@ export interface Message {
   turnId: string | null;
   createdAt: string;
   attachments: Artifact[];
-  modelCostUsd?: number | null;
+  receipt?: MessageReceipt;
+  questionState?:
+    'pending' | 'confirmed' | 'executing' | 'completed' | 'uncertain' | 'declined' | 'expired';
   streamId?: string | null;
   reaction?: MessageReaction | null;
   reactions?: Array<{ actor: 'user' | 'assistant'; reaction: MessageReaction }>;
   replyToMessageId?: string | null;
   replyTo?: { id: string; role: 'user' | 'assistant'; text: string } | null;
   suggestions?: TaskSuggestions | null;
+}
+export interface MessageReceipt {
+  sessionId: string;
+  actions: Array<{ label: string; count: number }>;
+  costUsd: number | null;
 }
 export interface SubmitMessageResponse {
   threadId: string;
@@ -50,7 +65,14 @@ export interface Turn {
   createdAt: string;
   finishedAt?: string | null;
   error?: string | null;
-  showTyping?: boolean;
+}
+export interface Activity {
+  turnId: string;
+  taskId: string | null;
+  title: string | null;
+  step: string | null;
+  site: string | null;
+  since: string;
 }
 export interface TurnEvent {
   id: string;
@@ -84,6 +106,7 @@ export type VaultListEntry =
 export interface VaultLoginDetails extends VaultLoginEntry {
   username: string;
   hasPassword: boolean;
+  hasAuthenticator: boolean;
 }
 interface VaultCardDetails extends VaultCardEntry {
   cardholder: string;
@@ -108,6 +131,7 @@ export type VaultActivityReason =
   | 'background'
   | 'injection'
   | 'unrequested'
+  | 'rule'
   | 'payment'
   | 'code_typed'
   | 'said_yes'
@@ -131,6 +155,7 @@ export interface VaultActivityEntry {
   amount?: { minor: number; currency: string };
   task: string;
   reason: VaultActivityReason;
+  because?: TrustBecause;
 }
 export interface VaultActivity {
   week: { signIns: number; payments: number; held: number };
@@ -148,6 +173,7 @@ export interface VaultImportResult {
   imported: number;
   existing: number;
   skipped: number;
+  authenticatorKeys: number;
 }
 
 export interface VaultSession {
@@ -171,6 +197,13 @@ export interface CredentialRequest {
   savedEntries?: (VaultLoginEntry & { username: string })[];
   selectedEntryId?: string;
   username?: string;
+  passwordManager?: { name: string; account?: string };
+}
+export interface PasswordManagerLogin {
+  id: string;
+  title: string;
+  username: string;
+  website: string;
 }
 export interface Connection {
   canReconnect?: boolean;
@@ -205,12 +238,14 @@ export interface AppSetupStatus {
     name: string;
     logoUrl?: string;
     pairingConfirmed?: boolean;
+    available?: boolean;
   }>;
 }
 export interface Configuration {
   provider: string;
   model: string;
   llmReady: boolean;
+  modelReconnect: boolean;
   integrationsReady: boolean;
   conversationResetEnabled: boolean;
 }
@@ -222,6 +257,7 @@ export interface AppState {
   planningTasks?: boolean;
   messages: Message[];
   turns: Turn[];
+  activity?: Activity[];
   configuration: Configuration;
 }
 export interface MessageHistoryPage {
@@ -267,7 +303,6 @@ export interface Task {
   stepIndex?: number;
   revision?: number;
   appliedRevision?: number;
-  activity?: { site: string };
 }
 export interface TaskDetail {
   task: Task;
@@ -294,6 +329,7 @@ export interface Schedule {
   nextRun: string | null;
   lastRun: ScheduleRun | null;
   baselineObservation: ScheduleObservation | null;
+  monthlyUsd: number | null;
 }
 export type ScheduleObservation = {
   sourceUrl: string;
@@ -322,6 +358,7 @@ export interface ScheduleHistory {
 export type HourCycle = 'auto' | 'h12' | 'h23';
 export interface Preferences {
   notificationRule: string;
+  rules: string;
   timeZone: string | null;
   locale: string | null;
   hourCycle: HourCycle;
@@ -330,12 +367,29 @@ export interface Preferences {
   quietEnd: string;
 }
 export type ChannelProvider = 'telegram' | 'whatsapp';
+export interface ChannelLinkStatus {
+  pairingId?: string;
+  state:
+    | 'connecting'
+    | 'awaiting_scan'
+    | 'connected'
+    | 'disconnected'
+    | 'logged_out'
+    | 'expired'
+    | 'failed';
+  qr?: string;
+  expiresAt?: string;
+  accountHandle?: string;
+  accountName?: string;
+}
 export interface ChannelSetupSummary {
   provider: ChannelProvider;
   enabled: boolean;
   accountName?: string;
   accountHandle?: string;
-  mode?: 'polling' | 'webhook';
+  mode?: 'polling' | 'webhook' | 'linked';
+  linkMode?: 'bot' | 'self-chat';
+  connectionState?: ChannelLinkStatus['state'];
   webhookStatus?: 'registered' | 'manual_setup' | 'registration_pending';
   webhookUrl?: string;
   pairedUser?: string;

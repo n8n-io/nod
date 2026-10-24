@@ -3,6 +3,7 @@ COPY src/providers/docker/install-rtk.sh /tmp/install-rtk.sh
 RUN sh /tmp/install-rtk.sh
 
 FROM node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+ARG NOD_RUNTIME_REFRESH
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python-is-python3 python3-pip python3-venv python3-requests python3-bs4 pipx ffmpeg poppler-utils jq tesseract-ocr tesseract-ocr-eng tesseract-ocr-deu tesseract-ocr-por tesseract-ocr-spa tesseract-ocr-fra ca-certificates curl git unzip ripgrep libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji qpdf ghostscript zip xz-utils file sqlite3 tesseract-ocr-cat tesseract-ocr-ita tesseract-ocr-nld && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/yt-dlp && /opt/yt-dlp/bin/pip install --no-cache-dir "yt-dlp[pin,pin-curl-cffi,pin-deno]==2026.8.19" && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp
 COPY --chmod=555 src/providers/docker/save-video.py /usr/local/bin/save-video

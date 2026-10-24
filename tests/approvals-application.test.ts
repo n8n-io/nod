@@ -11,11 +11,13 @@ import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 import { createDecisionModel } from '../src/providers/decisions.ts';
-import { BrowserActionError } from '../src/ports/computer.ts';
+import { BrowserActionError, type CredentialInput } from '../src/ports/computer.ts';
+import { authenticatorKey } from '../src/shared/authenticator-key.ts';
+import { authenticatorCode } from '../src/server/authenticator.ts';
 
 test(
   'personal approvals revalidate targets before execution',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 60_000 },
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 120_000 },
   async (t) => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
     const schema = `test_personal_review_${suffix}`;
@@ -76,6 +78,7 @@ test(
     const uploads: string[] = [];
     const workspaceFiles = new Map<string, Uint8Array>();
     const browserActs: Array<Record<string, unknown>> = [];
+    const injected: CredentialInput[] = [];
     let browserUrl = 'https://bank.example.test/transfer';
     let allowMethodBrowser = false;
     let methodBindings = 0;
@@ -86,8 +89,26 @@ test(
     let repeatAfterConfirm: { action: string; args: Record<string, unknown> } | undefined;
     const prompts = new Map<string, string>();
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
+    const { createModelService } = await import('../src/server/models.ts');
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    const models = createModelService({
+      database: pool,
+      ownerId,
+      origin: `http://localhost:${port}`,
+      keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) },
+      backend: createPiModelBackend({
+        fetch: async (input) => {
+          assert.equal(String(input), 'https://api.openai.com/v1/models');
+          return Response.json({ data: [{ id: 'gpt-6.1-sol' }, { id: 'gpt-6-luna' }] });
+        },
+      }),
+    });
+    await models.initialize();
+    await models.addKey('openai', 'synthetic-model-key');
+    t.after(() => models.close());
     const application = await createApplication(
       {
+        models,
         agent: {
           async open(options) {
             const phase = phases.get(options.turnId) ?? 0;
@@ -194,6 +215,10 @@ test(
           },
           selectSignInMethod: async () => {
             throw new Error('This fixture never selects a method.');
+          },
+          injectCredentials: async (input) => {
+            injected.push(input);
+            return { status: 'submitted' };
           },
           act: async (_id, input) => {
             browserActs.push({ ...input });
@@ -304,21 +329,19 @@ test(
                   answer: ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)],
                 }
               : task === 'review'
-                ? {
-                    run:
-                      (allowMethodBrowser &&
-                        (input as { action?: { name?: string } }).action?.name === 'NOD_browser') ||
-                      asked.has(
-                        (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
-                          ?.text ?? '',
-                      ) ||
-                      cleared.has(
-                        String(
-                          (input as { action?: { arguments?: { recipient_email?: unknown } } })
-                            .action?.arguments?.recipient_email,
-                        ),
-                      ),
-                  }
+                ? (() => {
+                    const words = input as {
+                      userMessages?: Array<{ text: string }>;
+                      action?: { name?: string; arguments?: { recipient_email?: unknown } };
+                    };
+                    const run =
+                      (allowMethodBrowser && words.action?.name === 'NOD_browser') ||
+                      asked.has(words.userMessages?.at(-1)?.text ?? '') ||
+                      cleared.has(String(words.action?.arguments?.recipient_email));
+                    return run
+                      ? { run, because: words.userMessages?.at(-1)?.text ?? 'read' }
+                      : { run };
+                  })()
                 : undefined;
           },
         },
@@ -403,6 +426,50 @@ test(
       );
     }
     try {
+      await t.test(
+        'model settings use the trust check and save only the approved selection',
+        async () => {
+          const before = models.view().selection;
+          const connection = models.view().connections[0]!;
+          const model = connection.models.find((item) => item.id !== before?.modelId)!;
+          const input = {
+            connectionId: connection.id,
+            modelId: model.id,
+            effort: model.efforts[0]!,
+          };
+          const turn = await propose('model_select', input);
+          const [card] = await approvalsFor(turn);
+          assert.equal(card.action, 'NOD_model_select');
+          assert.deepEqual(models.view().selection, before);
+          const response = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: card.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          await waitFor(response.json().turnId, 'succeeded');
+          assert.deepEqual(models.view().selection, input);
+          assert.equal((await approvalsFor(turn))[0].status, 'completed');
+          const directText = 'Use the first connected model again.';
+          asked.add(directText);
+          plans.set(directText, { action: 'model_select', args: { ...before! } });
+          const direct = await request('POST', '/api/messages', { text: directText });
+          await waitFor(direct.json().turnId, 'succeeded');
+          assert.deepEqual(models.view().selection, before);
+          assert.equal((await approvalsFor(direct.json().turnId)).length, 0);
+          await assert.rejects(
+            application.personal.manage('model_select', {
+              ...input,
+              connectionId: randomUUID(),
+            }),
+          );
+          assert.deepEqual(models.view().selection, before);
+          assert.equal(models.view().connections[0]!.keyEnding, '-key');
+          assert.doesNotMatch(
+            JSON.stringify(await application.personal.manage('models_get', {})),
+            /synthetic-model-key|keyEnding|-key/,
+          );
+        },
+      );
       await t.test(
         'a compromised agent cannot send outside the account until the owner confirms',
         async () => {
@@ -1562,6 +1629,65 @@ test(
           } finally {
             allowMethodBrowser = false;
           }
+        },
+      );
+      await t.test(
+        'a saved authenticator key enters the current code only with exact-origin consent',
+        async () => {
+          const origin = 'https://bank.example.test';
+          const authenticator =
+            'otpauth://totp/Bank:owner?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Bank';
+          const saved = await request('POST', '/api/vault', {
+            label: 'Synthetic bank',
+            origin,
+            username: 'owner@bank.example.test',
+            password: 'synthetic-bank-password',
+            authenticatorKey: authenticator,
+          });
+          assert.equal(saved.statusCode, 200, saved.body);
+          const login = saved.json().id as string;
+          const input = {
+            origin,
+            label: 'Synthetic bank',
+            kind: 'otp',
+            passwordSelector: '@code',
+            submitSelector: '@verify',
+            message: 'Enter your sign-in code.',
+          };
+          const before = injected.length;
+          const held = await propose('Enter code', input, 'sign_in');
+          const [card] = await approvalsFor(held);
+          assert.equal(card?.action, 'NOD_vault_allow');
+          assert.equal(card.status, 'pending');
+          assert.deepEqual(card.args, { origin, kind: 'sign_in', itemId: login });
+          assert.equal(injected.length, before);
+          const text = `Sign in to the synthetic bank ${randomUUID()}`;
+          asked.add(text);
+          const earliest = authenticatorCode(authenticatorKey(authenticator)!);
+          const entered = await propose('Enter code', input, 'sign_in', text);
+          const latest = authenticatorCode(authenticatorKey(authenticator)!);
+          assert.deepEqual(await approvalsFor(entered), []);
+          assert.equal(injected.length, before + 1);
+          const entry = injected.at(-1)!;
+          assert.equal(entry.kind, 'otp');
+          assert.equal(entry.origin, origin);
+          assert.ok([earliest, latest].includes(entry.code!));
+          assert.equal(JSON.stringify(results.get(entered)).includes(entry.code!), false);
+          assert.doesNotMatch(JSON.stringify(results.get(entered)), /JBSWY3DP|otpauth/i);
+          assert.equal(
+            (await pool.query('SELECT 1 FROM credential_requests WHERE turn_id=$1', [entered]))
+              .rowCount,
+            0,
+          );
+          assert.deepEqual(
+            (
+              await pool.query(
+                'SELECT action,item_id,reason FROM vault_activity WHERE turn_id=$1',
+                [entered],
+              )
+            ).rows,
+            [{ action: 'code', item_id: login, reason: 'asked' }],
+          );
         },
       );
     } finally {

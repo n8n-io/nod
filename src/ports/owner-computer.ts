@@ -23,11 +23,12 @@ export interface OwnerComputer {
   resolve?(app: string, signal: AbortSignal): Promise<MacApp | null>;
   identify?(app: string, signal: AbortSignal): Promise<MacApp | null>;
   open?(app: string, signal: AbortSignal): Promise<MacApp>;
-  look?(app: string, signal: AbortSignal): Promise<{ app: MacApp; tree: string }>;
+  look?(app: string, signal: AbortSignal, scope: string): Promise<{ app: MacApp; tree: string }>;
   inspect?(
     app: string,
     ref: string | undefined,
     signal: AbortSignal,
+    scope: string,
   ): Promise<{ label: string; token: string }>;
   act?(action: MacAppAction, signal: AbortSignal): Promise<void>;
   screenshot?(app: string, signal: AbortSignal): Promise<{ app: MacApp; png: Buffer }>;

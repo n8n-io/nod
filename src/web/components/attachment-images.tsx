@@ -1,9 +1,12 @@
-import { Play } from 'lucide-react';
+import { Play } from './icons';
+import { useEffect, useRef } from 'react';
+import { FileActions, fileDrag, prepareFile } from './file-actions';
 import type { Artifact } from '../../shared/contracts';
 import { ownedArtifactUrl } from '../lib/attachment-url';
 import { attachmentKind, previewableImage, vectorImage } from '../lib/attachment-kind';
 import { FileGlyph } from './attachment-glyph';
 import { useArtifactDrawer } from './artifact-context';
+import { StickerPlayer } from './sticker-player';
 export { ownedArtifactUrl } from '../lib/attachment-url';
 
 export interface ImagePreview {
@@ -13,6 +16,7 @@ export interface ImagePreview {
   size: number;
   mimeType?: string;
   downloadUrl?: string;
+  source?: Artifact['source'];
 }
 
 export interface AttachmentTrigger {
@@ -52,6 +56,8 @@ export function artifactImage(artifact: Artifact): ImagePreview | null {
 
 export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
   const kind = attachmentKind(image.mimeType ?? 'image/png', image.name);
+  if (kind === 'sticker') return <StickerPlayer item={image} />;
+  if (kind === 'video' && image.source === 'sticker') return <StickerVideo item={image} />;
   if (kind === 'image')
     return (
       <img
@@ -86,6 +92,39 @@ export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
   );
 }
 
+function StickerVideo({ item }: { item: ImagePreview }) {
+  const video = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const element = video.current;
+    if (!element) return;
+    element.src = item.url;
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let visible = false;
+    const update = () => {
+      if (visible && !motion.matches && !document.hidden) void element.play().catch(() => {});
+      else element.pause();
+    };
+    const observer = new IntersectionObserver((entries) => {
+      visible = entries.some((entry) => entry.isIntersecting);
+      update();
+    });
+    observer.observe(element);
+    motion.addEventListener('change', update);
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      observer.disconnect();
+      motion.removeEventListener('change', update);
+      document.removeEventListener('visibilitychange', update);
+      element.pause();
+      element.removeAttribute('src');
+      element.load();
+    };
+  }, [item.url]);
+  return (
+    <video ref={video} preload="metadata" muted loop playsInline tabIndex={-1} aria-hidden="true" />
+  );
+}
+
 export function ImageGallery({ images }: { images: ImagePreview[] }) {
   images = images.filter(
     (image) =>
@@ -103,26 +142,32 @@ export function ImageGallery({ images }: { images: ImagePreview[] }) {
       aria-label={`${images.length} ${itemLabel}${images.length === 1 ? '' : 's'}`}
     >
       {visible.map((image, index) => (
-        <button
-          type="button"
-          className={`attachment-image-tile is-${attachmentKind(image.mimeType ?? 'image/png', image.name)}${drawer.selectedId === image.id ? ' is-selected' : ''}`}
-          key={image.id}
-          aria-label={`View ${itemLabel} ${index + 1} of ${images.length}`}
-          aria-current={drawer.selectedId === image.id || undefined}
-          onClick={(event) =>
-            drawer.open(image.id, {
-              element: event.currentTarget,
-              keyboard: event.detail === 0,
-            })
-          }
-        >
-          <AttachmentThumbnail image={image} />
-          {index === 3 && images.length > visible.length && (
-            <span className="attachment-image-more" aria-hidden="true">
-              +{images.length - visible.length}
-            </span>
-          )}
-        </button>
+        <div key={image.id} className="attachment-image-item">
+          <button
+            draggable
+            onDragStart={(event) => fileDrag(event, image)}
+            onPointerEnter={() => prepareFile(image)}
+            type="button"
+            className={`attachment-image-tile is-${attachmentKind(image.mimeType ?? 'image/png', image.name)}${image.source === 'sticker' ? ' is-sticker' : ''}${drawer.selectedId === image.id ? ' is-selected' : ''}`}
+            key={image.id}
+            aria-label={`View ${itemLabel} ${index + 1} of ${images.length}`}
+            aria-current={drawer.selectedId === image.id || undefined}
+            onClick={(event) =>
+              drawer.open(image.id, {
+                element: event.currentTarget,
+                keyboard: event.detail === 0,
+              })
+            }
+          >
+            <AttachmentThumbnail image={image} />
+            {index === 3 && images.length > visible.length && (
+              <span className="attachment-image-more" aria-hidden="true">
+                +{images.length - visible.length}
+              </span>
+            )}
+          </button>
+          <FileActions item={image} />
+        </div>
       ))}
     </div>
   );

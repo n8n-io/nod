@@ -1,6 +1,13 @@
+import { authenticatorKey } from './authenticator-key.ts';
 import { loopbackHost } from './loopback.ts';
 
-export type ImportedLogin = { label: string; origin: string; username: string; password: string };
+export type ImportedLogin = {
+  label: string;
+  origin: string;
+  username: string;
+  password: string;
+  authenticatorKey?: string;
+};
 
 const columns = {
   url: ['url', 'login_uri', 'website', 'login uri', 'web site'],
@@ -9,6 +16,7 @@ const columns = {
   password: ['password', 'login_password'],
   label: ['title', 'name'],
   archived: ['archived'],
+  authenticator: ['otpauth', 'login_totp', 'totp'],
 };
 
 function records(text: string) {
@@ -71,9 +79,11 @@ export function parsePasswordCsv(text: string) {
   const email = column(columns.email);
   const label = column(columns.label);
   const archived = column(columns.archived);
+  const authenticator = column(columns.authenticator);
   if (url < 0 || password < 0)
     throw new Error('Choose a CSV file exported from a password manager.');
   let unreadable = 0;
+  let unusableKeys = 0;
   const found = rows.flatMap((row) => {
     const value = (index: number) => (index < 0 ? '' : (row[index] ?? ''));
     if (row.length !== names.length) {
@@ -89,6 +99,8 @@ export function parsePasswordCsv(text: string) {
       unreadable++;
       return [];
     }
+    const key = value(authenticator).trim() ? authenticatorKey(value(authenticator)) : undefined;
+    if (value(authenticator).trim() && !key) unusableKeys++;
     return [
       {
         secure: site.secure,
@@ -97,6 +109,7 @@ export function parsePasswordCsv(text: string) {
           origin: site.origin,
           username: value(username).trim() || value(email).trim(),
           password: value(password),
+          ...(key ? { authenticatorKey: key } : {}),
         },
       },
     ];
@@ -106,5 +119,6 @@ export function parsePasswordCsv(text: string) {
       (item) => item.login,
     ),
     unreadable,
+    unusableKeys,
   };
 }

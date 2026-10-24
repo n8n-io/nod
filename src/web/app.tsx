@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from './components/icons';
 import { Chat } from './pages/chat';
 import { Usage } from './pages/usage';
 import { Vault } from './pages/vault';
@@ -17,12 +17,12 @@ import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
-import { captureFeedbackScreenshot } from './lib/feedback-capture';
 import { navigate, sidebarItems } from './lib/navigation';
+import { appPagePath } from '../shared/app-links';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
-import { useSession } from './hooks/use-session';
+import type { useSession } from './hooks/use-session';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
 import { AccountSettings } from './components/account-settings';
@@ -38,6 +38,7 @@ import {
   onFeedbackRequested,
   subscribeDesktopFocusMessage,
   subscribeDesktopSettings,
+  subscribeDesktopNavigation,
 } from './lib/desktop';
 
 function replayingOnboarding(path: string) {
@@ -100,6 +101,7 @@ function Workspace({
   useSavedDateFormat();
   useBrowserTimeZone();
   const [collapsed, setCollapsed] = useState(() => readUiPreference('nod.sidebar') !== 'expanded');
+  const [sidebarMotion, setSidebarMotion] = useState(false);
   const [toolbarActions, setToolbarActions] = useState<HTMLDivElement | null>(null);
   const [pendingMessageFocus, setPendingMessageFocus] = useState<string>();
   const [notificationTarget, setNotificationTarget] = useState<{
@@ -161,9 +163,13 @@ function Workspace({
   useEffect(() => {
     writeUiPreference('nod.sidebar', collapsed ? 'collapsed' : 'expanded');
   }, [collapsed]);
+  function toggleSidebar(animate: boolean) {
+    setSidebarMotion(animate);
+    setCollapsed((value) => !value);
+  }
   return (
     <div
-      className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''} ${entering ? 'shell-entering' : ''}`}
+      className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''} ${sidebarMotion ? 'sidebar-motion' : ''} ${entering ? 'shell-entering' : ''}`}
     >
       <a href="#workspace" className="skip-link">
         Skip to content
@@ -171,7 +177,7 @@ function Workspace({
       {desktopSettingsAvailable() && (
         <DesktopToolbar
           collapsed={collapsed}
-          onToggle={() => setCollapsed((value) => !value)}
+          onToggle={() => toggleSidebar(true)}
           actionsRef={setToolbarActions}
         />
       )}
@@ -179,13 +185,13 @@ function Workspace({
         path={currentPath}
         unreadCount={unread.count}
         unreadPending={unread.pending}
-        onToggle={() => setCollapsed((value) => !value)}
+        onToggle={() => toggleSidebar(false)}
         onNavigate={navigate}
         account={account}
       />
       <div className="workspace-frame">
         {!desktopSettingsAvailable() && (
-          <SidebarToggle collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)} />
+          <SidebarToggle collapsed={collapsed} onToggle={() => toggleSidebar(true)} />
         )}
         <div className="workspace-body">
           <main id="workspace" className="main-workspace" tabIndex={-1}>
@@ -203,7 +209,6 @@ function Workspace({
                   onReadLatest={unread.markRead}
                   onFeedback={onFeedback}
                   onDismissFeedbackDiscovery={onDismissFeedbackDiscovery}
-                  onModels={(trigger) => account.onSettings('Models', trigger)}
                   requestedMessage={chatRequests[0]}
                   onRequestHandled={(id) =>
                     setChatRequests((current) => current.filter((request) => request.id !== id))
@@ -230,7 +235,7 @@ function Workspace({
               <Apps configuration={state?.configuration} onAsk={askInChat} />
             )}
             {currentPath === '/channels' && <Channels />}
-            {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
+            {currentPath === '/tasks' && <Tasks onAsk={askInChat} activity={state?.activity} />}
             {settings}
             {!settingsPage(currentPath) &&
               !sidebarItems.some((item) => item.path === currentPath) && (
@@ -278,28 +283,16 @@ function AuthenticatedApp({
     setFeedbackDiscovery(false);
   };
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [feedbackScreenshot, setFeedbackScreenshot] = useState<File | null>(null);
-  const feedbackCapture = useRef<Promise<File | null> | null>(null);
   const feedbackTrigger = useRef<HTMLElement | null>(null);
-  const openFeedback = async () => {
-    if (feedbackOpen || feedbackCapture.current) return;
+  const openFeedback = () => {
+    if (feedbackOpen) return;
     dismissFeedbackDiscovery();
     feedbackTrigger.current =
       document.activeElement !== document.body ? (document.activeElement as HTMLElement) : null;
-    const capture = captureFeedbackScreenshot().catch(() => null);
-    feedbackCapture.current = capture;
-    const screenshot = await capture;
-    if (feedbackCapture.current !== capture) return;
-    feedbackCapture.current = null;
-    setFeedbackScreenshot(screenshot);
     setFeedbackOpen(true);
   };
   useEffect(() => {
     setFeedbackOpen(false);
-    setFeedbackScreenshot(null);
-    return () => {
-      feedbackCapture.current = null;
-    };
   }, [session.user!.id]);
   useEffect(() => {
     if (!feedbackRequest) return;
@@ -315,6 +308,8 @@ function AuthenticatedApp({
     if (!settingsOpen && path !== '/memory') settingsReturn.current = { path, trigger: null };
   }, [path, settingsOpen]);
   const [finishingOnboarding, setFinishingOnboarding] = useState(false);
+  const onboarding =
+    finishingOnboarding || !session.settings!.onboardingCompleted || replayingOnboarding(path);
   const [settingsRequest, setSettingsRequest] = useState(0);
   const settingsTab: AccountTab =
     path === '/settings/models' ? 'Models' : path === '/settings/memory' ? 'Memory' : 'General';
@@ -334,6 +329,23 @@ function AuthenticatedApp({
     setSettingsRequest((current) => current + 1);
     navigate(settingsPath(tab));
   };
+  const openPage = (value: string, trigger?: HTMLElement) => {
+    const destination = appPagePath(value);
+    if (!destination) return;
+    if (settingsPage(destination))
+      openSettings(
+        destination === '/settings/models'
+          ? 'Models'
+          : destination === '/settings/memory'
+            ? 'Memory'
+            : 'General',
+        trigger,
+      );
+    else {
+      navigate(destination);
+      window.requestAnimationFrame(() => document.getElementById('workspace')?.focus());
+    }
+  };
   useEffect(
     () =>
       subscribeDesktopSettings((section) =>
@@ -341,24 +353,37 @@ function AuthenticatedApp({
       ),
     [],
   );
+  useEffect(() => (onboarding ? undefined : subscribeDesktopNavigation(openPage)), [onboarding]);
   useEffect(() => {
     if (path !== '/memory' || !session.settings!.onboardingCompleted) return;
     window.history.replaceState(null, '', '/settings/memory');
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, [path, session.settings!.onboardingCompleted]);
   useEffect(() => {
-    const openSettingsLink = (event: MouseEvent) => {
+    const openAppLink = (event: MouseEvent) => {
       const link =
-        event.target instanceof Element &&
-        event.target.closest<HTMLAnchorElement>('a[href="/memory"], a[href="/usage"]');
-      if (!link || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+        event.target instanceof Element && event.target.closest<HTMLAnchorElement>('a[href]');
+      if (
+        !link ||
+        event.defaultPrevented ||
+        event.button ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey ||
+        link.hasAttribute('download') ||
+        (link.target && link.target !== '_self')
+      )
         return;
+      const url = new URL(link.href);
+      if (url.origin !== window.location.origin || url.search || url.hash) return;
+      const destination = appPagePath(url.pathname);
+      if (!destination) return;
       event.preventDefault();
-      if (link.getAttribute('href') === '/usage') navigate('/usage');
-      else openSettings('Memory', link);
+      openPage(destination, link);
     };
-    document.addEventListener('click', openSettingsLink);
-    return () => document.removeEventListener('click', openSettingsLink);
+    document.addEventListener('click', openAppLink);
+    return () => document.removeEventListener('click', openAppLink);
   }, []);
   useEffect(() => {
     if (!desktopSettingsAvailable()) return;
@@ -400,8 +425,6 @@ function AuthenticatedApp({
   };
   const allowed = path !== '/browser' || session.capabilities.developer;
   const match = /^\/(vault|credentials|payments)\/([^/]+)\/?$/.exec(path);
-  const onboarding =
-    finishingOnboarding || !session.settings!.onboardingCompleted || replayingOnboarding(path);
   return (
     <>
       {!allowed ? (
@@ -500,7 +523,6 @@ function AuthenticatedApp({
       <FeedbackDialog
         key={session.user!.id}
         ownerId={session.user!.id}
-        screenshot={feedbackScreenshot}
         open={feedbackOpen}
         onOpenChange={setFeedbackOpen}
         returnFocus={() =>
@@ -513,17 +535,18 @@ function AuthenticatedApp({
   );
 }
 function AccountApp({
+  sessionState,
   path,
   setPath,
   feedbackRequest,
   onFeedbackHandled,
 }: {
+  sessionState: ReturnType<typeof useSession>;
   path: string;
   setPath(path: string): void;
   feedbackRequest: number;
   onFeedbackHandled(): void;
 }) {
-  const sessionState = useSession();
   const { session } = sessionState;
   useEffect(() => {
     if (!sessionState.loading) desktopRendererReady();
@@ -608,7 +631,7 @@ function AccountApp({
   );
 }
 
-export function App() {
+export function App({ sessionState }: { sessionState: ReturnType<typeof useSession> }) {
   const [path, setPath] = useState(window.location.pathname);
   const [feedbackRequest, setFeedbackRequest] = useState(0);
   useEffect(() => {
@@ -631,6 +654,7 @@ export function App() {
         <Privacy />
       ) : (
         <AccountApp
+          sessionState={sessionState}
           path={path}
           setPath={setPath}
           feedbackRequest={feedbackRequest}

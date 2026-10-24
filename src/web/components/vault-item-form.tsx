@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { CreditCard, Globe } from 'lucide-react';
+import { CreditCard, Globe } from './icons';
 import type { VaultEntry, VaultEntryDetails, VaultListEntry } from '../../shared/contracts';
 import { api } from '../lib/api';
-import { Button, Field, Input, Notice } from './ui';
+import { Button, Checkbox, Field, Input, Notice } from './ui';
 import { suggestLoginName } from '../lib/vault-name';
 import { VaultTitle } from './vault-surface';
 
@@ -21,7 +21,9 @@ export function parseCardExpiry(value: FormDataEntryValue | null) {
 
 export function clearVaultSecret(form: HTMLFormElement | null) {
   form
-    ?.querySelectorAll<HTMLInputElement>('input[name="password"], input[name="cardNumber"]')
+    ?.querySelectorAll<HTMLInputElement>(
+      'input[name="password"], input[name="cardNumber"], input[name="authenticatorKey"]',
+    )
     .forEach((input) => (input.value = ''));
 }
 
@@ -53,6 +55,43 @@ function VaultSecretField({
         disabled={disabled}
       />
     </Field>
+  );
+}
+
+function AuthenticatorKeyField({ saved, disabled }: { saved: boolean; disabled: boolean }) {
+  const [removing, setRemoving] = useState(false);
+  return (
+    <>
+      <Field label="Authenticator key (optional)">
+        <Input
+          name="authenticatorKey"
+          type="password"
+          placeholder={
+            removing
+              ? 'Will be removed'
+              : saved
+                ? 'Leave blank to keep current'
+                : 'Setup key or otpauth:// link'
+          }
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          maxLength={2048}
+          disabled={disabled || removing}
+        />
+      </Field>
+      {saved && (
+        <label className="vault-check">
+          <Checkbox
+            name="removeAuthenticator"
+            checked={removing}
+            disabled={disabled}
+            onChange={(event) => setRemoving(event.target.checked)}
+          />
+          <span>Remove saved key</span>
+        </label>
+      )}
+    </>
   );
 }
 
@@ -117,6 +156,12 @@ export function VaultFields({
         saved={details?.kind !== 'login' || details.hasPassword !== false}
         disabled={disabled}
       />
+      {kind === 'login' && (
+        <AuthenticatorKeyField
+          saved={details?.kind === 'login' && details.hasAuthenticator}
+          disabled={disabled}
+        />
+      )}
       {kind === 'card' && (
         <Field label="Expiry date">
           <Input
@@ -209,10 +254,14 @@ export function VaultItemForm({
             origin,
             username,
             password: String(values.get('password') ?? ''),
+            ...(String(values.get('authenticatorKey') ?? '').trim()
+              ? { authenticatorKey: String(values.get('authenticatorKey')) }
+              : {}),
           },
     );
     values.delete('password');
     values.delete('cardNumber');
+    values.delete('authenticatorKey');
     clearVaultSecret(form.current);
     const controller = new AbortController();
     request.current = controller;
@@ -238,7 +287,7 @@ export function VaultItemForm({
         setError(
           kind === 'card'
             ? 'This card could not be saved. Check the details and try again.'
-            : 'This login could not be saved. Check the website and try again.',
+            : 'This login could not be saved. Check the website and authenticator key, then try again.',
         );
     } finally {
       body = '';

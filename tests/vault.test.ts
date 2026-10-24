@@ -40,6 +40,11 @@ import type {
   VaultLoginEntry,
 } from '../src/shared/contracts.ts';
 import { parsePasswordCsv } from '../src/shared/password-import.ts';
+import { authenticatorKey } from '../src/shared/authenticator-key.ts';
+import { authenticatorCode } from '../src/server/authenticator.ts';
+import { matchingWebsite } from '../src/providers/onepassword/websites.ts';
+import { createOnePassword, forkedOnePassword } from '../src/providers/onepassword/index.ts';
+import { PasswordManagerError, type PasswordManager } from '../src/ports/password-manager.ts';
 import { createPayments } from '../src/server/payments.ts';
 import type { CardEntry } from '../src/ports/computer.ts';
 
@@ -118,6 +123,207 @@ test('vault encryption binds the secret to its record, owner, and exact origin',
       Buffer.concat([nonce, shortTag.getAuthTag()]).toString('base64'),
     ),
   );
+});
+
+test('authenticator codes match RFC 6238 and only usable keys are accepted', () => {
+  const base32 = (text: string) => {
+    const bits = [...Buffer.from(text)].map((byte) => byte.toString(2).padStart(8, '0')).join('');
+    return (bits.match(/.{1,5}/g) ?? [])
+      .map((chunk) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'[parseInt(chunk.padEnd(5, '0'), 2)])
+      .join('');
+  };
+  const seeds = {
+    SHA1: '12345678901234567890',
+    SHA256: '12345678901234567890123456789012',
+    SHA512: '1234567890123456789012345678901234567890123456789012345678901234',
+  };
+  for (const [seconds, algorithm, code] of [
+    [59, 'SHA1', '94287082'],
+    [59, 'SHA256', '46119246'],
+    [59, 'SHA512', '90693936'],
+    [1111111109, 'SHA1', '07081804'],
+    [1111111111, 'SHA256', '67062674'],
+    [1234567890, 'SHA512', '93441116'],
+    [2000000000, 'SHA1', '69279037'],
+    [20000000000, 'SHA256', '77737706'],
+  ] as const) {
+    const key = authenticatorKey(
+      `otpauth://totp/RFC:test?secret=${base32(seeds[algorithm])}&algorithm=${algorithm.toLowerCase()}&digits=8&issuer=RFC`,
+    );
+    assert.ok(key);
+    assert.equal(authenticatorCode(key, seconds * 1000), code);
+  }
+  assert.equal(
+    authenticatorKey(' jbsw y3dp-ehpk 3pxp== '),
+    'otpauth://totp/?secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=6&period=30',
+  );
+  assert.equal(
+    authenticatorKey('OTPAUTH://totp/Shop:ana?secret=JBSWY3DPEHPK3PXP&period=60&digits=7'),
+    'otpauth://totp/?secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=7&period=60',
+  );
+  for (const unusable of [
+    '',
+    'JBSWY3DP',
+    'JBSWY3DPEHPK3PX1',
+    'JBSWY3DPEHPK3PXPJ',
+    'JBSWY3DPEHPK3PXPJBS',
+    'JBSWY3DPEHPK3PXPJBSWY3',
+    'otpauth://hotp/Shop?secret=JBSWY3DPEHPK3PXP&counter=1',
+    'otpauth://totp/Shop?secret=JBSWY3DPEHPK3PXP&algorithm=MD5',
+    'otpauth://totp/Shop?secret=JBSWY3DPEHPK3PXP&digits=9',
+    'otpauth://totp/Shop?secret=JBSWY3DPEHPK3PXP&period=0',
+    'otpauth://totp/Shop?issuer=Shop',
+    'steam://JBSWY3DPEHPK3PXP',
+  ])
+    assert.equal(authenticatorKey(unusable), undefined, unusable);
+});
+
+test('password exports carry usable authenticator keys and count the rest', () => {
+  const onePassword = parsePasswordCsv(
+    'Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes\n' +
+      'Bank,https://bank.example.test,ana@example.test,bank-synthetic,otpauth://totp/Bank:ana?secret=JBSWY3DPEHPK3PXP&issuer=Bank,false,false,,\n' +
+      'Shop,https://shop.example.test,ana@example.test,shop-synthetic,,false,false,,\n' +
+      'Game,https://game.example.test,ana,game-synthetic,steam://JBSWY3DPEHPK3PXP,false,false,,\n',
+  );
+  assert.deepEqual(
+    onePassword.logins.map((login) => [login.label, login.authenticatorKey]),
+    [
+      ['Bank', 'otpauth://totp/?secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=6&period=30'],
+      ['Shop', undefined],
+      ['Game', undefined],
+    ],
+  );
+  assert.equal(onePassword.unusableKeys, 1);
+  const bitwarden = parsePasswordCsv(
+    'folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n' +
+      ',,login,Mail,,,0,https://mail.example.test,ana,mail-synthetic,jbsw y3dp ehpk 3pxp\n',
+  );
+  assert.equal(
+    bitwarden.logins[0]?.authenticatorKey,
+    'otpauth://totp/?secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=6&period=30',
+  );
+  assert.equal(bitwarden.unusableKeys, 0);
+});
+
+test('a 1Password login applies only where 1Password itself would fill it', () => {
+  const anywhere = (url: string) => [{ url, autofillBehavior: 'AnywhereOnWebsite' }];
+  assert.equal(matchingWebsite(anywhere('github.com'), 'https://github.com'), 'github.com');
+  assert.equal(
+    matchingWebsite(anywhere('https://github.com/login'), 'https://gist.github.com'),
+    'https://github.com/login',
+  );
+  for (const page of [
+    'https://github.com.attacker.example',
+    'https://evilgithub.com',
+    'https://github.co',
+  ])
+    assert.equal(matchingWebsite(anywhere('https://github.com'), page), undefined, page);
+  assert.equal(
+    matchingWebsite(anywhere('https://alice.github.io'), 'https://bob.github.io'),
+    undefined,
+  );
+  const exact = [{ url: 'https://login.example.com', autofillBehavior: 'ExactDomain' }];
+  assert.equal(matchingWebsite(exact, 'https://login.example.com'), 'https://login.example.com');
+  assert.equal(matchingWebsite(exact, 'https://example.com'), undefined);
+  assert.equal(matchingWebsite(exact, 'https://login.example.com:8443'), undefined);
+  assert.equal(
+    matchingWebsite(
+      [{ url: 'https://example.com', autofillBehavior: 'Never' }],
+      'https://example.com',
+    ),
+    undefined,
+  );
+  assert.equal(
+    matchingWebsite(anywhere('android://key@com.example.app/'), 'https://example.com'),
+    undefined,
+  );
+  for (const url of ['mailto:login@example.com', 'https://login:secret@example.com'])
+    assert.equal(matchingWebsite(anywhere(url), 'https://example.com'), undefined, url);
+});
+
+test('the real 1Password helper runs in its own process and fails clearly without the app', async () => {
+  const manager = createOnePassword({ open: forkedOnePassword('test') });
+  try {
+    await assert.rejects(
+      manager.logins('Synthetic account', 'https://example.com'),
+      (error: unknown) =>
+        error instanceof PasswordManagerError &&
+        error.reason === 'unavailable' &&
+        /^1Password: ./.test(error.message),
+    );
+  } finally {
+    await manager.close();
+  }
+  const running = async () =>
+    /onepassword\/helper\.ts test/.test((await runProcess('ps', ['-ax', '-o', 'command='])).stdout);
+  for (let attempt = 0; attempt < 50 && (await running()); attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await running(), false);
+});
+
+test('a stopped 1Password helper fails its request at once and the next request reopens it', async () => {
+  let opened = 0;
+  const manager = createOnePassword({
+    answerMs: 60_000,
+    open: async () => {
+      const dead = ++opened === 2;
+      const closed: Array<() => void> = [];
+      return {
+        send: () => {
+          if (!dead) closed.forEach((listener) => listener());
+        },
+        receive: () => {},
+        closed: (listener: () => void) => {
+          closed.push(listener);
+          if (dead) listener();
+        },
+        close: () => {},
+      };
+    },
+  });
+  try {
+    for (const _ of [1, 2]) {
+      const started = Date.now();
+      await assert.rejects(
+        manager.logins('Synthetic account', 'https://example.com'),
+        (error: unknown) => error instanceof PasswordManagerError && /stopped/.test(error.message),
+      );
+      assert.ok(Date.now() - started < 1_000);
+    }
+    assert.equal(opened, 2);
+  } finally {
+    await manager.close();
+  }
+});
+
+test('an idle 1Password helper closing late never fails a request on its replacement', async () => {
+  const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  let opened = 0;
+  const manager = createOnePassword({
+    idleMs: 5,
+    open: async () => {
+      const answerMs = ++opened === 1 ? 0 : 60;
+      const closed: Array<() => void> = [];
+      let reply: (raw: unknown) => void = () => {};
+      return {
+        send: (message: { id: number }) =>
+          void setTimeout(() => reply({ id: message.id, ok: true, value: [] }), answerMs),
+        receive: (receiver: (raw: unknown) => void) => {
+          reply = receiver;
+        },
+        closed: (listener: () => void) => closed.push(listener),
+        close: () => void setTimeout(() => closed.forEach((listener) => listener()), 30),
+      };
+    },
+  });
+  try {
+    assert.deepEqual(await manager.logins('Synthetic account', 'https://example.com'), []);
+    await delay(15);
+    assert.deepEqual(await manager.logins('Synthetic account', 'https://example.com'), []);
+    assert.equal(opened, 2);
+  } finally {
+    await manager.close();
+  }
 });
 
 test('explicit card code replies keep private codes separate from ordinary numeric prose', () => {
@@ -1962,7 +2168,12 @@ test(
             },
           });
           assert.equal(imported.statusCode, 200);
-          assert.deepEqual(imported.json(), { imported: 2, existing: 2, skipped: 3 });
+          assert.deepEqual(imported.json(), {
+            imported: 2,
+            existing: 2,
+            skipped: 3,
+            authenticatorKeys: 0,
+          });
           assert.equal(imported.body.includes('secret'), false);
           const listed = (await app.inject({ url: '/api/vault', headers })).json<
             VaultLoginEntry[]
@@ -1979,10 +2190,449 @@ test(
           );
           assert.equal(JSON.stringify(stored.rows).includes('import-secret'), false);
           assert.equal(JSON.stringify(stored.rows).includes('fresh@example.test'), false);
+          const keyed = parsePasswordCsv(
+            'Title,Url,Username,Password,OTPAuth\n' +
+              'Kept,https://import.example.com,kept@example.test,kept-changed-secret,otpauth://totp/Kept?secret=JBSWY3DPEHPK3PXP\n' +
+              'Keyed,https://keyed.example.com,keyed@example.test,keyed-import-secret,JBSWY3DPEHPK3PXPJBSWY3DP\n',
+          );
+          const rekeyed = await app.inject({
+            method: 'POST',
+            url: '/api/vault/import',
+            headers,
+            payload: {
+              logins: [
+                ...keyed.logins,
+                {
+                  label: 'Bad key',
+                  origin: 'https://bad-key.example.com',
+                  username: 'bad@example.test',
+                  password: 'bad-key-import-secret',
+                  authenticatorKey: 'otpauth://hotp/Bad?secret=JBSWY3DPEHPK3PXP',
+                },
+              ],
+            },
+          });
+          assert.deepEqual(rekeyed.json(), {
+            imported: 1,
+            existing: 1,
+            skipped: 1,
+            authenticatorKeys: 2,
+          });
+          const relisted = (await app.inject({ url: '/api/vault', headers })).json<
+            VaultLoginEntry[]
+          >();
+          const keptAgain = relisted.find(
+            (entry) => entry.label === 'Kept' && entry.origin === 'https://import.example.com',
+          )!;
+          assert.equal((await read(keptAgain.id, 'details')).json().hasAuthenticator, true);
+          assert.equal(
+            (await read(keptAgain.id, 'password')).json().password,
+            'kept-original-secret',
+          );
+          assert.equal(
+            relisted.some((entry) => entry.label === 'Bad key'),
+            false,
+          );
+          const sealed = JSON.stringify((await pool.query('SELECT * FROM vault_entries')).rows);
+          assert.doesNotMatch(sealed, /JBSWY3DP|otpauth/i);
+          assert.doesNotMatch(JSON.stringify(relisted), /JBSWY3DP|otpauth|authenticator/i);
+        },
+      );
+
+      await t.test(
+        'an authenticator key is checked, kept, replaced and removed only on request',
+        async () => {
+          const entry = await save('Keyed');
+          const details = async () => (await read(entry.id, 'details')).json();
+          const change = (payload: Record<string, unknown>) =>
+            patch(entry.id, { label: 'Keyed', username: 'Keyed@example.test', ...payload });
+          assert.equal((await details()).hasAuthenticator, false);
+          const refused = await change({
+            authenticatorKey: 'otpauth://hotp/Keyed?secret=JBSWY3DPEHPK3PXP&counter=1',
+          });
+          assert.equal(refused.statusCode, 400);
+          assert.match(refused.json().error, /authenticator key/);
+          assert.equal((await details()).hasAuthenticator, false);
+          assert.equal((await change({ authenticatorKey: 'JBSWY3DPEHPK3PXP' })).statusCode, 200);
+          assert.equal((await details()).hasAuthenticator, true);
+          assert.equal((await change({ label: 'Renamed' })).statusCode, 200);
+          assert.equal((await details()).hasAuthenticator, true);
+          assert.equal((await read(entry.id, 'password')).json().password, 'Keyed-secret');
+          assert.equal((await change({ authenticatorKey: '' })).statusCode, 200);
+          assert.equal((await details()).hasAuthenticator, false);
+          assert.equal((await read(entry.id, 'password')).json().password, 'Keyed-secret');
+          const created = await app.inject({
+            method: 'POST',
+            url: '/api/vault',
+            headers,
+            payload: {
+              label: 'Unusable',
+              origin: 'https://unusable.example.test',
+              username: 'unusable@example.test',
+              password: 'unusable-secret',
+              authenticatorKey: 'steam://JBSWY3DPEHPK3PXP',
+            },
+          });
+          assert.equal(created.statusCode, 400);
+          assert.equal(
+            (
+              await pool.query('SELECT 1 FROM vault_entries WHERE origin=$1', [
+                'https://unusable.example.test',
+              ])
+            ).rowCount,
+            0,
+          );
         },
       );
     } finally {
       await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
+  'a saved authenticator key enters one current code for the account this task signed in with',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_vault_authenticator_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    try {
+      const { turn } = await seedTurns(pool);
+      const owner = 'local-development';
+      const origin = 'https://bank.example.test';
+      let observedOrigin = origin;
+      const injections: CredentialInjection[] = [];
+      const vault = await createVault(pool, {
+        requestKey: Buffer.alloc(32, 42),
+        keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 9) },
+        page: async () => ({ origin: observedOrigin, url: `${observedOrigin}/verify` }),
+        inject: async (input) => {
+          injections.push(input);
+          return { status: 'submitted' as const };
+        },
+        resume: async () => {},
+        retry: async () => {},
+      });
+      const authenticator =
+        'otpauth://totp/Bank:first?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Bank';
+      const first = await vault.saveLogin({
+        origin,
+        label: 'First',
+        username: 'first@bank.example.test',
+        password: 'first-synthetic-password',
+        authenticatorKey: authenticator,
+      });
+      const second = await vault.saveLogin({
+        origin,
+        label: 'Second',
+        username: 'second@bank.example.test',
+        password: 'second-synthetic-password',
+      });
+      const code = { origin, label: 'Bank code', kind: 'otp' as const, passwordSelector: '#code' };
+      const password = {
+        origin,
+        label: 'Bank',
+        kind: 'password' as const,
+        usernameSelector: '#user',
+        passwordSelector: '#password',
+      };
+      const current = () => authenticatorCode(authenticatorKey(authenticator)!);
+
+      await t.test('the code goes to the login this task entered, once per sign-in', async () => {
+        const task = await turn();
+        const realNow = Date.now;
+        Date.now = () => realNow() + 5_000;
+        try {
+          assert.equal(await vault.fillSaved(task, owner, first.id, password), true);
+        } finally {
+          Date.now = realNow;
+        }
+        assert.equal((await vault.authenticatorLogin(task, owner, origin))?.id, first.id);
+        const before = current();
+        assert.equal(await vault.fillAuthenticatorCode(task, owner, first.id, code), true);
+        const after = current();
+        const entered = injections.at(-1)!;
+        assert.equal(entered.kind, 'otp');
+        assert.equal(entered.password, undefined);
+        assert.match(entered.code!, /^\d{6}$/);
+        assert.ok([before, after].includes(entered.code!));
+        assert.equal(await vault.fillAuthenticatorCode(task, owner, first.id, code), false);
+        assert.equal(injections.filter((input) => input.kind === 'otp').length, 1);
+      });
+
+      await t.test('another account in the same task never receives the key', async () => {
+        const task = await turn();
+        assert.equal(await vault.fillSaved(task, owner, second.id, password), true);
+        assert.equal(await vault.authenticatorLogin(task, owner, origin), undefined);
+        assert.equal(await vault.authenticatorLogin(task, owner, origin, first.id), undefined);
+        const entered = injections.length;
+        await assert.rejects(
+          vault.fillAuthenticatorCode(task, owner, first.id, code),
+          /matches the account already entered/,
+        );
+        assert.equal(injections.length, entered);
+      });
+
+      await t.test('an expired sign-in choice never gets a code', async () => {
+        const task = await turn();
+        assert.equal(await vault.fillSaved(task, owner, first.id, password), true);
+        await pool.query(
+          "UPDATE credential_account_selections SET expires_at=now()-interval '1 second' WHERE origin=$1",
+          [origin],
+        );
+        assert.equal(await vault.authenticatorLogin(task, owner, origin), undefined);
+        const entered = injections.length;
+        await assert.rejects(
+          vault.fillAuthenticatorCode(task, owner, first.id, code),
+          /took too long/,
+        );
+        assert.equal(injections.length, entered);
+      });
+
+      await t.test('without a sign-in, only the named or single keyed login applies', async () => {
+        const task = await turn();
+        assert.equal((await vault.authenticatorLogin(task, owner, origin))?.id, first.id);
+        assert.equal(await vault.authenticatorLogin(task, owner, origin, second.id), undefined);
+        assert.equal(await vault.authenticatorLogin(task, 'another-owner', origin), undefined);
+        assert.equal(
+          await vault.authenticatorLogin(task, owner, 'https://other.example.test'),
+          undefined,
+        );
+        assert.equal(
+          await vault.fillAuthenticatorCode(task, owner, first.id, { ...code, emailCode: true }),
+          false,
+        );
+        const entered = injections.length;
+        observedOrigin = 'https://bank.example.test.attacker.example';
+        await assert.rejects(
+          vault.fillAuthenticatorCode(task, owner, first.id, code),
+          /origin changed/,
+        );
+        observedOrigin = origin;
+        assert.equal(injections.length, entered);
+        await vault.saveLogin({
+          origin,
+          label: 'Second',
+          username: 'second@bank.example.test',
+          password: 'second-synthetic-password',
+          authenticatorKey: 'JBSWY3DPEHPK3PXP',
+        });
+        assert.equal(await vault.authenticatorLogin(task, owner, origin), undefined);
+        assert.equal(
+          (await vault.authenticatorLogin(task, owner, origin, second.id))?.id,
+          second.id,
+        );
+      });
+
+      await t.test('the key stays sealed and out of every listing', async () => {
+        const sealed = JSON.stringify((await pool.query('SELECT * FROM vault_entries')).rows);
+        assert.doesNotMatch(sealed, /JBSWY3DP|otpauth/i);
+        assert.doesNotMatch(JSON.stringify(await vault.list()), /JBSWY3DP|otpauth|authenticator/i);
+        const uses = (
+          await pool.query("SELECT item_id FROM vault_uses WHERE kind='otp' ORDER BY created_at")
+        ).rows;
+        assert.deepEqual(uses, [{ item_id: first.id }]);
+      });
+    } finally {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
+  'a password manager login picked in the private form is saved sealed and entered once',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_vault_manager_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    const bare = Fastify();
+    try {
+      const { turn, wait } = await seedTurns(pool);
+      const owner = 'local-development';
+      const origin = 'https://bank.example.test';
+      const calls: string[] = [];
+      const injections: CredentialInjection[] = [];
+      const resumed: string[] = [];
+      const password = 'manager-synthetic-password';
+      const manager: PasswordManager = {
+        name: '1Password',
+        logins: async (account, site) => {
+          calls.push(`logins ${account} ${site}`);
+          if (account === 'Unreachable')
+            throw new PasswordManagerError('unavailable', 'The library did not load.');
+          return [
+            { id: 'v1/i1', title: 'Bank', username: 'owner@bank.example.test', website: origin },
+          ];
+        },
+        login: async (account, site, id) => {
+          calls.push(`login ${account} ${site} ${id}`);
+          if (id !== 'v1/i1')
+            throw new PasswordManagerError(
+              'missing',
+              'This 1Password login is not for this website.',
+            );
+          return {
+            title: 'Bank',
+            username: 'owner@bank.example.test',
+            password,
+            authenticatorKey: 'otpauth://totp/Bank:owner?secret=JBSWY3DPEHPK3PXP&issuer=Bank',
+          };
+        },
+        close: async () => {},
+      };
+      const options = {
+        requestKey: Buffer.alloc(32, 42),
+        keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 5) },
+        page: async () => ({ origin, url: `${origin}/login` }),
+        inject: async (input: CredentialInjection) => {
+          injections.push(input);
+          return { status: 'submitted' as const };
+        },
+        resume: async (turnId: string) => {
+          resumed.push(turnId);
+        },
+        retry: async () => {},
+      };
+      const vault = await createVault(pool, { ...options, passwordManager: manager });
+      vault.registerRoutes(app);
+      const request = {
+        origin,
+        label: 'Bank',
+        kind: 'password' as const,
+        usernameSelector: '#user',
+        passwordSelector: '#password',
+      };
+      const task = await turn();
+      const token = (await vault.request(task, owner, request)).url.split('/').at(-1)!;
+      await wait(task);
+      const path = `/api/credential-requests/${token}`;
+      const describe = async () => (await app.inject({ url: path })).json<CredentialRequest>();
+      const post = (suffix: string, payload: Record<string, unknown>) =>
+        app.inject({ method: 'POST', url: `${path}${suffix}`, payload });
+
+      await t.test('the form offers the manager and explains a missing app', async () => {
+        assert.deepEqual((await describe()).passwordManager, { name: '1Password' });
+        const failed = await post('/password-manager', { account: 'Unreachable' });
+        assert.equal(failed.statusCode, 502);
+        assert.match(failed.json().error, /Integrate with other apps/);
+        assert.deepEqual((await describe()).passwordManager, { name: '1Password' });
+        assert.equal((await post('/password-manager', { account: ' ' })).statusCode, 400);
+      });
+
+      await t.test('listing remembers the account and returns no secret', async () => {
+        const listed = await post('/password-manager', { account: 'Synthetic Family' });
+        assert.equal(listed.statusCode, 200);
+        assert.deepEqual(listed.json().logins, [
+          { id: 'v1/i1', title: 'Bank', username: 'owner@bank.example.test', website: origin },
+        ]);
+        assert.doesNotMatch(listed.body, /manager-synthetic-password|JBSWY3DP/);
+        assert.deepEqual((await describe()).passwordManager, {
+          name: '1Password',
+          account: 'Synthetic Family',
+        });
+        assert.equal(calls.at(-1), `logins Synthetic Family ${origin}`);
+      });
+
+      await t.test('a login for another website is refused before anything is saved', async () => {
+        const refused = await post('/password-manager/use', {
+          account: 'Synthetic Family',
+          id: 'v1/elsewhere',
+        });
+        assert.equal(refused.statusCode, 409);
+        assert.match(refused.json().error, /not for this website/);
+        assert.equal((await pool.query('SELECT 1 FROM vault_entries')).rowCount, 0);
+        assert.equal(injections.length, 0);
+      });
+
+      await t.test('the picked login is sealed with its key and entered once', async () => {
+        const used = await post('/password-manager/use', {
+          account: 'Synthetic Family',
+          id: 'v1/i1',
+        });
+        assert.equal(used.statusCode, 200, used.body);
+        assert.deepEqual(used.json(), { ok: true });
+        assert.equal(injections.length, 1);
+        assert.equal(calls.at(-1), `login Synthetic Family ${origin} v1/i1`);
+        assert.equal(injections[0]!.password, password);
+        assert.equal(injections[0]!.username, 'owner@bank.example.test');
+        assert.deepEqual(resumed, [task.turnId]);
+        const [saved] = await vault.list();
+        assert.equal(saved?.label, 'Bank');
+        assert.equal(saved?.origin, origin);
+        const { secret } = await vault.readCredential(saved!.id);
+        assert.equal(secret.password, password);
+        assert.ok(secret.authenticator);
+        const sealed = JSON.stringify((await pool.query('SELECT * FROM vault_entries')).rows);
+        assert.doesNotMatch(sealed, /manager-synthetic-password|JBSWY3DP|owner@bank/);
+        assert.equal((await describe()).status, 'filled');
+        assert.equal((await describe()).passwordManager, undefined);
+        const reads = calls.length;
+        const again = await post('/password-manager/use', {
+          account: 'Synthetic Family',
+          id: 'v1/i1',
+        });
+        assert.equal(again.statusCode, 409);
+        assert.equal(calls.length, reads);
+        assert.equal(injections.length, 1);
+      });
+
+      await t.test('other owners and nods without a manager get nothing', async () => {
+        const foreign = await turn('another-owner');
+        const foreignToken = (await vault.request(foreign, 'another-owner', request)).url
+          .split('/')
+          .at(-1)!;
+        await wait(foreign);
+        const before = calls.length;
+        assert.equal(
+          (
+            await app.inject({
+              method: 'POST',
+              url: `/api/credential-requests/${foreignToken}/password-manager`,
+              payload: { account: 'Synthetic Family' },
+            })
+          ).statusCode,
+          409,
+        );
+        assert.equal(calls.length, before);
+        const plain = await createVault(pool, options);
+        plain.registerRoutes(bare);
+        const next = await turn();
+        const plainToken = (await plain.request(next, owner, request)).url.split('/').at(-1)!;
+        await wait(next);
+        const described = (
+          await bare.inject({ url: `/api/credential-requests/${plainToken}` })
+        ).json<CredentialRequest>();
+        assert.equal(described.passwordManager, undefined);
+        assert.equal(
+          (
+            await bare.inject({
+              method: 'POST',
+              url: `/api/credential-requests/${plainToken}/password-manager`,
+              payload: { account: 'Synthetic Family' },
+            })
+          ).statusCode,
+          404,
+        );
+      });
+    } finally {
+      await app.close();
+      await bare.close();
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
@@ -4242,6 +4892,89 @@ test('chat removes private-entry actions only after the server confirms submissi
   }
 });
 
+test('chat app setup keeps confirmed completion until dismissal and ignores an older request', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<div id="root"></div>', {url:'http://localhost:4310/',pretendToBeVisual:true});
+Object.assign(globalThis, {
+  window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true,
+  getComputedStyle:dom.window.getComputedStyle.bind(dom.window),
+  requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),
+  cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window),
+  ...Object.fromEntries(['Node','NodeFilter','Event','CustomEvent','Element','HTMLElement','HTMLInputElement','MutationObserver'].map(name => [name,dom.window[name]])),
+});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+const {act,createElement}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {SetupActions}=await import('./src/web/components/setup-link.tsx');
+const links=['https://consent.example.test/first','https://consent.example.test/second'];
+const hashes=links.map(url=>createHash('sha256').update(url).digest('hex'));
+const completed=new Set();
+let releaseFirst;
+let held=false;
+let opened=0;
+window.open=()=>({closed:false,opener:null,document:{title:'',body:{textContent:''}},location:{set href(value){opened++;}},close(){this.closed=true;}});
+globalThis.fetch=async(path,init={})=>{
+  assert.equal(path,'/api/apps/setup-status');
+  const body=JSON.parse(init.body);
+  if(body.pairingUrl===links[0]&&!held){
+    held=true;
+    return new Promise(resolve=>{releaseFirst=()=>resolve(Response.json({completed:[hashes[0]],apps:[]}));});
+  }
+  return Response.json({completed:body.hashes.filter(hash=>completed.has(hash)),apps:body.hashes.filter(hash=>!completed.has(hash)).map(hash=>({hash,slug:'notion',name:'Synthetic workspace',available:true}))});
+};
+const root=createRoot(document.querySelector('#root'));
+const settle=()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,15));});
+const waitFor=async(check)=>{for(let i=0;i<100;i++){if(check())return;await settle();}assert.ok(check());};
+const dialog=()=>document.querySelector('[role="dialog"]');
+const action=(name)=>Array.from(dialog()?.querySelectorAll('button')??[]).find(button=>button.textContent.trim()===name);
+const click=async(element)=>{assert.ok(element);await act(async()=>element.dispatchEvent(new window.MouseEvent('click',{bubbles:true,cancelable:true})));};
+try {
+  await act(async()=>root.render(createElement(SetupActions,{actions:links.map((href,index)=>({href,setup:'app',label:'Synthetic '+index}))})));
+  await settle();
+  await click(document.querySelectorAll('[data-setup="app"]')[0]);
+  await waitFor(()=>held);
+  await click(action('Close'));
+  await waitFor(()=>!dialog());
+  await click(document.querySelectorAll('[data-setup="app"]')[1]);
+  await waitFor(()=>opened===1);
+  const current=dialog();
+  assert.ok(current.querySelector('[role="status"]'));
+  await act(async()=>releaseFirst());
+  await settle();
+  assert.equal(dialog(),current);
+  assert.equal(action('Done'),undefined);
+  assert.ok(current.querySelector('[role="status"]'));
+  completed.add(hashes[0]);
+  await act(async()=>window.dispatchEvent(new Event('focus')));
+  await settle();
+  assert.equal(dialog(),current);
+  assert.equal(action('Done'),undefined);
+  completed.add(hashes[1]);
+  await act(async()=>window.dispatchEvent(new Event('focus')));
+  await waitFor(()=>Boolean(action('Done')));
+  assert.equal(dialog(),current);
+  assert.equal(current.querySelector('[role="status"]'),null);
+  assert.equal(document.querySelector('[data-setup="app"]'),null);
+  await settle();
+  assert.equal(dialog(),current);
+  await click(action('Done'));
+  await waitFor(()=>!dialog());
+  assert.equal(opened,1);
+} finally {
+  releaseFirst?.();
+  await act(async()=>root.unmount());
+  dom.window.close();
+}
+`,
+  });
+  assert.equal(result.exitCode, 0, `${result.stdout}\n${result.stderr}`);
+});
+
 test('analytics routes collapse private paths to known pages', async () => {
   const { analyticsRoute, sanitizedAnalyticsUrl } =
     await import('../src/web/lib/analytics-privacy.ts');
@@ -4289,6 +5022,7 @@ Object.defineProperty(globalThis, 'navigator', {configurable:true,value:dom.wind
 globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
 globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
 globalThis.location = window.location;
+globalThis.ResizeObserver = class { observe() {} disconnect() {} };
 globalThis.EventSource = window.EventSource = class { static CLOSED = 2; readyState = 0; close() {} addEventListener() {} };
 window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
 let finishPreparation;
@@ -4443,6 +5177,7 @@ Object.defineProperty(globalThis, 'navigator', {configurable:true,value:dom.wind
 globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
 globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
 globalThis.location = window.location;
+globalThis.ResizeObserver = class { observe() {} disconnect() {} };
 const requests=[];
 window.XMLHttpRequest = undefined;
 globalThis.XMLHttpRequest = undefined;
@@ -4612,7 +5347,7 @@ test(
   },
 );
 
-test('onboarding advances only after a newly confirmed connection with ready owned state', async () => {
+test('onboarding continues only after a confirmed connection with a ready owned model', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 25_000,
     input: String.raw`
@@ -4627,7 +5362,8 @@ globalThis.location=window.location;
 globalThis.ResizeObserver=class {observe(){} disconnect(){}};
 HTMLElement.prototype.scrollIntoView=function(){};
 window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
-window.open=()=>({closed:false,opener:null,location:{replace(){}},close(){}});
+let popupBlocked=false;
+window.open=()=>popupBlocked?null:({closed:false,opener:null,location:{replace(){}},close(){}});
 let channel;
 globalThis.BroadcastChannel=class {constructor(){channel=this;} close(){}};
 const {createElement,act}=await import('react');
@@ -4642,7 +5378,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 let root;
 let advances=0;
 const settle=(ms=15)=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,ms));});
-const waitFor=async(condition)=>{for(let i=0;i<100&&!condition();i++)await settle();assert.ok(condition(),'Expected the confirmed connection to advance its React step');};
+const waitFor=async(condition,message='Expected the confirmed connection to advance its React step')=>{for(let i=0;i<100&&!condition();i++)await settle();assert.ok(condition(),message);};
 const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent.trim()===text);
 const click=async(text)=>{await waitFor(()=>button(text)&&!button(text).disabled);await act(async()=>button(text).click());await settle();};
 async function mount(Component,arrived='forward') {
@@ -4653,6 +5389,8 @@ async function mount(Component,arrived='forward') {
   await settle();
 }
 const connection={id:'fixture-model',provider:'anthropic',method:'api_key',status:'connected',label:'Fixture model',managed:false,models:[{id:'fixture-model-name',name:'Fixture',efforts:['off'],images:false,contextWindow:32000}]};
+let keyResponse=connection;
+const keyRequests=[];
 let models={connections:[],selection:null};
 let failKey=true;
 let select;
@@ -4664,6 +5402,9 @@ let failDisconnect=true;
 let gmailReconnect=false;
 let gmailCompleted=false;
 let gmailMissing=false;
+let gmailAvailable=true;
+let gmailPairingConfirmed=true;
+const gmailRequests=[];
 let failApps=false;
 let failTelegram=true;
 let failChannelLoad=false;
@@ -4687,7 +5428,7 @@ let failInterviewPost=0;
 let failInterviewSave=false;
 let expectedAnswers=['Synthetic project focus'];
 let telegram={provider:'telegram',enabled:true,mode:'polling',accountHandle:'@fixture_bot',pairingCandidate:{id:'123456',name:'Fixture'},pairingExpiresAt:new Date(Date.now()+600000).toISOString()};
-const attempt='A'.repeat(43);
+let gmailAttempt;
 window.fetch=globalThis.fetch=async(url,options={})=>{
   const path=new URL(url,window.location.href).pathname;
   const body=options.body?JSON.parse(options.body):{};
@@ -4738,8 +5479,9 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
   if(path==='/api/onboarding/suggestions')return Response.json({ok:true});
   if(path==='/api/models')return Response.json(models);
   if(path==='/api/models/keys'){
+    keyRequests.push(body);
     if(failKey)return Response.json({error:'Fixture key rejected'},{status:503});
-    models={connections:[connection],selection:null};
+    models={connections:[keyResponse],selection:null};
     return Response.json(models);
   }
   if(path==='/api/models/selection')return new Promise(resolve=>{select=()=>{models={...models,selection:body};resolve(Response.json(models));};});
@@ -4755,8 +5497,8 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
     disconnectPending=false;
     return Response.json({disconnected:true});
   }
-  if(path==='/api/apps/gmail/connect')return Response.json({url:'https://connect.composio.dev/link/fixture',attempt});
-  if(path==='/api/apps/setup-status')return Response.json({completed:gmailCompleted?body.hashes:[],apps:gmailMissing?[]:body.hashes.map(hash=>({hash,pairingConfirmed:true}))});
+  if(path==='/api/apps/gmail/connect'){gmailRequests.push(body);gmailAttempt=String(gmailRequests.length).padStart(43,'A');return Response.json({url:'https://connect.composio.dev/link/fixture-'+gmailRequests.length,attempt:gmailAttempt});}
+  if(path==='/api/apps/setup-status')return Response.json({completed:gmailCompleted?body.hashes:[],apps:gmailMissing?[]:body.hashes.map(hash=>({hash,pairingConfirmed:gmailPairingConfirmed,available:gmailAvailable}))});
   if(path==='/api/channels')return failChannelLoad?Response.json({error:'Fixture channel refresh failed'},{status:503}):Response.json({channels:[],inbox:[],deliveries:[],error:null});
   if(path==='/api/channel-settings')return Response.json({ready:true,channels:[telegram]});
   if(path==='/api/channel-settings/telegram/confirm'){
@@ -4766,8 +5508,10 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
   }
   throw new Error('Unexpected fixture request '+path);
 };
+const provider=name=>act(async()=>[...document.querySelectorAll('.ob-brain-provider')].find(item=>item.textContent.includes(name)).click());
+const canContinue=()=>button('Continue')&&!button('Continue').disabled;
 await mount(Brain);
-await act(async()=>[...document.querySelectorAll('.ob-brain-option')].find(item=>item.textContent.includes('Anthropic')).click());
+await provider('Anthropic');
 await waitFor(()=>document.querySelector('#ob-brain-key-anthropic'));
 await act(async()=>{const input=document.querySelector('#ob-brain-key-anthropic');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'synthetic-model-key');input.dispatchEvent(new Event('input',{bubbles:true}));});
 await click('Connect');
@@ -4776,35 +5520,96 @@ assert.match(document.body.textContent,/Fixture key rejected/);
 failKey=false;
 await click('Connect');
 await waitFor(()=>select);
-assert.equal(advances,0,'connection alone cannot advance before model selection is ready');
+assert.equal(canContinue(),false,'connection alone cannot continue before model selection is ready');
 await act(async()=>select());
-await waitFor(()=>advances===1);
+await waitFor(canContinue);
+await settle(50);
+assert.equal(advances,0,'a ready model waits for Continue');
+await click('Continue');
+assert.equal(advances,1);
 await act(async()=>pageDataCache.refresh('/api/models',true));
 assert.equal(advances,1);
 for(const direction of ['forward','back']){
   await mount(Brain,direction);
-  await waitFor(()=>button('Continue')&&!button('Continue').disabled);
+  await waitFor(canContinue);
   assert.equal(advances,0,'cached model must not bounce '+direction);
 }
 models={connections:[],selection:null};
 await mount(Brain);
-await act(async()=>[...document.querySelectorAll('.ob-brain-option')].find(item=>item.textContent.includes('OpenAI')).click());
+await provider('OpenAI');
 await click('Sign in with ChatGPT');
 await waitFor(()=>oauth);
-assert.equal(advances,0);
+assert.equal(canContinue(),false);
 models={connections:[{...connection,provider:'openai',method:'subscription'}],selection:{connectionId:connection.id,modelId:connection.models[0].id,effort:'off'}};
 await act(async()=>oauth());
-await waitFor(()=>advances===1);
+await waitFor(canContinue);
+assert.equal(advances,0,'a finished sign-in waits for Continue');
+await click('Continue');
+assert.equal(advances,1);
+select=undefined;
+models={connections:[{...connection,provider:'openai',method:'subscription',models:['gpt-6.1-sol','gpt-6-sol'].map(id=>({...connection.models[0],id,efforts:['high']}))}],selection:null};
+await mount(Brain,'back');
+await waitFor(()=>select);
+await act(async()=>select());
+await waitFor(canContinue);
+assert.equal(models.selection.modelId,'gpt-6-sol','ChatGPT keeps its subscription-specific recommendation');
+const editInput=async(input,value)=>{
+  assert.ok(input);
+  await act(async()=>{
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+  });
+};
+const labeledInput=label=>[...document.querySelectorAll('label')].find(item=>item.querySelector('.field-label')?.textContent===label)?.querySelector('input');
+for(const scenario of [
+  {id:'cloudflare-workers-ai',search:'Cloudflare Workers',name:'Cloudflare Workers AI',fields:{accountId:'a'.repeat(32)}},
+  {id:'cloudflare-ai-gateway',search:'Cloudflare AI Gateway',name:'Cloudflare AI Gateway',fields:{accountId:'b'.repeat(32),gatewayId:'synthetic-gateway'}},
+  {id:'google',name:'Google Gemini',model:'gemini-3.8-flash',fields:{},efforts:['low','medium','high'],effort:'medium'},
+  {id:'google',name:'Google Gemini',model:'gemini-4-argon',fields:{},efforts:['low','medium','high'],effort:'medium',manual:true},
+  {id:'baseten',search:'Baseten',name:'Baseten',fields:{},saved:true},
+  {id:'amazon-bedrock',search:'Amazon Bedrock',name:'Amazon Bedrock',fields:{region:'eu-west-1'},manual:true},
+]){
+  models={connections:[],selection:null};
+  select=undefined;
+  keyResponse={...connection,provider:scenario.id,models:[{...connection.models[0],id:scenario.model??connection.models[0].id,efforts:scenario.efforts??['off']}]};
+  if(scenario.manual)keyResponse.models.push({...keyResponse.models[0],id:'fixture-second-model'});
+  await mount(Brain,'back');
+  if(scenario.search){
+    await click('More providers');
+    await editInput(document.querySelector('[aria-label="Search providers"]'),scenario.search);
+  }
+  await provider(scenario.name);
+  await waitFor(()=>document.querySelector('#ob-brain-key-'+scenario.id));
+  for(const [name,value] of Object.entries(scenario.fields)){
+    const labels={accountId:'Account ID',gatewayId:'Gateway ID',region:'Region'};
+    await editInput(labeledInput(labels[name]),value);
+  }
+  await editInput(document.querySelector('#ob-brain-key-'+scenario.id),'synthetic-model-key');
+  await click(scenario.saved?'Save key':'Connect');
+  assert.deepEqual(keyRequests.at(-1),{provider:scenario.id,key:'synthetic-model-key',...scenario.fields});
+  if(scenario.manual){
+    await settle(50);
+    assert.equal(select,undefined,'A provider without a safe default requires an explicit model choice');
+    assert.equal(canContinue(),false);
+    assert.ok(button('Choose a model')&&!button('Choose a model').disabled,'Manual choice remains available when the recommended model is missing');
+  }else{
+    await waitFor(()=>select);
+    assert.equal(canContinue(),false,'saving a provider still waits for model selection');
+    await act(async()=>select());
+    await waitFor(canContinue);
+    assert.equal(models.selection.effort,scenario.effort??'off');
+  }
+}
 disconnectPending=true;
 await mount(Email);
 await waitFor(()=>button('Retry disconnection'));
 assert.equal(disconnectCalls,0,'uncertain disconnection is never retried automatically');
-assert.ok(button('Connect Gmail').disabled);
+assert.ok((button('Connect Gmail')??button('Try again')).disabled);
 assert.ok(button('Continue').disabled);
 await click('Retry disconnection');
 assert.equal(disconnectCalls,1);
 assert.match(document.body.textContent,/Fixture disconnection unavailable/);
-assert.ok(button('Connect Gmail').disabled);
+assert.ok((button('Connect Gmail')??button('Try again')).disabled);
 assert.equal(advances,0);
 failDisconnect=false;
 await click('Retry disconnection');
@@ -4820,7 +5625,7 @@ await click('Connect Gmail');
 await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt:'B'.repeat(43)}}));
 assert.equal(advances,0,'foreign callback cannot advance');
 failApps=true;
-await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt}}));
+await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt:gmailAttempt}}));
 await settle();
 assert.equal(advances,0,'callback alone cannot advance without confirmed account state');
 failApps=false; gmailConnected=false; gmailReconnect=true;
@@ -4862,8 +5667,69 @@ await mount(Email);
 await click('Connect Gmail');
 gmailMissing=true;
 await act(async()=>window.dispatchEvent(new Event('focus')));
-await waitFor(()=>document.body.textContent.includes('Gmail didn’t connect'));
+await waitFor(()=>button('Try again')&&!button('Try again').disabled&&document.querySelector('[role="alert"]'),'An absent attempt must offer explicit recovery');
 assert.equal(advances,0,'an absent attempt without completion remains a failure');
+gmailConnected=false;gmailCompleted=false;gmailMissing=false;gmailAvailable=true;gmailPairingConfirmed=false;
+await mount(Email);
+await click('Connect Gmail');
+await act(async()=>window.dispatchEvent(new Event('focus')));
+assert.ok(button('Cancel'),'Available consent must remain pending');
+assert.equal(advances,0);
+assert.equal(document.querySelector('a[href^="https://connect.composio.dev/link/"]'),null,'A handed-off one-time consent link must not be offered again');
+const beforeRestart=gmailRequests.length;
+const olderAttempt=gmailAttempt;
+await click('Start again');
+assert.equal(gmailRequests.length,beforeRestart+1,'Only an explicit restart starts a new consent attempt');
+assert.notEqual(gmailAttempt,olderAttempt,'A restart must replace the active attempt');
+assert.ok(button('Cancel'),'The restarted attempt must remain pending');
+for(const connection of ['connected','cancelled','failed','expired']){
+  await act(async()=>channel.onmessage({data:{connection,service:'gmail',attempt:olderAttempt}}));
+  await settle();
+  assert.ok(button('Cancel'),'A stale callback must not settle restarted consent');
+  assert.equal(document.querySelector('[role="alert"]'),null);
+  assert.equal(advances,0);
+  assert.equal(gmailRequests.length,beforeRestart+1,'A stale callback cannot trigger another restart');
+}
+const pendingRequests=gmailRequests.length;
+const failedAttempt=gmailAttempt;
+gmailAvailable=false;
+await act(async()=>window.dispatchEvent(new Event('focus')));
+await waitFor(()=>button('Try again')&&!button('Try again').disabled,'Unavailable consent must stop waiting and offer a fresh sign-in');
+assert.equal(button('Cancel'),undefined,'Unavailable consent must stop waiting immediately');
+assert.ok(document.querySelector('[role="alert"]'),'Unavailable consent must expose recovery');
+assert.equal(gmailRequests.length,pendingRequests,'Unavailable consent must not retry automatically');
+assert.equal(advances,0,'Unavailable consent cannot finish onboarding');
+gmailAvailable=true;
+await click('Try again');
+assert.equal(gmailRequests.length,pendingRequests+1,'Explicit recovery must start fresh consent');
+assert.notEqual(gmailAttempt,failedAttempt,'Explicit recovery must receive a distinct attempt');
+assert.equal(document.querySelector('[role="alert"]'),null,'Retry clears the previous failure');
+for(const connection of ['connected','cancelled','failed','expired']){
+  await act(async()=>channel.onmessage({data:{connection,service:'gmail',attempt:failedAttempt}}));
+  await settle();
+  assert.ok(button('Cancel'),'A stale '+connection+' callback must leave the retry pending');
+  assert.equal(document.querySelector('[role="alert"]'),null,'A stale callback cannot replace the retry state');
+  assert.equal(advances,0,'A stale callback cannot advance onboarding');
+  assert.equal(gmailRequests.length,pendingRequests+1,'A stale callback cannot restart authorization');
+}
+gmailConnected=true;gmailCompleted=true;
+await act(async()=>window.dispatchEvent(new Event('focus')));
+await waitFor(()=>advances===1);
+assert.equal(document.querySelector('[role="alert"]'),null,'Confirmed retry must not show a failure');
+gmailConnected=false;gmailCompleted=false;gmailPairingConfirmed=false;popupBlocked=true;
+await mount(Email);
+await click('Connect Gmail');
+const consentLink=()=>document.querySelector('a[href^="https://connect.composio.dev/link/"]');
+await waitFor(consentLink,'A blocked popup must offer the unopened consent URL');
+const manual=consentLink();
+const beforeManual=gmailRequests.length;
+await act(async()=>{manual.addEventListener('click',event=>event.preventDefault(),{once:true});manual.click();});
+assert.equal(consentLink(),null,'A manually opened one-time link must not be offered again');
+assert.equal(gmailRequests.length,beforeManual,'Manual handoff uses the existing authorization');
+assert.ok(button('Start again'),'A consumed link can only be replaced by an explicit restart');
+await click('Cancel');
+assert.equal(gmailRequests.length,beforeManual,'Cancel cannot retry authorization');
+popupBlocked=false;gmailPairingConfirmed=true;
 await mount(Telegram);
 await click('Confirm');
 assert.equal(advances,0);
@@ -5124,8 +5990,8 @@ await waitFor(()=>document.querySelector('.ob')?.dataset.step==='brain');
 assert.equal(window.location.search,'');
 assert.ok(calls.includes('/api/account/prepare'));
 assert.equal(calls.some(path=>path.startsWith('/api/desktop/setup')),false);
-await waitFor(()=>[...document.querySelectorAll('.ob-brain-option')].some(item=>item.textContent.includes('Anthropic')));
-await act(async()=>[...document.querySelectorAll('.ob-brain-option')].find(item=>item.textContent.includes('Anthropic')).click());
+await waitFor(()=>[...document.querySelectorAll('.ob-brain-provider')].some(item=>item.textContent.includes('Anthropic')));
+await act(async()=>[...document.querySelectorAll('.ob-brain-provider')].find(item=>item.textContent.includes('Anthropic')).click());
 await waitFor(()=>document.querySelector('#ob-brain-key-anthropic'));
 async function recoverWithDraft(input, draft) {
   const fill=value=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true}))};

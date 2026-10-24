@@ -25,7 +25,7 @@ function setup(now: number) {
   const date = Number(
     new Intl.DateTimeFormat('en-GB', { day: 'numeric', timeZone: 'Europe/Madrid' }).format(now),
   );
-  const current = Math.max(localTime(now, date - 1, 6), now - 3 * day);
+  const current = Math.min(now, Math.max(localTime(now, date - 1, 6), now - 3 * day));
   const previous = current - 30 * day;
   const files = {
     current: bill('IBZ-48213', current, '78.12'),
@@ -127,7 +127,6 @@ export default scenario({
   complexity: 'simple',
   stance: 'regression',
   seconds: 420,
-  window: { from: 7, to: 24 },
   user: {
     approve: (action, args) =>
       !/SEND|FORWARD|REPLY|DRAFT/.test(action) ||

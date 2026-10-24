@@ -21,7 +21,7 @@ See [Task sessions](/how-it-works/task-sessions/) for the architecture diagram, 
 
 ## One process and a few containers
 
-One Node process serves the React client and runs the Fastify API, the agent runtime, the thread-drain worker and the schedulers. Docker containers run PostgreSQL, the workspace and the browser.
+One Node process serves the React client and runs the Fastify API, the agent runtime, the thread-drain worker and the schedulers. Docker containers run PostgreSQL, the workspace and the browser. While you pick a login from 1Password, a separate helper process talks to the 1Password app, so the server never loads 1Password's code.
 
 ```mermaid
 flowchart TD

@@ -67,7 +67,7 @@ git clone https://github.com/n8n-io/nod.git && cd nod
 corepack enable && pnpm start
 ```
 
-You also need a model connection: an OpenAI, Anthropic or OpenRouter API key, or a ChatGPT Plus or Pro plan. See [Install from source](docs/src/content/docs/get-started/install-from-source.mdx) for the Linux Vault key and the access link.
+You also need a model connection: an OpenAI, Anthropic or OpenRouter API key, an Amazon Bedrock key and Region, a Google Vertex AI key, an Azure OpenAI endpoint, deployment and key, or a ChatGPT Plus or Pro plan. See [Install from source](docs/src/content/docs/get-started/install-from-source.mdx) for the Linux Vault key and the access link.
 
 ## Read the docs
 

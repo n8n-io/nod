@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { Globe2, KeyRound, Link2, MonitorSmartphone } from 'lucide-react';
+import { Globe2, KeyRound, Link2 } from './icons';
 import type { AppSetupStatus, CredentialRequest } from '../../shared/contracts';
 import { api, ApiError } from '../lib/api';
 import { captureAnalytics } from '../lib/analytics';
@@ -11,7 +11,7 @@ import { AppDiscoveryDialog } from './app-discovery-dialog';
 import { ServiceLogo } from './service-logo';
 import { usePrivateEntry } from './private-entry';
 
-const icons = { vault: KeyRound, website: Globe2, app: Link2, browser: MonitorSmartphone };
+const icons = { vault: KeyRound, website: Globe2, app: Link2 };
 const vaultLink = /^\/(?:vault|credentials)\/([A-Za-z0-9_-]+)\/?$/;
 const paymentLink = /^\/payments\/([a-f0-9-]{36})\/?$/i;
 const appLink = /^\/apps\?connect=([a-f0-9-]{36})$/i;
@@ -179,6 +179,7 @@ function SetupAction({
         type="button"
         data-setup={setup}
         className="setup-app-card"
+        disabled={app?.available === false}
         onClick={(event) => {
           captureAnalytics('nod_setup_link_clicked', { setup });
           onConnect(href, event.currentTarget);
@@ -190,7 +191,7 @@ function SetupAction({
           <Icon size={28} aria-hidden="true" />
         )}
         <span className="setup-app-name">{app?.name ?? label.replace(/^Connect\s+/i, '')}</span>
-        <span className="setup-app-action">Connect</span>
+        <span className="setup-app-action">{app?.available === false ? 'Expired' : 'Connect'}</span>
       </button>
     );
   return (
@@ -254,6 +255,18 @@ export function SetupActions({
     setOpening(false);
     setError('');
   }
+  function confirmed(href: string) {
+    request.current?.abort();
+    request.current = null;
+    window.clearTimeout(timer.current);
+    setOpening(false);
+    setError('');
+    setSignIn((value) =>
+      value?.url === href && value.outcome !== 'connected'
+        ? { ...value, outcome: 'connected' }
+        : value,
+    );
+  }
   useEffect(() => {
     close();
     return () => {
@@ -262,7 +275,7 @@ export function SetupActions({
     };
   }, [key]);
   useEffect(() => {
-    if (signIn?.url && completed.has(signIn.url)) close();
+    if (signIn?.url && completed.has(signIn.url)) confirmed(signIn.url);
   }, [completed, signIn?.url]);
   async function connect(href: string) {
     const navigate = appLink.test(href);
@@ -300,6 +313,7 @@ export function SetupActions({
       service: previous?.slug ?? '',
       name: previous?.name ?? 'app',
       logoUrl: previous?.logoUrl,
+      url: href,
       opened: opened.current.has(href),
     });
     setOpening(true);
@@ -320,11 +334,11 @@ export function SetupActions({
         if (!current()) return;
         if (result.completed.includes(href)) {
           complete(href);
-          close();
+          confirmed(href);
           return;
         }
         const app = result.apps.get(href);
-        if (!app) {
+        if (!app || app.available === false) {
           fail('This sign-in link is no longer available. Ask nod to connect again.');
           return;
         }
@@ -350,11 +364,11 @@ export function SetupActions({
       if (result.completed.includes(href)) {
         popup?.close();
         complete(href);
-        close();
+        confirmed(href);
         return;
       }
       const app = result.apps.get(href);
-      if (!app) throw new Error('The sign-in link is unavailable.');
+      if (!app || app.available === false) throw new Error('The sign-in link is unavailable.');
       const pairingConfirmed = app.pairingConfirmed === true;
       if (pairingConfirmed) {
         popup?.close();

@@ -61,10 +61,10 @@ function PreviewRow({
   onImageError: (url: string) => void;
 }) {
   const [playing, setPlaying] = useState(false);
+  const title = previewableUrl(row.label) === row.page ? row.title || row.label : row.label;
   const copy = (
     <span className="message-link-preview-copy">
-      <strong>{row.label}</strong>
-      {row.title && row.title !== row.label && <span>{row.title}</span>}
+      <strong>{title}</strong>
       <small>{row.url}</small>
     </span>
   );
@@ -98,7 +98,7 @@ function PreviewRow({
         <span className="message-link-preview-player">
           <iframe
             src={autoplay(row.playerUrl)}
-            title={row.title ?? row.label}
+            title={title}
             allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
             allowFullScreen
             referrerPolicy="strict-origin-when-cross-origin"
@@ -110,7 +110,7 @@ function PreviewRow({
         <button
           type="button"
           className="message-link-preview-play"
-          aria-label={`Play ${row.label}`}
+          aria-label={`Play ${title}`}
           onClick={() => {
             setPlaying(true);
             opened(row.url, 'player', row.position);

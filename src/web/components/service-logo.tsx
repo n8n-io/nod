@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link2 } from 'lucide-react';
+import { Link2 } from './icons';
 import { integrationServiceIds } from '../../shared/integrations.ts';
 
 const bundled = new Set(integrationServiceIds);

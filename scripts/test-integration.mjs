@@ -115,6 +115,7 @@ if (process.argv.includes('--run')) {
       'scripts',
       'public',
       'desktop/main',
+      'desktop/preload',
       'desktop/ui',
       'tsconfig.json',
       'dist/web',

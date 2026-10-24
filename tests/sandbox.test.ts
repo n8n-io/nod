@@ -264,6 +264,57 @@ if (process.platform !== 'win32') {
       await assert.rejects(result, /cancelled/);
       await delay(300);
       assert.equal(existsSync(effect), false);
+      const release = join(root, 'release');
+      const calls = join(root, 'calls');
+      await rm(started);
+      await writeFile(
+        helper,
+        `#!${process.execPath}\nconst fs = require('node:fs');\nconst readline = require('node:readline');\nreadline.createInterface({ input: process.stdin }).on('line', line => { const request = JSON.parse(line); fs.appendFileSync(${JSON.stringify(calls)}, request.op + '\\n'); const reply = result => process.stdout.write(JSON.stringify({ id: request.id, ok: true, result }) + '\\n'); if (request.op === 'act') { fs.writeFileSync(${JSON.stringify(started)}, String(process.pid)); const timer = setInterval(() => { if (!fs.existsSync(${JSON.stringify(release)})) return; clearInterval(timer); fs.writeFileSync(${JSON.stringify(effect)}, 'completed'); reply({ done: true }); }, 5); } else reply([{ name: String(process.pid), bundleId: 'fixture' }]); });\n`,
+      );
+      const held = computer.act!(
+        { app: 'fixture', action: 'press', targetToken: 'synthetic' },
+        new AbortController().signal,
+      ).then(
+        () => ({ completed: true }),
+        (error: Error) => ({ completed: false, error: error.message }),
+      );
+      await ready(started);
+      const firstPid = await readFile(started, 'utf8');
+      const queuedController = new AbortController();
+      const queued = computer.apps!(queuedController.signal);
+      queuedController.abort(new Error('Queued task cancelled.'));
+      await assert.rejects(queued, /cancelled/);
+      await writeFile(release, 'go');
+      assert.deepEqual(await held, { completed: true });
+      assert.equal(await readFile(effect, 'utf8'), 'completed');
+      assert.equal(await readFile(calls, 'utf8'), 'act\n');
+      assert.deepEqual(await computer.apps!(new AbortController().signal), [
+        { name: firstPid, bundleId: 'fixture' },
+      ]);
+      await Promise.all([rm(started), rm(release), rm(effect)]);
+      const disposedActive = computer.act!(
+        { app: 'fixture', action: 'press', targetToken: 'synthetic' },
+        new AbortController().signal,
+      ).then(
+        () => 'completed',
+        (error: Error) => error.message,
+      );
+      await ready(started);
+      const waiting = Array.from({ length: 16 }, () =>
+        computer.apps!(new AbortController().signal).then(
+          () => 'completed',
+          (error: Error) => error.message,
+        ),
+      );
+      await assert.rejects(computer.apps!(new AbortController().signal), /waiting/);
+      computer.dispose();
+      assert.match(await disposedActive, /stopped/);
+      assert.ok((await Promise.all(waiting)).every((result) => /stopped/.test(result)));
+      assert.equal(existsSync(effect), false);
+      assert.equal(await readFile(calls, 'utf8'), 'act\napps\nact\n');
+      const fresh = await computer.apps!(new AbortController().signal);
+      assert.equal(fresh.length, 1);
+      assert.notEqual(fresh[0]!.name, firstPid);
     } finally {
       computer.dispose();
       await rm(root, { recursive: true, force: true });
@@ -511,6 +562,7 @@ int main(int argc, char **argv) {
         source.indexOf('func observed('),
         source.indexOf('let keyCodes:'),
       );
+      const post = source.slice(source.indexOf('func post('), source.indexOf('func windowFrame('));
       const fixture = join(root, 'tree.swift');
       const executable = join(root, 'tree');
       await writeFile(
@@ -541,11 +593,50 @@ var reads = 0
 var actionReads = 0
 var windowTitleReads: [ObjectIdentifier: Int] = [:]
 var sent = 0
+var acted: [AXUIElement] = []
+var typed = ""
+var keyboardEvents = 0
+var redirectFocusAfter: Int?
+var redirectWindowAfter: Int?
+var changeFocusOnKey = false
+struct CGEventFlags: OptionSet {
+  let rawValue: UInt64
+  static let maskCommand = CGEventFlags(rawValue: 1)
+  static let maskShift = CGEventFlags(rawValue: 2)
+  static let maskAlternate = CGEventFlags(rawValue: 4)
+  static let maskControl = CGEventFlags(rawValue: 8)
+}
+final class CGEventSource {
+  enum State { case privateState }
+  init(stateID: State) {}
+}
+final class CGEvent {
+  let down: Bool
+  var value = ""
+  var flags: CGEventFlags = []
+  init?(keyboardEventSource: CGEventSource?, virtualKey: UInt16, keyDown: Bool) { down = keyDown }
+  func keyboardSetUnicodeString(stringLength: Int, unicodeString: UnsafePointer<UInt16>) {
+    value = String(utf16CodeUnits: unicodeString, count: stringLength)
+  }
+  func postToPid(_ pid: Int32) {
+    keyboardEvents += 1
+    if !down { return }
+    typed += value
+    focusedTarget.value += value
+    if typed.count == redirectFocusAfter || (value.isEmpty && changeFocusOnKey) { focusedTarget = otherTarget }
+    if typed.count == redirectWindowAfter { focusedTarget.window = second }
+  }
+}
+func keyCode(_ key: String, _ flags: CGEventFlags) throws -> UInt16 { 0 }
+func usleep(_ duration: Int) {}
 let suffix = String(repeating: "synthetic document context ", count: 30) + "approval-target-tail"
 let first = AXUIElement("AXWindow", "first window", (1...1200).map {
   AXUIElement("AXGroup", "container \\($0)", [AXUIElement("AXButton", "button \\($0) " + suffix)])
 })
 let target = first.children[0].children[0]
+var focusedTarget = target
+let scopeA = "00000000-0000-4000-8000-000000000001"
+let scopeB = "00000000-0000-4000-8000-000000000002"
 let secure = AXUIElement("AXTextField", "private field")
 secure.subrole = "AXSecureTextField"
 secure.value = "synthetic-secret-value"
@@ -573,7 +664,7 @@ func AXUIElementCopyAttributeValue(_ element: AXUIElement, _ name: String, _ res
   case kAXValueAttribute: result = element.value as NSString
   case kAXWindowAttribute: result = element.window
   case kAXFocusedWindowAttribute: result = first
-  case kAXFocusedUIElementAttribute: result = target
+  case kAXFocusedUIElementAttribute: result = focusedTarget
   case kAXMenuBarAttribute: result = element === root ? menu : nil
   case kAXChildrenAttribute, kAXWindowsAttribute: result = element.children as NSArray
   default: result = nil
@@ -591,13 +682,13 @@ func CFEqual(_ before: AXUIElement, _ after: AXUIElement) -> Bool { before === a
 func AXIsProcessTrusted() -> Bool { true }
 func AXUIElementCreateApplication(_ pid: Int32) -> AXUIElement { root }
 @discardableResult func AXUIElementSetAttributeValue(_ element: AXUIElement, _ attribute: String, _ value: Any) -> AXError { .success }
-func AXUIElementPerformAction(_ element: AXUIElement, _ action: String) -> AXError { sent += 1; return .success }
-func post(_ pid: Int32, _ request: [String: Any]) throws { sent += 1 }
+func AXUIElementPerformAction(_ element: AXUIElement, _ action: String) -> AXError { sent += 1; acted.append(element); return .success }
 func app(_ query: String) throws -> NSRunningApplication { NSRunningApplication() }
 func describe(_ app: NSRunningApplication) -> [String: Any] { [:] }
 ${states}
 ${look}
 ${actions}
+${post}
 func expect(_ success: Bool, _ message: String) {
   if !success { print(message); exit(1) }
 }
@@ -605,7 +696,8 @@ func refused(_ run: () throws -> Void) {
   do { try run(); expect(false, "A changed or private target was accepted") } catch is Failure {} catch { expect(false, "Unexpected validation error") }
 }
 func targetRef() -> String { refs.first { $0.value.element === target }!.key }
-let result = try look("fixture")
+refused { _ = try look("fixture", scope: "") }
+let result = try look("fixture", scope: scopeA)
 let tree = result["tree"] as! String
 let metrics: [String: Any] = ["attributeReads": reads, "actionReads": actionReads, "outputBytes": tree.utf8.count, "outputCharacters": tree.count, "refs": refs.count, "firstWindowTitleReads": windowTitleReads[ObjectIdentifier(first)]!, "secondWindowTitleReads": windowTitleReads[ObjectIdentifier(second)]!]
 FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: metrics))
@@ -617,23 +709,76 @@ expect(actionReads == refs.count, "Descriptions were fetched for omitted contain
 expect(windowTitleReads.values.allSatisfy { $0 < 10 }, "Repeated window fingerprints across controls")
 expect(tree.contains("…") && !tree.contains("approval-target-tail") && !tree.contains("value-tail"), "Unbounded tree previews")
 expect(tree.contains(String(target.value.prefix(200))), "Readable app values were shortened")
-let inspected = try inspect(["app": "fixture", "ref": targetRef()])
+refused { _ = try inspect(["app": "fixture", "ref": targetRef(), "scope": scopeB]) }
+refused { _ = try inspect(["app": "fixture", "ref": targetRef()]) }
+let inspected = try inspect(["app": "fixture", "ref": targetRef(), "scope": scopeA])
 expect((inspected["label"] as! String).contains("approval-target-tail"), "Approval label was shortened")
 let original = target.label
 target.label += " changed after preview"
-refused { _ = try inspect(["app": "fixture", "ref": targetRef()]) }
+refused { _ = try inspect(["app": "fixture", "ref": targetRef(), "scope": scopeA]) }
 target.label = original
 first.label += " changed window"
-refused { _ = try inspect(["app": "fixture", "ref": targetRef()]) }
+refused { _ = try inspect(["app": "fixture", "ref": targetRef(), "scope": scopeA]) }
 refused { _ = try act(["app": "fixture", "action": "press", "targetToken": inspected["token"]!]) }
 expect(sent == 0, "A stale action was sent")
-let next = try look("fixture")
+let next = try look("fixture", scope: scopeA)
 expect((next["tree"] as! String).contains("changed window"), "Window cache survived look")
-let current = try inspect(["app": "fixture", "ref": targetRef()])
+let current = try inspect(["app": "fixture", "ref": targetRef(), "scope": scopeA])
 let secureRef = refs.first { $0.value.element === secure }!.key
-refused { _ = try inspect(["app": "fixture", "ref": secureRef]) }
+refused { _ = try inspect(["app": "fixture", "ref": secureRef, "scope": scopeA]) }
 _ = try act(["app": "fixture", "action": "press", "targetToken": current["token"]!])
-expect(sent == 1 && refs.isEmpty && targets.isEmpty, "Action refs did not expire")
+expect(sent == 1 && refs.isEmpty && targets.isEmpty && observedScope == nil, "Action refs did not expire")
+_ = try look("fixture", scope: scopeA)
+let previousRef = targetRef()
+let otherTarget = first.children[1].children[0]
+first.children.swapAt(0, 1)
+focusedTarget = otherTarget
+_ = try look("fixture", scope: scopeB)
+refused { _ = try inspect(["app": "fixture", "ref": previousRef, "scope": scopeA]) }
+refused { _ = try inspect(["app": "fixture", "scope": scopeA]) }
+expect(sent == 1, "Another turn's observation caused an action")
+let otherRef = refs.first { $0.value.element === otherTarget }!.key
+let other = try inspect(["app": "fixture", "ref": otherRef, "scope": scopeB])
+_ = try act(["app": "fixture", "action": "press", "targetToken": other["token"]!])
+expect(sent == 2 && acted.last === otherTarget, "The observing turn did not act on its own target")
+_ = try look("fixture", scope: scopeA)
+let staleSameScope = targetRef()
+_ = try look("fixture", scope: scopeA)
+refused { _ = try inspect(["app": "fixture", "ref": staleSameScope, "scope": scopeA]) }
+let currentSameScope = try inspect(["app": "fixture", "ref": targetRef(), "scope": scopeA])
+_ = try act(["app": "fixture", "action": "press", "targetToken": currentSameScope["token"]!])
+expect(sent == 3 && acted.last === target, "The latest same-turn ref did not reach its target")
+_ = try look("fixture", scope: scopeB)
+let otherFocus = try inspect(["app": "fixture", "scope": scopeB])
+_ = try act(["app": "fixture", "action": "type", "text": "synthetic", "targetToken": otherFocus["token"]!])
+expect(sent == 3 && typed == "synthetic" && keyboardEvents == 18 && observedScope == nil, "Typing failed while only the target value changed")
+typed = ""
+keyboardEvents = 0
+focusedTarget = target
+_ = try look("fixture", scope: scopeA)
+let typing = try inspect(["app": "fixture", "scope": scopeA])
+redirectFocusAfter = 1
+refused { _ = try act(["app": "fixture", "action": "type", "text": "abc", "targetToken": typing["token"]!]) }
+expect(typed == "a" && keyboardEvents == 2, "Typing continued after focus changed")
+redirectFocusAfter = nil
+typed = ""
+keyboardEvents = 0
+focusedTarget = target
+_ = try look("fixture", scope: scopeA)
+let movedWindow = try inspect(["app": "fixture", "scope": scopeA])
+redirectWindowAfter = 1
+refused { _ = try act(["app": "fixture", "action": "type", "text": "abc", "targetToken": movedWindow["token"]!]) }
+expect(typed == "a" && keyboardEvents == 2, "Typing continued after its window changed")
+redirectWindowAfter = nil
+target.window = first
+typed = ""
+keyboardEvents = 0
+focusedTarget = target
+_ = try look("fixture", scope: scopeA)
+let key = try inspect(["app": "fixture", "scope": scopeA])
+changeFocusOnKey = true
+_ = try act(["app": "fixture", "action": "key", "key": "tab", "targetToken": key["token"]!])
+expect(keyboardEvents == 2 && focusedTarget === otherTarget, "A focus-changing key did not release")
 `,
       );
       const built = await runProcess('/usr/bin/swiftc', ['-O', '-o', executable, fixture], {

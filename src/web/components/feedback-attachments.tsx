@@ -24,7 +24,7 @@ import {
   Trash2,
   Undo2,
   X,
-} from 'lucide-react';
+} from './icons';
 import { feedbackLimits } from '../../shared/feedback';
 import {
   feedbackAnnotationColors as annotationColors,

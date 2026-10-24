@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import * as Popover from '@radix-ui/react-popover';
-import { CalendarClock, MessageCircle, ScanSearch, Undo2, Zap } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { CalendarClock, MessageCircle, ScanSearch, Undo2, Zap } from '../components/icons';
 import type { TrustEntry, TrustPage, TrustSource, TrustView } from '../../shared/trust';
 import type { AccountPreferences } from '../../shared/account';
 import type {
@@ -21,8 +20,11 @@ import {
   type DateFormat,
 } from '../lib/date-format';
 import { PageTitle } from '../components/page-title';
+import { StatementValue } from '../components/statement-value';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { VaultUse } from '../components/vault-activity';
+import { becauseText } from '../lib/trust-because';
+import { money } from '../lib/money';
 import { vaultItems } from './vault';
 
 const day = 86_400_000;
@@ -35,16 +37,6 @@ const sources: Record<TrustSource, { icon: typeof Zap; label: string }> = {
   check: { icon: ScanSearch, label: 'Activity check' },
   resume: { icon: Undo2, label: 'Approved action' },
 };
-
-function money(value: number) {
-  if (value > 0 && value < 0.01) return '<$0.01';
-  return formatNumber(value, {
-    style: 'currency',
-    currency: 'USD',
-    currencyDisplay: 'narrowSymbol',
-    minimumFractionDigits: Number.isInteger(value) && value >= 1 ? 0 : 2,
-  });
-}
 
 function date(ms: number, format: DateFormat) {
   return new Date(ms).toLocaleDateString(format.locale, {
@@ -60,28 +52,6 @@ function times(count: number) {
 
 function saveLimits(body: { monthlyUsd?: number | null; taskUsd?: number | null }) {
   return api('/api/trust/limit', { method: 'PUT', body: JSON.stringify(body) });
-}
-
-function Value({
-  text,
-  label,
-  children,
-}: {
-  text: ReactNode;
-  label: string;
-  children(close: () => void): ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger className="usage-value">{text}</Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content className="usage-pop" align="start" sideOffset={8} aria-label={label}>
-          {children(() => setOpen(false))}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
-  );
 }
 
 function Chart({ month, limit }: { month: TrustView['month']; limit: number | undefined }) {
@@ -243,15 +213,31 @@ function TaskLimit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
   );
 }
 
-function StandingInstruction({ rule, onSaved }: { rule: string; onSaved(): void }) {
-  const [draft, setDraft] = useState(rule);
+function RuleEditor({
+  field,
+  value,
+  label,
+  placeholder,
+  hint,
+  remove,
+  onSaved,
+}: {
+  field: 'notificationRule' | 'rules';
+  value: string;
+  label: string;
+  placeholder: string;
+  hint: string;
+  remove: string;
+  onSaved(): void;
+}) {
+  const [draft, setDraft] = useState(value);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  async function save(notificationRule: string) {
+  async function save(text: string) {
     setBusy(true);
     setError('');
     try {
-      await savePreferences({ notificationRule });
+      await savePreferences({ [field]: text });
       onSaved();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -270,15 +256,15 @@ function StandingInstruction({ rule, onSaved }: { rule: string; onSaved(): void 
         maxLength={4000}
         value={draft}
         autoFocus
-        aria-label="Standing instruction"
-        placeholder="Whenever Ana sends an invoice, forward it to accounting@acme.com."
+        aria-label={label}
+        placeholder={placeholder}
         onChange={(event) => setDraft(event.target.value)}
       />
       <div className="usage-rule-actions">
-        <Button size="sm" type="submit" disabled={busy || draft.trim() === rule}>
+        <Button size="sm" type="submit" disabled={busy || draft.trim() === value}>
           Save
         </Button>
-        {rule && (
+        {value && (
           <Button
             type="button"
             size="sm"
@@ -286,11 +272,11 @@ function StandingInstruction({ rule, onSaved }: { rule: string; onSaved(): void 
             disabled={busy}
             onClick={() => void save('')}
           >
-            Stop
+            {remove}
           </Button>
         )}
       </div>
-      <small>nod reads and drafts on its own, and does only what this says.</small>
+      <small>{hint}</small>
       {error && <Notice>{error}</Notice>}
     </form>
   );
@@ -300,11 +286,13 @@ function Sentence({
   view,
   vault,
   rule,
+  rules,
   onSaved,
 }: {
   view: TrustView;
   vault: VaultActivity;
   rule: string;
+  rules: string;
   onSaved(): void;
 }) {
   const format = useDateFormat();
@@ -356,29 +344,32 @@ function Sentence({
     <>
       <p className="statement-summary usage-sentence">
         nod spent{' '}
-        <Value text={money(month.spentUsd)} label={`Spending in ${name}`}>
+        <StatementValue text={money(month.spentUsd)} label={`Spending in ${name}`}>
           {() => <Month view={view} />}
-        </Value>
+        </StatementValue>
         {limit ? (
           <>
             {' '}
             of{' '}
-            <Value text={money(limit.monthlyUsd)} label="Monthly limit">
+            <StatementValue text={money(limit.monthlyUsd)} label="Monthly limit">
               {limitForm}
-            </Value>{' '}
+            </StatementValue>{' '}
             in {name}
           </>
         ) : (
           <>
             {' '}
             in {name}, with{' '}
-            <Value text="no monthly limit" label="Monthly limit">
+            <StatementValue text="no monthly limit" label="Monthly limit">
               {limitForm}
-            </Value>
+            </StatementValue>
           </>
         )}
         . {taskUsd === null ? 'Tasks ' : 'Tasks check in at '}
-        <Value text={taskUsd === null ? 'never check in' : money(taskUsd)} label="Task check-in">
+        <StatementValue
+          text={taskUsd === null ? 'never check in' : money(taskUsd)}
+          label="Task check-in"
+        >
           {(close) => (
             <TaskLimit
               view={view}
@@ -388,7 +379,7 @@ function Sentence({
               }}
             />
           )}
-        </Value>
+        </StatementValue>
         .
         <br />
         {done.length ? (
@@ -407,13 +398,45 @@ function Sentence({
         )}
         <br />
         On its own, nod{' '}
-        <Value
+        <StatementValue
           text={rule ? 'follows your instruction' : 'watches nothing'}
           label="Standing instruction"
         >
-          {(close) => <StandingInstruction rule={rule} onSaved={close} />}
-        </Value>
+          {(close) => (
+            <RuleEditor
+              field="notificationRule"
+              value={rule}
+              label="Standing instruction"
+              placeholder="Whenever Ana sends an invoice, forward it to accounting@acme.com."
+              hint="nod reads and drafts on its own, and does only what this says."
+              remove="Stop"
+              onSaved={() => {
+                close();
+                onSaved();
+              }}
+            />
+          )}
+        </StatementValue>
         {rule ? <>: “{rule}”</> : '.'}
+        <br />
+        {rules ? 'Everywhere, nod keeps ' : 'You haven’t set any '}
+        <StatementValue text={rules ? 'your rules' : 'rules'} label="Rules">
+          {(close) => (
+            <RuleEditor
+              field="rules"
+              value={rules}
+              label="Rules"
+              placeholder="Always ask before sending email outside my company."
+              hint="Say what nod may do without asking, or must ask you about first."
+              remove="Clear"
+              onSaved={() => {
+                close();
+                onSaved();
+              }}
+            />
+          )}
+        </StatementValue>
+        {rules ? <>: “{rules}”</> : '.'}
       </p>
       {limit?.reached && (
         <Notice kind="info">
@@ -428,7 +451,17 @@ function Sentence({
 function TrustRow({ entry }: { entry: TrustEntry }) {
   const format = useDateFormat();
   const { icon: Icon, label } = sources[entry.source];
-  const did = [...new Set(entry.actions)].join(', ');
+  const did = [...new Set(entry.actions.map((action) => action.label))].join(', ');
+  const explained = entry.actions.filter((action) => action.because);
+  const reasons = [
+    ...new Set(
+      explained.map((action) =>
+        new Set(explained.map((item) => item.label)).size > 1
+          ? `${action.label} · ${becauseText(action.because!)}`
+          : becauseText(action.because!),
+      ),
+    ),
+  ];
   return (
     <div className="vault-use">
       <span className="vault-glyph" aria-hidden="true">
@@ -440,6 +473,11 @@ function TrustRow({ entry }: { entry: TrustEntry }) {
           {[formatTime(entry.at, format), label].filter(Boolean).join(' · ')}
           {entry.error ? ` · ${entry.error}` : did ? ` · ${did}` : ''}
         </span>
+        {reasons.map((reason) => (
+          <small key={reason} className="usage-because" title={reason}>
+            {reason}
+          </small>
+        ))}
       </span>
       {entry.costUsd !== null && <span className="usage-row-cost">{money(entry.costUsd)}</span>}
     </div>
@@ -456,10 +494,12 @@ function Statement({
   view,
   vault,
   opener,
+  session,
 }: {
-  view: TrustView;
+  view: TrustPage;
   vault: VaultActivity;
   opener(entry: VaultActivityEntry): (() => void) | undefined;
+  session?: string;
 }) {
   const format = useDateFormat();
   const [trust, setTrust] = useState<Stream<TrustEntry>>(view);
@@ -491,7 +531,7 @@ function Statement({
     setLoading(true);
     setError('');
     const query = (next: { at: string; id: string }) =>
-      `at=${encodeURIComponent(next.at)}&id=${next.id}`;
+      `at=${encodeURIComponent(next.at)}&id=${next.id}${session ? `&session=${session}` : ''}`;
     try {
       const [olderTrust, olderUses] = await Promise.all([
         frontier(trust) === cutoff
@@ -557,7 +597,46 @@ function Statement({
   );
 }
 
+function SessionStatement({
+  session,
+  vault,
+  opener,
+  onClear,
+}: {
+  session: string;
+  vault: VaultActivity;
+  opener(entry: VaultActivityEntry): (() => void) | undefined;
+  onClear(): void;
+}) {
+  const page = usePageData<TrustPage>(`/api/trust/entries?session=${session}`);
+  const none = useMemo(() => ({ ...vault, entries: [], next: undefined }), [vault]);
+  if (page.error) return <Notice>{page.error}</Notice>;
+  if (!page.data) return <Loading label="Opening usage…" />;
+  return (
+    <>
+      <p className="usage-filter">
+        One task or run.{' '}
+        <button type="button" onClick={onClear}>
+          Show all
+        </button>
+      </p>
+      <Statement view={page.data} vault={none} opener={opener} session={session} />
+    </>
+  );
+}
+
+function sessionFilter() {
+  const match = /^\?session=([0-9a-f-]{36})$/.exec(
+    window.location.pathname === '/usage' ? window.location.search : '',
+  );
+  return match?.[1];
+}
+
 export function Usage({ hidden = false }: { hidden?: boolean }) {
+  const [session, setSession] = useState(sessionFilter);
+  useEffect(() => {
+    if (!hidden) setSession(sessionFilter());
+  }, [hidden]);
   const trust = usePageData<TrustView>('/api/trust');
   const vault = usePageData<VaultActivity>('/api/vault/activity');
   const preferences = usePageData<AccountPreferences>('/api/preferences');
@@ -599,9 +678,25 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
             view={trust.data}
             vault={vault.data}
             rule={preferences.data.notificationRule}
-            onSaved={() => void trust.refresh()}
+            rules={preferences.data.rules}
+            onSaved={() => {
+              void trust.refresh();
+              void preferences.refresh();
+            }}
           />
-          <Statement view={trust.data} vault={vault.data} opener={opener} />
+          {session ? (
+            <SessionStatement
+              session={session}
+              vault={vault.data}
+              opener={opener}
+              onClear={() => {
+                window.history.replaceState(null, '', '/usage');
+                setSession(undefined);
+              }}
+            />
+          ) : (
+            <Statement view={trust.data} vault={vault.data} opener={opener} />
+          )}
         </div>
       ) : error ? (
         <Notice>{error}</Notice>

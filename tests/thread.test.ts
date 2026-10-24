@@ -116,6 +116,15 @@ test(
       resume: thread.resumeAfterCredentials,
       retry: thread.retryCredentials,
     });
+    const { createChatVerification } = await import('../src/server/chat-verification.ts');
+    const verification = await createChatVerification(db.pool, {
+      ownerId,
+      keyStore: { getKey: async () => fixtureKey },
+      refresh() {},
+      submitCode: async () => {
+        throw new Error('Unused fixture capability.');
+      },
+    });
     const approvals = await createApprovals(
       async () => {
         executed++;
@@ -173,7 +182,7 @@ test(
       submitMessage: userMessages.submit,
       configuration: () => ({ ...configuration(), llmReady: true }),
       planningTasks: onboarding.planning,
-      messageCosts: async () => ({}),
+      receipts: async () => ({}),
     });
     onboarding.registerRoutes(app);
     const tasks = createTasks({ pool: db.pool, ownerId });
@@ -266,6 +275,7 @@ test(
       present: (...input) => presentInterruption(...input),
       observeTurn: (_turnId, operation) => analytics.withRun(ownerId, operation),
       executeConfirmation: async () => undefined,
+      bindVerificationQuestion: verification.bindQuestion,
       connectedApps: readConnectedApps,
       spendingLimitReached: async () => limitReached,
       speech: {
@@ -425,12 +435,19 @@ test(
           return { status: 'waiting_user', message: 'Which account should I use?' };
         if (context.prompt === 'ask-approval')
           return { status: 'waiting_user', waitingFor: 'approval' };
-        if (context.prompt === 'ask-credentials')
+        if (context.prompt === 'ask-credentials') {
+          const request = randomUUID();
+          await db.pool.query(
+            `INSERT INTO credential_requests(id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,selectors,inspection)
+             VALUES($1,$2,$3,$4,$5,$5,'https://fixture.test','Synthetic code','otp','{}','{}')`,
+            [request, `synthetic-${request}`, ownerId, context.threadId, context.turnId],
+          );
           return {
             status: 'waiting_credentials',
             waitingFor: 'credentials',
             message: 'Enter the synthetic password. [Sign in](/vault/fixture)',
           };
+        }
         await context.reply(`done: ${context.prompt}`);
         return { status: 'succeeded' };
       },
@@ -771,6 +788,24 @@ test(
         firstThreadId = first.threadId;
       });
 
+      await t.test(
+        'message text reaches storage and the runtime without another parse',
+        async () => {
+          const value =
+            'Read <https://example.com/a_(b)?items[]=one&next=%26copy%3B#part_two>.\n\n`C:\\work\\file_name.txt` and <u>literal &amp; text</u>.';
+          const response = await sendJson({ text: value });
+          assert.equal(response.statusCode, 200);
+          const submitted = response.json<SubmitMessageResponse>();
+          await waitFor(settled(submitted.turnId));
+          assert.equal(ran(submitted.turnId)?.prompt, value);
+          assert.equal(
+            (await db.pool.query('SELECT text FROM messages WHERE id=$1', [submitted.messageId]))
+              .rows[0].text,
+            value,
+          );
+        },
+      );
+
       await t.test('a backlog of drain jobs does not delay the next turn', async () => {
         const threadId = (await thread.activeThread(db.pool)).id;
         for (let index = 0; index < 30; index++)
@@ -915,6 +950,123 @@ test(
         },
       );
 
+      await t.test(
+        'live activity shows owner-started work with its latest step and site, never background runs or finished work',
+        async (t) => {
+          const { createActivity } = await import('../src/server/activity.ts');
+          const activity = createActivity({ pool: db.pool, ownerId });
+          const threadId = (await thread.activeThread(db.pool)).id;
+          const ids: string[] = [];
+          const sessions: string[] = [];
+          t.after(async () => {
+            activity.close();
+            await db.pool.query('DELETE FROM turn_events WHERE turn_id=ANY($1::uuid[])', [ids]);
+            await db.pool.query('DELETE FROM messages WHERE turn_id=ANY($1::uuid[])', [ids]);
+            await db.pool.query('DELETE FROM tasks WHERE session_id=ANY($1::uuid[])', [sessions]);
+            await db.pool.query('DELETE FROM turns WHERE id=ANY($1::uuid[])', [ids]);
+          });
+          const start = Date.now() - 60_000;
+          const at = (seconds: number) => new Date(start + seconds * 1000);
+          const turn = async (source: string, session = randomUUID()) => {
+            const id = randomUUID();
+            ids.push(id);
+            await db.pool.query(
+              `INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background,started_at)
+               VALUES($1,$2,$3,$4,$5,'activity fixture','running',$6,$7)`,
+              [id, ownerId, threadId, session, source, source !== 'user', at(0)],
+            );
+            return id;
+          };
+          const event = (
+            turnId: string,
+            type: string,
+            seconds: number,
+            summary = '',
+            site: string | null = null,
+          ) =>
+            db.pool.query(
+              'INSERT INTO turn_events(id,turn_id,type,summary,site,created_at) VALUES($1,$2,$3,$4,$5,$6)',
+              [randomUUID(), turnId, type, summary, site, at(seconds)],
+            );
+          const chat = await turn('user');
+          await event(chat, 'started', 1);
+          await event(chat, 'step', 2, 'Reading the synthetic page.');
+          await event(chat, 'tool_start', 3, 'apps');
+          await event(chat, 'tool_start', 4, 'browser', 'example.com');
+          await event(chat, 'step', 5, 'Comparing two synthetic prices.');
+          const session = randomUUID();
+          const taskId = randomUUID();
+          sessions.push(session);
+          await db.pool.query(
+            `INSERT INTO tasks(id,owner_id,title,done_when,now_text,session_id)
+             VALUES($1,$2,'Synthetic task','Done','Starting',$3)`,
+            [taskId, ownerId, session],
+          );
+          const resumed = await turn('resume', session);
+          await event(resumed, 'step', 1, 'Checking synthetic seats.');
+          const quietSession = randomUUID();
+          sessions.push(quietSession);
+          await db.pool.query(
+            `INSERT INTO tasks(id,owner_id,title,done_when,now_text,session_id)
+             VALUES($1,$2,'Quiet synthetic task','Done','Reading the synthetic page.',$3)`,
+            [randomUUID(), ownerId, quietSession],
+          );
+          const quiet = await turn('task', quietSession);
+          await event(quiet, 'tool_start', 1, 'browser', 'example.com');
+          const schedule = await turn('schedule');
+          await event(schedule, 'step', 1, 'A scheduled synthetic step.');
+          const background = await turn('event');
+          await event(background, 'tool_start', 1, 'apps');
+          const finished = await turn('user');
+          await event(finished, 'step', 1, 'Writing the synthetic answer.');
+          await event(finished, 'final', 2);
+          const spoke = await turn('user');
+          await event(spoke, 'step', 1, 'Before the synthetic update.');
+          await transaction(async (client) => {
+            const message = await thread.insertAssistantMessage(
+              client,
+              { threadId, turnId: spoke },
+              'A synthetic update.',
+            );
+            await client.query('UPDATE messages SET created_at=$2 WHERE id=$1', [message, at(2)]);
+          }, db.pool);
+          await event(spoke, 'tool_start', 3, 'apps');
+          const live = new Map((await activity.current()).map((item) => [item.turnId, item]));
+          assert.deepEqual(
+            [live.get(chat)?.step, live.get(chat)?.site, live.get(chat)?.taskId],
+            ['Comparing two synthetic prices.', 'example.com', null],
+          );
+          assert.deepEqual(
+            [live.get(resumed)?.title, live.get(resumed)?.step, live.get(resumed)?.taskId],
+            ['Synthetic task', 'Checking synthetic seats.', taskId],
+          );
+          assert.deepEqual([live.get(spoke)?.step, live.get(spoke)?.site], [null, null]);
+          assert.deepEqual(
+            [live.get(quiet)?.title, live.get(quiet)?.step, live.get(quiet)?.site],
+            ['Quiet synthetic task', 'Reading the synthetic page.', 'example.com'],
+          );
+          for (const turnId of [schedule, background, finished])
+            assert.equal(live.has(turnId), false, turnId);
+          await event(finished, 'steered', 3);
+          assert.ok((await activity.current()).some((item) => item.turnId === finished));
+          const otherThread = randomUUID();
+          await db.pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'another-owner')", [
+            otherThread,
+          ]);
+          const other = randomUUID();
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,started_at)
+             VALUES($1,'another-owner',$2,$2,'user','activity fixture','running',now())`,
+            [other, otherThread],
+          );
+          t.after(async () => {
+            await db.pool.query('DELETE FROM turns WHERE id=$1', [other]);
+            await db.pool.query('DELETE FROM threads WHERE id=$1', [otherThread]);
+          });
+          assert.ok(!(await activity.current()).some((item) => item.turnId === other));
+        },
+      );
+
       await t.test('a reached spending limit pauses chat and background turns', async (t) => {
         const raced = await thread.submitUserMessage('limit race fixture');
         await waitFor(settled(raced.turnId));
@@ -959,6 +1111,46 @@ test(
           assert.equal(row.status, 'failed');
           assert.match(row.error, /spending limit was reached/);
         }
+        const notices = async (turnId: string) =>
+          (
+            await db.pool.query(
+              "SELECT text FROM messages WHERE turn_id=$1 AND role='assistant' AND stream_id=$2",
+              [turnId, `failure:${turnId}`],
+            )
+          ).rows.map((row) => row.text);
+        for (const turnId of [chat.turnId, background[2]!]) {
+          await waitFor(async () => (await notices(turnId)).length === 1);
+          assert.deepEqual(await notices(turnId), [
+            `I couldn't finish this. ${spendingLimitReached}`,
+          ]);
+        }
+        for (const turnId of background.slice(0, 2)) assert.deepEqual(await notices(turnId), []);
+        const taskSession = randomUUID();
+        const taskMessage = await transaction(
+          (client) =>
+            thread.insertAssistantMessage(
+              client,
+              { threadId: chat.threadId, turnId: chat.turnId },
+              'Synthetic check-in task.',
+            ),
+          db.pool,
+        );
+        await db.pool.query(
+          `INSERT INTO tasks(id,owner_id,title,done_when,now_text,session_id,message_id)
+           VALUES($1,$2,'Synthetic check-in','Done','Checking',$3,$4)`,
+          [randomUUID(), ownerId, taskSession, taskMessage],
+        );
+        const checkIn = await thread.enqueueTurn('limit task check-in fixture', {
+          source: 'schedule',
+          sourceId: `schedule:limit:${randomUUID()}:2`,
+          sessionId: taskSession,
+          background: true,
+        });
+        await waitFor(settled(checkIn));
+        await waitFor(async () => (await notices(checkIn)).length === 1);
+        assert.deepEqual(await notices(checkIn), [
+          `I couldn't finish this. ${spendingLimitReached}`,
+        ]);
       });
 
       await t.test(
@@ -1054,6 +1246,33 @@ test(
           assert.equal(ran(first.turnId)?.workspacePath, workspace);
           assert.equal(ran(first.turnId)?.attachments[0]?.path, join(workspace, staged));
           assert.equal(stagedReads.get('read attachment'), 'synthetic attachment bytes');
+          const sticker = await storeArtifact(
+            Buffer.from(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5ZkAAAAASUVORK5CYII=',
+              'base64',
+            ),
+            'sticker.png',
+            'image/png',
+          );
+          const stickerTurn = await thread.submitUserMessage('', [
+            { ...sticker, source: 'sticker' },
+          ]);
+          await waitFor(settled(stickerTurn.turnId));
+          assert.equal(ran(stickerTurn.turnId)?.prompt, '');
+          assert.equal(ran(stickerTurn.turnId)?.attachments[0]?.source, 'sticker');
+          const photo = await sendJson({ text: '', attachmentIds: [sticker.id] });
+          assert.equal(photo.statusCode, 200);
+          const photoTurn = photo.json();
+          await waitFor(settled(photoTurn.turnId));
+          assert.equal(ran(photoTurn.turnId)?.prompt, '');
+          assert.equal(ran(photoTurn.turnId)?.attachments[0]?.mimeType, 'image/png');
+          const storedPhoto = (
+            await db.pool.query('SELECT text,attachments FROM messages WHERE id=$1', [
+              photoTurn.messageId,
+            ])
+          ).rows[0];
+          assert.equal(storedPhoto.text, '');
+          assert.equal(storedPhoto.attachments[0].id, sticker.id);
           const second = await thread.submitUserMessage('use attachment again', [], {
             channel: 'web',
           });
@@ -1219,10 +1438,27 @@ test(
               ).rows[0],
               { status: 'waiting', waiting_reason: reason },
             );
-            if (reason === 'credentials')
+            if (reason === 'credentials') {
               assert.deepEqual(await postedWithWaitingState(waiting.turnId), [
                 { text: 'Enter the synthetic password. [Sign in](/vault/fixture)', together: true },
               ]);
+              assert.deepEqual(
+                (
+                  await db.pool.query(
+                    `SELECT q.xmin=m.xmin AND m.xmin=u.xmin AS together
+                   FROM chat_verification_questions q JOIN messages m ON m.id=q.message_id
+                   JOIN credential_requests r ON r.id=q.request_id AND r.turn_id=m.turn_id AND r.owner_id=m.owner_id
+                   JOIN turns u ON u.id=m.turn_id WHERE u.id=$1`,
+                    [waiting.turnId],
+                  )
+                ).rows,
+                [{ together: true }],
+              );
+              await db.pool.query(
+                "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+                [waiting.turnId],
+              );
+            }
           }
           await waitFor(settledThread);
           const answer = await thread.submitUserMessage('the work account', [], { channel: 'web' });
@@ -1295,9 +1531,14 @@ test(
           await waitFor(settled(failed.turnId));
           await delay(1200);
           const lines = logged.mock.calls.map((call) => String(call.arguments[0]));
-          const failure = lines.find((line) => line.includes(failed.turnId));
-          assert.match(failure ?? '', /Error \| code=E_SYNTHETIC/);
+          const failure = lines.find((line) => line.includes('turn_failed'));
+          assert.deepEqual(JSON.parse(failure ?? '{}'), {
+            event: 'turn_failed',
+            name: 'Error',
+            code: 'E_SYNTHETIC',
+          });
           assert.doesNotMatch(failure ?? '', /private-fixture/);
+          assert.ok(!failure?.includes(failed.turnId));
           const row = (
             await db.pool.query('SELECT status,error FROM turns WHERE id=$1', [failed.turnId])
           ).rows[0];
@@ -1393,6 +1634,7 @@ test(
                   );
                 return mode === 'invalid' ? ' ' : completeText;
               };
+              const logStart = logged.mock.calls.length;
               let failed: { threadId: string; turnId: string };
               if (mode.startsWith('resume')) {
                 const parent = await thread.submitUserMessage('Synthetic parent request.');
@@ -1413,7 +1655,9 @@ test(
                 };
               } else failed = await thread.submitUserMessage('runtime-failure');
               await waitFor(() =>
-                logged.mock.calls.some((call) => String(call.arguments[0]).includes(failed.turnId)),
+                logged.mock.calls
+                  .slice(logStart)
+                  .some((call) => String(call.arguments[0]).includes('turn_failed')),
               );
               assert.equal(presented, 1);
               assert.equal(
@@ -1467,7 +1711,11 @@ test(
         assert.doesNotThrow(() =>
           db.pool.emit('error', Object.assign(new Error('private-fixture'), { code: '57P01' })),
         );
-        assert.match(String(logged.mock.calls[0].arguments[0]), /Error 57P01/);
+        assert.deepEqual(JSON.parse(String(logged.mock.calls[0].arguments[0])), {
+          event: 'database_idle_error',
+          name: 'Error',
+          code: '57P01',
+        });
         assert.doesNotMatch(String(logged.mock.calls[0].arguments[0]), /private-fixture/);
       });
 
@@ -1505,6 +1753,55 @@ test(
         assert.equal(await turnStatus(after.turnId), 'succeeded');
       });
 
+      await t.test(
+        'computer call cancellation is fenced independently from its owner turn',
+        async () => {
+          const previous = dependencies.computer;
+          const controller = new AbortController();
+          const effects: string[] = [];
+          let operation: AbortSignal | undefined;
+          let releaseAction!: () => void;
+          const ready = new Promise<void>((resolve) => {
+            releaseAction = resolve;
+          });
+          const prompt = 'computer call cancellation fixture';
+          block(prompt);
+          dependencies.computer = async (_turn, args, options) => {
+            operation = options.signal;
+            if (args.command === 'pending') await ready;
+            options.signal.throwIfAborted();
+            effects.push(String(args.command));
+            return { exitCode: 0, output: 'synthetic result' };
+          };
+          const turn = await thread.submitUserMessage(prompt, [], { channel: 'web' });
+          try {
+            await waitFor(() => Boolean(ran(turn.turnId)));
+            const context = ran(turn.turnId)!;
+            const pending = context.computer!(
+              { action: 'shell', command: 'pending' },
+              undefined,
+              controller.signal,
+            );
+            const rejected = assert.rejects(pending, /script ended/);
+            await waitFor(() => Boolean(operation));
+            controller.abort(new Error('The script ended.'));
+            releaseAction();
+            await rejected;
+            assert.equal(operation!.aborted, true);
+            assert.equal(context.signal.aborted, false);
+            assert.equal(await turnStatus(turn.turnId), 'running');
+            assert.deepEqual(effects, []);
+            await context.computer!({ action: 'shell', command: 'following' });
+            assert.deepEqual(effects, ['following']);
+          } finally {
+            releaseAction();
+            release(prompt);
+            await waitFor(settled(turn.turnId));
+            dependencies.computer = previous;
+          }
+        },
+      );
+
       await t.test('computer Stop leaves unrelated sessions running', async () => {
         const { createComputerPolicy } = await import('../src/server/computer.ts');
         const app = { name: 'Synthetic Notes', bundleId: 'fixture.notes' };
@@ -1524,7 +1821,7 @@ test(
             },
             dispose() {},
           },
-          check: async () => ({ confirm: false }),
+          check: async () => ({ confirm: false, basis: { kind: 'read' } }),
           request: async (_turn, _action, _args, options) =>
             (options.run as () => Promise<unknown>)(),
           lock: (id, write) => thread.withTurnLock(id, write),
@@ -1593,7 +1890,7 @@ test(
                     ref: 'e1',
                     targetToken: 'synthetic-target',
                   },
-                  { turnId: target },
+                  { turnId: target, basis: { kind: 'approved' } },
                 ),
               );
               await waitFor(() => Boolean(nativeSignal));
@@ -2468,7 +2765,15 @@ test(
           for (let i = 0; i < 65; i++)
             await db.pool.query(
               "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,created_at) VALUES($1,$2,'assistant',$3,$4,$5,'2026-09-20 12:00:00.123456+00'::timestamptz)",
-              [randomUUID(), ownerId, `Fixture ${i}`, freshThread, turn],
+              [
+                randomUUID(),
+                ownerId,
+                i === 0
+                  ? `Fixture ${i} ${'preface '.repeat(100)}crimson seats beside sapphire curtains`
+                  : `Fixture ${i}`,
+                freshThread,
+                turn,
+              ],
             );
           const foreignThread = randomUUID(),
             foreign = randomUUID(),
@@ -2481,7 +2786,7 @@ test(
             [foreignTurn, foreignThread],
           );
           await db.pool.query(
-            "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'other-owner','assistant','private content',$2,$3)",
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'other-owner','assistant','Fixture private content',$2,$3)",
             [foreign, foreignThread, foreignTurn],
           );
           const archived = (
@@ -2490,6 +2795,10 @@ test(
               [firstThreadId],
             )
           ).rows[0] as { id: string; turn_id: string };
+          await db.pool.query(
+            "UPDATE messages SET text='Fixture archived content',created_at=now() WHERE id=$1",
+            [archived.id],
+          );
           const state = (await request('GET', '/api/state')).json<{
             messages: Array<{ id: string; turnId: string | null }>;
             turns: Array<{ id: string; status: string }>;
@@ -2511,6 +2820,27 @@ test(
               state.turns.some((entry) => entry.id === id),
               false,
             );
+          const matches = (await request('GET', '/api/messages/search?q=Fixture')).json<
+            Array<{ id: string }>
+          >();
+          assert.ok(matches.length > 0);
+          assert.equal(
+            matches.some((message) => message.id === foreign || message.id === archived.id),
+            false,
+          );
+          const separated = (
+            await request('GET', '/api/messages/search?q=crimson%20sapphire')
+          ).json<Array<{ snippet: string }>>();
+          assert.equal(separated.length, 1);
+          assert.match(separated[0].snippet, /crimson seats beside sapphire curtains/);
+          assert.equal(separated[0].snippet.includes('<b>'), false);
+          for (const id of [foreign, archived.id])
+            assert.equal((await request('GET', `/api/messages/around/${id}`)).statusCode, 404);
+          const around = await request('GET', `/api/messages/around/${matches[0].id}`);
+          assert.equal(around.statusCode, 200);
+          assert.ok(
+            around.json<Array<{ id: string }>>().some((message) => message.id === matches[0].id),
+          );
           const expected = new Set(
             (
               await db.pool.query('SELECT id FROM messages WHERE thread_id=$1', [freshThread])
@@ -2533,6 +2863,38 @@ test(
             cursor = `?before=${encodeURIComponent(page.messages[0].createdAt)}&beforeId=${page.messages[0].id}&threadId=${freshThread}`;
           }
           assert.deepEqual(seen, expected);
+          const quoted = await db.pool.connect();
+          try {
+            await quoted.query('BEGIN');
+            const clientMessageId = randomUUID();
+            const options = {
+              client: quoted,
+              threadId: freshThread,
+              clientMessageId,
+              replyToMessageId: matches[0].id,
+              replyQuote: 'Fixture',
+            };
+            const posted = await thread.submitUserMessage('Use November here.', [], options);
+            const stored = (
+              await quoted.query('SELECT text,reply_quote FROM messages WHERE id=$1', [
+                posted.messageId,
+              ])
+            ).rows[0];
+            assert.deepEqual(stored, { text: 'Use November here.', reply_quote: 'Fixture' });
+            assert.equal(
+              (await thread.submitUserMessage('Use November here.', [], options)).messageId,
+              posted.messageId,
+            );
+            await assert.rejects(
+              thread.submitUserMessage('Use November here.', [], {
+                ...options,
+                replyQuote: 'Changed passage',
+              }),
+            );
+          } finally {
+            await quoted.query('ROLLBACK');
+            quoted.release();
+          }
           const message = [...seen][0];
           const react = (id: string, reaction: string) =>
             request('POST', `/api/messages/${id}/reaction`, { reaction });
@@ -3026,13 +3388,25 @@ test(
             await checkResume(`credentials-retry:${resumed}`);
             assert.equal(await thread.resumeAfterConnection(research, 'Synthetic source'), true);
             const connected = await checkResume(`connection:${research}`);
-            await db.pool.query(
-              "UPDATE turns SET status='waiting',waiting_reason='question',handoff_browser_id=session_id::text WHERE id=$1",
-              [connected],
-            );
-            assert.equal(await thread.resumeAfterHandoff(connected), true);
-            await checkResume(`handoff:${connected}`);
-            assert.equal(await thread.resumeAfterHandoff(connected), false);
+            let handoffTurn = connected;
+            for (const channel of ['telegram:synthetic', 'whatsapp:synthetic']) {
+              await db.pool.query(
+                "UPDATE turns SET status='waiting',waiting_reason='question',handoff_browser_id=session_id::text,channel=$2 WHERE id=$1",
+                [handoffTurn, channel],
+              );
+              assert.equal(await thread.resumeAfterHandoff(handoffTurn), true);
+              const continued = await checkResume(`handoff:${handoffTurn}`);
+              const resumed = (
+                await db.pool.query('SELECT session_id,channel FROM turns WHERE id=$1', [continued])
+              ).rows[0];
+              const original = (
+                await db.pool.query('SELECT session_id FROM turns WHERE id=$1', [handoffTurn])
+              ).rows[0];
+              assert.equal(resumed.session_id, original.session_id);
+              assert.equal(resumed.channel, channel);
+              assert.equal(await thread.resumeAfterHandoff(handoffTurn), false);
+              handoffTurn = continued;
+            }
           } finally {
             quietBackgroundWork = false;
             dependencies.readArtifact = previousRead;
@@ -3112,6 +3486,7 @@ const memoryFixture = async (tables: string[] = []) => {
   const post = async (
     text: string,
     options: {
+      id?: string;
       owner?: string;
       role?: string;
       at?: string;
@@ -3120,7 +3495,7 @@ const memoryFixture = async (tables: string[] = []) => {
       suggestions?: string;
     } = {},
   ) => {
-    const id = randomUUID();
+    const id = options.id ?? randomUUID();
     const turnId = randomUUID();
     await pool.query(
       'INSERT INTO messages(id,owner_id,role,text,turn_id,attachments,created_at,thread_id,suggestions) VALUES($1,$2,$3,$4,$5,$6::jsonb,COALESCE($7::timestamptz,now()),$8,$9::jsonb)',
@@ -3351,7 +3726,7 @@ test(
       const flat = 'Our holiday flat is at Rua Antiga 5, Faro.';
       const older = await post(flat, { thread: randomUUID() });
       const details = 'Ship it to Rua Fixture 12, 4050-262 Porto, and call me on +351 912 000 111.';
-      const earlier = await post(details);
+      const earlier = await post(details, { id: 'fa1f176a-c3a0-48ff-a2dc-11ef41119dab' });
       await post('Your draft: ship to Rua Fixture 99 and bank with FastBank.', {
         role: 'assistant',
       });
@@ -3388,9 +3763,10 @@ test(
         ],
         [{ m: 3, text: ask }, [flat, details]],
       );
+      const written = await memory.load();
       assert.deepEqual(
         Object.fromEntries(
-          (await memory.load()).entries.map((entry) => [entry.slug, [entry.origin, entry.sources]]),
+          written.entries.map((entry) => [entry.slug, [entry.origin, entry.sources]]),
         ),
         {
           'holiday-flat': ['stated', [older.id]],
@@ -3398,7 +3774,10 @@ test(
           phone: ['stated', [earlier.id]],
         },
       );
-      assert.doesNotMatch(JSON.stringify(await memory.load()), /FastBank|Fixture 99|4111|sk-/);
+      assert.doesNotMatch(
+        [...written.entries, ...written.archive].map((entry) => entry.text).join('\n'),
+        /FastBank|Fixture 99|4111|sk-/,
+      );
 
       const thread = randomUUID();
       await post('Synthetic first tasks.', {
@@ -3791,7 +4170,10 @@ async function feedbackFixture(t: TestContext) {
     source: 'desktop' as const,
     appModified: false,
   };
-  const open = async (ownerId = randomUUID()) => {
+  const open = async (
+    ownerId = randomUUID(),
+    buildReport: Parameters<typeof registerFeedback>[1]['buildReport'] = async () => state.content,
+  ) => {
     const app = Fastify();
     apps.push(app);
     await registerFeedback(app, {
@@ -3799,7 +4181,7 @@ async function feedbackFixture(t: TestContext) {
       ownerId,
       context,
       delivery,
-      buildReport: async () => state.content,
+      buildReport,
     });
     return { app, ownerId };
   };
@@ -3820,12 +4202,67 @@ test(
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await feedbackFixture(t);
-    const first = await f.open();
+    const first = await f.open(randomUUID(), async (activity, errors, errorsAvailable) =>
+      JSON.stringify({ activity, errors, errorsAvailable }),
+    );
     const second = await f.open();
     const snapshot = (
-      await first.app.inject({ method: 'POST', url: '/api/feedback/report' })
+      await first.app.inject({
+        method: 'POST',
+        url: '/api/feedback/report',
+        payload: {
+          activity: [
+            {
+              source: 'runtime',
+              ageMs: 1245,
+              event: 'nod_ui_error',
+              properties: {
+                area: 'chat',
+                action: 'send',
+                message: 'Unstructured private diagnostic canary',
+              },
+              account: 'Private account canary',
+            },
+            { source: 'app', ageMs: 0, event: 'Private event name', properties: { area: 'chat' } },
+          ],
+        },
+      })
     ).json<{ id: string; content: string }>();
-    const input = f.submission({ reportId: snapshot.id });
+    assert.deepEqual(JSON.parse(snapshot.content), {
+      activity: [
+        {
+          source: 'app',
+          ageMs: 1000,
+          event: 'nod_ui_error',
+          properties: { area: 'chat', action: 'send' },
+        },
+      ],
+      errors: [],
+      errorsAvailable: false,
+    });
+    for (const payload of [
+      { errors: [] },
+      { errors: [], errorsAvailable: false },
+      { errors: [{ type: 'error', message: 'Synthetic client error', ageMs: 1000 }] },
+    ]) {
+      const response = await first.app.inject({
+        method: 'POST',
+        url: '/api/feedback/report',
+        payload,
+      });
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(JSON.parse(response.json().content), {
+        activity: [],
+        errors: payload.errors,
+        errorsAvailable: payload.errorsAvailable ?? true,
+      });
+    }
+    const input = f.submission({
+      reportId: snapshot.id,
+      appVersion: 'Private version canary',
+      appRelease: 'Private release canary',
+      platform: 'Private computer canary',
+    });
     const crossOwner = await second.app.inject({
       method: 'POST',
       url: '/api/feedback',
@@ -3836,6 +4273,19 @@ test(
     const sent = await first.app.inject({ method: 'POST', url: '/api/feedback', payload: input });
     assert.equal(sent.statusCode, 200);
     assert.equal(f.state.envelopes.length, 1);
+    const delivered = f.state.envelopes[0];
+    assert.equal(Buffer.from(delivered.report!.data, 'base64').toString(), snapshot.content);
+    assert.equal(delivered.appVersion, null);
+    assert.equal(delivered.appRelease, null);
+    assert.equal(delivered.platform, null);
+    assert.doesNotMatch(JSON.stringify(delivered), /canary/);
+    const withoutReport = await first.app.inject({
+      method: 'POST',
+      url: '/api/feedback',
+      payload: f.submission(),
+    });
+    assert.equal(withoutReport.statusCode, 200);
+    assert.equal(f.state.envelopes[1].report, undefined);
     const foreignStatus = await second.app.inject({ url: `/api/feedback/${input.submissionId}` });
     assert.equal(foreignStatus.json().status, 'rejected');
     assert.equal(f.state.statusRequests.length, 0);
@@ -3848,191 +4298,720 @@ test(
 );
 
 test(
-  'feedback diagnostics exclude unrelated personal context, scrub personal data, redact mirrored credentials and stay bounded',
+  'feedback diagnostics retain redacted content and operational evidence without owner identifiers',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await feedbackFixture(t);
     const { buildFeedbackReport } = await import('../src/server/bug-report.ts');
     await f.pool.query(`
-      CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text,status text DEFAULT 'idle',archived_at timestamptz);
-      CREATE TABLE messages(id uuid,owner_id text,thread_id uuid,turn_id uuid,role text,text text,created_at timestamptz DEFAULT now());
-      CREATE TABLE turns(id uuid,owner_id text,thread_id uuid,source text,status text,error text,background boolean DEFAULT false,waiting_reason text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
-      CREATE TABLE profiles(owner_id text,data jsonb);
-      CREATE TABLE goals(owner_id text,title text);
-      CREATE TABLE schedules(owner_id text,prompt text)
+      CREATE TABLE messages(id uuid,owner_id text,turn_id uuid,role text,text text,attachments jsonb DEFAULT '[]',reply_to_message_id uuid,created_at timestamptz DEFAULT now());
+      CREATE TABLE turns(id uuid,owner_id text,parent_turn_id uuid,session_id uuid,source text,channel text,status text,error text,background boolean,waiting_reason text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
+      CREATE TABLE turn_events(id uuid,turn_id uuid,run_id uuid,parent_run_id uuid,session_id uuid,call_id uuid,type text,summary text,created_at timestamptz DEFAULT now());
+      CREATE TABLE model_usage(id text,owner_id text,turn_id uuid,session_id uuid,run_id uuid,parent_run_id uuid,cost_usd double precision,details jsonb,created_at timestamptz DEFAULT now());
+      CREATE TABLE tasks(id uuid,owner_id text,turn_id uuid,session_id uuid,state text,step_index integer,steps jsonb,revision integer,applied_revision integer,updated_at timestamptz DEFAULT now());
+      CREATE TABLE app_connections(id uuid,owner_id text,slug text,account_id text,account_active boolean,revoked boolean,callback_expires timestamptz,triggers_enabled boolean,watch_failures integer,inbox_failed boolean,inbox_reconnect_required boolean,account_checked_at timestamptz,inbox_checked_at timestamptz,created_at timestamptz DEFAULT now());
+      CREATE TABLE browser_connections(id uuid,owner_id text,state text,checked_at timestamptz,created_at timestamptz DEFAULT now());
+      CREATE TABLE discovered_connections(id uuid,owner_id text,reconnect_required boolean,replaced_at timestamptz,paths jsonb,created_at timestamptz DEFAULT now());
+      CREATE TABLE model_connections(id uuid,owner_id text,provider text,method text,status text,managed boolean,created_at timestamptz DEFAULT now());
+      CREATE TABLE integration_events(id text,owner_id text,slug text,state text,created_at timestamptz DEFAULT now());
+      CREATE TABLE schedules(id uuid,owner_id text,kind text,enabled boolean,delivery_channel text,next_run_at timestamptz,created_at timestamptz DEFAULT now());
+      CREATE TABLE schedule_runs(id uuid,owner_id text,schedule_id uuid,turn_id uuid,created_at timestamptz DEFAULT now());
+      CREATE TABLE channel_inbox(source_id text,owner_id text,provider text,state text,turn_id uuid,created_at timestamptz DEFAULT now());
+      CREATE TABLE channel_outbox(source_id text,state text,reason text,updated_at timestamptz DEFAULT now());
     `);
     const ownerId = randomUUID();
     const otherOwner = randomUUID();
-    const threadId = randomUUID();
-    const archivedThread = randomUUID();
-    const otherThread = randomUUID();
-    const secret = 'synthetic-saved-password/123';
-    const username = 'synthetic-saved-user';
-    const apiKey = 'synthetic-bootstrap/composio-value';
-    const personal =
-      'from Marta Vidal <marta.vidal@example.com>, card 4111 1111 1111 1111, call 612 345 678';
-    const paddedApiKey = ` \t${apiKey}\r\n`;
-    const echoes = [
-      apiKey,
-      paddedApiKey,
-      encodeURIComponent(apiKey),
-      encodeURIComponent(paddedApiKey),
+    const turnId = randomUUID();
+    const foreignTurn = randomUUID();
+    const sessionId = randomUUID();
+    const mainRun = randomUUID();
+    const childRun = randomUUID();
+    const callId = randomUUID();
+    const messageId = randomUUID();
+    const scheduleId = randomUUID();
+    const privateValues = [
+      'Marta Vidal',
+      'someone.unknown@example.com',
+      'Rua da Piedade 37',
+      '4111 1111 1111 1111',
+      'synthetic-password/123',
+      'https://customer.example.com/private?token=secret',
+      '/Users/customer/private.pdf',
     ];
+    const privateText = JSON.stringify({
+      name: privateValues[0],
+      email: privateValues[1],
+      address: privateValues[2],
+      cardNumber: privateValues[3],
+      password: privateValues[4],
+      url: privateValues[5],
+      path: privateValues[6],
+      message: 'Gmail fetch failed with HTTP 503 after 4321 ms.',
+    });
     await f.pool.query(
-      'INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,NULL),($3,$2,now()),($4,$5,NULL)',
-      [threadId, ownerId, archivedThread, otherThread, otherOwner],
+      `INSERT INTO turns VALUES($1,$2,NULL,$3,'task','web','failed',$4,true,'approval',now()-interval '5 minutes',now()-interval '4 minutes',now()-interval '3 minutes'),
+       ($5,$6,NULL,$7,'user','telegram','succeeded',$4,false,NULL,now(),now(),now())`,
+      [turnId, ownerId, sessionId, privateText, foreignTurn, otherOwner, randomUUID()],
     );
-    await f.pool.query('INSERT INTO profiles VALUES($1,$2)', [
-      ownerId,
-      { personal: 'synthetic-private-profile' },
-    ]);
-    await f.pool.query('INSERT INTO goals VALUES($1,$2)', [ownerId, 'synthetic-private-goal']);
-    await f.pool.query('INSERT INTO schedules VALUES($1,$2)', [
-      ownerId,
-      'synthetic-private-schedule',
-    ]);
-    for (const row of [
+    await f.pool.query(
+      `INSERT INTO messages(id,owner_id,turn_id,role,text,attachments) VALUES($1,$2,$3,'assistant',$4,$5),($6,$7,$8,'user','foreign-owner', '[]');
+       `,
       [
+        messageId,
         ownerId,
-        threadId,
-        `Visible diagnostic ${secret} ${encodeURIComponent(secret)} ${username} ${echoes.join('|')} ${personal}`,
-        'now()',
+        turnId,
+        privateText,
+        JSON.stringify([{ name: privateText, mimeType: 'application/pdf' }]),
+        randomUUID(),
+        otherOwner,
+        foreignTurn,
       ],
-      [ownerId, archivedThread, 'synthetic-archived-thread', 'now()'],
-      [otherOwner, otherThread, 'synthetic-foreign-owner', 'now()'],
-      [ownerId, threadId, 'synthetic-old-message', "now()-interval '2 days'"],
+    );
+    await f.pool.query(
+      `INSERT INTO messages(id,owner_id,role,text,created_at) VALUES($1,$2,'user','old-message',now()-interval '2 days'),($3,$2,'user','future-message',now()+interval '1 day')`,
+      [randomUUID(), ownerId, randomUUID()],
+    );
+    for (const event of [
+      [mainRun, null, 'agent_start', privateText],
+      [childRun, mainRun, 'agent_start', privateText],
+      [childRun, mainRun, 'tool_failed', 'browser'],
+      [childRun, mainRun, 'tool_failed', 'sign in'],
+      [childRun, mainRun, 'tool_complete', 'web search'],
+      [childRun, mainRun, 'tool_failed', privateText],
+      [childRun, mainRun, 'agent_failed', privateText],
     ])
       await f.pool.query(
-        `INSERT INTO messages(id,owner_id,thread_id,role,text,created_at) VALUES($1,$2,$3,'assistant',$4,${row[3]})`,
-        [randomUUID(), row[0], row[1], row[2]],
+        'INSERT INTO turn_events(id,turn_id,session_id,run_id,parent_run_id,call_id,type,summary) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+        [randomUUID(), turnId, sessionId, event[0], event[1], callId, event[2], event[3]],
       );
     await f.pool.query(
-      "INSERT INTO turns(id,owner_id,thread_id,source,status,error) VALUES($1,$2,$3,'user','failed',$4)",
-      [randomUUID(), ownerId, threadId, `Provider failure ${echoes.join('|')}`],
+      `INSERT INTO turn_events(id,turn_id,type,summary) VALUES($1,$2,'agent_complete','foreign-event')`,
+      [randomUUID(), foreignTurn],
     );
-    const toolCall = (id: string, name: string, input: unknown, output: string) => {
-      const timestamp = new Date().toISOString();
-      return [
-        {
-          type: 'message',
-          timestamp,
-          message: {
-            role: 'assistant',
-            content: [{ type: 'toolCall', id, name, arguments: input }],
+    for (const owner of [ownerId, otherOwner]) {
+      const currentTurn = owner === ownerId ? turnId : foreignTurn;
+      await f.pool.query(
+        'INSERT INTO model_usage(id,owner_id,turn_id,session_id,run_id,parent_run_id,cost_usd,details) VALUES($1,$2,$3,$4,$5,$6,0.01234,$7)',
+        [
+          randomUUID(),
+          owner,
+          currentTurn,
+          sessionId,
+          childRun,
+          mainRun,
+          {
+            provider: 'openai',
+            model: 'gpt-5',
+            category: 'agent',
+            status: 'failed',
+            durationMs: 4321,
+            inputTokens: 123,
+            outputTokens: 45,
+            cacheReadTokens: 10,
+            cacheWriteTokens: 0,
+            operation: privateText,
+            private: privateText,
+            pricing: 'sdk_estimate',
+            estimateUsd: 0.04567,
+            costUsd: 987,
           },
+        ],
+      );
+      await f.pool.query(`INSERT INTO tasks VALUES($1,$2,$3,$4,'open',1,$5,2,1,now())`, [
+        randomUUID(),
+        owner,
+        currentTurn,
+        sessionId,
+        JSON.stringify([privateText, privateText]),
+      ]);
+      await f.pool.query(
+        `INSERT INTO app_connections(id,owner_id,slug,account_id,account_active,revoked,triggers_enabled,watch_failures,inbox_failed,inbox_reconnect_required) VALUES($1,$2,$3,$4,false,false,true,3,true,true)`,
+        [randomUUID(), owner, privateText, privateText],
+      );
+      await f.pool.query(
+        `INSERT INTO browser_connections(id,owner_id,state) VALUES($1,$2,'needs_sign_in')`,
+        [randomUUID(), owner],
+      );
+      await f.pool.query(
+        `INSERT INTO discovered_connections(id,owner_id,reconnect_required,paths) VALUES($1,$2,true,$3)`,
+        [
+          randomUUID(),
+          owner,
+          JSON.stringify([{ kind: 'mcp', endpoint: privateText }, { kind: privateText }]),
+        ],
+      );
+      await f.pool.query(
+        `INSERT INTO model_connections(id,owner_id,provider,method,status,managed) VALUES($1,$2,$3,'api_key','reconnect',false)`,
+        [randomUUID(), owner, privateText],
+      );
+      await f.pool.query(
+        `INSERT INTO integration_events(id,owner_id,slug,state) VALUES($1,$2,'gmail','processing')`,
+        [privateText + owner, owner],
+      );
+      const schedule = owner === ownerId ? scheduleId : randomUUID();
+      await f.pool.query(
+        `INSERT INTO schedules(id,owner_id,kind,enabled,delivery_channel,next_run_at) VALUES($1,$2,'recurring',true,'web',now()-interval '1 minute')`,
+        [schedule, owner],
+      );
+      await f.pool.query(
+        `INSERT INTO schedule_runs(id,owner_id,schedule_id,turn_id) VALUES($1,$2,$3,$4)`,
+        [randomUUID(), owner, schedule, currentTurn],
+      );
+      const channelId = privateText + owner;
+      await f.pool.query(
+        `INSERT INTO channel_inbox(source_id,owner_id,provider,state,turn_id) VALUES($1,$2,'telegram','submitted',$3)`,
+        [channelId, owner, currentTurn],
+      );
+      await f.pool.query(
+        `INSERT INTO channel_outbox(source_id,state,reason) VALUES($1,'uncertain','send_not_confirmed')`,
+        [channelId],
+      );
+    }
+    const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+    const { createFeedbackRedactor } = await import('../src/server/feedback-redaction.ts');
+    const logRoot = await mkdtemp(join(tmpdir(), 'feedback-rich-'));
+    const redactor = createFeedbackRedactor({
+      secrets: ['synthetic-password/123'],
+      profile: { names: ['Marta Vidal'], region: 'PT' },
+    });
+    const journal = await createFeedbackLog({
+      dataRoot: logRoot,
+      ownerId,
+      sanitize: redactor.value,
+    });
+    t.after(async () => {
+      await journal.close();
+      await rm(logRoot, { recursive: true, force: true });
+    });
+    const scope = { turnId, sessionId, runId: childRun, parentRunId: mainRun, callId };
+    journal.record(
+      'tool_start',
+      {
+        tool: 'apps',
+        input: {
+          action: 'GMAIL_FETCH',
+          email: 'someone.unknown@example.com',
+          query: 'Find the failed workflow',
         },
-        {
-          type: 'message',
-          timestamp,
-          message: {
-            role: 'toolResult',
-            toolCallId: id,
-            toolName: name,
-            content: [{ type: 'text', text: output }],
-          },
+      },
+      scope,
+    );
+    journal.record(
+      'tool_end',
+      {
+        tool: 'apps',
+        status: 'failed',
+        output: {
+          statusCode: 503,
+          message: 'Service unavailable',
+          token: 'synthetic-password/123',
         },
-      ];
-    };
+        durationMs: 4321,
+      },
+      scope,
+    );
+    journal.record('failure', {
+      event: 'request_failed',
+      error: new Error('Gmail fetch failed with HTTP 503 for Marta Vidal'),
+    });
     const options = {
       pool: f.pool,
       ownerId,
-      secrets: [paddedApiKey],
-      provider: 'synthetic',
-      model: 'synthetic',
-      profile: async () => ({ names: ['Marta Vidal'], region: 'ES' }),
-      sessionEntries: async (requested: string) => {
-        assert.equal(requested, threadId);
-        return [
-          {
-            type: 'message',
-            message: {
-              role: 'toolResult',
-              toolName: 'get_credential',
-              content: [{ type: 'text', text: JSON.stringify({ username, password: secret }) }],
-            },
-          },
-          {
-            type: 'message',
-            message: {
-              role: 'assistant',
-              content: [{ type: 'thinking', thinking: 'synthetic-private-reasoning' }],
-            },
-          },
-          ...toolCall(
-            'credential',
-            'get_credential',
-            { origin: 'synthetic-credential-origin' },
-            secret,
-          ),
-          ...toolCall(
-            'browser',
-            'browser',
-            {
-              action: `echo ${secret}`,
-              attendees: [{ displayName: 'Ana Ruiz', email: 'ana.ruiz@example.com' }],
-            },
-            `Visible tool activity ${username}; ${echoes.join('|')} ${personal}`,
-          ),
-          ...toolCall(
-            'fill',
-            'browser',
-            { action: 'fill', text: 'synthetic-private-fill' },
-            username,
-          ),
-          ...toolCall('login', 'sign_in', { origin: 'synthetic-private-origin' }, 'private-login'),
-        ];
+      provider: privateText,
+      model: privateText,
+      context: {
+        appVersion: '1.2.3',
+        appRelease: privateText,
+        platform: privateText,
+        development: false,
+        source: 'desktop' as const,
+        appModified: null,
       },
+      activity: [
+        {
+          source: 'app' as const,
+          ageMs: 1000,
+          event: 'screen',
+          properties: { screen: '/apps', url: privateText },
+        },
+      ],
+      logs: () => journal.snapshot(),
+      errors: [
+        {
+          type: 'render' as const,
+          ageMs: 1000,
+          message: 'Could not open account for someone.unknown@example.com',
+          stack: 'Error: connection view unavailable',
+        },
+      ],
+      secrets: ['synthetic-password/123'],
+      profile: async () => ({ names: ['Marta Vidal'], region: 'PT' }),
     };
     const encoded = await buildFeedbackReport(options);
     for (const omitted of [
-      secret,
-      encodeURIComponent(secret),
-      username,
-      ...echoes,
-      'synthetic-private-profile',
-      'synthetic-private-goal',
-      'synthetic-private-schedule',
-      'synthetic-private-reasoning',
-      'synthetic-archived-thread',
-      'synthetic-foreign-owner',
-      'synthetic-old-message',
-      'synthetic-credential-origin',
-      'synthetic-private-fill',
-      'synthetic-private-origin',
-      'private-login',
-      'Marta',
-      'Vidal',
-      'marta.vidal@example.com',
-      '4111',
-      '612 345 678',
-      'Ana Ruiz',
-      'ana.ruiz@example.com',
+      ...privateValues,
+      ownerId,
+      otherOwner,
+      turnId,
+      foreignTurn,
+      sessionId,
+      mainRun,
+      childRun,
+      callId,
+      messageId,
+      scheduleId,
+      'foreign-owner',
+      'foreign-event',
+      'old-message',
+      'future-message',
     ])
       assert.ok(!encoded.includes(omitted), omitted);
-    assert.ok(encoded.includes('Visible diagnostic'));
-    assert.ok(encoded.includes('Visible tool activity'));
-    assert.ok(encoded.includes('[redacted]'));
+    assert.doesNotMatch(encoded, /\d{4}-\d{2}-\d{2}T/);
     const report = JSON.parse(encoded);
+    assert.equal(report.format, 'nod-feedback-report-v3');
+    assert.equal(report.coverage.contentIncluded, true);
+    assert.equal(report.coverage.redaction, 'best-effort');
+    assert.match(report.messages[0].text, /Gmail fetch failed with HTTP 503/);
+    assert.match(report.turns[0].error, /Gmail fetch failed with HTTP 503/);
+    assert.ok(
+      Object.values(report.coverage.sections).every(
+        (section: any) => section.status === 'collected',
+      ),
+    );
     assert.equal(report.messages.length, 1);
-    assert.equal(report.trace.length, 4);
-    const large = 'x'.repeat(3500);
-    const start = Date.now() + 1_000;
-    let newest = '';
-    for (let index = 0; index < 200; index++) {
-      newest = randomUUID();
-      await f.pool.query(
-        "INSERT INTO messages(id,owner_id,thread_id,role,text,created_at) VALUES($1,$2,$3,'assistant',$4,$5)",
-        [newest, ownerId, threadId, `${large}${large}${large}`, new Date(start + index * 1000)],
-      );
+    assert.equal(report.messages[0].characters, privateText.length);
+    assert.equal(report.messages[0].attachmentCount, 1);
+    assert.equal(report.turns.length, 1);
+    assert.equal(report.messages[0].turnId, report.turns[0].id);
+    assert.equal(report.turns[0].status, 'failed');
+    assert.equal(report.turns[0].queueMs, 60_000);
+    assert.equal(report.turns[0].durationMs, 60_000);
+    assert.equal(report.turns[0].errorPresent, true);
+    assert.equal(report.execution.length, 7);
+    assert.ok(report.execution.some((row: any) => row.tool === 'sign_in'));
+    assert.ok(report.execution.some((row: any) => row.tool === 'web'));
+    const child = report.execution.find(
+      (row: any) => row.parentRunId && row.type === 'agent_start',
+    );
+    assert.ok(
+      report.execution.some(
+        (row: any) => row.runId === child.parentRunId && row.type === 'agent_start',
+      ),
+    );
+    assert.ok(
+      report.execution.some(
+        (row: any) =>
+          row.runId === child.runId && row.type === 'tool_failed' && row.tool === 'browser',
+      ),
+    );
+    assert.equal(report.modelUsage.length, 1);
+    assert.equal(report.modelUsage[0].runId, child.runId);
+    assert.equal(report.logs.length, 3);
+    assert.equal(report.logs[0].runId, child.runId);
+    assert.equal(report.logs[0].parentRunId, child.parentRunId);
+    assert.equal(report.logs[0].callId, report.logs[1].callId);
+    assert.equal(report.logs[0].data.tool, 'apps');
+    assert.equal(report.logs[0].data.input.query, 'Find the failed workflow');
+    assert.equal(report.logs[1].data.output.statusCode, 503);
+    assert.match(report.logs[2].data.error.message, /Gmail fetch failed with HTTP 503/);
+    assert.equal(report.clientErrors.length, 1);
+    assert.match(report.clientErrors[0].data.message, /Could not open account/);
+    for (const input of [
+      { errors: undefined, errorsAvailable: undefined },
+      { errors: options.errors, errorsAvailable: false },
+    ]) {
+      const unavailable = JSON.parse(await buildFeedbackReport({ ...options, ...input }));
+      assert.equal(unavailable.coverage.sections.clientErrors.status, 'unavailable');
+      assert.deepEqual(unavailable.clientErrors, []);
     }
+    const emptyErrors = JSON.parse(await buildFeedbackReport({ ...options, errors: [] }));
+    assert.equal(emptyErrors.coverage.sections.clientErrors.status, 'collected');
+    assert.deepEqual(emptyErrors.clientErrors, []);
+    assert.equal(report.modelUsage[0].inputTokens, 123);
+    assert.equal(report.modelUsage[0].modelFamily, 'gpt');
+    assert.equal(report.modelUsage[0].durationMs, 4321);
+    assert.equal(report.modelUsage[0].costUsd, 0.01234);
+    assert.equal(report.modelUsage[0].estimateUsd, 0.04567);
+    assert.deepEqual(report.runtime, { provider: 'other', modelFamily: 'custom' });
+    assert.equal(report.environment.appVersion, '1.2.3');
+    assert.equal(report.environment.appRelease, null);
+    assert.equal(report.environment.platform, null);
+    assert.deepEqual(report.appActivity.entries, [
+      { source: 'app', ageMs: 1000, event: 'screen', properties: { screen: '/apps' } },
+    ]);
+    assert.equal(report.tasks[0].steps, 2);
+    assert.equal(report.connections.length, 1);
+    assert.equal(report.connections[0].app, 'custom');
+    assert.equal(report.connections[0].status, 'reconnect');
+    assert.equal(report.connections[0].watchFailures, 3);
+    assert.equal(report.connections[0].inboxFailed, true);
+    assert.equal(report.browserConnections.length, 1);
+    assert.equal(report.directConnections.length, 1);
+    assert.deepEqual(report.directConnections[0].methods, ['mcp', 'other']);
+    assert.equal(report.modelConnections[0].provider, 'other');
+    assert.equal(report.integrationEvents.length, 1);
+    assert.equal(report.schedules.length, 1);
+    assert.equal(report.schedules[0].failedRuns, 1);
+    assert.equal(report.schedules[0].overdue, true);
+    assert.equal(report.channels.length, 1);
+    assert.equal(report.channels[0].deliveryState, 'uncertain');
+
+    await f.pool.query(
+      `INSERT INTO messages(id,owner_id,role,text,created_at)
+       SELECT gen_random_uuid(),$1,'user',repeat('x',n),now()-interval '10 seconds'+n*interval '1 millisecond'
+       FROM generate_series(1,250) n`,
+      [ownerId],
+    );
     const bounded = await buildFeedbackReport(options);
-    assert.ok(Buffer.byteLength(bounded) <= feedbackLimits.reportBytes);
     const truncated = JSON.parse(bounded);
+    assert.ok(Buffer.byteLength(bounded) <= feedbackLimits.reportBytes);
     assert.equal(truncated.coverage.truncated, true);
-    assert.equal(truncated.messages.at(-1).id, newest);
-    assert.ok(truncated.messages.length > 30);
+    assert.equal(truncated.coverage.sections.messages.truncated, true);
+    assert.equal(truncated.messages.length, 200);
+    assert.ok(truncated.messages.some((row: any) => row.characters === 250));
+    assert.ok(!truncated.messages.some((row: any) => row.characters === 1));
+
+    await f.pool.query(
+      "UPDATE model_usage SET cost_usd='Infinity',details=jsonb_set(details,'{estimateUsd}','-1') WHERE owner_id=$1",
+      [ownerId],
+    );
+    const invalidCost = JSON.parse(await buildFeedbackReport(options));
+    assert.equal(invalidCost.modelUsage[0].costUsd, null);
+    assert.equal(invalidCost.modelUsage[0].estimateUsd, null);
+    const unavailableRedaction = [
+      {
+        profile: async () => {
+          throw new Error('Profile unavailable');
+        },
+      },
+      { profile: async () => ({ names: [123] as unknown as string[] }) },
+      { profile: async () => ({ names: Array.from({ length: 101 }, () => 'Marta Vidal') }) },
+      { profile: async () => ({ names: ['Marta Vidal'.repeat(50)] }) },
+      { secrets: Array.from({ length: 257 }, (_, index) => `synthetic-secret-${index}`) },
+    ];
+    for (const unavailable of unavailableRedaction) {
+      let readLogs = false;
+      const fallback = JSON.parse(
+        await buildFeedbackReport({
+          ...options,
+          ...unavailable,
+          logs: async () => {
+            readLogs = true;
+            return journal.snapshot();
+          },
+        }),
+      );
+      assert.equal(fallback.coverage.contentIncluded, false);
+      assert.equal(fallback.coverage.redaction, 'unavailable');
+      assert.equal(fallback.coverage.sections.clientErrors.status, 'unavailable');
+      assert.equal(fallback.coverage.sections.logs.status, 'unavailable');
+      assert.equal(readLogs, false);
+      assert.deepEqual(fallback.clientErrors, []);
+      assert.deepEqual(fallback.logs, []);
+      assert.ok(fallback.messages.every((row: any) => !('text' in row)));
+      assert.ok(fallback.turns.every((row: any) => !('error' in row)));
+      assert.equal(fallback.turns[0].status, 'failed');
+      assert.equal(fallback.modelUsage[0].inputTokens, 123);
+    }
+    await f.pool.query('DROP TABLE model_usage');
+    const unavailable = JSON.parse(await buildFeedbackReport(options));
+    assert.equal(unavailable.coverage.sections.modelUsage.status, 'unavailable');
+    assert.deepEqual(unavailable.modelUsage, []);
+    assert.equal(unavailable.turns[0].status, 'failed');
+    assert.equal(unavailable.messages.length, 200);
+    const runtime = await f.open(ownerId, () => buildFeedbackReport(options));
+    const prepared = await runtime.app.inject({ method: 'POST', url: '/api/feedback/report' });
+    assert.equal(prepared.statusCode, 200);
+    const snapshot = prepared.json<{ id: string; content: string }>();
+    const sent = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/feedback',
+      payload: f.submission({ reportId: snapshot.id }),
+    });
+    assert.equal(sent.json().status, 'submitted');
+    assert.equal(
+      Buffer.from(f.state.envelopes.at(-1)!.report!.data, 'base64').toString(),
+      snapshot.content,
+    );
   },
 );
+
+test('feedback journal redacts before persistence, survives restart, rotates and expires within its owner', async (t) => {
+  const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+  const { createRedactor } = await import('../src/server/redaction.ts');
+  const { createPersonalDataRedactor, withoutPersonalFields } =
+    await import('../src/server/personal-data.ts');
+  const { stat } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'feedback-log-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let now = 1_800_000_000_000;
+  const secret = 'synthetic-private-token';
+  const privateText = `Marta Vidal marta.vidal@example.com ${secret}`;
+  const redact = createRedactor([secret]);
+  const personal = createPersonalDataRedactor({ names: ['Marta Vidal'], region: 'PT' });
+  const options = {
+    dataRoot: root,
+    ownerId: 'synthetic-private-owner',
+    sanitize: (value: unknown) => withoutPersonalFields(redact(value), personal),
+    now: () => now,
+    maxFileBytes: 4096,
+    maxFiles: 2,
+    snapshotLimit: 5,
+  };
+  const first = await createFeedbackLog(options);
+  const turnId = randomUUID();
+  first.record(
+    'failure',
+    {
+      message: `Provider failed for ${privateText}`,
+      stack: `Error: Provider failed for ${privateText}\n    at operation (runtime.js:12:4)`,
+    },
+    { turnId, callId: 'call_synthetic-123' },
+  );
+  const initial = await first.snapshot();
+  assert.equal(initial.entries.length, 1);
+  assert.equal(initial.entries[0].scope.turnId, turnId);
+  assert.ok(JSON.stringify(initial.entries).includes('runtime.js:12:4'));
+  const parent = join(root, 'feedback-logs');
+  const [ownerDirectory] = await readdir(parent);
+  assert.match(ownerDirectory, /^[a-f0-9]{64}$/);
+  const directory = join(parent, ownerDirectory);
+  const persisted = await readFile(join(directory, 'journal-0.jsonl'), 'utf8');
+  for (const privateValue of [secret, 'Marta', 'Vidal', 'marta.vidal@example.com'])
+    assert.ok(!persisted.includes(privateValue), privateValue);
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(parent)).mode & 0o777, 0o700);
+    assert.equal((await stat(directory)).mode & 0o777, 0o700);
+    assert.equal((await stat(join(directory, 'journal-0.jsonl'))).mode & 0o777, 0o600);
+  }
+  await first.close();
+  const reopened = await createFeedbackLog(options);
+  t.after(() => reopened.close());
+  assert.deepEqual((await reopened.snapshot()).entries, initial.entries);
+  const other = await createFeedbackLog({ ...options, ownerId: 'another-synthetic-owner' });
+  t.after(() => other.close());
+  other.record('activity', { status: 'failed', owner: 'other-owner-only' });
+  assert.equal((await other.snapshot()).entries.length, 1);
+  assert.ok(!JSON.stringify(await reopened.snapshot()).includes('other-owner-only'));
+  for (let index = 0; index < 14; index++) {
+    now++;
+    reopened.record('tool_end', { name: 'browser', sequence: index, output: 'x'.repeat(1000) });
+  }
+  const rotated = await reopened.snapshot();
+  assert.equal((rotated.entries.at(-1)!.data as { sequence: number }).sequence, 13);
+  assert.ok(rotated.entries.length <= 5);
+  assert.equal(rotated.coverage.truncated, true);
+  const files = await readdir(directory);
+  assert.ok(files.length <= 2);
+  assert.ok(files.every((name) => /^journal-\d\.jsonl$/.test(name)));
+  for (const name of files) assert.ok((await stat(join(directory, name))).size <= 4096);
+  now += 86_400_001;
+  assert.deepEqual((await reopened.snapshot()).entries, []);
+  assert.deepEqual(await readdir(directory), []);
+  reopened.record('tool_end', { status: 'succeeded' });
+  assert.equal((await reopened.snapshot()).entries.length, 1);
+});
+
+test('feedback journal bounds pending writes, reports unavailable redaction and repairs interrupted JSONL', async (t) => {
+  const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+  const { appendFile } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'feedback-log-queue-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let release!: () => void;
+  let entered!: () => void;
+  let bothEntered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const concurrent = new Promise<void>((resolve) => {
+    bothEntered = resolve;
+  });
+  let calls = 0;
+  let fails = false;
+  const options = {
+    dataRoot: root,
+    ownerId: 'synthetic-owner',
+    maxPending: 2,
+    sanitize: async (value: unknown) => {
+      entered();
+      if (++calls === 2) bothEntered();
+      await waiting;
+      if (fails) throw new Error('Synthetic private redaction failure');
+      return JSON.parse(JSON.stringify(value).replaceAll('synthetic-secret', '[redacted]'));
+    },
+  };
+  const log = await createFeedbackLog(options);
+  const input = { input: 'synthetic-secret', sequence: 1, nested: { operation: 'original' } };
+  let getterCalls = 0;
+  Object.defineProperty(input, 'getter', {
+    enumerable: true,
+    get() {
+      getterCalls++;
+      throw new Error('Must not execute a payload getter');
+    },
+  });
+  log.record('tool_start', input);
+  input.nested.operation = 'mutated';
+  await started;
+  const parent = join(root, 'feedback-logs');
+  const [ownerDirectory] = await readdir(parent);
+  const directory = join(parent, ownerDirectory);
+  assert.deepEqual(await readdir(directory), []);
+  log.record('tool_end', { output: 'synthetic-secret', sequence: 2 });
+  log.record('failure', { message: 'queue-overflow' });
+  await concurrent;
+  release();
+  const flushed = await log.snapshot();
+  assert.equal(flushed.entries.length, 2);
+  assert.equal(flushed.coverage.dropped, 1);
+  assert.equal(flushed.coverage.truncated, true);
+  assert.equal(getterCalls, 0);
+  assert.equal((flushed.entries[0].data as typeof input).nested.operation, 'original');
+  assert.ok(!JSON.stringify(flushed).includes('synthetic-secret'));
+  fails = true;
+  log.record('failure', { message: 'must-not-persist' });
+  const failed = await log.snapshot();
+  assert.equal(failed.coverage.dropped, 2);
+  assert.equal(failed.coverage.unavailable, true);
+  assert.ok(!JSON.stringify(failed).includes('must-not-persist'));
+  await log.close();
+  fails = false;
+  await appendFile(join(directory, 'journal-0.jsonl'), '{"event":');
+  const reopened = await createFeedbackLog(options);
+  t.after(() => reopened.close());
+  const recovered = await reopened.snapshot();
+  assert.equal(recovered.entries.length, 2);
+  assert.equal(recovered.coverage.dropped, 1);
+  assert.equal(recovered.coverage.truncated, true);
+  assert.equal(recovered.coverage.unavailable, true);
+  reopened.record('tool_end', { status: 'succeeded' });
+  assert.equal((await reopened.snapshot()).entries.length, 3);
+  const lines = (await readFile(join(directory, 'journal-0.jsonl'), 'utf8')).trim().split('\n');
+  assert.equal(lines.length, 3);
+  for (const line of lines) JSON.parse(line);
+});
+
+test('feedback journal bounds detached data and timed-out sanitizers without serial timeout delays', async (t) => {
+  const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+  const root = await mkdtemp(join(tmpdir(), 'feedback-log-timeout-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const captured: unknown[] = [];
+  const log = await createFeedbackLog({
+    dataRoot: root,
+    ownerId: 'synthetic-owner',
+    maxPending: 2,
+    sanitize: (value) => {
+      captured.push(value);
+      return new Promise(() => {});
+    },
+  });
+  t.after(() => log.close());
+  const oversized = 'x'.repeat(31_995) + 'synthetic-secret';
+  const data = {
+    error: new Error('Synthetic provider failure'),
+    oversized,
+    fields: Array.from({ length: 2000 }, () => 'x'.repeat(1000)),
+  };
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  log.record('failure', data);
+  log.record('tool_end', data);
+  await Promise.resolve();
+  assert.equal(captured.length, 2);
+  for (const value of captured) {
+    assert.ok(JSON.stringify(value).length < 100_000);
+    assert.match((value as any).error.message, /Synthetic provider failure/);
+    assert.match((value as any).error.stack, /thread.test.ts/);
+    assert.equal((value as any).oversized, '[omitted]');
+  }
+  t.mock.timers.tick(3000);
+  const snapshot = await log.snapshot();
+  assert.deepEqual(snapshot.entries, []);
+  assert.equal(snapshot.coverage.dropped, 2);
+  assert.equal(snapshot.coverage.truncated, true);
+  assert.equal(snapshot.coverage.unavailable, true);
+  log.record('activity', { status: 'failed' });
+  const exhausted = await log.snapshot();
+  assert.equal(captured.length, 2);
+  assert.equal(exhausted.coverage.dropped, 3);
+});
+
+test('feedback journal removes expired files while idle and stops maintenance on close', async (t) => {
+  const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+  const root = await mkdtemp(join(tmpdir(), 'feedback-log-idle-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  let now = 1_800_000_000_000;
+  const log = await createFeedbackLog({
+    dataRoot: root,
+    ownerId: 'synthetic-owner',
+    sanitize: (value) => value,
+    now: () => now,
+  });
+  t.after(() => log.close());
+  log.record('activity', { status: 'failed' });
+  assert.equal((await log.snapshot()).entries.length, 1);
+  const parent = join(root, 'feedback-logs');
+  const [ownerDirectory] = await readdir(parent);
+  const directory = join(parent, ownerDirectory);
+  now += 86_400_001;
+  t.mock.timers.tick(60_000);
+  for (let attempt = 0; attempt < 100 && (await readdir(directory)).length; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(await readdir(directory), []);
+  log.record('activity', { status: 'succeeded' });
+  assert.equal((await log.snapshot()).entries.length, 1);
+  await log.close();
+  now += 86_400_001;
+  t.mock.timers.tick(60_000);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal((await readdir(directory)).length, 1);
+});
+
+test('feedback journal refuses symlinked locations and linked files without changing their targets', async (t) => {
+  if (process.platform === 'win32') return;
+  const { createFeedbackLog } = await import('../src/server/feedback-log.ts');
+  const { link, mkdir, stat, symlink } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'feedback-log-links-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const target of ['root', 'parent', 'owner', 'file', 'hardlink']) {
+    await t.test(target, async () => {
+      const outside = join(root, `${target}-outside`);
+      const dataRoot = join(root, `${target}-data`);
+      await mkdir(outside);
+      const original = join(outside, 'original');
+      await writeFile(original, 'Untouched synthetic content', { mode: 0o644 });
+      if (target === 'root') await symlink(outside, dataRoot);
+      else await mkdir(dataRoot);
+      const options = { dataRoot, ownerId: 'synthetic-owner', sanitize: (value: unknown) => value };
+      if (target === 'parent') await symlink(outside, join(dataRoot, 'feedback-logs'));
+      else if (target !== 'root') {
+        const initialized = await createFeedbackLog(options);
+        await initialized.close();
+        const parent = join(dataRoot, 'feedback-logs');
+        const [ownerDirectory] = await readdir(parent);
+        const directory = join(parent, ownerDirectory);
+        if (target === 'owner') {
+          await rm(directory, { recursive: true });
+          await symlink(outside, directory);
+        } else if (target === 'file') await symlink(original, join(directory, 'journal-0.jsonl'));
+        else await link(original, join(directory, 'journal-0.jsonl'));
+      }
+      const log = await createFeedbackLog(options);
+      log.record('failure', { message: 'Must not reach the target' });
+      const snapshot = await log.snapshot();
+      assert.equal(snapshot.coverage.unavailable, true);
+      assert.equal(snapshot.coverage.dropped, 1);
+      assert.deepEqual(snapshot.entries, []);
+      assert.equal(await readFile(original, 'utf8'), 'Untouched synthetic content');
+      assert.equal((await stat(original)).mode & 0o777, 0o644);
+      assert.deepEqual(await readdir(outside), ['original']);
+      await log.close();
+    });
+  }
+});
 
 async function conversationAnalyticsFixture(t: TestContext) {
   const schema = `test_analytics_${randomUUID().replaceAll('-', '')}`;

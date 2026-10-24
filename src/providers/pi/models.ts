@@ -17,9 +17,22 @@ import type {
   ModelCredential,
   ModelDefinition,
 } from '../../ports/models.ts';
-import type { ModelProvider, ModelMethod } from '../../shared/models.ts';
+import {
+  bedrockRegionPattern,
+  modelProviders,
+  modelProviderNames,
+  type ModelProvider,
+  type ModelMethod,
+} from '../../shared/models.ts';
 import { signInPage } from '../../shared/sign-in-page.ts';
 import type { PiModelCall } from './traces.ts';
+import {
+  antLingModel,
+  assistantModelId,
+  assistantModels,
+  cloudflareCredential,
+  nativeCatalog,
+} from './model-catalog.ts';
 
 const resource = 'https://api.openai.com/v1';
 const issuer = 'https://auth.openai.com';
@@ -57,7 +70,8 @@ class TokenRejected extends Error {
 
 function chatgptCredential(value: unknown) {
   const parsed = chatgptCredentialSchema.safeParse(value);
-  if (!parsed.success) throw new ModelAuthError('Reconnect your ChatGPT account in Models.', true);
+  if (!parsed.success)
+    throw new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
   return parsed.data;
 }
 
@@ -327,6 +341,87 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     );
     return models.flat();
   }
+  async function cloudResponse(url: string, init: RequestInit, rejected: string) {
+    const response = await request(url, {
+      ...init,
+      redirect: 'error',
+      signal: AbortSignal.timeout(15000),
+    });
+    if ([400, 401, 403, 404].includes(response.status)) {
+      await response.body?.cancel();
+      throw new ModelAuthError(rejected);
+    }
+    return response;
+  }
+  async function bedrockCatalog(local: readonly Model<Api>[], credential: ModelCredential) {
+    if (credential.type !== 'bedrock' || !bedrockRegionPattern.test(credential.region))
+      throw new Error('This model connection is unavailable.');
+    const root = `https://bedrock.${credential.region}.amazonaws.com`;
+    const list = async (path: string) =>
+      jsonResponse(
+        await cloudResponse(
+          `${root}${path}`,
+          { headers: { Authorization: `Bearer ${credential.key}` } },
+          'Amazon Bedrock didn’t accept this key in that Region. Check both, and that the key can list models.',
+        ),
+      );
+    const available = new Set(
+      entries(
+        (await list('/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=TEXT'))
+          .modelSummaries,
+        z.object({ modelId: z.string() }),
+      ).map((model) => model.modelId),
+    );
+    let page: string | undefined;
+    do {
+      const profiles = await list(
+        `/inference-profiles?type=SYSTEM_DEFINED&maxResults=1000${page ? `&nextToken=${encodeURIComponent(page)}` : ''}`,
+      );
+      for (const profile of entries(
+        profiles.inferenceProfileSummaries,
+        z.object({ inferenceProfileId: z.string(), status: z.literal('ACTIVE') }),
+      ))
+        available.add(profile.inferenceProfileId);
+      page =
+        typeof profiles.nextToken === 'string' && profiles.nextToken !== page
+          ? profiles.nextToken
+          : undefined;
+    } while (page);
+    return local.filter((model) => available.has(model.id)).map(definition);
+  }
+  async function vertexCatalog(local: readonly Model<Api>[], credential: ModelCredential) {
+    if (credential.type !== 'api_key' || !local.length)
+      throw new Error('This model connection is unavailable.');
+    const response = await request(
+      `https://aiplatform.googleapis.com/v1/publishers/google/models/${local[0].id}:countTokens`,
+      {
+        method: 'POST',
+        headers: { 'x-goog-api-key': credential.key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'nod' }] }] }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    await response.body?.cancel();
+    if ([400, 401, 403].includes(response.status))
+      throw new ModelAuthError('Google Vertex AI didn’t accept this API key.');
+    if (!response.ok && response.status !== 404)
+      throw new Error('The model service is temporarily unavailable. Try again.');
+    return local.map(definition);
+  }
+  async function azureCatalog(local: readonly Model<Api>[], credential: ModelCredential) {
+    if (credential.type !== 'azure') throw new Error('This model connection is unavailable.');
+    const model = local.find((item) => item.id === credential.model);
+    if (!model) throw new Error('This model connection is unavailable.');
+    await jsonResponse(
+      await cloudResponse(
+        `${credential.url}/models`,
+        { headers: { 'api-key': credential.key } },
+        'This Azure OpenAI endpoint didn’t accept the key. Check the endpoint and the key.',
+      ),
+    );
+    return [definition({ ...model, baseUrl: credential.url })];
+  }
   return {
     async signIn({ signal: requestedSignal, hostId, previous }) {
       const controller = new AbortController();
@@ -516,11 +611,21 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       return { url: url.toString(), state, result, complete };
     },
     async catalog(provider: ModelProvider, method: ModelMethod, credential?: ModelCredential) {
+      if (!modelProviders.includes(provider))
+        throw new Error('This model provider is unavailable.');
       if (provider === 'compatible') return endpointCatalog(credential);
-      if (credential?.type === 'endpoint') throw new Error('This model connection is unavailable.');
-      if (method === 'subscription' && credential) chatgptCredential(credential);
-      const local = (await runtime()).getModels(provider);
+      const local = assistantModels(
+        provider === 'ant-ling' ? [antLingModel] : (await runtime()).getModels(provider),
+      );
       if (!credential) return local.map(definition);
+      if (provider === 'amazon-bedrock') return bedrockCatalog(local, credential);
+      if (provider === 'google-vertex') return vertexCatalog(local, credential);
+      if (provider === 'azure') return azureCatalog(local, credential);
+      if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'openrouter')
+        return (await nativeCatalog(provider, local, credential, request)).map(definition);
+      if (credential.type !== 'api_key' && credential.type !== 'oauth')
+        throw new Error('This model connection is unavailable.');
+      if (method === 'subscription') chatgptCredential(credential);
       const key = credential.type === 'api_key' ? credential.key : credential.access;
       const url =
         provider === 'openrouter'
@@ -532,6 +637,15 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         provider === 'anthropic'
           ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
           : { Authorization: `Bearer ${key}` };
+      const accepted = async (response: Response) => {
+        if (response.status !== 401) return response;
+        await response.body?.cancel();
+        throw method === 'subscription'
+          ? new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true)
+          : new ModelAuthError(
+              `${modelProviderNames[provider]} didn’t accept this API key. Check it and try again.`,
+            );
+      };
       if (provider === 'openrouter') {
         const account = z
           .object({
@@ -540,15 +654,27 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
               is_provisioning_key: z.boolean().optional(),
             }),
           })
-          .parse(await json('https://openrouter.ai/api/v1/key', { headers }));
+          .parse(
+            await jsonResponse(
+              await accepted(
+                await request('https://openrouter.ai/api/v1/key', {
+                  headers,
+                  signal: AbortSignal.timeout(15000),
+                  redirect: 'error',
+                }),
+              ),
+            ),
+          );
         if (account.data.is_management_key || account.data.is_provisioning_key)
-          throw new Error('Use an inference key for OpenRouter.');
+          throw new ModelAuthError('Use an inference key for OpenRouter.');
       }
-      const response = await request(url, {
-        headers,
-        signal: AbortSignal.timeout(15000),
-        redirect: 'error',
-      });
+      const response = await accepted(
+        await request(url, {
+          headers,
+          signal: AbortSignal.timeout(15000),
+          redirect: 'error',
+        }),
+      );
       if (
         provider === 'openai' &&
         method === 'api_key' &&
@@ -601,6 +727,8 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             m.supported_parameters.includes('tools') &&
             m.architecture.input_modalities.includes('text') &&
             m.architecture.output_modalities.includes('text') &&
+            m.architecture.output_modalities.every((modality) => modality === 'text') &&
+            assistantModelId(m.id) &&
             !m.id.includes(':batch'),
         )
         .map((m) => {
@@ -716,7 +844,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           error instanceof TokenRejected && [400, 401, 403].includes(error.statusCode);
         throw new ModelAuthError(
           terminal
-            ? 'Reconnect your ChatGPT account in Models.'
+            ? 'Reconnect your ChatGPT account in Settings > Models.'
             : 'ChatGPT is temporarily unavailable. Try again.',
           terminal,
           { cause: error },
@@ -732,6 +860,10 @@ export async function createPiModelRuntime(
 ) {
   const subscription = access.method === 'subscription';
   const provider = access.provider;
+  const reconnect = async (credential?: ModelCredential) => {
+    await access.needsReconnect?.(credential);
+    return new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
+  };
   if (
     subscription &&
     (provider !== 'openai' ||
@@ -739,21 +871,46 @@ export async function createPiModelRuntime(
       access.definition.spec.api !== 'openai-responses' ||
       access.definition.spec.baseUrl !== resource)
   )
-    throw new ModelAuthError('Reconnect your ChatGPT account in Models.', true);
+    throw await reconnect();
   const secrets = new Set<string>();
   const credentials: CredentialStore = {
-    async read(providerId) {
+    async read(providerId): ReturnType<CredentialStore['read']> {
       if (providerId !== provider) return undefined;
       const credential = await access.read();
       if (!credential) throw new Error('The selected model connection is unavailable.');
       if (subscription) {
-        const value = chatgptCredential(credential);
+        const parsed = chatgptCredentialSchema.safeParse(credential);
+        if (!parsed.success) throw await reconnect(credential);
+        const value = parsed.data;
         for (const secret of [value.access, value.refresh, value.idToken]) secrets.add(secret);
         return { type: 'oauth', access: value.access, refresh: '', expires: value.expires };
       }
       if (credential.type === 'oauth')
         throw new Error('The selected model connection is unavailable.');
       if (credential.key) secrets.add(credential.key);
+      if (provider === 'cloudflare-workers-ai' || provider === 'cloudflare-ai-gateway') {
+        const value = cloudflareCredential(provider, credential);
+        return {
+          type: 'api_key',
+          key: value.key,
+          env: {
+            CLOUDFLARE_ACCOUNT_ID: value.accountId,
+            ...(value.gatewayId ? { CLOUDFLARE_GATEWAY_ID: value.gatewayId } : {}),
+          },
+        };
+      }
+      if (credential.type === 'bedrock')
+        return { type: 'api_key', key: credential.key, env: { AWS_REGION: credential.region } };
+      if (credential.type === 'azure')
+        return {
+          type: 'api_key',
+          key: credential.key,
+          env: {
+            AZURE_OPENAI_BASE_URL: credential.url,
+            AZURE_OPENAI_API_VERSION: 'v1',
+            AZURE_OPENAI_DEPLOYMENT_NAME_MAP: `${access.definition.choice.id}=${credential.deployment}`,
+          },
+        };
       return { type: 'api_key', key: credential.key || keyless };
     },
     async list() {
@@ -781,19 +938,26 @@ export async function createPiModelRuntime(
     const events = stream(model, context, {
       ...options,
       maxRetries: 0,
-      ...(access.provider === 'compatible'
+      ...(access.provider === 'compatible' ||
+      access.provider === 'radius' ||
+      access.provider === 'cloudflare-workers-ai' ||
+      access.provider === 'cloudflare-ai-gateway'
         ? {
             fetch: (input: string | URL | Request, init?: RequestInit) => {
               const headers = new Headers(init?.headers);
               if (headers.get('authorization') === `Bearer ${keyless}`)
                 headers.delete('authorization');
-              return fetch(input, {
+              return (options?.fetch ?? fetch)(input, {
                 ...init,
                 headers,
                 redirect: 'error',
-                dispatcher: (endpointConnections ??= new Dispatcher1Wrapper(
-                  new Agent({ headersTimeout: 0, bodyTimeout: 0 }),
-                )),
+                ...(access.provider === 'compatible'
+                  ? {
+                      dispatcher: (endpointConnections ??= new Dispatcher1Wrapper(
+                        new Agent({ headersTimeout: 0, bodyTimeout: 0 }),
+                      )),
+                    }
+                  : {}),
               } as RequestInit);
             },
           }

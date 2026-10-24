@@ -7,7 +7,7 @@ import pg from 'pg';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
-import type { Schedule, ScheduleHistory } from '../src/shared/contracts.ts';
+import type { Schedule, ScheduleHistory, TaskDetail } from '../src/shared/contracts.ts';
 import {
   readSchedule,
   scheduleExpression,
@@ -361,6 +361,40 @@ test(
       await t.test(
         'schedule editor changes retain the intended recurrence and exact run time',
         async () => {
+          const edited = await create({ cron: '0 9 * * *' });
+          const beforePreview = (await request('GET', '/api/schedules'))
+            .json()
+            .find((row: { id: string }) => row.id === edited.id);
+          const preview = await request('POST', `/api/schedules/${edited.id}/preview`, {
+            cron: '30 10 * * 1-5',
+            timeZone: 'Europe/Lisbon',
+          });
+          assert.equal(preview.statusCode, 200);
+          assert.equal(preview.json().nextRun, '2035-10-29T10:30:00.000Z');
+          assert.deepEqual(
+            (await request('GET', '/api/schedules'))
+              .json()
+              .find((row: { id: string }) => row.id === edited.id),
+            beforePreview,
+          );
+          assert.equal(
+            (
+              await request('PATCH', `/api/schedules/${edited.id}`, {
+                title: 'Changed title',
+                expectedRevision: beforePreview.revision,
+              })
+            ).statusCode,
+            200,
+          );
+          assert.equal(
+            (
+              await request('PATCH', `/api/schedules/${edited.id}`, {
+                title: 'Stale reversal',
+                expectedRevision: beforePreview.revision,
+              })
+            ).statusCode,
+            409,
+          );
           for (const [frequency, day, expected] of [
             ['daily', '1', '2035-10-27T09:30:00.000Z'],
             ['weekdays', '1', '2035-10-29T10:30:00.000Z'],
@@ -442,6 +476,9 @@ test(
           assert.equal(history[0]!.status, 'queued');
           assert.equal((await saved(schedule.id)).enabled, false);
           assert.equal((await saved(schedule.id)).nextRun, null);
+          const preview = await request('POST', `/api/schedules/${schedule.id}/preview`, {});
+          assert.equal(preview.statusCode, 200);
+          assert.equal(preview.json().nextRun, null);
           assert.equal((await saved(schedule.id)).lastRun?.id, history[0]!.id);
           await personal.initialize({ workers: false });
           await deliver([job]);
@@ -480,6 +517,102 @@ test(
           assert.equal((await saved(schedule.id)).nextRun, '2035-11-03T09:05:00.000Z');
         },
       );
+      await t.test(
+        'task activity names each tool call and the app actions the task took, only the owner’s',
+        async () => {
+          const { createLedger } = await import('../src/server/ledger.ts');
+          await createLedger({ pool: db.pool, ownerId }).initialize();
+          const current = await thread.activeThread(db.pool, ownerId);
+          const taskId = randomUUID();
+          const work = randomUUID();
+          await db.pool.query(
+            `INSERT INTO tasks(id,owner_id,title,done_when,now_text,result,state,closed_at)
+             VALUES($1,$2,'Report for Lena','Report sent','Finished','Sent','done',now())`,
+            [taskId, ownerId],
+          );
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,status,prompt,task_id)
+             VALUES($1,$2,$3,'task','succeeded','Email Lena the report.',$4)`,
+            [work, ownerId, current.id, taskId],
+          );
+          for (const [type, summary] of [
+            ['tool_complete', 'web search'],
+            ['tool_complete', 'apps'],
+            ['tool_failed', 'apps'],
+            ['tool_complete', 'mcp  linear  create issue'],
+          ])
+            await db.pool.query(
+              'INSERT INTO turn_events(id,turn_id,type,summary) VALUES($1,$2,$3,$4)',
+              [randomUUID(), work, type, summary],
+            );
+          await db.pool.query(
+            `INSERT INTO app_actions(owner_id,turn_id,action,basis) VALUES($1,$2,'GMAIL_SEND_EMAIL','{"kind":"approved"}'),
+             ('another-owner',$2,'SLACK_SEND_MESSAGE','{"kind":"approved"}')`,
+            [ownerId, work],
+          );
+          const response = await request('GET', `/api/tasks/${taskId}`);
+          assert.equal(response.statusCode, 200, response.body);
+          assert.deepEqual(
+            response
+              .json<TaskDetail>()
+              .events.filter((event) => event.type !== 'message' && event.type !== 'step')
+              .map((event) => [event.type, event.summary]),
+            [
+              ['tool_complete', 'Searched the web'],
+              ['tool_failed', 'Used a connected app'],
+              ['tool_complete', 'Used linear'],
+              ['tool_complete', 'Gmail: send email'],
+            ],
+          );
+        },
+      );
+      await t.test('a recurring schedule shows what its finished runs cost a month', async () => {
+        const { createLedger } = await import('../src/server/ledger.ts');
+        const ledger = createLedger({ pool: db.pool, ownerId });
+        await ledger.initialize();
+        const priced = createPersonalService({
+          pool: db.pool,
+          ownerId,
+          scheduler: thread.boss,
+          now: () => clock,
+          enqueueTurn: thread.enqueueTurn,
+          refresh() {},
+          sessionCosts: ledger.sessionCosts,
+        });
+        clock = new Date('2035-10-26T12:00:00.000Z');
+        const schedule = await create({ cron: '5 9 * * *' });
+        const monthly = async () =>
+          (await priced.listSchedules()).find((item) => item.id === schedule.id)!.monthlyUsd;
+        assert.equal(await monthly(), null);
+        let job = await jobFor(schedule.id);
+        clock = new Date(schedule.nextRun!);
+        await deliver([job]);
+        job = await jobFor(schedule.id);
+        clock = new Date('2035-10-28T09:05:00.000Z');
+        await deliver([job]);
+        const turns = (await runs(schedule.id)).map((run) => run.turnId);
+        assert.equal(turns.length, 2);
+        for (const [index, turnId] of turns.entries())
+          await db.pool.query(
+            'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,$4)',
+            [randomUUID(), ownerId, turnId, index ? 0.3 : 0.1],
+          );
+        assert.equal(await monthly(), null);
+        await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=ANY($1::uuid[])", [
+          turns,
+        ]);
+        assert.equal(Math.round((await monthly())! * 100) / 100, 6);
+        await db.pool.query(
+          'INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES($1,$2,$3,NULL)',
+          [randomUUID(), ownerId, turns[0]],
+        );
+        assert.equal(Math.round((await monthly())! * 100) / 100, 9);
+        assert.equal(
+          (await request('PATCH', `/api/schedules/${schedule.id}`, { enabled: false })).statusCode,
+          200,
+        );
+        assert.equal(await monthly(), null);
+      });
       await t.test(
         'a baseline added to an existing watch is what its next run compares with',
         async () => {

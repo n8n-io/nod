@@ -35,7 +35,7 @@ Mac ZIP files, runtime packs, checksums, the public certificate and update metad
 
 ## Configure the repository once
 
-CI signs Mac builds with n8n's Apple Developer ID and has Apple notarize them, on GitHub's Mac runners. Create a GitHub environment named `release` with these values. Never commit certificate keys or passwords.
+CI signs Mac builds with n8n's Apple Developer ID and has Apple notarize them, on Blacksmith's Mac runners, so these credentials reach those runners. Create a GitHub environment named `release` with these values. Never commit certificate keys or passwords.
 
 | Kind              | Name                            | Value                                                                                   |
 | ----------------- | ------------------------------- | --------------------------------------------------------------------------------------- |
@@ -117,7 +117,7 @@ The **Build desktop release** workflow runs on `main` by hand for a draft or a r
 
 Release builds run one at a time, and up to 100 runs can wait in the queue. A failed build can reuse its matching draft. Published assets are never replaced.
 
-The container images, the Windows runtime and the publishing steps run on Blacksmith runners. Mac signing and notarization, the Mac update checks and the Windows installer check run on GitHub's macOS and Windows runners. The Mac update checks run alongside the image builds, and each Mac app job signs its own runtime before packaging the app.
+The container images, the Windows runtime, Mac signing and notarization, the Mac update checks and the publishing steps run on Blacksmith runners. Both Mac apps build on Apple silicon; the Intel app builds and runs its checks with x64 Node under Rosetta. The Windows jobs run on GitHub's Windows runners, because the installer check needs WSL 2, which Blacksmith's Windows runners can't run. The Mac and Windows update checks run alongside the builds, and the Windows job installs and builds while the Windows runtime builds or downloads. Each Mac app job signs its own runtime before packaging the app, and the release uploads its assets in parallel.
 
 ## How installed apps update
 
@@ -131,7 +131,9 @@ Drafts are never offered to the installer or the updater.
 - An automatic check announces a ready update with a notification when notifications are on, and with a **Restart** or **Later** dialog otherwise. The menu offers **Restart to update** until you restart.
 - If a reply, schedule or background check is running, or nod can't tell, it asks before restarting.
 - If the runtime hasn't changed, nod reuses it and downloads only the app or installer.
-- A Mac runtime changes only when what it ships changes: the browser worker and the source it imports, the scripts the images copy, dependencies, Dockerfiles, pinned downloads and the runtime build scripts. Other app changes reuse the published runtime.
+- A Mac runtime is rebuilt when one of its inputs changes, or by the first release built in a new week (below). Its inputs are the browser worker and the source it imports, the scripts the images copy, dependencies, Dockerfiles, pinned downloads, the runtime build scripts and the release workflow. Other app changes reuse the published runtime. A test fails when a runtime build script or Dockerfile reads a repository file the fingerprint doesn't cover.
+- A Windows runtime follows the same rule, plus its own Dockerfile, guest script and build script. When it hasn't changed, the release build downloads the published one, checks it against its manifest and GitHub's asset digest, and runs the full Windows install check on it. A Windows install that already has that runtime then updates with only the installer.
+- The first release built in a new week (from Monday, UTC) rebuilds both runtimes and refetches the images' system packages, such as Chromium, instead of reusing Docker's cached layers. Later releases that week reuse them. A week without a release build ships no refresh.
 - On Windows, the restart runs the verified installer silently over the current install, then opens nod again. The profile is kept.
 
 ## Help private-alpha testers
@@ -144,14 +146,16 @@ On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/nod/instal
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Not enough storage    | nod needs the runtime's extracted size plus 512 MiB, and downloads also reserve the archive size. The error says how much to free. Free it and retry. Existing data is kept. |
 | Setup was interrupted | Retry it.                                                                                                                                                                    |
-| It still fails        | Open **Send feedback** in Chat, tick **Include diagnostic report**, review it and send. If Chat can't open, send the visible setup error.                                    |
+| It still fails        | Open **Send feedback** in Chat, choose **Bug or issue**, review the selected diagnostic report, and send. If Chat can't open, describe the visible setup error.              |
 | Starting over         | Select **Remove all data…** in the **nod** menu. It deletes the profile and private computer, keeps the runtime, and quits.                                                  |
+
+The report includes recent messages, tool inputs and results, errors, and app activity after best-effort redaction. Review it for personal details before sending, or untick **Include diagnostic report**. It excludes screenshots, binary data, system prompts, and model thinking. Database and journal sections mark unavailable sources and omitted entries. See [Report contents and limits](/deploy/troubleshooting/#report-contents-and-limits). If preparation fails, select **Continue without report**, then **Send feedback**. Your text and selected attachments stay in the draft; check these for personal information.
 
 :::danger[Don't delete the profile to recover]
 Never delete the profile, VM, database or runtime cache as a routine recovery step. A downgrade or full backup-and-restore isn't supported. Testers should never send API keys, passwords or the settings file.
 :::
 
-In development, **Copy trace** copies the same report without sending it. `NOD_FEEDBACK_URL` changes where feedback goes, and an empty value turns sending off.
+In development, **Copy report** copies the same report without sending it. `NOD_FEEDBACK_URL` changes where feedback goes, and an empty value turns sending off.
 
 :::caution[Hardware needs aren't measured yet]
 The VM reserves 3 to 6 GiB of RAM and a 24 GiB virtual disk that grows as it's used. Before preparing or loading its images, nod checks for the disk's remaining capacity plus 2 GiB of free space. Pending runtime downloads on the same disk are included in that check.

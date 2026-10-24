@@ -26,6 +26,7 @@ export async function prepare(stack: Stack, world: World, timeZone: string) {
     timeZone,
     quietHoursEnabled: false,
     notificationRule: world.notificationRule ?? '',
+    ...(world.rules ? { rules: world.rules } : {}),
   });
   const slugs = world.apps?.services ?? [];
   for (const slug of slugs) {

@@ -30,15 +30,16 @@ flowchart LR
 <Tabs syncKey="os">
 <TabItem label="Mac" icon="apple">
 
-- Electron runs the app window and the nod server.
+- Electron runs the app window and the nod server. While you use 1Password, a separate helper talks to the 1Password app; it's the only nod process allowed to load 1Password's library.
 - Lima and Apple's Virtualization framework run a private Ubuntu virtual machine. It gets half your memory, between 3 and 6 GiB, and a 24 GiB disk that grows as it's used. Its first boot installs the firewall packages it needs from the runtime pack, and uses Ubuntu's package servers only if that installation fails.
 - The VM holds PostgreSQL and separate workspace and browser containers. Docker runs only inside the VM.
 
 </TabItem>
 <TabItem label="Windows" icon="seti:windows">
 
-- Electron runs the app window and the nod server.
+- Electron runs the app window and the nod server. While you use 1Password, a separate helper talks to the 1Password app.
 - A private WSL 2 distribution named `nod-<profile>` holds PostgreSQL and separate workspace and browser containers. Docker runs only inside it.
+- nod reaches PostgreSQL through WSL's localhost forwarding, on a loopback port it picks free at each launch.
 - nod doesn't change your default WSL distribution or global WSL settings.
 
 </TabItem>
@@ -67,7 +68,7 @@ The app download is small. On first launch, nod downloads a matching runtime pac
 - On a Mac, nod checks every extracted file. Verified packs live in `~/Library/Application Support/nod/runtime/<release>`. The VM mounts them read-only. After the VM starts, nod deletes packs that no nod VM mounts and that are more than a day old, so a downloaded update waits for its restart.
 - After its containers start, nod removes container images from earlier runtimes. On a Mac, the freed space returns to your disk.
 - On Windows, nod imports the pack into its WSL distribution, then deletes the archive.
-- An app update reuses the runtime when it hasn't changed.
+- An app update reuses the runtime when it hasn't changed. The first release built each week rebuilds it, which also refreshes its system packages, such as the browser.
 
 If a download isn't available, you can import the matching `nod-Runtime-darwin-<arch>-<id>.tar.gz` from the release page by hand. On Windows, put `nod-Runtime-win32-x64.tar.gz` from the same release next to the installer and run it again.
 

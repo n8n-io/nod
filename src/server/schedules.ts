@@ -71,6 +71,7 @@ export interface ScheduleDependencies {
   enqueueTurn: typeof enqueueTurn;
   refresh(): void;
   now?: () => Date;
+  sessionCosts?(sessionIds: string[]): Promise<Record<string, number | null>>;
 }
 
 interface ScheduleRow {
@@ -478,7 +479,43 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return result;
   }
 
-  async function value(row: ScheduleRow): Promise<Schedule> {
+  async function monthlyCosts(rows: ScheduleRow[]) {
+    const recurring = rows.filter((row) => row.kind === 'recurring' && row.enabled && row.cron);
+    const monthly = new Map<string, number>();
+    if (!recurring.length || !dependencies.sessionCosts) return monthly;
+    const runs = (
+      await pool.query<{ schedule_id: string; turn_id: string }>(
+        `SELECT schedule_id,turn_id FROM (
+           SELECT r.schedule_id,r.turn_id,
+             row_number() OVER (PARTITION BY r.schedule_id ORDER BY r.scheduled_for DESC) AS recent
+           FROM schedule_runs r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
+           WHERE r.schedule_id=ANY($1::uuid[]) AND r.owner_id=$2
+             AND u.status NOT IN ('queued','running','waiting')) runs
+         WHERE recent<=10`,
+        [recurring.map((row) => row.id), ownerId],
+      )
+    ).rows;
+    const costs = await dependencies.sessionCosts(runs.map((run) => run.turn_id));
+    const from = now();
+    const month = 30 * 86_400_000;
+    for (const row of recurring) {
+      const priced = runs.flatMap((run) => {
+        const cost = run.schedule_id === row.id ? costs[run.turn_id] : undefined;
+        return typeof cost === 'number' ? [cost] : [];
+      });
+      if (!priced.length) continue;
+      const upcoming = scheduler.previewSchedule(row.cron!, { tz: row.timeZone, count: 200, from });
+      const last = upcoming.at(-1)?.getTime();
+      const count =
+        last !== undefined && last - from.getTime() < month
+          ? (upcoming.length * month) / Math.max(last - from.getTime(), 1)
+          : upcoming.filter((date) => date.getTime() - from.getTime() <= month).length;
+      monthly.set(row.id, (priced.reduce((sum, cost) => sum + cost, 0) / priced.length) * count);
+    }
+    return monthly;
+  }
+
+  async function value(row: ScheduleRow, monthly?: Map<string, number>): Promise<Schedule> {
     return {
       id: row.id,
       title: row.title,
@@ -492,6 +529,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       nextRun: row.nextRun?.toISOString() ?? null,
       lastRun: (await history({ limit: 1 }, row.id)).runs[0] ?? null,
       baselineObservation: row.baselineObservation,
+      monthlyUsd: (monthly ?? (await monthlyCosts([row]))).get(row.id) ?? null,
     };
   }
 
@@ -502,7 +540,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         [ownerId],
       )
     ).rows;
-    return Promise.all(rows.map(value));
+    const monthly = await monthlyCosts(rows);
+    return Promise.all(rows.map((row) => value(row, monthly)));
   }
 
   function validateCreate(raw: unknown) {
@@ -682,7 +721,12 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return value(row);
   }
 
-  async function update(id: string, raw: unknown, provenance?: ScheduleProvenance) {
+  async function update(
+    id: string,
+    raw: unknown,
+    provenance?: ScheduleProvenance,
+    expectedRevision?: number,
+  ) {
     z.uuid().parse(id);
     const input = updateSchema.parse(raw);
     if (!Object.keys(input).length) throw invalid('Choose a schedule detail to update.');
@@ -694,7 +738,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         )
       ).rows[0];
       if (!previous) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
-      assertRevision(previous, provenance?.expectedRevision);
+      assertRevision(previous, provenance?.expectedRevision ?? expectedRevision);
       const next = updateValue(previous, input);
       const authorized =
         input.prompt === undefined
@@ -774,10 +818,33 @@ export function createSchedules(dependencies: ScheduleDependencies) {
 
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/schedules', list);
+    app.post<{ Params: { id: string } }>('/api/schedules/:id/preview', async (request) => {
+      const previous = await read(z.uuid().parse(request.params.id));
+      const input = updateSchema
+        .pick({ cron: true, runAt: true, timeZone: true })
+        .parse(request.body);
+      const next = updateValue(previous, input);
+      validateTiming(next, false);
+      if (next.kind === 'once' && next.runAt && new Date(next.runAt) <= now())
+        return { nextRun: null };
+      return {
+        nextRun:
+          nextOccurrence({
+            ...previous,
+            cron: next.cron,
+            timeZone: next.timeZone,
+            runAt: next.runAt ? new Date(next.runAt) : null,
+            enabled: true,
+          })?.toISOString() ?? null,
+      };
+    });
     app.post('/api/schedules', (request) => create(request.body));
-    app.patch<{ Params: { id: string } }>('/api/schedules/:id', (request) =>
-      update(request.params.id, request.body),
-    );
+    app.patch<{ Params: { id: string } }>('/api/schedules/:id', (request) => {
+      const { expectedRevision, ...body } = updateSchema
+        .extend({ expectedRevision: z.number().int().nonnegative().optional() })
+        .parse(request.body);
+      return update(request.params.id, body, undefined, expectedRevision);
+    });
     app.delete<{ Params: { id: string } }>('/api/schedules/:id', (request) =>
       remove(request.params.id),
     );

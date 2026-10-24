@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send } from 'lucide-react';
+import { Send } from '../../../components/icons';
 import type { StepProps } from '..';
 import { Rise } from '../../../components/motion';
 import { TelegramSetup } from '../../../components/telegram-setup';

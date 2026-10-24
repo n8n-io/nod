@@ -2,6 +2,144 @@
 
 Releases from before the rename to nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.2.5 - 2026-10-23
+
+### Features
+
+- **tasks:** Stop all background work when the owner asks in chat. [#444](https://github.com/n8n-io/nod/pull/444) (f4b6e81)
+- **onboarding:** Redesign model selection as one provider card. [commit](https://github.com/n8n-io/nod/commit/f27fa1ce4be8b1ab1345bf68e19d8447af8aee9d) (f27fa1c)
+
+### Fixes
+
+- **chat:** Preserve links and keep replies readable. [commit](https://github.com/n8n-io/nod/commit/4014d5e879ace35b2f9bef7785254f1a3874a2b0) (4014d5e)
+- **channels:** Remove stale WhatsApp QR codes. [commit](https://github.com/n8n-io/nod/commit/55b8a2ff325d52539c9e7b88915ffefc6a521f0d) (55b8a2f)
+- **onboarding:** Address review feedback and leave out the playground. [commit](https://github.com/n8n-io/nod/commit/263eaa157a012bc124a1f53257707c5cf5f03ec4) (263eaa1)
+- **browser:** Make handoff explicit and show who has control. [commit](https://github.com/n8n-io/nod/commit/e85795732057dcdef93921043a7e0f53be0845a5) (e857957)
+- **models:** Repair the same account on sign-in and show connections that need reconnecting. [#442](https://github.com/n8n-io/nod/pull/442) (879a2cb)
+- **ci:** Mount desktop preload files in integration tests. [#441](https://github.com/n8n-io/nod/pull/441) (05d0ce9)
+- **feedback:** Keep reports sendable when diagnostics are incomplete. [#436](https://github.com/n8n-io/nod/pull/436) (6869b0f)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.2.4...4014d5e879ace35b2f9bef7785254f1a3874a2b0)
+
+<details>
+<summary>Build details</summary>
+
+Source: `4014d5e879ace35b2f9bef7785254f1a3874a2b0`
+Previous release: `nod-v0.2.4`
+
+</details>
+
+## 0.2.4 - 2026-10-23
+
+### Features
+
+- Add app links and model selection from chat. [#438](https://github.com/n8n-io/nod/pull/438) (31f0a10)
+- **web:** Useful empty states for Tasks and Vault. [#437](https://github.com/n8n-io/nod/pull/437) (81bc0d5)
+- **trust:** Authenticator keys, 1Password sign-in, quoted trust reasons and receipts. [#431](https://github.com/n8n-io/nod/pull/431) (8689fd8)
+
+### Fixes
+
+- **onboarding:** Say which setup step is missing and go back to it. [#439](https://github.com/n8n-io/nod/pull/439) (80bf1ca)
+
+<details>
+<summary>Maintenance (2 changes)</summary>
+
+- **desktop:** Reuse the published Windows runtime within a week and rebuild runtimes weekly. [#435](https://github.com/n8n-io/nod/pull/435) (d835c85)
+- **desktop:** Cut release time with Blacksmith M4 Macs, a larger publisher and overlapped Windows work. [#434](https://github.com/n8n-io/nod/pull/434) (5b36df1)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.2.3...80bf1ca923053b68d9419c28ea858e0267c19324)
+
+<details>
+<summary>Build details</summary>
+
+Source: `80bf1ca923053b68d9419c28ea858e0267c19324`
+Previous release: `nod-v0.2.3`
+
+</details>
+
+## 0.2.3 - 2026-10-23
+
+### Features
+
+- **models:** Connect Amazon Bedrock, Google Vertex AI and Azure OpenAI. [#427](https://github.com/n8n-io/nod/pull/427) (f5ac65b)
+- **trust:** Owner rules the trust check applies to every action. [#426](https://github.com/n8n-io/nod/pull/426) (09147f6)
+- **ui:** Animate the sidebar and steady its layout. [commit](https://github.com/n8n-io/nod/commit/37091d785b7281c607866121a2639e3ed5555ec4) (37091d7)
+- **ui:** Switch to n8n icons and tidy the sidebar and page titles. [commit](https://github.com/n8n-io/nod/commit/7ba4fa7d0eaf944b0aafa3fbb5e77fd1dda2968b) (7ba4fa7)
+
+### Fixes
+
+- **desktop:** Start Windows storage on a free port and name why it can't connect. [#432](https://github.com/n8n-io/nod/pull/432) (748043d)
+- **ui:** Use the outline sidebar toggle icon in both states. [commit](https://github.com/n8n-io/nod/commit/ad150fdc7de6b6df2c9b4aae88cf598e6ddd8624) (ad150fd)
+- **ui:** Show state in the sidebar toggle and audio play icons. [commit](https://github.com/n8n-io/nod/commit/92f98d75fcf6f6100d76e73c406ca8be8802391d) (92f98d7)
+- **ui:** Soften message link underlines. [commit](https://github.com/n8n-io/nod/commit/9b3314300afc93bec784843da45c33143d473deb) (9b33143)
+- **desktop:** Start after updating with apps connected before 0.2. [#428](https://github.com/n8n-io/nod/pull/428) (770e64f)
+- **ui:** Smooth the chat fade and steady onboarding controls. [commit](https://github.com/n8n-io/nod/commit/3958ee6fbc5be347df4e7c2b4c46807f789dc816) (3958ee6)
+- **evals:** Keep overnight release checks valid. [#425](https://github.com/n8n-io/nod/pull/425) (d5d1244)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.2.1...748043d9a43eafa4e25b6e99e9afc52f1377f931)
+
+<details>
+<summary>Build details</summary>
+
+Source: `748043d9a43eafa4e25b6e99e9afc52f1377f931`
+Previous release: `nod-v0.2.1`
+
+</details>
+
+## 0.2.2 - 2026-10-23
+
+### Features
+
+- **trust:** Owner rules the trust check applies to every action. [#426](https://github.com/n8n-io/nod/pull/426) (09147f6)
+
+### Fixes
+
+- **desktop:** Start after updating with apps connected before 0.2. [#428](https://github.com/n8n-io/nod/pull/428) (770e64f)
+- **evals:** Keep overnight release checks valid. [#425](https://github.com/n8n-io/nod/pull/425) (d5d1244)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.2.1...770e64ff65339a35b64bcea26f76d63c1a81fec5)
+
+<details>
+<summary>Build details</summary>
+
+Source: `770e64ff65339a35b64bcea26f76d63c1a81fec5`
+Previous release: `nod-v0.2.1`
+
+</details>
+
+## 0.2.1 - 2026-10-22
+
+### Features
+
+- **channels:** Add WhatsApp QR setup and media for Telegram. [#423](https://github.com/n8n-io/nod/pull/423) (451e6f8)
+- One activity model for live progress and typing on every surface. [#421](https://github.com/n8n-io/nod/pull/421) (a8ae5a1)
+- **web:** Rename Activity and Logins and payment to Usage and Vault. [#422](https://github.com/n8n-io/nod/pull/422) (543867e)
+- **web:** Split Trust into Activity and Logins and payment. [#419](https://github.com/n8n-io/nod/pull/419) (d206020)
+
+### Fixes
+
+- **desktop:** Keep Windows starting after the first launch. [#418](https://github.com/n8n-io/nod/pull/418) (0a53b79)
+- **web:** Clear model step, visible selection in sent messages, task line says what it's doing. [#417](https://github.com/n8n-io/nod/pull/417) (62e58db)
+
+<details>
+<summary>Maintenance (1 changes)</summary>
+
+- **desktop:** Cut release build time with parallel Mac checks, faster runners and multithreaded image compression. [#420](https://github.com/n8n-io/nod/pull/420) (a7d8112)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.2.0...451e6f8581d29cc93fe86249e966f5374bfb694e)
+
+<details>
+<summary>Build details</summary>
+
+Source: `451e6f8581d29cc93fe86249e966f5374bfb694e`
+Previous release: `nod-v0.2.0`
+
+</details>
+
 ## 0.2.0 - 2026-10-22
 
 ### Features

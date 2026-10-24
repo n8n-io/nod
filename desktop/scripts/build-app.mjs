@@ -146,6 +146,7 @@ for (const path of [
   'NOTICE',
   'desktop/runtime',
   'desktop/main/engine.mjs',
+  'desktop/main/onepassword.mjs',
 ]) {
   await mkdir(dirname(join(engine, path)), { recursive: true });
   await copy(join(root, path), join(engine, path));
@@ -229,6 +230,7 @@ const paths = await packager({
   prune: false,
   overwrite: true,
   icon,
+  protocols: [{ name: 'nod', schemes: ['nod'] }],
   extendInfo: {
     LSMinimumSystemVersion: minimumSystemVersion,
     ElectronSquirrelPreventDowngrades: true,

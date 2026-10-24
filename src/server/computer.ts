@@ -4,9 +4,10 @@ import { z } from 'zod';
 import type { MacApp, MacAppAction, OwnerComputer } from '../ports/owner-computer.ts';
 import type { ComputerStatus } from '../shared/computer.ts';
 import type { TurnRef } from './thread.ts';
+import type { TrustBasis } from './trust-basis.ts';
 import { fileBytes } from '../shared/files.ts';
 
-type Verdict = { confirm: false } | { confirm: true; reason: string };
+type Verdict = { confirm: false; basis: TrustBasis } | { confirm: true; reason: string };
 type Request = (
   turn: TurnRef,
   action: string,
@@ -119,9 +120,11 @@ export function createComputerPolicy(options: {
   ownerId: string;
   computer?: OwnerComputer;
   check(turn: TurnRef, action: string, args: Record<string, unknown>): Promise<Verdict>;
+  hasRules?(): Promise<boolean>;
   request: Request;
   lock(turnId: string, write: () => Promise<void>): Promise<void>;
   signalFor(turnId: string): AbortSignal | undefined;
+  record?(turnId: string, action: string, basis: TrustBasis): Promise<void>;
   publishScreenshot?(
     turn: TurnRef,
     bytes: Uint8Array,
@@ -261,8 +264,8 @@ export function createComputerPolicy(options: {
       return { app: running, running: true };
     }
     if (!launch) throw new Error(`${query} is not running. Open it first.`);
-    const identified = computer.identify ? await computer.identify(query, signal) : null;
-    const app = identified ?? { name: query, bundleId: query };
+    const app = computer.identify ? await computer.identify(query, signal) : null;
+    if (!app?.bundleId) throw new Error(`Could not identify ${query}. Name the Mac app again.`);
     refuse(app);
     return { app, running: false };
   }
@@ -288,11 +291,57 @@ export function createComputerPolicy(options: {
     });
   }
 
-  async function observe(action: 'look' | 'screenshot', app: MacApp, signal: AbortSignal) {
+  async function observe(
+    action: 'look' | 'screenshot',
+    app: MacApp,
+    signal: AbortSignal,
+    turnId: string,
+  ) {
     touch(app.name);
-    if (action === 'look') return computer.look!(app.bundleId, signal);
+    if (action === 'look') return computer.look!(app.bundleId, signal, turnId);
     const shot = await computer.screenshot!(app.bundleId, signal);
     return { app: shot.app, png: shot.png.toString('base64') };
+  }
+
+  async function observeCompleted(
+    app: MacApp,
+    action: 'open' | 'act',
+    signal: AbortSignal,
+    turnId: string,
+  ) {
+    try {
+      signal.throwIfAborted();
+      const observation = await computer.look!(app.bundleId, signal, turnId);
+      signal.throwIfAborted();
+      refuse(observation.app);
+      if (observation.app.bundleId !== app.bundleId) throw new Error('The observed app changed.');
+      return { done: true, app: observation.app, tree: observation.tree };
+    } catch {
+      signal.throwIfAborted();
+      return {
+        done: true,
+        observation: 'unavailable',
+        next:
+          action === 'open'
+            ? 'The app is open, but its view is unavailable. Look again before acting; do not repeat the open action.'
+            : 'The action completed, but its result could not be observed. Look again before acting; do not repeat the action.',
+      };
+    }
+  }
+
+  async function complete<T>(
+    turnId: string,
+    action: string,
+    basis: TrustBasis,
+    signal: AbortSignal,
+    result: T,
+  ): Promise<T> {
+    signal.throwIfAborted();
+    await options.lock(turnId, async () => {
+      signal.throwIfAborted();
+      await options.record?.(turnId, `NOD_computer_${action}`, basis);
+    });
+    return result;
   }
 
   async function run(
@@ -327,6 +376,7 @@ export function createComputerPolicy(options: {
             turnId: turn.turnId,
             signal,
             expectedRevision: revision,
+            basis: verdict.confirm ? { kind: 'approved' } : verdict.basis,
           }),
         details: verdict.confirm ? { reason: verdict.reason } : {},
       });
@@ -334,27 +384,40 @@ export function createComputerPolicy(options: {
     if (input.action === 'apps') {
       if (!computer.apps) throw new Error('Mac app control needs the nod desktop app.');
       await provenance.admit?.(false);
-      return (await computer.apps(signal)).filter((app) => !isBlockedApp(app));
+      const result = (await computer.apps(signal)).filter((app) => !isBlockedApp(app));
+      return complete(turn.turnId, input.action, { kind: 'read' }, signal, result);
     }
     const { app, running } = await target(input.app, signal, input.action === 'open');
     signal = operation(signal, app.bundleId);
     refuse(app);
     const allowed = await permitted(app);
     if (input.action === 'open' && running) {
-      if (allowed) {
+      if (allowed && !(await options.hasRules?.())) {
         await provenance.admit?.(false);
         signal.throwIfAborted();
-        return { app, running: true, next: 'Look at the app before acting in it.' };
+        return execute(
+          'NOD_computer',
+          { action: 'open', app: app.name, bundleId: app.bundleId, running: true },
+          {
+            threadId: turn.threadId,
+            turnId: turn.turnId,
+            signal,
+            expectedRevision: revision,
+            basis: { kind: 'read' },
+          },
+        );
       }
     } else if (
       allowed &&
       input.action !== 'act' &&
       input.action !== 'open' &&
-      input.action !== 'share_screenshot'
+      input.action !== 'share_screenshot' &&
+      !(await options.hasRules?.())
     ) {
       await provenance.admit?.(false);
       signal.throwIfAborted();
-      return observe(input.action, app, signal);
+      const result = await observe(input.action, app, signal, turn.turnId);
+      return complete(turn.turnId, input.action, { kind: 'read' }, signal, result);
     }
     let args: Record<string, unknown> = {
       action: input.action,
@@ -372,7 +435,7 @@ export function createComputerPolicy(options: {
       if (['press', 'focus', 'showMenu', 'raise', 'set'].includes(step) && !ref)
         throw new Error('Pass the ref from a fresh look.');
       if (!computer.inspect) throw new Error('Mac app control needs the nod desktop app.');
-      const target = await computer.inspect(app.bundleId, ref, signal);
+      const target = await computer.inspect(app.bundleId, ref, signal, turn.turnId);
       args = {
         ...args,
         step,
@@ -400,6 +463,7 @@ export function createComputerPolicy(options: {
           expectedRevision: revision,
           rememberApp: provenance.rooted === true,
           read: true,
+          basis: verdict.confirm ? { kind: 'approved' } : verdict.basis,
         }),
       details: verdict.confirm ? { reason: verdict.reason } : {},
     });
@@ -409,6 +473,7 @@ export function createComputerPolicy(options: {
     action: string,
     args: Record<string, unknown>,
     provenance?: {
+      basis: TrustBasis;
       threadId?: string;
       turnId?: string;
       signal?: AbortSignal;
@@ -447,6 +512,8 @@ export function createComputerPolicy(options: {
     });
     signal.throwIfAborted();
     track(provenance.turnId);
+    const completed = <T>(result: T) =>
+      complete(provenance.turnId!, String(args.action), provenance.basis, signal, result);
     if (args.action === 'share_file') {
       if (fileTransfers >= 2)
         throw Object.assign(
@@ -470,7 +537,7 @@ export function createComputerPolicy(options: {
           signal,
         );
         signal.throwIfAborted();
-        return result;
+        return completed(result);
       } finally {
         fileTransfers--;
       }
@@ -480,10 +547,12 @@ export function createComputerPolicy(options: {
         command: string;
         timeoutSeconds?: number;
       };
-      return computer.shell(command, {
+      const result = await computer.shell(command, {
         signal,
         timeoutMs: timeoutSeconds ? timeoutSeconds * 1000 : undefined,
       });
+      signal.throwIfAborted();
+      return result.exitCode === 0 ? completed(result) : result;
     }
     const rememberAllowed = () =>
       action === 'NOD_computer_app' && provenance?.turnId && provenance.rememberApp !== false
@@ -503,26 +572,30 @@ export function createComputerPolicy(options: {
       );
       signal.throwIfAborted();
       await rememberAllowed();
-      return result;
+      return completed(result);
     }
     if (args.action === 'open') {
       const opened = args.running ? app : await computer.open!(app.bundleId, signal);
       signal.throwIfAborted();
       refuse(opened);
+      if (opened.bundleId !== app.bundleId)
+        throw new Error('The opened app changed. Check its identity before continuing.');
       if (action === 'NOD_computer_app' && provenance?.turnId && provenance.rememberApp !== false)
         await remember(provenance.turnId, opened, revision, signal);
       touch(opened.name);
-      return { app: opened, next: 'Look at the app before acting in it.' };
+      return completed(await observeCompleted(opened, 'open', signal, provenance.turnId));
     }
     if (args.action === 'look' || args.action === 'screenshot') {
-      if (provenance?.read) {
-        const result = await observe(args.action, app, signal);
+      if (provenance.read || action === 'NOD_computer') {
+        const result = await observe(args.action, app, signal, provenance.turnId);
         signal.throwIfAborted();
         await rememberAllowed();
-        return result;
+        return completed(result);
       }
       await rememberAllowed();
-      return `The owner allowed nod to use ${app.name}. ${args.action === 'look' ? 'Look' : 'Take the screenshot'} again to continue.`;
+      return completed(
+        `The owner allowed nod to use ${app.name}. ${args.action === 'look' ? 'Look' : 'Take the screenshot'} again to continue.`,
+      );
     }
     if (typeof args.targetToken !== 'string' || !args.targetToken)
       throw Object.assign(new Error(`${app.name} needs a fresh look before acting.`), {
@@ -541,19 +614,7 @@ export function createComputerPolicy(options: {
     await computer.act!(step, signal);
     signal.throwIfAborted();
     await rememberAllowed();
-    try {
-      signal.throwIfAborted();
-      const observation = await computer.look!(app.bundleId, signal);
-      signal.throwIfAborted();
-      return { done: true, app: observation.app, tree: observation.tree };
-    } catch {
-      signal.throwIfAborted();
-      return {
-        done: true,
-        observation: 'unavailable',
-        next: 'The action completed, but its result could not be observed. Look again before acting; do not repeat the action.',
-      };
-    }
+    return completed(await observeCompleted(app, 'act', signal, provenance.turnId));
   }
 
   function registerRoutes(app: FastifyInstance) {

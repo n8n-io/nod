@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { KeyRound, Monitor, Moon, Settings, Sun } from 'lucide-react';
+import { KeyRound, Monitor, Moon, Settings, Sun } from './icons';
 import type { AccountTheme, AccountUser } from '../../shared/account';
 import { desktopSettingsAvailable } from '../lib/desktop';
 

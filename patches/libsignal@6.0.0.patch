@@ -1,0 +1,120 @@
+diff --git a/src/curve.js b/src/curve.js
+index 55b4b8090e0380599b90bf7808599acab7ff1479..37dadb81127f6f5eed75376d83bd95b74c36cd5d 100644
+--- a/src/curve.js
++++ b/src/curve.js
+@@ -40,7 +40,7 @@ function scrubPubKeyFormat(pubKey) {
+     if (pubKey.byteLength == 33) {
+         return pubKey.slice(1);
+     } else {
+-        console.error("WARNING: Expected pubkey of length 33, please report the ST and client that generated the pubkey");
++        
+         return pubKey;
+     }
+ }
+diff --git a/src/queue_job.js b/src/queue_job.js
+index baab89c48e66d4c3fb704abd35c1cfff979bb518..c38898d772d7aa11a0cfbc71782ee996e377492a 100644
+--- a/src/queue_job.js
++++ b/src/queue_job.js
+@@ -47,7 +47,7 @@ module.exports = function(bucket, awaitable) {
+         if (typeof bucket === 'string') {
+             awaitable.name = bucket;
+         } else {
+-            console.warn("Unhandled bucket type (for naming):", typeof bucket, bucket);
++            
+         }
+     }
+     let inactive;
+diff --git a/src/session_builder.js b/src/session_builder.js
+index 30c731328ebbb645db5de52d1254e557f6bb4786..ab1c650bd2e452e0a75f5682da3cb18230bbce7b 100644
+--- a/src/session_builder.js
++++ b/src/session_builder.js
+@@ -71,7 +71,7 @@ class SessionBuilder {
+         }   
+         const existingOpenSession = record.getOpenSession();
+         if (existingOpenSession) {
+-            console.warn("Closing open session in favor of incoming prekey bundle");
++            
+             record.closeSession(existingOpenSession);
+         }
+         record.setSession(await this.initSession(false, preKeyPair, signedPreKeyPair,
+diff --git a/src/session_cipher.js b/src/session_cipher.js
+index 0e6df11ee52cf6de3403a0c6f38254c674690312..af8956d7de8b6553171c8a435254066c409a325f 100644
+--- a/src/session_cipher.js
++++ b/src/session_cipher.js
+@@ -154,9 +154,9 @@ class SessionCipher {
+                 errs.push(e);
+             }
+         }
+-        console.error("Failed to decrypt message with any known session...");
++        
+         for (const e of errs) {
+-            console.error("Session error:" + e, e.stack);
++            
+         }
+         throw new errors.SessionError("No matching sessions found for message");
+     }
+@@ -179,7 +179,7 @@ class SessionCipher {
+                 // was the most current.  Simply make a note of it and continue.  If our
+                 // actual open session is for reason invalid, that must be handled via
+                 // a full SessionError response.
+-                console.warn("Decrypted message with closed session.");
++                
+             }
+             await this.storeRecord(record);
+             return result.plaintext;
+diff --git a/src/session_record.js b/src/session_record.js
+index 7626a3927fadcdf7f66b3d0c9cf8c63d33da579b..873f657b43505c534b125ed239ac0e7ae03abde4 100644
+--- a/src/session_record.js
++++ b/src/session_record.js
+@@ -170,9 +170,7 @@ const migrations = [{
+         } else {
+             for (const key in sessions) {
+                 if (sessions[key].indexInfo.closed === -1) {
+-                    console.error('V1 session storage migration error: registrationId',
+-                                  data.registrationId, 'for open session version',
+-                                  data.version);
++                    
+                 }
+             }
+         }
+@@ -190,7 +188,7 @@ class SessionRecord {
+         let run = (data.version === undefined);
+         for (let i = 0; i < migrations.length; ++i) {
+             if (run) {
+-                console.info("Migrating session to:", migrations[i].version);
++                
+                 migrations[i].migrate(data);
+             } else if (migrations[i].version === data.version) {
+                 run = true;
+@@ -267,18 +265,18 @@ class SessionRecord {
+ 
+     closeSession(session) {
+         if (this.isClosed(session)) {
+-            console.warn("Session already closed", session);
++            
+             return;
+         }
+-        console.info("Closing session:", session);
++        
+         session.indexInfo.closed = Date.now();
+     }
+ 
+     openSession(session) {
+         if (!this.isClosed(session)) {
+-            console.warn("Session already open");
++            
+         }
+-        console.info("Opening session:", session);
++        
+         session.indexInfo.closed = -1;
+     }
+ 
+@@ -298,7 +296,7 @@ class SessionRecord {
+                 }
+             }
+             if (oldestKey) {
+-                console.info("Removing old closed session:", oldestSession);
++                
+                 delete this.sessions[oldestKey];
+             } else {
+                 throw new Error('Corrupt sessions object');

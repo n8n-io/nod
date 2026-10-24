@@ -7,7 +7,10 @@ export interface Turn {
   computer: Computer;
   execution: ExecutionScope;
   reply(text: string, id?: string, replyToMessageId?: string): Promise<unknown>;
-  pause(reason: 'question' | 'approval' | 'credentials', message?: string): Promise<void>;
+  pause(
+    reason: 'question' | 'approval' | 'credentials' | 'browser',
+    message?: string,
+  ): Promise<void>;
   confirm(result: unknown): Promise<unknown>;
   visited(browserId: string, url: string): void;
   delegate?(title: string, instruction: string): Promise<string>;

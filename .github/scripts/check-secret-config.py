@@ -69,11 +69,6 @@ for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
     if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
         raise SystemExit("The public token exception must be limited to its configuration file.")
 
-evidence_path = "docs/research/apps-acceptance-b8e489cb.json"
-code, findings = scan((config.parent / evidence_path).read_text(), evidence_path)
-if code != 0 or findings:
-    raise SystemExit("Verified acceptance source hashes must pass secret scanning.")
-
 synthetic = f'api_key = "{candidate}"'
 for filename in [
     "tests/app.test.ts",
@@ -136,7 +131,7 @@ for filename, fingerprints in composio["fingerprints"].items():
     changed = "".join(f'"{field}": "{changed_digest}"\n' for _, field in fingerprints)
     code, findings = scan(snapshot, filename)
     if code != 0 or findings:
-        raise SystemExit("Verified evidence fingerprints must pass at their exact artifact path.")
+        raise SystemExit("Allowlisted fingerprints must pass only at their exact artifact path.")
     for content, target in [
         (changed, filename),
         (snapshot, "docs/testing/composio-proxy/new-source.json"),

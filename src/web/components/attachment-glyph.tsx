@@ -9,7 +9,7 @@ import {
   FileVideo,
   Presentation,
   Workflow,
-} from 'lucide-react';
+} from './icons';
 import { attachmentKind } from '../lib/attachment-kind';
 
 export function FileGlyph({

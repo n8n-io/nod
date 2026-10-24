@@ -167,7 +167,14 @@ test(
                 },
               };
             }
-            return task === 'review' && 'action' in input ? { run: true } : {};
+            return task === 'review' && 'action' in input
+              ? {
+                  run: true,
+                  because:
+                    (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
+                      ?.text ?? 'read',
+                }
+              : {};
           },
         },
         speech: {

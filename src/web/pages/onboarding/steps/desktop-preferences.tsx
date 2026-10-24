@@ -1,4 +1,4 @@
-import { Bell, Check, LoaderCircle, Power } from 'lucide-react';
+import { Bell, Check, LoaderCircle, Power } from '../../../components/icons';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { desktopOnboardingSteps, OnboardingFrame } from '../frame';
 import { Button, Notice } from '../../../components/ui';

@@ -88,6 +88,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     unroute();
   };
   terminate = release;
+  let phase = 'start';
   try {
     const judgeLlm = withFallback(
       await createLlm(judgeModel),
@@ -106,6 +107,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       hermetic: definition.tier !== 'live',
       environment,
     }));
+    phase = 'prepare';
     await prepare(stack, world, definition.timeZone ?? 'Europe/Madrid');
     taskStarted = Date.now();
     const session = createSession({
@@ -116,12 +118,14 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       world,
     });
     let failure: string | undefined;
+    phase = 'play';
     try {
       await definition.play(session, world);
       await session.followUp();
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
     }
+    phase = 'collect';
     const trace = await collect({
       task: session.userMessages.map((message) => message.text).join('\n---\n'),
       stack,
@@ -146,6 +150,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
         truth,
         skipJudges: Boolean(failure),
       });
+    phase = 'grade';
     let graded = await scored();
     for (const wait of [20_000, 60_000]) {
       if (!graded.judgeFault) break;
@@ -202,6 +207,17 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     };
     return result;
   } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: 'eval_attempt_failed',
+        phase,
+        pool: stack && {
+          total: stack.pool.totalCount,
+          idle: stack.pool.idleCount,
+          waiting: stack.pool.waitingCount,
+        },
+      }),
+    );
     const message = error instanceof Error ? error.message : String(error);
     return {
       ...base,

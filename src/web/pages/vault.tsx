@@ -1,7 +1,7 @@
 import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { ChevronRight, CreditCard, Globe, Plus, Upload } from 'lucide-react';
+import { ChevronRight, CreditCard, Globe, KeyRound, Plus, Upload } from '../components/icons';
 import type { VaultListEntry, VaultSession } from '../../shared/contracts';
 import { usePageData } from '../hooks/use-page-data';
 import { usePhone } from '../hooks/use-phone';
@@ -72,8 +72,9 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
   const returnTo = useRef<string | null>(null);
   const newTrigger = useRef<HTMLButtonElement>(null);
   const openingDialog = useRef(false);
-  const split = !phone;
   const items = vaultItems(entries ?? [], sessions.data ?? []);
+  const empty = Boolean(entries && sessions.data) && !items.length;
+  const split = !phone && !empty;
   const search = query.trim().toLowerCase();
   const visible = items
     .filter(
@@ -350,7 +351,56 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
         </Notice>
       )}
       <div className="vault-layout">
-        {!pageMode && (
+        {!pageMode && empty && (
+          <div className="statement vault-start">
+            <p className="statement-summary">
+              nod has <b>no logins</b> and <b>no cards</b> yet.
+              <br />
+              It fills them in for you. The AI never sees your passwords or card numbers.
+            </p>
+            <div className="vault-doors">
+              {[
+                {
+                  icon: Upload,
+                  label: 'Import passwords',
+                  detail: 'From Chrome, 1Password or another manager',
+                  run: () => setImporting(true),
+                },
+                {
+                  icon: KeyRound,
+                  label: 'Add a login',
+                  detail: 'nod signs in when a task needs it',
+                  run: () => start('login'),
+                },
+                {
+                  icon: CreditCard,
+                  label: 'Add a card',
+                  detail: 'You approve each payment with its security code',
+                  run: () => start('card'),
+                },
+                ...(onAsk
+                  ? [
+                      {
+                        icon: Globe,
+                        label: 'Sign in to a website',
+                        detail: 'Sign in once, later tasks reuse it',
+                        run: () => setWebsite(true),
+                      },
+                    ]
+                  : []),
+              ].map(({ icon: Icon, label, detail, run }) => (
+                <button key={label} type="button" className="vault-door" onClick={run}>
+                  <span className="vault-door-icon" aria-hidden="true">
+                    <Icon size={20} />
+                  </span>
+                  <strong>{label}</strong>
+                  <span>{detail}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {!pageMode && !empty && (
           <div className="vault-browser">
             <SearchField
               className="vault-search"
@@ -362,15 +412,12 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
             />
             {!entries || (!sessions.data && !sessions.error) ? (
               (loading || sessions.loading) && <Loading label="Opening logins and cards…" />
-            ) : !items.length ? (
-              <div className="secondary-empty">
-                <h2>Nothing saved yet</h2>
-                <p>Add a login, a payment card or a website session.</p>
-              </div>
             ) : visible.length ? (
               <div className="vault-items">{visible.map(row)}</div>
             ) : (
-              <p className="vault-no-results">No items match “{query.trim()}”.</p>
+              items.length > 0 && (
+                <p className="vault-no-results">No items match “{query.trim()}”.</p>
+              )
             )}
           </div>
         )}

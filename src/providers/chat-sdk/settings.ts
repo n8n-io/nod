@@ -135,6 +135,31 @@ export function createChatSdkSetupVerifier(
             },
           };
         }
+        const linked = z
+          .object({
+            mode: z.enum(['bot', 'self-chat']),
+            allowedNumber: z
+              .string()
+              .trim()
+              .regex(/^\d{7,15}$/)
+              .optional(),
+            policyConfirmed: z.literal(true),
+          })
+          .strict()
+          .safeParse(input);
+        if (linked.success) {
+          if (linked.data.mode === 'bot' && !linked.data.allowedNumber)
+            throw new ChannelSetupFailure('invalid_input');
+          return {
+            environment: {
+              WHATSAPP_ENABLED: 'true',
+              WHATSAPP_MODE: linked.data.mode,
+              WHATSAPP_ALLOWED_NUMBER: linked.data.allowedNumber ?? '',
+              WHATSAPP_POLICY_CONFIRMED: 'true',
+            },
+            summary: { provider, enabled: true, mode: 'linked', linkMode: linked.data.mode },
+          };
+        }
         const parsed = whatsappInput.safeParse(input);
         if (!parsed.success) throw new ChannelSetupFailure('invalid_input');
         const value = parsed.data;
@@ -160,6 +185,7 @@ export function createChatSdkSetupVerifier(
         return {
           environment: {
             WHATSAPP_ENABLED: 'true',
+            WHATSAPP_MODE: 'cloud',
             WHATSAPP_POLICY_CONFIRMED: 'true',
             WHATSAPP_ACCESS_TOKEN: value.accessToken,
             WHATSAPP_APP_SECRET: value.appSecret,

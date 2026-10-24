@@ -1,7 +1,8 @@
 import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ExternalLink, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ExternalLink, X } from '../components/icons';
 import { TelegramSetup } from '../components/telegram-setup';
+import { WhatsAppSetup } from '../components/whatsapp-setup';
 import type { ChannelProvider, ChannelSetupSummary } from '../../shared/contracts';
 import { telegramState, useChannelSettings } from '../hooks/use-channel-settings';
 import { channelLabel, channelSetupBody, telegramBotUrl } from '../lib/secondary-pages';
@@ -29,7 +30,6 @@ const providers = [
     id: 'whatsapp' as const,
     name: 'WhatsApp',
     description: 'Chat with nod in WhatsApp.',
-    comingSoon: true,
   },
 ];
 const channelStatus = {
@@ -213,8 +213,8 @@ function ChannelCard({
   );
   const needsPairing = Boolean(
     setup?.enabled &&
-    provider.id === 'telegram' &&
-    (!setup.allowedUserId || setup.pairingExpiresAt),
+    ((provider.id === 'telegram' && (!setup.allowedUserId || setup.pairingExpiresAt)) ||
+      (setup.mode === 'linked' && setup.connectionState !== 'connected')),
   );
   const status: keyof typeof channelStatus | null = connected
     ? needsDelivery || needsPairing
@@ -250,7 +250,7 @@ function ChannelCard({
       </div>
       {connected ? (
         <div className="channel-account-actions">
-          {provider.id === 'telegram' && (needsDelivery || needsPairing) ? (
+          {(provider.id === 'telegram' && needsDelivery) || needsPairing ? (
             <Button variant="outline" size="sm" disabled={busy} onClick={onPair}>
               {needsDelivery ? 'Retry connection' : 'Finish setup'}
               <ArrowRight size={16} />
@@ -337,9 +337,13 @@ export function Channels() {
     save,
     telegramAction: telegramRequest,
     remove,
-  } = useChannelSettings({ watchTelegram: editing === 'telegram' });
+  } = useChannelSettings({
+    watchTelegram: editing === 'telegram',
+    watchWhatsApp: editing === 'whatsapp',
+  });
   const [step, setStep] = useState(0);
   const [fields, setFields] = useState<Record<string, string>>({});
+  const whatsappCloud = fields.connection === 'cloud';
   const [policy, setPolicy] = useState(false);
   const [manualId, setManualId] = useState(false);
   const [resuming, setResuming] = useState(false);
@@ -396,7 +400,7 @@ export function Channels() {
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!editing || busy || !settings?.ready) return;
-    if (editing === 'whatsapp' && step < whatsappSteps.length - 1) {
+    if (editing === 'whatsapp' && whatsappCloud && step < whatsappSteps.length - 1) {
       setStep((value) => value + 1);
       return;
     }
@@ -454,7 +458,9 @@ export function Channels() {
               setRemoveError('');
               setRemoving(channel.provider.id);
             }}
-            onPair={resumeTelegram}
+            onPair={() =>
+              channel.provider.id === 'whatsapp' ? open('whatsapp') : void resumeTelegram()
+            }
           />
         ))}
       </div>
@@ -615,6 +621,31 @@ export function Channels() {
                   </Button>
                 )}
               </div>
+            </>
+          ) : !whatsappCloud ? (
+            <>
+              <div className="channel-wizard-heading">
+                <img src="/logos/whatsapp.svg" alt="" width={24} height={24} />
+                <span>WhatsApp</span>
+              </div>
+              <DialogTitle>Connect WhatsApp</DialogTitle>
+              <DialogDescription>
+                Link an account with a QR code. nod must be running to answer.
+              </DialogDescription>
+              <WhatsAppSetup
+                setup={channels.find((item) => item.provider.id === 'whatsapp')?.setup}
+                busy={busy}
+                ready={Boolean(settings?.ready)}
+                error={error}
+                onSave={async (input) => (await save('whatsapp', input)).ok}
+                onRefresh={load}
+                onCloud={() => {
+                  setFields({ connection: 'cloud' });
+                  setPolicy(false);
+                  setStep(0);
+                }}
+                onDone={close}
+              />
             </>
           ) : (
             <>

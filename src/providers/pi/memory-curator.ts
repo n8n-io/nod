@@ -76,7 +76,7 @@ export function createPiMemoryCurator(options: {
     get configured() {
       return options.configured?.() ?? Boolean(options.apiKey);
     },
-    async curate({ task, instructions, input }, signal, report) {
+    async curate({ task, instructions, input, images }, signal, report) {
       signal?.throwIfAborted();
       if (options.resolve) loaded = undefined;
       loaded ??= load().catch((error) => {
@@ -87,7 +87,16 @@ export function createPiMemoryCurator(options: {
       const complete = async () => {
         const context: Context = {
           systemPrompt: instructions,
-          messages: [{ role: 'user', content: JSON.stringify(input), timestamp: Date.now() }],
+          messages: [
+            {
+              role: 'user',
+              content:
+                task === 'vision'
+                  ? [{ type: 'text', text: JSON.stringify(input) }, ...(images ?? [])]
+                  : JSON.stringify(input),
+              timestamp: Date.now(),
+            },
+          ],
         };
         const startedAt = new Date().toISOString();
         const started = performance.now();
@@ -121,6 +130,7 @@ export function createPiMemoryCurator(options: {
                   ? 'cancelled'
                   : 'succeeded',
             costUsd: subscription ? null : (piUsageMetrics(reply.usage).costUsd ?? null),
+            ...(subscription ? { estimateUsd: piUsageMetrics(reply.usage).costUsd ?? null } : {}),
             pricing: subscription ? 'unavailable' : piUsageMetrics(reply.usage).pricing,
           });
         return reply;
@@ -128,7 +138,7 @@ export function createPiMemoryCurator(options: {
       let reply = await complete();
       for (
         let attempt = 0;
-        attempt < (task === 'analytics' ? 0 : 2) &&
+        attempt < (task === 'analytics' || task === 'vision' ? 0 : 2) &&
         reply.stopReason === 'error' &&
         !signal?.aborted;
         attempt++
@@ -139,7 +149,11 @@ export function createPiMemoryCurator(options: {
         reply.stopReason === 'aborted' ||
         reply.stopReason === 'length'
       )
-        throw new Error('The memory model is unavailable.');
+        throw new Error(
+          task === 'vision'
+            ? 'The image model is unavailable.'
+            : 'The memory model is unavailable.',
+        );
       return json(
         reply.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(''),
       );

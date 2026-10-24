@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import {
   CalendarClock,
@@ -13,11 +13,22 @@ import {
   LoaderCircle,
   MessageCircle,
   MessageSquare,
-} from 'lucide-react';
-import type { Schedule, ScheduleRun, Task, TaskDetail, TaskStatus } from '../../shared/contracts';
+} from '../components/icons';
+import type {
+  Activity,
+  Schedule,
+  ScheduleRun,
+  Task,
+  TaskDetail,
+  TaskStatus,
+} from '../../shared/contracts';
 import { taskHeadline, taskLabels } from '../../shared/task-status';
+import { InlineName } from '../components/inline-name';
+import { pageDataCache } from '../lib/page-data-cache';
+import { api } from '../lib/api';
 import { PageTitle } from '../components/page-title';
-import { NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
+import { AskNod, NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
+import { StatementValue } from '../components/statement-value';
 import { Button, Loading, Notice } from '../components/ui';
 import { MessageText } from '../components/message';
 import { usePageData } from '../hooks/use-page-data';
@@ -60,6 +71,7 @@ function TaskActivity({ id }: { id: string }) {
     if (
       last &&
       event.type !== 'message' &&
+      event.type !== 'step' &&
       last.type === event.type &&
       last.summary === event.summary &&
       last.site === event.site &&
@@ -73,10 +85,10 @@ function TaskActivity({ id }: { id: string }) {
       {rows.map((event) => (
         <li
           key={event.id}
-          data-kind={event.type === 'message' ? 'message' : 'step'}
+          data-kind={event.type === 'message' || event.type === 'step' ? event.type : 'tool'}
           data-helper={Boolean(event.parentRunId)}
         >
-          {event.type === 'message' ? (
+          {event.type === 'message' || event.type === 'step' ? (
             <Markdown allowedElements={[]} unwrapDisallowed>
               {event.summary}
             </Markdown>
@@ -99,10 +111,12 @@ function TaskActivity({ id }: { id: string }) {
 
 export function TaskCard({
   task,
+  live,
   onScheduled,
   onReply,
 }: {
   task: Task;
+  live?: Activity;
   onScheduled?(): void;
   onReply?(): void;
 }) {
@@ -131,7 +145,7 @@ export function TaskCard({
   const line =
     !onReply && expanded && task.status === 'needs_you'
       ? task.now || 'Waiting for your answer'
-      : taskHeadline(task);
+      : (live?.step ?? taskHeadline(task));
   return (
     <article
       className="task-preview"
@@ -166,10 +180,10 @@ export function TaskCard({
             {!steps.length && chevron}
           </span>
           <span className="task-preview-line">
-            {task.activity && (
+            {live?.site && (
               <>
                 <Globe2 size={14} aria-hidden="true" />
-                {task.activity.site} ·{' '}
+                {live.site} ·{' '}
               </>
             )}
             <Markdown allowedElements={[]} unwrapDisallowed>
@@ -191,6 +205,19 @@ export function TaskCard({
         </button>
       </h2>
       <div className="task-preview-body" id={`${headingId}-body`} hidden={!expanded}>
+        {expanded && (
+          <InlineName
+            value={task.title}
+            label="task title"
+            save={async (title) => {
+              await api(`/api/tasks/${task.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ title }),
+              });
+              await pageDataCache.refresh('/api/tasks', true);
+            }}
+          />
+        )}
         {!onReply && task.status === 'needs_you' && task.question && (
           <div className="task-preview-question">
             <MessageText text={task.question} />
@@ -318,7 +345,7 @@ export function TaskCard({
                 }
               }}
             >
-              {stopping ? 'Stopping…' : 'Stop'}
+              {stopping ? 'Stopping…' : 'Stop this task'}
             </Button>
           )}
         </div>
@@ -357,32 +384,61 @@ function Pending({ label }: { label: string }) {
   );
 }
 
-function Empty({ title, children }: { title: string; children: string }) {
+function Ideas({
+  first,
+  ask,
+  onAsk,
+}: {
+  first: string;
+  ask: Array<'task' | 'schedule'>;
+  onAsk(text: string): void;
+}) {
   return (
-    <div className="secondary-empty">
-      <h2>{title}</h2>
-      <p>{children}</p>
+    <div className="statement tasks-ideas">
+      <p className="statement-summary">
+        {first}
+        <br />
+        {ask.length > 1 ? 'Hand it ' : 'Hand nod '}
+        {ask.map((kind, index) => (
+          <Fragment key={kind}>
+            {index > 0 && ', or '}
+            <StatementValue
+              text={kind === 'task' ? 'something that takes a while' : 'something that repeats'}
+              label={kind === 'task' ? 'New task' : 'New schedule'}
+            >
+              {(close) => <AskNod subject={{ kind }} onAsk={onAsk} onClose={close} />}
+            </StatementValue>
+          </Fragment>
+        ))}
+        .
+      </p>
     </div>
   );
 }
 
-export function Tasks({ onAsk }: { onAsk(text: string): void }) {
+export function Tasks({ onAsk, activity }: { onAsk(text: string): void; activity?: Activity[] }) {
   const tasks = usePageData<Task[]>('/api/tasks');
   const schedules = usePageData<Schedule[]>('/api/schedules');
   const history = useScheduleHistory();
   const [view, setView] = useState<(typeof views)[number]>('current');
-  useEffect(() => captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: view }), []);
   const selectView = (next: typeof view) => {
     if (next !== view) captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: next });
     setView(next);
   };
   const tabsId = useId();
+  const [interacting, setInteracting] = useState(false);
+  const stableOrder = useRef<string[]>([]);
   const open = (tasks.data ?? [])
-    .filter((task) => !closed(task))
+    .filter((task) => !closed(task) || (interacting && stableOrder.current.includes(task.id)))
     .sort(
       (a, b) =>
         order.indexOf(a.status) - order.indexOf(b.status) || b.updatedAt.localeCompare(a.updatedAt),
     );
+  if (interacting) {
+    for (const task of open)
+      if (!stableOrder.current.includes(task.id)) stableOrder.current.push(task.id);
+    open.sort((a, b) => stableOrder.current.indexOf(a.id) - stableOrder.current.indexOf(b.id));
+  } else stableOrder.current = open.map((task) => task.id);
   const upcoming = (schedules.data ?? [])
     .filter((schedule) => schedule.enabled && schedule.nextRun)
     .sort((a, b) => a.nextRun!.localeCompare(b.nextRun!) || a.id.localeCompare(b.id));
@@ -400,167 +456,212 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
       .filter((run) => run.status !== 'queued' && run.status !== 'running')
       .map((run) => ({ at: run.createdAt, run })),
   ].sort((a, b) => b.at.localeCompare(a.at));
+  const settled =
+    (tasks.data || tasks.error) &&
+    (schedules.data || schedules.error) &&
+    (history.data || history.error);
+  const fresh =
+    tasks.data?.length === 0 &&
+    schedules.data?.length === 0 &&
+    Boolean(history.data) &&
+    !history.runs.length;
+  const tabbed =
+    !fresh &&
+    Boolean(settled || tasks.data?.length || schedules.data?.length || history.runs.length);
+  const seen = useRef(false);
+  useEffect(() => {
+    if (!tabbed || seen.current) return;
+    seen.current = true;
+    captureAnalytics('nod_tab_viewed', { page: 'tasks', tab: view });
+  }, [tabbed]);
   const counts = {
     current: tasks.data ? open.length : null,
     scheduled: schedules.data ? upcoming.length : null,
     previous: null,
   };
   return (
-    <div className="content-page secondary-page tasks-page">
+    <div
+      className="content-page secondary-page tasks-page"
+      onPointerEnter={() => setInteracting(true)}
+      onPointerLeave={() => {
+        if (!document.activeElement?.closest('.tasks-page')) setInteracting(false);
+      }}
+      onFocus={() => setInteracting(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setInteracting(false);
+      }}
+    >
       <PlanToast />
       <header className="page-heading secondary-heading">
         <PageTitle path="/tasks" />
-        {view === 'scheduled' && (
+        {tabbed && view === 'scheduled' && (
           <div className="secondary-heading-actions">
             <NewPlan onAsk={onAsk} />
           </div>
         )}
       </header>
-      <div
-        className="secondary-tabs"
-        role="tablist"
-        aria-label="Task views"
-        onKeyDown={(event) => {
-          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-          event.preventDefault();
-          const index = views.indexOf(view);
-          const step = event.key === 'ArrowLeft' ? views.length - 1 : 1;
-          const next =
-            views[
-              event.key === 'Home'
-                ? 0
-                : event.key === 'End'
-                  ? views.length - 1
-                  : (index + step) % views.length
-            ];
-          selectView(next);
-          event.currentTarget.querySelector<HTMLButtonElement>(`[data-view="${next}"]`)?.focus();
-        }}
-      >
-        {views.map((item) => (
-          <button
-            key={item}
-            id={`${tabsId}-tab-${item}`}
-            data-view={item}
-            role="tab"
-            tabIndex={view === item ? 0 : -1}
-            aria-selected={view === item}
-            aria-controls={`${tabsId}-panel`}
-            onClick={() => selectView(item)}
+      {fresh ? (
+        <Ideas first="nod has nothing on its plate." ask={['task', 'schedule']} onAsk={onAsk} />
+      ) : !tabbed ? (
+        <Pending label="Loading tasks…" />
+      ) : (
+        <>
+          <div
+            className="secondary-tabs"
+            role="tablist"
+            aria-label="Task views"
+            onKeyDown={(event) => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              event.preventDefault();
+              const index = views.indexOf(view);
+              const step = event.key === 'ArrowLeft' ? views.length - 1 : 1;
+              const next =
+                views[
+                  event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                      ? views.length - 1
+                      : (index + step) % views.length
+                ];
+              selectView(next);
+              event.currentTarget
+                .querySelector<HTMLButtonElement>(`[data-view="${next}"]`)
+                ?.focus();
+            }}
           >
-            {viewLabels[item]}
-            {counts[item] !== null && <span>{counts[item]}</span>}
-          </button>
-        ))}
-      </div>
-      <div
-        role="tabpanel"
-        id={`${tabsId}-panel`}
-        aria-labelledby={`${tabsId}-tab-${view}`}
-        tabIndex={0}
-      >
-        {view !== 'scheduled' && tasks.error && (
-          <LoadError what="tasks" refreshing={tasks.refreshing} retry={tasks.refresh} />
-        )}
-        {view === 'scheduled' && schedules.error && (
-          <LoadError what="schedules" refreshing={schedules.refreshing} retry={schedules.refresh} />
-        )}
-        {view === 'previous' && history.error && (
-          <LoadError
-            what="scheduled runs"
-            refreshing={history.refreshing}
-            retry={history.refresh}
-          />
-        )}
-        {view === 'current' ? (
-          !tasks.data ? (
-            tasks.loading && <Pending label="Loading tasks…" />
-          ) : open.length ? (
-            <div className="saved-plan-list">
-              {open.map((task) => (
-                <TaskCard key={task.id} task={task} />
-              ))}
-            </div>
-          ) : (
-            <Empty title="Nothing in progress">
-              When you hand nod something that takes time, like getting quotes or chasing a refund,
-              it shows up here with how it’s going.
-            </Empty>
-          )
-        ) : view === 'scheduled' ? (
-          !schedules.data ? (
-            schedules.loading && <Pending label="Loading schedules…" />
-          ) : (
-            <>
-              {upcoming.length ? (
+            {views.map((item) => (
+              <button
+                key={item}
+                id={`${tabsId}-tab-${item}`}
+                data-view={item}
+                role="tab"
+                tabIndex={view === item ? 0 : -1}
+                aria-selected={view === item}
+                aria-controls={`${tabsId}-panel`}
+                onClick={() => selectView(item)}
+              >
+                {viewLabels[item]}
+                {counts[item] !== null && <span>{counts[item]}</span>}
+              </button>
+            ))}
+          </div>
+          <div
+            role="tabpanel"
+            id={`${tabsId}-panel`}
+            aria-labelledby={`${tabsId}-tab-${view}`}
+            tabIndex={0}
+          >
+            {view !== 'scheduled' && tasks.error && (
+              <LoadError what="tasks" refreshing={tasks.refreshing} retry={tasks.refresh} />
+            )}
+            {view === 'scheduled' && schedules.error && (
+              <LoadError
+                what="schedules"
+                refreshing={schedules.refreshing}
+                retry={schedules.refresh}
+              />
+            )}
+            {view === 'previous' && history.error && (
+              <LoadError
+                what="scheduled runs"
+                refreshing={history.refreshing}
+                retry={history.refresh}
+              />
+            )}
+            {view === 'current' ? (
+              !tasks.data ? (
+                tasks.loading && <Pending label="Loading tasks…" />
+              ) : open.length ? (
                 <div className="saved-plan-list">
-                  {upcoming.map((schedule) => (
-                    <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
+                  {open.map((task) => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      live={activity?.find((item) => item.taskId === task.id)}
+                    />
                   ))}
                 </div>
               ) : (
-                <Empty title="Nothing scheduled">
-                  Schedule a one-time task or something that repeats.
-                </Empty>
-              )}
-              {desktopSettingsAvailable() && (
-                <p className="saved-plan-note schedule-availability">
-                  Scheduled tasks run only while your Mac is on and nod is open.
-                </p>
-              )}
-              {inactive.length > 0 && (
-                <details className="schedule-inactive" open={!upcoming.length}>
-                  <summary>
-                    Not scheduled <span>{inactive.length}</span>
-                    <ChevronDown size={16} aria-hidden="true" />
-                  </summary>
-                  <div className="saved-plan-list">
-                    {inactive.map((schedule) => (
-                      <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
-                    ))}
-                  </div>
-                </details>
-              )}
-            </>
-          )
-        ) : (tasks.loading && !tasks.error) || (history.loading && !history.error) ? (
-          <Pending label="Loading previous tasks…" />
-        ) : previous.length ? (
-          <>
-            <div className="saved-plan-list">
-              {previous.map((item) =>
-                'task' in item ? (
-                  <TaskCard
-                    key={`task:${item.task.id}`}
-                    task={item.task}
-                    onScheduled={() => setView('scheduled')}
-                  />
-                ) : (
-                  <ScheduleRunRow key={`run:${item.run.id}`} run={item.run} />
-                ),
-              )}
-            </div>
-            {history.earlierError && <Notice>{history.earlierError}</Notice>}
-            {history.cursor && (
-              <Button
-                variant="ghost"
-                className="schedule-history-more"
-                size="sm"
-                disabled={history.loadingEarlier}
-                onClick={() => void history.loadEarlier()}
-              >
-                {history.loadingEarlier ? 'Loading…' : 'Load earlier'}
-              </Button>
+                <Ideas first="Nothing in progress." ask={['task']} onAsk={onAsk} />
+              )
+            ) : view === 'scheduled' ? (
+              !schedules.data ? (
+                schedules.loading && <Pending label="Loading schedules…" />
+              ) : (
+                <>
+                  {upcoming.length ? (
+                    <div className="saved-plan-list">
+                      {upcoming.map((schedule) => (
+                        <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
+                      ))}
+                    </div>
+                  ) : (
+                    <Ideas
+                      first="Nothing runs on a schedule yet."
+                      ask={['schedule']}
+                      onAsk={onAsk}
+                    />
+                  )}
+                  {desktopSettingsAvailable() && (
+                    <p className="saved-plan-note schedule-availability">
+                      Scheduled tasks run only while your Mac is on and nod is open.
+                    </p>
+                  )}
+                  {inactive.length > 0 && (
+                    <details className="schedule-inactive" open={!upcoming.length}>
+                      <summary>
+                        Not scheduled <span>{inactive.length}</span>
+                        <ChevronDown size={16} aria-hidden="true" />
+                      </summary>
+                      <div className="saved-plan-list">
+                        {inactive.map((schedule) => (
+                          <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </>
+              )
+            ) : (tasks.loading && !tasks.error) || (history.loading && !history.error) ? (
+              <Pending label="Loading previous tasks…" />
+            ) : previous.length ? (
+              <>
+                <div className="saved-plan-list">
+                  {previous.map((item) =>
+                    'task' in item ? (
+                      <TaskCard
+                        key={`task:${item.task.id}`}
+                        task={item.task}
+                        onScheduled={() => setView('scheduled')}
+                      />
+                    ) : (
+                      <ScheduleRunRow key={`run:${item.run.id}`} run={item.run} />
+                    ),
+                  )}
+                </div>
+                {history.earlierError && <Notice>{history.earlierError}</Notice>}
+                {history.cursor && (
+                  <Button
+                    variant="ghost"
+                    className="schedule-history-more"
+                    size="sm"
+                    disabled={history.loadingEarlier}
+                    onClick={() => void history.loadEarlier()}
+                  >
+                    {history.loadingEarlier ? 'Loading…' : 'Load earlier'}
+                  </Button>
+                )}
+              </>
+            ) : (
+              (tasks.data || history.data) && (
+                <div className="statement tasks-ideas">
+                  <p className="statement-summary">Nothing finished yet.</p>
+                </div>
+              )
             )}
-          </>
-        ) : (
-          (tasks.data || history.data) && (
-            <Empty title="Nothing finished yet">
-              Tasks nod finishes or stops, and past scheduled runs, appear here.
-            </Empty>
-          )
-        )}
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -98,12 +98,14 @@ test('settings Escape preserves nested interactions and pending changes before r
       const { createElement, useState, act } = await import('react');
       const { createRoot } = await import('react-dom/client');
       const { App } = await import('./src/web/app.tsx');
+      const { useSession } = await import('./src/web/hooks/use-session.ts');
       const { Dialog, DialogContent, DialogTitle } = await import('./src/web/components/ui.tsx');
       let openDialog;
       function Fixture() {
+        const sessionState = useSession();
         const [dialog, setDialog] = useState(false);
         openDialog = () => setDialog(true);
-        return createElement('div', null, createElement(App), createElement(Dialog, {
+        return createElement('div', null, createElement(App, { sessionState }), createElement(Dialog, {
           open: dialog, onOpenChange: setDialog,
         }, createElement(DialogContent, { 'aria-describedby': undefined },
           createElement(DialogTitle, null, 'Nested action'), createElement('button', null, 'Nested control'))));
@@ -143,6 +145,17 @@ test('settings Escape preserves nested interactions and pending changes before r
       try {
         await act(async () => root.render(createElement(Fixture)));
         await settle(() => document.querySelector('button[aria-label="Settings"]'));
+        const link = document.createElement('a');
+        link.href = '/settings/models';
+        link.textContent = 'Synthetic screen link';
+        document.querySelector('#workspace').append(link);
+        link.focus();
+        await click(link);
+        await settle(() => window.location.pathname === '/settings/models');
+        await escape();
+        await settle(() => window.location.pathname === '/apps');
+        await settle(() => document.activeElement === link);
+        link.remove();
         const trigger = await open();
         await click(document.querySelector('[role="tab"][aria-label="Memory"]'));
         await escape();
@@ -231,6 +244,39 @@ test('settings Escape preserves nested interactions and pending changes before r
         await escape();
         await settle(() => window.location.pathname === '/');
         await settle(() => document.activeElement === document.querySelector('#workspace'));
+        await act(async () => root.render(null));
+        const { readFileSync } = await import('node:fs');
+        const { runInNewContext } = await import('node:vm');
+        const { sessionStore } = await import('./src/web/lib/session.ts');
+        const listeners = new Map();
+        const desktopPreferences = { theme: 'system', resolvedTheme: 'light',
+          notifications: true, launchAtLogin: true, onboardingPreferenceStep: 'complete' };
+        runInNewContext(readFileSync('./desktop/preload/engine.cjs', 'utf8'), {
+          require: () => ({
+            contextBridge: { exposeInMainWorld: (name, value) => { window[name] = value; } },
+            ipcRenderer: {
+              on: (name, listener) => listeners.set(name, listener),
+              removeListener: name => listeners.delete(name),
+              invoke: async name => name === 'nod:status' ? { phase: 'ready' } : desktopPreferences,
+            },
+          }),
+        });
+        session = { ...session, settings: { ...session.settings, onboardingCompleted: false } };
+        await act(async () => {
+          await sessionStore.refresh();
+          root.render(createElement(Fixture));
+        });
+        await settle(() => window.location.pathname === '/onboarding');
+        await act(async () => listeners.get('nod:navigate')({}, '/settings/models'));
+        await settle(() => window.location.pathname === '/onboarding');
+        session = { ...session, settings: { ...session.settings, onboardingCompleted: true } };
+        await act(async () => {
+          await sessionStore.refresh();
+          window.history.replaceState(null, '', '/');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        });
+        await settle(() => window.location.pathname === '/settings/models');
+        await settle(() => document.querySelector('[role="tab"][aria-label="Models"][aria-selected="true"]'));
       } finally {
         await act(async () => root.unmount());
         dom.window.close();
@@ -300,7 +346,7 @@ describe('account routes', () => {
     analytics?: Analytics,
     onTraces?: (enabled: boolean) => void,
     key?: string,
-    onboardingReady?: () => Promise<boolean>,
+    onboardingMissing?: () => Promise<'brain' | 'email' | null>,
   ) {
     let record: AccountSettings = {
       theme: 'system',
@@ -347,7 +393,7 @@ describe('account routes', () => {
       },
       traces: onTraces !== undefined,
       onTraces,
-      onboardingReady,
+      onboardingMissing,
     }).register(app);
     await app.ready();
     return { app, calls, record: () => record };
@@ -360,7 +406,7 @@ describe('account routes', () => {
     const f = await fixture(undefined, undefined, undefined, async () => {
       checked++;
       if (failed) throw new Error('Synthetic provider outage');
-      return ready;
+      return ready ? null : 'email';
     });
     t.after(() => f.app.close());
     const complete = () =>
@@ -370,7 +416,9 @@ describe('account routes', () => {
         headers: { origin },
         payload: { onboardingCompleted: true },
       });
-    assert.equal((await complete()).statusCode, 409);
+    const refused = await complete();
+    assert.equal(refused.statusCode, 409);
+    assert.equal(refused.json().step, 'email');
     assert.equal(f.record().onboardingCompleted, false);
     assert.equal(f.calls.writes, 0);
     assert.equal(f.calls.started, 0);
@@ -916,6 +964,13 @@ describe('analytics privacy', () => {
           report?.({
             ...usage,
             id: randomUUID(),
+            provider: 'radius',
+            model: 'acme-private-acquisition-canary',
+            durationMs: 0,
+          });
+          report?.({
+            ...usage,
+            id: randomUUID(),
             provider: 'openai',
             model: 'gpt-6-sol',
             durationMs: 0,
@@ -954,6 +1009,14 @@ describe('analytics privacy', () => {
         },
         {
           ...shared,
+          provider: 'radius',
+          model: 'custom',
+          input_tokens: 0,
+          output_tokens: 0,
+          pricing: 'unavailable',
+        },
+        {
+          ...shared,
           provider: 'openai',
           model: 'gpt-6-sol',
           input_tokens: 0,
@@ -963,6 +1026,7 @@ describe('analytics privacy', () => {
         },
       ],
     );
+    assert.ok(!JSON.stringify(captured).includes('acme-private-acquisition-canary'));
   });
 });
 
@@ -1218,6 +1282,34 @@ test('server addresses keep host and port, add http and refuse other schemes, si
   );
 });
 
+test('Azure endpoints need HTTPS away from this computer and resolve to the v1 API', async () => {
+  const { azureAddress } = await import('../src/server/models.ts');
+  assert.deepEqual(
+    [
+      'fixture.openai.azure.com',
+      'https://fixture.openai.azure.com/',
+      'https://fixture.cognitiveservices.azure.com/openai',
+      'https://fixture.services.ai.azure.com/openai/v1/',
+      'https://gateway.example.test/llm/openai/v1',
+      'http://127.0.0.1:8443',
+      'http://fixture.openai.azure.com',
+      'https://user:secret@fixture.openai.azure.com',
+      'https://fixture.openai.azure.com/?api-version=v1',
+    ].map(azureAddress),
+    [
+      'https://fixture.openai.azure.com/openai/v1',
+      'https://fixture.openai.azure.com/openai/v1',
+      'https://fixture.cognitiveservices.azure.com/openai/v1',
+      'https://fixture.services.ai.azure.com/openai/v1',
+      'https://gateway.example.test/llm/openai/v1',
+      'http://127.0.0.1:8443/openai/v1',
+      undefined,
+      undefined,
+      undefined,
+    ],
+  );
+});
+
 describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
   async function fixture(t: import('node:test').TestContext) {
     const { createModelService } = await import('../src/server/models.ts');
@@ -1308,6 +1400,231 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       };
     };
   }
+
+  test('native provider connections keep owned credentials private and preserve the selected model', async (t) => {
+    const f = await fixture(t);
+    const { apiKeyModelProviders } = await import('../src/shared/models.ts');
+    const backend = {
+      ...f.backend,
+      catalog: (provider: import('../src/shared/models.ts').ModelProvider) =>
+        f.backend.catalog(provider, 'api_key'),
+    };
+    const owner = await f.create('fixture-provider-owner', backend);
+    const other = await f.create('fixture-provider-other', backend);
+    const app = Fastify();
+    owner.register(app);
+    t.after(() => app.close());
+    let original: import('../src/shared/models.ts').ModelSelection | null = null;
+    for (const provider of apiKeyModelProviders) {
+      const key = `fixture-private-${provider}-key`;
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/models/keys',
+        payload: {
+          provider,
+          key,
+          ...(provider === 'amazon-bedrock' ? { region: 'eu-west-1' } : {}),
+          ...(provider === 'azure'
+            ? {
+                url: 'https://fixture.openai.azure.com',
+                model: 'gpt-6.1-sol',
+                deployment: 'fixture-deployment',
+              }
+            : {}),
+          ...(provider.startsWith('cloudflare-')
+            ? {
+                accountId: 'ABCDEF0123456789ABCDEF0123456789',
+                ...(provider === 'cloudflare-ai-gateway' ? { gatewayId: 'fixture-gateway' } : {}),
+              }
+            : {}),
+        },
+      });
+      assert.equal(response.statusCode, 200, `${provider}: ${response.body}`);
+      assert.ok(!response.body.includes(key));
+      const connection = owner.view().connections.find((item) => item.provider === provider)!;
+      assert.ok(connection);
+      if (!original) original = owner.view().selection;
+      assert.deepEqual(owner.view().selection, original);
+      const choice = connection.models[0];
+      await assert.rejects(
+        other.select({
+          connectionId: connection.id,
+          modelId: choice.id,
+          effort: choice.efforts[0],
+        }),
+      );
+    }
+    assert.equal(owner.view().connections.length, apiKeyModelProviders.length);
+    assert.deepEqual(other.view(), { connections: [], selection: null });
+    const stored = JSON.stringify([
+      (await f.database.query('SELECT * FROM model_connections')).rows,
+      (await f.database.query('SELECT * FROM vault_app_grants')).rows,
+    ]);
+    assert.ok(!stored.includes('fixture-private-'));
+    const cloud = owner
+      .view()
+      .connections.find((item) => item.provider === 'cloudflare-ai-gateway')!;
+    const choice = cloud.models[0];
+    await owner.select({ connectionId: cloud.id, modelId: choice.id, effort: choice.efforts[0] });
+    const captured = await owner.resolve();
+    assert.deepEqual(await captured.read(), {
+      type: 'cloudflare',
+      key: 'fixture-private-cloudflare-ai-gateway-key',
+      accountId: 'abcdef0123456789abcdef0123456789',
+      gatewayId: 'fixture-gateway',
+    });
+    await owner.remove(cloud.id);
+    assert.equal(await captured.read(), undefined);
+  });
+
+  test('model setup chooses capable defaults, preserves explicit choices and requires valid cloud accounts', async (t) => {
+    const f = await fixture(t);
+    const backend = {
+      ...f.backend,
+      catalog: (provider: import('../src/shared/models.ts').ModelProvider) =>
+        f.backend.catalog(provider, 'api_key'),
+    };
+    const google = await f.create('fixture-google-default', backend);
+    await google.addKey('google', 'fixture-google-key');
+    assert.equal(google.view().selection?.modelId, 'gemini-3.8-flash');
+    assert.equal(google.view().selection?.effort, 'medium');
+    const chosen = google.view().selection!;
+    await google.addKey('mistral', 'fixture-mistral-key');
+    assert.deepEqual(google.view().selection, chosen);
+    const paidGoogle = await f.create('fixture-google-paid-choice', {
+      ...backend,
+      catalog: async () =>
+        (await backend.catalog('google')).filter(
+          (definition) => definition.choice.id === 'gemini-4-argon',
+        ),
+    });
+    const paidConnection = await paidGoogle.addKey('google', 'fixture-google-paid-key');
+    assert.equal(paidGoogle.view().selection, null);
+    assert.equal(paidGoogle.configured, false);
+    await paidGoogle.select({
+      connectionId: paidConnection,
+      modelId: 'gemini-4-argon',
+      effort: 'medium',
+    });
+    assert.equal(paidGoogle.configured, true);
+    assert.equal((await paidGoogle.resolve()).definition.choice.id, 'gemini-4-argon');
+    const bedrock = await f.create('fixture-bedrock-default', backend);
+    await bedrock.addKey('amazon-bedrock', 'fixture-bedrock-key', { region: 'eu-west-1' });
+    assert.equal(bedrock.view().selection, null);
+    const explicit = await f.create('fixture-explicit-default', backend, {
+      provider: 'google',
+      model: 'fixture-unavailable-model',
+      credentials: { google: { type: 'api_key', key: 'fixture-managed-key' } },
+    });
+    assert.equal(explicit.configured, false);
+    assert.equal(explicit.view().selection, null);
+    const fallbackBackend = {
+      ...backend,
+      catalog: async () =>
+        [
+          {
+            choice: {
+              id: 'fixture-small',
+              name: 'Small',
+              efforts: ['off'] as const,
+              images: false,
+              contextWindow: 8000,
+            },
+            spec: {},
+          },
+          {
+            choice: {
+              id: 'fixture-capable',
+              name: 'Capable',
+              efforts: ['low', 'high'] as const,
+              images: true,
+              contextWindow: 262144,
+            },
+            spec: {},
+          },
+        ].map((definition) => ({
+          ...definition,
+          choice: { ...definition.choice, efforts: [...definition.choice.efforts] },
+        })),
+    };
+    const fallback = await f.create('fixture-fallback-default', fallbackBackend);
+    await fallback.addKey('deepseek', 'fixture-fallback-key');
+    assert.equal(fallback.view().selection?.modelId, 'fixture-small');
+    assert.equal(fallback.view().selection?.effort, 'off');
+    const subscription = await f.create('fixture-subscription-default', {
+      ...backend,
+      signIn: stubSignIn(async () => subscriptionCredential()),
+    });
+    const signIn = await subscription.start('openai');
+    await subscription.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${signIn.attempt}&code=fixture`),
+    );
+    assert.equal(subscription.view().selection?.modelId, 'gpt-6-sol');
+    const count = google.view().connections.length;
+    for (const settings of [
+      {},
+      { accountId: 'not-an-account', gatewayId: 'fixture-gateway' },
+      { accountId: '0123456789abcdef0123456789abcdef' },
+      { accountId: '0123456789abcdef0123456789abcdef', gatewayId: '../other-gateway' },
+    ])
+      await assert.rejects(
+        google.addKey('cloudflare-ai-gateway', 'fixture-rejected-key', settings),
+      );
+    assert.equal(google.view().connections.length, count);
+  });
+
+  test('image fallback uses owned connected models without changing the chat selection and reads current credentials', async (t) => {
+    const f = await fixture(t);
+    const backend = {
+      ...f.backend,
+      catalog: async (
+        provider: import('../src/shared/models.ts').ModelProvider,
+        method: import('../src/shared/models.ts').ModelMethod,
+        credential?: import('../src/ports/models.ts').ModelCredential,
+      ) => {
+        const definitions = await f.backend.catalog('openai', method, credential);
+        return definitions.map((definition) => ({
+          ...definition,
+          choice: {
+            ...definition.choice,
+            images: credential?.type === 'api_key' && credential.key === 'fixture-vision',
+          },
+        }));
+      },
+    };
+    const owner = await f.create('fixture-images', backend);
+    const other = await f.create('fixture-images-other', backend);
+    await other.addKey('openai', 'fixture-vision');
+    const textId = await owner.addKey('openai', 'fixture-text');
+    const selection = owner.view().selection!;
+    assert.equal(owner.hasImageModel(), false);
+    await assert.rejects(owner.resolveImage(), /Connect a model that accepts images/);
+    const visionId = await owner.addKey('openai', 'fixture-vision');
+    await owner.select({ ...selection, connectionId: textId });
+    assert.equal(owner.hasImageModel(), true);
+    const access = await owner.resolveImage();
+    assert.equal(access.definition.choice.images, true);
+    assert.deepEqual(await access.read(), { type: 'api_key', key: 'fixture-vision' });
+    assert.deepEqual(owner.view().selection, { ...selection, connectionId: textId });
+    const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    const store = createDatabaseModelStore({
+      database: f.database,
+      ownerId: 'fixture-images',
+      keyStore: f.keyStore,
+    });
+    await store.initialize();
+    await store.change((state) => {
+      state.connections.find((row) => row.id === visionId)!.credential = {
+        type: 'api_key',
+        key: 'fixture-updated',
+      };
+    });
+    assert.deepEqual(await access.read(), { type: 'api_key', key: 'fixture-updated' });
+    await owner.remove(visionId);
+    assert.equal(await access.read(), undefined);
+    assert.equal(owner.hasImageModel(), false);
+    assert.equal((await owner.resolve()).definition.choice.images, false);
+  });
 
   test('model connections verify credential storage before opening sign-in or calling a provider', async (t) => {
     const f = await fixture(t);
@@ -1659,10 +1976,17 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const f = await fixture(t);
     const owner = await f.create('fixture-owner');
     const other = await f.create('fixture-other');
+    assert.equal(owner.hasApiKey('openai'), false);
+    assert.equal(await owner.apiKey('openai'), undefined);
     const first = await owner.addKey('openai', 'fixture-first-api-key');
+    assert.equal(owner.hasApiKey('openai'), true);
+    assert.equal(await owner.apiKey('openai'), 'fixture-first-api-key');
+    assert.equal(other.hasApiKey('openai'), false);
+    assert.equal(await other.apiKey('openai'), undefined);
     const original = owner.view().selection!;
     const captured = await owner.resolve();
     const second = await owner.addKey('openai', 'fixture-second-api-key');
+    assert.equal(await owner.apiKey('openai'), 'fixture-first-api-key');
     await assert.rejects(other.select(original));
     await other.remove(first);
     assert.equal((await captured.read())?.type, 'api_key');
@@ -1674,15 +1998,28 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.ok(!JSON.stringify(owner.view()).includes('fixture-first-api-key'));
     assert.deepEqual(other.view().connections, []);
     await owner.select({ connectionId: second, modelId: 'gpt-6.1-sol', effort: 'medium' });
+    assert.equal(await owner.apiKey('openai'), 'fixture-second-api-key');
     assert.equal(((await captured.read()) as { key: string }).key, 'fixture-first-api-key');
     await owner.remove(second);
     assert.equal(owner.configured, false);
+    assert.equal(await owner.apiKey('openai'), 'fixture-first-api-key');
     assert.equal(
       (await f.database.query('SELECT id FROM vault_app_grants WHERE id=$1', [second])).rowCount,
       0,
     );
+    const third = await owner.addKey('openai', 'fixture-third-api-key');
+    assert.equal(await owner.apiKey('openai'), 'fixture-third-api-key');
+    const fourth = await owner.addKey('openai', 'fixture-fourth-api-key');
+    await owner.remove(third);
+    assert.equal(owner.hasApiKey('openai'), false);
+    assert.equal(await owner.apiKey('openai'), undefined);
+    await owner.select(original);
+    assert.equal(await owner.apiKey('openai'), 'fixture-first-api-key');
+    await owner.remove(fourth);
     await owner.remove(first);
     assert.equal(await captured.read(), undefined);
+    assert.equal(owner.hasApiKey('openai'), false);
+    assert.equal(await owner.apiKey('openai'), undefined);
   });
 
   test('OpenAI-compatible servers connect from Models or server settings, and keep their key out of storage', async (t) => {
@@ -1743,6 +2080,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     );
     const access = await owner.resolve();
     assert.equal(access.definition.spec.baseUrl, `${address}/v1`);
+    assert.equal(owner.hasApiKey('openai'), false);
+    assert.equal(await owner.apiKey('openai'), undefined);
     assert.deepEqual(await access.read(), {
       type: 'endpoint',
       url: address,
@@ -1870,6 +2209,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(repeated.statusCode, 200);
     assert.equal(exchanges, 1);
     const restored = await f.create('fixture-owner', backend);
+    assert.equal(restored.hasApiKey('openai'), false);
+    assert.equal(await restored.apiKey('openai'), undefined);
     const a = await owner.resolve();
     const b = await restored.resolve();
     const firstRead = a.read();
@@ -1908,7 +2249,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       async exchange() {
         exchanging();
         await exchangeGate;
-        return backend.exchange();
+        exchanges++;
+        return { type: 'api_key' as const, key: 'fixture-openrouter-key' };
       },
     });
     const slowApp = Fastify();
@@ -1926,6 +2268,13 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       [200, 200],
     );
     assert.equal(exchanges, exchangesBefore + 1);
+    assert.equal(slow.hasApiKey('openrouter'), true);
+    assert.equal(await slow.apiKey('openrouter'), 'fixture-openrouter-key');
+    assert.equal(slow.hasApiKey('openai'), false);
+    const routerId = slow.view().connections[0].id;
+    await slow.remove(routerId);
+    assert.equal(slow.hasApiKey('openrouter'), false);
+    assert.equal(await slow.apiKey('openrouter'), undefined);
     const failed = await f.create('fixture-failed', {
       ...backend,
       exchange: async () => {
@@ -2116,4 +2465,412 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(restarted.view().connections.length, 2);
     assert.deepEqual(restarted.view().selection, selection);
   });
+
+  test('each account is one connection: an unusable one shows on its row, signing in again repairs it, and what the owner adds next takes over', async (t) => {
+    const f = await fixture(t);
+    const { createPiModelRuntime } = await import('../src/providers/pi/models.ts');
+    const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    const { ModelAuthError } = await import('../src/ports/models.ts');
+    let account = 'fixture-account';
+    let down = false;
+    let revoked = false;
+    let hidden: string | undefined;
+    let held: { access: string; entered(): void; release: Promise<void> } | undefined;
+    const backend = {
+      ...f.backend,
+      signIn: stubSignIn(async () => ({
+        ...subscriptionCredential(),
+        access: `fixture-access-${randomUUID()}`,
+        accountId: account,
+        email: `${account}@example.test`,
+      })),
+      catalog: async (
+        provider: Parameters<typeof f.backend.catalog>[0],
+        method: Parameters<typeof f.backend.catalog>[1],
+        credential?: Parameters<typeof f.backend.catalog>[2],
+      ) => {
+        if (credential?.type === 'oauth' && credential.access === held?.access) {
+          held.entered();
+          await held.release;
+          throw new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
+        }
+        if (down) throw new Error('fixture-catalog-outage');
+        if (revoked && method === 'subscription')
+          throw new ModelAuthError('Reconnect your ChatGPT account in Settings > Models.', true);
+        return f.backend
+          .catalog(provider, method, method === 'api_key' ? credential : undefined)
+          .then((definitions) => definitions.filter(({ choice }) => choice.id !== hidden));
+      },
+    };
+    const store = createDatabaseModelStore({
+      database: f.database,
+      ownerId: 'fixture-owner',
+      keyStore: f.keyStore,
+    });
+    await store.initialize();
+    const grants = async () =>
+      (await f.database.query('SELECT count(*)::int AS count FROM vault_app_grants')).rows[0].count;
+    async function signIn(service: Awaited<ReturnType<typeof f.create>>) {
+      const started = await service.start('openai');
+      await service.complete(
+        new URL(`http://127.0.0.1:1455/auth/callback?state=${started.attempt}&code=fixture`),
+      );
+    }
+    const owner = await f.create('fixture-owner', backend);
+    await signIn(owner);
+    const [chatgpt] = owner.view().connections;
+    const selection = owner.view().selection!;
+    assert.equal(selection.connectionId, chatgpt.id);
+    await signIn(owner);
+    assert.deepEqual(
+      owner.view().connections.map(({ id, status }) => ({ id, status })),
+      [{ id: chatgpt.id, status: 'connected' }],
+    );
+    assert.deepEqual(owner.view().selection, selection);
+    down = true;
+    await signIn(owner);
+    down = false;
+    assert.deepEqual(
+      owner.view().connections.map(({ id, status }) => ({ id, status })),
+      [{ id: chatgpt.id, status: 'connected' }],
+    );
+    assert.equal(owner.configured, true);
+    assert.equal(await grants(), 1);
+
+    await store.change((state) => {
+      for (const model of state.connections[0].models)
+        model.spec.baseUrl = 'https://chatgpt.com/backend-api';
+    });
+    const restarted = await f.create('fixture-owner', backend);
+    const stale = await restarted.resolve();
+    await assert.rejects(
+      createPiModelRuntime(stale),
+      /Reconnect your ChatGPT account in Settings > Models/,
+    );
+    assert.equal(restarted.view().connections[0].status, 'reconnect');
+    assert.equal(restarted.configured, false);
+    await assert.rejects(
+      restarted.resolve(),
+      /Reconnect the ChatGPT plan connection in Settings > Models/,
+    );
+
+    await signIn(restarted);
+    assert.deepEqual(
+      restarted.view().connections.map(({ id, status }) => ({ id, status })),
+      [{ id: chatgpt.id, status: 'connected' }],
+    );
+    assert.deepEqual(restarted.view().selection, selection);
+    await createPiModelRuntime(await restarted.resolve());
+    await stale.needsReconnect!();
+    assert.equal(restarted.view().connections[0].status, 'connected');
+
+    await (
+      await restarted.resolve()
+    ).needsReconnect!();
+    assert.equal(restarted.view().connections[0].status, 'reconnect');
+    const key = await restarted.addKey('openai', 'fixture-api-1111');
+    assert.equal(restarted.view().selection?.connectionId, key);
+    assert.equal(restarted.configured, true);
+    assert.equal(await restarted.addKey('openai', 'fixture-api-1111'), key);
+    assert.equal(restarted.view().connections.length, 2);
+    const chosen = restarted.view().selection!;
+    hidden = chosen.modelId;
+    await restarted.refreshCatalog(key);
+    hidden = undefined;
+    assert.deepEqual(restarted.view().selection, chosen);
+    assert.equal(restarted.configured, false);
+    await assert.rejects(restarted.resolve(), /selected model is unavailable/);
+    await restarted.refreshCatalog(key);
+    assert.equal(restarted.configured, true);
+
+    await store.change((state) => {
+      const [original] = state.connections;
+      const copies = [randomUUID(), randomUUID()].map((id) => ({
+        ...structuredClone(original),
+        id,
+        status: 'connected' as const,
+      }));
+      state.connections.push(...copies);
+      state.selection = { ...selection, connectionId: copies[1].id };
+    });
+    const duplicated = await f.create('fixture-owner', backend);
+    assert.equal(duplicated.view().connections.length, 4);
+    await signIn(duplicated);
+    assert.deepEqual(
+      duplicated.view().connections.map(({ id, status }) => ({ id, status })),
+      [
+        { id: chatgpt.id, status: 'connected' },
+        { id: key, status: 'connected' },
+      ],
+    );
+    assert.deepEqual(duplicated.view().selection, selection);
+    assert.equal(duplicated.configured, true);
+    assert.equal(await grants(), 2);
+
+    account = 'fixture-second-account';
+    await signIn(duplicated);
+    await signIn(duplicated);
+    const work = await duplicated.addKey('openai', 'fixture-api-2222');
+    assert.deepEqual(
+      duplicated.view().connections.map(({ label, keyEnding }) => [label, keyEnding]),
+      [
+        ['fixture-account@example.test', undefined],
+        ['OpenAI API', '1111'],
+        ['fixture-second-account@example.test', undefined],
+        ['OpenAI API', '2222'],
+      ],
+    );
+    assert.deepEqual(duplicated.view().selection, selection);
+    await duplicated.remove(work);
+    assert.equal(duplicated.view().connections.length, 3);
+    assert.deepEqual(duplicated.view().selection, selection);
+    assert.equal(await grants(), 3);
+
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => (entered = resolve));
+    held = {
+      access: ((await (await duplicated.resolve()).read()) as { access: string }).access,
+      entered,
+      release: new Promise((resolve) => (release = resolve)),
+    };
+    const racing = duplicated.refreshCatalog(chatgpt.id);
+    await reached;
+    account = 'fixture-account';
+    await signIn(duplicated);
+    release();
+    await assert.rejects(racing, /Reconnect/);
+    assert.equal(
+      duplicated.view().connections.find(({ id }) => id === chatgpt.id)?.status,
+      'connected',
+    );
+
+    revoked = true;
+    await assert.rejects(duplicated.refreshCatalog(chatgpt.id), /Reconnect/);
+    revoked = false;
+    assert.equal(
+      duplicated.view().connections.find(({ id }) => id === chatgpt.id)?.status,
+      'reconnect',
+    );
+    assert.equal(duplicated.configured, false);
+  });
+});
+
+test('feedback activity keeps only bounded technical facts, expires locally and clears on owner changes', async (t) => {
+  const { createFeedbackActivity, parseFeedbackActivity } =
+    await import('../src/shared/feedback-activity.ts');
+  const { feedbackActivity, feedbackActivitySnapshot } =
+    await import('../src/web/lib/feedback-activity.ts');
+  const { api } = await import('../src/web/lib/api.ts');
+  const { captureAnalytics, capturePageview } = await import('../src/web/lib/analytics.ts');
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+  const history = createFeedbackActivity('runtime');
+  const privateValue = 'A private person and their confidential project';
+  history.record('nod_connection_changed', {
+    app: 'gmail',
+    connection_method: 'managed_app',
+    status: 'failed',
+    failure_reason: 'authentication',
+    domain: privateValue,
+    account: privateValue,
+  });
+  history.record('nod_service_used', {
+    app: privateValue,
+    connection_method: 'mcp',
+    outcome: 'failed',
+    duration_ms: 12,
+    error: privateValue,
+  });
+  history.record(privateValue, { status: 'failed' });
+  assert.deepEqual(
+    history.snapshot().map((row) => row.properties),
+    [
+      {
+        app: 'gmail',
+        connection_method: 'managed_app',
+        status: 'failed',
+        failure_reason: 'authentication',
+      },
+      { app: 'custom', connection_method: 'mcp', outcome: 'failed', duration_ms: 12 },
+    ],
+  );
+  assert.ok(!JSON.stringify(history.snapshot()).includes(privateValue));
+  assert.deepEqual(
+    parseFeedbackActivity([
+      { source: 'app', ageMs: 0, event: '__proto__', properties: { status: privateValue } },
+    ]),
+    [],
+  );
+  t.mock.timers.tick(1_800_001);
+  assert.deepEqual(history.snapshot(), []);
+  for (let index = 0; index < 110; index++)
+    history.record('request_failed', {
+      area: 'chat',
+      method: 'POST',
+      status: 500,
+      reason: 'http',
+      path: privateValue,
+    });
+  assert.equal(history.snapshot().length, 100);
+  let requests = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    requests++;
+    return Response.json({ error: privateValue }, { status: 503 });
+  });
+  setRequestAccount('diagnostic-owner-one');
+  t.after(() => setRequestAccount(null));
+  capturePageview('/vault/private-person?secret=private');
+  captureAnalytics('nod_ui_error', { area: 'chat', action: 'send' });
+  assert.equal(requests, 0);
+  await assert.rejects(api('/api/apps/private-account?secret=private'), /private person/);
+  for (let index = 0; index < 110; index++)
+    capturePageview(`/vault/private-person-${index}?secret=private`);
+  assert.deepEqual(
+    feedbackActivitySnapshot().map((row) => row.properties),
+    [
+      { screen: '/credentials' },
+      { area: 'chat', action: 'send' },
+      { area: 'apps', method: 'GET', status: 503, reason: 'http' },
+    ],
+  );
+  assert.ok(!JSON.stringify(feedbackActivitySnapshot()).includes('private'));
+  capturePageview('/apps');
+  capturePageview('/vault/private-person');
+  assert.equal(feedbackActivitySnapshot().filter((row) => row.event === 'screen').length, 3);
+  t.mock.timers.tick(1_800_001);
+  capturePageview('/vault/private-person');
+  assert.equal(feedbackActivitySnapshot().filter((row) => row.event === 'screen').length, 1);
+  setRequestAccount('diagnostic-owner-two');
+  assert.deepEqual(feedbackActivitySnapshot(), []);
+  capturePageview('/vault/private-person');
+  assert.equal(feedbackActivitySnapshot().length, 1);
+  feedbackActivity.clear();
+  for (const [path, area] of [
+    ['/api/thread/stop', 'chat'],
+    ['/api/browser-handoff/private-session/complete', 'browser'],
+    ['/api/channel-settings/private-channel', 'channels'],
+    ['/api/schedule-runs?limit=20', 'tasks'],
+    ['/api/credential-requests/private-request', 'vault'],
+    ['/api/payment-requests/private-request', 'vault'],
+  ]) {
+    await assert.rejects(api(path, { method: 'POST' }), /private person/);
+    assert.deepEqual(feedbackActivitySnapshot().at(-1)?.properties, {
+      area,
+      method: 'POST',
+      status: 503,
+      reason: 'http',
+    });
+  }
+  assert.ok(!JSON.stringify(feedbackActivitySnapshot()).includes('private'));
+  feedbackActivity.clear();
+  t.mock.method(
+    globalThis,
+    'fetch',
+    async (_path: string, options: RequestInit) =>
+      new Promise<Response>((_resolve, reject) =>
+        options.signal!.addEventListener('abort', () => reject(options.signal!.reason), {
+          once: true,
+        }),
+      ),
+  );
+  const timeout = new AbortController();
+  const timedRequest = api('/api/channels/private-recipient', { signal: timeout.signal });
+  timeout.abort(new DOMException(privateValue, 'TimeoutError'));
+  await assert.rejects(timedRequest, { name: 'TimeoutError' });
+  assert.deepEqual(
+    feedbackActivitySnapshot().map((row) => row.properties),
+    [{ area: 'channels', method: 'GET', status: 0, reason: 'timeout' }],
+  );
+  for (const changedOwner of [false, true]) {
+    const cancellation = new AbortController();
+    const cancelledRequest = api('/api/channels/private-recipient', {
+      signal: cancellation.signal,
+    });
+    if (changedOwner) setRequestAccount('diagnostic-owner-three');
+    else cancellation.abort();
+    await assert.rejects(cancelledRequest, { name: 'AbortError' });
+    assert.equal(feedbackActivitySnapshot().length, changedOwner ? 0 : 1);
+  }
+  feedbackActivity.record('nod_ui_error', { area: 'settings', action: 'load' });
+  setRequestAccount(null);
+  assert.deepEqual(feedbackActivitySnapshot(), []);
+  for (const path of ['/api/session', '/api/access']) {
+    let respond: (response: Response) => void = () => {};
+    t.mock.method(
+      globalThis,
+      'fetch',
+      async () => new Promise<Response>((resolve) => (respond = resolve)),
+    );
+    setRequestAccount('diagnostic-owner-one');
+    const staleRequest = api(path);
+    setRequestAccount('diagnostic-owner-two');
+    respond(Response.json({ error: privateValue }, { status: 503 }));
+    await assert.rejects(staleRequest, /private person/);
+    assert.deepEqual(feedbackActivitySnapshot(), []);
+  }
+});
+
+test('failure logging keeps concurrent runtime sinks isolated without exposing messages to the console', async (t) => {
+  const { logFailure, withFailureLog } = await import('../src/server/failure-log.ts');
+  const consoleOutput: string[] = [];
+  t.mock.method(console, 'error', (...values: unknown[]) => consoleOutput.push(values.join(' ')));
+  const received: Array<
+    Array<{ event: string; error: unknown; context?: Record<string, unknown> }>
+  > = [[], []];
+  const failure = Object.assign(new Error('synthetic private failure message'), {
+    code: 'ECONNRESET',
+  });
+  await Promise.all(
+    received.map((events, index) =>
+      withFailureLog(
+        (event, error, context) => {
+          events.push({ event, error, context });
+        },
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, index === 0 ? 5 : 1));
+          logFailure(`runtime_${index}`, failure, { turnId: `synthetic-private-turn-${index}` });
+        },
+      ),
+    ),
+  );
+  for (const [index, events] of received.entries()) {
+    assert.equal(events.length, 1);
+    assert.equal(events[0].event, `runtime_${index}`);
+    assert.equal(events[0].error, failure);
+    assert.deepEqual(events[0].context, { turnId: `synthetic-private-turn-${index}` });
+  }
+  assert.equal(
+    withFailureLog(
+      () => {
+        throw new Error('sink failure');
+      },
+      () => {
+        logFailure('broken_sink', failure);
+        return 42;
+      },
+    ),
+    42,
+  );
+  await withFailureLog(
+    async () => {
+      throw new Error('async sink failure');
+    },
+    async () => {
+      logFailure('rejected_sink', failure);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    },
+  );
+  logFailure('outside_runtime', failure);
+  assert.deepEqual(
+    received.map((events) => events.length),
+    [1, 1],
+  );
+  assert.equal(consoleOutput.length, 5);
+  for (const line of consoleOutput) {
+    const item = JSON.parse(line);
+    assert.equal(item.name, 'Error');
+    assert.equal(item.code, 'ECONNRESET');
+    assert.ok(!line.includes('synthetic'));
+    assert.ok(!line.includes('sink failure'));
+  }
 });

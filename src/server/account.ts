@@ -21,7 +21,7 @@ export function createAccountSession(options: {
   analytics?: Analytics;
   model?(): { provider: string; name: string; configured: boolean };
   start?(): Promise<void>;
-  onboardingReady?(): Promise<boolean>;
+  onboardingMissing?(): Promise<'brain' | 'email' | null>;
   traces?: boolean;
   onTraces?(enabled: boolean): void;
   prepare?(signal: AbortSignal): Promise<void>;
@@ -135,12 +135,20 @@ export function createAccountSession(options: {
         return reply.code(400).send({ error: 'Conversation traces are not available here.' });
       let onboardingCompletedNow = false;
       if (input.onboardingCompleted) {
-        if (options.onboardingReady && !(await options.accounts.read(owner)).onboardingCompleted) {
+        if (
+          options.onboardingMissing &&
+          !(await options.accounts.read(owner)).onboardingCompleted
+        ) {
           try {
-            if (!(await options.onboardingReady()))
-              return reply
-                .code(409)
-                .send({ error: 'Connect an AI provider and Gmail before finishing setup.' });
+            const step = await options.onboardingMissing();
+            if (step)
+              return reply.code(409).send({
+                error:
+                  step === 'brain'
+                    ? 'Connect an AI provider before finishing setup.'
+                    : 'Connect Gmail before finishing setup.',
+                step,
+              });
           } catch {
             return reply.code(503).send({ error: 'Could not verify setup. Try again.' });
           }

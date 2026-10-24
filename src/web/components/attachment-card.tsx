@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download } from 'lucide-react';
+import { FileActions, fileDrag, prepareFile } from './file-actions';
 import type { Artifact, Message } from '../../shared/contracts';
 import { attachmentKind, fileSize, fileType } from '../lib/attachment-kind';
-import { Button } from './ui';
 import { FileGlyph } from './attachment-glyph';
+import { AudioPlayer } from './audio-player';
+import { SharedMessageCard } from './shared-message-card';
 import { useArtifactDrawer } from './artifact-context';
 import {
   ImageGallery,
@@ -134,6 +135,9 @@ function DocumentCard({
     .join(' · ');
   return (
     <div
+      draggable
+      onDragStart={(event) => fileDrag(event, item)}
+      onPointerEnter={() => prepareFile(item)}
       className={`attachment-card is-${attachmentKind(mimeType, item.name) ?? 'file'}${selected ? ' is-selected' : ''}`}
     >
       <button
@@ -152,13 +156,7 @@ function DocumentCard({
         )}
         <CardDetails name={item.name} mimeType={mimeType} meta={meta} />
       </button>
-      {item.downloadUrl && ownedArtifactUrl(item.downloadUrl) && (
-        <Button variant="ghost" size="icon" className="attachment-card-download" asChild>
-          <a href={item.downloadUrl} download={item.name} aria-label={`Download ${item.name}`}>
-            <Download size={16} />
-          </a>
-        </Button>
-      )}
+      <FileActions item={item} />
     </div>
   );
 }
@@ -167,17 +165,34 @@ function messageFiles(attachments: Artifact[]) {
   const owned = attachments
     .filter((artifact) => ownedArtifactUrl(artifact.url))
     .map((artifact): ImagePreview => ({ ...artifact, downloadUrl: artifact.url }));
-  const visual = owned.filter((item) =>
-    ['image', 'video'].includes(attachmentKind(item.mimeType ?? '', item.name) ?? ''),
+  const animated = owned.some(
+    (item) =>
+      item.source === 'sticker' &&
+      ['sticker', 'video'].includes(attachmentKind(item.mimeType ?? '', item.name) ?? ''),
   );
-  return { visual, rest: owned.filter((item) => !visual.includes(item)) };
+  const preview = (item: ImagePreview) =>
+    animated &&
+    (item.source === 'sticker-preview' ||
+      (item.source === 'sticker' &&
+        item.name === 'sticker-preview.jpg' &&
+        item.mimeType === 'image/jpeg'));
+  const visual = owned.filter(
+    (item) =>
+      !preview(item) &&
+      ['image', 'video', 'sticker'].includes(attachmentKind(item.mimeType ?? '', item.name) ?? ''),
+  );
+  return {
+    visual,
+    rest: owned.filter((item) => !preview(item) && !visual.includes(item)),
+  };
 }
 
 export function conversationFiles(messages: Pick<Message, 'attachments'>[]) {
-  return messages.flatMap((message) => {
+  const files = messages.flatMap((message) => {
     const { visual, rest } = messageFiles(message.attachments);
     return [...visual, ...rest];
   });
+  return [...new Map(files.map((file) => [file.id, file])).values()];
 }
 
 export function MessageAttachments({
@@ -208,15 +223,28 @@ export function MessageAttachments({
       {visual.length > 0 && <ImageGallery images={visual} />}
       {rest.length > 0 && (
         <div className="attachment-cards">
-          {rest.map((item) => (
-            <DocumentCard
-              key={item.id}
-              item={item}
-              selected={drawer.selectedId === item.id}
-              loadDocument={loadDocument}
-              onOpen={(trigger) => drawer.open(item.id, trigger)}
-            />
-          ))}
+          {rest.map((item) =>
+            item.source === 'location' ||
+            item.name === 'location.json' ||
+            item.source === 'contact' ||
+            /\.vcf$/i.test(item.name) ? (
+              <SharedMessageCard
+                key={item.id}
+                item={item}
+                selected={drawer.selectedId === item.id}
+              />
+            ) : attachmentKind(item.mimeType ?? '', item.name) === 'audio' ? (
+              <AudioPlayer key={item.id} item={item} selected={drawer.selectedId === item.id} />
+            ) : (
+              <DocumentCard
+                key={item.id}
+                item={item}
+                selected={drawer.selectedId === item.id}
+                loadDocument={loadDocument}
+                onOpen={(trigger) => drawer.open(item.id, trigger)}
+              />
+            ),
+          )}
         </div>
       )}
     </div>

@@ -24,6 +24,10 @@ Unfinished setup interviews are encrypted in your installation’s private stora
 
 For what nod stores and how long it keeps it, see the [Security review guide](/trust/security-review/#what-nod-stores).
 
+Unsent chat drafts stay in app or browser storage on this device, for your account and conversation. They include text, reply targets, and uploaded file references. Private entry fields and recognized verification replies are excluded.
+
+Desktop file actions prepare private copies in the system temporary folder. The cache holds up to eight files. Saving creates a separate file in Downloads. Temporary copies remain until cache eviction or app shutdown. A forced stop can leave a temporary copy behind.
+
 ## What leaves your computer
 
 ```mermaid
@@ -63,6 +67,14 @@ nod creates a random cryptographic identity for each installation and encrypts i
 
 You authorize each app, such as Gmail, with its provider. The Composio project key stays on the connection service. Your model keys stay encrypted on your installation. Provider keys never enter a prompt, nod's workspace or its browser.
 
+When the selected chat model cannot read an attached image, nod can send the image and your current request to an image model on another connected service. It first checks the selected connection, then the other connected connections. It keeps your chat selection. The selected chat model receives the image description as untrusted data. No image request is sent if no connected image model is available.
+
+Telegram TGS stickers are decoded and played locally in a sandbox with no network access. Static and video stickers use local artifact files. Contact previews do not fetch websites. A shared map loads from OpenStreetMap only after you select **View map**.
+
+Incoming voice messages go to OpenAI when its API key is available, or to OpenRouter and the provider it routes to when only an OpenRouter key is available. This can differ from your chat provider. nod selects one service before sending the audio and does not switch services after a failed request. Text for a voice reply goes to OpenAI. Playback and waveform processing run in your browser without a model. The audio and transcript follow the same owned file and message rules as other channel content. See [Files and voice messages](/use/channels/#files-and-voice-messages).
+
+The WhatsApp QR connection links nod as a device on the account you select. nod stores its device credentials and Signal keys encrypted on your installation. The QR code stays in the private setup panel. Session recordings exclude that panel. Disconnect removes the saved device keys. Group messages and other chats do not enter the nod conversation.
+
 ## Your own telemetry
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` to send model request metadata to your own OpenTelemetry collector. Export is off when the variable is empty.
@@ -87,9 +99,21 @@ Before a trace leaves your computer, nod removes known secrets, your name, email
 
 ## Feedback
 
-The feedback dialog shows who receives your submission. The default is the nod team at n8n; an operator can set a different HTTPS collector. To help the team investigate, you can tick **Include diagnostic report** to add your recent chat, actions and their results. It's off by default. Select **Review** to read the report first. Before you see it, nod removes known secret values and the personal details it removes from [conversation traces](/trust/conversation-traces/#what-nod-removes-first), such as your name, email addresses, phone numbers and card numbers. Removal is automatic and can miss details written in other forms, such as another person's name in a sentence. From the desktop app, feedback also includes the app version and your platform. Feedback is a separate, deliberate submission and does not turn on usage analytics.
+The feedback dialog shows who receives your submission: the nod team at n8n by default, or your operator's configured collector.
 
-Operators can disable submission and status checks with `NOD_FEEDBACK_ENABLED=false`. See the [configuration reference](/deploy/configuration/#analytics-and-feedback) for custom collectors and operation without either upstream collector.
+**Include diagnostic report** starts selected for every category. The report helps with support, debugging, and product improvement. Select **Review** to inspect the exact attachment, or untick the checkbox to leave it out. Your choice stays with the draft when you close or reload it.
+
+The report can include recent chat messages, tool arguments and results, runtime and app errors, and technical activity. Tool results can include text read from files, websites, or connected apps. nod masks known secrets and recognized personal details before presenting the report. This is best-effort redaction: names and other personal information can remain. Review the report before sending it.
+
+Credential fields, screenshots, binary data, system prompts, and model thinking are omitted. Execution IDs become labels that link entries within the report. Technical model and integration fields use known categories, and activity times use relative ages and durations.
+
+nod keeps a local journal of recent tool activity and failures, with redaction before writing and again when preparing a report. The journal holds at most three files of 1 MiB each. Reports read only the latest 24 hours. Expired records are removed on startup, report preparation, journal writes, and a one-minute cleanup timer. If nod is stopped, expired files remain until it runs again. See [Report contents and limits](/deploy/troubleshooting/#report-contents-and-limits).
+
+Preparing a report sends recent app activity and errors from the app window to your nod runtime for redaction and assembly. The configured feedback recipient receives your submission only after you select **Send feedback**. Screenshots aren't captured automatically. Feedback text and files you choose to add are sent as provided and can contain personal information.
+
+The report marks unavailable database or journal sources and omitted entries. The app activity and error buffers have fixed limits and no marker for dropped or expired entries. After an account change, app error capture pauses until the window reloads, and that source is marked unavailable. If redaction can't be prepared, the report omits message content and logs. If the report itself can't be prepared, select **Continue without report**. Your text and selected files stay in the draft.
+
+Feedback does not change your usage analytics or conversation trace settings. Operators can disable submission and status checks with `NOD_FEEDBACK_ENABLED=false`. See the [configuration reference](/deploy/configuration/#analytics-and-feedback) for custom collectors and operation without either upstream collector.
 
 ## What memory learns from
 
@@ -110,7 +134,7 @@ There's no button to clear only your chat history yet. **Remove all data** delet
 
 ## Where this is enforced
 
-[`src/server/memory-learning.ts`](https://github.com/n8n-io/nod/blob/main/src/server/memory-learning.ts) (memory sources) · [`src/server/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/server/analytics.ts) (analytics opt-in and events) · [`src/server/traces.ts`](https://github.com/n8n-io/nod/blob/main/src/server/traces.ts) and [`src/server/personal-data.ts`](https://github.com/n8n-io/nod/blob/main/src/server/personal-data.ts) (trace opt-in and scrubbing) · [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics-privacy.ts) (recording masks) · [`src/server/bug-report.ts`](https://github.com/n8n-io/nod/blob/main/src/server/bug-report.ts) (report scrubbing)
+[`src/server/memory-learning.ts`](https://github.com/n8n-io/nod/blob/main/src/server/memory-learning.ts) (memory sources) · [`src/server/analytics.ts`](https://github.com/n8n-io/nod/blob/main/src/server/analytics.ts) (analytics opt-in and events) · [`src/server/traces.ts`](https://github.com/n8n-io/nod/blob/main/src/server/traces.ts) and [`src/server/personal-data.ts`](https://github.com/n8n-io/nod/blob/main/src/server/personal-data.ts) (trace opt-in and scrubbing) · [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/nod/blob/main/src/web/lib/analytics-privacy.ts) (recording masks) · [`src/server/bug-report.ts`](https://github.com/n8n-io/nod/blob/main/src/server/bug-report.ts) (report assembly) · [`src/server/feedback-redaction.ts`](https://github.com/n8n-io/nod/blob/main/src/server/feedback-redaction.ts) (report and journal redaction) · [`src/server/feedback-log.ts`](https://github.com/n8n-io/nod/blob/main/src/server/feedback-log.ts) (local journal limits)
 
 ## Related resources
 

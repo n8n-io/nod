@@ -1,12 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronLeft, Eye, EyeOff, KeyRound, LockKeyhole, ArrowUpRight } from 'lucide-react';
-import type { CredentialRequest, PaymentRequest } from '../../shared/contracts';
-import { api } from '../lib/api';
+import {
+  Check,
+  ChevronLeft,
+  Eye,
+  EyeOff,
+  KeyRound,
+  LockKeyhole,
+  ArrowUpRight,
+} from '../components/icons';
+import type {
+  CredentialRequest,
+  PasswordManagerLogin,
+  PaymentRequest,
+} from '../../shared/contracts';
+import { api, ApiError } from '../lib/api';
 import { originLabel } from '../lib/vault-name';
 import { returnToChat } from '../lib/navigation';
 import { subscribeAppEvents } from '../lib/app-events';
 import { Button, Field, Input, Loading, Notice } from '../components/ui';
 import { BrandMark } from '../components/brand';
+
+type ManagerState =
+  | { stage: 'account'; account?: string }
+  | { stage: 'waiting'; account: string }
+  | { stage: 'list'; account: string; logins: PasswordManagerLogin[] };
 
 type PrivateFormProps = {
   id: string;
@@ -231,6 +248,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
   const [retried, setRetried] = useState(false);
   const [enterNew, setEnterNew] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [manager, setManager] = useState<ManagerState | null>(null);
   useEffect(() => {
     if (!request || (request.status === 'uncertain' && !retried)) return;
     const controller = new AbortController();
@@ -264,6 +282,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
             setEnterNew(false);
             setRevealed(false);
             setRetried(false);
+            setManager(null);
             setActiveId(flow.nextId);
           }
         }
@@ -315,12 +334,14 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
   const username = request?.kind === 'identifier' || request?.kind === 'password';
   const password = request?.kind === 'password';
   const savedEntries = request?.kind === 'otp' ? [] : (request?.savedEntries ?? []);
-  const choosingSaved = savedEntries.length > 0 && !enterNew;
+  const choosingSaved = savedEntries.length > 0 && !enterNew && !manager;
+  const managerName = request?.passwordManager?.name;
   async function perform<T>(
     suffix: string,
     input: unknown,
     accepted: (result: T) => void,
     failure: string,
+    explained = false,
   ) {
     if (action.current) return;
     updates.current++;
@@ -341,9 +362,9 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
         },
       );
       if (generation.current === current && !controller.signal.aborted) accepted(result);
-    } catch {
+    } catch (cause) {
       if (generation.current === current && !controller.signal.aborted) {
-        setError(failure);
+        setError(explained && cause instanceof ApiError ? cause.message : failure);
         try {
           const value = await api<CredentialRequest>(
             `/api/credential-requests/${encodeURIComponent(activeId)}`,
@@ -388,6 +409,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
     onRequestChange?.(match[1]);
     setRequest(null);
     setRetried(false);
+    setManager(null);
     setEnterNew(true);
     setError(result.error ?? '');
     setActiveId(match[1]);
@@ -406,6 +428,33 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
       { entryId },
       submitted,
       'This saved login could not be used. Try again or choose another login.',
+    );
+  }
+  async function listManaged(account: string) {
+    let listed = false;
+    setManager({ stage: 'waiting', account });
+    await perform<{ logins: PasswordManagerLogin[] }>(
+      '/password-manager',
+      { account },
+      (result) => {
+        listed = true;
+        setManager({ stage: 'list', account, logins: result.logins });
+      },
+      `nod couldn’t open ${managerName}. Try again.`,
+      true,
+    );
+    if (!listed)
+      setManager((current) =>
+        current?.stage === 'waiting' ? { stage: 'account', account } : current,
+      );
+  }
+  function useManaged(account: string, id: string) {
+    return perform(
+      '/password-manager/use',
+      { account, id },
+      submitted,
+      'This login could not be used. Try again or choose another login.',
+      true,
     );
   }
   function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -438,7 +487,13 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
         aria-busy={saving || (!request && !error)}
         data-analytics-private
       >
-        {saving ? (
+        {saving && manager?.stage === 'waiting' ? (
+          <div className="credential-complete" role="status" aria-live="polite">
+            <h1>Approve in {managerName}</h1>
+            <p>{managerName} asks before nod can read your logins.</p>
+            <Loading label={`Waiting for ${managerName}…`} />
+          </div>
+        ) : saving ? (
           <div className="credential-complete" role="status" aria-live="polite">
             <h1>{request?.kind === 'otp' ? 'Checking your code…' : 'Continuing sign-in…'}</h1>
             {request && <p>{originLabel(request.origin)}</p>}
@@ -541,7 +596,80 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
                 </Button>
               </div>
             )}
-            {request && !choosingSaved && savedEntries.length > 0 && (
+            {request && manager && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="credential-method-back"
+                disabled={saving}
+                onClick={() => setManager(null)}
+              >
+                <ChevronLeft size={16} aria-hidden="true" />
+                Back
+              </Button>
+            )}
+            {request && manager?.stage === 'account' && (
+              <form
+                className="form-stack"
+                autoComplete="off"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const account = String(new FormData(event.currentTarget).get('account') ?? '');
+                  if (account.trim()) void listManaged(account.trim());
+                }}
+              >
+                <Field
+                  label={`${managerName} account`}
+                  hint={`The name at the top of the ${managerName} sidebar.`}
+                >
+                  <Input
+                    name="account"
+                    defaultValue={manager.account ?? request.passwordManager?.account}
+                    autoComplete="off"
+                    autoFocus
+                    required
+                    maxLength={200}
+                  />
+                </Field>
+                <Button className="credential-submit" type="submit" disabled={saving}>
+                  Continue
+                </Button>
+              </form>
+            )}
+            {request && manager?.stage === 'list' && (
+              <div className="credential-accounts">
+                <h2>Choose a login from {managerName}</h2>
+                {manager.logins.length ? (
+                  manager.logins.map((login) => (
+                    <Button
+                      key={login.id}
+                      variant="outline"
+                      disabled={saving}
+                      onClick={() => void useManaged(manager.account, login.id)}
+                    >
+                      <KeyRound size={16} />
+                      <span>
+                        <strong>{login.title}</strong>
+                        {login.username && <small>{login.username}</small>}
+                      </span>
+                      <ArrowUpRight size={16} />
+                    </Button>
+                  ))
+                ) : (
+                  <p>
+                    No {managerName} logins for {originLabel(request.origin)}.
+                  </p>
+                )}
+                <Button
+                  variant="ghost"
+                  disabled={saving}
+                  onClick={() => setManager({ stage: 'account' })}
+                >
+                  Use another account
+                </Button>
+              </div>
+            )}
+            {request && !manager && !choosingSaved && savedEntries.length > 0 && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -556,7 +684,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
                 Choose a saved login
               </Button>
             )}
-            {request && request.kind !== 'method' && !choosingSaved && (
+            {request && request.kind !== 'method' && !choosingSaved && !manager && (
               <form
                 className="form-stack"
                 autoComplete="off"
@@ -633,6 +761,21 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
                       : 'Save and continue'}
                 </Button>
               </form>
+            )}
+            {request?.passwordManager && !manager && (
+              <Button
+                variant="ghost"
+                disabled={saving}
+                onClick={() => {
+                  setError('');
+                  const account = request.passwordManager?.account;
+                  if (account) void listManaged(account);
+                  else setManager({ stage: 'account' });
+                }}
+              >
+                <KeyRound size={16} aria-hidden="true" />
+                Use {request.passwordManager.name}
+              </Button>
             )}
           </>
         )}

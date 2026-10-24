@@ -303,7 +303,7 @@
 .task-activity li {
   margin: 0.35rem 0;
 }
-.task-activity [data-kind='step'] {
+.task-activity [data-kind='tool'] {
   padding-left: 0.75rem;
   color: var(--text-secondary);
 }
@@ -332,4 +332,12 @@
   .task-preview-chevron {
     transition: none;
   }
+}
+.tasks-ideas {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  animation: startup-fade 180ms ease-out;
+}
+[role='tabpanel'] > .tasks-ideas {
+  padding-top: var(--secondary-empty-inset);
 }

@@ -16,6 +16,7 @@ const mimeTypes: Record<string, string> = {
   '.md': 'text/markdown',
   '.csv': 'text/csv',
   '.json': 'application/json',
+  '.vcf': 'text/vcard',
   '.pdf': 'application/pdf',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -108,6 +109,7 @@ export function createArtifactService(options: {
     mimeType: string,
     threadId?: string,
     database: Pick<PoolClient, 'query'> = options.database,
+    onCreated?: (cleanup: () => Promise<void>) => void,
   ): Promise<Artifact> {
     if (!bytes.length || bytes.length > fileBytes)
       throw Object.assign(
@@ -133,12 +135,16 @@ export function createArtifactService(options: {
         'INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
         [id, options.ownerId, threadId || null, safeName, mimeType, bytes.length, location(id)],
       );
-      afterRollback(database, async () => {
-        const stored = await database.query(
-          'SELECT id FROM artifacts WHERE id=$1 AND owner_id=$2',
-          [id, options.ownerId],
-        );
-        if (stored.rowCount === 0) await rm(location(id), { force: true });
+      const removeUnstored = async (source: Pick<PoolClient, 'query'>) => {
+        const stored = await source.query('SELECT 1 FROM artifacts WHERE id=$1 AND owner_id=$2', [
+          id,
+          options.ownerId,
+        ]);
+        if (!stored.rowCount) await rm(location(id), { force: true });
+      };
+      afterRollback(database, () => removeUnstored(database));
+      onCreated?.(async () => {
+        await removeUnstored(options.database);
       });
       return artifactView(result.rows[0]);
     } catch (error) {

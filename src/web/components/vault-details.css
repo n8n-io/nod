@@ -52,6 +52,70 @@
   border-radius: 22%;
   object-fit: contain;
 }
+.vault-start {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  animation: startup-fade 180ms ease-out;
+}
+.vault-doors {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: 12px;
+  width: 100%;
+  max-width: 960px;
+}
+.vault-door {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 148px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--dialog-radius);
+  background: var(--surface);
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 140ms,
+    transform 140ms;
+}
+.vault-door:hover {
+  border-color: var(--muted-foreground);
+}
+.vault-door:active {
+  transform: scale(0.98);
+}
+.vault-door:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.vault-door strong {
+  margin-top: auto;
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+.vault-door > span:last-child {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  line-height: 1.45;
+}
+.vault-door-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 12px;
+  border-radius: var(--card-radius);
+  background: var(--control);
+}
+@media (max-width: 640px) {
+  .vault-door {
+    min-height: 0;
+  }
+}
 .vault-no-results {
   padding: 24px 12px;
   color: var(--muted-foreground);
@@ -392,6 +456,14 @@ button.vault-use:focus-visible {
   font-weight: 500;
 }
 .vault-use-text span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.vault-use-text .usage-because {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
   color: var(--muted-foreground);
   font-size: 12px;
 }

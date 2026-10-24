@@ -57,6 +57,9 @@ jobs:
       runtime_base_url: ${{ steps.plan.outputs.runtime_base_url }}
       runtime_reused: ${{ steps.plan.outputs.runtime_reused }}
       runtime_public: ${{ steps.plan.outputs.runtime_public }}
+      windows_runtime_fingerprint: ${{ steps.plan.outputs.windows_runtime_fingerprint }}
+      windows_runtime_tag: ${{ steps.plan.outputs.windows_runtime_tag }}
+      runtime_refresh: ${{ steps.plan.outputs.runtime_refresh }}
     steps:
       - name: Check out the requested main revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -75,6 +78,8 @@ jobs:
         run: |
           until run=$(gh run list -R "$GITHUB_REPOSITORY" -w ci.yml -b main -c "$NOD_RELEASE_SOURCE" -L 1 --json databaseId --jq '.[0].databaseId // empty') && [ -n "$run" ]; do sleep 10; done
           gh run watch "$run" -R "$GITHUB_REPOSITORY" --exit-status --interval 30 > /dev/null
+      - name: Rebuild runtimes at least weekly
+        run: echo "NOD_RUNTIME_REFRESH=$(date -u -d "-$(( $(date -u +%u) - 1 )) days" +%F)" >> "$GITHUB_ENV"
       - name: Require tested source, signing configuration and runtime integrity
         id: plan
         env:
@@ -119,6 +124,7 @@ jobs:
       NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
       NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -143,6 +149,7 @@ jobs:
           file: Dockerfile.workspace
           platforms: linux/${{ matrix.docker_arch }}
           load: true
+          build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-workspace:experiment
           cache-from: type=gha,scope=desktop-workspace-${{ matrix.arch }}
           cache-to: type=gha,scope=desktop-workspace-${{ matrix.arch }},mode=max
@@ -153,6 +160,7 @@ jobs:
           file: Dockerfile.browser
           platforms: linux/${{ matrix.docker_arch }}
           load: true
+          build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-browser:experiment
           cache-from: type=gha,scope=desktop-browser-${{ matrix.arch }}
           cache-to: type=gha,scope=desktop-browser-${{ matrix.arch }},mode=max
@@ -191,6 +199,7 @@ jobs:
       NOD_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
       NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -200,10 +209,14 @@ jobs:
           persist-credentials: false
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - name: Install Rosetta for the Intel build
+        if: matrix.arch == 'x64'
+        run: /usr/bin/arch -x86_64 /usr/bin/true || sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.21.0'
+          architecture: ${{ matrix.node_arch }}
           cache: pnpm
           cache-dependency-path: |
             pnpm-lock.yaml
@@ -250,6 +263,7 @@ jobs:
       NOD_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
       NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -259,10 +273,14 @@ jobs:
           persist-credentials: false
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - name: Install Rosetta for the Intel build
+        if: matrix.arch == 'x64'
+        run: /usr/bin/arch -x86_64 /usr/bin/true || sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.21.0'
+          architecture: ${{ matrix.node_arch }}
           cache: pnpm
           cache-dependency-path: |
             pnpm-lock.yaml
@@ -378,11 +396,13 @@ jobs:
     name: Build the Windows runtime
     needs: plan
     if: needs.plan.outputs.release_needed == 'true'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 60
     env:
-      NOD_DESKTOP_TARGET: win32-x64
       NOD_RUNTIME_ASSETS: .local/windows-runtime-assets
+      NOD_WINDOWS_RUNTIME_TAG: ${{ needs.plan.outputs.windows_runtime_tag }}
+      NOD_WINDOWS_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.windows_runtime_fingerprint }}
+      NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -393,13 +413,21 @@ jobs:
         with:
           node-version: '24.21.0'
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: Reuse the published Windows runtime
+        if: env.NOD_WINDOWS_RUNTIME_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/desktop-release.mjs reuse-windows-runtime
+      - if: env.NOD_WINDOWS_RUNTIME_TAG == ''
+        run: pnpm install --frozen-lockfile
       - name: Set up Docker build cache
+        if: env.NOD_WINDOWS_RUNTIME_TAG == ''
         id: buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
         with:
           use: false
       - name: Build the workspace image
+        if: env.NOD_WINDOWS_RUNTIME_TAG == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
         with:
           builder: ${{ steps.buildx.outputs.name }}
@@ -407,12 +435,14 @@ jobs:
           file: Dockerfile.workspace
           platforms: linux/amd64
           load: true
+          build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-workspace:experiment
           cache-from: |
             type=gha,scope=desktop-workspace-x64
             type=gha,scope=desktop-workspace-win32
           cache-to: type=gha,scope=desktop-workspace-win32,mode=max
       - name: Build the browser image
+        if: env.NOD_WINDOWS_RUNTIME_TAG == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
         with:
           builder: ${{ steps.buildx.outputs.name }}
@@ -420,14 +450,21 @@ jobs:
           file: Dockerfile.browser
           platforms: linux/amd64
           load: true
+          build-args: NOD_RUNTIME_REFRESH=${{ needs.plan.outputs.runtime_refresh }}
           tags: nod-desktop-browser:experiment
           cache-from: |
             type=gha,scope=desktop-browser-x64
             type=gha,scope=desktop-browser-win32
           cache-to: type=gha,scope=desktop-browser-win32,mode=max
       - name: Verify and export the native images
+        if: env.NOD_WINDOWS_RUNTIME_TAG == ''
+        env:
+          NOD_DESKTOP_TARGET: win32-x64
         run: node desktop/scripts/prepare-runtime.mjs --images-only --prebuilt-images
       - name: Build the Windows root filesystem
+        if: env.NOD_WINDOWS_RUNTIME_TAG == ''
+        env:
+          NOD_DESKTOP_TARGET: win32-x64
         run: node desktop/scripts/prepare-windows-runtime.mjs --prebuilt-images
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -435,14 +472,16 @@ jobs:
           path: |
             .local/windows-runtime-assets/guest.tar.gz
             .local/windows-runtime-assets/manifest.json
+            .local/windows-runtime-assets/runtime-win32-x64-*.json
           include-hidden-files: true
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
 
-  windows:
-    name: Package and check the Windows installer
-    needs: [plan, windows-runtime]
+  windows-checks:
+    name: Check Windows updates
+    needs: plan
+    if: needs.plan.outputs.release_needed == 'true'
     runs-on: windows-2025
     timeout-minutes: 45
     environment:
@@ -470,10 +509,6 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --dir desktop install --frozen-lockfile
           choco install nsis --yes --no-progress
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: desktop-windows-runtime
-          path: .local/windows-runtime-assets
       - name: Verify native Windows updates and profile preservation
         run: node desktop/scripts/check-windows-updates.mjs
       - name: Preserve Windows update acceptance
@@ -486,16 +521,68 @@ jobs:
           if-no-files-found: ignore
       - name: Check Windows workspace paths
         run: pnpm exec tsx --test --test-name-pattern="workspace paths cannot|workspace artifact reads" tests/sandbox.test.ts
+
+  windows:
+    name: Package and check the Windows installer
+    needs: plan
+    if: needs.plan.outputs.release_needed == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 60
+    environment:
+      name: release
+      deployment: false
+    permissions:
+      actions: read
+      contents: read
+    env:
+      NOD_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
+      NOD_RELEASE_BUILD: 'true'
+      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.plan.outputs.source }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir desktop install --frozen-lockfile
+          choco install nsis --yes --no-progress
       - run: pnpm run build
+      - name: Wait for the Windows runtime
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          until [ "$(gh api "$runs/artifacts?name=desktop-windows-runtime" --jq .total_count)" = 1 ]; do
+            result=$(gh api "$runs/attempts/$GITHUB_RUN_ATTEMPT/jobs" --paginate --jq '.jobs[] | select(.name == "Build the Windows runtime") | .conclusion')
+            if [ -n "$result" ] && [ "$result" != success ]; then echo "The Windows runtime build ended with $result." >&2; exit 1; fi
+            sleep 10
+          done
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: desktop-windows-runtime
+          path: .local/windows-runtime-assets
       - name: Package the Windows installer
         env:
           NOD_TRACES_TOKEN: ${{ secrets.NOD_TRACES_TOKEN }}
         run: node desktop/scripts/build-windows.mjs
       - run: node desktop/scripts/check-windows.mjs
+      - run: Copy-Item .local/windows-runtime-assets/runtime-win32-x64-*.json dist/windows/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-windows-x64
           path: |
+            dist/windows/runtime-win32-x64-*.json
             dist/windows/nod-Setup-x64.exe
             dist/windows/nod-Runtime-win32-x64.tar.gz
             dist/windows/SHA256SUMS
@@ -507,9 +594,9 @@ jobs:
 
   release:
     name: Verify uploaded assets and prepare the release
-    needs: [plan, mac, mac-checks, windows]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.mac.result == 'success' && needs.mac-checks.result == 'success' && needs.windows.result == 'success' }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [plan, mac, mac-checks, windows, windows-checks]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.mac.result == 'success' && needs.mac-checks.result == 'success' && needs.windows.result == 'success' && needs.windows-checks.result == 'success' }}
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 30
     environment: release
     env:
@@ -520,6 +607,7 @@ jobs:
       NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
       NOD_RELEASE_PLAN: ${{ needs.plan.outputs.metadata_sha256 && '.local/desktop-release-plan.json' || '' }}
       NOD_RELEASE_PLAN_SHA256: ${{ needs.plan.outputs.metadata_sha256 }}
+      NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}
     permissions:
       contents: write
     steps:

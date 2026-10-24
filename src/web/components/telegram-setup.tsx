@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, ExternalLink, LoaderCircle } from 'lucide-react';
+import { Check, ExternalLink, LoaderCircle } from './icons';
 import { QRCodeSVG } from 'qrcode.react';
 import type { ChannelSetupSummary } from '../../shared/contracts';
 import { telegramState } from '../hooks/use-channel-settings';
@@ -66,11 +66,30 @@ export function TelegramSetup({
 }) {
   const [hasToken, setHasToken] = useState(false);
   const [tokenError, setTokenError] = useState('');
+  const [copyResult, setCopyResult] = useState<{ url: string; ok: boolean }>();
   const state = telegramState(setup);
   const disabled = busy || unavailable;
   const candidate = manual ? undefined : state.candidate;
   const current = state.paired ? 5 : candidate ? 4 : state.saved ? 3 : hasToken ? 2 : 1;
   const liveUrl = state.waiting ? pairingUrl : null;
+  let pairingCommand = '';
+  if (liveUrl && setup?.accountHandle) {
+    try {
+      const target = new URL(liveUrl);
+      const code = target.searchParams.get('start');
+      if (
+        target.origin === 'https://t.me' &&
+        !target.username &&
+        !target.password &&
+        !target.hash &&
+        target.pathname.toLowerCase() === `/${setup.accountHandle.slice(1).toLowerCase()}` &&
+        [...target.searchParams].length === 1 &&
+        code &&
+        /^[A-Za-z0-9_-]{32}$/.test(code)
+      )
+        pairingCommand = `/start ${code}`;
+    } catch {}
+  }
   const steps = ['Create a bot', 'Paste the bot token', 'Open your bot', 'Confirm your account'];
   const setupError =
     error ||
@@ -299,6 +318,38 @@ export function TelegramSetup({
                                 Scan this new code or open Telegram below. Press{' '}
                                 <strong>Start</strong> in your bot’s chat.
                               </TelegramLink>
+                              {pairingCommand && (
+                                <div data-analytics-private>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    disabled={disabled}
+                                    onClick={async () => {
+                                      try {
+                                        await navigator.clipboard.writeText(pairingCommand);
+                                        setCopyResult({ url: liveUrl, ok: true });
+                                      } catch {
+                                        setCopyResult({ url: liveUrl, ok: false });
+                                      }
+                                    }}
+                                  >
+                                    {copyResult?.url === liveUrl && copyResult.ok
+                                      ? 'Copied'
+                                      : 'Copy pairing command'}
+                                  </Button>
+                                  <p>
+                                    If Start does not connect, paste this command in your bot’s
+                                    chat.
+                                  </p>
+                                  {copyResult?.url === liveUrl && !copyResult.ok && (
+                                    <Input
+                                      aria-label="Pairing command"
+                                      readOnly
+                                      value={pairingCommand}
+                                    />
+                                  )}
+                                </div>
+                              )}
                               <p className="telegram-setup-waiting" role="status">
                                 <LoaderCircle size={14} aria-hidden="true" />
                                 Waiting for you to press Start…

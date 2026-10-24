@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Check, X } from 'lucide-react';
+import { Check, X } from './icons';
 import type { VaultListEntry } from '../../shared/contracts';
 import { pageDataCache } from '../lib/page-data-cache';
 import { VaultItemForm } from './vault-item-form';

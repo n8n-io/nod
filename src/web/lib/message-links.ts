@@ -6,23 +6,15 @@ import remarkRehype from 'remark-rehype';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
 import { SKIP, visit } from 'unist-util-visit';
-import { rehypeLocalLinks } from './markdown';
+import { rehypeLocalLinks, remarkLinkDestinations } from './markdown';
 import { isConnectionBridge } from './connection-url';
+import { appPagePath } from '../../shared/app-links';
 
-export type SetupKind = 'vault' | 'website' | 'app' | 'browser';
+export type SetupKind = 'vault' | 'website' | 'app';
 type SafeLink =
   | { href: string; kind: 'artifact' | 'external' | 'navigation' }
   | { href: string; kind: 'setup'; setup: SetupKind };
 
-const navigationPaths = new Set([
-  '/',
-  '/apps',
-  '/tasks',
-  '/memory',
-  '/usage',
-  '/vault',
-  '/channels',
-]);
 const renamedPaths = new Map([
   ['/trust', '/usage'],
   ['/trust?add=login', '/vault?add=login'],
@@ -34,7 +26,7 @@ const e2eConsentPath =
   /^\/e2e\/connect\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const localPath =
   /^\/(?:api\/artifacts|vault|credentials|payments)\/[A-Za-z0-9_-]+\/?$|^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/;
-const defaultLabels = { vault: 'Open Vault', website: 'Connect website', browser: 'Open browser' };
+const defaultLabels = { vault: 'Open Vault', website: 'Connect website' };
 const appLabel = /^Connect [\p{L}\p{N}][\p{L}\p{N} .&()+-]{0,79}$/u;
 
 export function setupLink(
@@ -68,10 +60,9 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
   if (
     !absolute &&
     !localPath.test(value.split(/[?#]/, 1)[0]) &&
-    !navigationPaths.has(value) &&
+    !appPagePath(value) &&
     value !== '/vault?add=login' &&
     value !== '/vault?add=card' &&
-    value !== '/browser' &&
     !connectionPath.test(value) &&
     !e2eConsentPath.test(value)
   )
@@ -95,8 +86,6 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
         return ['?add=login', '?add=card'].includes(url.search) && !url.hash
           ? { href: `/vault${url.search}`, kind: 'setup', setup: 'vault' }
           : null;
-      if (url.origin === base.origin && url.pathname === '/browser' && !url.search && !url.hash)
-        return { href: '/browser', kind: 'setup', setup: 'browser' };
       if (
         url.origin === base.origin &&
         !url.hash &&
@@ -108,10 +97,12 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
         : value.split(/[?#]/, 1)[0];
       if (
         url.origin === base.origin &&
-        navigationPaths.has(path) &&
-        navigationPaths.has(url.pathname)
+        !url.search &&
+        !url.hash &&
+        appPagePath(path) &&
+        appPagePath(path) === appPagePath(url.pathname)
       )
-        return { href: url.pathname, kind: 'navigation' };
+        return { href: appPagePath(path)!, kind: 'navigation' };
       if (url.origin !== base.origin || !localPath.test(path) || !localPath.test(url.pathname))
         return null;
       if (url.pathname.startsWith('/api/artifacts/'))
@@ -131,6 +122,7 @@ export function safeMessageLink(link: string, origin: string): SafeLink | null {
 const setupParser = unified()
   .use(remarkParse)
   .use(remarkGfm)
+  .use(remarkLinkDestinations)
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeRaw)
   .use(rehypeLocalLinks)

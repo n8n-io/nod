@@ -67,7 +67,6 @@ export default scenario({
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,
-  window: { from: 7, to: 21 },
   user: {
     approve: (action, args) =>
       action.startsWith('GOOGLECALENDAR_') || JSON.stringify(args ?? '').includes(ana),

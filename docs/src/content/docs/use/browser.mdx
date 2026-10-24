@@ -23,21 +23,23 @@ Steps on the way to what you asked for just run, such as a cookie banner, adding
 
 ## Take over the browser
 
-When nod needs you on a page, it asks in chat with an **Open browser** link.
+When nod needs you on a page, it pauses the task and opens its live browser in chat.
 
 <Steps>
 
-1. Open nod on the desktop or the web. The live page appears under nod's message.
+1. Open nod on the desktop or the web. The panel says **You have control** when it is ready. The live page appears under nod's message.
 2. Click, type and scroll on the page. Use **Back** and **Reload** if you need them, or **Enlarge browser** for a bigger view.
-3. When you're finished, select **Done**. nod looks at the page to see what you did and carries on. Done doesn't post a message for you.
+3. When you're finished, select **Return to nod**. nod looks at the page to see what you did and carries on. Returning control does not post a message for you.
 
 </Steps>
 
 nod doesn't watch or act while you have the browser. If you started on Telegram or WhatsApp, open nod to take over, because chat apps can't show the page.
 
+If the view disconnects, nod keeps the task waiting. Select **Reconnect view** to try again. The browser stays held for up to 30 minutes. After that, nod can close it to make room for other work, and the page can be lost. Reconnecting does not repeat your last input.
+
 Pointer input follows the page’s zoom level in both the chat and enlarged views and keeps working while the next frame loads.
 
-Changing the view or selecting **Done** waits for pending input to reach the browser. If input fails, nod shows an error and doesn't repeat it. Check the page before trying again.
+Changing the view or selecting **Return to nod** waits for pending input to reach the browser. If input fails, nod shows an error and doesn't repeat it. Check the page before trying again.
 
 ## CAPTCHAs and human checks
 
@@ -61,12 +63,12 @@ flowchart LR
   chat[Chat]:::accent --> b1[Chat browser]
   sub[Subagents] --> b2[A browser each]
   run[Scheduled run] --> b3[Its own browser]
-  b1 -- Open browser --> you([You]):::accent
+  b1 -- Take control --> you([You]):::accent
 ```
 
 When you ask for several independent things, such as prices from three shops, nod can split the work between subagents that browse at the same time, then combine what they found.
 
-The chat or a background task can hand its browser to you. Each view belongs to that specific question. **Done** continues that task. Subagents return blockers to the parent. Other browsers are deleted when their work ends.
+The chat or a background task can hand its browser to you. Each view belongs to that specific question. **Return to nod** continues that task in its original channel. Subagents return blockers to the parent. Other browsers are deleted when their work ends.
 
 Up to four browsers run at once. Other work waits when all four are busy. nod never closes a browser used in the last five minutes for another job. One idle for longer can be closed, even in the middle of a task, but one waiting for you stays open for 30 minutes.
 

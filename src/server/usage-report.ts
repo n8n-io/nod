@@ -113,7 +113,7 @@ export function usagePdf(report: UsageReport, exported: Date) {
       ...clockOptions(locale, report.hourCycle),
       timeZone,
     });
-    const did = [...new Set(entry.actions)].join(', ');
+    const did = [...new Set(entry.actions.map((action) => action.label))].join(', ');
     line(
       `${time}  ${entry.title}${did ? ` (${did})` : ''}`,
       9,

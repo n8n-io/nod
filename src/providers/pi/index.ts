@@ -27,7 +27,7 @@ import { createPiModelRuntime } from './models.ts';
 import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 import type { ModelAccess } from '../../ports/models.ts';
-import type { Agent } from '../../ports/agent.ts';
+import type { Agent, AgentToolResult } from '../../ports/agent.ts';
 import type { WorkspaceSession } from '../../ports/computer.ts';
 import { closeInterruptedCalls, keptImages, openLocalSession, removedImage } from './checkpoint.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
@@ -217,14 +217,14 @@ function ownerContextCopies(ownerContext: string | undefined) {
   };
 }
 
-type NativeObservationKind = 'look' | 'screenshot' | 'act';
+type NativeObservationKind = 'open' | 'look' | 'screenshot' | 'act';
 
 function nativeObservationKind(details: unknown): NativeObservationKind | undefined {
   if (!details || typeof details !== 'object') return;
   const marker = (details as { nativeObservation?: unknown }).nativeObservation;
   if (!marker || typeof marker !== 'object' || Object.keys(marker).length !== 1) return;
   const kind = (marker as { kind?: unknown }).kind;
-  if (kind === 'look' || kind === 'screenshot' || kind === 'act') return kind;
+  if (kind === 'open' || kind === 'look' || kind === 'screenshot' || kind === 'act') return kind;
 }
 
 function recentNativeObservations(messages: ContextEvent['messages']) {
@@ -296,8 +296,8 @@ function recentNativeObservations(messages: ContextEvent['messages']) {
       action === 'screenshot'
         ? Object.keys(value).length !== 1
         : typeof value.tree !== 'string' ||
-          Object.keys(value).length !== (action === 'act' ? 3 : 2) ||
-          (action === 'act' && value.done !== true)
+          Object.keys(value).length !== (action === 'act' || action === 'open' ? 3 : 2) ||
+          ((action === 'act' || action === 'open') && value.done !== true)
     )
       continue;
     observations.set(index, {
@@ -308,7 +308,7 @@ function recentNativeObservations(messages: ContextEvent['messages']) {
           text: untrustedBlock(
             'computer',
             JSON.stringify({
-              ...(action === 'act' ? { done: true } : {}),
+              ...(action === 'act' || action === 'open' ? { done: true } : {}),
               app,
               observation: 'stale',
               next: 'An older native observation was omitted. Look again before acting; do not repeat a completed action.',
@@ -343,6 +343,38 @@ function nativeObservations(pi: ExtensionAPI) {
     preparation.messagesToSummarize = messages.slice(0, history);
     preparation.turnPrefixMessages = messages.slice(history, history + prefix);
   });
+}
+
+function completedNativeCall(action: unknown, result: AgentToolResult) {
+  try {
+    const value = JSON.parse(
+      result.content
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n'),
+    );
+    if (action === 'apps') return Array.isArray(value);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    if (action === 'act') return value.done === true;
+    if (action === 'shell') return Number.isInteger(value.exitCode);
+    if (action === 'share_file' || action === 'share_screenshot')
+      return (
+        typeof value.id === 'string' &&
+        value.source === (action === 'share_file' ? 'computer_file' : 'computer_screenshot')
+      );
+    if (!value.app || typeof value.app.name !== 'string' || typeof value.app.bundleId !== 'string')
+      return false;
+    if (action === 'open') return true;
+    if (action === 'look') return typeof value.tree === 'string';
+    return (
+      action === 'screenshot' &&
+      result.content.some(
+        (part) => part.type === 'image' && part.mimeType === 'image/png' && Boolean(part.data),
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 function recentImages(pi: ExtensionAPI) {
@@ -486,6 +518,51 @@ export function createPiAgent(options: {
           : selectedModel;
       const manager = ephemeral ? SessionManager.inMemory(directory) : openLocalSession(directory);
       closeInterruptedCalls(manager);
+      type NativeScript = {
+        controller: AbortController;
+        calls: Array<{ action: string; step?: string; status: 'done' | 'unknown' }>;
+        timer?: ReturnType<typeof setTimeout>;
+      };
+      const nativeScripts = new Map<string, NativeScript>();
+      let activeNativeScript: NativeScript | undefined;
+      let directNativeCall = false;
+      const nativeScript = async (
+        id: string,
+        signal: AbortSignal | undefined,
+        run: (signal: AbortSignal) => ReturnType<ToolDefinition['execute']>,
+        registerReceipt: (read: () => string) => void,
+      ) => {
+        if (nativeScripts.has(id)) throw new Error('This computer script is already running.');
+        const scope: NativeScript = { controller: new AbortController(), calls: [] };
+        nativeScripts.set(id, scope);
+        const operation = signal
+          ? AbortSignal.any([signal, scope.controller.signal])
+          : scope.controller.signal;
+        const receipt = () =>
+          scope.calls.length
+            ? `Computer step receipts: ${JSON.stringify(scope.calls)}\nDo not replay completed steps. An unknown result may have taken effect; look again before further actions.`
+            : '';
+        registerReceipt(receipt);
+        try {
+          const result = await run(operation);
+          return scope.calls.length
+            ? {
+                ...result,
+                content: [...result.content, { type: 'text' as const, text: receipt() }],
+              }
+            : result;
+        } catch (error) {
+          if (!scope.calls.length) throw error;
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)}\n${receipt()}`,
+          );
+        } finally {
+          clearTimeout(scope.timer);
+          scope.controller.abort(new Error('The computer script has ended.'));
+          nativeScripts.delete(id);
+          if (activeNativeScript === scope) activeNativeScript = undefined;
+        }
+      };
       const sandboxTools = createSandbox(input.workspace, input.timeZone);
       const tools: ToolDefinition[] = [
         ...sandboxTools.map((definition): ToolDefinition => ({
@@ -515,12 +592,91 @@ export function createPiAgent(options: {
                   description: tool.deferred.description,
                 },
               }
-            : { exposure: 'model-only' as const }),
+            : {
+                exposure: tool.name === 'computer' ? ('direct' as const) : ('model-only' as const),
+              }),
           executionMode: tool.parallel ? 'parallel' : 'sequential',
-          execute: async (id, args) => {
-            const result = await tool.execute(args as Record<string, unknown>, {
-              nested: id.includes('/'),
-            });
+          execute: async (id, args, signal) => {
+            const nested = id.includes('/');
+            const scope =
+              tool.name === 'computer' && nested
+                ? nativeScripts.get(id.slice(0, id.lastIndexOf('/')))
+                : undefined;
+            if (tool.name === 'computer' && nested && !scope)
+              throw new Error('Nested computer calls need an active computer script.');
+            const operation = scope
+              ? signal
+                ? AbortSignal.any([signal, scope.controller.signal])
+                : scope.controller.signal
+              : signal;
+            operation?.throwIfAborted();
+            if (tool.name === 'computer') {
+              if ((activeNativeScript && activeNativeScript !== scope) || directNativeCall) {
+                const error = new Error(
+                  'Another computer operation is running. Wait for its result before continuing.',
+                );
+                scope?.controller.abort(error);
+                throw error;
+              }
+              if (scope && !activeNativeScript) {
+                activeNativeScript = scope;
+                scope.timer = setTimeout(
+                  () =>
+                    scope.controller.abort(
+                      new Error('The computer script reached its 60-second limit.'),
+                    ),
+                  60_000,
+                );
+              }
+            }
+            if (scope && scope.calls.length >= 16) {
+              const error = new Error('The computer script reached its 16-call limit.');
+              scope.controller.abort(error);
+              throw error;
+            }
+            const params = args as Record<string, unknown>;
+            const receipt = scope
+              ? {
+                  action: [
+                    'apps',
+                    'open',
+                    'look',
+                    'screenshot',
+                    'act',
+                    'shell',
+                    'share_file',
+                    'share_screenshot',
+                  ].includes(String(params.action))
+                    ? String(params.action)
+                    : 'unknown',
+                  ...(params.action === 'act' &&
+                  ['press', 'set', 'focus', 'showMenu', 'raise', 'type', 'key'].includes(
+                    String(params.step),
+                  )
+                    ? { step: String(params.step) }
+                    : {}),
+                  status: 'unknown' as 'done' | 'unknown',
+                }
+              : undefined;
+            if (receipt) scope!.calls.push(receipt);
+            let result: AgentToolResult;
+            if (tool.name === 'computer' && !nested) directNativeCall = true;
+            try {
+              result = await tool.execute(params, { nested, signal: operation });
+              operation?.throwIfAborted();
+              if (receipt) {
+                if (!completedNativeCall(params.action, result))
+                  throw new Error(
+                    'The computer result is uncertain. Look again before further actions.',
+                  );
+                receipt.status = 'done';
+              }
+            } catch (error) {
+              scope?.controller.abort(error);
+              throw error;
+            } finally {
+              if (tool.name === 'computer' && !nested) directNativeCall = false;
+            }
             const kind =
               tool.name === 'computer' ? nativeObservationKind(result.details) : undefined;
             return {
@@ -569,6 +725,7 @@ export function createPiAgent(options: {
                   }
                 : {}),
               execute: async (id, params, signal, onUpdate, context) => {
+                let cancellationSummary: (() => string) | undefined;
                 const args = web
                   ? {
                       ...visibleWebParameters(params as Record<string, unknown>),
@@ -585,11 +742,32 @@ export function createPiAgent(options: {
                           ? webRequests.run(connections, () =>
                               registered.definition.execute(id, args, signal, onUpdate, context),
                             )
-                          : registered.definition.execute(id, args, signal, onUpdate, context),
+                          : name === 'codemode'
+                            ? nativeScript(
+                                id,
+                                signal,
+                                (operation) =>
+                                  registered.definition.execute(
+                                    id,
+                                    args,
+                                    operation,
+                                    onUpdate,
+                                    context,
+                                  ),
+                                (read) => {
+                                  cancellationSummary = read;
+                                },
+                              )
+                            : registered.definition.execute(id, args, signal, onUpdate, context),
                       input.workspace,
                       signal,
                     ),
-                  { nested: id.includes('/') },
+                  {
+                    nested: id.includes('/'),
+                    ...(name === 'codemode'
+                      ? { cancellationSummary: () => cancellationSummary?.() }
+                      : {}),
+                  },
                 );
                 const usage = (result as { usage?: ModelUsage }).usage;
                 if (usage)
@@ -628,8 +806,8 @@ export function createPiAgent(options: {
       if (guidelines.some((rule) => rule.includes('codemode')))
         guidelines.push(
           deferred
-            ? 'Codemode scripts can call workspace, web and connected MCP server tools (mcp__ names, found with tool_search, searchTools or describeTool); call apps, browser and other nod tools directly.'
-            : 'Codemode scripts can call only workspace and web tools; call apps, browser and other nod tools directly.',
+            ? 'Codemode scripts can call workspace, web, computer when available, and connected MCP server tools (mcp__ names, found with tool_search, searchTools or describeTool); call apps, browser and other nod tools directly.'
+            : 'Codemode scripts can call workspace, web and computer when available; call apps, browser and other nod tools directly.',
         );
       const systemPrompt = guidelines.length
         ? `${input.systemPrompt}\n\nTool guidelines:\n${guidelines.map((rule) => `- ${rule}`).join('\n')}`

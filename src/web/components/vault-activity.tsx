@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CircleHelp, CreditCard, Hash, KeyRound, Pause } from 'lucide-react';
+import { CircleHelp, CreditCard, Hash, KeyRound, Pause } from './icons';
 import type {
   VaultActivity,
   VaultActivityEntry,
@@ -9,6 +9,7 @@ import { api, errorMessage } from '../lib/api';
 import { formatDayLabel, formatTime, useDateFormat } from '../lib/date-format';
 import { originLabel } from '../lib/vault-name';
 import { Button, Notice } from './ui';
+import { becauseText } from '../lib/trust-because';
 
 const reasons: Record<VaultActivityReason, string> = {
   owner: 'You requested it',
@@ -24,6 +25,7 @@ const reasons: Record<VaultActivityReason, string> = {
   background: 'Background work',
   injection: 'A page had instructions',
   unrequested: 'You didn’t mention it',
+  rule: 'Your rule',
   payment: 'You approved',
   code_typed: 'You approved',
   said_yes: 'You approved',
@@ -93,6 +95,11 @@ export function VaultUse({ entry, open }: { entry: VaultActivityEntry; open?(): 
       <span className="vault-use-text">
         <b>{title(entry)}</b>
         <span>{[formatTime(entry.at, format), entry.task].filter(Boolean).join(' · ')}</span>
+        {entry.because && entry.because.kind !== 'approved' && (
+          <small className="usage-because" title={becauseText(entry.because)}>
+            {becauseText(entry.because)}
+          </small>
+        )}
       </span>
       <span className={`vault-pill ${tone}`}>{text}</span>
     </>

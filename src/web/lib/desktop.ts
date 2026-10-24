@@ -43,6 +43,7 @@ type DesktopWindow = Window & {
     saveSettings(input: DesktopSettingsChange): Promise<DesktopSettings>;
     removeAllData(): Promise<void>;
     onOpenSettings(listener: (section: DesktopSettingsSection) => void): () => void;
+    onNavigate?(listener: (path: string) => void): () => void;
     openExternal(url: string): Promise<void>;
     getPreferences(): Promise<DesktopPreferences>;
     getFeedbackContext?(): Promise<DesktopFeedbackContext>;
@@ -68,6 +69,10 @@ export function desktopSettingsAvailable() {
 
 export function openDesktopSettings(section: DesktopSettingsSection = 'general') {
   window.dispatchEvent(new window.CustomEvent('nod:open-settings', { detail: section }));
+}
+
+export function subscribeDesktopNavigation(listener: (path: string) => void) {
+  return (window as DesktopWindow).nodDesktop?.onNavigate?.(listener);
 }
 
 export function subscribeDesktopSettings(listener: (section: DesktopSettingsSection) => void) {
@@ -172,4 +177,31 @@ export async function retryDesktopRuntime() {
     (status.runtime?.phase === 'error' ? status.runtime.message : undefined);
   if (failure || status.phase !== 'ready' || status.runtime?.phase !== 'ready')
     throw new Error(failure || 'Your workspace is not ready yet. Try again.');
+}
+
+export function desktopFilesAvailable() {
+  return (
+    typeof (window as DesktopWindow & { nodDesktop?: { fileAction?: unknown } }).nodDesktop
+      ?.fileAction === 'function'
+  );
+}
+
+export function desktopFileAction(
+  id: string,
+  action: 'prepare' | 'drag' | 'save' | 'open' | 'show',
+) {
+  const bridge = (
+    window as unknown as { nodDesktop?: { fileAction(id: string, action: string): Promise<void> } }
+  ).nodDesktop;
+  if (!bridge?.fileAction)
+    return Promise.reject(new Error('This file action needs the desktop app.'));
+  return bridge.fileAction(id, action);
+}
+
+export function nativeFileMenu(id: string, image: boolean): Promise<string | null> {
+  return (
+    window as unknown as {
+      nodDesktop: { fileMenu(id: string, image: boolean): Promise<string | null> };
+    }
+  ).nodDesktop.fileMenu(id, image);
 }

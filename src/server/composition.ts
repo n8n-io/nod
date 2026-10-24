@@ -9,7 +9,13 @@ import {
   type BrowserStep,
   type RuntimeObservation,
 } from '../ports/agent.ts';
-import { lightestEffort, type ModelProvider } from '../shared/models.ts';
+import {
+  apiKeyModelProviders,
+  lightestEffort,
+  modelProviderInfo,
+  modelProviders,
+  modelSource,
+} from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
 import {
@@ -32,6 +38,7 @@ import type { IntegrationProvider, IntegrationService } from '../ports/integrati
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import { privateEmailResult, type MailCheck } from './integration-result.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
+import type { PasswordManager } from '../ports/password-manager.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel, DecisionQuestion, ModelReview } from '../ports/decisions.ts';
 import { createDecisionModel } from '../providers/decisions.ts';
@@ -46,11 +53,18 @@ import { createOtlpTelemetry } from '../providers/otlp/telemetry.ts';
 import type { UsageTelemetry } from '../ports/provider-usage.ts';
 import { agentModels } from '../shared/model-defaults.ts';
 import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
+import { createWhatsAppLinkedTransport } from '../providers/chat-sdk/whatsapp.ts';
+import { combineMessagingTransports } from '../providers/chat-sdk/combined.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
 import { createMacComputer } from '../providers/macos/owner-computer.ts';
 import type { OwnerComputer } from '../ports/owner-computer.ts';
 import { createComputerPolicy } from './computer.ts';
+import {
+  createOnePassword,
+  desktopOnePassword,
+  forkedOnePassword,
+} from '../providers/onepassword/index.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
 import { createComposioProxy } from '../providers/composio/proxy.ts';
 import {
@@ -69,13 +83,18 @@ import {
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
+import { createOpenRouterTranscriptionProvider } from '../providers/openrouter/speech.ts';
+import { createImageAnalysis } from './images.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
-import { createModelService, endpointAddress } from './models.ts';
+import { createModelService, endpointAddress, modelKeyCredential } from './models.ts';
 import { createIntegrationBrowser } from './integration-browser.ts';
 import { createIntegrationIdentityCheckpoint } from './integration-identity.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createSkillLibrary } from '../providers/pi/skills.ts';
-import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
+import { createFeedbackActivity, parseFeedbackActivity } from '../shared/feedback-activity.ts';
+import { createFeedbackLog } from './feedback-log.ts';
+import { createFeedbackRedactor } from './feedback-redaction.ts';
+import { withFailureLog, type FailureLogSink } from './failure-log.ts';
 import { createPiMemoryCurator } from '../providers/pi/memory-curator.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
@@ -89,10 +108,13 @@ import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals, turnOrigin } from './approvals.ts';
 import { createCommunication, publicText } from './communication.ts';
 import { createTrust } from './trust.ts';
+import type { TrustBasis } from './trust-basis.ts';
 import { localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
 import { createChannelSettings, initializeChannelSettings } from './channel-settings.ts';
+import { createChannelMedia } from './channel-media.ts';
+import { createChannelSessionStore } from './channel-session.ts';
 import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
 import { createAccountStore } from './account-store.ts';
 import { createModelTraces, type ModelTraceGate } from './traces.ts';
@@ -125,6 +147,7 @@ import {
   initializeThreads,
   publishComputerFile,
   publishScreenshot,
+  lockThread,
   reactToAssistantMessage,
   resumeAfterConnection,
   resumeAfterCredentials,
@@ -141,6 +164,7 @@ import { browserOf } from './turn-chain.ts';
 import type { VaultActivityReason } from '../shared/contracts.ts';
 import { createTriage, getPreferences } from './triage.ts';
 import { createTasks } from './tasks.ts';
+import { createActivity } from './activity.ts';
 import { checkedKeyStore, createVault, credentialOrigin, sealedDataExists } from './vault.ts';
 import { createVaultAccess } from './vault-access.ts';
 import { createPayments } from './payments.ts';
@@ -159,7 +183,9 @@ export interface ApplicationAdapters {
   speech: SpeechProvider;
   integrations: IntegrationProvider;
   keyStore: CredentialKeyStore;
+  passwordManager?: PasswordManager;
   memoryCurator?: MemoryCurator;
+  imageCurator?: MemoryCurator;
   analyticsCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   decisions?: DecisionModel;
@@ -172,7 +198,7 @@ export interface ApplicationAdapters {
     verifier: ChannelSetupVerifier;
     create(environment: Record<string, string>): MessagingTransport;
   };
-  model: { provider: string; name: string; configured: boolean };
+  model: { provider: string; name: string; configured: boolean; reconnect?: boolean };
 }
 
 export function createDefaultAdapters(
@@ -188,16 +214,14 @@ export function createDefaultAdapters(
     !env.NOD_FEEDBACK_RECEIPT_URL_PREFIX
   )
     throw new Error('Set NOD_FEEDBACK_RECEIPT_URL_PREFIX when using a custom feedback intake.');
-  const provider = env.LLM_PROVIDER || 'openai';
-  if (!['openai', 'anthropic', 'openrouter', 'compatible'].includes(provider))
-    throw new Error('LLM_PROVIDER must be openai, anthropic, openrouter or compatible.');
+  const provider = z.enum(modelProviders).parse(env.LLM_PROVIDER || 'openai');
   const endpoint =
     env.OPENAI_COMPATIBLE_BASE_URL && endpointAddress(env.OPENAI_COMPATIBLE_BASE_URL);
   if (env.OPENAI_COMPATIBLE_BASE_URL && !endpoint)
     throw new Error(
       'OPENAI_COMPATIBLE_BASE_URL must be a plain http or https address, such as http://localhost:11434/v1.',
     );
-  const model = env.LLM_MODEL || agentModels[provider as keyof typeof agentModels];
+  const model = env.LLM_MODEL || agentModels[provider];
   const keyStore = checkedKeyStore(
     pool,
     env.NOD_VAULT_KEY
@@ -220,16 +244,28 @@ export function createDefaultAdapters(
     backend: createPiModelBackend(),
     origin: publicOrigin,
     bootstrap: {
-      provider: provider as ModelProvider,
-      model,
+      provider,
+      model: env.LLM_MODEL || undefined,
       credentials: {
-        ...(env.OPENAI_API_KEY && { openai: { type: 'api_key', key: env.OPENAI_API_KEY } }),
-        ...(env.ANTHROPIC_API_KEY && {
-          anthropic: { type: 'api_key', key: env.ANTHROPIC_API_KEY },
-        }),
-        ...(env.OPENROUTER_API_KEY && {
-          openrouter: { type: 'api_key', key: env.OPENROUTER_API_KEY },
-        }),
+        ...Object.fromEntries(
+          apiKeyModelProviders.flatMap((id) => {
+            const key = env[modelProviderInfo[id].env]?.trim();
+            if (!key) return [];
+            return [
+              [
+                id,
+                modelKeyCredential(id, key, {
+                  region: env.AWS_REGION,
+                  url: env.AZURE_OPENAI_ENDPOINT,
+                  model: env.AZURE_OPENAI_MODEL,
+                  deployment: env.AZURE_OPENAI_DEPLOYMENT,
+                  accountId: env.CLOUDFLARE_ACCOUNT_ID,
+                  gatewayId: env.CLOUDFLARE_GATEWAY_ID,
+                }),
+              ],
+            ];
+          }),
+        ),
         ...(endpoint && {
           compatible: {
             type: 'endpoint',
@@ -240,6 +276,22 @@ export function createDefaultAdapters(
       },
     },
     changed: refresh,
+  });
+  const openAISpeech = createOpenAISpeechProvider({
+    apiKey: env.OPENAI_API_KEY || (() => models.apiKey('openai')),
+    configured: () => Boolean(env.OPENAI_API_KEY) || models.hasApiKey('openai'),
+    speechModel: env.TTS_MODEL,
+    transcriptionModel: env.STT_MODEL,
+    voice: env.TTS_VOICE,
+  });
+  const openRouterTranscription = createOpenRouterTranscriptionProvider({
+    apiKey: () =>
+      env.OPENROUTER_API_KEY
+        ? Promise.resolve(env.OPENROUTER_API_KEY)
+        : models.apiKey('openrouter'),
+    configured: () => Boolean(env.OPENROUTER_API_KEY) || models.hasApiKey('openrouter'),
+    model:
+      env.STT_MODEL && (env.STT_MODEL.includes('/') ? env.STT_MODEL : `openai/${env.STT_MODEL}`),
   });
   const traces = createModelTraces(
     createN8nTraces({
@@ -320,25 +372,66 @@ export function createDefaultAdapters(
           }),
         }
       : {}),
+    passwordManager: createOnePassword({
+      open: desktopMode ? desktopOnePassword() : forkedOnePassword(env.NOD_APP_VERSION || 'source'),
+    }),
     workspace: createDockerWorkspace({
       container: env.WORKSPACE_CONTAINER || 'nod-workspace',
       workspaceRoot: join(dataRoot, 'workspaces'),
     }),
-    speech: createOpenAISpeechProvider({
-      apiKey: env.OPENAI_API_KEY,
-      speechModel: env.TTS_MODEL,
-      voice: env.TTS_VOICE,
-    }),
+    speech: {
+      ...openAISpeech,
+      get configured() {
+        return openAISpeech.configured;
+      },
+      get transcriptionConfigured() {
+        return openAISpeech.configured || openRouterTranscription.configured;
+      },
+      transcribe: (audio, signal, report) =>
+        openAISpeech.configured
+          ? openAISpeech.transcribe!(audio, signal, report)
+          : openRouterTranscription.transcribe(audio, signal, report),
+    },
     integrations,
     integrationBrowser,
     keyStore,
     memoryCurator: modelCurator,
+    imageCurator: createPiMemoryCurator({
+      get provider() {
+        return models.current.provider;
+      },
+      configured: () => models.hasImageModel(),
+      resolve: () => models.resolveImage(),
+      traces,
+    }),
     analyticsCurator: selectedCurator,
     onboardingCurator: selectedCurator,
     decisions,
     messagingSetup: {
       verifier: createChatSdkSetupVerifier(),
-      create: (environment) => createChatSdkTransport(pool, { ...env, ...environment }),
+      create: (environment) => {
+        const configured = { ...env, ...environment };
+        const mode =
+          environment.WHATSAPP_MODE ??
+          (environment.WHATSAPP_ENABLED === 'true' && environment.WHATSAPP_ACCESS_TOKEN
+            ? 'cloud'
+            : configured.WHATSAPP_MODE);
+        if (
+          configured.WHATSAPP_ENABLED !== 'true' ||
+          configured.WHATSAPP_POLICY_CONFIRMED !== 'true' ||
+          (mode !== 'bot' && mode !== 'self-chat') ||
+          (mode === 'bot' && !/^\d{7,15}$/.test(configured.WHATSAPP_ALLOWED_NUMBER ?? ''))
+        )
+          return createChatSdkTransport(pool, configured);
+        return combineMessagingTransports(
+          createChatSdkTransport(pool, { ...configured, WHATSAPP_ENABLED: 'false' }),
+          createWhatsAppLinkedTransport({
+            mode,
+            allowedNumber: configured.WHATSAPP_ALLOWED_NUMBER,
+            store: createChannelSessionStore({ pool, ownerId, keyStore }),
+          }),
+        );
+      },
     },
     linkPreviews: createPublicLinkPreviewProvider(),
     feedback: createN8nFeedback({
@@ -360,9 +453,19 @@ export async function createApplication(
   adapters: ApplicationAdapters,
   options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> } = {},
 ) {
+  const diagnostics: {
+    log?: Awaited<ReturnType<typeof createFeedbackLog>>;
+    failure: FailureLogSink;
+  } = {
+    failure: (event, error, context) =>
+      diagnostics.log?.record('failure', { event, error, context }, context),
+  };
   try {
-    return await initializeApplication(adapters, options);
+    return await withFailureLog(diagnostics.failure, () =>
+      initializeApplication(adapters, options, diagnostics),
+    );
   } catch (error) {
+    await diagnostics.log?.close().catch(() => {});
     try {
       await adapters.analytics?.shutdown();
     } catch {}
@@ -376,6 +479,7 @@ export async function createApplication(
 async function initializeApplication(
   adapters: ApplicationAdapters,
   options: { workers?: boolean; channels?: boolean; runtimeReady?: Promise<void> },
+  diagnostics: { log?: Awaited<ReturnType<typeof createFeedbackLog>>; failure: FailureLogSink },
 ) {
   const analytics = await createAnalytics({
     provider: adapters.analytics,
@@ -386,7 +490,18 @@ async function initializeApplication(
       process.env.NOD_APP_VERSION || process.env.NOD_IMAGE_RELEASE || process.env.NOD_RELEASE,
   });
   let observeConnections: ((only?: 'apps' | 'models') => Promise<void>) | undefined;
+  const feedbackActivity = createFeedbackActivity('runtime');
   const captureAnalytics: CaptureAnalytics = (event, delivery) => {
+    feedbackActivity.record(event.event, 'properties' in event ? event.properties : undefined);
+    const activity = parseFeedbackActivity([
+      {
+        source: 'runtime',
+        ageMs: 0,
+        event: event.event,
+        properties: 'properties' in event ? event.properties : undefined,
+      },
+    ])[0];
+    if (activity) diagnostics.log?.record('activity', activity);
     analytics.capture(ownerId, event, delivery);
     if (
       event.event === 'nod_connection_changed' &&
@@ -446,7 +561,9 @@ async function initializeApplication(
       if (password) secrets.push(password);
     } catch {}
   }
-  adapters.models?.onSecrets((values) => secrets.push(...values));
+  adapters.models?.onSecrets((values) => {
+    for (const value of values) if (!secrets.includes(value)) secrets.push(value);
+  });
   const memoryCurator =
     adapters.memoryCurator ?? createPiMemoryCurator({ provider: adapters.model.provider });
   const ledger = createLedger({
@@ -523,14 +640,40 @@ async function initializeApplication(
     coreSkills,
   );
   const fetches = new Map<string, string[]>();
+  const analyzeImages =
+    adapters.imageCurator && createImageAnalysis(ledger.curator(adapters.imageCurator));
   const runtime = createAgentRuntime({
     agent: ledger.agent(adapters.agent),
+    analyzeImages:
+      analyzeImages &&
+      ((images, request, signal, execution) =>
+        ledger.withExecution(execution, () => analyzeImages(images, request, signal))),
     skills: skillLibrary,
     computer,
     workspace,
     redactError: createErrorRedactor(secrets),
     pageVisited: (url, subagent) => websiteVisited(url, 'browser', subagent),
     observe: (turnId, event) => {
+      const { execution, id, type, name } = event;
+      diagnostics.log?.record(
+        type,
+        type === 'tool_start'
+          ? { tool: name, input: event.input }
+          : {
+              tool: name,
+              status: event.status,
+              output: event.output,
+              error: event.error,
+              durationMs: event.durationMs,
+            },
+        {
+          turnId,
+          sessionId: execution?.sessionId,
+          runId: execution?.runId,
+          parentRunId: execution?.parentRunId,
+          callId: id,
+        },
+      );
       if (event.type === 'tool_end') {
         captureAnalytics(toolUsed(event));
         const fetched = fetches.get(event.id);
@@ -556,7 +699,7 @@ async function initializeApplication(
       adapters.observe?.(turnId, event);
     },
   });
-  const speech = createSpeech(adapters.speech);
+  const speech = createSpeech(ledger.speech(adapters.speech));
   const memoryStore = createPostgresObjectStore({ database: pool, ownerId });
   await memoryStore.initialize();
   await importMemoryFile(memoryStore, join(dataRoot, 'objects', 'memory'));
@@ -598,8 +741,10 @@ async function initializeApplication(
     refresh,
     memory,
     learnedSkills,
+    models: adapters.models,
     consumers,
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
+    sessionCosts: ledger.sessionCosts,
   });
   await personal.initialize({ workers: options.workers });
   const tasks = createTasks({
@@ -609,6 +754,7 @@ async function initializeApplication(
     clearBrowser: (id) => adapters.computer.clear(id),
   });
   await tasks.initialize();
+  const activity = createActivity({ pool, ownerId });
   const triage = createTriage({
     consumers,
     connectedApps: () => integrations.connectedApps(ownerId, true),
@@ -707,6 +853,7 @@ async function initializeApplication(
     },
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
     icon,
+    passwordManager: adapters.passwordManager,
     onOwnerUse: (entry, client) => vaultAccess.ownerUse(entry, client),
     onUse: (use, client) =>
       vaultAccess.used(
@@ -819,12 +966,12 @@ async function initializeApplication(
       const result = await (action === 'NOD_browser'
         ? replayBrowserStep(args, provenance)
         : action === 'NOD_computer' || action === 'NOD_computer_app'
-          ? computerPolicy.execute(action, args, provenance)
+          ? computerPolicy.execute(action, args, { ...provenance, basis: { kind: 'approved' } })
           : action === 'NOD_vault_allow'
             ? vaultAccess.allow(args)
             : action === 'NOD_limits_update'
               ? ledger.setLimits(args)
-              : action.startsWith('NOD_memory_')
+              : action.startsWith('NOD_memory_') || action === 'NOD_model_select'
                 ? withTurnLock(provenance.turnId, () =>
                     personal.manage(action.slice('NOD_'.length), args, provenance),
                   )
@@ -848,7 +995,7 @@ async function initializeApplication(
                         ready,
                         turn,
                       );
-                      await ledger.action(provenance.turnId, action);
+                      await ledger.action(provenance.turnId, action, { kind: 'approved' });
                       return privateEmailResult(
                         (
                           await saveIntegrationFiles(result, async (file) => {
@@ -927,6 +1074,38 @@ async function initializeApplication(
         : undefined,
     };
   };
+  let feedbackProfileRead: ReturnType<typeof ownerProfile> | undefined;
+  let feedbackRedaction:
+    | {
+        profile: Awaited<ReturnType<typeof ownerProfile>>;
+        redact: ReturnType<typeof createFeedbackRedactor>;
+      }
+    | undefined;
+  const feedbackSecrets = [ownerId, ...secrets];
+  diagnostics.log = await createFeedbackLog({
+    dataRoot,
+    ownerId,
+    sanitize: async (value) => {
+      const profile = await (feedbackProfileRead ??= ownerProfile().finally(() => {
+        feedbackProfileRead = undefined;
+      }));
+      for (let index = feedbackSecrets.length - 1; index < secrets.length; index++)
+        feedbackSecrets.push(secrets[index]);
+      if (
+        !feedbackRedaction ||
+        feedbackRedaction.profile.region !== profile.region ||
+        feedbackRedaction.profile.names.length !== profile.names.length ||
+        feedbackRedaction.profile.names.some((name, index) => name !== profile.names[index])
+      )
+        feedbackRedaction = {
+          profile,
+          redact: createFeedbackRedactor({ secrets: feedbackSecrets, profile }),
+        };
+      const { redact } = feedbackRedaction;
+      if (!redact.isReady()) throw new Error('Diagnostic redaction unavailable.');
+      return redact.value(value);
+    },
+  });
   adapters.traces?.configure({
     enabled: (await localAccounts.read(ownerId)).traces,
     secrets,
@@ -981,15 +1160,16 @@ async function initializeApplication(
       itemId?: string;
       sessionOrigin?: string;
     },
-  ): Promise<{ reason: VaultActivityReason } | { question: string }> {
+  ): Promise<{ reason: VaultActivityReason; basis?: TrustBasis } | { question: string }> {
     const access = await vaultAccess.authorize(turn, target);
-    if (access.ok) return { reason: access.reason };
+    if (access.ok)
+      return { reason: access.reason, ...(access.basis ? { basis: access.basis } : {}) };
     const result = await approvals.request(turn, 'NOD_vault_allow', access.args, {
       details: access.details,
     });
     if (result && typeof result === 'object' && appConfirmation in result)
       return { question: result[appConfirmation] };
-    return { reason: 'allowed' };
+    return { reason: 'allowed', basis: { kind: 'approved' } };
   }
   const trust = createTrust({
     pool,
@@ -1009,6 +1189,8 @@ async function initializeApplication(
     ownerId,
     computer: adapters.ownerComputer,
     check: trust.check,
+    hasRules: async () => Boolean((await getPreferences()).rules.trim()),
+    record: ledger.action,
     request: (turn, action, args, options) => approvals.request(turn, action, args, options),
     lock: (turnId, write) => withTurnLock(turnId, write),
     signalFor: turnSignal,
@@ -1073,6 +1255,7 @@ async function initializeApplication(
       readArtifact: workspace.readArtifact.bind(workspace),
       mailCheck,
       executeConfirmation: approvals.executeConfirmed,
+      bindVerificationQuestion: chatVerification.bindQuestion,
       reactToMessage: reactions.react,
       runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
       spendingLimitReached: ledger.limitReached,
@@ -1156,6 +1339,7 @@ async function initializeApplication(
             reason: access.reason,
             itemId: result.connectionId,
             itemKind: 'session',
+            ...(access.basis ? { basis: access.basis } : {}),
           });
         return result;
       },
@@ -1195,6 +1379,7 @@ async function initializeApplication(
         if (
           [
             'notification_preferences_update',
+            'model_select',
             'schedule_create',
             'schedule_update',
             'schedule_cancel',
@@ -1215,14 +1400,29 @@ async function initializeApplication(
                 timeZone: schedule.timeZone,
               }
             : undefined;
-          const rule =
-            action === 'notification_preferences_update' && 'notificationRule' in input
-              ? (await triage.getPreferences()).notificationRule
+          const preferences =
+            action === 'notification_preferences_update'
+              ? await triage.getPreferences()
               : undefined;
+          const rule = 'notificationRule' in input ? preferences?.notificationRule : undefined;
+          const rules = 'rules' in input ? preferences?.rules : undefined;
+          const connection =
+            action === 'model_select'
+              ? adapters.models?.view().connections.find((item) => item.id === input.connectionId)
+              : undefined;
+          const targetModel = connection
+            ? {
+                service: modelSource(connection),
+                account: connection.label,
+                model: connection.models.find((item) => item.id === input.modelId)!.name,
+              }
+            : undefined;
           const verdict = await trust.check(turn, `NOD_${action}`, {
             ...input,
+            ...(targetModel ? { targetModel } : {}),
             ...(current ? { currentSchedule: current } : {}),
             ...(rule === undefined ? {} : { currentNotificationRule: rule }),
+            ...(rules === undefined ? {} : { currentRules: rules }),
           });
           return approvals.request(turn, `NOD_${action}`, input, {
             ...provenance,
@@ -1245,9 +1445,11 @@ async function initializeApplication(
                 }
               : undefined,
             details: {
+              ...(targetModel ? { targetModel } : {}),
               ...(verdict.confirm ? { reason: verdict.reason } : {}),
               ...(current ? { schedule: current } : {}),
               ...(rule === undefined ? {} : { currentNotificationRule: rule }),
+              ...(rules === undefined ? {} : { currentRules: rules }),
             },
           });
         }
@@ -1308,9 +1510,30 @@ async function initializeApplication(
           });
         }
         const { savedLoginId, ...request } = input;
-        if (savedLoginId !== undefined && request.kind === 'otp')
-          throw new Error('Saved logins cannot supply verification codes.');
         const origin = credentialOrigin(request.origin);
+        if (request.kind === 'otp' && !request.emailCode) {
+          const login = await vault.authenticatorLogin(turn, ownerId, origin, savedLoginId);
+          if (login) {
+            const access = await permitVault(turn, {
+              origin,
+              kind: 'sign_in',
+              itemId: login.id,
+              ...(login.usernameHint ? { account: login.usernameHint } : {}),
+            });
+            if ('question' in access) return { [appConfirmation]: access.question };
+            if (await vault.fillAuthenticatorCode(turn, ownerId, login.id, request)) {
+              await vaultAccess.record(turn, {
+                action: 'code',
+                origin,
+                reason: access.reason,
+                itemId: login.id,
+                itemKind: 'login',
+                ...(access.basis ? { basis: access.basis } : {}),
+              });
+              return { filled: true as const };
+            }
+          }
+        }
         const saved = (await vault.list(ownerId)).filter((entry) => entry.origin === origin);
         const chosen =
           savedLoginId !== undefined
@@ -1342,6 +1565,7 @@ async function initializeApplication(
             origin,
             reason: request.kind === 'otp' ? 'mailbox' : access.reason,
             ...(itemId ? { itemId, itemKind: 'login' as const } : {}),
+            ...(access.basis ? { basis: access.basis } : {}),
           });
           return { filled: true as const };
         };
@@ -1391,7 +1615,11 @@ async function initializeApplication(
               turn,
               options.signal,
             );
-            await ledger.action(turn.turnId, action);
+            await ledger.action(
+              turn.turnId,
+              action,
+              verdict.confirm ? { kind: 'approved' } : verdict.basis,
+            );
             analytics.actionExecuted(ownerId, action);
             return result;
           },
@@ -1417,6 +1645,7 @@ async function initializeApplication(
       await onboardingSuggestions.complete((await ownerNames().catch(() => []))[0]);
   };
   const app = await createApp({
+    failureLog: diagnostics.failure,
     analytics: captureAnalytics,
     linkReplay: analytics.linkReplay,
     admission,
@@ -1424,14 +1653,17 @@ async function initializeApplication(
     submitMessage: userMessages.submit,
     verification: chatVerification,
     taskLedger: tasks.read,
+    activity: activity.current,
     planningTasks: onboardingSuggestions.planning,
-    messageCosts: ledger.messageCosts,
+    receipts: ledger.receipts,
+    questionStates: approvals.states,
     computer,
     configuration: () =>
       configuration({
         provider: adapters.model.provider,
         model: adapters.model.name,
         llmReady: adapters.model.configured,
+        modelReconnect: adapters.model.reconnect === true,
         integrationsReady: adapters.integrations.configured,
       }),
   });
@@ -1444,30 +1676,33 @@ async function initializeApplication(
     pool,
     ownerId,
     secrets,
+    profile: ownerProfile,
+    logs: () => diagnostics.log!.snapshot(),
+    context: await feedbackContext({ environment: process.env }),
     get provider() {
       return adapters.model.provider;
     },
     get model() {
       return adapters.model.name;
     },
-    profile: ownerProfile,
-    sessionEntries: (threadId) =>
-      readPiSessionEntries({
-        threadId,
-        sessionRoot: join(dataRoot, 'sessions'),
-      }),
   };
   await registerFeedback(app, {
     pool,
     ownerId,
-    context: await feedbackContext({ environment: process.env }),
+    context: feedbackReportOptions.context!,
     delivery: adapters.feedback ?? {
       configured: false,
       recipient: null,
       submit: async (input) => ({ submissionId: input.submissionId, status: 'rejected' }),
       status: async (submissionId) => ({ submissionId, status: 'rejected' }),
     },
-    buildReport: () => buildFeedbackReport(feedbackReportOptions),
+    buildReport: (activity, errors, errorsAvailable) =>
+      buildFeedbackReport({
+        ...feedbackReportOptions,
+        errors,
+        errorsAvailable,
+        activity: [...feedbackActivity.snapshot(), ...activity].sort((a, b) => b.ageMs - a.ageMs),
+      }),
     analytics: captureAnalytics,
   });
   registerPrivacyNotice(app, privacyNotice);
@@ -1480,9 +1715,12 @@ async function initializeApplication(
     developerIds: desktopMode ? new Set() : new Set([ownerId]),
     start: welcome,
     prepare: prepareRuntime,
-    onboardingReady: async () =>
-      adapters.model.configured &&
-      (await integrations.list(ownerId, { refresh: false })).some(connectedGmail),
+    onboardingMissing: async () =>
+      !adapters.model.configured
+        ? 'brain'
+        : (await integrations.list(ownerId, { refresh: false })).some(connectedGmail)
+          ? null
+          : 'email',
     traces: adapters.traces?.available ?? false,
     onTraces: (enabled) => adapters.traces?.configure({ enabled }),
   }).register(app);
@@ -1519,6 +1757,15 @@ async function initializeApplication(
         ownerId,
         keyStore: adapters.keyStore,
         verifier: setup.verifier,
+        linkStatus: async () => {
+          if (!channels) throw new Error('Messaging is not ready.');
+          return channels.pairing();
+        },
+        unlink: async () => {
+          await channels?.unlink();
+        },
+        cancelPairing: async (pairingId, restart) =>
+          (await channels?.cancelPairing(pairingId, restart)) ?? false,
         apply: async (environment) => {
           if (!channels) throw new Error('Messaging is not ready.');
           await channels.replaceTransport(setup.create(environment));
@@ -1538,12 +1785,17 @@ async function initializeApplication(
       ownerId,
       present: communication.present,
       resolveAttachments: artifacts.readThreadArtifacts,
+      media: createChannelMedia({ artifacts, speech }),
+      modelConfigured: () => adapters.model.configured,
+      verificationPending: async (channel) => (await chatVerification.pending(channel)).length > 0,
+      attributeMediaUsage: ledger.attributeMediaUsage,
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
       reacted: (messageId, reaction) =>
         reactToAssistantMessage(messageId, reaction, adapters.model.configured),
-      activeThread: (client) => activeThread(client),
+      activeThread: (client) => lockThread(client),
+      activity: activity.read,
       taskCommand: tasks.chatCommand,
       commandReply: async (command, client, threadId) => {
         const now = new Date();
@@ -1599,9 +1851,18 @@ async function initializeApplication(
           events.off('event', onEvent);
         };
       },
-      submit: async (text, sourceId, client, channel, messageId, answer, replyToMessageId) =>
+      submit: async (
+        text,
+        sourceId,
+        client,
+        channel,
+        messageId,
+        answer,
+        replyToMessageId,
+        attachments,
+      ) =>
         (
-          await userMessages.submit(text, [], {
+          await userMessages.submit(text, attachments, {
             sourceId,
             channel,
             client,
@@ -1637,12 +1898,15 @@ async function initializeApplication(
       clearTimeout(timer);
     }
   }
+  app.addHook('onReady', async () => activity.start());
   app.addHook('onClose', async () => {
     stopConnectionInventory();
     const failures: unknown[] = [];
     for (const close of [
       () => adapters.integrationBrowser?.close(),
+      () => adapters.passwordManager?.close(),
       () => channels?.close(),
+      () => activity.close(),
       () => stopThreadWorkers(),
       () => conversationAnalytics.close(),
       finishWork,
@@ -1650,6 +1914,7 @@ async function initializeApplication(
       () => adapters.ownerComputer?.dispose(),
       () => analytics.shutdown(),
       () => adapters.telemetry?.shutdown(),
+      () => diagnostics.log?.close(),
     ]) {
       try {
         await close();

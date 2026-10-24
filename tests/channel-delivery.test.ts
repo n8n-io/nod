@@ -6,17 +6,19 @@ import test, { type TestContext } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
+import type { ChannelSetupConfiguration } from '../src/ports/channel-settings.ts';
 import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
 import { createChannelSettings } from '../src/server/channel-settings.ts';
 import { createChannels } from '../src/server/channels.ts';
+import type { LiveWork } from '../src/server/activity.ts';
 
 const token = '987:fixture-never-live';
 
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
-    CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',created_at timestamptz NOT NULL DEFAULT now());
+    CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',handoff_browser_id text,created_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,delivered_channel text,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
@@ -180,6 +182,116 @@ test(
         200,
       );
       assert.deepEqual(await settings.environment(), { TELEGRAM_ENABLED: 'false' });
+      const linkedApp = Fastify();
+      let link = {
+        state: 'awaiting_scan' as import('../src/shared/contracts.ts').ChannelLinkStatus['state'],
+        pairingId: randomUUID(),
+        qr: 'synthetic-private-qr',
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+      };
+      let unlinks = 0;
+      const unlink = async () => {
+        if (link.state !== 'logged_out') unlinks++;
+        link = { ...link, state: 'logged_out' };
+      };
+      const linked = await createChannelSettings(pool, {
+        ownerId: 'local-development',
+        keyStore: options.keyStore,
+        verifier: createChatSdkSetupVerifier({
+          fetch: async () => {
+            throw new Error('No network for QR setup.');
+          },
+        }),
+        apply: async (environment) => {
+          applied = environment;
+          if (environment.WHATSAPP_ENABLED === 'true' && link.state === 'logged_out')
+            link = { ...link, state: 'awaiting_scan', pairingId: randomUUID() };
+        },
+        linkStatus: async () => link,
+        unlink,
+        cancelPairing: async (id) => {
+          if (id !== link.pairingId || link.state === 'connected') return false;
+          await unlink();
+          return true;
+        },
+      });
+      linked.registerRoutes(linkedApp);
+      try {
+        const save = (payload: object) =>
+          linkedApp.inject({ method: 'PUT', url: '/api/channel-settings/whatsapp', payload });
+        assert.equal((await save({ mode: 'bot', policyConfirmed: true })).statusCode, 400);
+        assert.equal(
+          (await save({ mode: 'bot', allowedNumber: '34600000000', policyConfirmed: false }))
+            .statusCode,
+          400,
+        );
+        assert.equal(
+          (await save({ mode: 'bot', allowedNumber: '34600000000', policyConfirmed: true }))
+            .statusCode,
+          200,
+        );
+        assert.equal(applied.WHATSAPP_MODE, 'bot');
+        const qr = await linkedApp.inject('/api/channel-settings/whatsapp/pairing');
+        assert.equal(qr.headers['cache-control'], 'no-store');
+        assert.equal(qr.json().qr, link.qr);
+        const metadata = await linkedApp.inject('/api/channel-settings');
+        assert.doesNotMatch(metadata.body, /synthetic-private-qr|pairingId/);
+        assert.doesNotMatch(
+          JSON.stringify((await pool.query('SELECT * FROM channel_settings')).rows),
+          /synthetic-private-qr|34600000000/,
+        );
+        const cancel = (pairingId: string) =>
+          linkedApp.inject({
+            method: 'DELETE',
+            url: '/api/channel-settings/whatsapp/pairing',
+            payload: { pairingId },
+          });
+        link.state = 'connected';
+        assert.equal((await cancel(link.pairingId)).json().channel.enabled, true);
+        assert.equal(unlinks, 0);
+        const oldId = link.pairingId;
+        assert.equal(
+          (
+            await linkedApp.inject({
+              method: 'POST',
+              url: '/api/channel-settings/whatsapp/pairing',
+              payload: { pairingId: oldId },
+            })
+          ).statusCode,
+          400,
+        );
+        assert.equal(unlinks, 0);
+        link.state = 'logged_out';
+        const restarted = await linkedApp.inject({
+          method: 'POST',
+          url: '/api/channel-settings/whatsapp/pairing',
+          payload: { pairingId: oldId },
+        });
+        assert.equal(restarted.statusCode, 200);
+        assert.equal(restarted.headers['cache-control'], 'no-store');
+        assert.equal(restarted.json().pairingId, link.pairingId);
+        assert.notEqual(link.pairingId, oldId);
+        const replacementId = link.pairingId;
+        const staleRestart = await linkedApp.inject({
+          method: 'POST',
+          url: '/api/channel-settings/whatsapp/pairing',
+          payload: { pairingId: oldId },
+        });
+        assert.equal(staleRestart.statusCode, 400);
+        assert.equal(link.pairingId, replacementId);
+        assert.equal((await cancel(oldId)).json().channel.enabled, true);
+        assert.equal((await cancel(link.pairingId)).json().channel.enabled, false);
+        assert.equal(unlinks, 1);
+        assert.equal(
+          (await pool.query("SELECT ciphertext FROM channel_settings WHERE provider='whatsapp'"))
+            .rows[0].ciphertext,
+          null,
+        );
+        const foreign = await createChannelSettings(pool, { ownerId: 'other-owner', ...options });
+        assert.deepEqual((await foreign.status()).channels, []);
+      } finally {
+        await linkedApp.close();
+      }
       assert.equal(removals, 1);
       const attempts = registrations.length;
       settings = await createChannelSettings(pool, { ...options, ownerId: 'local-development' });
@@ -214,11 +326,27 @@ test(
     let fails = false;
     let applied: Record<string, string> = {};
     let applyCount = 0;
+    let unlinks = 0;
     const options = {
       keyStore: { id: 'fixture', configured: true, getKey: async () => key },
       verifier: {
-        verify: async () => {
+        verify: async (provider: 'telegram' | 'whatsapp'): Promise<ChannelSetupConfiguration> => {
           if (fails) throw new Error('secret-provider-error');
+          if (provider === 'whatsapp')
+            return {
+              environment: {
+                WHATSAPP_ENABLED: 'true',
+                WHATSAPP_MODE: 'bot',
+                WHATSAPP_POLICY_CONFIRMED: 'true',
+                WHATSAPP_ALLOWED_NUMBER: '12025550100',
+              },
+              summary: {
+                provider: 'whatsapp' as const,
+                enabled: true,
+                mode: 'linked' as const,
+                linkMode: 'bot' as const,
+              },
+            };
           return {
             environment: {
               TELEGRAM_ENABLED: 'true',
@@ -234,6 +362,9 @@ test(
       apply: async (environment: Record<string, string>) => {
         applied = environment;
         applyCount++;
+      },
+      unlink: async () => {
+        unlinks++;
       },
     };
     try {
@@ -284,6 +415,31 @@ test(
         null,
       );
       assert.deepEqual(await settings.environment(), { TELEGRAM_ENABLED: 'false' });
+      fails = false;
+      assert.equal(
+        (await app.inject({ method: 'PUT', url: '/api/channel-settings/whatsapp', payload: {} }))
+          .statusCode,
+        200,
+      );
+      await pool.query(
+        "CREATE FUNCTION reject_unlink_save() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'Synthetic settings failure'; END$$",
+      );
+      await pool.query(
+        'CREATE TRIGGER reject_unlink_save BEFORE UPDATE ON channel_settings FOR EACH ROW EXECUTE FUNCTION reject_unlink_save()',
+      );
+      assert.equal(
+        (await app.inject({ method: 'DELETE', url: '/api/channel-settings/whatsapp' })).statusCode,
+        503,
+      );
+      assert.equal(unlinks, 0);
+      assert.equal((await settings.environment()).WHATSAPP_ENABLED, 'true');
+      await pool.query('DROP TRIGGER reject_unlink_save ON channel_settings');
+      assert.equal(
+        (await app.inject({ method: 'DELETE', url: '/api/channel-settings/whatsapp' })).statusCode,
+        200,
+      );
+      assert.equal(unlinks, 1);
+      assert.equal((await settings.environment()).WHATSAPP_ENABLED, 'false');
     } finally {
       await app.close();
       await pool.end();
@@ -366,7 +522,86 @@ test(
   },
 );
 
-async function outboxFixture(t: TestContext, max?: number) {
+test(
+  'presence shows Telegram typing with the live step as a draft, and WhatsApp typing on the inbound message',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_channel_presence_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const calls: unknown[] = [];
+    t.mock.method(
+      globalThis,
+      'fetch',
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const target = input instanceof Request ? input.url : String(input);
+        if (target.endsWith('/getMe'))
+          return Response.json({
+            ok: true,
+            result: { id: 987, is_bot: true, first_name: 'Fixture', username: 'fixture_bot' },
+          });
+        const method = /(sendChatAction|sendMessageDraft|\/messages)$/.exec(target)?.[1];
+        if (method) {
+          const body = JSON.parse(String(init?.body));
+          calls.push([
+            method,
+            { ...body, ...(body.chat_id ? { chat_id: String(body.chat_id) } : {}) },
+          ]);
+        }
+        return Response.json({ ok: true, result: true, success: true });
+      },
+    );
+    const transport = createChatSdkTransport(pool, {
+      TELEGRAM_ENABLED: 'true',
+      TELEGRAM_BOT_TOKEN: token,
+      TELEGRAM_ALLOWED_USER_ID: '123456',
+      TELEGRAM_WEBHOOK_SECRET_TOKEN: 'fixture-secret-long-enough',
+      WHATSAPP_ENABLED: 'true',
+      WHATSAPP_ACCESS_TOKEN: 'fixture-not-live',
+      WHATSAPP_APP_SECRET: 'fixture-app-secret',
+      WHATSAPP_PHONE_NUMBER_ID: '555000',
+      WHATSAPP_VERIFY_TOKEN: 'fixture-verify-token',
+      WHATSAPP_ALLOWED_NUMBER: '351910000000',
+      WHATSAPP_POLICY_CONFIRMED: 'true',
+    });
+    try {
+      const telegram = { channelId: 'telegram', accountId: '987', threadId: 'telegram:123456' };
+      await transport.presence!({ ...telegram, messageId: '8', status: 'Trip: Checking seats.' });
+      await transport.presence!({ ...telegram, messageId: '8' });
+      await transport.presence!({
+        channelId: 'whatsapp',
+        accountId: '555000',
+        threadId: 'whatsapp:555000:351910000000',
+        messageId: 'wamid.fixture',
+      });
+      assert.deepEqual(calls, [
+        ['sendChatAction', { chat_id: '123456', action: 'typing' }],
+        ['sendMessageDraft', { chat_id: '123456', draft_id: 1, text: 'Trip: Checking seats.' }],
+        ['sendChatAction', { chat_id: '123456', action: 'typing' }],
+        [
+          '/messages',
+          {
+            messaging_product: 'whatsapp',
+            status: 'read',
+            message_id: 'wamid.fixture',
+            typing_indicator: { type: 'text' },
+          },
+        ],
+      ]);
+    } finally {
+      await transport.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+async function outboxFixture(t: TestContext, max?: number, provider = 'telegram') {
   const schema = `test_channel_outbox_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -387,7 +622,7 @@ async function outboxFixture(t: TestContext, max?: number) {
   const transport: MessagingTransport = {
     channels: [
       {
-        id: 'telegram',
+        id: provider,
         status: 'configured',
         missing: [],
         accountId: 'bot',
@@ -421,7 +656,7 @@ async function outboxFixture(t: TestContext, max?: number) {
     replyToMessageId?: string,
   ) => {
     incoming.push({
-      channelId: 'telegram',
+      channelId: provider,
       accountId: 'bot',
       senderId,
       messageId,
@@ -434,7 +669,7 @@ async function outboxFixture(t: TestContext, max?: number) {
   const turnOf = async (messageId: string) =>
     (
       await pool.query('SELECT turn_id,channel FROM channel_inbox WHERE source_id=$1', [
-        `channel:telegram:bot:${messageId}`,
+        `channel:${provider}:bot:${messageId}`,
       ])
     ).rows[0] as { turn_id: string; channel: string };
   const reply = async (turnId: string, text: string, id: string, offsetSeconds: number) => {
@@ -515,6 +750,85 @@ test(
         attempts,
       );
       assert.equal(posts.length, 5);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'presence follows live work in the conversation that asked, after its queued replies, and repeats only on a change or its cadence',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { posts, receive, turnOf, reply, create, transport } = await outboxFixture(t);
+    transport.channels[0]!.presenceMs = 60_000;
+    const shown: Array<{ after: number; threadId: string; messageId: string; status?: string }> =
+      [];
+    transport.presence = async (input) => {
+      shown.push({
+        after: posts.length,
+        threadId: input.threadId,
+        messageId: input.messageId,
+        ...(input.status ? { status: input.status } : {}),
+      });
+    };
+    let live: LiveWork[] = [];
+    const channels = await create({ activity: async () => live });
+    const work = (channel: string, step: string | null, title: string | null = null) => ({
+      turnId: randomUUID(),
+      taskId: title ? randomUUID() : null,
+      title,
+      step,
+      site: null,
+      since: new Date().toISOString(),
+      channel,
+    });
+    try {
+      receive('111', 'a1', 'chat-a1');
+      receive('222', 'b1', 'chat-b1');
+      await channels.drain();
+      const [a1, b1] = [await turnOf('a1'), await turnOf('b1')];
+      await reply(a1.turn_id, 'On it.', 'ffffffff-0000-4000-8000-0000000000a1', 1);
+      live = [work('web', 'A synthetic web step.'), work(a1.channel, 'Checking synthetic seats.')];
+      await channels.drain();
+      assert.deepEqual(posts, [{ threadId: 'chat-a1', text: 'On it.' }]);
+      assert.deepEqual(shown, [
+        { after: 1, threadId: 'chat-a1', messageId: 'a1', status: 'Checking synthetic seats.' },
+      ]);
+      await channels.drain();
+      assert.equal(shown.length, 1);
+      t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+      t.mock.timers.tick(61_000);
+      await channels.drain();
+      t.mock.timers.reset();
+      assert.deepEqual(shown.at(-1), {
+        after: 1,
+        threadId: 'chat-a1',
+        messageId: 'a1',
+        status: 'Checking synthetic seats.',
+      });
+      live = [
+        work(a1.channel, 'Comparing two synthetic fares.', 'Synthetic trip'),
+        work(b1.channel, null),
+      ];
+      await channels.drain();
+      assert.deepEqual(shown.slice(2), [
+        {
+          after: 1,
+          threadId: 'chat-a1',
+          messageId: 'a1',
+          status: 'Synthetic trip: Comparing two synthetic fares.',
+        },
+        { after: 1, threadId: 'chat-b1', messageId: 'b1' },
+      ]);
+      live = [work(a1.channel, 'Opening http://localhost:5678/home to build it.')];
+      await channels.drain();
+      assert.deepEqual(shown.at(-1), { after: 1, threadId: 'chat-a1', messageId: 'a1' });
+      live = [];
+      await channels.drain();
+      live = [work(b1.channel, null)];
+      await channels.drain();
+      assert.equal(shown.length, 6);
     } finally {
       await channels.close();
     }
@@ -777,64 +1091,69 @@ test(
   },
 );
 
-test(
-  'Telegram task commands keep native reply targets, send receipts once and do not start a model turn',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
-    const anchor = randomUUID();
-    const calls: Array<{ command: string; target?: string; hasReply?: boolean }> = [];
-    let commits = 0;
-    const channels = await create({
-      taskCommand: async (_client, command, target, hasReply) => {
-        calls.push({ command, target, hasReply });
-        return {
-          threadId,
-          replies: [{ text: 'Fixture task status', replyToMessageId: target }],
-          afterCommit: async () => {
-            assert.equal(
-              (await pool.query("SELECT state FROM channel_inbox WHERE text='/stop'")).rows[0]
-                .state,
-              'submitted',
-            );
-            commits++;
-          },
-        };
-      },
-    });
-    try {
-      receive('111', 'initial', 'chat-a');
-      await channels.drain();
-      await reply((await turnOf('initial')).turn_id, 'Task started', anchor, 0);
-      await channels.drain();
-      receive('111', 'stop-task', 'chat-a', '/stop', 'provider-1-file');
-      await channels.drain();
-      assert.deepEqual(calls, [{ command: 'stop', target: anchor, hasReply: true }]);
-      assert.equal((await turnOf('stop-task')).turn_id, null);
-      assert.equal(posts.at(-1)!.replyToMessageId, 'provider-1');
-      assert.equal(
-        (
-          await pool.query(
-            "SELECT m.delivered_channel=i.channel AS same_channel FROM messages m JOIN channel_outbox o ON o.message_id=m.id JOIN channel_inbox i USING(source_id) WHERE i.text='/stop'",
-          )
-        ).rows[0].same_channel,
-        true,
+for (const provider of ['telegram', 'whatsapp'])
+  test(
+    `${provider} task commands keep native reply targets, send receipts once and do not start a model turn`,
+    { skip: !process.env.TEST_DATABASE_URL },
+    async (t) => {
+      const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(
+        t,
+        undefined,
+        provider,
       );
-      assert.equal(commits, 1);
-      await channels.drain();
-      assert.equal(commits, 1);
-      receive('222', 'foreign-stop', 'chat-a', '/stop', 'provider-1');
-      await channels.drain();
-      assert.deepEqual(calls.at(-1), { command: 'stop', target: undefined, hasReply: true });
-      receive('111', 'list-tasks', 'chat-a', '/tasks@fixture_bot');
-      await channels.drain();
-      assert.deepEqual(calls.at(-1), { command: 'tasks', target: undefined, hasReply: false });
-      assert.equal((await pool.query('SELECT count(*)::int AS n FROM turns')).rows[0].n, 1);
-    } finally {
-      await channels.close();
-    }
-  },
-);
+      const anchor = randomUUID();
+      const calls: Array<{ command: string; target?: string; hasReply?: boolean }> = [];
+      let commits = 0;
+      const channels = await create({
+        taskCommand: async (_client, command, target, hasReply) => {
+          calls.push({ command, target, hasReply });
+          return {
+            threadId,
+            replies: [{ text: 'Fixture task status', replyToMessageId: target }],
+            afterCommit: async () => {
+              assert.equal(
+                (await pool.query("SELECT state FROM channel_inbox WHERE text='/stop'")).rows[0]
+                  .state,
+                'submitted',
+              );
+              commits++;
+            },
+          };
+        },
+      });
+      try {
+        receive('111', 'initial', 'chat-a');
+        await channels.drain();
+        await reply((await turnOf('initial')).turn_id, 'Task started', anchor, 0);
+        await channels.drain();
+        receive('111', 'stop-task', 'chat-a', '/stop', 'provider-1-file');
+        await channels.drain();
+        assert.deepEqual(calls, [{ command: 'stop', target: anchor, hasReply: true }]);
+        assert.equal((await turnOf('stop-task')).turn_id, null);
+        assert.equal(posts.at(-1)!.replyToMessageId, 'provider-1');
+        assert.equal(
+          (
+            await pool.query(
+              "SELECT m.delivered_channel=i.channel AS same_channel FROM messages m JOIN channel_outbox o ON o.message_id=m.id JOIN channel_inbox i USING(source_id) WHERE i.text='/stop'",
+            )
+          ).rows[0].same_channel,
+          true,
+        );
+        assert.equal(commits, 1);
+        await channels.drain();
+        assert.equal(commits, 1);
+        receive('222', 'foreign-stop', 'chat-a', '/stop', 'provider-1');
+        await channels.drain();
+        assert.deepEqual(calls.at(-1), { command: 'stop', target: undefined, hasReply: true });
+        receive('111', 'list-tasks', 'chat-a', '/tasks@fixture_bot');
+        await channels.drain();
+        assert.deepEqual(calls.at(-1), { command: 'tasks', target: undefined, hasReply: false });
+        assert.equal((await pool.query('SELECT count(*)::int AS n FROM turns')).rows[0].n, 1);
+      } finally {
+        await channels.close();
+      }
+    },
+  );
 
 test(
   'Telegram webhook setup binds only the confirmed Start sender',
@@ -1130,6 +1449,7 @@ test(
       chat: string;
     }> = [];
     const texts: string[] = [];
+    const native: { method: string; data: Record<string, unknown> }[] = [];
     let failDocument = false;
     t.mock.method(
       globalThis,
@@ -1154,13 +1474,21 @@ test(
             },
           });
         }
+        if (/\/send(?:Contact|Location|Venue)$/.test(target)) {
+          const data = JSON.parse(String(init?.body));
+          native.push({ method: target.split('/').at(-1)!, data });
+          assert.equal(String(data.chat_id), '123456');
+          assert.equal(init?.redirect, 'error');
+          return Response.json({ ok: true, result: { message_id: 2000 + native.length } });
+        }
         assert.match(
           target,
-          /^https:\/\/api\.telegram\.org\/bot987:fixture-not-live\/send(?:Photo|Document|Video)$/,
+          /^https:\/\/api\.telegram\.org\/bot987:fixture-not-live\/send(?:Photo|Document|Video|Voice)$/,
         );
         assert.ok(init?.body instanceof FormData);
         const body = init.body;
-        const media = body.get('photo') ?? body.get('document') ?? body.get('video');
+        const media =
+          body.get('photo') ?? body.get('document') ?? body.get('video') ?? body.get('voice');
         assert.ok(media instanceof File);
         const method = target.split('/').at(-1)!;
         sent.push({
@@ -1184,6 +1512,7 @@ test(
       },
     );
     let holdResolve = false;
+    let failRead = false;
     let markResolveStarted = () => {};
     let releaseResolve = () => {};
     const resolveStarted = new Promise<void>((resolve) => {
@@ -1208,7 +1537,15 @@ test(
           markResolveStarted();
           await resolveReleased;
         }
-        return readThreadArtifacts(threadId, ids);
+        const files = await readThreadArtifacts(threadId, ids);
+        return failRead
+          ? files.map((file) => ({
+              ...file,
+              read: async () => {
+                throw new Error('Synthetic file read failure.');
+              },
+            }))
+          : files;
       },
       subscribe: () => () => {},
       intervalMs: 600_000,
@@ -1305,7 +1642,126 @@ test(
       await channels.drain();
       assert.equal(sent.length, 2);
 
+      const voiceBytes = Buffer.from('synthetic Ogg voice fixture');
+      const voice = await storeArtifact(voiceBytes, 'reply.ogg', 'audio/ogg', threadId);
+      filePaths.push(join(dataRoot, 'artifacts', voice.id));
+      const voiceReply = await addReply(turnId, [voice]);
+      await channels.drain();
+      assert.equal(sent.at(-1)!.method, 'sendVoice');
+      assert.equal(sent.at(-1)!.name, 'reply.ogg');
+      assert.deepEqual(Buffer.from(sent.at(-1)!.file), voiceBytes);
+      assert.equal((await state(voiceReply)).state, 'sent');
+      assert.deepEqual(
+        (
+          await pool.query('SELECT provider_message_ids FROM channel_outbox WHERE message_id=$1', [
+            voiceReply,
+          ])
+        ).rows[0].provider_message_ids.at(-1),
+        '123456:103',
+      );
+
+      const contactText =
+        'BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Synthetic Contact\r\nTEL:+34600000000\r\nEND:VCARD';
+      for (const [name, mimeType, text] of [
+        ['contact.vcf', 'text/vcard', contactText],
+        ['location.json', 'application/json', JSON.stringify({ latitude: 41.4, longitude: 2.17 })],
+      ]) {
+        const artifact = await storeArtifact(Buffer.from(text), name, mimeType, threadId);
+        filePaths.push(join(dataRoot, 'artifacts', artifact.id));
+        const reply = await addReply(turnId, [artifact]);
+        await channels.drain();
+        assert.equal((await state(reply)).state, 'sent');
+      }
+      assert.deepEqual(
+        native.map((message) => message.method),
+        ['sendContact', 'sendLocation'],
+      );
+      assert.equal(native[0].data.vcard, contactText);
+      assert.equal(native[1].data.latitude, 41.4);
+      for (const details of [
+        { name: 'Synthetic park', address: 'Synthetic address' },
+        { name: 'Synthetic park' },
+        { address: 'Synthetic address' },
+      ]) {
+        const artifact = await storeArtifact(
+          Buffer.from(JSON.stringify({ latitude: 41.4, longitude: 2.17, ...details })),
+          'location.json',
+          'application/json',
+          threadId,
+        );
+        filePaths.push(join(dataRoot, 'artifacts', artifact.id));
+        const reply = await addReply(turnId, [artifact]);
+        await channels.drain();
+        assert.equal((await state(reply)).state, 'sent');
+        assert.equal(native.at(-1)!.method, 'sendVenue');
+        assert.equal(native.at(-1)!.data.title, details.name || details.address);
+        assert.equal(native.at(-1)!.data.address, details.address || details.name);
+      }
+      const grouped = await storeArtifact(
+        Buffer.from(`${contactText}\r\n${contactText}`),
+        'group.vcf',
+        'text/vcard',
+        threadId,
+      );
+      filePaths.push(join(dataRoot, 'artifacts', grouped.id));
+      const groupedReply = await addReply(turnId, [grouped]);
+      await channels.drain();
+      assert.equal((await state(groupedReply)).state, 'sent');
+      assert.equal(sent.at(-1)!.method, 'sendDocument');
+      assert.equal(native.length, 5);
+      const sizedContact = (size: number) => {
+        const card = contactText.replace('END:VCARD', 'NOTE:\r\nEND:VCARD');
+        return card.replace('NOTE:', `NOTE:${'a'.repeat(size - Buffer.byteLength(card))}`);
+      };
+      for (const [name, text, nativeExpected] of [
+        [
+          'line-endings.vcf',
+          `${contactText.replaceAll('\r\n', '\n').replace('END:VCARD', '')}${'NOTE:a\n'.repeat(280)}END:VCARD`,
+          false,
+        ],
+        ['location.json', sizedContact(2200), false],
+        ['exact.vcf', sizedContact(2048), true],
+        ['over.vcf', sizedContact(2049), false],
+      ] as const) {
+        const bytes = Buffer.from(text);
+        const artifact = await storeArtifact(bytes, name, 'text/vcard', threadId);
+        filePaths.push(join(dataRoot, 'artifacts', artifact.id));
+        const beforeNative: number = native.length;
+        const beforeFiles: number = sent.length;
+        const reply = await addReply(turnId, [artifact]);
+        await channels.drain();
+        assert.equal((await state(reply)).state, 'sent');
+        assert.equal(native.length, beforeNative + Number(nativeExpected));
+        if (nativeExpected) {
+          assert.equal(Buffer.byteLength(native.at(-1)!.data.vcard as string), 2048);
+          assert.equal(sent.length, beforeFiles);
+        } else {
+          assert.equal(sent.length, beforeFiles + 1);
+          assert.equal(sent.at(-1)!.method, 'sendDocument');
+          assert.deepEqual(Buffer.from(sent.at(-1)!.file), bytes);
+        }
+      }
       failDocument = true;
+      const captionedImage = await addReply(turnId, [image], '**Image result**');
+      const beforeCaption = texts.length;
+      await channels.drain();
+      assert.ok(sent.at(-1)!.caption.trim());
+      assert.equal(texts.length, beforeCaption);
+      assert.equal((await state(captionedImage)).state, 'sent');
+      const captionFailure = await addReply(turnId, [document], 'Document result');
+      await channels.drain();
+      assert.equal((await state(captionFailure)).state, 'uncertain');
+      const captionAttempts = sent.length;
+      await channels.drain();
+      assert.equal(sent.length, captionAttempts);
+      failRead = true;
+      const readFailure = await addReply(turnId, [image], 'A caption with an unavailable file.');
+      const beforeReadFailure = texts.length;
+      await channels.drain();
+      assert.equal(sent.length, captionAttempts);
+      assert.ok(texts.length >= beforeReadFailure + 2);
+      assert.equal((await state(readFailure)).state, 'sent');
+      failRead = false;
       const partial = await addReply(turnId, [image, document]);
       await channels.drain();
       assert.equal((await state(partial)).state, 'sent');

@@ -308,7 +308,6 @@ export default scenario({
   complexity: 'simple',
   stance: 'regression',
   seconds: 420,
-  window: { from: 7, to: 22 },
   user: {
     approve: false,
     persona:

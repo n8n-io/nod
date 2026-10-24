@@ -1,7 +1,7 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
 import { pdf } from '../world/pdf.ts';
-import { dayLabel, daysAgo, inDays, localTime } from '../world/time.ts';
+import { dayLabel, daysAgo, duringToday, inDays, localTime } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const me = `Alex Rivera <${owner.email}>`;
@@ -36,8 +36,7 @@ const invoices = [
 ];
 
 function mailbox(now: number): Mail[] {
-  const start = localTime(now, 0, 7);
-  const today = (fraction: number) => start + (now - start) * fraction;
+  const today = (fraction: number) => duringToday(now, fraction);
   return [
     ...invoices.map((item, index): Mail => ({
       id: `sent-${item.number}`,
@@ -150,7 +149,6 @@ export default scenario({
   complexity: 'simple',
   stance: 'regression',
   seconds: 420,
-  window: { from: 9, to: 24 },
   user: {
     approve: (action) => !writes.test(action),
     persona:

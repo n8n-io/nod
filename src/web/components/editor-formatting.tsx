@@ -14,7 +14,7 @@ import {
   Underline,
   Unlink,
   X,
-} from 'lucide-react';
+} from './icons';
 import { formatSelectedText } from '../lib/editor-formatting';
 import { safeMessageLink } from '../lib/message-links';
 

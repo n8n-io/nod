@@ -19,6 +19,7 @@ const sequence: RevealStep[] = [
 
 export function Welcome({ arrived, onNext, usage }: StepProps) {
   const [saving, setSaving] = useState<boolean | null>(null);
+  const pending = useRef<Promise<boolean> | null>(null);
   const [error, setError] = useState('');
   const [reaction, setReaction] = useState<GlyphReaction | null>(null);
   const enabled = saving ?? usage?.enabled ?? false;
@@ -38,23 +39,31 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
   useEffect(() => {
     const press = (event: KeyboardEvent) => {
       if (event.key !== 'Enter' || event.target !== document.body || event.repeat) return;
-      if (done && saving === null) onNext();
+      if (done) void next();
     };
     window.addEventListener('keydown', press);
     return () => window.removeEventListener('keydown', press);
-  }, [done, saving]);
+  }, [done, onNext]);
   async function change(value: boolean) {
     if (!usage || saving !== null) return;
     setSaving(value);
     setError('');
     setReaction((current) => ({ kind: value ? 'on' : 'off', count: (current?.count ?? 0) + 1 }));
-    try {
-      await usage.onChange(value);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setSaving(null);
-    }
+    const save = usage.onChange(value).then(
+      () => true,
+      (cause) => {
+        setError(errorMessage(cause));
+        return false;
+      },
+    );
+    pending.current = save;
+    await save;
+    pending.current = null;
+    setSaving(null);
+  }
+  async function next() {
+    if (pending.current && !(await pending.current)) return;
+    onNext();
   }
   useLayoutEffect(() => {
     if (stage !== 1 || !section.current || !slot.current) return;
@@ -153,7 +162,7 @@ export function Welcome({ arrived, onNext, usage }: StepProps) {
         ]}
       />
       <Rise show={done} className="ob-welcome-cta">
-        <Button className="ob-next" disabled={saving !== null} onClick={onNext}>
+        <Button className="ob-next" onClick={() => void next()}>
           Let’s go
         </Button>
         <p className="ob-welcome-reassurance">You can change your choices later in Settings.</p>

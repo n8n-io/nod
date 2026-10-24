@@ -1,3 +1,4 @@
+import { logFailure } from './failure-log.ts';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -8,7 +9,7 @@ import { pool } from './db.ts';
 import { transaction } from './transaction.ts';
 import { turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId } from './config.ts';
-import { delta, refresh } from './events.ts';
+import { delta, refresh, working } from './events.ts';
 import { artifactMimeType, localArtifacts, type ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
 import type { Artifact, MessageReaction } from '../shared/contracts.ts';
@@ -44,6 +45,7 @@ const inflight = new Set<Promise<void>>();
 let stopping = false;
 
 export type TurnSource = 'user' | 'schedule' | 'event' | 'resume' | 'task';
+export const ownerStarted = (turn = 'u') => `${turn}.source IN ('user','task','resume')`;
 export interface TurnRef {
   threadId: string;
   turnId: string;
@@ -66,6 +68,7 @@ export interface SubmitUserMessageOptions {
   channel?: string;
   client?: PoolClient;
   replyToMessageId?: string;
+  replyQuote?: string;
   seenMessageId?: string;
   clientMessageId?: string;
   prompt?: string;
@@ -103,6 +106,11 @@ export interface ThreadDependencies {
     turnId: string,
     signal: AbortSignal,
   ) => Promise<{ prompt: string } | undefined>;
+  bindVerificationQuestion?: (
+    turnId: string,
+    messageId: string,
+    client: PoolClient,
+  ) => Promise<void>;
   spendingLimitReached?: () => Promise<boolean>;
   checkIn?: (sessionId: string, turnId: string) => Promise<RuntimeContext['checkIn']>;
   skipTurn?: (sourceId: string) => Promise<boolean>;
@@ -481,7 +489,7 @@ export async function submitUserMessage(
     if (options.clientMessageId) {
       const previous = (
         await client.query(
-          'SELECT id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id FROM messages WHERE id=$1',
+          'SELECT id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote FROM messages WHERE id=$1',
           [options.clientMessageId],
         )
       ).rows[0];
@@ -492,6 +500,7 @@ export async function submitUserMessage(
           previous.thread_id !== thread.id ||
           previous.text !== text ||
           previous.reply_to_message_id !== (options.replyToMessageId ?? null) ||
+          previous.reply_quote !== (options.replyQuote ?? null) ||
           JSON.stringify((previous.attachments as Artifact[]).map((item) => item.id)) !==
             JSON.stringify(attachments.map((item) => item.id))
         )
@@ -509,6 +518,11 @@ export async function submitUserMessage(
       if (prior) return { threadId: thread.id, turnId: prior.id, messageId: prior.message_id };
     }
     await assertReplyTarget(client, thread.id, options.replyToMessageId);
+    if (
+      options.replyQuote !== undefined &&
+      (!options.replyToMessageId || !options.replyQuote.trim() || options.replyQuote.length > 4000)
+    )
+      throw httpError('Select a passage of 4,000 characters or fewer.');
     const confirmed = await confirmAction?.accept(client, {
       ...confirmation,
       threadId: thread.id,
@@ -552,7 +566,7 @@ export async function submitUserMessage(
     );
     if (taskTarget) await taskTarget.record(turnId);
     await client.query(
-      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id) VALUES($1,$2,'user',$3,$4,$5,$6,$7)",
+      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8)",
       [
         messageId,
         ownerId,
@@ -561,6 +575,7 @@ export async function submitUserMessage(
         turnId,
         JSON.stringify(attachments),
         options.replyToMessageId ?? null,
+        options.replyQuote ?? null,
       ],
     );
     await sendDrain(client, thread.id);
@@ -579,25 +594,34 @@ export async function submitUserMessage(
   return result;
 }
 
-export async function cancelTurns(client: PoolClient, threadId: string, sessionId?: string) {
+export async function cancelTurns(
+  client: PoolClient,
+  threadId: string,
+  scope: { sessionId?: string; background?: boolean } = {},
+) {
+  const values = [threadId, ownerId, scope.sessionId ?? null, scope.background ?? false];
   const current = await client.query(
-    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND status IN ('queued','running','waiting') RETURNING id,session_id",
-    [threadId, ownerId, sessionId ?? null],
+    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting') RETURNING id,session_id",
+    values,
   );
   const taskIds = (
     await client.query(
       `SELECT DISTINCT to_jsonb(u)->>'task_id' AS id FROM turns u
-       WHERE u.thread_id=$1 AND u.owner_id=$2 AND ($3::uuid IS NULL OR u.session_id=$3)
+       WHERE u.thread_id=$1 AND u.owner_id=$2 AND ($3::uuid IS NULL OR u.session_id=$3) AND (NOT $4 OR u.session_id<>$1)
          AND to_jsonb(u)->>'task_id' IS NOT NULL`,
-      [threadId, ownerId, sessionId ?? null],
+      values,
     )
   ).rows.map((row) => row.id);
-  if (taskIds.length)
-    await client.query(
-      "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND state='open'",
-      [taskIds, ownerId],
-    );
+  const tasks = taskIds.length
+    ? (
+        await client.query(
+          "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND state='open' RETURNING title,session_id",
+          [taskIds, ownerId],
+        )
+      ).rows.map((row) => ({ title: row.title as string, sessionId: row.session_id as string }))
+    : [];
   return {
+    tasks,
     ids: current.rows.map((row) => row.id as string),
     browsers: [
       ...new Set(
@@ -628,7 +652,7 @@ export async function stopThread(turnIds?: string[]) {
     );
     const result = { ids: [] as string[], browsers: [] as string[] };
     for (const sessionId of new Set(current.rows.map((row) => row.session_id))) {
-      const stopped = await cancelTurns(client, thread.id, sessionId);
+      const stopped = await cancelTurns(client, thread.id, { sessionId });
       result.ids.push(...stopped.ids);
       result.browsers.push(...stopped.browsers);
     }
@@ -777,7 +801,7 @@ export async function resumeAfterHandoff(turnId: string) {
       resumeTurn(
         turnId,
         `handoff:${turnId}`,
-        'The owner pressed Done on the browser you handed them. Look at the current page to see what they did there, if anything, then continue the request.',
+        'The owner returned control of the browser you handed them. Look at the current page to see what they did there, if anything, then continue the request.',
         false,
         client,
       )
@@ -798,9 +822,7 @@ export function resumeAfterConnection(turnId: string, service: string) {
 
 export async function initializeThreads() {
   stopping = false;
-  boss.on('error', () =>
-    console.error('The thread queue reported an error. Check database availability.'),
-  );
+  boss.on('error', (error) => logFailure('thread_queue_failed', error));
   await boss.start();
   await boss.createQueue(queue);
 }
@@ -835,22 +857,6 @@ async function finishTurn(
   return Boolean(updated.rowCount);
 }
 
-function describeFailure(error: unknown) {
-  if (!(error instanceof Error)) return 'a thrown value that is not an Error';
-  const fields = [error.name];
-  for (const key of ['code', 'statusCode'] as const) {
-    const value = (error as { code?: unknown; statusCode?: unknown })[key];
-    if (typeof value === 'string' || typeof value === 'number')
-      fields.push(`${key}=${String(value).slice(0, 64)}`);
-  }
-  const frames = (error.stack ?? '')
-    .split(/\r?\n/)
-    .filter((line) => /^\s+at /.test(line))
-    .slice(0, 2)
-    .map((line) => line.trim());
-  return [...fields, ...frames].join(' | ');
-}
-
 const interrupted = 'Interrupted.';
 
 function failureText(error: unknown) {
@@ -868,14 +874,14 @@ async function failTurn(
     const turn = (
       await client.query<{
         thread_id: string;
-        background: boolean;
+        owner_started: boolean;
         task_id: string | null;
         latest_user_message_id: string | null;
       }>(
         `${turnChainSql()}, origin AS (
           SELECT u.created_at,u.id FROM turns u JOIN chain c ON c.id=u.id
           ORDER BY u.created_at,u.id LIMIT 1
-        ) SELECT u.thread_id,u.background,to_jsonb(u)->>'task_id' AS task_id,
+        ) SELECT u.thread_id,${ownerStarted()} AS owner_started,to_jsonb(u)->>'task_id' AS task_id,
          (SELECT m.id FROM messages m LEFT JOIN turns author ON author.id=m.turn_id AND author.owner_id=m.owner_id
           WHERE m.owner_id=$2 AND m.thread_id=u.thread_id AND m.role='user'
             AND (m.turn_id IN (SELECT id FROM chain)
@@ -899,7 +905,7 @@ async function failTurn(
     return { ...turn, taskMessageId: task?.message_id as string | undefined };
   }, pool);
   if (!turn) return false;
-  if (turn.background && !turn.taskMessageId) return true;
+  if (!turn.owner_started && !turn.taskMessageId) return true;
   const presented = await present?.(
     turn.thread_id,
     error === interrupted ? { kind: 'interrupted' } : { kind: 'failed', error },
@@ -1032,10 +1038,12 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
 
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   if (stopping) return;
-  for (const turn of await claimTurns(threadId)) {
+  const claimed = await claimTurns(threadId);
+  if (claimed.length) refresh();
+  for (const turn of claimed) {
     const execute = () => executeTurn(turn, dependencies);
     const work = (dependencies.observeTurn ? dependencies.observeTurn(turn.id, execute) : execute())
-      .catch((error) => console.error(`Turn ${turn.id} did not finish: ${describeFailure(error)}`))
+      .catch((error) => logFailure('turn_unfinished', error, { threadId, turnId: turn.id }))
       .then(() => drainNext(threadId))
       .finally(refresh);
     inflight.add(work);
@@ -1044,23 +1052,25 @@ async function drainThread(threadId: string, dependencies: ThreadDependencies) {
 }
 
 async function drainNext(threadId: string) {
+  let failure: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       return await sendDrain(undefined, threadId);
-    } catch {
+    } catch (error) {
+      failure = error;
       await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
     }
   }
-  console.error('The next turn could not be queued. It runs on the next message or start.');
+  logFailure('thread_drain_failed', failure, { threadId });
 }
 
-type StoredAttachment = { id?: string; name?: string; mimeType?: string };
+type StoredAttachment = Partial<Pick<Artifact, 'id' | 'name' | 'mimeType' | 'source'>>;
 
 async function loadMessage(messageId: string | null) {
   const message = messageId
     ? (
         await pool.query(
-          `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
+          `SELECT s.attachments,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments
            FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
            WHERE s.id=$1 AND s.owner_id=$2`,
           [messageId, ownerId],
@@ -1122,7 +1132,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       [ownerId, turn.session_id, turn.id],
     ),
     pool.query(
-      'SELECT time_zone,locale,hour_cycle,notification_rule,quiet_hours_enabled,quiet_start,quiet_end FROM preferences WHERE owner_id=$1',
+      'SELECT time_zone,locale,hour_cycle,notification_rule,rules,quiet_hours_enabled,quiet_start,quiet_end FROM preferences WHERE owner_id=$1',
       [ownerId],
     ),
     dependencies.accountProfile?.().catch(() => undefined),
@@ -1148,6 +1158,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       locale: preference?.locale || formattingLocale(timeZone ? timeZoneRegion(timeZone) : null),
       hourCycle: preference?.hour_cycle || defaultPreferences.hourCycle,
       notificationRule: preference?.notification_rule ?? defaultPreferences.notificationRule,
+      rules: preference?.rules ?? defaultPreferences.rules,
       quietHours: isQuietTime({
         ...defaultPreferences,
         timeZone: timeZone ?? null,
@@ -1299,10 +1310,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           signal,
         );
         stagedFiles.set(upload.id, name);
+        const source = items.find((item) => item.id === upload.id)?.source;
         staged.push({
           path: join(workspacePath, name),
           mimeType: upload.mime_type,
           workspaceFile: `/workspace/${threadId}/${name}`,
+          ...(source ? { source } : {}),
         });
       }
       return staged;
@@ -1316,6 +1329,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             attachments: files.map((file) => ({
               name: String(file?.name ?? ''),
               mimeType: String(file?.mimeType ?? ''),
+              ...(file.source ? { source: file.source } : {}),
               ...(file?.id && stagedFiles.has(file.id)
                 ? { workspaceFile: workspaceReference(stagedFiles.get(file.id)!) }
                 : {}),
@@ -1353,14 +1367,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     };
     const emit = async (type: string, summary: string, event?: ExecutionEvent) => {
       await current((client) => insertEvent(client, turnId, type, summary, event));
-      refresh();
+      working();
     };
     const { reactToMessage, connections, browserConnection } = dependencies;
     if (await dependencies.spendingLimitReached?.()) {
       limited = true;
-      await current((client) =>
-        finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
-      );
+      await failTurn(turnId, undefined, spendingLimitReached);
       return;
     }
     await emit('started', 'Turn started.');
@@ -1459,9 +1471,17 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       ),
       computer:
         dependencies.computer &&
-        fenced((args, admit) =>
-          dependencies.computer!(ref, args, { sourceMessageId, admit, signal }),
-        ),
+        fenced(async (args, admit, callSignal?: AbortSignal) => {
+          const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
+          operation.throwIfAborted();
+          const result = await dependencies.computer!(ref, args, {
+            sourceMessageId,
+            admit,
+            signal: operation,
+          });
+          operation.throwIfAborted();
+          return result;
+        }),
       task: dependencies.task && fenced((input) => dependencies.task!(ref, input, sourceMessageId)),
       takeMessages:
         turn.background && !taskContext
@@ -1537,8 +1557,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             : (result.waitingFor ?? 'question'),
         handoffBrowserId: result.handoffBrowserId,
       });
-      if (waiting && result.message)
-        await insertAssistantMessage(client, ref, result.message, shared.splice(0));
+      if (waiting && result.message) {
+        const messageId = await insertAssistantMessage(
+          client,
+          ref,
+          result.message,
+          shared.splice(0),
+        );
+        if (result.status === 'waiting_credentials' || result.waitingFor === 'credentials')
+          await dependencies.bindVerificationQuestion?.(turnId, messageId, client);
+      }
     }).catch((error) => {
       if (!signal.aborted) throw error;
     });
@@ -1554,13 +1582,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     if (signal.aborted) outcome = 'cancelled';
     if (!signal.aborted && error instanceof Error && error.message === spendingLimitReached) {
       limited = true;
-      await current((client) =>
-        finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
-      );
+      await failTurn(turnId, undefined, spendingLimitReached);
     } else {
       failure = error instanceof ModelRequestError ? 'model' : 'unknown';
       if (await failTurn(turnId, dependencies.present, failureText(error)))
-        console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
+        logFailure('turn_failed', error, { threadId, turnId, sessionId: turn.session_id });
     }
   } finally {
     dependencies.analytics?.({

@@ -86,6 +86,7 @@ export interface RuntimeContext {
   locale?: string;
   hourCycle?: 'auto' | 'h12' | 'h23';
   notificationRule?: string;
+  rules?: string;
   quietHours?: boolean;
   account?: RuntimeAccount;
   connectedApps?: ConnectedApp[];
@@ -123,7 +124,12 @@ export interface RuntimeContext {
   tasks?: import('../shared/contracts.ts').Task[];
   workspacePath: string;
   signal: AbortSignal;
-  attachments: Array<{ path: string; mimeType: string; workspaceFile?: string }>;
+  attachments: Array<{
+    path: string;
+    mimeType: string;
+    workspaceFile?: string;
+    source?: Artifact['source'];
+  }>;
   emit(type: string, summary: string, event?: ExecutionEvent): Promise<void>;
   reply(text: string, streamId?: string, replyToMessageId?: string): Promise<void>;
   reactToMessage?(
@@ -142,6 +148,7 @@ export interface RuntimeContext {
   computer?(
     args: Record<string, unknown>,
     admit?: (asks: boolean) => Promise<void>,
+    signal?: AbortSignal,
   ): Promise<unknown>;
   browserStep?(
     request: BrowserStep,
@@ -228,7 +235,10 @@ export interface AgentToolMetadata {
 }
 export interface AgentTool extends AgentToolMetadata {
   parallel?: boolean;
-  execute(args: Record<string, unknown>, options?: { nested?: boolean }): Promise<AgentToolResult>;
+  execute(
+    args: Record<string, unknown>,
+    options?: { nested?: boolean; signal?: AbortSignal },
+  ): Promise<AgentToolResult>;
 }
 export interface SkillLibrary {
   catalog: Array<{ name: string; description: string }>;
@@ -254,7 +264,7 @@ export interface AgentSessionOptions extends ExecutionScope {
     name: string,
     params: unknown,
     run: () => Promise<AgentToolResult>,
-    options?: { nested?: boolean },
+    options?: { nested?: boolean; cancellationSummary?: () => string | undefined },
   ): Promise<AgentToolResult>;
   onEvent(event: AgentEvent): void;
   shouldStop(): boolean;

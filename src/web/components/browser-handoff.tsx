@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, KeyRound, Maximize2, Minimize2, RotateCw } from 'lucide-react';
+import { ArrowLeft, KeyRound, Maximize2, Minimize2, RotateCw } from './icons';
 import type { BrowserHandoffInput } from '../../shared/browser-handoff';
-import { ApiError, apiStream, errorMessage, post } from '../lib/api';
+import { ApiError, api, apiStream, errorMessage } from '../lib/api';
 import { browserFrames } from '../lib/browser-frames';
 import { captureAnalytics } from '../lib/analytics';
 import { BrandMark } from './brand';
@@ -28,6 +28,22 @@ const batchBytes = 64 * 1024;
 const textPiece = 2000;
 const encoder = new TextEncoder();
 
+async function post(path: string, body: unknown) {
+  try {
+    return await api(path, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(75_000),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError')
+      throw new Error(
+        'The browser did not confirm this request. Check the page before trying again.',
+      );
+    throw error;
+  }
+}
+
 export function BrowserHandoff({ turnId, paused = false }: { turnId: string; paused?: boolean }) {
   const screen = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
@@ -48,6 +64,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   const [loading, setLoading] = useState<'back' | 'reload' | 'resize' | null>(null);
   const [returning, setReturning] = useState(false);
   const [closed, setClosed] = useState(false);
+  const [returned, setReturned] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
   const [frame, setFrame] = useState('');
@@ -198,6 +215,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     try {
       await flush();
       await post('/api/browser-handoff/done', { turnId });
+      setReturned(true);
       setClosed(true);
     } catch (reason) {
       setError(errorMessage(reason));
@@ -327,17 +345,24 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     return () => window.removeEventListener('keydown', keydown);
   }, [expanded, closed, loading, returning]);
 
-  if (closed) return null;
+  if (closed)
+    return (
+      <p className="browser-handoff-feedback" role="status">
+        {returned
+          ? 'Control returned to nod. It will check the page and continue.'
+          : 'This browser handoff has ended. Continue in chat.'}
+      </p>
+    );
   const busy = returning || loading !== null;
-  const status =
-    error ||
-    (live
-      ? 'Click and type here, then hand it back.'
-      : unavailable
-        ? 'The browser view could not connect.'
-        : shown
+  const status = returning
+    ? 'Returning control…'
+    : unavailable
+      ? 'Disconnected'
+      : live
+        ? 'You have control'
+        : failures
           ? 'Reconnecting…'
-          : '');
+          : 'Opening browser…';
   const sizeToggle = (
     <Button
       variant="ghost"
@@ -363,13 +388,14 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
           : undefined
       }
     >
-      {expanded && (
-        <div className="browser-handoff-header">
-          <BrandMark small />
-          <span>nod's browser</span>
-          {sizeToggle}
-        </div>
-      )}
+      <div className="browser-handoff-header">
+        <BrandMark small />
+        <span className="browser-handoff-title">Browser</span>
+        <span className="browser-handoff-state" role="status" aria-live="polite">
+          {status}
+        </span>
+        {sizeToggle}
+      </div>
       <div
         className="browser-handoff-screen"
         ref={screen}
@@ -410,21 +436,33 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
           />
         )}
         {unavailable ? (
-          <Button
-            variant="outline"
-            onClick={() => {
-              setFailures(0);
-              setShown(false);
-              setError('');
-              setAttempt((value) => value + 1);
-            }}
-          >
-            Try again
-          </Button>
+          <div className="browser-handoff-recovery">
+            <strong>The browser view could not connect.</strong>
+            <p>
+              Your task is waiting. Try to reconnect the view. The page can close after 30 minutes.
+              Your last input will not run again.
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setFailures(0);
+                setShown(false);
+                setError('');
+                setAttempt((value) => value + 1);
+              }}
+            >
+              Reconnect view
+            </Button>
+          </div>
         ) : !shown ? (
           <Loading label="Opening nod's browser…" />
         ) : null}
       </div>
+      {error && (
+        <p className="browser-handoff-feedback" role="alert">
+          {error}
+        </p>
+      )}
       <div className="browser-handoff-bar">
         <div className="browser-handoff-actions">
           <Button
@@ -448,21 +486,30 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
             <RotateCw size={16} className={loading ? 'spin' : undefined} />
           </Button>
         </div>
-        <span role="status">{status}</span>
+        <span>
+          {paused
+            ? 'Reply in chat to continue this task.'
+            : 'nod is paused while you use this page.'}
+        </span>
         <div className="browser-handoff-actions">
           <Button variant="ghost" size="sm" asChild>
-            <a href="/vault?add=login" target="_blank" rel="noopener noreferrer">
+            <a
+              href="/vault?add=login"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Save login"
+              title="Save login"
+            >
               <KeyRound size={16} aria-hidden="true" />
-              Save login
+              <span className="browser-handoff-save-label">Save login</span>
             </a>
           </Button>
-          {!expanded && sizeToggle}
           <Button
             onClick={() => void done()}
-            disabled={!shown || busy || paused}
+            disabled={busy || paused}
             title={paused ? 'Paused at the spending limit.' : undefined}
           >
-            {returning ? 'Finishing…' : 'Done'}
+            {returning ? 'Returning…' : 'Return to nod'}
           </Button>
         </div>
       </div>

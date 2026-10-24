@@ -107,7 +107,6 @@ export default scenario({
   complexity: 'complex',
   stance: 'regression',
   seconds: 900,
-  window: { from: 7, to: 20 },
   user: {
     approve: true,
     persona: `You are Alex Rivera, a freelance designer. Helena Marques (${helena}) is your boss at Northwind. You want the check every day at 8:00 your time, here in this chat, and nothing at all when there is no unread email from her.`,

@@ -1,4 +1,4 @@
-import { Monitor } from 'lucide-react';
+import { Monitor } from '../components/icons';
 import { BrowserScreen } from '../components/browser-screen';
 import { Loading, Notice } from '../components/ui';
 import { useBrowserState } from '../hooks/use-browser-state';

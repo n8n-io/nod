@@ -147,6 +147,8 @@ export function createMacComputer(options: {
   const fileReads = new Set<() => void>();
   let helper: ChildProcessWithoutNullStreams | undefined;
   let nextId = 0;
+  let dispatching = false;
+  const queued: Array<{ run(): Promise<void>; cancel(error: Error): void }> = [];
   const pending = new Map<
     number,
     {
@@ -197,7 +199,7 @@ export function createMacComputer(options: {
     return child;
   }
 
-  function call<T>(request: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+  function dispatch<T>(request: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     signal?.throwIfAborted();
     const child = start();
     const id = ++nextId;
@@ -231,6 +233,52 @@ export function createMacComputer(options: {
         },
       });
       child.stdin.write(`${JSON.stringify({ ...request, id })}\n`);
+    });
+  }
+
+  function next() {
+    if (dispatching) return;
+    const request = queued.shift();
+    if (!request) return;
+    dispatching = true;
+    void request.run().finally(() => {
+      dispatching = false;
+      next();
+    });
+  }
+
+  function call<T>(request: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
+    return new Promise<T>((resolve, reject) => {
+      if (queued.length >= 16) {
+        reject(new Error('Too many Mac app requests are waiting.'));
+        return;
+      }
+      const abort = () => {
+        const index = queued.indexOf(waiting);
+        if (index < 0) return;
+        queued.splice(index, 1);
+        waiting.cancel(
+          signal!.reason instanceof Error ? signal!.reason : new Error('Task cancelled.'),
+        );
+      };
+      const waiting = {
+        async run() {
+          signal?.removeEventListener('abort', abort);
+          try {
+            resolve(await dispatch<T>(request, signal));
+          } catch (error) {
+            reject(error);
+          }
+        },
+        cancel(error: Error) {
+          signal?.removeEventListener('abort', abort);
+          reject(error);
+        },
+      };
+      queued.push(waiting);
+      signal?.addEventListener('abort', abort, { once: true });
+      next();
     });
   }
 
@@ -397,9 +445,9 @@ export function createMacComputer(options: {
         throw error;
       }),
     open: (app, signal) => call<MacApp>({ op: 'open', app }, signal),
-    async look(app, signal) {
+    async look(app, signal, scope) {
       const result = await call<{ app: MacApp; tree: string; truncated: boolean }>(
-        { op: 'look', app },
+        { op: 'look', app, scope },
         signal,
       );
       return {
@@ -407,8 +455,8 @@ export function createMacComputer(options: {
         tree: result.truncated ? `${result.tree}\n[tree truncated]` : result.tree,
       };
     },
-    inspect: (app, ref, signal) =>
-      call<{ label: string; token: string }>({ op: 'inspect', app, ref }, signal),
+    inspect: (app, ref, signal, scope) =>
+      call<{ label: string; token: string }>({ op: 'inspect', app, ref, scope }, signal),
     act: async (action, signal) => {
       await call({ op: 'act', ...action }, signal);
     },
@@ -423,6 +471,8 @@ export function createMacComputer(options: {
     requestPermission: (kind) =>
       call<Record<ComputerPermissionKind, boolean>>({ op: 'request', permission: kind }),
     dispose() {
+      for (const request of queued.splice(0))
+        request.cancel(new Error('nod Computer Use stopped.'));
       for (const stop of fileReads) stop();
       if (helper) stop(helper, new Error('nod Computer Use stopped.'));
     },

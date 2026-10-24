@@ -1,5 +1,5 @@
 import type { ReactNode, Ref } from 'react';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare } from '../../components/icons';
 import { onboardingSteps, type OnboardingStep } from '../../../shared/onboarding';
 import { NodGlyph } from '../../components/motion';
 import { Button } from '../../components/ui';

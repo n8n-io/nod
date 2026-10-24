@@ -21,34 +21,35 @@ This page explains the words you'll meet in these docs. Select a term to read th
 
 ## nod's computer
 
-| Term                             | What it means                                                                                                                                    |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Workspace](/use/workspace/)     | nod's private Linux computer, where it runs commands and keeps files. It never receives your model provider keys.                                |
-| [Browser](/use/browser/)         | nod's own web browser, separate from yours and from the workspace.                                                                               |
-| [Browser handoff](/use/browser/) | When a website needs you, nod sends an **Open browser** link to a live view of its browser. You take over, then select **Done** to hand it back. |
+| Term                             | What it means                                                                                                                  |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| [Workspace](/use/workspace/)     | nod's private Linux computer, where it runs commands and keeps files. It never receives your model provider keys.              |
+| [Browser](/use/browser/)         | nod's own web browser, separate from yours and from the workspace.                                                             |
+| [Browser handoff](/use/browser/) | When a website needs you, nod opens a live browser view in chat. You take over, then select **Return to nod** to hand it back. |
 
 ## Connections
 
-| Term                                 | What it means                                                                                                                                                     |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Model connection](/connect/models/) | How nod reaches a model: an OpenAI, Anthropic or OpenRouter API key, a ChatGPT or OpenRouter account, or a local model server. A paid provider bills you for use. |
-| [Connected app](/connect/apps/)      | An account nod can use for you, such as Gmail, Calendar or Slack.                                                                                                 |
-| [Composio](/connect/apps/)           | The service nod uses to connect many apps for you. You sign in to each app and choose what it can access.                                                         |
-| [MCP](/connect/mcp-api-cli/)         | Model Context Protocol, a standard way for an app to offer tools to an assistant. Notion, Linear and n8n connect through their own MCP servers.                   |
-| [Channel](/use/channels/)            | Another place to chat with nod besides the app: Telegram or WhatsApp.                                                                                             |
+| Term                                 | What it means                                                                                                                                                                                                     |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Model connection](/connect/models/) | How nod reaches a model: an OpenAI, Anthropic, OpenRouter, Amazon Bedrock, Google Vertex AI or Azure OpenAI API key, a ChatGPT or OpenRouter account, or a local model server. A paid provider bills you for use. |
+| [Connected app](/connect/apps/)      | An account nod can use for you, such as Gmail, Calendar or Slack.                                                                                                                                                 |
+| [Composio](/connect/apps/)           | The service nod uses to connect many apps for you. You sign in to each app and choose what it can access.                                                                                                         |
+| [MCP](/connect/mcp-api-cli/)         | Model Context Protocol, a standard way for an app to offer tools to an assistant. Notion, Linear and n8n connect through their own MCP servers.                                                                   |
+| [Channel](/use/channels/)            | Another place to chat with nod besides the app: Telegram or WhatsApp.                                                                                                                                             |
 
 ## Safety and control
 
-| Term                                                            | What it means                                                                                                                                                                                             |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Trust check](/trust/approvals/)                                | The server check that runs before every connected app action. It decides whether the action runs now or waits for you.                                                                                    |
-| [Approval](/trust/approvals/)                                   | nod's yes or no question about one exact action. If you reply yes, the action runs once.                                                                                                                  |
-| [Standing instruction](/trust/approvals/#standing-instructions) | What you told nod to do on its own when something arrives, such as "whenever Ana sends an invoice, forward it to accounting". Background work does it without asking. You see and change it in **Usage**. |
-| [Vault](/trust/vault/)                                          | Where nod keeps your saved logins and cards, encrypted, and your saved browser sessions. The model never sees saved passwords, codes or card numbers.                                                     |
-| [Saved login](/trust/vault/)                                    | A website username and password in Vault. nod enters it privately, and only on that exact website.                                                                                                        |
-| [Saved browser session](/trust/browser-sessions/)               | A signed-in browser profile that nod can reuse on the websites you allow.                                                                                                                                 |
-| [Private form](/trust/vault/)                                   | A secure form where you enter a password, code or card for a task. What you type goes to the website, not to the model.                                                                                   |
-| [Uncertain outcome](/trust/outcomes/)                           | An approved action that was interrupted, so nod can't tell if it happened. nod checks the result instead of running it again.                                                                             |
+| Term                                                            | What it means                                                                                                                                                                                                                                |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Trust check](/trust/approvals/)                                | The server check that runs before every connected app action. It decides whether the action runs now or waits for you.                                                                                                                       |
+| [Approval](/trust/approvals/)                                   | nod's yes or no question about one exact action. If you reply yes, the action runs once.                                                                                                                                                     |
+| [Standing instruction](/trust/approvals/#standing-instructions) | What you told nod to do on its own when something arrives, such as "whenever Ana sends an invoice, forward it to accounting". Background work does it without asking. You see and change it in **Usage**.                                    |
+| [Rules](/trust/approvals/#your-rules)                           | What you told nod it may do without asking, or must always ask you about first, such as "always ask before you pay". The trust check holds every chat, task, scheduled run and background run to them. You see and change them in **Usage**. |
+| [Vault](/trust/vault/)                                          | Where nod keeps your saved logins and cards, encrypted, and your saved browser sessions. The model never sees saved passwords, codes or card numbers.                                                                                        |
+| [Saved login](/trust/vault/)                                    | A website username and password in Vault, with an optional authenticator key. nod enters it privately, and only on that exact website.                                                                                                       |
+| [Saved browser session](/trust/browser-sessions/)               | A signed-in browser profile that nod can reuse on the websites you allow.                                                                                                                                                                    |
+| [Private form](/trust/vault/)                                   | A secure form where you enter a password, code or card for a task. What you type goes to the website, not to the model.                                                                                                                      |
+| [Uncertain outcome](/trust/outcomes/)                           | An approved action that was interrupted, so nod can't tell if it happened. nod checks the result instead of running it again.                                                                                                                |
 
 ## Running nod
 

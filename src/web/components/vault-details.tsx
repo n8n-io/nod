@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Copy, Eye, EyeOff } from 'lucide-react';
+import { Copy, Eye, EyeOff } from './icons';
 import type {
   VaultEntry,
   VaultEntryDetails,
@@ -30,7 +30,13 @@ import {
 function hasChanges(form: HTMLFormElement, details: VaultEntryDetails) {
   const data = new FormData(form);
   if (String(data.get('label') ?? '') !== details.label) return true;
-  if (String(data.get('cardNumber') ?? '').trim() || Boolean(data.get('password'))) return true;
+  if (
+    String(data.get('cardNumber') ?? '').trim() ||
+    Boolean(data.get('password')) ||
+    String(data.get('authenticatorKey') ?? '').trim() ||
+    data.get('removeAuthenticator')
+  )
+    return true;
   if (details.kind === 'login') return String(data.get('username') ?? '') !== details.username;
   const expiry = parseCardExpiry(data.get('expiry'));
   return (
@@ -215,6 +221,12 @@ export function VaultDetails({
     if (isCard && !replacement.trim()) replacement = '';
     const hasPassword =
       details.kind === 'login' && (Boolean(replacement) || details.hasPassword !== false);
+    let authenticatorKey = data.get('removeAuthenticator')
+      ? ''
+      : String(data.get('authenticatorKey') ?? '').trim() || undefined;
+    const hasAuthenticator =
+      details.kind === 'login' &&
+      (authenticatorKey === undefined ? details.hasAuthenticator : Boolean(authenticatorKey));
     let body = JSON.stringify(
       isCard
         ? {
@@ -230,11 +242,14 @@ export function VaultDetails({
               suggestLoginName(entry.kind === 'login' ? entry.origin : ''),
             username,
             ...(replacement ? { password: replacement } : {}),
+            ...(authenticatorKey === undefined ? {} : { authenticatorKey }),
           },
     );
     replacement = '';
+    authenticatorKey = undefined;
     data.delete('password');
     data.delete('cardNumber');
+    data.delete('authenticatorKey');
     hideSecrets();
     const request = new AbortController();
     saveRequest.current = request;
@@ -260,7 +275,7 @@ export function VaultDetails({
       setDetails(
         updated.kind === 'card'
           ? { ...updated, cardholder }
-          : { ...updated, username, hasPassword },
+          : { ...updated, username, hasPassword, hasAuthenticator },
       );
       setFormRevision((value) => value + 1);
       setDirty(false);
@@ -268,7 +283,12 @@ export function VaultDetails({
       setNotice(isCard ? 'Card updated.' : 'Login updated.');
       onSaved(updated.kind === 'card' ? updated : { ...updated, username });
     } catch {
-      if (current()) setError(`This ${item} could not be updated. Try again.`);
+      if (current())
+        setError(
+          isCard
+            ? 'This card could not be updated. Try again.'
+            : 'This login could not be updated. Check the authenticator key and try again.',
+        );
     } finally {
       body = '';
       if (current()) {
@@ -429,7 +449,7 @@ export function VaultDetails({
   }
 
   function editableValue(field: string, value: React.ReactNode) {
-    const label = `Edit ${field === 'label' ? 'name' : field === 'username' ? identityName.toLowerCase() : field}`;
+    const label = `Edit ${field === 'label' ? 'name' : field === 'username' ? identityName.toLowerCase() : field === 'authenticatorKey' ? 'authenticator key' : field}`;
     return (
       <button
         type="button"
@@ -569,12 +589,25 @@ export function VaultDetails({
               )}
             </>
           ) : (
-            field(
-              'Password',
-              details.hasPassword === false
-                ? editableValue('password', <span className="vault-secret-empty">Not saved</span>)
-                : secretControls('password', 'Password', '••••••••'),
-            )
+            <>
+              {field(
+                'Password',
+                details.hasPassword === false
+                  ? editableValue('password', <span className="vault-secret-empty">Not saved</span>)
+                  : secretControls('password', 'Password', '••••••••'),
+              )}
+              {field(
+                'Authenticator',
+                editableValue(
+                  'authenticatorKey',
+                  details.hasAuthenticator ? (
+                    'Saved'
+                  ) : (
+                    <span className="vault-secret-empty">Not saved</span>
+                  ),
+                ),
+              )}
+            </>
           )}
         </div>
       )}

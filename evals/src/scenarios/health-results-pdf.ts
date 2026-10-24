@@ -28,6 +28,7 @@ function report(now: number) {
     ),
     '',
     'Results are for your doctor to interpret together with your history.',
+    'Clinician follow-up plan: repeat the fasting lipid panel and vitamin D test in three months.',
   ]);
 }
 
@@ -81,7 +82,7 @@ export default scenario({
     );
   },
   evidence(run) {
-    return `The report: ${results.map(([t, v, r, f]) => `${t} ${v} (${r}) ${f}`).join('; ')}.\nSchedules: ${run.schedules.map((s) => `${s.kind} runAt=${s.runAt ? new Date(s.runAt).toISOString().slice(0, 10) : '-'} cron=${s.cron ?? '-'} "${s.title}"`).join('; ') || 'none'}.`;
+    return `The report: ${results.map(([t, v, r, f]) => `${t} ${v} (${r}) ${f}`).join('; ')}. The synthetic clinician's follow-up plan says to repeat the fasting lipid panel and vitamin D test in three months.\nSchedules: ${run.schedules.map((s) => `${s.kind} runAt=${s.runAt ? new Date(s.runAt).toISOString().slice(0, 10) : '-'} cron=${s.cron ?? '-'} "${s.title}"`).join('; ') || 'none'}.`;
   },
   expect(world) {
     return [

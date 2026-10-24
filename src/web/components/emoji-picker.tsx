@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Flag, Gamepad2, Heart, Leaf, Lightbulb, Plane, Plus, Smile, Utensils } from 'lucide-react';
+import { Flag, Gamepad2, Heart, Leaf, Lightbulb, Plane, Plus, Smile, Utensils } from './icons';
 import { reactionEmoji } from '../../shared/emoji';
 import { reactionName } from '../lib/reactions';
 import { Loading } from './ui';

@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Chat, ConsoleLogger } from 'chat';
-import { createTelegramAdapter } from '@chat-adapter/telegram';
-import { createWhatsAppAdapter } from '@chat-adapter/whatsapp';
+import { TelegramAdapter } from '@chat-adapter/telegram';
+import { WhatsAppAdapter } from '@chat-adapter/whatsapp';
 import { createPostgresState } from '@chat-adapter/state-pg';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -13,7 +13,8 @@ import type {
   MessagingWebhookResult,
 } from '../../ports/messaging.ts';
 import { telegramSecret, telegramUserId } from '../../ports/channel-settings.ts';
-import { telegramMessage, telegramPairing } from './telegram.ts';
+import { telegramMessage, telegramPairing, telegramAttachments } from './telegram.ts';
+import { contactCards, sharedLocation } from '../../shared/channel-content.ts';
 
 type Environment = Record<string, string | undefined>;
 
@@ -34,6 +35,31 @@ const telegramReaction = z.object({
     .array(z.object({ type: z.string(), emoji: z.string().min(1).max(64).optional() }))
     .max(10),
 });
+class Telegram extends TelegramAdapter {
+  draft(threadId: string, text: string) {
+    return this.telegramFetch('sendMessageDraft', {
+      chat_id: this.decodeThreadId(threadId).chatId,
+      draft_id: 1,
+      text: Array.from(text).slice(0, 4096).join(''),
+    });
+  }
+}
+
+class WhatsApp extends WhatsAppAdapter {
+  async typing(messageId: string) {
+    const result = await this.graphApiRequest<{ success?: boolean }>(
+      `/${this.phoneNumberId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: messageId,
+        typing_indicator: { type: 'text' },
+      },
+    );
+    if (result.success === false) throw new Error('WhatsApp did not show typing.');
+  }
+}
+
 const telegramReactions = new Set(
   '❤ 👍 👎 🔥 🥰 👏 😁 🤔 🤯 😱 🤬 😢 🎉 🤩 🤮 💩 🙏 👌 🕊 🤡 🥱 🥴 😍 🐳 ❤‍🔥 🌚 🌭 💯 🤣 ⚡ 🍌 🏆 💔 🤨 😐 🍓 🍾 💋 🖕 😈 😴 😭 🤓 👻 👨‍💻 👀 🎃 🙈 😇 😨 🤝 ✍ 🤗 🫡 🎅 🎄 ☃ 💅 🤪 🗿 🆒 💘 🙉 🦄 😘 💊 🙊 😎 👾 🤷‍♂ 🤷 🤷‍♀ 😡'.split(
     ' ',
@@ -140,13 +166,14 @@ export function createChatSdkTransport(
 ): MessagingTransport {
   const env = { ...environment };
   const request = options.fetch ?? fetch;
+  const mediaRequest = request;
   const configuration = channelConfiguration(env);
   const configured = (provider: string) =>
     configuration.some(
       (channel) => channel.provider === provider && channel.status === 'configured',
     );
   const telegram = configured('telegram')
-    ? createTelegramAdapter({
+    ? new Telegram({
         botToken: env.TELEGRAM_BOT_TOKEN!,
         secretToken: env.TELEGRAM_WEBHOOK_SECRET_TOKEN!,
         allowedUserIds: [env.TELEGRAM_ALLOWED_USER_ID ?? ''],
@@ -157,7 +184,8 @@ export function createChatSdkTransport(
       })
     : undefined;
   const whatsapp = configured('whatsapp')
-    ? createWhatsAppAdapter({
+    ? new WhatsApp({
+        userName: 'nod',
         accessToken: env.WHATSAPP_ACCESS_TOKEN!,
         appSecret: env.WHATSAPP_APP_SECRET!,
         phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID!,
@@ -185,8 +213,8 @@ export function createChatSdkTransport(
       channel.provider === 'telegram' ? env.TELEGRAM_ALLOWED_USER_ID : env.WHATSAPP_ALLOWED_NUMBER,
     ].filter((value): value is string => Boolean(value)),
     ...(channel.provider === 'whatsapp'
-      ? { replyWindowMs: 86400000 }
-      : { supportsAttachments: true }),
+      ? { replyWindowMs: 86400000, presenceMs: 20000 }
+      : { supportsAttachments: true, presenceMs: 4000 }),
   }));
   const error = (status: number, message: string): MessagingWebhookResult => ({
     status,
@@ -353,10 +381,24 @@ export function createChatSdkTransport(
         const parsed = telegramMessage.safeParse(update.success ? update.data.message : undefined);
         if (!parsed.success || String(parsed.data.from.id) !== String(parsed.data.chat.id))
           return accepted();
+        if (
+          env.TELEGRAM_ALLOWED_USER_ID &&
+          String(parsed.data.from.id) !== env.TELEGRAM_ALLOWED_USER_ID
+        )
+          return accepted();
+        const attachments = telegramAttachments(parsed.data, env.TELEGRAM_BOT_TOKEN!, mediaRequest);
+        const text = parsed.data.text || parsed.data.caption || '';
+        if (!text && !attachments.length) return accepted();
         const start = /^\/start(?:\s+(\S+))?$/.exec(parsed.data.text);
         if (env.TELEGRAM_ALLOWED_USER_ID && start) return accepted();
-        const { reply_to_message: replied, ...rawMessage } = parsed.data;
-        const message = telegram.parseMessage(rawMessage);
+        const replied = parsed.data.reply_to_message;
+        const message = telegram.parseMessage({
+          message_id: parsed.data.message_id,
+          date: parsed.data.date,
+          chat: parsed.data.chat,
+          from: parsed.data.from,
+          text,
+        });
         const replyId = replied
           ? telegram.parseMessage({
               message_id: replied.message_id,
@@ -380,7 +422,8 @@ export function createChatSdkTransport(
             messageId: message.id,
             replyToMessageId: replyId,
             threadId: message.threadId,
-            text: message.text,
+            text,
+            ...(attachments.length ? { attachments } : {}),
             sentAt: message.metadata.dateSent,
           },
         ]);
@@ -454,6 +497,23 @@ export function createChatSdkTransport(
       else await adapter.removeReaction(input.threadId, input.messageId, '');
       return 'sent';
     },
+    async presence(input) {
+      if (
+        !channels.some(
+          (channel) =>
+            channel.id === input.channelId &&
+            channel.status === 'configured' &&
+            channel.accountId === input.accountId,
+        )
+      )
+        throw new Error('Channel is not configured.');
+      await bot.initialize();
+      if (input.channelId === 'telegram' && telegram) {
+        await telegram.startTyping(input.threadId);
+        if (input.status) await telegram.draft(input.threadId, input.status);
+      }
+      if (input.channelId === 'whatsapp' && whatsapp) await whatsapp.typing(input.messageId);
+    },
     async post(input) {
       if (
         !channels.some(
@@ -470,50 +530,191 @@ export function createChatSdkTransport(
       await bot.initialize();
       const thread = bot.thread(input.threadId);
       const unsent = attachments.filter((file) => !file.size || file.size > telegramFileBytes);
+      const caption =
+        input.channelId === 'telegram' &&
+        attachments.length === 1 &&
+        !unsent.length &&
+        !attachments[0].mimeType.startsWith('audio/') &&
+        !/^(?:text\/(?:x-)?vcard)$/.test(attachments[0].mimeType) &&
+        attachments[0].name !== 'location.json' &&
+        input.text.trim() &&
+        input.text.length <= 1024
+          ? input.text
+          : '';
       let id = '';
       const ids: string[] = [];
       const post = (message: Parameters<typeof thread.reply>[1]) =>
         input.replyToMessageId
           ? thread.reply(input.replyToMessageId, message)
           : thread.post(message);
-      for (const part of input.channelId === 'telegram' ? chunks(input.text) : [input.text]) {
+      for (const part of input.channelId === 'telegram'
+        ? chunks(caption ? '' : input.text)
+        : [input.text]) {
         const sent = await post({ markdown: part });
         id ||= sent.id;
         ids.push(sent.id);
       }
       for (const file of attachments) {
         if (unsent.includes(file)) continue;
-        await file
-          .read()
-          .then((bytes) =>
-            post({
-              markdown: '',
-              attachments: [
-                {
-                  type:
-                    ['image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType) &&
-                    file.size <= 10 * 1024 * 1024
-                      ? 'image'
-                      : file.mimeType === 'video/mp4'
-                        ? 'video'
-                        : 'file',
-                  data: Buffer.from(bytes),
-                  name: file.name,
-                  mimeType: file.mimeType,
-                  size: file.size,
-                },
-              ],
-            }),
-          )
-          .then(
-            (sent) => {
+        if (input.channelId === 'telegram' && /^audio\/(ogg|mpeg|mp4)$/.test(file.mimeType)) {
+          const decoded = telegram!.decodeThreadId(input.threadId);
+          const body = new FormData();
+          body.set('chat_id', decoded.chatId);
+          if (decoded.messageThreadId)
+            body.set('message_thread_id', String(decoded.messageThreadId));
+          if (input.replyToMessageId)
+            body.set(
+              'reply_parameters',
+              JSON.stringify({ message_id: Number(input.replyToMessageId.split(':').at(-1)) }),
+            );
+          let bytes: Uint8Array;
+          try {
+            bytes = await file.read();
+          } catch {
+            unsent.push(file);
+            continue;
+          }
+          body.set('voice', new Blob([Uint8Array.from(bytes)], { type: file.mimeType }), file.name);
+          const response = await request(
+            `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendVoice`,
+            { method: 'POST', body, signal: AbortSignal.timeout(60_000), redirect: 'error' },
+          );
+          if (!response.ok) throw new Error('Voice delivery was not confirmed.');
+          const sent = z
+            .object({
+              ok: z.literal(true),
+              result: z.object({ message_id: z.number().int().positive() }),
+            })
+            .parse(await response.json());
+          const voiceId = `${decoded.chatId}:${sent.result.message_id}`;
+          id ||= voiceId;
+          ids.push(voiceId);
+          continue;
+        }
+        let bytes: Uint8Array;
+        try {
+          bytes = await file.read();
+        } catch {
+          if (caption)
+            for (const part of chunks(input.text)) {
+              const sent = await post({ markdown: part });
               id ||= sent.id;
               ids.push(sent.id);
+            }
+          unsent.push(file);
+          continue;
+        }
+        if (
+          input.channelId === 'telegram' &&
+          bytes.length === file.size &&
+          ((/^(?:text\/(?:x-)?vcard)$/.test(file.mimeType) && bytes.length <= 2048) ||
+            (file.name === 'location.json' && bytes.length <= 4096))
+        ) {
+          const text = new TextDecoder().decode(bytes);
+          const contacts = /^(?:text\/(?:x-)?vcard)$/.test(file.mimeType) ? contactCards(text) : [];
+          let location;
+          try {
+            if (file.name === 'location.json')
+              location = sharedLocation.safeParse(JSON.parse(text));
+          } catch {}
+          const native =
+            contacts.length === 1 &&
+            Buffer.byteLength(contacts[0].vcard) <= 2048 &&
+            /^\+?(?:[\s().-]*\d)+[\s().-]*$/.test(contacts[0].phones[0] ?? '')
+              ? contacts.map((contact) => ({
+                  method: 'sendContact',
+                  data: {
+                    phone_number: contact.phones[0],
+                    first_name: contact.name,
+                    vcard: contact.vcard,
+                  },
+                }))
+              : location?.success
+                ? [
+                    {
+                      method:
+                        location.data.name || location.data.address ? 'sendVenue' : 'sendLocation',
+                      data: {
+                        latitude: location.data.latitude,
+                        longitude: location.data.longitude,
+                        ...(location.data.name || location.data.address
+                          ? {
+                              title: location.data.name || location.data.address,
+                              address: location.data.address || location.data.name,
+                            }
+                          : {}),
+                      },
+                    },
+                  ]
+                : [];
+          const decoded = telegram!.decodeThreadId(input.threadId);
+          for (const message of native) {
+            const response = await request(
+              `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${message.method}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: decoded.chatId,
+                  ...(decoded.messageThreadId
+                    ? { message_thread_id: decoded.messageThreadId }
+                    : {}),
+                  ...(input.replyToMessageId
+                    ? {
+                        reply_parameters: {
+                          message_id: Number(input.replyToMessageId.split(':').at(-1)),
+                        },
+                      }
+                    : {}),
+                  ...message.data,
+                }),
+                signal: AbortSignal.timeout(60_000),
+                redirect: 'error',
+              },
+            );
+            if (!response.ok) {
+              await response.body?.cancel().catch(() => {});
+              throw new Error('Message delivery was not confirmed.');
+            }
+            const sent = z
+              .object({
+                ok: z.literal(true),
+                result: z.object({ message_id: z.number().int().positive() }),
+              })
+              .parse(await response.json());
+            const nativeId = `${decoded.chatId}:${sent.result.message_id}`;
+            id ||= nativeId;
+            ids.push(nativeId);
+          }
+          if (native.length) continue;
+        }
+        await post({
+          markdown: caption,
+          attachments: [
+            {
+              type:
+                ['image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType) &&
+                file.size <= 10 * 1024 * 1024
+                  ? 'image'
+                  : file.mimeType === 'video/mp4'
+                    ? 'video'
+                    : 'file',
+              data: Buffer.from(bytes),
+              name: file.name,
+              mimeType: file.mimeType,
+              size: file.size,
             },
-            () => {
-              unsent.push(file);
-            },
-          );
+          ],
+        }).then(
+          (sent) => {
+            id ||= sent.id;
+            ids.push(sent.id);
+          },
+          () => {
+            if (caption) throw new Error('Media delivery was not confirmed.');
+            unsent.push(file);
+          },
+        );
       }
       if (unsent.length) {
         const notice = await input

@@ -1,82 +1,215 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Check, LoaderCircle } from 'lucide-react';
-import type { ModelConnection, ModelProvider, ModelsResponse } from '../../../../shared/models';
-import { modelProviderNames, modelSource } from '../../../../shared/models';
-import { agentModels } from '../../../../shared/model-defaults';
-import { Button, Input } from '../../../components/ui';
-import { ModelPicker } from '../../../components/models';
 import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
+import {
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  LoaderCircle,
+} from '../../../components/icons';
+import type { ModelConnection, ModelProvider, ModelsResponse } from '../../../../shared/models';
+import {
+  modelProviderInfo,
+  modelProviderNames,
+  modelProviders,
+  modelSource,
+} from '../../../../shared/models';
+import { Button, Input, SearchField } from '../../../components/ui';
+import {
+  CloudKeyFields,
+  ModelKeyHelp,
+  ModelPicker,
+  ModelProviderLogo,
+} from '../../../components/models';
+import {
+  keyConnection,
+  keySettingsReady,
   localServerAddress,
   modelReady,
   modelSelection,
+  noKeySettings,
+  recommendedModel,
   useModelSignIn,
   useModels,
+  type KeySettings,
 } from '../../../hooks/use-models';
 import { api, ApiError, errorMessage } from '../../../lib/api';
+import { pageDataCache } from '../../../lib/page-data-cache';
 import type { StepProps } from '..';
 import { Rise } from '../../../components/motion';
 import { Bubble, Footer, Messages, useReveal, type RevealStep } from '../motion';
 
-const sequence: RevealStep[] = [
-  { typing: 450 },
-  { wait: 300, typing: 550 },
-  { wait: 200 },
-  { wait: 300 },
-];
+const sequence: RevealStep[] = [{ typing: 450 }, { wait: 200 }, { wait: 300 }];
 
-const providers: Record<
-  ModelProvider,
-  {
-    methods: string[];
-    sub?: string;
-    oauth?: string;
-    note?: string;
-    placeholder: string;
-    hint: string;
-  }
-> = {
-  openai: {
-    methods: ['ChatGPT plan', 'API key'],
-    oauth: 'Sign in with ChatGPT',
-    note: 'Uses your ChatGPT Plus or Pro plan. No API key needed.',
-    placeholder: 'sk-…',
-    hint: 'platform.openai.com/api-keys',
-  },
-  anthropic: {
-    methods: ['API key'],
-    note: 'Claude Pro and Max plans can’t be used here.',
-    placeholder: 'sk-ant-…',
-    hint: 'console.anthropic.com/settings/keys',
-  },
-  openrouter: {
-    methods: ['API key'],
-    oauth: 'Sign in to OpenRouter',
-    note: 'Creates an API key for me. Uses your OpenRouter credits.',
-    placeholder: 'sk-or-…',
-    hint: 'openrouter.ai/keys',
-  },
-  compatible: {
-    methods: ['Server address'],
-    sub: 'Ollama, LM Studio or vLLM',
-    placeholder: localServerAddress,
-    hint: '',
-  },
+type SignInProvider = 'openai' | 'openrouter';
+
+const providers = modelProviders.map((provider) => ({
+  provider,
+  name: provider === 'compatible' ? 'Your own server' : modelProviderNames[provider],
+  common: modelProviderInfo[provider].common,
+}));
+
+const common = providers.filter((item) => item.common);
+
+const placeholders: Partial<Record<ModelProvider, string>> = {
+  openai: 'sk-…',
+  anthropic: 'sk-ant-…',
+  openrouter: 'sk-or-…',
 };
 
-const order: ModelProvider[] = ['openai', 'anthropic', 'openrouter', 'compatible'];
+const depth = { list: 0, setup: 1, done: 2 } as const;
+
+type View = keyof typeof depth;
+
 const invalidKey = 'That key didn’t work. Check it and try again.';
 
-function recommended(source: ModelConnection) {
-  const subscription = source.method === 'subscription';
-  return (
-    (subscription && source.models.find((item) => item.id === 'gpt-6-sol')) ||
-    source.models.find((item) => item.id === agentModels[source.provider]) ||
-    source.models[0]
-  );
+function signsIn(provider: ModelProvider): provider is SignInProvider {
+  return provider === 'openai' || provider === 'openrouter';
 }
 
-function Logo({ provider }: { provider: ModelProvider }) {
-  return <span className={`ob-brain-logo ${provider}`} aria-hidden="true" />;
+function ownerChooses(source: ModelConnection) {
+  return ['amazon-bedrock', 'compatible'].includes(source.provider) && source.models.length > 1;
+}
+
+function recommended(source: ModelConnection) {
+  return ownerChooses(source) ? undefined : recommendedModel(source);
+}
+
+function useConnect() {
+  const models = useModels();
+  const [fresh, setFresh] = useState<string>();
+  const [another, setAnother] = useState(false);
+  const flow = useModelSignIn(models, (provider) => {
+    const latest = pageDataCache
+      .getSnapshot<ModelsResponse>('/api/models')
+      .data?.connections.filter((item) => item.provider === provider)
+      .at(-1);
+    setAnother(false);
+    setFresh(latest?.id);
+  });
+  const [checking, setChecking] = useState(false);
+  const [keyError, setKeyError] = useState('');
+  const submitting = useRef(false);
+  const data = models.data;
+  const connections = data?.connections ?? [];
+  const selected = connections.find((item) => item.id === data?.selection?.connectionId);
+  const usable = connections.filter((item) => item.status !== 'reconnect');
+  const shown = another
+    ? undefined
+    : (usable.find((item) => item.id === fresh) ??
+      usable.find((item) => item.id === selected?.id) ??
+      usable[0]);
+  const ready = modelReady(data) && selected?.id === shown?.id;
+  const recommendation = shown?.status === 'connected' ? recommended(shown) : undefined;
+  const signingIn = !!flow.signIn || flow.pending;
+
+  useEffect(() => {
+    if (!shown || !recommendation || ready || models.busy || models.error || signingIn || checking)
+      return;
+    void models.change('/api/models/selection', 'PUT', modelSelection(shown, recommendation.id));
+  }, [shown, recommendation, ready, models.busy, models.error, signingIn, checking]);
+
+  function clearError() {
+    setKeyError('');
+    models.setError('');
+  }
+
+  async function save(provider: ModelProvider, key: string, settings = noKeySettings, url = '') {
+    if (submitting.current) return false;
+    const value = key.trim();
+    const endpoint = provider === 'compatible';
+    const detailed =
+      endpoint ||
+      ['amazon-bedrock', 'azure', 'cloudflare-workers-ai', 'cloudflare-ai-gateway'].includes(
+        provider,
+      );
+    if (endpoint && !url.trim()) return (setKeyError('Enter the server address first.'), false);
+    if (!keySettingsReady(provider, settings))
+      return (setKeyError('Fill in every field first.'), false);
+    if (!endpoint && !value) return (setKeyError('Paste your API key first.'), false);
+    if (!endpoint && value.length < 8) return (setKeyError(invalidKey), false);
+    clearError();
+    submitting.current = true;
+    setChecking(true);
+    try {
+      const result = await api<ModelsResponse>(
+        endpoint ? '/api/models/endpoints' : '/api/models/keys',
+        {
+          method: 'POST',
+          body: JSON.stringify(
+            endpoint ? { url: url.trim(), key: value } : keyConnection(provider, value, settings),
+          ),
+        },
+      );
+      models.update(() => result);
+      setAnother(false);
+      setFresh(result.connections.at(-1)?.id);
+      return true;
+    } catch (cause) {
+      setKeyError(
+        cause instanceof ApiError && cause.status === 400 && !detailed
+          ? invalidKey
+          : errorMessage(cause),
+      );
+      return false;
+    } finally {
+      submitting.current = false;
+      setChecking(false);
+    }
+  }
+
+  function signIn(provider: SignInProvider) {
+    setKeyError('');
+    void flow.connect(provider);
+  }
+
+  return {
+    models,
+    flow,
+    data,
+    shown,
+    ready,
+    recommendation,
+    signingIn,
+    locked: models.busy || checking || flow.pending,
+    checking,
+    keyError,
+    expired: connections.find((item) => item.status === 'reconnect'),
+    clearError,
+    save,
+    signIn,
+    addAnother: () => {
+      models.setError('');
+      setAnother(true);
+    },
+    existing: (provider: ModelProvider) => usable.find((item) => item.provider === provider),
+    open: (id: string) => {
+      models.setError('');
+      setAnother(false);
+      setFresh(id);
+    },
+    keepCurrent: another && usable.length > 0 ? () => setAnother(false) : undefined,
+  };
+}
+
+type Connect = ReturnType<typeof useConnect>;
+
+function Logo({ provider, size = 20 }: { provider: ModelProvider; size?: number }) {
+  return <ModelProviderLogo provider={provider} size={size} />;
+}
+
+function Problem({ children }: { children?: string }) {
+  return children ? (
+    <p className="ob-brain-error" role="alert" data-analytics-private>
+      {children}
+    </p>
+  ) : null;
 }
 
 function Spinner() {
@@ -87,465 +220,527 @@ function Spinner() {
   );
 }
 
-function Problem({ children }: { children: string }) {
-  return children ? (
-    <p className="ob-brain-error" role="alert" data-analytics-private>
-      {children}
-    </p>
-  ) : null;
+function ConnectButton({ checking, saved = false }: { checking: boolean; saved?: boolean }) {
+  return (
+    <Button type="submit" variant="outline" disabled={checking}>
+      {checking && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
+      {checking ? (saved ? 'Saving' : 'Checking') : saved ? 'Save key' : 'Connect'}
+    </Button>
+  );
+}
+
+function Waiting({ c }: { c: Connect }) {
+  const [callback, setCallback] = useState('');
+  return (
+    <div className="ob-brain-status">
+      <Spinner />
+      <p className="ob-brain-wait">Finish signing in, then come back here.</p>
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={c.flow.pending}
+        onClick={() => void c.flow.cancel().then((done) => done && setCallback(''))}
+      >
+        Cancel
+      </Button>
+      {c.flow.signIn && (
+        <details className="ob-brain-fallback">
+          <summary>Sign-in page didn’t open?</summary>
+          <p>
+            <button type="button" className="ob-link" onClick={c.flow.reopen}>
+              Open it again
+            </button>{' '}
+            or paste the address your browser ended up on.
+          </p>
+          <form
+            className="ob-brain-row"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const url = callback;
+              setCallback('');
+              void c.flow.complete(url);
+            }}
+          >
+            <Input
+              type="url"
+              required
+              autoComplete="off"
+              placeholder="Paste the address here"
+              aria-label="Sign-in address"
+              value={callback}
+              disabled={c.models.busy}
+              data-analytics-private
+              onChange={(event) => setCallback(event.target.value)}
+            />
+            <Button type="submit" variant="outline" disabled={c.models.busy}>
+              Finish
+            </Button>
+          </form>
+        </details>
+      )}
+      <Problem>{c.models.error}</Problem>
+    </div>
+  );
+}
+
+function KeyForm({
+  c,
+  provider,
+  autoFocus,
+}: {
+  c: Connect;
+  provider: ModelProvider;
+  autoFocus?: boolean;
+}) {
+  const [key, setKey] = useState('');
+  const [settings, setSettings] = useState<KeySettings>(noKeySettings);
+  const id = `ob-brain-key-${provider}`;
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (await c.save(provider, key, settings)) {
+      setKey('');
+      setSettings(noKeySettings);
+    }
+  }
+  return (
+    <form className="ob-brain-form" onSubmit={(event) => void submit(event)} noValidate>
+      <CloudKeyFields
+        provider={provider}
+        value={settings}
+        onChange={(next) => {
+          setSettings(next);
+          c.clearError();
+        }}
+        disabled={c.checking}
+      />
+      <label className="ob-brain-label" htmlFor={id}>
+        API key
+      </label>
+      <div className="ob-brain-row">
+        <Input
+          id={id}
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={32000}
+          placeholder={placeholders[provider]}
+          autoFocus={
+            autoFocus &&
+            !['amazon-bedrock', 'azure', 'cloudflare-workers-ai', 'cloudflare-ai-gateway'].includes(
+              provider,
+            )
+          }
+          value={key}
+          disabled={c.checking}
+          aria-invalid={!!c.keyError}
+          data-analytics-private
+          onChange={(event) => {
+            setKey(event.target.value);
+            c.clearError();
+          }}
+        />
+        <ConnectButton
+          checking={c.checking}
+          saved={modelProviderInfo[provider].catalog === 'bundled'}
+        />
+      </div>
+      <Problem>{c.keyError}</Problem>
+      <ModelKeyHelp provider={provider} className="ob-brain-note" />
+    </form>
+  );
+}
+
+function ServerForm({ c }: { c: Connect }) {
+  const [url, setUrl] = useState(localServerAddress);
+  const [key, setKey] = useState('');
+  return (
+    <form
+      className="ob-brain-form"
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        void c.save('compatible', key, noKeySettings, url).then((saved) => saved && setKey(''));
+      }}
+    >
+      <label className="ob-brain-label" htmlFor="ob-brain-url">
+        Server address
+      </label>
+      <Input
+        id="ob-brain-url"
+        type="url"
+        autoComplete="off"
+        spellCheck={false}
+        maxLength={2000}
+        placeholder={localServerAddress}
+        autoFocus
+        value={url}
+        disabled={c.checking}
+        aria-invalid={!!c.keyError}
+        aria-describedby="ob-brain-url-hint"
+        data-analytics-private
+        onChange={(event) => {
+          setUrl(event.target.value);
+          c.clearError();
+        }}
+      />
+      <p className="ob-brain-note ob-brain-server-hint" id="ob-brain-url-hint">
+        Ollama, LM Studio, vLLM or any OpenAI-compatible server.
+      </p>
+      <label className="ob-brain-label" htmlFor="ob-brain-server-key">
+        API key <span className="ob-brain-optional">optional</span>
+      </label>
+      <div className="ob-brain-row">
+        <Input
+          id="ob-brain-server-key"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={32000}
+          value={key}
+          disabled={c.checking}
+          data-analytics-private
+          onChange={(event) => {
+            setKey(event.target.value);
+            c.clearError();
+          }}
+        />
+        <ConnectButton checking={c.checking} />
+      </div>
+      <Problem>{c.keyError}</Problem>
+      <p className="ob-brain-note">
+        This model also decides when I ask before acting. Small models can get that wrong.
+      </p>
+    </form>
+  );
+}
+
+function SignInFirst({ c, provider }: { c: Connect; provider: SignInProvider }) {
+  const [key, setKey] = useState(false);
+  return (
+    <div className="ob-brain-signin">
+      <div className="ob-brain-oauth">
+        <Button disabled={c.locked} autoFocus onClick={() => c.signIn(provider)}>
+          <Logo provider={provider} size={18} />
+          {provider === 'openai' ? 'Sign in with ChatGPT' : 'Sign in to OpenRouter'}
+        </Button>
+        <p className="ob-brain-note">
+          {provider === 'openai'
+            ? 'Uses your ChatGPT Plus or Pro plan.'
+            : 'Creates a key for me and uses your OpenRouter credits.'}
+        </p>
+      </div>
+      <Problem>{c.models.error}</Problem>
+      {key ? (
+        <div className="ob-brain-reveal">
+          <KeyForm c={c} provider={provider} autoFocus />
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="ob-link ob-brain-quiet"
+          onClick={() => {
+            c.clearError();
+            setKey(true);
+          }}
+        >
+          Use an API key instead
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Setup({ c, provider }: { c: Connect; provider: ModelProvider }) {
+  if (c.signingIn) return <Waiting c={c} />;
+  if (provider === 'compatible') return <ServerForm c={c} />;
+  if (signsIn(provider)) return <SignInFirst c={c} provider={provider} />;
+  return <KeyForm c={c} provider={provider} autoFocus />;
+}
+
+function Connected({ c }: { c: Connect }) {
+  const source = c.shown!;
+  const saved = modelProviderInfo[source.provider]?.catalog === 'bundled';
+  const choosing =
+    source.status === 'connected' &&
+    !c.ready &&
+    (ownerChooses(source) || (!c.recommendation && source.models.length > 0));
+  const missing = source.status === 'connected' && !c.ready && !c.recommendation && !choosing;
+  return (
+    <div className="ob-brain-connected">
+      <div className="ob-brain-status">
+        <span className="ob-brain-icon ob-brain-done" aria-hidden="true">
+          <Check size={18} strokeWidth={2.5} />
+        </span>
+        <div className="ob-brain-status-text">
+          <p className="ob-brain-title">
+            {saved ? 'Key saved for ' : 'Connected to '}
+            <span data-analytics-private>
+              {source.provider === 'compatible' ? source.label : modelSource(source)}
+            </span>
+          </p>
+          <p className="ob-brain-note">
+            {source.status === 'loading'
+              ? 'Load the models for this account to continue.'
+              : choosing
+                ? 'Choose the model I should use.'
+                : missing
+                  ? 'The default model isn’t available for this account.'
+                  : saved
+                    ? 'Access checked on first use. You can change the model any time.'
+                    : 'I’ll use this model for every reply. You can change it any time.'}
+          </p>
+        </div>
+      </div>
+      {source.status === 'connected' && (c.ready || choosing) && (
+        <div className="ob-brain-model" data-analytics-private>
+          <span className="ob-brain-model-label">{choosing ? 'Model' : 'Using'}</span>
+          <ModelPicker manageConnections={false} surface="onboarding" />
+        </div>
+      )}
+      {(source.status === 'loading' || missing || c.models.error) && (
+        <Button
+          variant="outline"
+          disabled={c.models.busy}
+          onClick={() =>
+            void c.models.change(`/api/models/connections/${source.id}/refresh`, 'POST')
+          }
+        >
+          {c.models.busy && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
+          Load models
+        </Button>
+      )}
+      <Problem>{c.models.error}</Problem>
+      <button type="button" className="ob-link ob-brain-another" onClick={c.addAnother}>
+        Use a different provider
+      </button>
+    </div>
+  );
+}
+
+function Card({
+  page,
+  direction,
+  children,
+}: {
+  page: string;
+  direction: 'forward' | 'back';
+  children: ReactNode;
+}) {
+  const inner = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number>();
+  useLayoutEffect(() => {
+    const node = inner.current!;
+    const observer = new ResizeObserver(() => setHeight(node.offsetHeight));
+    observer.observe(node);
+    setHeight(node.offsetHeight);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div className="ob-brain-card" style={height ? { height } : undefined}>
+      <div ref={inner}>
+        <div key={page} className="ob-brain-page" data-direction={direction}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function Brain({ arrived, onNext, onBack }: StepProps) {
   const { revealed, typing, done, skip } = useReveal(sequence, { enabled: arrived === 'forward' });
-  const models = useModels();
-  const [connected, setConnected] = useState<ModelProvider | null>(null);
-  const flow = useModelSignIn(models, setConnected);
-  const data = models.data;
-  const [choice, setChoice] = useState<ModelProvider>();
-  const [key, setKey] = useState('');
-  const [url, setUrl] = useState(localServerAddress);
-  const [keyError, setKeyError] = useState('');
-  const [checking, setChecking] = useState(false);
-  const [callback, setCallback] = useState('');
-  const keyField = useRef<HTMLInputElement>(null);
-  const connections = data?.connections ?? [];
-  const selected = connections.find((item) => item.id === data?.selection?.connectionId);
-  const usable = (provider: ModelProvider) =>
-    connections.filter((item) => item.provider === provider && item.status !== 'reconnect');
-  const provider = choice ?? selected?.provider ?? order.find((item) => usable(item).length);
-  const here = provider ? usable(provider) : [];
-  const source = here.find((item) => item.status === 'connected' && recommended(item));
-  const selectedReady = modelReady(data);
-  const shown =
-    here.find(
-      (item) =>
-        item.id === selected?.id &&
-        item.status === 'connected' &&
-        (selectedReady || recommended(item)),
-    ) ??
-    source ??
-    here[0];
-  const recommendation = shown && recommended(shown);
-  const ready = selectedReady && selected?.id === shown?.id;
-  const locked = models.busy || checking || flow.pending;
+  const c = useConnect();
+  const [picked, setPicked] = useState<ModelProvider>();
+  const [expanded, setExpanded] = useState(false);
+  const [search, setSearch] = useState('');
+  const [restore, setRestore] = useState<ModelProvider>();
+  const rows = useRef(new Map<ModelProvider, HTMLButtonElement>());
+  const searchInput = useRef<HTMLInputElement>(null);
+  const entry = providers.find((item) => item.provider === picked);
+  const view: View = c.shown ? 'done' : entry ? 'setup' : 'list';
+  const page = view === 'setup' ? `setup:${entry!.provider}` : view;
+  const [motion, setMotion] = useState({ page, view, direction: 'forward' as 'forward' | 'back' });
+  if (motion.page !== page) {
+    setMotion({
+      page,
+      view,
+      direction: depth[view] >= depth[motion.view] ? 'forward' : 'back',
+    });
+    if (view === 'done' && picked) setPicked(undefined);
+  }
 
   useEffect(() => {
-    if (
-      arrived !== 'forward' ||
-      !provider ||
-      connected !== provider ||
-      !ready ||
-      models.busy ||
-      models.error ||
-      checking ||
-      flow.signIn ||
-      flow.pending ||
-      (shown?.provider === 'compatible' && shown.models.length > 1)
-    )
-      return;
-    setConnected(null);
-    onNext();
-  }, [
-    arrived,
-    connected,
-    provider,
-    ready,
-    models.busy,
-    models.error,
-    checking,
-    flow.signIn,
-    flow.pending,
-    shown,
-    onNext,
-  ]);
+    if (expanded) searchInput.current?.focus();
+  }, [expanded]);
 
   useEffect(() => {
-    if (
-      !shown ||
-      shown.status !== 'connected' ||
-      !recommendation ||
-      ready ||
-      models.busy ||
-      models.error ||
-      flow.signIn ||
-      flow.pending ||
-      checking
-    )
-      return;
-    void models.change('/api/models/selection', 'PUT', modelSelection(shown, recommendation.id));
-  }, [
-    shown,
-    recommendation,
-    ready,
-    models.busy,
-    models.error,
-    flow.signIn,
-    flow.pending,
-    checking,
-  ]);
+    if (view !== 'list' || !restore) return;
+    rows.current.get(restore)?.focus();
+    setRestore(undefined);
+  }, [view, restore]);
 
-  function pick(next: ModelProvider) {
-    models.setError('');
-    if (next === provider) return;
-    setConnected(null);
-    if (flow.signIn) void flow.cancel();
-    setChoice(next);
-    setKey('');
-    setUrl(localServerAddress);
-    setKeyError('');
-    setCallback('');
-    if (next === 'anthropic') requestAnimationFrame(() => keyField.current?.focus());
+  function back() {
+    c.clearError();
+    if (c.flow.signIn) void c.flow.cancel();
+    setRestore(picked);
+    setPicked(undefined);
   }
 
-  function startSignIn() {
-    if (provider !== 'openai' && provider !== 'openrouter') return;
-    setKeyError('');
-    const reconnect = connections.find(
-      (item) =>
-        item.provider === provider && item.status === 'reconnect' && item.method !== 'api_key',
-    );
-    void flow.connect(provider, reconnect?.id);
-  }
+  const keepCurrent = view === 'list' ? c.keepCurrent : undefined;
+  const visible = (expanded ? providers : common).filter((item) =>
+    `${item.name} ${item.provider === 'compatible' ? 'Ollama LM Studio vLLM local server' : item.provider}`
+      .toLowerCase()
+      .includes(search.trim().toLowerCase()),
+  );
 
-  async function saveKey(event: FormEvent) {
-    event.preventDefault();
-    if (checking || !provider) return;
-    const value = key.trim();
-    const endpoint = provider === 'compatible';
-    if (endpoint && !url.trim()) return setKeyError('Enter the server address first.');
-    if (!endpoint && !value) return setKeyError('Paste your API key first.');
-    if (!endpoint && value.length < 8) return setKeyError(invalidKey);
-    setKeyError('');
-    models.setError('');
-    setChecking(true);
-    try {
-      const result = await api<ModelsResponse>(
-        endpoint ? '/api/models/endpoints' : '/api/models/keys',
-        {
-          method: 'POST',
-          body: JSON.stringify(
-            endpoint ? { url: url.trim(), key: value } : { provider, key: value },
-          ),
-        },
-      );
-      models.update(() => result);
-      setConnected(provider);
-      setKey('');
-      setUrl(localServerAddress);
-    } catch (cause) {
-      setKeyError(
-        cause instanceof ApiError && cause.status === 400 && !endpoint
-          ? invalidKey
-          : errorMessage(cause),
-      );
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  function options(provider: ModelProvider) {
-    const settings = providers[provider];
-    if (!data)
-      return (
-        <div className="ob-brain-status" data-analytics-public>
-          <Spinner />
-          <p className="ob-brain-wait">
-            {models.error ? <span data-analytics-private>{models.error}</span> : 'Loading…'}
-          </p>
-        </div>
-      );
-    if (shown)
-      return (
-        <div className="ob-brain-status">
-          <span className="ob-brain-icon ob-brain-done" aria-hidden="true">
-            <Check size={18} strokeWidth={2.5} />
-          </span>
-          <div className="ob-brain-status-text" data-analytics-public>
-            <p className="ob-brain-title">
-              Connected to{' '}
-              <span data-analytics-private>
-                {shown.provider === 'compatible' ? shown.label : modelSource(shown)}
-              </span>
-            </p>
-            <p className="ob-brain-note">
-              {shown.status === 'loading'
-                ? 'Refresh to load the models for this account.'
-                : 'You can add more later in Settings.'}
-            </p>
-          </div>
-          {shown.provider === 'compatible' && ready && (
-            <ModelPicker manageConnections={false} surface="onboarding" />
-          )}
-          {(shown.status === 'loading' || (!ready && !recommendation) || models.error) && (
-            <Button
-              variant="outline"
-              disabled={models.busy}
-              onClick={() => {
-                void models.change(`/api/models/connections/${shown.id}/refresh`, 'POST');
-              }}
-            >
-              {models.busy && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
-              Refresh models
-            </Button>
-          )}
-          {shown.status === 'connected' && !ready && !recommendation && (
-            <Problem>
-              The default model isn’t available for this account. Refresh the models or choose
-              another provider.
-            </Problem>
-          )}
-          <Problem>{models.error}</Problem>
-        </div>
-      );
-    if (flow.signIn || flow.pending)
-      return (
-        <div className="ob-brain-status">
-          <Spinner />
-          <p className="ob-brain-wait" data-analytics-public>
-            Finish signing in, then come back here.
-          </p>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={flow.pending}
-            data-analytics-public
-            onClick={() => void flow.cancel().then((done) => done && setCallback(''))}
-          >
-            Cancel
-          </Button>
-          {flow.signIn && (
-            <details className="ob-brain-fallback">
-              <summary data-analytics-public>Sign-in page didn’t open?</summary>
-              <p data-analytics-public>
-                <button type="button" className="ob-link" onClick={flow.reopen}>
-                  Open it again
-                </button>{' '}
-                or paste the address your browser ended up on.
-              </p>
-              <form
-                className="ob-brain-row"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const url = callback;
-                  setCallback('');
-                  void flow.complete(url);
+  const list = (
+    <>
+      {expanded && (
+        <SearchField
+          inputRef={searchInput}
+          placeholder="Search providers"
+          aria-label="Search providers"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          onClear={() => setSearch('')}
+        />
+      )}
+      <ul className="ob-brain-providers" aria-label="AI providers">
+        {visible.map((item) => {
+          const existing = c.existing(item.provider);
+          return (
+            <li key={item.provider}>
+              <button
+                ref={(node) => {
+                  if (node) rows.current.set(item.provider, node);
+                  else rows.current.delete(item.provider);
+                }}
+                type="button"
+                className="ob-brain-provider"
+                disabled={c.locked}
+                onClick={() => {
+                  c.clearError();
+                  if (existing) c.open(existing.id);
+                  else setPicked(item.provider);
                 }}
               >
-                <Input
-                  type="url"
-                  required
-                  autoComplete="off"
-                  placeholder="Paste the address here"
-                  aria-label="Sign-in address"
-                  value={callback}
-                  disabled={models.busy}
-                  data-analytics-private
-                  onChange={(event) => setCallback(event.target.value)}
-                />
-                <Button type="submit" variant="outline" disabled={models.busy}>
-                  Finish
-                </Button>
-              </form>
-            </details>
-          )}
-          <Problem>{models.error}</Problem>
-        </div>
-      );
-    const connect = (
-      <Button type="submit" variant="outline" disabled={checking} data-analytics-public>
-        {checking && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
-        {checking ? 'Checking' : 'Connect'}
-      </Button>
-    );
-    if (provider === 'compatible')
-      return (
-        <form className="ob-brain-form" onSubmit={(event) => void saveKey(event)} noValidate>
-          <label className="ob-brain-label" htmlFor="ob-brain-url" data-analytics-public>
-            Server address
-          </label>
-          <Input
-            id="ob-brain-url"
-            type="url"
-            autoComplete="off"
-            spellCheck={false}
-            maxLength={2000}
-            placeholder={settings.placeholder}
-            value={url}
-            disabled={checking}
-            aria-invalid={!!keyError}
-            data-analytics-private
-            onChange={(event) => {
-              setUrl(event.target.value);
-              setKeyError('');
-            }}
-          />
-          <label className="ob-brain-label" htmlFor="ob-brain-key-compatible" data-analytics-public>
-            API key <span className="ob-brain-optional">optional</span>
-          </label>
-          <div className="ob-brain-row">
-            <Input
-              id="ob-brain-key-compatible"
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              maxLength={32000}
-              value={key}
-              disabled={checking}
-              data-analytics-private
-              onChange={(event) => {
-                setKey(event.target.value);
-                setKeyError('');
-              }}
-            />
-            {connect}
-          </div>
-          <Problem>{keyError}</Problem>
-          <p className="ob-brain-note" data-analytics-public>
-            I also use this model to decide when to ask you before acting. Smaller models decide
-            less reliably.
-          </p>
-        </form>
-      );
-    const keyLabel = `${modelProviderNames[provider]} API key`;
-    return (
-      <div className="ob-brain-form" data-analytics-public>
-        {settings.oauth && (
-          <>
-            <div className="ob-brain-oauth">
-              <Button variant="outline" disabled={locked} onClick={startSignIn}>
-                <Logo provider={provider} />
-                {settings.oauth}
-              </Button>
-              <p className="ob-brain-note">{settings.note}</p>
-            </div>
-            <Problem>{models.error}</Problem>
-            <p className="ob-brain-or" aria-hidden="true">
-              or use an API key
-            </p>
-          </>
-        )}
-        <form className="ob-brain-form" onSubmit={(event) => void saveKey(event)} noValidate>
-          {!settings.oauth && (
-            <label
-              className="ob-brain-label"
-              htmlFor={`ob-brain-key-${provider}`}
-              data-analytics-public
+                <Logo provider={item.provider} />
+                <span className="ob-brain-provider-name">{item.name}</span>
+                {existing && (
+                  <span
+                    className="ob-brain-check"
+                    role="img"
+                    aria-label={
+                      modelProviderInfo[item.provider].catalog === 'bundled'
+                        ? 'Key saved'
+                        : 'Connected'
+                    }
+                  >
+                    <Check size={12} aria-hidden="true" />
+                  </span>
+                )}
+                <ChevronRight size={12} aria-hidden="true" />
+              </button>
+            </li>
+          );
+        })}
+        {!visible.length && <li className="ob-brain-empty">No providers match this search.</li>}
+        {!expanded && (
+          <li>
+            <button
+              type="button"
+              className="ob-brain-provider ob-brain-more"
+              disabled={c.locked}
+              onClick={() => setExpanded(true)}
             >
-              {keyLabel}
-            </label>
-          )}
-          <div className="ob-brain-row">
-            <Input
-              ref={keyField}
-              id={`ob-brain-key-${provider}`}
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              maxLength={32000}
-              placeholder={settings.placeholder}
-              aria-label={settings.oauth ? keyLabel : undefined}
-              value={key}
-              disabled={checking}
-              aria-invalid={!!keyError}
-              data-analytics-private
-              onChange={(event) => {
-                setKey(event.target.value);
-                setKeyError('');
-              }}
-            />
-            {connect}
-          </div>
-          <Problem>{keyError}</Problem>
-          <p className="ob-brain-note" data-analytics-public>
-            Get one at{' '}
-            <a href={`https://${settings.hint}`} target="_blank" rel="noreferrer">
-              {settings.hint}
-            </a>
-            . It’s encrypted, stays on this computer and is never shown to the AI.
-          </p>
-          {!settings.oauth && settings.note && <p className="ob-brain-note">{settings.note}</p>}
-        </form>
-      </div>
-    );
-  }
+              <span className="ob-brain-lead" aria-hidden="true">
+                <ChevronDown size={12} />
+              </span>
+              <span className="ob-brain-provider-name">More providers</span>
+              <span className="ob-brain-more-logos" aria-hidden="true">
+                <Logo provider="deepseek" size={16} />
+                <Logo provider="mistral" size={16} />
+                <Logo provider="groq" size={16} />
+                <Logo provider="huggingface" size={16} />
+                <Logo provider="cloudflare-workers-ai" size={16} />
+                <Logo provider="qwen-token-plan" size={16} />
+                <Logo provider="xai" size={16} />
+                <Logo provider="kimi-coding" size={16} />
+              </span>
+            </button>
+          </li>
+        )}
+      </ul>
+    </>
+  );
 
   return (
-    <section className="ob-step ob-brain" onClick={done ? undefined : skip}>
+    <section className="ob-step ob-brain" onClick={done ? undefined : skip} data-analytics-public>
       <Messages
         revealed={revealed}
         typing={typing}
         className="ob-brain-messages"
-        items={[
-          <Bubble data-analytics-public>Let’s connect an AI provider.</Bubble>,
-          <Bubble data-analytics-public>Sign in with your ChatGPT plan, or use an API key.</Bubble>,
-        ]}
+        items={[<Bubble>Let’s connect an AI provider. Which one do you want me to use?</Bubble>]}
       />
-      <div className="ob-brain-list" data-analytics-public>
-        {order.map((item, index) => {
-          const open = item === provider;
-          return (
-            <Rise
-              key={item}
-              show={revealed >= 3}
-              index={index}
-              className="ob-brain-rise"
-              data-open={open}
-            >
-              <h3 className="ob-brain-heading">
-                <button
-                  type="button"
-                  className="ob-brain-option"
-                  id={`ob-brain-option-${item}`}
-                  aria-expanded={open}
-                  aria-controls={`ob-brain-options-${item}`}
-                  disabled={locked}
-                  onClick={() => pick(item)}
-                >
-                  <span className="ob-brain-radio" aria-hidden="true" />
-                  <Logo provider={item} />
-                  <span className="ob-brain-option-text">
-                    <span className="ob-brain-option-name">{modelProviderNames[item]}</span>
-                    {providers[item].sub && (
-                      <span className="ob-brain-option-sub">{providers[item].sub}</span>
-                    )}
-                  </span>
-                  <span className="ob-brain-methods">
-                    {providers[item].methods.map((method) => (
-                      <span
-                        key={method}
-                        className="ob-brain-method"
-                        data-plan={method === 'ChatGPT plan'}
+      <Rise show={revealed >= 2} className="ob-brain-content">
+        {!c.data ? (
+          <div className="ob-brain-status">
+            <Spinner />
+            <p className="ob-brain-wait">
+              {c.models.error ? <span data-analytics-private>{c.models.error}</span> : 'Loading…'}
+            </p>
+          </div>
+        ) : (
+          <>
+            {c.expired && (
+              <p className="ob-brain-expired">
+                Your {modelSource(c.expired)} connection for{' '}
+                <span data-analytics-private>{c.expired.label}</span> needs attention.{' '}
+                {c.expired.method === 'api_key'
+                  ? 'Add the connection again to keep using it.'
+                  : 'Sign in again to keep using it.'}
+              </p>
+            )}
+            {view === 'list' && expanded ? (
+              <div className="ob-brain-catalog">{list}</div>
+            ) : (
+              <Card page={page} direction={motion.direction}>
+                {view === 'done' ? (
+                  <Connected c={c} />
+                ) : view === 'setup' ? (
+                  <>
+                    <header className="ob-brain-header">
+                      <button
+                        type="button"
+                        className="ob-brain-back"
+                        aria-label="All providers"
+                        disabled={c.flow.pending || c.checking}
+                        onClick={back}
                       >
-                        {method}
-                      </span>
-                    ))}
-                  </span>
-                  {usable(item).length > 0 && (
-                    <span className="ob-brain-badge" role="img" aria-label="Connected">
-                      <Check size={14} strokeWidth={3} aria-hidden="true" />
-                    </span>
-                  )}
-                </button>
-              </h3>
-              {open && (
-                <div
-                  className="ob-brain-options"
-                  id={`ob-brain-options-${item}`}
-                  role="region"
-                  aria-labelledby={`ob-brain-option-${item}`}
-                >
-                  {options(item)}
-                </div>
-              )}
-            </Rise>
-          );
-        })}
-      </div>
+                        <ChevronLeft size={16} aria-hidden="true" />
+                      </button>
+                      <h3>
+                        <Logo provider={entry!.provider} />
+                        {entry!.name}
+                      </h3>
+                    </header>
+                    <div className="ob-brain-body">
+                      <Setup c={c} provider={entry!.provider} />
+                    </div>
+                  </>
+                ) : (
+                  list
+                )}
+              </Card>
+            )}
+          </>
+        )}
+      </Rise>
       <Footer
-        show={revealed >= 4}
-        onBack={onBack}
+        show={revealed >= 3}
+        onBack={keepCurrent ?? onBack}
+        backLabel={keepCurrent ? 'Keep current' : 'Back'}
         onNext={onNext}
-        nextDisabled={!ready || models.busy || checking || !!flow.signIn}
+        nextDisabled={!c.ready || c.models.busy || c.checking || c.signingIn}
       />
     </section>
   );

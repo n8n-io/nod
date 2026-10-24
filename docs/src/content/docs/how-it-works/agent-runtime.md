@@ -9,6 +9,24 @@ This page explains what happens inside a turn: the Pi session, the tools the mod
 
 The short version: `src/runtime` runs each turn in a Pi session. Every tool call goes through one turn guard. Results from the outside world reach the model wrapped as untrusted data.
 
+nod has its own warm, direct voice. It uses normal sentence capitalization and preserves names and acronyms. It follows the conversation language and explicit style requests. It does not copy the user's casing, slang or tone. These rules also apply to channel notices and confirmation questions.
+
+Replies, task updates, questions and confirmations share one writing rule. They use short paragraphs with blank lines between them. Long answers are allowed when useful. They use lists and headings when those help you read. A confirmation asks once and separates the necessary details into short paragraphs.
+
+The prompt asks nod to preserve source titles and identifying context in the visible reply, including a meeting's known date or a document's project. A link or the period searched does not replace that context. Context already clear for the item need not be repeated. The reply says when details are unknown, including people's roles or an item's purpose, without dropping known facts or inventing context.
+
+The activity view stays available during work. For a longer request, nod sends a normal chat message when a useful, verified part is ready. It states what it found or completed and what remains. It can deliver that result before the whole job is done. Routine tool steps do not each need a message or a new status line.
+
+Related details stay together. nod can split a reply at a natural break when each message has a clear purpose. It does not split each sentence or paragraph into another notification. Progress messages need useful progress, an important change, a blocker or a question. [Notification research](https://interruptions.net/literature/Iqbal-CHI08.pdf) supports choosing useful breaks for interruptions. A [randomized field study of notification batching](https://doi.org/10.1016/j.chb.2019.07.016) also found benefits from grouping alerts. These findings guide the choice of message breaks. They do not prove that one or two messages are best for a given reply, or set a fixed message rate for nod.
+
+The rule uses everyday words, natural contractions and practical help. It follows [Microsoft's writing guidance](https://learn.microsoft.com/en-us/windows/apps/design/style/writing-style) on warmth, clear language and useful error recovery.
+
+[COLING 2025 research](https://aclanthology.org/2025.coling-main.410/) supports adapting the interaction to the user rather than assuming one style suits everyone. A [2026 study of conversational style and trust](https://arxiv.org/abs/2502.10844) found that praise combined with changing stance can reduce trust. nod therefore keeps its own judgement and explains disagreement with respect.
+
+These sources guide the design. They do not prove the quality of each generated reply. Paragraph length and blank lines are product choices for readability.
+
+[Research on conversational feedback](https://arxiv.org/abs/2507.22352) found that natural cues improved perceived response time in a voice and VR setting. [Sidekick](https://arxiv.org/abs/2607.17527) found benefits from combining quiet background cues with summaries of completed actions. These studies support adapting feedback to the task. They do not establish that chat messages always beat status indicators, or measure a dopamine effect from nod messages.
+
 ## Pi sessions
 
 Pi is the agent harness nod runs on. It keeps the transcript, calls the model and runs tools. nod's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/nod/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/index.ts) runs sessions in parallel. Each session runs one turn at a time:
@@ -31,12 +49,14 @@ All totals come from these ledger rows. Missing prices stay unknown.
 
 ## Keeping the context small
 
-| Mechanism          | Rule                                                                                                                                                                                                                       |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compaction         | Pi compacts at 256k tokens or 16,384 tokens below the model's context window, whichever is smaller, and keeps the newest third of that in full, which leaves the summary request room even when a chat fills the window.   |
-| Screenshot pruning | Above twelve screenshots, the oldest are replaced in steps of eight with a note to take a new one. The prompt cache breaks only at those steps.                                                                            |
-| Attached images    | PNG, JPEG and WebP images of up to 3.75 MiB each, and 16 MiB together per message, reach the model with the message. Others, and every image for a model that can't read images, stay workspace files marked as not shown. |
-| Provider errors    | Reach Pi with only the connection key redacted, so Pi's overflow recovery and retries see the real error.                                                                                                                  |
+| Mechanism          | Rule                                                                                                                                                                                                                                                                                         |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compaction         | Pi compacts at 256k tokens or 16,384 tokens below the model's context window, whichever is smaller, and keeps the newest third of that in full, which leaves the summary request room even when a chat fills the window.                                                                     |
+| Screenshot pruning | Above twelve screenshots, the oldest are replaced in steps of eight with a note to take a new one. The prompt cache breaks only at those steps.                                                                                                                                              |
+| Attached images    | PNG, JPEG and WebP images of up to 3.75 MiB each, and 16 MiB together per message, reach the model with the message. If the chat model cannot read images, an image model from a connected service supplies an untrusted description. Other images stay workspace files marked as not shown. |
+| Provider errors    | Reach Pi with only the connection key redacted, so Pi's overflow recovery and retries see the real error.                                                                                                                                                                                    |
+
+Image analysis keeps the selected chat model. It prefers an image model on that model's connection, then checks the owner's other connected services. It reads current credentials for each request. The image model receives the current request and supported images, without the chat history, tool results or Vault data. Its description is untrusted data and cannot approve an action. Analysis has no automatic retry. Its usage belongs to the current session and counts toward the monthly limit and task check-in. A failed analysis leaves the image marked as not shown.
 
 When a loaded session ends with tool calls that have no result, each call gets the result "This action was interrupted. Its outcome is unknown; check before doing it again."
 
@@ -52,14 +72,14 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/nod/
 | `follow_up`                                                         | In a chat or saved task, queues one short line that goes out as its own message right after the reply, such as an offer to keep doing a job. |
 | `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                                                              |
 | `react_to_message`                                                  | Now and then, reacts to the user's message with one emoji, on web, Telegram and WhatsApp. At most one every five minutes.                    |
-| `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and more.                                                        |
+| `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and handoff.                                                     |
 | `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.                                                                  |
 | `pay`                                                               | Pays at a checkout with a Vault card after your approval.                                                                                    |
 | `browser_session`                                                   | Creates a browser profile to sign in to, or opens a saved one after the same check as a sign-in.                                             |
 | `apps`                                                              | Runs an action on a connected account, after the trust check.                                                                                |
 | `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                                                                      |
 | `manage_personal_context`                                           | Schedules, notification preferences, memory, history and usage.                                                                              |
-| `task`                                                              | Starts saved task sessions, sends owner updates, reports progress and stops a task. It grants no permission.                                 |
+| `task`                                                              | Starts saved task sessions, sends owner updates, reports progress and stops one task or all background work. It grants no permission.        |
 | `share_file`                                                        | Attaches a workspace file to nod's next reply or question, or sends it alone when a turn finishes or fails without one.                      |
 | `create_audio`                                                      | Turns text into speech and sends it to you.                                                                                                  |
 | `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                          |
@@ -86,7 +106,7 @@ flowchart TD
 - **Observations:** the guard reports each call to an optional observer. Only the capability evals and the voice eval script set one; the capability evals redact typed text and memory arguments.
 - **App actions:** `apps` and every connected MCP server tool also pass the server's [trust check](/trust/approvals/).
 
-`apps` and `manage_personal_context` calls run in parallel with each other and with subagents. The trust check covers app actions, changes to schedules, notification settings and spending limits, and forgetting a note or turning memory on, off or clearing it, and those checks run in parallel too. Other `manage_personal_context` operations, such as saving a note and reads, have no trust check and count as decided as soon as they reach the server.
+`apps` and `manage_personal_context` calls run in parallel with each other and with subagents. The trust check covers app actions, changes to schedules, notification settings, the owner's rules and spending limits, and forgetting a note or turning memory on, off or clearing it, and those checks run in parallel too. Other `manage_personal_context` operations, such as saving a note and reads, have no trust check and count as decided as soon as they reach the server.
 
 A call acts only once every `apps` or `manage_personal_context` call issued before it in the turn is decided, and each earlier one that asks has opened its question or failed. If one of them opened a question, the later call is refused. A turn has at most one open confirmation: while one waits for the owner, approvals refuse to open another.
 
@@ -131,15 +151,31 @@ Providers that take a prompt cache key, such as OpenAI, get the same one from ev
 
 ## Message cadence
 
-A chat turn posts its opening line, then only what the model writes between tool calls after the user has heard nothing for a while, then its final reply. The window is 30 seconds in nod web and 3 minutes in chat apps. A task's first message is its acknowledgement, so the task posts only its questions, files, deliberate `send_message` updates and result. The rule lives in [`src/runtime/index.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/index.ts); the prompt asks for what each message should contain.
+nod keeps two things apart:
 
-| Moment    | What nod does                                                                                                  | Why                                                                                                                                                                                                                                                                                                                                                            |
-| --------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Start     | One line on what it will do, only when the work takes more than a few seconds                                  | Unexplained waits feel longer ([Maister 1985](https://davidmaister.com/articles/5/52/index.html)); feedback matters past about 10 seconds ([Nielsen](https://www.nngroup.com/articles/response-times-3-important-limits/))                                                                                                                                     |
-| During    | One line at a change of step: what it found and what's next, without tool names, percentages or time estimates | Intermediate results beat silence on perceived speed and trust ([Kirmayr et al. 2026](https://arxiv.org/abs/2602.15569)); progress that slips makes waits worse ([Conrad et al. 2010](https://pmc.ncbi.nlm.nih.gov/articles/PMC2910434)); updates land best at breakpoints ([Iqbal and Bailey 2008](https://www.interruptions.net/literature/Iqbal-CHI08.pdf)) |
-| Chat apps | Waits longer before an update                                                                                  | Every phone notification costs attention ([Stothart et al. 2015](https://doi.org/10.1037/xhp0000100)), and people often look minutes later ([Pielot et al. 2014](https://ic.unicamp.br/~oliveira/doc/MHCI2014_An-in-situ-study-of-mobile-phone-notifications.pdf))                                                                                             |
-| End       | One reply that leads with the result and doesn't repeat updates                                                | Summaries help; full traces hurt ([Fernandes et al. 2026](https://arxiv.org/abs/2605.25856))                                                                                                                                                                                                                                                                   |
-| After     | At most one concrete offer, not repeated after a no                                                            | Frequent proactive suggestions annoy ([Chen et al. 2025](https://arxiv.org/abs/2410.04596)); keep requests minimal and easy to dismiss ([PAIR](https://pair.withgoogle.com/chapter/feedback-controls/))                                                                                                                                                        |
+- **Live status** shows that nod is working and what it's doing right now. It updates in place without notifying you. Its activity records are separate from chat messages.
+- **Messages** are what nod says to you: an opening line, a useful milestone or partial result, a question, a blocker, the final result or a failure.
+
+Live status covers work you started: a chat request, a task, a reply to a task, and work that continues after you answer or approve something. Schedules and email events that nod starts on its own show none. Whether nod is working comes from the turn's state and its tool events, never from what the model says about its progress; the model only words the step. The status is computed in [`src/server/activity.ts`](https://github.com/n8n-io/nod/blob/main/src/server/activity.ts), and the runtime records steps in [`src/runtime/index.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/index.ts).
+
+| Where               | While nod works for you                                                                                                                                                                                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| nod web and desktop | A live bubble with its current activity, such as "Checking seat availability", or the website it's on. A task also shows its title. Milestone messages join the conversation while the live bubble continues. It disappears when work ends. A task card shows the same step and website. |
+| Telegram            | **typing…** plus the current step as a live draft in your chat. A draft never notifies you. It is refreshed during work and expires after 30 seconds without a refresh.                                                                                                                  |
+| WhatsApp            | **typing…** only; it marks your latest message as read. In Business Cloud API mode, nod stops typing when the 24-hour reply window closes. A QR-paired connection does not set that limit.                                                                                               |
+
+| Moment              | What nod does                                                                                                                | Purpose                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Start               | A short opening message for a chat request that takes more than a few seconds. A saved task uses its existing start message. | Acknowledge the request without repeating the same start.               |
+| Routine work        | Keep activity visible. Use a short status for a useful change of phase.                                                      | Show the current work without narrating each tool call.                 |
+| Milestone           | Send a useful, verified partial result in chat. State what is complete and what remains.                                     | Give the user something useful before the whole job is done.            |
+| Something needs you | Send a question, blocker or decision as a message.                                                                           | Make a required response clear.                                         |
+| End                 | Deliver the final result. State a failure, interruption or spending limit when it stops requested work.                      | Mark the actual outcome and avoid repeating messages already delivered. |
+| After               | Make at most one relevant offer. Do not repeat an offer the user ignored or declined.                                        | Keep follow-up useful and easy to dismiss.                              |
+
+Milestones follow useful progress, not a fixed clock or message count. A partial result does not mean the whole task is finished. Background schedules and events keep routine checks quiet and deliver only what their standing instruction asks for.
+
+The runtime's conversation guidance defines these message breaks. The confirmation and notice writer uses the same voice and paragraph rules, but returns one message for its supplied purpose. It does not receive instructions to send progress messages or start another part of a conversation.
 
 ## Compact command output
 

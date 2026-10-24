@@ -10,6 +10,7 @@ import { artifactView, localArtifacts, type ArtifactService } from './artifacts.
 import {
   activeHandoffSql,
   activeThread,
+  ownerStarted,
   reactToAssistantMessage,
   resetThread,
   resumeAfterHandoff,
@@ -18,16 +19,18 @@ import {
 } from './thread.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { accessKey, registerLocalAccess } from './access.ts';
-import { logFailure } from './failure-log.ts';
+import { logFailure, withFailureLog, type FailureLogSink } from './failure-log.ts';
 import { fileBytes } from '../shared/files.ts';
 import { BrowserActionError, type Computer } from '../ports/computer.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
 import { browserHandoffInputs } from '../shared/browser-handoff.ts';
 import type {
+  Activity,
   Configuration,
   Message,
   MessageHistoryPage,
   MessageReaction,
+  MessageReceipt,
   Turn,
 } from '../shared/contracts.ts';
 import type { createChatVerification } from './chat-verification.ts';
@@ -35,15 +38,17 @@ import { registerWorkAdmission, type WorkAdmission } from './work-admission.ts';
 import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
 
 const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,
- CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',left(target.text,1000)) END AS "replyTo"`;
+ CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,left(target.text,1000))) END AS "replyTo"`;
 function messageView(
   row: Message & { assistantReaction?: MessageReaction | null },
-  modelCostUsd?: number | null,
+  receipt?: MessageReceipt,
+  questionState?: Message['questionState'],
 ): Message {
   const { assistantReaction, ...message } = row;
   return {
     ...message,
-    ...(modelCostUsd !== undefined ? { modelCostUsd } : {}),
+    ...(receipt ? { receipt } : {}),
+    ...(questionState ? { questionState } : {}),
     reactions: [
       ...(message.reaction ? [{ actor: 'user' as const, reaction: message.reaction }] : []),
       ...(assistantReaction ? [{ actor: 'assistant' as const, reaction: assistantReaction }] : []),
@@ -52,6 +57,7 @@ function messageView(
 }
 
 export interface AppDependencies {
+  failureLog?: FailureLogSink;
   analytics?: CaptureAnalytics;
   linkReplay?: (turnId: string, sessionId: string) => void;
   admission?: WorkAdmission;
@@ -65,15 +71,28 @@ export interface AppDependencies {
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   taskLedger?: () => Promise<import('../shared/contracts.ts').Task[]>;
+  activity?: () => Promise<Activity[]>;
   planningTasks?: () => boolean;
-  messageCosts?: (
-    turnIds: string[],
-  ) => Promise<Record<string, { messageId: string | null; costUsd: number | null }>>;
+  questionStates?: (messageIds: string[]) => Promise<Record<string, Message['questionState']>>;
+  receipts?: (turnIds: string[]) => Promise<Record<string, MessageReceipt>>;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
   const publicConfiguration = dependencies.configuration ?? configuration;
   const artifacts = dependencies.artifacts ?? localArtifacts;
+  async function messageViews(
+    rows: Array<Message & { assistantReaction?: MessageReaction | null }>,
+  ) {
+    const [receipts, questions] = await Promise.all([
+      dependencies
+        .receipts?.(rows.map((message) => message.turnId).filter((id): id is string => !!id))
+        .catch(() => undefined),
+      dependencies.questionStates?.(rows.map((message) => message.id)).catch(() => undefined),
+    ]);
+    return rows.map((message) =>
+      messageView(message, receipts?.[message.id], questions?.[message.id]),
+    );
+  }
   const app = Fastify({
     logger: false,
     bodyLimit: 256 * 1024,
@@ -81,6 +100,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
     forceCloseConnections: true,
   });
   const streams = new Set<ServerResponse>();
+  if (dependencies.failureLog)
+    app.addHook('onRequest', (_request, _reply, done) =>
+      withFailureLog(dependencies.failureLog!, done),
+    );
   if (dependencies.analytics) registerAnalyticsRoutes(app, dependencies.analytics);
   app.addHook('preClose', async () => {
     for (const stream of streams) stream.end();
@@ -93,10 +116,15 @@ export async function createApp(dependencies: AppDependencies = {}) {
       : { key: await accessKey(dataRoot) },
   );
   if (desktopAccess && dependencies.admission) registerWorkAdmission(app, dependencies.admission);
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     const known = error instanceof Error ? (error as Error & { statusCode?: number }) : undefined;
     const status = error instanceof z.ZodError ? 400 : known?.statusCode || 500;
-    if (status >= 500) logFailure('request_failed', error);
+    if (status >= 500)
+      logFailure('request_failed', error, {
+        method: request.method,
+        operation: request.routeOptions.url?.split('/').filter(Boolean).join(' '),
+        status,
+      });
     reply.code(status).send({
       error:
         error instanceof z.ZodError
@@ -114,13 +142,14 @@ export async function createApp(dependencies: AppDependencies = {}) {
   });
   if (desktopAccess)
     app.get('/api/desktop/status', async () => {
-      const result = await pool.query<{ source: string; visible: boolean }>(
-        "SELECT source,NOT background AS visible FROM turns WHERE owner_id=$1 AND status='running'",
+      const result = await pool.query<{ source: string; visible: boolean; task: boolean }>(
+        `SELECT u.source,${ownerStarted()} AS visible,to_jsonb(u)->>'task_id' IS NOT NULL AS task
+         FROM turns u WHERE u.owner_id=$1 AND u.status='running'`,
         [ownerId],
       );
       return { running: result.rows };
     });
-  const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",(NOT u.background OR u.source='user') AS "showTyping",
+  const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",
     CASE WHEN ${activeHandoffSql}
       THEN (SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id AND m.role='assistant' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS "handoffMessageId"`;
   async function messageTurns(threadId: string, ids: string[]): Promise<Turn[]> {
@@ -134,7 +163,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.get('/api/configuration', async () => publicConfiguration());
   app.get('/api/state', async () => {
     const thread = await activeThread(pool);
-    const [messages, turns, verificationRequests] = await Promise.all([
+    const [messages, turns, verificationRequests, activity] = await Promise.all([
       pool.query(
         `SELECT ${messageFields} FROM (SELECT m.* FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 151) m
          LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id ORDER BY date_trunc('milliseconds',m.created_at),m.id`,
@@ -145,14 +174,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
         [ownerId, thread.id],
       ),
       dependencies.verification?.pending() ?? [],
+      dependencies.activity?.() ?? [],
     ]);
     const hasEarlierMessages = messages.rows.length > 150;
     const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
-    const modelCosts = await dependencies
-      .messageCosts?.(
-        visibleMessages.map((message) => message.turnId).filter((id): id is string => !!id),
-      )
-      .catch(() => undefined);
     const recentIds = new Set(turns.rows.map((turn) => turn.id));
     const olderTurns = await messageTurns(
       thread.id,
@@ -162,18 +187,38 @@ export async function createApp(dependencies: AppDependencies = {}) {
       threadId: thread.id,
       tasks: await dependencies.taskLedger?.(),
       hasEarlierMessages,
-      messages: visibleMessages.map((message) => {
-        const cost = message.turnId ? modelCosts?.[message.turnId] : undefined;
-        return messageView(
-          message,
-          cost && cost.messageId === message.id ? cost.costUsd : undefined,
-        );
-      }),
+      messages: await messageViews(visibleMessages),
       turns: [...turns.rows, ...olderTurns],
+      activity,
       verificationRequests,
       planningTasks: dependencies.planningTasks?.() ?? false,
       configuration: publicConfiguration(),
     };
+  });
+  app.get('/api/messages/search', async (request) => {
+    const { q } = z.object({ q: z.string().trim().min(1).max(200) }).parse(request.query);
+    const thread = await activeThread(pool);
+    const { rows } = await pool.query(
+      `SELECT ${messageFields},ts_headline('english',m.text,websearch_to_tsquery('english',$3),'StartSel="", StopSel="", MaxWords=35, MinWords=15, ShortWord=0') AS snippet FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id WHERE m.owner_id=$1 AND m.thread_id=$2 AND (to_tsvector('english',m.text) @@ websearch_to_tsquery('english',$3) OR strpos(lower(m.text),lower($3))>0) ORDER BY m.created_at DESC,m.id DESC LIMIT 50`,
+      [ownerId, thread.id, q],
+    );
+    return rows.map((row) => ({ ...messageView(row), snippet: row.snippet as string }));
+  });
+  app.get('/api/messages/around/:id', async (request) => {
+    const { id } = z.object({ id: z.uuid() }).parse(request.params);
+    const thread = await activeThread(pool);
+    const hit = (
+      await pool.query(
+        'SELECT created_at FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3',
+        [id, ownerId, thread.id],
+      )
+    ).rows[0];
+    if (!hit) throw Object.assign(new Error('Message not found.'), { statusCode: 404 });
+    const { rows } = await pool.query(
+      `SELECT ${messageFields} FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.created_at BETWEEN $3::timestamptz-interval '1 day' AND $3::timestamptz+interval '1 day' ORDER BY (m.id=$4) DESC,abs(extract(epoch FROM m.created_at-$3::timestamptz)),m.id LIMIT 60`,
+      [ownerId, thread.id, hit.created_at, id],
+    );
+    return messageViews(rows);
   });
   app.get('/api/messages', async (request) => {
     const query = z
@@ -197,17 +242,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
       [ownerId, query.before ?? null, query.beforeId ?? null, thread.id],
     );
     const page = rows.rows.slice(0, 60);
-    const modelCosts = await dependencies
-      .messageCosts?.(page.map((message) => message.turnId).filter((id): id is string => !!id))
-      .catch(() => undefined);
     return {
-      messages: page.reverse().map((message) => {
-        const cost = message.turnId ? modelCosts?.[message.turnId] : undefined;
-        return messageView(
-          message,
-          cost && cost.messageId === message.id ? cost.costUsd : undefined,
-        );
-      }),
+      messages: await messageViews(page.reverse()),
       hasMore: rows.rows.length > 60,
     } satisfies MessageHistoryPage;
   });
@@ -237,6 +273,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         text: z.string().trim().default(''),
         attachmentIds: z.array(z.uuid()).default([]),
         replyToMessageId: z.uuid().optional(),
+        replyQuote: z.string().trim().min(1).max(4000).optional(),
         seenMessageId: z.uuid().optional(),
         clientMessageId: z.uuid().optional(),
         threadId: z.uuid().optional(),
@@ -267,16 +304,15 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
     if (result.rowCount !== input.attachmentIds.length)
       throw Object.assign(new Error('An attachment is unavailable.'), { statusCode: 400 });
-    const prompt =
-      input.text || 'Review the attached files and briefly describe what they contain.';
     const submitted = await (dependencies.submitMessage ?? submitUserMessage)(
-      prompt,
+      input.text,
       input.attachmentIds.map((id) =>
         artifactView(result.rows.find((artifact) => artifact.id === id)!),
       ),
       {
         channel: 'web',
         replyToMessageId: input.replyToMessageId,
+        replyQuote: input.replyQuote,
         seenMessageId: input.seenMessageId,
         threadId: input.threadId,
         clientMessageId,
@@ -304,16 +340,18 @@ export async function createApp(dependencies: AppDependencies = {}) {
       const payload =
         event.type === 'refresh'
           ? { type: 'refresh' }
-          : event.type === 'delta' && event.ownerId === ownerId && event.channel === 'web'
-            ? {
-                type: 'delta',
-                threadId: event.threadId,
-                turnId: event.turnId,
-                text: event.text,
-                streamId: event.streamId,
-                done: event.done,
-              }
-            : undefined;
+          : event.type === 'activity' && event.ownerId === ownerId
+            ? { type: 'activity', items: event.items }
+            : event.type === 'delta' && event.ownerId === ownerId && event.channel === 'web'
+              ? {
+                  type: 'delta',
+                  threadId: event.threadId,
+                  turnId: event.turnId,
+                  text: event.text,
+                  streamId: event.streamId,
+                  done: event.done,
+                }
+              : undefined;
       if (payload && !reply.raw.destroyed) reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
     };
     send({ type: 'refresh' });
@@ -329,6 +367,14 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const file = await request.file();
     if (!file) throw Object.assign(new Error('Choose a file to upload.'), { statusCode: 400 });
     return artifacts.storeArtifact(await file.toBuffer(), file.filename, file.mimetype);
+  });
+  app.get<{ Params: { id: string } }>('/api/artifacts/:id/metadata', async (request, reply) => {
+    const { rows } = await pool.query('SELECT * FROM artifacts WHERE id=$1 AND owner_id=$2', [
+      z.uuid().parse(request.params.id),
+      ownerId,
+    ]);
+    if (!rows[0]) return reply.code(404).send({ error: 'File not found.' });
+    return artifactView(rows[0]);
   });
   app.get<{ Params: { id: string } }>('/api/artifacts/:id', async (request, reply) => {
     const result = await pool.query('SELECT * FROM artifacts WHERE id=$1 AND owner_id=$2', [

@@ -1,0 +1,11 @@
+{
+  "/": "Chat",
+  "/tasks": "Tasks",
+  "/apps": "Apps",
+  "/channels": "Channels",
+  "/usage": "Usage",
+  "/vault": "Vault",
+  "/settings": "Settings",
+  "/settings/models": "Settings > Models",
+  "/settings/memory": "Settings > Memory"
+}

@@ -33,6 +33,7 @@ const configuration = {
   provider: 'fixture',
   model: 'Fixture model',
   llmReady: true,
+  modelReconnect: false,
   integrationsReady: false,
   conversationResetEnabled: false,
 };

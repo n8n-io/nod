@@ -1,5 +1,6 @@
 export type AttachmentKind =
   | 'image'
+  | 'sticker'
   | 'audio'
   | 'video'
   | 'pdf'
@@ -14,6 +15,7 @@ export type AttachmentKind =
   | 'text';
 
 const extensionKinds: Record<string, AttachmentKind> = {
+  tgs: 'sticker',
   pdf: 'pdf',
   md: 'markdown',
   markdown: 'markdown',
@@ -58,6 +60,7 @@ const extensionKinds: Record<string, AttachmentKind> = {
 };
 
 function kindFromType(type: string): AttachmentKind | null {
+  if (type === 'application/x-tgsticker') return 'sticker';
   if (/^image\/(?:png|jpeg|webp|gif|avif|bmp|svg\+xml)$/.test(type)) return 'image';
   if (/^audio\/(?:mpeg|wav|x-wav|webm|ogg|mp4|aac|flac|x-m4a)$/.test(type)) return 'audio';
   if (/^video\/(?:mp4|webm|ogg|quicktime)$/.test(type)) return 'video';
@@ -100,6 +103,7 @@ export function localPreviewable(mimeType: string, name = '') {
   return (
     Boolean(kind) &&
     kind !== 'html' &&
+    kind !== 'sticker' &&
     !/^(?:text\/html|image\/svg\+xml|(?:text|application)\/(?:[\w.-]+\+)?xml)$/.test(
       mimeType.split(';', 1)[0].trim().toLowerCase(),
     ) &&
@@ -121,3 +125,5 @@ export function fileType(name: string) {
   if (/\.n8n\.json$/i.test(name)) return 'n8n workflow';
   return /\.([a-z0-9]{1,10})$/i.exec(name)?.[1].toUpperCase() ?? 'File';
 }
+
+export const textPreviewBytes = 4_000_000;

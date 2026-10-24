@@ -345,10 +345,20 @@ test(
     const artifacts = await import('../src/server/artifacts.ts');
     const { createApp } = await import('../src/server/app.ts');
     const { createApprovals } = await import('../src/server/approvals.ts');
+    const { createLedger } = await import('../src/server/ledger.ts');
     const { dataRoot, ownerId, port, configuration } = await import('../src/server/config.ts');
     assert.equal(dataRoot, join(fixtureRoot, '.local'));
+    const ledger = createLedger({ pool: db.pool, ownerId });
+    const nativeReceipts = async (turnId: string) =>
+      (
+        await db.pool.query(
+          'SELECT action,basis FROM app_actions WHERE owner_id=$1 AND turn_id=$2 ORDER BY created_at',
+          [ownerId, turnId],
+        )
+      ).rows;
     let messages: ReturnType<typeof thread.createUserMessageService>;
     const app = await createApp({
+      questionStates: (ids) => approvals.states(ids),
       submitMessage: (text, attachments, options) => messages.submit(text, attachments, options),
       configuration: () => configuration({ llmReady: true }),
     });
@@ -540,6 +550,7 @@ test(
       await db.initializeDatabase();
       await computerPolicy.initialize();
       await thread.initializeThreads();
+      await ledger.initialize();
       await personal.initialize({ workers: false });
       const approved = await createApprovals(
         async (action, args, context) => {
@@ -582,9 +593,20 @@ test(
 
       const { createTrust } = await import('../src/server/trust.ts');
       const reviews: Array<Record<string, any>> = [];
-      let aligned: boolean | string | ((input: Record<string, any>) => boolean) = false;
+      const prompts: string[] = [];
+      let aligned:
+        boolean | string | ((input: Record<string, any>) => boolean | Record<string, unknown>) =
+        false;
+      let ruled = false;
+      const cite = (input: Record<string, any>) =>
+        input.userMessages?.at(-1)?.text ??
+        input.scheduledTaskInstruction ??
+        input.standingInstruction ??
+        input.userRules ??
+        'read';
       t.beforeEach(() => {
         aligned = false;
+        ruled = false;
       });
       const replies: object[] = [];
       const replyAnswers: Record<string, string> = {
@@ -597,7 +619,7 @@ test(
       const trust = createTrust({
         pool: db.pool,
         ownerId,
-        review: async (_instructions, input) => {
+        review: async (instructions, input) => {
           if ('reply' in input) {
             replies.push(input);
             const reply = String(input.reply)
@@ -607,9 +629,15 @@ test(
             return { answer: replyAnswers[reply] ?? 'other' };
           }
           reviews.push(input as Record<string, any>);
+          prompts.push(instructions);
           const yes =
             typeof aligned === 'function' ? aligned(input as Record<string, any>) : aligned;
-          return { run: yes };
+          if (yes && typeof yes === 'object') return yes;
+          return {
+            run: yes,
+            ...(yes === true ? { because: cite(input) } : {}),
+            ...(ruled ? { rule: true } : {}),
+          };
         },
       });
       const email = (to: string) => ({
@@ -919,8 +947,15 @@ test(
           });
           assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Check my inbox.');
           const approved = await begin('Yes, send that reply to the client.');
+          const yes = (
+            await db.pool.query(
+              "SELECT id FROM messages WHERE owner_id=$1 AND role='user' AND text=$2",
+              [ownerId, 'Yes, send that reply to the client.'],
+            )
+          ).rows[0].id;
           assert.deepEqual(await trust.check(approved, 'GMAIL_REPLY_TO_THREAD', reply), {
             confirm: false,
+            basis: { kind: 'message', messageId: yes, quote: 'Yes, send that reply to the client' },
           });
           assert.equal(
             reviews.at(-1)?.userMessages.at(-1).text,
@@ -956,7 +991,7 @@ test(
               message_id: 'synthetic-invoice',
               recipient_email: 'accounting@example.test',
             }),
-            { confirm: false },
+            { confirm: false, basis: { kind: 'standing', quote: standing.slice(0, -1) } },
           );
           assert.equal(reviews.at(-1)?.userMessages, undefined);
           await trust.check(await begin('Check my inbox.'), 'GMAIL_FETCH_EMAILS', {});
@@ -985,11 +1020,132 @@ test(
               event_id: 'synthetic-standup',
               start_time: '10:00',
             }),
-            { confirm: false },
+            { confirm: false, basis: { kind: 'schedule', quote: instruction.slice(0, -1) } },
           );
           assert.equal(reviews.at(-1)?.userMessages, undefined);
           assert.equal(reviews.at(-1)?.standingInstruction, undefined);
           await setRule('');
+        },
+      );
+
+      await t.test(
+        'owner rules reach the checker in chat, scheduled and background work, only owners with rules get the rules prompt, and only a real rule is named as the reason to ask',
+        async () => {
+          const setRules = (rules: string) =>
+            db.pool.query(
+              `INSERT INTO preferences(owner_id,rules) VALUES($1,$2)
+               ON CONFLICT(owner_id) DO UPDATE SET rules=EXCLUDED.rules`,
+              [ownerId, rules],
+            );
+          const send = email('ana.named@example.test');
+          await setRules('');
+          aligned = true;
+          const chat = await begin('Send Ana the synthetic update.');
+          assert.equal((await trust.check(chat, 'GMAIL_SEND_EMAIL', send)).confirm, false);
+          assert.equal(reviews.at(-1)?.userRules, undefined);
+          const plain = prompts.at(-1)!;
+          assert.doesNotMatch(plain, /userRules/);
+          aligned = false;
+          ruled = true;
+          assert.deepEqual(await trust.check(chat, 'GMAIL_SEND_EMAIL', { ...send }), {
+            confirm: true,
+            reason: 'unrequested',
+          });
+          const rules = 'Always ask me before sending any email.';
+          await setRules(`  ${rules}\n`);
+          aligned = (input) => input.userRules === undefined;
+          for (const turn of [
+            chat,
+            await begin('Synthetic event', { source: 'event' }),
+            await begin('Synthetic scheduled work', { source: 'schedule' }),
+          ]) {
+            assert.deepEqual(await trust.check(turn, 'GMAIL_SEND_EMAIL', send), {
+              confirm: true,
+              reason: 'rule',
+            });
+            assert.equal(reviews.at(-1)?.userRules, rules);
+            assert.ok(prompts.at(-1)!.startsWith(plain));
+            assert.match(prompts.at(-1)!, /userRules/);
+          }
+          ruled = false;
+          assert.deepEqual(
+            await trust.check(
+              await begin('Synthetic event', { source: 'event' }),
+              'GMAIL_SEND_EMAIL',
+              send,
+            ),
+            { confirm: true, reason: 'background' },
+          );
+          await setRules('');
+          await trust.check(chat, 'NOD_notification_preferences_update', {
+            rules,
+            currentRules: '',
+          });
+          assert.equal(reviews.at(-1)?.userRules, undefined);
+          assert.match(prompts.at(-1)!, /currentRules/);
+        },
+      );
+
+      await t.test(
+        'a run verdict counts only when it quotes words the checker was actually shown',
+        async () => {
+          const turn = await begin('Send Lena the synthetic report.');
+          const said = (
+            await db.pool.query(
+              "SELECT id FROM messages WHERE owner_id=$1 AND role='user' AND text=$2",
+              [ownerId, 'Send Lena the synthetic report.'],
+            )
+          ).rows[0].id;
+          const subject = `Synthetic report ${randomUUID()}`;
+          const send = { ...email('lena@example.test'), subject };
+          for (const answer of [
+            { run: true },
+            { run: true, because: '' },
+            { run: true, because: 'Send Noa the synthetic report' },
+            { run: true, because: said },
+            { run: true, because: 'schedule' },
+            { run: true, because: 'rule' },
+            { run: true, because: subject },
+            { run: 'true', because: 'Send Lena the synthetic report.' },
+          ]) {
+            aligned = () => answer;
+            assert.deepEqual(
+              await trust.check(turn, 'GMAIL_SEND_EMAIL', send),
+              { confirm: true, reason: 'unrequested' },
+              JSON.stringify(answer),
+            );
+          }
+          aligned = () => ({ run: true, because: '“send lena the  synthetic report”' });
+          assert.deepEqual(await trust.check(turn, 'GMAIL_SEND_EMAIL', send), {
+            confirm: false,
+            basis: {
+              kind: 'message',
+              messageId: said,
+              quote: 'send lena the  synthetic report',
+            },
+          });
+          aligned = () => ({ run: true, because: 'read' });
+          assert.deepEqual(await trust.check(turn, 'GMAIL_FETCH_EMAILS', {}), {
+            confirm: false,
+            basis: { kind: 'read' },
+          });
+          await db.pool.query(
+            `INSERT INTO preferences(owner_id,rules) VALUES($1,$2)
+             ON CONFLICT(owner_id) DO UPDATE SET rules=EXCLUDED.rules`,
+            [ownerId, 'Send Noa the weekly synthetic report without asking.'],
+          );
+          try {
+            aligned = () => ({ run: true, because: 'Send Noa the weekly synthetic report' });
+            assert.deepEqual(
+              await trust.check(turn, 'GMAIL_SEND_EMAIL', email('noa@example.test')),
+              {
+                confirm: false,
+                basis: { kind: 'rule', quote: 'Send Noa the weekly synthetic report' },
+              },
+            );
+          } finally {
+            await db.pool.query("UPDATE preferences SET rules='' WHERE owner_id=$1", [ownerId]);
+          }
         },
       );
 
@@ -1027,6 +1183,7 @@ test(
           assert.deepEqual(await access.authorize(groupResumed, target), {
             ok: true,
             reason: 'allowed',
+            basis: { kind: 'approved' },
           });
           assert.equal(reviews.length, afterGroup);
           const task = await begin('Download my bank statement.');
@@ -1039,7 +1196,7 @@ test(
           const resumed = await confirmAccess(task, signIn.args);
           assert.deepEqual(
             await access.authorize(resumed, { origin: site, kind: 'sign_in', itemId: first }),
-            { ok: true, reason: 'allowed' },
+            { ok: true, reason: 'allowed', basis: { kind: 'approved' } },
           );
           for (const other of [
             { origin: site, kind: 'sign_in' as const, itemId: second },
@@ -1060,9 +1217,23 @@ test(
             input.action.arguments.website === site &&
             input.userMessages?.at(-1)?.text === 'Download my bank statement now.';
           const requested = await begin('Download my bank statement now.');
+          const download = (
+            await db.pool.query(
+              "SELECT id FROM messages WHERE owner_id=$1 AND role='user' AND text=$2",
+              [ownerId, 'Download my bank statement now.'],
+            )
+          ).rows[0].id;
           assert.deepEqual(
             await access.authorize(requested, { origin: site, kind: 'sign_in', itemId: first }),
-            { ok: true, reason: 'asked' },
+            {
+              ok: true,
+              reason: 'asked',
+              basis: {
+                kind: 'message',
+                messageId: download,
+                quote: 'Download my bank statement now',
+              },
+            },
           );
           aligned = false;
           const background = await begin('Synthetic background work', { source: 'event' });
@@ -1073,6 +1244,32 @@ test(
           });
           assert.ok('details' in verdict);
           assert.equal(reviews.at(-1)?.userMessages, undefined);
+          await access.record(requested, {
+            action: 'sign_in',
+            origin: site,
+            reason: 'asked',
+            itemId: first,
+            itemKind: 'login',
+            basis: { kind: 'message', messageId: download, quote: 'Download my bank statement' },
+          });
+          await access.record(requested, {
+            action: 'sign_in',
+            origin: site,
+            reason: 'asked',
+            itemId: second,
+            itemKind: 'login',
+            basis: {
+              kind: 'message',
+              messageId: randomUUID(),
+              quote: 'Download my bank statement',
+            },
+          });
+          const listed = (await access.activity({ origin: site })).entries;
+          assert.deepEqual(listed.find((entry) => entry.itemId === first)?.because, {
+            kind: 'message',
+            text: 'Download my bank statement',
+          });
+          assert.equal(listed.find((entry) => entry.itemId === second)?.because, undefined);
         },
       );
 
@@ -1366,8 +1563,10 @@ test(
             false,
           );
           const parcel = await start('Watch the fixture parcel.', 'Fixture parcel');
+          const backgrounds: string[] = [];
           for (const source of ['event', 'schedule'] as const) {
             const background = await begin('Synthetic background work.', { source });
+            backgrounds.push(background.turnId);
             t.after(() => finish(background.turnId, 'cancelled'));
             await assert.rejects(
               tasks.execute(background, { action: 'stop', id: parcel.id }, null),
@@ -1380,6 +1579,7 @@ test(
             await assert.rejects(
               tasks.execute(background, { action: 'stop', id: parcel.id }, answer),
             );
+            await assert.rejects(tasks.execute(background, { action: 'stop' }, answer));
           }
           const stopper = await begin('Stop the fixture dentist task.');
           t.after(() => finish(stopper.turnId, 'cancelled'));
@@ -1414,6 +1614,24 @@ test(
               ])
             ).rowCount,
             0,
+          );
+          const everything = await begin('Stop everything you are doing.');
+          t.after(() => finish(everything.turnId, 'cancelled'));
+          const stopped = await tasks.execute(
+            everything,
+            { action: 'stop' },
+            (await row(everything.turnId)).message_id,
+          );
+          assert.deepEqual(Object.keys(stopped), ['stopped']);
+          assert.deepEqual((stopped as { stopped: { tasks: string[] } }).stopped.tasks, [
+            'Fixture parcel',
+          ]);
+          for (const turnId of backgrounds) assert.equal(await turnStatus(turnId), 'cancelled');
+          for (const turnId of [everything.turnId, reopen.turnId])
+            assert.equal(await turnStatus(turnId), 'running');
+          assert.equal(
+            (await db.pool.query('SELECT state FROM tasks WHERE id=$1', [parcel.id])).rows[0].state,
+            'cancelled',
           );
         },
       );
@@ -1704,6 +1922,16 @@ test(
                 checked.userMessages[0].assistantMessage,
                 'Which fixture folder should I organize?',
               );
+              aligned = () => ({ run: true, because: correction });
+              assert.deepEqual(await trust.check(current, 'NOD_computer', { action: 'look' }), {
+                confirm: false,
+                basis: {
+                  kind: 'message',
+                  messageId: reply.messageId,
+                  quote: 'Only inspect the fixture folder. Do not move any files',
+                },
+              });
+              assert.equal('id' in reviews.at(-1)!.userMessages[0], false);
               const foreignThread = randomUUID();
               await db.pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [
                 foreignThread,
@@ -1720,7 +1948,10 @@ test(
                   value,
                 ]);
                 try {
-                  await trust.check(current, 'NOD_computer', { action: 'shell' });
+                  assert.equal(
+                    (await trust.check(current, 'NOD_computer', { action: 'shell' })).confirm,
+                    true,
+                  );
                   assert.equal(reviews.at(-1)?.userMessages, undefined);
                   await assert.rejects(
                     approvals.request(
@@ -1773,6 +2004,17 @@ test(
                 ],
               );
               assert.deepEqual(reviews.at(-1)!.action, { name: 'NOD_computer', arguments: action });
+              aligned = () => ({ run: true, because: 'Yes.' });
+              assert.deepEqual(
+                await trust.check(latest, 'NOD_computer', {
+                  action: 'shell',
+                  command: 'fixture-rename-file',
+                }),
+                {
+                  confirm: false,
+                  basis: { kind: 'message', messageId: yes.messageId, quote: 'Yes' },
+                },
+              );
               for (const [column, value] of [
                 ['owner_id', 'foreign'],
                 ['thread_id', foreignThread],
@@ -1853,60 +2095,507 @@ test(
         },
       );
 
+      await t.test('current owner rules override remembered native read access', async (t) => {
+        const { createPreferencesStore } = await import('../src/server/preferences.ts');
+        const preferences = createPreferencesStore(db.pool, ownerId);
+        const previousRules = (await preferences.get()).rules;
+        t.after(() => preferences.update({ rules: previousRules }));
+        const askRule = 'Ask before reading Synthetic Rules App';
+        const allowRule = 'You may read Synthetic Rules App without asking';
+        await createPreferencesStore(db.pool, 'foreign-native-rule-owner').update({
+          rules: askRule,
+        });
+        for (const action of ['look', 'screenshot', 'open'])
+          await t.test(action, async (t) => {
+            await preferences.update({ rules: '' });
+            const nativeApp = {
+              name: 'Synthetic Rules App',
+              bundleId: `fixture.rules.${randomUUID()}`,
+            };
+            const controller = new AbortController();
+            const observations: Array<{ action: string; scope?: string }> = [];
+            let failRules = false;
+            const policy = createComputerPolicy({
+              pool: db.pool,
+              ownerId,
+              computer: {
+                shell: async () => assert.fail('This fixture does not run commands.'),
+                resolve: async () => nativeApp,
+                open: async () => assert.fail('A running app must not be relaunched.'),
+                look: async (_app, _signal, scope) => {
+                  observations.push({ action: 'look', scope });
+                  return { app: nativeApp, tree: '- Synthetic result [ref=e1]' };
+                },
+                screenshot: async () => {
+                  observations.push({ action: 'screenshot' });
+                  return { app: nativeApp, png: Buffer.from('synthetic native image') };
+                },
+                dispose() {},
+              },
+              check: trust.check,
+              hasRules: async () => {
+                if (failRules) throw new Error('Synthetic preferences unavailable.');
+                return Boolean((await preferences.get()).rules.trim());
+              },
+              request: (turn, name, args, options) => approvals.request(turn, name, args, options),
+              lock: (id, write) => thread.withTurnLock(id, write),
+              signalFor: () => controller.signal,
+              record: ledger.action,
+            });
+            await db.pool.query('UPDATE computer_settings SET enabled=true WHERE owner_id=$1', [
+              ownerId,
+            ]);
+            const granted = await begin('Use Synthetic Rules App.');
+            t.after(() => finish(granted.turnId, 'cancelled'));
+            aligned = true;
+            const reviewsBefore = reviews.length;
+            await policy.run(
+              granted,
+              { action: 'look', app: nativeApp.name },
+              { rooted: true },
+              controller.signal,
+            );
+            assert.equal(reviews.length, reviewsBefore + 1);
+            assert.equal(
+              (
+                await db.pool.query(
+                  'SELECT 1 FROM computer_apps WHERE owner_id=$1 AND bundle_id=$2',
+                  [ownerId, nativeApp.bundleId],
+                )
+              ).rowCount,
+              1,
+            );
+            const input = { action, app: nativeApp.name };
+            await policy.run(granted, input, { rooted: true }, controller.signal);
+            assert.equal(reviews.length, reviewsBefore + 1);
+            assert.equal(observations.length, 2);
+            assert.deepEqual((await nativeReceipts(granted.turnId)).at(-1)?.basis, {
+              kind: 'read',
+            });
+            await preferences.update({ rules: askRule });
+            const turn = await begin('Read Synthetic Rules App.');
+            t.after(() => finish(turn.turnId, 'cancelled'));
+            aligned = (input) => {
+              assert.equal(input.userRules, askRule);
+              return { run: false, rule: true };
+            };
+            const question = await policy.run(turn, input, { rooted: true }, controller.signal);
+            assert.ok(question && typeof question === 'object' && appConfirmation in question);
+            assert.deepEqual(reviews.at(-1)?.action, {
+              name: 'NOD_computer',
+              arguments: {
+                ...input,
+                bundleId: nativeApp.bundleId,
+                ...(action === 'open' ? { running: true } : {}),
+              },
+            });
+            assert.equal(observations.length, 2);
+            assert.deepEqual(await nativeReceipts(turn.turnId), []);
+            const pending = await proposal(turn.turnId);
+            assert.equal(pending.action, 'NOD_computer');
+            const accepted = await confirm(pending.id, true);
+            assert.ok(accepted && 'turnId' in accepted);
+            t.after(() => finish(accepted.turnId, 'cancelled'));
+            executionResult = () => {
+              const call = calls.at(-1)!;
+              return policy.execute(call.action, call.args, {
+                ...call.context,
+                basis: { kind: 'approved' },
+              });
+            };
+            try {
+              await execute(pending.id, controller.signal);
+              assert.equal(observations.length, 3);
+              if (action !== 'screenshot')
+                assert.equal(observations.at(-1)?.scope, accepted.turnId);
+              const recorded = await stored(pending.id);
+              assert.equal(recorded.status, 'completed');
+              assert.deepEqual(
+                await policy.run(
+                  { threadId: turn.threadId, turnId: accepted.turnId },
+                  input,
+                  { sourceMessageId: accepted.messageId },
+                  controller.signal,
+                ),
+                recorded.result,
+              );
+              assert.equal(observations.length, 3);
+              assert.deepEqual(await nativeReceipts(accepted.turnId), [
+                { action: `NOD_computer_${action}`, basis: { kind: 'approved' } },
+              ]);
+            } finally {
+              executionResult = undefined;
+            }
+            await preferences.update({ rules: allowRule });
+            const allowed = await begin('Read Synthetic Rules App again.');
+            t.after(() => finish(allowed.turnId, 'cancelled'));
+            aligned = (input) => {
+              assert.equal(input.userRules, allowRule);
+              return { run: true, because: input.userRules };
+            };
+            await policy.run(allowed, input, { rooted: true }, controller.signal);
+            assert.equal(observations.length, 4);
+            assert.deepEqual(await nativeReceipts(allowed.turnId), [
+              { action: `NOD_computer_${action}`, basis: { kind: 'rule', quote: allowRule } },
+            ]);
+            failRules = true;
+            await assert.rejects(
+              policy.run(allowed, input, { rooted: true }, controller.signal),
+              /preferences unavailable/,
+            );
+            failRules = false;
+            assert.equal(observations.length, 4);
+          });
+      });
+
+      await t.test(
+        'native action receipts preserve authority and exclude unsuccessful work',
+        async (t) => {
+          for (const operation of [
+            'apps',
+            'look',
+            'screenshot',
+            'open running',
+            'open',
+            'act',
+            'shell',
+            'share_file',
+            'share_screenshot',
+          ])
+            for (const outcome of [
+              'success',
+              'failure',
+              'Stop',
+              'turn ended',
+              ...(operation === 'shell' ? ['nonzero'] : []),
+            ])
+              await t.test(`${operation}: ${outcome}`, async (t) => {
+                const turn = await begin('Run the synthetic native receipt fixture.');
+                t.after(() => finish(turn.turnId, 'cancelled'));
+                const messageId = (
+                  await db.pool.query("SELECT id FROM messages WHERE turn_id=$1 AND role='user'", [
+                    turn.turnId,
+                  ])
+                ).rows[0].id;
+                const nativeApp = {
+                  name: 'Synthetic Ledger App',
+                  bundleId: `fixture.ledger.${randomUUID()}`,
+                };
+                const controller = new AbortController();
+                const read = ['apps', 'look', 'screenshot', 'open running'].includes(operation);
+                const basis =
+                  operation === 'share_screenshot'
+                    ? { kind: 'rule' as const, quote: 'Share synthetic screenshots.' }
+                    : operation === 'shell'
+                      ? { kind: 'schedule' as const, quote: 'Run the synthetic command.' }
+                      : operation === 'share_file'
+                        ? { kind: 'standing' as const, quote: 'Share the synthetic report.' }
+                        : {
+                            kind: 'message' as const,
+                            messageId,
+                            quote: 'Run the synthetic native receipt fixture.',
+                          };
+                let checks = 0;
+                let effects = 0;
+                let locked = false;
+                const effect = async () => {
+                  effects++;
+                  if (outcome === 'failure') throw new Error('Synthetic native failure.');
+                  if (outcome === 'Stop') controller.abort(new Error('Synthetic Stop.'));
+                  if (outcome === 'turn ended') await finish(turn.turnId, 'cancelled');
+                };
+                const policy = createComputerPolicy({
+                  pool: db.pool,
+                  ownerId,
+                  computer: {
+                    apps: async () => {
+                      await effect();
+                      return [nativeApp];
+                    },
+                    resolve: async () => (operation === 'open' ? null : nativeApp),
+                    identify: async () => nativeApp,
+                    open: async () => {
+                      await effect();
+                      return nativeApp;
+                    },
+                    inspect: async (_app, _ref, _signal, scope) => {
+                      assert.equal(scope, turn.turnId);
+                      return { label: 'Synthetic button', token: 'synthetic-receipt-target' };
+                    },
+                    act: effect,
+                    look: async (_app, _signal, scope) => {
+                      assert.equal(scope, turn.turnId);
+                      if (['look', 'open running'].includes(operation)) await effect();
+                      return { app: nativeApp, tree: '- Synthetic button [ref=e1]' };
+                    },
+                    screenshot: async () => {
+                      if (operation === 'screenshot') await effect();
+                      return { app: nativeApp, png: Buffer.from('synthetic image') };
+                    },
+                    readFile: async () => Buffer.from('synthetic file'),
+                    shell: async () => {
+                      await effect();
+                      return {
+                        exitCode: outcome === 'nonzero' ? 1 : 0,
+                        output: 'synthetic output',
+                      };
+                    },
+                    dispose() {},
+                  },
+                  check: async () => {
+                    checks++;
+                    return { confirm: false, basis };
+                  },
+                  request: (turn, action, args, options) =>
+                    approvals.request(turn, action, args, options),
+                  lock: (id, write) =>
+                    thread.withTurnLock(id, async () => {
+                      locked = true;
+                      try {
+                        await write();
+                      } finally {
+                        locked = false;
+                      }
+                    }),
+                  signalFor: () => controller.signal,
+                  record: async (...args) => {
+                    assert.equal(locked, true);
+                    await ledger.action(...args);
+                  },
+                  publishFile: async () => {
+                    await effect();
+                    return { delivered: true };
+                  },
+                  publishScreenshot: async () => {
+                    await effect();
+                    return { delivered: true };
+                  },
+                });
+                await db.pool.query('UPDATE computer_settings SET enabled=true WHERE owner_id=$1', [
+                  ownerId,
+                ]);
+                if (operation !== 'open')
+                  await db.pool.query(
+                    'INSERT INTO computer_apps(owner_id,bundle_id,name) VALUES($1,$2,$3)',
+                    [ownerId, nativeApp.bundleId, nativeApp.name],
+                  );
+                const input =
+                  operation === 'shell'
+                    ? { action: 'shell', command: 'synthetic-command' }
+                    : operation === 'share_file'
+                      ? { action: 'share_file', path: '/Users/fixture/Desktop/report.bin' }
+                      : operation === 'act'
+                        ? { action: 'act', app: nativeApp.name, step: 'press', ref: 'e1' }
+                        : operation === 'apps'
+                          ? { action: 'apps' }
+                          : {
+                              action: operation === 'open running' ? 'open' : operation,
+                              app: nativeApp.name,
+                            };
+                const work = policy.run(turn, input, { rooted: true }, controller.signal);
+                if (
+                  ['success', 'nonzero'].includes(outcome) ||
+                  (operation === 'open running' && outcome === 'failure')
+                )
+                  await work;
+                else
+                  await assert.rejects(
+                    work,
+                    outcome === 'failure'
+                      ? /Synthetic native failure/
+                      : outcome === 'Stop'
+                        ? /Synthetic Stop/
+                        : /no longer active/,
+                  );
+                assert.equal(effects, 1);
+                assert.equal(checks, read ? 0 : 1);
+                const completed =
+                  outcome === 'success' || (operation === 'open running' && outcome === 'failure');
+                assert.deepEqual(
+                  await nativeReceipts(turn.turnId),
+                  completed
+                    ? [
+                        {
+                          action: `NOD_computer_${input.action}`,
+                          basis: read ? { kind: 'read' } : basis,
+                        },
+                      ]
+                    : [],
+                );
+              });
+        },
+      );
+
       await t.test(
         'completed native actions return fresh observations without replaying mutations',
         async (t) => {
-          for (const outcome of [
-            'fresh',
-            'unavailable',
-            'revoke before look',
-            'revoke during look',
-            'Stop during look',
-          ])
-            await t.test(outcome, async (t) => {
-              const turn = await begin(`Press the synthetic button: ${outcome}.`);
-              t.after(() => finish(turn.turnId, 'cancelled'));
-              const nativeApp = {
-                name: 'Synthetic Calculator',
-                bundleId: `fixture.action.${randomUUID()}`,
-              };
-              const controller = new AbortController();
-              let actions = 0;
-              let observations = 0;
-              const checked: Record<string, unknown>[] = [];
-              const nativeRoutes = Fastify();
-              t.after(() => nativeRoutes.close());
-              const revoke = () =>
-                nativeRoutes.inject({
-                  method: 'DELETE',
-                  url: `/api/computer/apps/${nativeApp.bundleId}`,
+          for (const operation of ['act', 'open', 'open running'])
+            for (const outcome of [
+              'fresh',
+              'unavailable',
+              ...(operation === 'open running' ? [] : ['revoke before look']),
+              'revoke during look',
+              'Stop during look',
+              'changed observation',
+              ...(operation === 'open' ? ['changed app', 'blocked app'] : []),
+            ])
+              await t.test(`${operation}: ${outcome}`, async (t) => {
+                const turn = await begin(`Press the synthetic button: ${outcome}.`);
+                t.after(() => finish(turn.turnId, 'cancelled'));
+                const nativeApp = {
+                  name: 'Synthetic Calculator',
+                  bundleId: `fixture.action.${randomUUID()}`,
+                };
+                const controller = new AbortController();
+                const expectedActions = operation === 'open running' ? 0 : 1;
+                let actions = 0;
+                let observations = 0;
+                const checked: Record<string, unknown>[] = [];
+                const nativeRoutes = Fastify();
+                t.after(() => nativeRoutes.close());
+                const revoke = () =>
+                  nativeRoutes.inject({
+                    method: 'DELETE',
+                    url: `/api/computer/apps/${nativeApp.bundleId}`,
+                  });
+                const policy = createComputerPolicy({
+                  pool: db.pool,
+                  ownerId,
+                  computer: {
+                    shell: async () => assert.fail('This fixture does not run commands.'),
+                    apps: async () => assert.fail('A named app does not need a discovery call.'),
+                    resolve: async () => (operation === 'open' ? null : nativeApp),
+                    identify: async () => nativeApp,
+                    open: async (bundleId, signal) => {
+                      signal.throwIfAborted();
+                      assert.equal(bundleId, nativeApp.bundleId);
+                      actions++;
+                      if (outcome === 'revoke before look') await revoke();
+                      if (outcome === 'changed app')
+                        return { name: 'Other Fixture App', bundleId: 'fixture.other-app' };
+                      if (outcome === 'blocked app')
+                        return { name: 'Terminal', bundleId: 'com.apple.Terminal' };
+                      return nativeApp;
+                    },
+                    inspect: async (_app, ref, _signal, scope) => {
+                      assert.equal(scope, turn.turnId);
+                      assert.equal(ref, 'e1');
+                      return { label: 'Button "Equals"', token: 'synthetic-exact-target' };
+                    },
+                    act: async (step, signal) => {
+                      signal.throwIfAborted();
+                      assert.deepEqual(step, {
+                        app: nativeApp.bundleId,
+                        action: 'press',
+                        targetToken: 'synthetic-exact-target',
+                        ref: 'e1',
+                      });
+                      actions++;
+                      if (outcome === 'revoke before look') await revoke();
+                    },
+                    look: async (bundleId, signal, scope) => {
+                      assert.equal(scope, calls.at(-1)!.context.turnId);
+                      assert.notEqual(scope, turn.turnId);
+                      signal.throwIfAborted();
+                      assert.equal(bundleId, nativeApp.bundleId);
+                      assert.equal(actions, expectedActions);
+                      observations++;
+                      assert.equal(
+                        (
+                          await db.pool.query(
+                            'SELECT 1 FROM computer_apps WHERE owner_id=$1 AND bundle_id=$2',
+                            [ownerId, nativeApp.bundleId],
+                          )
+                        ).rowCount,
+                        1,
+                      );
+                      if (outcome === 'unavailable')
+                        throw new Error('Synthetic private observation failure.');
+                      if (outcome === 'revoke during look') await revoke();
+                      if (outcome === 'Stop during look')
+                        controller.abort(new Error('Synthetic Stop.'));
+                      if (outcome === 'changed observation')
+                        return {
+                          app: { name: 'Other Fixture App', bundleId: 'fixture.other-app' },
+                          tree: 'Synthetic private content from another app.',
+                        };
+                      return { app: nativeApp, tree: '- Result 4131 [ref=e2]' };
+                    },
+                    dispose() {},
+                  },
+                  check: async (_turn, _action, args) => {
+                    checked.push(args);
+                    return { confirm: true, reason: 'unrequested' };
+                  },
+                  request: (turn, action, args, options) =>
+                    approvals.request(turn, action, args, options),
+                  lock: (id, write) => thread.withTurnLock(id, write),
+                  signalFor: () => controller.signal,
+                  record: ledger.action,
                 });
-              const policy = createComputerPolicy({
-                pool: db.pool,
-                ownerId,
-                computer: {
-                  shell: async () => assert.fail('This fixture does not run commands.'),
-                  resolve: async () => nativeApp,
-                  inspect: async (_app, ref) => {
-                    assert.equal(ref, 'e1');
-                    return { label: 'Button "Equals"', token: 'synthetic-exact-target' };
-                  },
-                  act: async (step, signal) => {
-                    signal.throwIfAborted();
-                    assert.deepEqual(step, {
-                      app: nativeApp.bundleId,
-                      action: 'press',
-                      targetToken: 'synthetic-exact-target',
-                      ref: 'e1',
+                policy.registerRoutes(nativeRoutes);
+                await nativeRoutes.inject({
+                  method: 'PATCH',
+                  url: '/api/computer',
+                  payload: { enabled: true },
+                });
+                await policy.run(
+                  turn,
+                  operation !== 'act'
+                    ? { action: 'open', app: nativeApp.name }
+                    : { action: 'act', app: nativeApp.name, step: 'press', ref: 'e1' },
+                  { rooted: true },
+                  controller.signal,
+                );
+                assert.equal(actions, 0);
+                assert.equal(observations, 0);
+                assert.deepEqual(await nativeReceipts(turn.turnId), []);
+                const pending = await proposal(turn.turnId);
+                assert.equal(checked.length, 1);
+                assert.deepEqual(checked[0], pending.args);
+                const accepted = await confirm(pending.id, true);
+                assert.ok(accepted && 'turnId' in accepted);
+                t.after(() => finish(accepted.turnId, 'cancelled'));
+                executionResult = () => {
+                  const call = calls.at(-1)!;
+                  return policy.execute(call.action, call.args, {
+                    ...call.context,
+                    basis: { kind: 'approved' },
+                  });
+                };
+                try {
+                  if (outcome === 'Stop during look')
+                    await assert.rejects(execute(pending.id, controller.signal), /Synthetic Stop/);
+                  else await execute(pending.id, controller.signal);
+                  assert.equal(actions, expectedActions);
+                  const record = await stored(pending.id);
+                  if (outcome === 'fresh') {
+                    assert.equal(record.status, 'completed');
+                    assert.deepEqual(record.result, {
+                      done: true,
+                      app: nativeApp,
+                      tree: '- Result 4131 [ref=e2]',
                     });
-                    actions++;
-                    if (outcome === 'revoke before look') await revoke();
-                  },
-                  look: async (bundleId, signal) => {
-                    signal.throwIfAborted();
-                    assert.equal(bundleId, nativeApp.bundleId);
-                    assert.equal(actions, 1);
-                    observations++;
+                  } else if (['unavailable', 'changed observation'].includes(outcome)) {
+                    assert.equal(record.status, 'completed');
+                    assert.equal(record.result.done, true);
+                    assert.equal(record.result.observation, 'unavailable');
+                    assert.match(record.result.next, /Look again/);
+                    assert.match(record.result.next, /do not repeat/i);
+                    assert.doesNotMatch(JSON.stringify(record.result), /Synthetic private/);
+                  } else {
+                    assert.equal(record.status, 'uncertain');
+                    assert.equal(record.result, null);
+                  }
+                  const expectedObservations = [
+                    'revoke before look',
+                    'changed app',
+                    'blocked app',
+                  ].includes(outcome)
+                    ? 0
+                    : 1;
+                  assert.equal(observations, expectedObservations);
+                  if (['changed app', 'blocked app'].includes(outcome))
                     assert.equal(
                       (
                         await db.pool.query(
@@ -1914,81 +2603,132 @@ test(
                           [ownerId, nativeApp.bundleId],
                         )
                       ).rowCount,
-                      1,
+                      0,
                     );
-                    if (outcome === 'unavailable')
-                      throw new Error('Synthetic private observation failure.');
-                    if (outcome === 'revoke during look') await revoke();
-                    if (outcome === 'Stop during look')
-                      controller.abort(new Error('Synthetic Stop.'));
-                    return { app: nativeApp, tree: '- Result 4131 [ref=e2]' };
+                  const receipts =
+                    record.status === 'completed'
+                      ? [
+                          {
+                            action: `NOD_computer_${operation === 'act' ? 'act' : 'open'}`,
+                            basis: { kind: 'approved' },
+                          },
+                        ]
+                      : [];
+                  assert.deepEqual(await nativeReceipts(accepted.turnId), receipts);
+                  assert.equal(await execute(pending.id), undefined);
+                  assert.equal(actions, expectedActions);
+                  assert.equal(observations, expectedObservations);
+                  assert.deepEqual(await nativeReceipts(accepted.turnId), receipts);
+                } finally {
+                  executionResult = undefined;
+                }
+              });
+        },
+      );
+
+      await t.test(
+        'a concurrent native open cannot retarget a checked typing or key action',
+        async (t) => {
+          for (const step of ['type', 'key'])
+            await t.test(step, async (t) => {
+              const turn = await begin('Enter the synthetic fixture text in the current field.');
+              const other = await begin('Inspect the same synthetic app in another task.');
+              t.after(() => finish(turn.turnId, 'cancelled'));
+              t.after(() => finish(other.turnId, 'cancelled'));
+              const nativeApp = { name: 'Fixture Editor', bundleId: `fixture.${randomUUID()}` };
+              const controller = new AbortController();
+              let generation = 0;
+              let inspections = 0;
+              let inputs = 0;
+              const checked: Record<string, unknown>[] = [];
+              let started!: () => void;
+              let release!: () => void;
+              const reviewing = new Promise<void>((resolve) => {
+                started = resolve;
+              });
+              const reviewed = new Promise<void>((resolve) => {
+                release = resolve;
+              });
+              const policy = createComputerPolicy({
+                pool: db.pool,
+                ownerId,
+                computer: {
+                  shell: async () => assert.fail('This fixture does not run commands.'),
+                  resolve: async () => nativeApp,
+                  open: async () => assert.fail('The running app must not be relaunched.'),
+                  look: async () => {
+                    generation++;
+                    return { app: nativeApp, tree: `- Text field ${generation} [ref=e1]` };
+                  },
+                  inspect: async (_app, ref) => {
+                    assert.equal(ref, undefined);
+                    inspections++;
+                    return {
+                      label: `Focused field ${generation}`,
+                      token: `fixture-target-${generation}`,
+                    };
+                  },
+                  act: async (action) => {
+                    if (action.targetToken !== `fixture-target-${generation}`)
+                      throw new Error('The app target expired. Look again before acting.');
+                    inputs++;
                   },
                   dispose() {},
                 },
                 check: async (_turn, _action, args) => {
                   checked.push(args);
-                  return { confirm: true, reason: 'unrequested' };
+                  started();
+                  await reviewed;
+                  return { confirm: false, basis: { kind: 'read' } };
                 },
                 request: (turn, action, args, options) =>
                   approvals.request(turn, action, args, options),
                 lock: (id, write) => thread.withTurnLock(id, write),
                 signalFor: () => controller.signal,
               });
-              policy.registerRoutes(nativeRoutes);
-              await nativeRoutes.inject({
-                method: 'PATCH',
-                url: '/api/computer',
-                payload: { enabled: true },
-              });
+              await db.pool.query('UPDATE computer_settings SET enabled=true WHERE owner_id=$1', [
+                ownerId,
+              ]);
+              await db.pool.query(
+                'INSERT INTO computer_apps(owner_id,bundle_id,name) VALUES($1,$2,$3)',
+                [ownerId, nativeApp.bundleId, nativeApp.name],
+              );
               await policy.run(
                 turn,
-                { action: 'act', app: nativeApp.name, step: 'press', ref: 'e1' },
+                { action: 'open', app: nativeApp.name },
                 { rooted: true },
                 controller.signal,
               );
-              assert.equal(actions, 0);
-              assert.equal(observations, 0);
-              const pending = await proposal(turn.turnId);
-              assert.equal(checked.length, 1);
-              assert.deepEqual(checked[0], pending.args);
-              const accepted = await confirm(pending.id, true);
-              assert.ok(accepted && 'turnId' in accepted);
-              t.after(() => finish(accepted.turnId, 'cancelled'));
-              executionResult = () => {
-                const call = calls.at(-1)!;
-                return policy.execute(call.action, call.args, call.context);
-              };
+              const pending = policy.run(
+                turn,
+                {
+                  action: 'act',
+                  app: nativeApp.name,
+                  step,
+                  ...(step === 'type' ? { text: 'Synthetic text' } : { key: 'cmd+s' }),
+                },
+                { rooted: true },
+                controller.signal,
+              );
+              const rejected = assert.rejects(pending, /target expired/);
+              await reviewing;
               try {
-                if (outcome === 'Stop during look')
-                  await assert.rejects(execute(pending.id, controller.signal), /Synthetic Stop/);
-                else await execute(pending.id, controller.signal);
-                assert.equal(actions, 1);
-                const record = await stored(pending.id);
-                if (outcome === 'fresh') {
-                  assert.equal(record.status, 'completed');
-                  assert.deepEqual(record.result, {
-                    done: true,
-                    app: nativeApp,
-                    tree: '- Result 4131 [ref=e2]',
-                  });
-                } else if (outcome === 'unavailable') {
-                  assert.equal(record.status, 'completed');
-                  assert.equal(record.result.done, true);
-                  assert.equal(record.result.observation, 'unavailable');
-                  assert.match(record.result.next, /Look again/);
-                  assert.match(record.result.next, /do not repeat/i);
-                  assert.doesNotMatch(JSON.stringify(record.result), /Synthetic private/);
-                } else {
-                  assert.equal(record.status, 'uncertain');
-                  assert.equal(record.result, null);
-                }
-                assert.equal(observations, outcome === 'revoke before look' ? 0 : 1);
-                assert.equal(await execute(pending.id), undefined);
-                assert.equal(actions, 1);
-                assert.equal(observations, outcome === 'revoke before look' ? 0 : 1);
+                await policy.run(
+                  other,
+                  { action: 'open', app: nativeApp.name },
+                  { rooted: true },
+                  controller.signal,
+                );
               } finally {
-                executionResult = undefined;
+                release();
               }
+              await rejected;
+              assert.equal(generation, 2);
+              assert.equal(inspections, 1);
+              assert.equal(inputs, 0);
+              assert.equal(checked.length, 1);
+              assert.equal(checked[0]?.control, 'Focused field 1');
+              assert.equal(checked[0]?.targetToken, 'fixture-target-1');
             });
         },
       );
@@ -2025,6 +2765,7 @@ test(
               approvals.request(turn, action, args, options),
             lock: (id, write) => thread.withTurnLock(id, write),
             signalFor: () => controller.signal,
+            record: ledger.action,
             publishFile: async (turn, data, name, signal) => {
               await holdPublication?.();
               return thread.publishComputerFile(turn, data, name, artifacts.localArtifacts, signal);
@@ -2048,7 +2789,10 @@ test(
           t.after(() => finish(accepted.turnId, 'cancelled'));
           executionResult = () => {
             const call = calls.at(-1)!;
-            return policy.execute(call.action, call.args, call.context);
+            return policy.execute(call.action, call.args, {
+              ...call.context,
+              basis: { kind: 'approved' },
+            });
           };
           try {
             const outcome = await execute(pending.id, controller.signal);
@@ -2073,6 +2817,20 @@ test(
               source: 'computer_file',
             });
             assert.deepEqual(delivered[0], result);
+            assert.deepEqual(
+              await policy.run(
+                { threadId: turn.threadId, turnId: accepted.turnId },
+                input,
+                {},
+                controller.signal,
+              ),
+              result,
+            );
+            assert.equal(reads, 1);
+            assert.deepEqual(await nativeReceipts(accepted.turnId), [
+              { action: 'NOD_computer_share_file', basis: { kind: 'approved' } },
+            ]);
+            assert.deepEqual(await nativeReceipts(turn.turnId), []);
             assert.ok(outcome?.prompt);
             assert.equal(outcome.prompt.includes(marker), false);
             assert.equal(outcome.prompt.includes(bytes.toString('base64')), false);
@@ -2096,6 +2854,7 @@ test(
             ).rows[0].revision;
             const share = (signal = controller.signal) =>
               policy.execute('NOD_computer', input, {
+                basis: { kind: 'approved' },
                 ...turn,
                 expectedRevision: revision,
                 signal,
@@ -2212,6 +2971,7 @@ test(
               approvals.request(turn, action, args, options),
             lock: (id, write) => thread.withTurnLock(id, write),
             signalFor: () => controller.signal,
+            record: ledger.action,
             publishFile: async (turn, data, name, signal) => {
               await thread.publishComputerFile(turn, data, name, artifacts.localArtifacts, signal);
               publications++;
@@ -2230,13 +2990,17 @@ test(
           t.after(() => finish(accepted.turnId, 'cancelled'));
           executionResult = () => {
             const call = calls.at(-1)!;
-            return policy.execute(call.action, call.args, call.context);
+            return policy.execute(call.action, call.args, {
+              ...call.context,
+              basis: { kind: 'approved' },
+            });
           };
           try {
             await execute(pending.id, controller.signal);
             const record = await stored(pending.id);
             assert.equal(record.status, 'uncertain');
             assert.equal(record.result, null);
+            assert.deepEqual(await nativeReceipts(accepted.turnId), []);
             const delivered = (
               await db.pool.query('SELECT attachments FROM messages WHERE turn_id=$1', [
                 accepted.turnId,
@@ -2246,6 +3010,7 @@ test(
             assert.equal(delivered[0].source, 'computer_file');
             assert.deepEqual(await artifacts.localArtifacts.readArtifact(delivered[0].id), bytes);
             assert.equal(await execute(pending.id, controller.signal), undefined);
+            assert.deepEqual(await nativeReceipts(accepted.turnId), []);
             await assert.rejects(
               policy.run(
                 { threadId: turn.threadId, turnId: accepted.turnId },
@@ -2296,6 +3061,7 @@ test(
               approvals.request(turn, action, args, options),
             lock: (id, write) => thread.withTurnLock(id, write),
             signalFor: () => controller.signal,
+            record: ledger.action,
             publishScreenshot: async (turn, bytes, name, signal) => {
               const artifact = await thread.publishScreenshot(
                 turn,
@@ -2366,7 +3132,10 @@ test(
           t.after(() => finish(accepted.turnId, 'cancelled'));
           executionResult = () => {
             const call = calls.at(-1)!;
-            return policy.execute(call.action, call.args, call.context);
+            return policy.execute(call.action, call.args, {
+              ...call.context,
+              basis: { kind: 'approved' },
+            });
           };
           try {
             await execute(pending.id, controller.signal);
@@ -2380,8 +3149,14 @@ test(
             assert.equal(delivered[0].source, 'computer_screenshot');
             assert.deepEqual(await artifacts.localArtifacts.readArtifact(delivered[0].id), png);
             assert.equal(captures, 1);
+            assert.deepEqual(await nativeReceipts(accepted.turnId), [
+              { action: 'NOD_computer_share_screenshot', basis: { kind: 'approved' } },
+            ]);
             assert.equal(await execute(pending.id, controller.signal), undefined);
             assert.equal(captures, 1);
+            assert.deepEqual(await nativeReceipts(accepted.turnId), [
+              { action: 'NOD_computer_share_screenshot', basis: { kind: 'approved' } },
+            ]);
             assert.deepEqual(
               await policy.run(
                 await running(accepted.turnId),
@@ -2396,6 +3171,9 @@ test(
               (await stored(pending.id)).result,
             );
             assert.equal(captures, 1);
+            assert.deepEqual(await nativeReceipts(accepted.turnId), [
+              { action: 'NOD_computer_share_screenshot', basis: { kind: 'approved' } },
+            ]);
             const live = await running(accepted.turnId);
             await assert.rejects(
               thread.publishScreenshot({ ...live, threadId: randomUUID() }, png),
@@ -2461,6 +3239,9 @@ test(
               if (outcome === 'declined') {
                 assert.equal(await execute(asked.id), undefined);
                 assert.equal(captures, 1);
+                assert.deepEqual(await nativeReceipts(accepted.turnId), [
+                  { action: 'NOD_computer_share_screenshot', basis: { kind: 'approved' } },
+                ]);
               } else {
                 interruptPublication = true;
                 await assert.rejects(
@@ -3060,6 +3841,16 @@ test(
           assert.deepEqual(await messages.submit('Yes.', [], reply), accepted);
           const confirmed = await proposal(turn.turnId);
           assert.equal(confirmed.status, 'confirmed');
+          assert.deepEqual(await approvals.states([confirmed.confirmation_message_id]), {
+            [confirmed.confirmation_message_id]: 'confirmed',
+          });
+          assert.equal(
+            (await request('GET', `/api/messages/around/${confirmed.confirmation_message_id}`))
+              .json()
+              .find((message: { id: string }) => message.id === confirmed.confirmation_message_id)
+              .questionState,
+            'confirmed',
+          );
           assert.equal(confirmed.execution_turn_id, accepted.turnId);
           assert.equal((await row(accepted.turnId)).channel, channel);
           const before = calls.length;
@@ -3082,6 +3873,9 @@ test(
             undefined,
           );
           assert.equal((await proposal(turn.turnId)).status, 'completed');
+          assert.deepEqual(await approvals.states([confirmed.confirmation_message_id]), {
+            [confirmed.confirmation_message_id]: 'completed',
+          });
           await finish(accepted.turnId, 'succeeded');
         },
       );
@@ -3413,6 +4207,14 @@ test(
             failExecution = false;
           }
           assert.equal((await stored(failed)).status, 'uncertain');
+          const questionId = (await stored(failed)).confirmation_message_id;
+          assert.deepEqual(await approvals.states([questionId]), { [questionId]: 'uncertain' });
+          await db.pool.query('UPDATE approvals SET owner_id=$2 WHERE id=$1', [
+            failed,
+            'other-owner',
+          ]);
+          assert.deepEqual(await approvals.states([questionId]), {});
+          await db.pool.query('UPDATE approvals SET owner_id=$2 WHERE id=$1', [failed, ownerId]);
           assert.equal(await execute(failed), undefined);
           assert.equal(await confirm(failed, true), undefined);
           assert.equal(calls.length, before + 1);
@@ -3661,7 +4463,10 @@ test(
           observed = false;
         },
       },
-      check: async () => (covered ? { confirm: false } : { confirm: true, reason: 'unrequested' }),
+      check: async () =>
+        covered
+          ? { confirm: false, basis: { kind: 'read' } }
+          : { confirm: true, reason: 'unrequested' },
       request: async (_turn, action, args, request) => {
         if (request.allowed && typeof request.run === 'function') return request.run();
         saved = {
@@ -3708,6 +4513,7 @@ test(
         await restarted.initialize();
         await assert.rejects(
           restarted.execute(older.action, older.args, {
+            basis: { kind: 'approved' },
             turnId: turn.turnId,
             expectedRevision: older.revision,
           }),
@@ -3717,6 +4523,7 @@ test(
         covered = false;
         await run({ action: 'look', app: target.name });
         await restarted.execute(saved!.action, saved!.args, {
+          basis: { kind: 'approved' },
           turnId: turn.turnId,
           expectedRevision: saved!.revision,
         });
@@ -3741,6 +4548,7 @@ test(
         );
         await assert.rejects(
           policy.execute(older.action, older.args, {
+            basis: { kind: 'approved' },
             turnId: turn.turnId,
             expectedRevision: older.revision,
           }),
@@ -3816,6 +4624,7 @@ test(
     const shellSignals: AbortSignal[] = [];
     let covered = false;
     let blocked = false;
+    let observations = 0;
     const label = 'Button "Delete all"';
     let hold: ((signal: AbortSignal) => Promise<void>) | undefined;
     const checks: Record<string, unknown>[] = [];
@@ -3830,18 +4639,21 @@ test(
         return { exitCode: 0, output: '' };
       },
       resolve: async (name) =>
-        name === 'Calculator' || name === 'EvilTerm'
+        ['Calculator', 'EvilTerm', 'Missing Fixture App'].includes(name)
           ? null
           : { name, bundleId: name === 'Terminal' ? 'com.apple.Terminal' : `fixture.${name}` },
-      identify: async (name) => ({
-        name,
-        bundleId: name === 'EvilTerm' ? 'COM.APPLE.TERMINAL' : `fixture.${name}`,
-      }),
+      identify: async (name) =>
+        name === 'Missing Fixture App'
+          ? null
+          : {
+              name,
+              bundleId: name === 'EvilTerm' ? 'COM.APPLE.TERMINAL' : `fixture.${name}`,
+            },
       open: async (bundleId) => ({ name: 'Calculator', bundleId }),
-      look: async (bundleId) => ({
-        app: { name: 'Notes', bundleId },
-        tree: `- ${label} [ref=e1]`,
-      }),
+      look: async (bundleId) => {
+        observations++;
+        return { app: { name: 'Notes', bundleId }, tree: `- ${label} [ref=e1]` };
+      },
       inspect: async (_bundleId, ref) => {
         if (ref !== undefined && ref !== 'e1') throw new Error(`Unknown ref ${ref}.`);
         return { label, token: 'fixture-target' };
@@ -3859,7 +4671,9 @@ test(
       computer,
       check: async (_turn, _action, args) => {
         checks.push(args);
-        return covered ? { confirm: false } : { confirm: true, reason: 'unrequested' };
+        return covered
+          ? { confirm: false, basis: { kind: 'read' } }
+          : { confirm: true, reason: 'unrequested' };
       },
       request: async (_turn, action, args, options) => {
         requests.push({ action, args, allowed: options.allowed });
@@ -3893,7 +4707,7 @@ test(
       policy.execute(
         'NOD_computer',
         { action: 'shell', command: 'fixture-expired' },
-        { turnId: randomUUID() },
+        { basis: { kind: 'approved' }, turnId: randomUUID() },
       ),
       (error: Error & { notRun?: boolean }) => error.notRun === true,
     );
@@ -3923,6 +4737,9 @@ test(
     await assert.rejects(run({ action: 'open', app: 'Script Editor' }), /never uses/);
     await assert.rejects(run({ action: 'look', app: 'a/b' }), /not a path/);
     await assert.rejects(run({ action: 'open', app: 'EvilTerm' }), /never uses/);
+    const checkedBeforeMissing = checks.length;
+    await assert.rejects(run({ action: 'open', app: 'Missing Fixture App' }), /Could not identify/);
+    assert.equal(checks.length, checkedBeforeMissing);
     for (const app of [
       'nod',
       'io.n8n.nod',
@@ -3945,7 +4762,7 @@ test(
     await policy.execute(
       'NOD_computer_app',
       { action: 'look', app: 'Notes', bundleId: 'fixture.Notes' },
-      { turnId: turn.turnId },
+      { basis: { kind: 'approved' }, turnId: turn.turnId },
     );
     const asked = requests.length;
     assert.deepEqual(await run({ action: 'look', app: 'Notes' }), {
@@ -3953,6 +4770,15 @@ test(
       tree: '- Button "Delete all" [ref=e1]',
     });
     assert.equal(requests.length, asked);
+
+    const checkedBeforeOpen = checks.length;
+    assert.deepEqual(await run({ action: 'open', app: 'Notes' }), {
+      done: true,
+      app: { name: 'Notes', bundleId: 'fixture.Notes' },
+      tree: '- Button "Delete all" [ref=e1]',
+    });
+    assert.equal(requests.length, asked);
+    assert.equal(checks.length, checkedBeforeOpen);
 
     covered = true;
     await run({ action: 'look', app: 'Calendar' });
@@ -3991,7 +4817,7 @@ test(
           ref: 'e1',
           control: 'Button "Delete all"',
         },
-        { turnId: turn.turnId },
+        { basis: { kind: 'approved' }, turnId: turn.turnId },
       ),
       (error: Error & { notRun?: boolean }) => error.notRun === true,
     );
@@ -4033,7 +4859,7 @@ test(
         ref: 'e1',
         targetToken: 'fixture-target',
       },
-      { turnId: turn.turnId },
+      { basis: { kind: 'approved' }, turnId: turn.turnId },
     );
     const revoked = assert.rejects(pending, /removed/);
     await starting;
@@ -4064,7 +4890,7 @@ test(
           ref: 'e1',
           targetToken: 'fixture-target',
         },
-        { turnId: turn.turnId },
+        { basis: { kind: 'approved' }, turnId: turn.turnId },
       ),
       (error: Error & { notRun?: boolean }) => error.notRun === true,
     );
@@ -4079,13 +4905,13 @@ test(
     await policy.execute(
       'NOD_computer',
       { action: 'shell', command: 'sleep 1' },
-      { turnId: turn.turnId, expectedRevision: revision },
+      { basis: { kind: 'approved' }, turnId: turn.turnId, expectedRevision: revision },
     );
     assert.equal(shellSignals.at(-1)?.aborted, false);
     await policy.execute(
       'NOD_computer',
       { action: 'shell', command: 'fixture-resume' },
-      { turnId: resume.turnId, expectedRevision: revision },
+      { basis: { kind: 'approved' }, turnId: resume.turnId, expectedRevision: revision },
     );
     assert.equal(shellSignals.at(-1)?.aborted, false);
     resumed.abort();
@@ -4102,7 +4928,7 @@ test(
     const shell = policy.execute(
       'NOD_computer',
       { action: 'shell', command: 'fixture-wait' },
-      { turnId: turn.turnId, expectedRevision: revision },
+      { basis: { kind: 'approved' }, turnId: turn.turnId, expectedRevision: revision },
     );
     const disabled = assert.rejects(shell, /turned off/);
     await starting;
@@ -4111,16 +4937,40 @@ test(
     await disabled;
     assert.equal(shellSignals.at(-1)?.aborted, true);
     await assert.rejects(
-      policy.execute('NOD_computer', { action: 'shell', command: 'ls' }, { turnId: turn.turnId }),
+      policy.execute(
+        'NOD_computer',
+        { action: 'shell', command: 'ls' },
+        { basis: { kind: 'approved' }, turnId: turn.turnId },
+      ),
       (error: Error & { notRun?: boolean }) => error.notRun === true,
     );
     await app.inject({ method: 'PATCH', url: '/api/computer', payload: { enabled: true } });
+    covered = true;
+    await run({ action: 'look', app: 'Notes' });
+    const observedBeforeRevision = observations;
+    await assert.rejects(
+      policy.run(
+        turn,
+        { action: 'open', app: 'Notes' },
+        {
+          rooted: true,
+          admit: async () => {
+            await pool.query('UPDATE computer_settings SET revision=revision+1 WHERE owner_id=$1', [
+              'computer-owner',
+            ]);
+          },
+        },
+        signal,
+      ),
+      (error: Error & { notRun?: boolean }) => error.notRun === true,
+    );
+    assert.equal(observations, observedBeforeRevision);
     controller.abort();
     await assert.rejects(
       policy.execute(
         'NOD_computer',
         { action: 'shell', command: 'fixture-stopped' },
-        { turnId: turn.turnId },
+        { basis: { kind: 'approved' }, turnId: turn.turnId },
       ),
       (error: Error) => error.name === 'AbortError',
     );

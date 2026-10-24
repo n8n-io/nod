@@ -1,4 +1,4 @@
-import { History, KeyRound, ListChecks, MessageCircle, PlugZap, Radio } from 'lucide-react';
+import { History, ListChecks, MessageCircle, PlugZap, Radio, Vault } from '../components/icons';
 
 export const sidebarItems = [
   { path: '/', label: 'Chat', key: '1', icon: MessageCircle },
@@ -6,10 +6,11 @@ export const sidebarItems = [
   { path: '/apps', label: 'Apps', key: '3', icon: PlugZap },
   { path: '/channels', label: 'Channels', key: '4', icon: Radio },
   { path: '/usage', label: 'Usage', key: '5', icon: History },
-  { path: '/vault', label: 'Vault', key: '6', icon: KeyRound },
+  { path: '/vault', label: 'Vault', key: '6', icon: Vault },
 ] as const;
 
 export function navigate(path: string) {
+  if (window.location.pathname + window.location.search + window.location.hash === path) return;
   window.history.pushState(null, '', path);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }

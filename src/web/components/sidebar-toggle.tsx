@@ -1,4 +1,4 @@
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen } from './icons';
 import { Button } from './ui';
 import { shortcutLabel } from '../lib/navigation';
 import { desktopSettingsAvailable } from '../lib/desktop';

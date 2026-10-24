@@ -92,15 +92,15 @@ flowchart LR
 
 ## What nod does in common cases
 
-| You ask nod to                                         | What happens                                                                                                                      |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| Read your calendar or inbox                            | It runs.                                                                                                                          |
-| Draft a reply                                          | It runs.                                                                                                                          |
-| Add an event, send an email or delete files            | A review checks it matches your request, then it runs. If it doesn't match, nod asks.                                             |
-| Email an address it found on a web page                | The review doesn't find it in your request, so nod asks.                                                                          |
-| Sign in to a site with a saved login                   | Vault checks the account and website, then fills in the password privately.                                                       |
-| Pay at a checkout                                      | You approve that one payment with your card's security code, which nod never saves.                                               |
-| Do something while it reacts to a new email on its own | It does what you told it to do on its own, such as forwarding Ana's invoices to accounting@acme.com. Anything else waits for you. |
+| You ask nod to                                         | What happens                                                                                                                                                                               |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Read your calendar or inbox                            | It runs.                                                                                                                                                                                   |
+| Draft a reply                                          | It runs.                                                                                                                                                                                   |
+| Add an event, send an email or delete files            | A review checks it matches your request, then it runs. If it doesn't match, nod asks.                                                                                                      |
+| Email an address it found on a web page                | The review doesn't find it in your request, so nod asks.                                                                                                                                   |
+| Sign in to a site with a saved login                   | Vault checks the account and website, then fills in the password privately.                                                                                                                |
+| Pay at a checkout                                      | You approve that one payment with your card's security code, which nod never saves.                                                                                                        |
+| Do something while it reacts to a new email on its own | It does what you told it to do on its own, such as forwarding Ana's invoices to accounting@acme.com, unless a rule says to ask first. Anything else waits for you unless a rule allows it. |
 
 :::note[Asked once]
 nod doesn't add its own confirmation on top of these checks, which ask you whenever your words don't cover an action. nod itself asks only when the account, target or action is unclear.
@@ -108,11 +108,11 @@ nod doesn't add its own confirmation on top of these checks, which ask you whene
 
 ## Where you see and change things
 
-- **Usage** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Linux app) shows what nod did and spent: app actions, sign-ins, card uses, questions and held attempts, with the cost of each request. The sentence at the top holds your monthly limit, when a task checks in with you and the [standing instruction](/trust/approvals/#standing-instructions) nod follows on its own. Select one to change it.
+- **Usage** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Linux app) shows what nod did and spent: app actions, sign-ins, card uses, questions and held attempts, with the cost of each request. The sentence at the top holds your monthly limit, when a task checks in with you, the [standing instruction](/trust/approvals/#standing-instructions) nod follows on its own and [your rules](/trust/approvals/#your-rules). Select one to change it.
 - **Vault** (⌘6 or Ctrl+6) lists your logins, cards and saved browser sessions. Edit or remove logins and cards, and sign out of sessions.
 - **Settings → Memory** shows what nod remembers about you and where it learned it.
 
-![Usage shows model costs, a $40 monthly limit, the $5 task check-in, a standing instruction, completed tasks and a sign-in.](../../../assets/screens/usage-light.png)
+![Usage shows model costs, a $40 monthly limit, the $5 task check-in, a standing instruction, a rule to ask before paying, completed tasks and a sign-in.](../../../assets/screens/usage-light.png)
 
 ## In this section
 

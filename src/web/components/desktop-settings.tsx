@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bell, Power } from 'lucide-react';
+import { Bell, Power } from './icons';
 import {
   getDesktopSettings,
   saveDesktopSettings,

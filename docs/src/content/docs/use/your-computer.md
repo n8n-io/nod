@@ -16,12 +16,14 @@ It's off by default and works on macOS only. nod still does most work in its own
 | Run commands | Runs a shell command on your Mac, for example to find, read, move or rename files     |
 | Share a file | Attaches an original Mac file to your conversation without rewriting its contents     |
 | See apps     | Lists the Mac apps that are running                                                   |
-| Open an app  | Opens a Mac app in the background                                                     |
+| Open an app  | Opens a Mac app in the background and reads its current window                        |
 | Look         | Reads a Mac app's window as a list of its buttons, fields, menus and text             |
 | Screenshot   | Takes a picture of one app window, even when another window covers it                 |
 | Act          | Presses a button, sets a value, opens a menu or types text and keys into that one app |
 
-nod sends actions to the selected app without moving your mouse. After an action, nod tries to read a fresh view to check the result. If that view is unavailable, it looks again before acting and never repeats the completed action. Some actions, such as raising a window, can bring it forward.
+When you name one app, nod opens it directly and reads a fresh view, including when it is already running. You don't need a separate step to list running apps.
+
+nod sends actions to the selected app without moving your mouse. After opening or acting in an app, nod tries to read a fresh view to check the result. If that view is unavailable, it looks again before acting and never repeats the completed action. Some actions, such as raising a window, can bring it forward.
 
 When you ask for a screenshot, nod can attach the app window image to your conversation. Sharing always goes through the trust check, even for an allowed app. For app inspection, each new request or continuation starts without older views. nod keeps only that request's two latest views in the model's context; earlier views remain in the saved conversation.
 
@@ -51,9 +53,9 @@ Commands run with a restricted environment inside a macOS sandbox profile. The p
 
 ## What asks you first
 
-Every file share, every command, every app nod opens and every action in an app goes through the same [trust check](/trust/approvals/) as app actions. It runs when your words ask for it. Otherwise nod asks you.
+Every file share, command, app launch and action in an app goes through the same [trust check](/trust/approvals/) as app actions. It runs when your words ask for it. Otherwise nod asks you.
 
-When your request names the Mac app, nod uses it and remembers it. Otherwise it asks once, for example "May I use Notes on your computer?". That yes covers the step and the app, and is remembered. Allowed apps are listed in **Settings**, where you can remove one. Listing running apps, looking at an allowed app and taking its screenshot don't ask.
+When your request names the Mac app, nod uses it and remembers it. Otherwise it asks once, for example "May I use Notes on your computer?". That yes covers the step and the app, and is remembered. Allowed apps are listed in **Settings**, where you can remove one. Listing running apps doesn't ask. Looking at an allowed app, taking its screenshot or opening it while it is already running only reads its current view. Your rules still apply to these reads; a rule to ask first pauses them for confirmation.
 
 Native app control blocks these known apps by bundle ID or name, even if you ask:
 

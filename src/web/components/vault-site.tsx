@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Globe } from 'lucide-react';
+import { Globe } from './icons';
 import type { VaultActivity, VaultSession } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { originLabel } from '../lib/vault-name';

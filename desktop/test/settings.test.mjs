@@ -31,6 +31,27 @@ import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
 import { createReadinessNotice, isQuietTime } from '../main/notifications.mjs';
 import { saveArtifactDownload } from '../main/downloads.mjs';
 import { createDesktopLifecycle } from '../main/lifecycle.mjs';
+import { appOpenPath } from '../main/app-links.mjs';
+import appPages from '../../src/shared/app-pages.json' with { type: 'json' };
+
+test('external app links can only open named screens without action data', () => {
+  for (const path of Object.keys(appPages))
+    assert.equal(appOpenPath(`nod://open${path}`, appPages), path);
+  for (const value of [
+    undefined,
+    'https://example.test/settings/models',
+    'nod://other/settings/models',
+    'nod://open/settings/models?key=synthetic',
+    'nod://open/settings/models#synthetic',
+    'nod://open/settings/unknown',
+    'nod://open/api/account',
+    'nod://open/trust?add=card',
+    'nod://open/settings/../apps',
+    'nod://open/credentials/request-id',
+    'nod://open@evil.test/apps',
+  ])
+    assert.equal(appOpenPath(value, appPages), null);
+});
 import {
   createDesktopUpdater,
   createUpdateSource,
@@ -350,6 +371,7 @@ async function runningDesktop(
     argv = [],
     prompt = () => assert.fail('No restart prompt is needed.'),
     reveal = () => assert.fail('No file should be revealed.'),
+    openExternal,
   } = {},
 ) {
   const storage = storedProfile
@@ -365,6 +387,7 @@ async function runningDesktop(
   }
   const windows = [];
   const children = [];
+  const helpers = [];
   const paths = new Map();
   const handlers = new Map();
   const rendererReady = (window) =>
@@ -373,6 +396,7 @@ async function runningDesktop(
       senderFrame: window.webContents.mainFrame,
     });
   const notifications = [];
+  const appEvents = new EventEmitter();
   const externalURLs = [];
   const updateMenu = {};
   const ipc = Object.assign(new EventEmitter(), {
@@ -388,7 +412,10 @@ async function runningDesktop(
     },
   });
   const context = {
+    readFileSync: () => JSON.stringify(appPages),
+    appOpenPath,
     app: {
+      on: (name, listener) => appEvents.on(name, listener),
       isPackaged: packaged,
       setName() {},
       setPath: (name, path) => paths.set(name, path),
@@ -430,7 +457,13 @@ async function runningDesktop(
     session: { fromPartition: () => appSession },
     dialog: { showMessageBox: async (options) => prompt(options) },
     Menu: { getApplicationMenu: () => ({ getMenuItemById: () => updateMenu }) },
-    shell: { showItemInFolder: reveal, openExternal: async (url) => externalURLs.push(url) },
+    shell: {
+      showItemInFolder: reveal,
+      openExternal: async (url) => {
+        externalURLs.push(url);
+        await openExternal?.(url);
+      },
+    },
     URL,
     dirname,
     isAbsolute,
@@ -493,15 +526,32 @@ async function runningDesktop(
         notifications.push(this);
       }
     },
+    MessageChannelMain: class {
+      port1 = { end: 'engine' };
+      port2 = { end: 'helper' };
+    },
     utilityProcess: {
-      fork(file, _args, options) {
+      fork(file, args, options) {
+        if (/[\\/]onepassword\.mjs$/.test(file)) {
+          const helper = Object.assign(new EventEmitter(), { file, args, options, sent: [] });
+          helper.postMessage = (message, transfer) => helper.sent.push({ message, transfer });
+          helper.kill = () => {
+            helper.killed = true;
+          };
+          helpers.push(helper);
+          return helper;
+        }
         assert.ok(allowStart, 'The healthy engine must not restart.');
         assert.ok(Object.values(options.env).every((value) => typeof value === 'string'));
         const child = new EventEmitter();
         assert.ok(file.endsWith('/engine.mjs') || file.endsWith('\\engine.mjs'));
         child.kind = 'engine';
         child.sent = [];
-        child.postMessage = (message) => child.sent.push(message);
+        child.transfers = [];
+        child.postMessage = (message, transfer) => {
+          child.sent.push(message);
+          if (transfer) child.transfers.push({ message, transfer });
+        };
         child.environment = options.env;
         child.port = options.env.PORT;
         child.stdout = { resume() {} };
@@ -624,6 +674,7 @@ async function runningDesktop(
   await runInNewContext(
     `(async () => {
     ${source}
+    appLinksReady = true;
     engine = {};
     enginePreferencesReady = true;
     engineRuntimeReady = true;
@@ -663,8 +714,10 @@ async function runningDesktop(
   );
   return {
     ...context.running,
+    openLink: (value) => appEvents.emit('open-url', { preventDefault() {} }, value),
     windows,
     children,
+    helpers,
     storage,
     handlers,
     notifications,
@@ -1371,6 +1424,34 @@ test('runtime handoff and readiness respect closed, minimized and background win
   }
 });
 
+test('app links wait for the owned renderer and open only a named screen', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    readyRenderers: false,
+  });
+  try {
+    f.openLink('nod://open/settings/models');
+    const window = f.windows.at(-1);
+    await new Promise(setImmediate);
+    assert.equal(
+      window.sent.some(([name]) => name === 'nod:navigate'),
+      false,
+    );
+    await f.rendererReady(window);
+    assert.deepEqual(
+      window.sent.filter(([name]) => name === 'nod:navigate'),
+      [['nod:navigate', '/settings/models']],
+    );
+    f.openLink('nod://open/trust?add=card');
+    f.showEngine();
+    assert.equal(window.sent.filter(([name]) => name === 'nod:navigate').length, 1);
+    f.openLink('nod://open/channels');
+    assert.deepEqual(window.sent.at(-1), ['nod:navigate', '/channels']);
+  } finally {
+    f.crash();
+    await f.close();
+  }
+});
+
 test('native windows wait for owned renderer readiness before replacing startup', async (t) => {
   for (const scenario of [
     'foreground',
@@ -1969,6 +2050,11 @@ test('partial onboarding restart keeps acknowledged consent and normal app progr
     assert.equal(new URL(window.url).pathname, '/onboarding');
     assert.equal(new URL(window.url).searchParams.get('welcome'), 'complete');
     assert.equal((await next.storage.store.get()).welcome.acknowledged, true);
+    next.openLink('nod://open/settings/models');
+    assert.equal(
+      window.sent.some(([name]) => name === 'nod:navigate'),
+      false,
+    );
     await next.storage.store.save({ notifications: true, launchAtLogin: true });
     completed = true;
     await next.handlers.get('nod:settings:save')(
@@ -1977,6 +2063,10 @@ test('partial onboarding restart keeps acknowledged consent and normal app progr
     );
     assert.equal((await next.storage.store.get()).welcome, undefined);
     assert.equal(writes, 1);
+    assert.deepEqual(
+      window.sent.filter(([name]) => name === 'nod:navigate'),
+      [['nod:navigate', '/settings/models']],
+    );
   } finally {
     await next.close();
   }
@@ -2549,6 +2639,39 @@ test('native artifact saving requires an owned main frame on the current trusted
   assert.equal(retired.savedPath, undefined);
 });
 
+test('Telegram pairing opens the native app with the exact nonce and falls back to HTTPS', async (t) => {
+  let rejectNative = false;
+  const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+    openExternal: async (url) => {
+      if (rejectNative && url.startsWith('tg:')) throw new Error('No Telegram app.');
+    },
+  });
+  f.showEngine();
+  const sender = f.windows.at(-1).webContents;
+  const event = { sender, senderFrame: sender.mainFrame };
+  const invoke = (url) => f.handlers.get('nod:external')(event, url);
+  const nonce = 'Abcd1234_-'.repeat(3) + 'AB';
+  const url = `https://t.me/fixture_bot?start=${nonce}`;
+  await invoke(url);
+  const native = `tg://resolve?domain=fixture_bot&start=${nonce}`;
+  assert.deepEqual(f.externalURLs, [native]);
+  rejectNative = true;
+  await invoke(url);
+  assert.deepEqual(f.externalURLs.slice(-2), [native, url]);
+  for (const value of [
+    url + '&extra=yes',
+    url + '&start=' + nonce,
+    url + '#fragment',
+    url.replace('t.me', 'example.test'),
+    url.replace(nonce, 'short'),
+    url.replace('https:', 'http:'),
+  ]) {
+    await invoke(value);
+    assert.equal(f.externalURLs.at(-1), value);
+  }
+  await assert.rejects(invoke(native), /unavailable/);
+});
+
 test('native settings reject foreign windows, subframes, AI credentials, and web onboarding writes', async (t) => {
   const f = await runningDesktop(
     t,
@@ -2583,7 +2706,12 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     await assert.rejects(get(rejected));
     await assert.rejects(save({ composioApiKey: 'synthetic-injected-key' }, rejected));
   }
-  for (const url of ['https://example.test/', 'http://127.0.0.1:4310/api/files/synthetic']) {
+  for (const url of [
+    'https://example.test/',
+    'https://example.test/settings',
+    'http://127.0.0.1:4310/api/files/synthetic',
+    'http://127.0.0.1:4310/settings/foreign',
+  ]) {
     frame.url = url;
     await assert.rejects(get());
     await assert.rejects(save({ theme: 'dark' }));
@@ -2617,6 +2745,15 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   assert.ok(
     window.sent.some(([channel, value]) => channel === 'nod:settings:focus' && value === 'models'),
   );
+  for (const path of ['/settings', '/settings/models', '/settings/memory']) {
+    frame.url = `http://127.0.0.1:4310${path}`;
+    assert.equal((await get()).theme, 'light');
+    assert.equal((await invoke('nod:preferences:get', event)).theme, 'light');
+    await save({ theme: 'dark' });
+    assert.equal((await invoke('nod:preferences:get', event)).theme, 'dark');
+    await invoke('nod:preferences:theme', event, 'light');
+    await assert.rejects(get({ sender: window.webContents, senderFrame: { url: frame.url } }));
+  }
   window.destroy();
   await assert.rejects(save({ theme: 'light' }));
   f.setReady(false);
@@ -2687,6 +2824,43 @@ test('the engine token waits for the engine nod started to report its port', asy
   f.children[0].emit('exit', 1);
   assert.equal((await prepared).phase, 'error');
   assert.deepEqual(requests, []);
+});
+
+test('the engine reaches 1Password only through a separate helper that may load its library', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    allowStart: true,
+    environment: { HOME: '/Users/synthetic', OPENAI_API_KEY: 'sk-synthetic-provider-key' },
+  });
+  f.crash();
+  assert.equal((await f.prepare()).phase, 'ready');
+  const [engine] = f.children;
+  assert.equal(f.helpers.length, 0);
+  engine.emit('message', { type: 'nod-1password-open' });
+  assert.equal(f.helpers.length, 1);
+  const [helper] = f.helpers;
+  assert.match(helper.file, /[\\/]desktop[\\/]main[\\/]onepassword\.mjs$/);
+  assert.equal(helper.options.allowLoadingUnsignedLibraries, true);
+  assert.equal(helper.options.serviceName, 'nod 1Password');
+  assert.deepEqual(JSON.parse(JSON.stringify(helper.options.env)), { HOME: '/Users/synthetic' });
+  assert.deepEqual(JSON.parse(JSON.stringify(helper.args)), ['0.0.0-test']);
+  assert.deepEqual(JSON.parse(JSON.stringify(helper.sent)), [
+    { message: { type: 'nod-1password-port' }, transfer: [{ end: 'helper' }] },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(engine.transfers)), [
+    { message: { type: 'nod-1password-port' }, transfer: [{ end: 'engine' }] },
+  ]);
+  engine.emit('exit', 1);
+  assert.equal(helper.killed, true);
+});
+
+test('a stale engine cannot open a 1Password helper', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), { allowStart: true });
+  f.crash();
+  assert.equal((await f.prepare()).phase, 'ready');
+  const [stale] = f.children;
+  stale.emit('exit', 1);
+  stale.emit('message', { type: 'nod-1password-open' });
+  assert.equal(f.helpers.length, 0);
 });
 
 async function fixture(t, platform = 'win32') {
@@ -3357,6 +3531,20 @@ test('engine preload exposes no credential reveal and withholds privileged IPC e
   const status = { phase: 'preparing', runtime: { phase: 'starting' } };
   listeners.get('nod:status')({ sender: 'privileged-synthetic-ipc' }, status);
   assert.deepEqual(received, [status]);
+  listeners.get('nod:navigate')({ sender: 'privileged-synthetic-ipc' }, '/settings/models');
+  let navigationCalls = 0;
+  const stop = bridge.onNavigate((...values) => {
+    navigationCalls++;
+    received = values;
+  });
+  assert.deepEqual(received, ['/settings/models']);
+  stop();
+  listeners.get('nod:navigate')({ sender: 'privileged-synthetic-ipc' }, '/trust');
+  assert.equal(navigationCalls, 1);
+  bridge.onNavigate((...values) => {
+    received = values;
+  });
+  assert.deepEqual(received, ['/trust']);
 });
 
 async function chatReadFixture(t) {
@@ -4308,5 +4496,121 @@ test('native readiness notification waits for full runtime readiness and reaches
         await f.close();
       }
     });
+  }
+});
+
+test('artifact exports keep owned bytes, safe names, separate saves and restricted opening', async () => {
+  const { createArtifactFiles, canOpenArtifact } = await import('../main/artifact-files.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'nod-artifact-contract-'));
+  let requests = 0;
+  let filename = '../report.pdf';
+  const files = createArtifactFiles({
+    temporary: root,
+    downloads: join(root, 'Downloads'),
+    fetchArtifact: async () => {
+      requests++;
+      return new Response('synthetic PDF bytes', {
+        headers: {
+          'content-type': 'application/pdf',
+          'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        },
+      });
+    },
+  });
+  const id = randomUUID();
+  try {
+    const [first, second] = await Promise.all([files.prepare(id), files.prepare(id)]);
+    assert.equal(first.path, second.path);
+    assert.equal(first.name, 'report.pdf');
+    assert.equal(requests, 1);
+    assert.equal(await readFile(first.path, 'utf8'), 'synthetic PDF bytes');
+    await files.save(id);
+    await files.save(id);
+    assert.equal(await readFile(join(root, 'Downloads/report.pdf'), 'utf8'), 'synthetic PDF bytes');
+    assert.equal(
+      await readFile(join(root, 'Downloads/report (1).pdf'), 'utf8'),
+      'synthetic PDF bytes',
+    );
+    await assert.rejects(files.prepare('../../private'), /unavailable/);
+    assert.equal(canOpenArtifact(first), true);
+    assert.equal(canOpenArtifact({ name: 'report.desktop', type: 'application/pdf' }), false);
+    assert.equal(canOpenArtifact({ name: 'report.pdf', type: 'text/html' }), false);
+    filename = 'report:Q4?.pdf';
+    assert.equal((await files.prepare(randomUUID())).name, 'report_Q4_.pdf');
+    filename = 'CON.pdf';
+    assert.equal((await files.prepare(randomUUID())).name, '_CON.pdf');
+    const pinnedId = randomUUID();
+    const pinned = await files.path(pinnedId);
+    const evicted = await files.prepare(randomUUID());
+    for (let index = 0; index < 9; index++) await files.prepare(randomUUID());
+    await assert.rejects(readFile(evicted.path), { code: 'ENOENT' });
+    assert.equal(await readFile(pinned.path, 'utf8'), 'synthetic PDF bytes');
+    const absent = createArtifactFiles({
+      temporary: root,
+      downloads: root,
+      fetchArtifact: async () => new Response('', { status: 404 }),
+    });
+    await assert.rejects(absent.prepare(randomUUID()), /no longer available/);
+    const blocked = join(root, 'not-a-directory');
+    await writeFile(blocked, 'Synthetic disk setup failure');
+    let cancelled = false;
+    const failed = createArtifactFiles({
+      temporary: blocked,
+      downloads: root,
+      fetchArtifact: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('Synthetic recovered download'));
+              controller.close();
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+        ),
+    });
+    const failedId = randomUUID();
+    await assert.rejects(failed.prepare(failedId));
+    assert.equal(cancelled, true);
+    await rm(blocked);
+    await mkdir(blocked);
+    const retried = await failed.prepare(failedId);
+    assert.equal(await readFile(retried.path, 'utf8'), 'Synthetic recovered download');
+    await failed.dispose();
+    let source;
+    const streaming = createArtifactFiles({
+      temporary: root,
+      downloads: root,
+      fetchArtifact: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              source = controller;
+              controller.enqueue(new TextEncoder().encode('First streamed bytes'));
+            },
+          }),
+        ),
+    });
+    const streamId = randomUUID();
+    const pending = streaming.prepare(streamId);
+    const rejected = assert.rejects(pending, { name: 'AbortError' });
+    let partial;
+    for (let attempt = 0; attempt < 100 && !partial; attempt++) {
+      for (const name of await readdir(root)) {
+        const path = join(root, name, streamId, 'download');
+        if ((await readFile(path).catch(() => null))?.toString() === 'First streamed bytes')
+          partial = path;
+      }
+      if (!partial) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(partial);
+    source.enqueue(new TextEncoder().encode(' Later streamed bytes'));
+    await streaming.dispose();
+    await rejected;
+    await assert.rejects(readFile(partial), { code: 'ENOENT' });
+  } finally {
+    await files.dispose();
+    await rm(root, { recursive: true, force: true });
   }
 });

@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ModelConnection, ModelSelection, ModelsResponse } from '../../shared/models';
+import type {
+  ModelConnection,
+  ModelProvider,
+  ModelSelection,
+  ModelsResponse,
+} from '../../shared/models';
 import { usePageData } from './use-page-data';
+import { defaultEffort, defaultModel } from '../../shared/model-defaults';
 import { api, errorMessage, post } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
@@ -8,6 +14,53 @@ import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 export type Models = ReturnType<typeof useModels>;
 
 export const localServerAddress = 'http://localhost:11434/v1';
+
+export interface KeySettings {
+  region: string;
+  url: string;
+  model: string;
+  deployment: string;
+  accountId: string;
+  gatewayId: string;
+}
+
+export const noKeySettings: KeySettings = {
+  region: '',
+  url: '',
+  model: '',
+  deployment: '',
+  accountId: '',
+  gatewayId: '',
+};
+
+export function keySettingsReady(provider: ModelProvider, settings: KeySettings) {
+  if (provider === 'amazon-bedrock') return !!settings.region.trim();
+  if (provider === 'azure')
+    return !!(settings.url.trim() && settings.deployment.trim() && settings.model);
+  if (provider === 'cloudflare-workers-ai') return !!settings.accountId.trim();
+  if (provider === 'cloudflare-ai-gateway')
+    return !!(settings.accountId.trim() && settings.gatewayId.trim());
+  return true;
+}
+
+export function keyConnection(provider: ModelProvider, key: string, settings: KeySettings) {
+  return {
+    provider,
+    key,
+    ...(provider === 'amazon-bedrock' ? { region: settings.region.trim() } : {}),
+    ...(provider === 'azure'
+      ? {
+          url: settings.url.trim(),
+          model: settings.model,
+          ...(settings.deployment.trim() ? { deployment: settings.deployment.trim() } : {}),
+        }
+      : {}),
+    ...(provider === 'cloudflare-workers-ai' || provider === 'cloudflare-ai-gateway'
+      ? { accountId: settings.accountId.trim() }
+      : {}),
+    ...(provider === 'cloudflare-ai-gateway' ? { gatewayId: settings.gatewayId.trim() } : {}),
+  };
+}
 
 export function useModels() {
   const page = usePageData<ModelsResponse>('/api/models');
@@ -28,6 +81,7 @@ export function useModels() {
       return true;
     } catch (cause) {
       setError(errorMessage(cause));
+      void page.refresh();
       return false;
     } finally {
       pending.current = false;
@@ -50,12 +104,16 @@ export function modelReady(models: ModelsResponse | null | undefined) {
 }
 
 export function modelSelection(source: ModelConnection, modelId: string): ModelSelection {
-  const efforts = source.models.find((item) => item.id === modelId)?.efforts ?? [];
+  const model = source.models.find((item) => item.id === modelId);
   return {
     connectionId: source.id,
     modelId,
-    effort: efforts.includes('high') ? 'high' : efforts[0],
+    effort: model ? defaultEffort(source.provider, model) : 'off',
   };
+}
+
+export function recommendedModel(source: ModelConnection) {
+  return defaultModel(source.provider, source.models, source.method);
 }
 
 export function useModelSignIn(
@@ -109,6 +167,7 @@ export function useModelSignIn(
         }
         if (result.status === 'failed') {
           models.setError(result.error ?? 'Sign-in failed. Start a new connection.');
+          void models.refresh();
           finish();
           return;
         }

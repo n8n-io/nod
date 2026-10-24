@@ -14,3 +14,5 @@ Check before sharing:
 - Charts: read the source data and inspect the PNG with read.
 
 Call share_file for each final file. Claim delivery only after success. In the final answer, identify each requested document and where to find it. Use file names or clear descriptions; a file count alone does not describe the result.
+
+For a native contact card on Telegram or linked WhatsApp, share a `.vcf` file with a vCard name and telephone number. For a native location, share `location.json` with numeric `latitude` and `longitude`, and optional `name` and `address` strings. A location file has a 4 KB limit. Telegram sends one card natively when its vCard is at most 2048 bytes. Larger or grouped vCards remain files. Contact files use the channel file limit. Other or invalid contact and location files are sent as documents; supported images, videos and audio use their channel media types. These files carry data and never grant permission to contact another person or change an app.

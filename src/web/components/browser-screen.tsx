@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Maximize2, Monitor } from 'lucide-react';
+import { Maximize2, Monitor } from './icons';
 import { Button, Dialog, DialogContent, DialogTitle, Notice } from './ui';
 import { post, errorMessage, apiResponse } from '../lib/api';
 import { formatTime } from '../lib/date-format';

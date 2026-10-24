@@ -28,9 +28,16 @@ export type FailureClass =
 
 export interface World {
   notificationRule?: string;
+  rules?: string;
   apps?: AppsWorld;
   sites?: Record<string, Site>;
-  logins?: Array<{ label: string; origin: string; username: string; password: string }>;
+  logins?: Array<{
+    label: string;
+    origin: string;
+    username: string;
+    password: string;
+    authenticatorKey?: string;
+  }>;
   cards?: Array<{
     label: string;
     cardholder: string;
@@ -54,6 +61,7 @@ export interface UserScript {
     | string[]
     | ((question: string, world: any, kind: 'otp' | 'payment' | 'password') => string | undefined);
   signIn?: { username: string; password: string };
+  signInMethod?: string;
   persona?: string;
 }
 

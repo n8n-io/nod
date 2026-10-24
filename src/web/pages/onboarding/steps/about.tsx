@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { ArrowUp } from 'lucide-react';
+import { ArrowUp } from '../../../components/icons';
 import type { Connection } from '../../../../shared/contracts';
 import {
   interviewAnswerChars,

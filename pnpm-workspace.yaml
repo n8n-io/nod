@@ -8,3 +8,6 @@ allowBuilds:
   core-js: false
   protobufjs: false
   '@google/genai': false
+patchedDependencies:
+  '@whiskeysockets/baileys@7.0.0-rc14': patches/@whiskeysockets__baileys@7.0.0-rc14.patch
+  libsignal@6.0.0: patches/libsignal@6.0.0.patch

@@ -1,0 +1,12 @@
+diff --git a/lib/Utils/messages-media.js b/lib/Utils/messages-media.js
+index 762c204..0878a93 100644
+--- a/lib/Utils/messages-media.js
++++ b/lib/Utils/messages-media.js
+@@ -298,5 +298,7 @@ export const getHttpStream = async (url, options = {}) => {
+     const response = await fetch(url.toString(), {
+         dispatcher: options.dispatcher,
++        signal: options.signal,
++        redirect: options.redirect,
+         method: 'GET',
+         headers: options.headers
+     });

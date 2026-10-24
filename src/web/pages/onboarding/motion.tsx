@@ -7,7 +7,7 @@ import {
   type ReactNode,
   type SelectHTMLAttributes,
 } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown } from '../../components/icons';
 import { NodGlyph, prefersReducedMotion } from '../../components/motion';
 import { Button, Switch } from '../../components/ui';
 import { cn } from '../../lib/utils';

@@ -42,15 +42,18 @@ export function routeFixtureHosts(hosts: string[], origin: string) {
     const request = input instanceof Request ? input : undefined;
     const url = new URL(request?.url ?? String(input));
     if (!fixture.has(url.hostname.toLowerCase())) return realFetch(input, init);
+    const { dispatcher: _dispatcher, ...options } = (init ?? {}) as RequestInit & {
+      dispatcher?: unknown;
+    };
     const target = new URL(`${url.pathname}${url.search}`, origin);
     if (request) {
-      const routed = new Request(target, request);
+      const routed = new Request(target, new Request(request, options));
       routed.headers.set('x-fixture-host', url.host);
-      return realFetch(routed, init);
+      return realFetch(routed);
     }
-    const headers = new Headers(init?.headers);
+    const headers = new Headers(options.headers);
     headers.set('x-fixture-host', url.host);
-    return realFetch(target, { ...init, headers });
+    return realFetch(target, { ...options, headers });
   }) as typeof fetch;
   return () => {
     dns.promises.lookup = lookup;

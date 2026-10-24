@@ -8,6 +8,7 @@ import type {
   VaultActivityReason,
 } from '../shared/contracts.ts';
 import type { TrustReason } from './trust.ts';
+import { becauseOf, type TrustBasis } from './trust-basis.ts';
 import type { TurnRef } from './thread.ts';
 import { turnOrigin } from './approvals.ts';
 import { turnChainSql } from './turn-chain.ts';
@@ -26,10 +27,12 @@ type Row = {
   currency: string | null;
   task: string;
   reason: VaultActivityReason;
+  basis: TrustBasis | null;
+  said: boolean;
 };
 
 export type VaultAccessVerdict =
-  | { ok: true; reason: VaultActivityReason }
+  | { ok: true; reason: VaultActivityReason; basis?: TrustBasis }
   | { ok: false; details: Record<string, unknown>; args: Record<string, unknown> };
 
 const cursor = z.object({ at: z.iso.datetime(), id: z.uuid() });
@@ -48,7 +51,7 @@ export async function createVaultAccess(
       turn: TurnRef,
       action: string,
       args: Record<string, unknown>,
-    ): Promise<{ confirm: false } | { confirm: true; reason: TrustReason }>;
+    ): Promise<{ confirm: false; basis: TrustBasis } | { confirm: true; reason: TrustReason }>;
     refresh?(): void;
   },
 ) {
@@ -64,6 +67,7 @@ export async function createVaultAccess(
     DROP INDEX IF EXISTS vault_activity_once;
     UPDATE vault_activity SET action='card' WHERE action='paid';
     CREATE UNIQUE INDEX IF NOT EXISTS vault_activity_payment ON vault_activity(owner_id,payment_id,action) WHERE payment_id IS NOT NULL;
+    ALTER TABLE vault_activity ADD COLUMN IF NOT EXISTS basis jsonb;
     DROP TABLE IF EXISTS vault_grants, vault_browser, vault_browser_holder;
   `);
 
@@ -109,12 +113,13 @@ export async function createVaultAccess(
       itemId?: string;
       itemKind?: VaultActivityEntry['itemKind'];
       payment?: { id: string; minor: number; currency: string };
+      basis?: TrustBasis;
     },
     database: Pool | PoolClient = pool,
   ) {
     await database.query(
-      `INSERT INTO vault_activity(id,owner_id,action,origin,item_id,item_kind,turn_id,root_turn_id,task,reason,payment_id,amount_minor,currency)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      `INSERT INTO vault_activity(id,owner_id,action,origin,item_id,item_kind,turn_id,root_turn_id,task,reason,payment_id,amount_minor,currency,basis)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        ${entry.payment ? 'ON CONFLICT (owner_id,payment_id,action) WHERE payment_id IS NOT NULL DO NOTHING' : ''}`,
       [
         randomUUID(),
@@ -130,6 +135,7 @@ export async function createVaultAccess(
         entry.payment?.id ?? null,
         entry.payment?.minor ?? null,
         entry.payment?.currency ?? null,
+        entry.basis ? JSON.stringify(entry.basis) : null,
       ],
     );
     options.refresh?.();
@@ -184,7 +190,8 @@ export async function createVaultAccess(
       ...(target.itemId ? { itemId: target.itemId } : {}),
       ...(sessionOrigin ? { sessionOrigin } : {}),
     };
-    if (await confirmed(chain, args)) return { ok: true, reason: 'allowed' };
+    if (await confirmed(chain, args))
+      return { ok: true, reason: 'allowed', basis: { kind: 'approved' } };
     const verdict = await options.check(
       turn,
       target.kind === 'session' ? 'NOD_browser_session' : 'NOD_sign_in',
@@ -195,7 +202,11 @@ export async function createVaultAccess(
       },
     );
     if (!verdict.confirm)
-      return { ok: true, reason: work.source === 'schedule' ? 'schedule' : 'asked' };
+      return {
+        ok: true,
+        reason: work.source === 'schedule' ? 'schedule' : 'asked',
+        basis: verdict.basis,
+      };
     await log(turn, chain, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
     return {
       ok: false,
@@ -240,7 +251,10 @@ export async function createVaultAccess(
       query.item === undefined || query.item === '' ? undefined : z.uuid().parse(query.item);
     const { rows } = await pool.query<Row>(
       `SELECT id,at,to_char(at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor,
-       action,origin,item_id,item_kind,amount_minor,currency,task,reason FROM vault_activity a
+       action,origin,item_id,item_kind,amount_minor,currency,task,reason,basis,
+       EXISTS(SELECT 1 FROM messages m WHERE a.basis->>'kind'='message'
+         AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid) AS said
+       FROM vault_activity a
        WHERE owner_id=$1 AND ($2::text IS NULL OR origin=$2) AND ($5::uuid IS NULL OR item_id=$5)
        AND ($3::timestamptz IS NULL OR (at,id)<($3,$4::uuid))
        ORDER BY at DESC,id DESC LIMIT 51`,
@@ -259,19 +273,23 @@ export async function createVaultAccess(
     const last = page.at(-1);
     return {
       week: { signIns: week.signed, payments: week.paid, held: week.held },
-      entries: page.map((row) => ({
-        id: row.id,
-        at: row.at.toISOString(),
-        action: row.action,
-        origin: row.origin,
-        ...(row.item_id ? { itemId: row.item_id } : {}),
-        ...(row.item_kind ? { itemKind: row.item_kind } : {}),
-        ...(row.amount_minor !== null && row.currency
-          ? { amount: { minor: Number(row.amount_minor), currency: row.currency } }
-          : {}),
-        task: row.task,
-        reason: row.reason,
-      })),
+      entries: page.map((row) => {
+        const because = becauseOf(row.basis, row.said);
+        return {
+          id: row.id,
+          at: row.at.toISOString(),
+          action: row.action,
+          origin: row.origin,
+          ...(row.item_id ? { itemId: row.item_id } : {}),
+          ...(row.item_kind ? { itemKind: row.item_kind } : {}),
+          ...(row.amount_minor !== null && row.currency
+            ? { amount: { minor: Number(row.amount_minor), currency: row.currency } }
+            : {}),
+          task: row.task,
+          reason: row.reason,
+          ...(because ? { because } : {}),
+        };
+      }),
       ...(rows.length > 50 && last ? { next: { at: last.cursor, id: last.id } } : {}),
     };
   }

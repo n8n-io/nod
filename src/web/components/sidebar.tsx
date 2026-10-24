@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { LayoutGrid, Moon, Settings, Sun } from 'lucide-react';
+import { LayoutGrid, Moon, Settings, Sun } from './icons';
 import { BrandMark } from './brand';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { AccountMenuItems, type AccountControls } from './account-menu';
@@ -230,7 +230,7 @@ export function Sidebar({
                     onNavigate(item.path);
                   }}
                 >
-                  <Icon size={24} aria-hidden="true" />
+                  <Icon size={20} solid={path === item.path} aria-hidden="true" />
                   <span className="nav-label" data-analytics-public>
                     {item.label}
                   </span>{' '}
@@ -314,7 +314,7 @@ export function Sidebar({
                       onNavigate(item.path);
                     }}
                   >
-                    <Icon size={24} aria-hidden="true" />
+                    <Icon size={20} solid={path === item.path} aria-hidden="true" />
                     <span data-analytics-public>{item.label}</span>{' '}
                     {item.path === '/' && unreadBadge}
                   </a>
@@ -351,7 +351,7 @@ export function Sidebar({
             title={themeLabel}
             onClick={toggleTheme}
           >
-            <ThemeIcon size={24} aria-hidden="true" />
+            <ThemeIcon size={20} aria-hidden="true" />
             <span className="nav-label">{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
           </button>
         )}
@@ -365,7 +365,7 @@ export function Sidebar({
             title={desktop ? `Settings (${shortcutLabel(',', mac)})` : 'Settings'}
             onClick={(event) => account.onSettings('General', event.currentTarget)}
           >
-            <Settings size={24} aria-hidden="true" />
+            <Settings size={20} solid={path.startsWith('/settings')} aria-hidden="true" />
             <span className="nav-label" data-analytics-public>
               Settings
             </span>

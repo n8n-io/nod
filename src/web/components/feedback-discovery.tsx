@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { MessageSquarePlus, X } from 'lucide-react';
+import { MessageSquarePlus, X } from './icons';
 import { BrandMark } from './brand';
 import { Button } from './ui';
 

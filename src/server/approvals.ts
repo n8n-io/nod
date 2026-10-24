@@ -137,11 +137,12 @@ export async function turnOrigin(turnId: string) {
       origin.source !== 'user' && replyTurns.length
         ? (
             await client.query<{
+              id: string;
               text: string;
               created_at: Date;
               assistant_message: string | null;
             }>(
-              `SELECT m.text,m.created_at,answered.text AS assistant_message FROM messages m
+              `SELECT m.id,m.text,m.created_at,answered.text AS assistant_message FROM messages m
                JOIN unnest($3::uuid[],$4::uuid[]) AS replies(message_id,turn_id)
                  ON m.id=replies.message_id AND m.turn_id=replies.turn_id
                JOIN turns current ON current.id=m.turn_id AND current.owner_id=m.owner_id
@@ -166,6 +167,7 @@ export async function turnOrigin(turnId: string) {
               ],
             )
           ).rows.map((row) => ({
+            id: row.id,
             at: row.created_at.toISOString(),
             text: row.text,
             ...(row.assistant_message ? { assistantMessage: row.assistant_message } : {}),
@@ -660,5 +662,18 @@ export async function createApprovals(
     };
   }
 
-  return { request, chat: { answer: answerChat, accept: acceptChat }, executeConfirmed };
+  async function states(messageIds: string[]) {
+    if (!messageIds.length) return {};
+    const { rows } = await pool.query<{
+      id: string;
+      status:
+        'pending' | 'confirmed' | 'executing' | 'completed' | 'uncertain' | 'declined' | 'expired';
+    }>(
+      'SELECT confirmation_message_id AS id,status FROM approvals WHERE owner_id=$1 AND confirmation_message_id=ANY($2::uuid[])',
+      [ownerId, messageIds],
+    );
+    return Object.fromEntries(rows.map((row) => [row.id, row.status]));
+  }
+
+  return { request, chat: { answer: answerChat, accept: acceptChat }, executeConfirmed, states };
 }

@@ -2,154 +2,6 @@
   margin-top: 0;
   margin-bottom: auto;
 }
-.ob-brain-list {
-  display: grid;
-  gap: 8px;
-}
-.ob-brain-rise {
-  --rise-from: translateY(14px) scale(0.97);
-  border: 1px solid var(--border);
-  border-radius: var(--card-radius);
-  background: var(--surface);
-  transition: border-color 160ms ease;
-}
-.ob-brain-rise[data-open='true'] {
-  border-color: var(--accent-border);
-}
-.ob-brain-heading {
-  font: inherit;
-}
-.ob-brain-option {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
-  width: 100%;
-  min-height: 64px;
-  padding: 12px 16px;
-  border: 0;
-  border-radius: calc(var(--card-radius) - 1px);
-  background: transparent;
-  color: var(--foreground);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background 160ms ease;
-}
-.ob-brain-option:hover:not(:disabled) {
-  background: var(--nav-hover);
-}
-.ob-brain-option:disabled {
-  cursor: default;
-}
-.ob-brain-option:focus:not(:focus-visible) {
-  outline: none;
-}
-.ob-brain-option:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-.ob-brain-rise[data-open='true'] > .ob-brain-heading > .ob-brain-option {
-  border-bottom-right-radius: 0;
-  border-bottom-left-radius: 0;
-}
-.ob-brain-radio {
-  display: grid;
-  flex-shrink: 0;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border: 1.5px solid var(--input-hover);
-  border-radius: 50%;
-}
-.ob-brain-option[aria-expanded='true'] > .ob-brain-radio {
-  border-color: var(--accent);
-}
-.ob-brain-option[aria-expanded='true'] > .ob-brain-radio::after {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.ob-brain-option > .ob-brain-logo {
-  width: 24px;
-  height: 24px;
-}
-.ob-brain-option[aria-expanded='true'] > .ob-brain-logo {
-  color: var(--accent);
-}
-.ob-brain-option-text {
-  display: grid;
-  flex: 1 1 160px;
-  min-width: 0;
-}
-.ob-brain-option-name {
-  font-size: var(--text-body);
-  font-weight: 500;
-  line-height: 1.4;
-}
-.ob-brain-option-sub {
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  line-height: 1.4;
-}
-.ob-brain-methods {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.ob-brain-method {
-  padding: 2px 10px;
-  border-radius: var(--radius-full);
-  background: var(--control);
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 20px;
-  white-space: nowrap;
-}
-.ob-brain-method[data-plan='true'] {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.ob-brain-badge {
-  display: grid;
-  flex-shrink: 0;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--success);
-  color: var(--surface);
-}
-.ob-brain-options {
-  display: grid;
-  gap: 16px;
-  padding: 16px 24px 24px 50px;
-  border-top: 1px solid var(--border);
-}
-.ob-brain-logo {
-  display: block;
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  background: currentColor;
-  mask-size: contain;
-  mask-position: center;
-  mask-repeat: no-repeat;
-}
-.ob-brain-logo.openai {
-  mask-image: url('/logos/chatgpt.svg');
-}
-.ob-brain-logo.anthropic {
-  mask-image: url('/logos/anthropic.svg');
-}
-.ob-brain-logo.openrouter {
-  mask-image: url('/logos/openrouter.svg');
-}
-.ob-brain-logo.compatible {
-  mask-image: url('/logos/server.svg');
-}
 .ob-brain-status {
   display: flex;
   flex-wrap: wrap;
@@ -183,24 +35,26 @@
 }
 .ob-brain-label {
   margin-top: 4px;
+  font-size: var(--text-control);
+}
+.ob-brain-form .field-label {
+  font-size: var(--text-control);
+}
+.ob-brain-form select.input {
+  padding-right: 40px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill='%23676767' d='m11.424 4.424-5 5L6 9.849l-.424-.425-5-5L.151 4 1 3.151l.424.425L6 8.152l4.576-4.576.424-.425.849.849z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  background-size: 12px;
+  cursor: pointer;
+}
+:root[data-theme='dark'] .ob-brain-form select.input {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill='%23bfbfbf' d='m11.424 4.424-5 5L6 9.849l-.424-.425-5-5L.151 4 1 3.151l.424.425L6 8.152l4.576-4.576.424-.425.849.849z'/%3E%3C/svg%3E");
 }
 .ob-brain-optional {
   color: var(--muted-foreground);
   font-weight: 400;
-}
-.ob-brain-or {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 4px 0;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-}
-.ob-brain-or::before,
-.ob-brain-or::after {
-  content: '';
-  flex: 1;
-  border-top: 1px solid var(--border);
 }
 .ob-brain-note {
   color: var(--muted-foreground);
@@ -250,16 +104,258 @@
 .ob-brain-fallback > form {
   margin-top: 8px;
 }
+.ob-brain-content {
+  display: grid;
+  gap: 16px;
+}
+.ob-brain-expired {
+  padding: 8px 12px;
+  border-radius: var(--control-radius);
+  background: var(--warning-soft);
+  font-size: var(--text-control);
+}
+.ob-brain-card {
+  box-sizing: content-box;
+  overflow: clip;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  background: var(--surface);
+  transition: height 220ms var(--ease-enter);
+}
+.ob-brain-page {
+  animation: ob-brain-page-in 220ms var(--ease-enter) both;
+}
+.ob-brain-page[data-direction='back'] {
+  animation-name: ob-brain-page-back;
+}
+@keyframes ob-brain-page-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+@keyframes ob-brain-page-back {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+}
+.ob-brain-catalog {
+  display: grid;
+  gap: 8px;
+}
+.ob-brain-providers {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+}
+.ob-brain-empty {
+  padding: 16px 12px;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.ob-brain-providers > li {
+  position: relative;
+}
+.ob-brain-providers > li + li::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 12px;
+  left: 12px;
+  border-top: 1px solid var(--border);
+}
+.ob-brain-providers > li:has(:hover:not(:disabled), :focus-visible)::before,
+.ob-brain-providers > li:has(:hover:not(:disabled), :focus-visible) + li::before {
+  opacity: 0;
+}
+.ob-brain-provider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--menu-item-radius);
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: none;
+}
+.ob-brain-provider:hover:not(:disabled) {
+  background: var(--nav-hover);
+}
+.ob-brain-provider:disabled {
+  cursor: default;
+}
+.ob-brain-provider:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.ob-brain-provider-name {
+  flex: 1;
+}
+.ob-brain-provider > svg,
+.ob-brain-lead {
+  flex-shrink: 0;
+  color: var(--input-hover);
+}
+.ob-brain-provider:hover:not(:disabled) > svg,
+.ob-brain-provider:hover:not(:disabled) > .ob-brain-lead {
+  color: var(--muted-foreground);
+}
+.ob-brain-check {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--success-soft);
+  color: var(--success);
+}
+.ob-brain-lead {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+.ob-brain-more {
+  flex-wrap: wrap;
+  row-gap: 12px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.ob-brain-more-logos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+.ob-brain-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 8px 16px 8px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.ob-brain-header > h3 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+.ob-brain-back {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--control-radius);
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.ob-brain-back:hover:not(:disabled) {
+  background: var(--nav-hover);
+}
+.ob-brain-back:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.ob-brain-back:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ob-brain-body {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+.ob-brain-signin {
+  display: grid;
+  gap: 12px;
+}
+.ob-brain-quiet {
+  justify-self: start;
+  margin-top: 4px;
+  font-size: var(--text-control);
+}
+.ob-brain-reveal {
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  animation: ob-brain-reveal 200ms var(--ease-enter) both;
+}
+@keyframes ob-brain-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.ob-brain-server-hint {
+  margin-bottom: 8px;
+}
+.ob-brain-connected {
+  display: grid;
+  gap: 16px;
+  justify-items: start;
+  padding: 16px 20px;
+}
+.ob-brain-connected > .ob-brain-status {
+  width: 100%;
+}
+.ob-brain-model {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-left: 56px;
+}
+.ob-brain-model-label {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.ob-brain-model .model-picker {
+  padding: 0;
+}
+.ob-brain-model .model-picker-trigger {
+  min-height: 36px;
+  padding-inline: 12px 8px;
+  border: 1px solid var(--border);
+}
+.ob-brain-another {
+  padding-left: 56px;
+  font-size: var(--text-control);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ob-brain-page {
+    transition: opacity 150ms var(--ease-enter);
+  }
+  @starting-style {
+    .ob-brain-page {
+      opacity: 0;
+    }
+  }
+}
 @media (max-width: 640px) {
-  .ob-brain-option {
-    padding-inline: 12px;
-  }
-  .ob-brain-methods {
+  .ob-brain-more-logos {
     flex-basis: 100%;
-    order: 1;
-    padding-left: 74px;
+    padding-left: 36px;
   }
-  .ob-brain-options {
+  .ob-brain-body {
     padding: 16px;
+  }
+  .ob-brain-model,
+  .ob-brain-another {
+    padding-left: 0;
   }
 }

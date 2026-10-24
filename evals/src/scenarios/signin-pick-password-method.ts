@@ -155,7 +155,6 @@ export default scenario({
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,
-  window: { from: 7, to: 21 },
   user: {
     approve: true,
     persona: `You are Alex Rivera. Your Stackly login (${owner.email} with a password) is saved in nod's Vault. You want nod to use that saved password login, not Google or a magic link.`,

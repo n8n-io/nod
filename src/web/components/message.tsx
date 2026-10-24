@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Copy, Check, CornerUpLeft, SmilePlus } from 'lucide-react';
+import { ChevronDown, Copy, Check, CornerUpLeft, SmilePlus } from './icons';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -21,7 +21,7 @@ import {
   safeMessageLink,
   setupLink,
 } from '../lib/message-links';
-import { rehypeLocalLinks } from '../lib/markdown';
+import { rehypeLocalLinks, remarkLinkDestinations } from '../lib/markdown';
 import { nextReaction, reactionName } from '../lib/reactions';
 import { MessageLinkPreviews } from './link-previews';
 import { SetupActions } from './setup-link';
@@ -29,6 +29,39 @@ import { TelegramChatLink, useTelegramChatUrl } from './telegram-chat-link';
 import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
+import { money } from '../lib/money';
+import { copyContent, selectedText } from '../lib/clipboard';
+import { navigate } from '../lib/navigation';
+
+function CopyBlock({ children, table = false }: { children: React.ReactNode; table?: boolean }) {
+  const content = useRef<HTMLDivElement>(null);
+  const [status, setStatus] = useState('');
+  useEffect(() => {
+    if (!status) return;
+    const timer = setTimeout(() => setStatus(''), 3000);
+    return () => clearTimeout(timer);
+  }, [status]);
+  return (
+    <div className="message-copy-block" ref={content}>
+      {children}
+      <button
+        type="button"
+        className="copy-block"
+        onClick={() => {
+          const element = content.current?.querySelector<HTMLElement>(table ? 'table' : 'pre');
+          void copyContent(element?.textContent ?? '', table ? element : undefined)
+            .then(() => setStatus('Copied'))
+            .catch(() => setStatus('Could not copy. Select the text and copy it.'));
+        }}
+        aria-label={table ? 'Copy table' : 'Copy code'}
+        title={table ? 'Copy table' : 'Copy code'}
+      >
+        <Copy size={14} />
+        {status && <span role="status">{status}</span>}
+      </button>
+    </div>
+  );
+}
 
 const ReactionPicker = lazy(() => import('./emoji-picker'));
 const analyticsReactions: Record<string, ReactionAnalytics['reaction']> = {
@@ -72,10 +105,19 @@ export const MessageText = memo(function MessageText({
     <>
       <div className="message-text" ref={content}>
         <Markdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={[remarkGfm, remarkLinkDestinations]}
           rehypePlugins={[rehypeRaw, rehypeLocalLinks, [rehypeSanitize, messageSchema]]}
           components={{
-            table: ({ node, ...props }) => <table {...props} tabIndex={0} />,
+            table: ({ node, ...props }) => (
+              <CopyBlock table>
+                <table {...props} tabIndex={0} />
+              </CopyBlock>
+            ),
+            pre: ({ node, ...props }) => (
+              <CopyBlock>
+                <pre {...props} />
+              </CopyBlock>
+            ),
             a: ({ href, children, node }) => {
               const link = safeMessageLink(href ?? '', origin);
               if (!link) return <span>{children}</span>;
@@ -92,6 +134,7 @@ export const MessageText = memo(function MessageText({
                 <a
                   href={link.kind === 'external' ? href : link.href}
                   target={
+                    link.kind === 'navigation' ||
                     setup?.href.startsWith('/apps?connect=') ||
                     link.href.startsWith('/e2e/connect/')
                       ? undefined
@@ -120,12 +163,8 @@ export const MessageText = memo(function MessageText({
         >
           {text}
         </Markdown>
-        <SetupActions
-          actions={actions.filter(
-            (action) => action.setup !== 'browser' && !connected(action.href),
-          )}
-        />
-        {handoff && handoffTurnId && actions.some((action) => action.setup === 'browser') && (
+        <SetupActions actions={actions.filter((action) => !connected(action.href))} />
+        {handoff && handoffTurnId && (
           <BrowserHandoff key={handoffTurnId} turnId={handoffTurnId} paused={handoffPaused} />
         )}
       </div>
@@ -143,6 +182,7 @@ export function MessageBubble({
   connectedAppIds,
   grouped = false,
   streaming = false,
+  delivery,
   onReply,
   handoff,
   handoffPaused,
@@ -151,13 +191,41 @@ export function MessageBubble({
   connectedAppIds?: ReadonlySet<string>;
   grouped?: boolean;
   streaming?: boolean;
-  onReply?(): void;
+  delivery?: 'sending' | 'received' | 'queued';
+  onReply?(quote?: string): void;
   handoff?: boolean;
   handoffPaused?: boolean;
 }) {
   const dateFormat = useDateFormat();
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [quote, setQuote] = useState('');
+  const [quotePoint, setQuotePoint] = useState({ left: 0, top: 0 });
+  function selectQuote() {
+    const value = selectedText(articleElement.current).trim().slice(0, 4000);
+    const range = window.getSelection()?.rangeCount ? window.getSelection()!.getRangeAt(0) : null;
+    if (value && range && typeof range.getBoundingClientRect === 'function') {
+      const box = range.getBoundingClientRect();
+      setQuotePoint({
+        left: Math.max(8, Math.min(box.left, window.innerWidth - 190)),
+        top: Math.max(8, box.top - 36),
+      });
+    }
+    setQuote(value);
+  }
+  useEffect(() => {
+    if (!quote) return;
+    const clear = () => setQuote('');
+    const selectionChanged = () => {
+      if (selectedText(articleElement.current).trim().slice(0, 4000) !== quote) clear();
+    };
+    window.addEventListener('scroll', clear, true);
+    document.addEventListener('selectionchange', selectionChanged);
+    return () => {
+      window.removeEventListener('scroll', clear, true);
+      document.removeEventListener('selectionchange', selectionChanged);
+    };
+  }, [quote]);
   const [reaction, setReaction] = useState(message.reaction ?? null);
   const [reacting, setReacting] = useState(false);
   const [selectedName, setSelectedName] = useState('');
@@ -350,11 +418,16 @@ export function MessageBubble({
       setReacting(false);
     }
   }
-  async function copy(method: 'button' | 'context_menu') {
+  async function copy(method: 'button' | 'context_menu', markdown = false) {
     captureAnalytics('nod_message_action', { action: 'copy', role: message.role, method });
     setPanel(null);
     try {
-      await navigator.clipboard.writeText(message.text);
+      if (markdown) await navigator.clipboard.writeText(message.text);
+      else
+        await copyContent(
+          message.text,
+          articleElement.current?.querySelector<HTMLElement>('.message-text'),
+        );
       setCopied(true);
       clearTimeout(copyTimeout.current);
       copyTimeout.current = setTimeout(() => setCopied(false), 2000);
@@ -365,7 +438,8 @@ export function MessageBubble({
   function reply(method: 'button' | 'context_menu') {
     captureAnalytics('nod_message_action', { action: 'reply', role: message.role, method });
     setPanel(null);
-    onReply?.();
+    onReply?.(quote || undefined);
+    setQuote('');
   }
   return (
     <article
@@ -373,6 +447,8 @@ export function MessageBubble({
       className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${selected ? ' message-selected' : ''}${panel ? ' message-panel-open' : ''}`}
       aria-label={streaming ? 'nod is responding' : message.role === 'user' ? 'You' : 'nod'}
       data-message-id={streaming ? undefined : message.id}
+      onMouseUp={selectQuote}
+      onKeyUp={selectQuote}
       onPointerUp={(event) => {
         if (!['touch', 'pen'].includes(event.pointerType)) return;
         if ((event.target as HTMLElement).closest('a,button,audio,video,input,textarea,select'))
@@ -398,6 +474,7 @@ export function MessageBubble({
               onContextMenu={(event) => {
                 if (
                   streaming ||
+                  selectedText(articleElement.current) ||
                   (event.target as HTMLElement).closest(
                     'a,button,audio,video,input,textarea,select,[contenteditable="true"],[role="button"]',
                   )
@@ -416,7 +493,29 @@ export function MessageBubble({
             >
               {message.replyTo &&
                 !(message.role === 'assistant' && message.replyTo.role === 'assistant') && (
-                  <blockquote className="message-reply-quote">
+                  <blockquote
+                    className="message-reply-quote"
+                    role="button"
+                    tabIndex={0}
+                    title="Go to original message"
+                    onClick={() =>
+                      window.dispatchEvent(
+                        new CustomEvent('nod:focus-message', {
+                          detail: { messageId: message.replyTo!.id },
+                        }),
+                      )
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        window.dispatchEvent(
+                          new CustomEvent('nod:focus-message', {
+                            detail: { messageId: message.replyTo!.id },
+                          }),
+                        );
+                      }
+                    }}
+                  >
                     <span>{message.replyTo.text || 'Attachment'}</span>
                   </blockquote>
                 )}
@@ -437,13 +536,24 @@ export function MessageBubble({
                 <MessageAttachments attachments={message.attachments} />
               )}
               {!streaming && (
-                <time
-                  className="message-time"
-                  dateTime={message.createdAt}
-                  title={formatFullDateTime(message.createdAt, dateFormat)}
-                >
-                  {formatTime(message.createdAt, dateFormat)}
-                </time>
+                <>
+                  {delivery && (
+                    <span className="message-delivery" role="status">
+                      {delivery === 'sending'
+                        ? 'Sending…'
+                        : delivery === 'queued'
+                          ? 'Received · queued'
+                          : 'Received'}
+                    </span>
+                  )}
+                  <time
+                    className="message-time"
+                    dateTime={message.createdAt}
+                    title={formatFullDateTime(message.createdAt, dateFormat)}
+                  >
+                    {formatTime(message.createdAt, dateFormat)}
+                  </time>
+                </>
               )}
             </div>
             {!streaming && (
@@ -520,10 +630,66 @@ export function MessageBubble({
             )}
           </div>
         </div>
+        {quote &&
+          onReply &&
+          createPortal(
+            <button
+              type="button"
+              className="selection-reply"
+              style={{ position: 'fixed', ...quotePoint, zIndex: 60 }}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => reply('button')}
+            >
+              Reply to selection
+            </button>,
+            document.body,
+          )}
+        {message.questionState && (
+          <span className="message-question-state" role="status">
+            {
+              {
+                pending: 'Waiting for your reply',
+                confirmed: 'Approved · queued',
+                executing: 'Working',
+                completed: 'Done',
+                uncertain: 'Outcome unclear',
+                declined: 'Declined',
+                expired: 'No longer pending',
+              }[message.questionState]
+            }
+          </span>
+        )}
+        {message.receipt && !streaming && (
+          <a
+            className="message-receipt"
+            href={`/usage?session=${message.receipt.sessionId}`}
+            onClick={(event) => {
+              if (
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              )
+                return;
+              event.preventDefault();
+              navigate(`/usage?session=${message.receipt!.sessionId}`);
+            }}
+          >
+            {[
+              ...message.receipt.actions.map((action) =>
+                action.count > 1 ? `${action.label} ×${action.count}` : action.label,
+              ),
+              message.receipt.costUsd === null ? '' : money(message.receipt.costUsd),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </a>
+        )}
         {error && <Notice>{error}</Notice>}
         {copied && (
-          <span className="sr-only" role="status">
-            Message copied
+          <span className="message-copy-status" role="status">
+            Copied
           </span>
         )}
       </div>
@@ -550,6 +716,10 @@ export function MessageBubble({
                   <Copy size={16} aria-hidden="true" />
                 )}
                 Copy
+              </button>
+              <button type="button" role="menuitem" onClick={() => void copy(panel.method, true)}>
+                <Copy size={16} aria-hidden="true" />
+                Copy Markdown
               </button>
             </div>
           ) : (

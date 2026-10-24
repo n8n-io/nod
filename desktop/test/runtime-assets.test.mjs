@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
+import { constants, existsSync, readdirSync, statSync } from 'node:fs';
 import {
   copyFile,
   cp,
@@ -18,8 +18,9 @@ import {
   utimes,
   writeFile,
 } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, posix, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createDesktopLifecycle } from '../main/lifecycle.mjs';
@@ -275,9 +276,10 @@ async function releaseFixture(
   if (plan) {
     const { runtimeInputs } = await import('../scripts/runtime-inputs.mjs');
     const input = await runtimeInputs();
+    const windows = await runtimeInputs('win32-x64');
     const repository = fileURLToPath(new URL('../../', import.meta.url));
     for (const path of new Set([
-      ...input.inputs.filter(
+      ...[...input.inputs, ...windows.inputs].filter(
         (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
       ),
       'pnpm-lock.yaml',
@@ -488,17 +490,20 @@ if (args[1] === 'create') {
     if (args.includes('--prerelease=false')) release.prerelease = false;
     if (args.includes('--notes-file')) release.body = readFileSync(flag('--notes-file'), 'utf8');
   } else if (args[1] === 'upload') {
-    const bytes = readFileSync(args[3]);
-    const name = basename(args[3]);
-    release.assets = release.assets.filter(asset => asset.name !== name);
-    state.assetIds = (state.assetIds || 0) + 1;
-    release.assets.push({ id: state.assetIds, name, size: bytes.length, digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'), state: 'uploaded' });
-    state.contents[tag + '/' + name] = bytes.toString('base64');
+    for (const file of args.slice(3, args.indexOf('--repo'))) {
+      const bytes = readFileSync(file);
+      const name = basename(file);
+      release.assets = release.assets.filter(asset => asset.name !== name);
+      state.assetIds = (state.assetIds || 0) + 1;
+      release.assets.push({ id: state.assetIds, name, size: bytes.length, digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'), state: 'uploaded' });
+      state.contents[tag + '/' + name] = bytes.toString('base64');
+    }
   } else if (args[1] === 'download') {
-    const name = flag('--pattern');
-    if (!state.contents[tag + '/' + name]) missing();
     mkdirSync(flag('--dir'), { recursive: true });
-    writeFileSync(join(flag('--dir'), name), (state.corruptDmg && name.endsWith('.dmg')) || (state.corruptZip && name.endsWith('.zip')) ? 'Corrupted application' : Buffer.from(state.contents[tag + '/' + name], 'base64'));
+    for (const name of args.filter((value, index) => args[index - 1] === '--pattern')) {
+      if (!state.contents[tag + '/' + name]) missing();
+      writeFileSync(join(flag('--dir'), name), (state.corruptDmg && name.endsWith('.dmg')) || (state.corruptZip && name.endsWith('.zip')) ? 'Corrupted application' : Buffer.from(state.contents[tag + '/' + name], 'base64'));
+    }
   } else throw new Error('Unexpected release operation');
 }
 save();
@@ -935,6 +940,23 @@ test('all three checked bundles publish together as one regular nod release', as
   await writeFile(join(windows, win.installer.file), installer);
   await writeFile(join(windows, win.runtime.file), pack);
   await writeFile(join(windows, 'release-win32-x64.json'), JSON.stringify(win));
+  const windowsFingerprint = JSON.parse(
+    (
+      await promisify(execFile)(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], {
+        cwd: f.root,
+        env: { NOD_DESKTOP_TARGET: 'win32-x64' },
+      })
+    ).stdout,
+  ).fingerprint;
+  const windowsManifest = `runtime-win32-x64-${windowsFingerprint}.json`;
+  const windowsRuntime = {
+    version: 1,
+    platform: 'win32-x64',
+    images: [],
+    guest: { file: 'guest.tar.gz', bytes: pack.length, sha256: win.runtime.sha256 },
+    fingerprint: windowsFingerprint,
+  };
+  await writeFile(join(windows, windowsManifest), JSON.stringify(windowsRuntime));
   const receipt = Object.fromEntries(
     ['installed', 'engine', 'wsl', 'application', 'browser', 'workspaceFiles', 'reopened'].map(
       (key) => [key, true],
@@ -955,6 +977,15 @@ test('all three checked bundles publish together as one regular nod release', as
   await assert.rejects(f.invoke('draft-all'));
   assert(!Object.values((await f.readState()).releases).some((release) => !release.draft));
   await copyFile(join(arm, 'nod-arm64.zip'), join(intel, 'nod-x64.zip'));
+  await writeFile(
+    join(windows, windowsManifest),
+    JSON.stringify({
+      ...windowsRuntime,
+      guest: { ...windowsRuntime.guest, sha256: win.installer.sha256 },
+    }),
+  );
+  await assert.rejects(f.invoke('draft-all'), /Windows runtime does not match/);
+  await writeFile(join(windows, windowsManifest), JSON.stringify(windowsRuntime));
   for (const hidden of [runtime.archive.file, win.runtime.file]) {
     await f.writeState({ ...(await f.readState()), brokerHides: [hidden] });
     await assert.rejects(f.invoke('draft-all'));
@@ -977,8 +1008,71 @@ test('all three checked bundles publish together as one regular nod release', as
     runtime.archive.file,
     f.release.archive.file,
     win.runtime.file,
+    windowsManifest,
   ])
     assert(completed.releases[f.appTag].assets.some((asset) => asset.name === name));
+});
+
+test('a reused Windows runtime must match its published manifest and asset digest', async (t) => {
+  const f = await releaseFixture(t);
+  const fingerprint = f.digest('Synthetic Windows runtime inputs');
+  const name = `runtime-win32-x64-${fingerprint}.json`;
+  const pack = Buffer.from('Synthetic Windows runtime');
+  const manifest = {
+    version: 1,
+    platform: 'win32-x64',
+    images: [{ name: 'browser', id: `sha256:${f.digest('browser')}` }],
+    guest: { file: 'guest.tar.gz', bytes: pack.length, expandedBytes: 99, sha256: f.digest(pack) },
+    fingerprint,
+  };
+  const publish = async (
+    bytes,
+    draft = false,
+    asset = { digest: f.digest(pack), size: pack.length },
+  ) => {
+    const state = await f.readState();
+    state.releases['nod-v0.0.9'] = {
+      id: 90,
+      tag_name: 'nod-v0.0.9',
+      draft,
+      assets: [
+        { name, size: 1, digest: `sha256:${f.digest(JSON.stringify(manifest))}` },
+        {
+          name: 'nod-Runtime-win32-x64.tar.gz',
+          size: asset.size,
+          digest: `sha256:${asset.digest}`,
+        },
+      ],
+    };
+    state.contents[`nod-v0.0.9/${name}`] = Buffer.from(JSON.stringify(manifest)).toString('base64');
+    state.contents['nod-v0.0.9/nod-Runtime-win32-x64.tar.gz'] = bytes.toString('base64');
+    await f.writeState(state);
+  };
+  const reuse = () =>
+    f.invoke('reuse-windows-runtime', false, {
+      NOD_WINDOWS_RUNTIME_TAG: 'nod-v0.0.9',
+      NOD_WINDOWS_RUNTIME_FINGERPRINT: fingerprint,
+    });
+  const assets = join(f.root, '.local/windows-runtime-assets');
+  await publish(Buffer.from('Tampered Windows runtime!'));
+  await assert.rejects(reuse(), /Windows runtime does not match/);
+  await assert.rejects(stat(join(assets, 'guest.tar.gz')));
+  for (const asset of [
+    { digest: f.digest('Another Windows runtime'), size: pack.length },
+    { digest: f.digest(pack), size: pack.length + 1 },
+  ]) {
+    await publish(pack, false, asset);
+    await assert.rejects(reuse(), /Windows runtime does not match/);
+    await assert.rejects(stat(join(assets, 'guest.tar.gz')));
+  }
+  await publish(pack, true);
+  await assert.rejects(reuse(), /reused Windows runtime is unavailable/);
+  await publish(pack);
+  await reuse();
+  assert.deepEqual(await readFile(join(assets, 'guest.tar.gz')), pack);
+  const saved = { ...manifest };
+  delete saved.fingerprint;
+  assert.deepEqual(JSON.parse(await readFile(join(assets, 'manifest.json'), 'utf8')), saved);
 });
 
 test('bundle copy includes explicit release assets under .local while excluding private descendants', async (t) => {
@@ -1008,7 +1102,10 @@ test('engine source imports only production dependencies outside the development
   const repository = fileURLToPath(new URL('../../', import.meta.url));
   const manifest = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8'));
   const allowed = new Set([...Object.keys(manifest.dependencies), ...builtinModules]);
-  const files = [join(repository, 'desktop/main/engine.mjs')];
+  const files = [
+    join(repository, 'desktop/main/engine.mjs'),
+    join(repository, 'desktop/main/onepassword.mjs'),
+  ];
   const walk = async (directory) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
@@ -2078,7 +2175,7 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
   }
 });
 
-test('database readiness failure replaces retained PostgreSQL only on the next explicit retry', async () => {
+test('Windows storage starts on a free port, and a readiness failure names its cause and replaces retained PostgreSQL on that port only on the next explicit retry', async (t) => {
   const source = await readFile(new URL('../runtime/index.mjs', import.meta.url), 'utf8');
   const functions = source
     .slice(
@@ -2087,10 +2184,14 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
     )
     .replaceAll('export ', '')
     .replace("const { default: pg } = await import('pg');", '');
-  const { replaceContainer } = await import('../runtime/index.mjs');
+  const { availablePort, replaceContainer } = await import('../runtime/index.mjs');
+  const taken = createServer();
+  await new Promise((listening) => taken.listen(0, '127.0.0.1', listening));
+  t.after(() => taken.close());
   for (const failure of ['pg_isready', 'connect', 'query']) {
     const containers = new Map();
     const commands = [];
+    const connections = [];
     let fault = 'workspace';
     let created = 0;
     let stopped = 0;
@@ -2103,14 +2204,18 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
         preparing: new Map(),
         storageReady: new Map(),
         replaceContainer,
+        availablePort,
         ensureNetwork: async () => {},
         protectNetworks: '',
         waitFor: async (operation) => operation(),
         removeStaleImages: async () => {},
         pg: {
           Client: class {
+            constructor({ connectionString }) {
+              connections.push(new URL(connectionString).port);
+            }
             async connect() {
-              if (fault === 'connect') throw new Error('Synthetic connection failure');
+              if (fault === 'connect') throw new Error('Synthetic connect failure');
             }
             async query() {
               if (fault === 'query') throw new Error('Synthetic query failure');
@@ -2131,7 +2236,7 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
                 id: `sha256:${name}`,
               })),
             },
-            saved: { port: 54329, password: 'synthetic-fixture-password' },
+            saved: { port: taken.address().port, password: 'synthetic-fixture-password' },
             controlRoot: 'synthetic-control',
             path: 'synthetic-path',
             dockerEnvironment: {},
@@ -2161,7 +2266,7 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
                 });
               }
               if (args[0] === 'exec' && args[2] === 'pg_isready' && fault === 'pg_isready')
-                throw new Error('Synthetic PostgreSQL readiness failure');
+                throw new Error('Synthetic pg_isready failure');
               if (args[0] === 'inspect') return 'true';
               return '';
             },
@@ -2188,7 +2293,10 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
       await assert.rejects(lifecycle.start({ retry: true }), /Synthetic browser startup failure/);
       assert.equal(postgres(), original);
       fault = failure;
-      await assert.rejects(lifecycle.start({ retry: true }));
+      await assert.rejects(
+        lifecycle.start({ retry: true }),
+        new RegExp(`Synthetic ${failure} failure`),
+      );
       assert.equal(postgres(), original);
       assert.equal(stopped, 0);
       const attempted = commands.length;
@@ -2206,6 +2314,9 @@ test('database readiness failure replaces retained PostgreSQL only on the next e
       );
       assert.equal(launches.length, 2);
       assert.deepEqual(launches[1], launches[0]);
+      const published = launches[0][launches[0].indexOf('--publish') + 1];
+      assert.notEqual(published, `127.0.0.1:${taken.address().port}:5432`);
+      assert.deepEqual(new Set(connections), new Set([published.split(':')[1]]));
       assert.equal(stopped, 0);
     } finally {
       await lifecycle.close();
@@ -2679,10 +2790,81 @@ test('runtime fingerprints cover dependencies and every source the images use, a
   const browserDockerfile = await readFile(join(repository, 'Dockerfile.browser'), 'utf8');
   assert.ok(browserDockerfile.includes(`esbuild ${browserEntries.join(' ')} `));
   const input = await runtimeInputs();
+  const windows = await runtimeInputs('win32-x64');
+  const windowsCopies = [
+    ...(
+      await readFile(join(repository, 'desktop/scripts/prepare-windows-runtime.mjs'), 'utf8')
+    ).matchAll(/copyFile\(join\(root, '([^']+)'\)/g),
+  ].map(([, path]) => path);
+  assert.ok(windowsCopies.length >= 2);
+  for (const path of windowsCopies) assert.ok(windows.inputs.includes(path), path);
+  const covered = (inputs, path) => {
+    const full = join(repository, path);
+    if (!existsSync(full) || !statSync(full).isDirectory()) return inputs.includes(path);
+    return readdirSync(full, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .every((entry) =>
+        inputs.includes(
+          relative(repository, join(entry.parentPath, entry.name)).replaceAll('\\', '/'),
+        ),
+      );
+  };
+  for (const path of ['Dockerfile.workspace', 'Dockerfile.browser']) {
+    const dockerfile = await readFile(join(repository, path), 'utf8');
+    for (const [, sources] of dockerfile.matchAll(
+      /^(?:COPY|ADD)(?! --from)(?:\s+--\S+)*\s+(.+)\s+\S+$/gm,
+    ))
+      for (const source of sources.split(/\s+/))
+        if (source !== 'src') assert.ok(covered(input.inputs, source), `${path}: ${source}`);
+    for (const [source] of dockerfile.matchAll(/\bsrc\/[\w./-]+/g))
+      assert.ok(covered(input.inputs, source), `${path}: ${source}`);
+  }
+  for (const [inputs, roots] of [
+    [input.inputs, ['desktop/scripts/prepare-runtime.mjs', 'desktop/scripts/runtime-pack.mjs']],
+    [
+      windows.inputs,
+      ['desktop/scripts/prepare-runtime.mjs', 'desktop/scripts/prepare-windows-runtime.mjs'],
+    ],
+  ]) {
+    const seen = new Set();
+    const visit = async (path) => {
+      if (seen.has(path)) return;
+      seen.add(path);
+      assert.ok(covered(inputs, path), path);
+      if (!path.endsWith('.mjs') || path === 'desktop/scripts/runtime-inputs.mjs') return;
+      const source = await readFile(join(repository, path), 'utf8');
+      const targets = [
+        ...[...source.matchAll(/(?:from\s*|import\(\s*)'(\.{1,2}\/[^']+\.mjs)'/g)].map(
+          ([, target]) => posix.join(posix.dirname(path), target),
+        ),
+        ...[
+          ...source.matchAll(
+            /'((?:desktop|src|patches)\/[^'*]+|Dockerfile\.[\w.]+|\.dockerignore|package\.json|pnpm-[\w.-]+\.yaml)'/g,
+          ),
+        ].map(([, target]) => target),
+      ];
+      for (const target of targets)
+        if (await stat(join(repository, target)).catch(() => undefined)) await visit(target);
+    };
+    for (const root of roots) await visit(root);
+    assert.ok(seen.size > roots.length);
+  }
+  for (const path of [
+    'Dockerfile.browser',
+    'Dockerfile.workspace',
+    'desktop/runtime/Dockerfile.windows',
+  ])
+    for (const stage of (await readFile(join(repository, path), 'utf8')).split(/^FROM /m))
+      if (stage.includes('apt-get install'))
+        assert.match(
+          stage.slice(0, stage.indexOf('apt-get install')),
+          /^ARG NOD_RUNTIME_REFRESH$/m,
+          path,
+        );
   const dockerfiles = `${browserDockerfile}\n${await readFile(join(repository, 'Dockerfile.workspace'), 'utf8')}`;
   for (const [, path] of dockerfiles.matchAll(/^COPY (?:--\S+ )*(src\/\S+)/gm))
     assert.ok(input.inputs.includes(path), path);
-  const sourcePaths = input.inputs.filter(
+  const sourcePaths = [...input.inputs, ...windows.inputs].filter(
     (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
   );
   for (const path of new Set([
@@ -2711,7 +2893,12 @@ test('runtime fingerprints cover dependencies and every source the images use, a
   await writeFile(lockPath, `${lockSource}\nsyntheticDependencyChange: true\n`);
   assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
   await writeFile(lockPath, lockSource);
-  for (const path of ['src/shared/public-address.ts', 'src/providers/docker/save-video.py']) {
+  for (const path of [
+    'src/shared/public-address.ts',
+    'src/providers/docker/save-video.py',
+    'patches/libsignal@6.0.0.patch',
+    'patches/@whiskeysockets__baileys@7.0.0-rc14.patch',
+  ]) {
     const file = join(root, path);
     const source = await readFile(file, 'utf8');
     await writeFile(file, `${source}\n// synthetic runtime change\n`);
@@ -2723,6 +2910,34 @@ test('runtime fingerprints cover dependencies and every source the images use, a
     await writeFile(join(root, path), 'export const syntheticAppChange = true;\n');
   }
   assert.equal(JSON.parse((await run()).stdout).fingerprint, before);
+  const windowsRun = (env = {}) =>
+    promisify(execFile)(process.execPath, [join(root, 'desktop/scripts/runtime-inputs.mjs')], {
+      env: { PATH: process.env.PATH, NOD_DESKTOP_TARGET: 'win32-x64', ...env },
+    }).then(({ stdout }) => JSON.parse(stdout).fingerprint);
+  const windowsBefore = await windowsRun();
+  const refreshed = await promisify(execFile)(
+    process.execPath,
+    [join(root, 'desktop/scripts/runtime-inputs.mjs')],
+    { env: { PATH: process.env.PATH, NOD_RUNTIME_REFRESH: '2026-10-19' } },
+  );
+  assert.notEqual(JSON.parse(refreshed.stdout).fingerprint, before);
+  assert.notEqual(await windowsRun({ NOD_RUNTIME_REFRESH: '2026-10-19' }), windowsBefore);
+  assert.equal(
+    await windowsRun({
+      NOD_SIGNING_MODE: 'self-signed',
+      NOD_SIGNING_IDENTITY: 'Synthetic nod Signing',
+      NOD_SIGNING_CERTIFICATE_SHA256: 'a'.repeat(64),
+    }),
+    windowsBefore,
+  );
+  for (const path of [...windowsCopies, 'desktop/scripts/prepare-windows-runtime.mjs']) {
+    const file = join(root, path);
+    const source = await readFile(file, 'utf8');
+    await writeFile(file, `${source}\n# synthetic runtime change\n`);
+    assert.notEqual(await windowsRun(), windowsBefore, path);
+    assert.equal(JSON.parse((await run()).stdout).fingerprint, before, path);
+    await writeFile(file, source);
+  }
   const outside = join(root, 'outside');
   await mkdir(outside);
   await writeFile(join(outside, 'must-not-be-hashed'), 'Synthetic outside-checkout content');

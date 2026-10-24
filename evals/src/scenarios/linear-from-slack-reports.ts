@@ -1,7 +1,7 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps, slack } from '../world/apps.ts';
 import { linear, type LinearIssue } from '../world/linear.ts';
-import { daysAgo, localTime } from '../world/time.ts';
+import { daysAgo, duringToday, localTime } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const people = [
@@ -249,7 +249,6 @@ export default scenario({
   complexity: 'complex',
   stance: 'regression',
   seconds: 900,
-  window: { from: 10, to: 23 },
   user: {
     approve: (action) => action === 'CONNECTED_MCP_CALL',
     persona:
@@ -257,7 +256,8 @@ export default scenario({
   },
   world(clock) {
     const now = clock.now();
-    const today = (hour: number, minute: number) => localTime(now, 0, hour, undefined, minute);
+    const today = (hour: number, minute: number) =>
+      duringToday(now, (hour * 60 + minute) / (24 * 60));
     const tracker = linear(
       owner,
       {
@@ -296,7 +296,7 @@ export default scenario({
             {
               user: 'U04ELENA',
               at: today(8, 5),
-              text: 'Bug report: the invoice CSV export leaves out every customer whose name has an accent (José, Zoë, Müller). The file downloads fine, those rows just are not in it. Two customers flagged it this morning.',
+              text: 'Bug report: the invoice CSV export leaves out every customer whose name has an accent (José, Zoë, Müller). The file downloads fine, those rows just are not in it. Two customers flagged it earlier today.',
             },
             {
               user: 'U05JONAS',
@@ -323,7 +323,7 @@ export default scenario({
             {
               user: 'U04ELENA',
               at: today(9, 55),
-              text: 'Off to a customer call, back after lunch.',
+              text: 'Off to a customer call, back later.',
             },
           ],
         },

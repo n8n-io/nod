@@ -154,8 +154,9 @@
   text-align: left;
   cursor: pointer;
 }
-.account-theme-previews > button:hover {
-  background: var(--nav-hover);
+.account-theme-previews > button:where(:hover:not(:disabled)) {
+  border-color: var(--border);
+  background: var(--control-hover);
 }
 .account-theme-previews > button[aria-pressed='true'] {
   border-color: var(--accent-border);

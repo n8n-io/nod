@@ -1,13 +1,17 @@
+import { logFailure } from './failure-log.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import type { Agent, AgentSessionOptions } from '../ports/agent.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import type { ProviderUsageEvent, UsageTelemetry } from '../ports/provider-usage.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel } from '../ports/decisions.ts';
-import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
+import type { SpeechProvider } from '../ports/speech.ts';
+import type { TrustAction, TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
+import type { MessageReceipt } from '../shared/contracts.ts';
+import { becauseOf, type TrustBasis } from './trust-basis.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
@@ -94,7 +98,9 @@ export function createLedger({
   telemetry?: UsageTelemetry;
 }) {
   const activeTurn = new AsyncLocalStorage<string>();
-  const activeExecution = new AsyncLocalStorage<AgentSessionOptions>();
+  const activeExecution = new AsyncLocalStorage<
+    ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>
+  >();
   async function initialize() {
     await pool.query(`CREATE TABLE IF NOT EXISTS model_usage (
       id text PRIMARY KEY, owner_id text NOT NULL, turn_id uuid REFERENCES turns(id) ON DELETE SET NULL,
@@ -114,6 +120,7 @@ export function createLedger({
       action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE app_actions DROP COLUMN IF EXISTS effect;
+    ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS basis jsonb;
     CREATE INDEX IF NOT EXISTS app_actions_owner_time ON app_actions(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS app_actions_turn ON app_actions(turn_id);
     CREATE TABLE IF NOT EXISTS spending_limits (
@@ -127,7 +134,7 @@ export function createLedger({
   function save(sql: string, values: unknown[]) {
     return pool.query(sql, values).then(
       () => undefined,
-      (error) => console.error(`The ledger skipped a record: ${error?.name ?? 'error'}`),
+      (error) => logFailure('ledger_record_failed', error),
     );
   }
 
@@ -146,10 +153,11 @@ export function createLedger({
 
   function record(
     usage: ProviderUsageEvent,
-    execution: ExecutionScope | undefined = activeExecution.getStore(),
+    execution: ExecutionScope | null | undefined = activeExecution.getStore(),
   ) {
     const { id, costUsd, turnId, ...details } = usage;
-    const attributedTurn = execution?.turnId ?? turnId ?? activeTurn.getStore() ?? null;
+    const attributedTurn =
+      execution === null ? null : (execution?.turnId ?? turnId ?? activeTurn.getStore() ?? null);
     const values = [
       id,
       ownerId,
@@ -166,7 +174,7 @@ export function createLedger({
       () => {
         pendingUsage.delete(id);
       },
-      (error) => console.error(`The ledger could not save usage: ${error?.name ?? 'error'}`),
+      (error) => logFailure('ledger_usage_failed', error, { turnId: attributedTurn }),
     );
     pendingUsage.set(id, { values, pending });
     analytics?.(modelUsed(usage));
@@ -228,13 +236,15 @@ export function createLedger({
             const usage: ProviderUsageEvent = {
               provider: value.provider ?? 'model',
               category:
-                request.task === 'review' || request.task === 'access'
-                  ? 'review'
-                  : request.task === 'plan'
-                    ? 'tasks'
-                    : request.task === 'analytics'
-                      ? 'analytics'
-                      : 'memory',
+                request.task === 'vision'
+                  ? 'agent'
+                  : request.task === 'review' || request.task === 'access'
+                    ? 'review'
+                    : request.task === 'plan'
+                      ? 'tasks'
+                      : request.task === 'analytics'
+                        ? 'analytics'
+                        : 'memory',
               operation: request.task,
               status: 'succeeded',
               durationMs: 0,
@@ -268,12 +278,54 @@ export function createLedger({
     };
   }
 
-  function action(turnId: string, name: string) {
+  function action(turnId: string, name: string, basis: TrustBasis) {
     return save(
-      `INSERT INTO app_actions(owner_id,turn_id,action)
-       SELECT $1,id,$3 FROM turns WHERE id=$2 AND owner_id=$1`,
-      [ownerId, turnId, name.slice(0, 200)],
+      `INSERT INTO app_actions(owner_id,turn_id,action,basis)
+       SELECT $1,id,$3,$4 FROM turns WHERE id=$2 AND owner_id=$1`,
+      [ownerId, turnId, name.slice(0, 200), JSON.stringify(basis)],
     );
+  }
+
+  function speech(base: SpeechProvider): SpeechProvider {
+    const report = (usage: ProviderUsageEvent, preprocessing = false) => {
+      record(usage, preprocessing ? null : undefined);
+      activeExecution.getStore()?.onEvent({ type: 'provider_usage', usage });
+    };
+    return {
+      ...base,
+      get configured() {
+        return base.configured;
+      },
+      get transcriptionConfigured() {
+        return base.transcriptionConfigured;
+      },
+      async synthesize(text, signal, onUsage) {
+        if (await limitReached()) throw new Error(spendingLimitReached);
+        try {
+          return await base.synthesize(text, signal, (usage) => {
+            report(usage);
+            onUsage?.(usage);
+          });
+        } finally {
+          await flushUsage();
+        }
+      },
+      ...(base.transcribe
+        ? ({
+            async transcribe(audio, signal, onUsage) {
+              if (await limitReached()) throw new Error(spendingLimitReached);
+              try {
+                return await base.transcribe!(audio, signal, (usage) => {
+                  report(usage, true);
+                  onUsage?.(usage);
+                });
+              } finally {
+                await flushUsage();
+              }
+            },
+          } satisfies Pick<SpeechProvider, 'transcribe'>)
+        : {}),
+    };
   }
 
   async function limits() {
@@ -302,49 +354,113 @@ export function createLedger({
     const [{ taskUsd }, spent] = await Promise.all([
       limits(),
       pool.query(
-        `SELECT COALESCE(sum(COALESCE(cost_usd,(details->>'estimateUsd')::float8)),0)::float8 AS spent
-         FROM model_usage WHERE owner_id=$1 AND session_id=$2 AND created_at>=COALESCE(
-           (SELECT max(t.created_at) FROM turns t JOIN turns c ON c.id=$3 AND c.owner_id=$1
+        `WITH boundary AS (
+           SELECT t.id,t.created_at FROM turns t JOIN turns c ON c.id=$3 AND c.owner_id=$1
              WHERE t.owner_id=$1 AND t.session_id=$2 AND t.source IN ('user','task')
-               AND (t.created_at,t.id)<=(c.created_at,c.id)),'-infinity')`,
+               AND (t.created_at,t.id)<=(c.created_at,c.id)
+           ORDER BY t.created_at DESC,t.id DESC LIMIT 1
+         ) SELECT COALESCE(sum(COALESCE(cost_usd,(details->>'estimateUsd')::float8)),0)::float8 AS spent
+         FROM model_usage WHERE owner_id=$1 AND session_id=$2
+           AND (created_at>=COALESCE((SELECT created_at FROM boundary),'-infinity')
+             OR turn_id=(SELECT id FROM boundary))`,
         [ownerId, sessionId, turnId],
       ),
     ]);
     return taskUsd === null ? undefined : { budgetUsd: taskUsd, spentUsd: spent.rows[0].spent };
   }
 
-  async function messageCosts(turnIds: string[]) {
-    if (!turnIds.length) return {};
-    const { rows } = await pool.query<{
-      turnId: string;
-      messageId: string | null;
-      costUsd: number | null;
-    }>(
-      `SELECT turn_id AS "turnId",
-         (SELECT id FROM messages m WHERE m.owner_id=$1 AND m.turn_id=model_usage.turn_id
-           AND m.role='assistant' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS "messageId",
-         CASE WHEN count(cost_usd)=count(*) THEN sum(cost_usd)::float8 END AS "costUsd"
-       FROM model_usage WHERE owner_id=$1 AND turn_id=ANY($2::uuid[]) GROUP BY turn_id`,
-      [ownerId, [...new Set(turnIds)]],
-    );
-    return Object.fromEntries(
-      rows.map(({ turnId, messageId, costUsd }) => [turnId, { messageId, costUsd }]),
+  async function attributeMediaUsage(client: PoolClient, ids: string[], turnId: string) {
+    if (!ids.length) return;
+    await client.query(
+      `UPDATE model_usage m SET turn_id=u.id,session_id=u.session_id,
+         run_id=NULL,parent_run_id=NULL,browser_id=NULL
+       FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND m.owner_id=$2
+         AND m.id=ANY($3::text[]) AND m.turn_id IS NULL
+         AND m.details->>'operation'='transcribe'`,
+      [turnId, ownerId, ids],
     );
   }
 
-  async function entries(before?: { at: string; id: string }) {
+  async function sessionCosts(sessionIds: string[]): Promise<Record<string, number | null>> {
+    if (!sessionIds.length) return {};
+    const { rows } = await pool.query<{ sessionId: string; costUsd: number | null }>(
+      `SELECT u.session_id AS "sessionId",
+         CASE WHEN count(m.cost_usd)=count(*) THEN sum(m.cost_usd)::float8 END AS "costUsd"
+       FROM model_usage m JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+       WHERE m.owner_id=$1 AND u.session_id=ANY($2::uuid[]) GROUP BY u.session_id`,
+      [ownerId, [...new Set(sessionIds)]],
+    );
+    return Object.fromEntries(rows.map(({ sessionId, costUsd }) => [sessionId, costUsd]));
+  }
+
+  async function receipts(turnIds: string[]): Promise<Record<string, MessageReceipt>> {
+    if (!turnIds.length) return {};
+    const { rows } = await pool.query<{
+      sessionId: string;
+      messageId: string;
+      actions: string[] | null;
+    }>(
+      `WITH sessions AS (
+         SELECT DISTINCT u.session_id FROM turns u
+         WHERE u.owner_id=$1 AND u.id=ANY($2::uuid[]) AND u.session_id<>u.thread_id)
+       SELECT s.session_id AS "sessionId",
+         (SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+           WHERE m.owner_id=$1 AND u.session_id=s.session_id AND m.role='assistant' AND m.text<>''
+           ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS "messageId",
+         (SELECT array_agg(a.action ORDER BY a.created_at) FROM app_actions a
+           JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id
+           WHERE a.owner_id=$1 AND u.session_id=s.session_id
+             AND a.basis IS NOT NULL AND a.basis->>'kind'<>'read') AS actions
+       FROM sessions s
+       WHERE (SELECT u.source FROM turns u WHERE u.owner_id=$1 AND u.session_id=s.session_id
+           ORDER BY u.created_at,u.id LIMIT 1) IN ('task','schedule')
+         AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.session_id=s.session_id
+           AND u.status IN ('queued','running','waiting'))`,
+      [ownerId, [...new Set(turnIds)]],
+    );
+    const costs = await sessionCosts(rows.map((row) => row.sessionId));
+    return Object.fromEntries(
+      rows.flatMap((row) => {
+        if (!row.messageId) return [];
+        const counts = new Map<string, number>();
+        for (const name of row.actions ?? []) {
+          const { app, label } = actionTitle(name);
+          const title = app ? `${app}: ${label}` : label;
+          counts.set(title, (counts.get(title) ?? 0) + 1);
+        }
+        const costUsd = costs[row.sessionId] ?? null;
+        if (!counts.size && costUsd === null) return [];
+        return [
+          [
+            row.messageId,
+            {
+              sessionId: row.sessionId,
+              actions: [...counts].map(([label, count]) => ({ label, count })),
+              costUsd,
+            },
+          ],
+        ];
+      }),
+    );
+  }
+
+  async function entries(before?: { at: string; id: string }, session?: string) {
     const { rows } = await pool.query(
       `SELECT u.id,u.source,u.source_id,u.channel,u.status,u.error,u.created_at,
          left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,
          (SELECT title FROM schedules WHERE owner_id=$1 AND id::text=split_part(u.source_id,':',2)) AS schedule,
-         (SELECT array_agg(action ORDER BY created_at) FROM app_actions WHERE turn_id=u.id) AS actions
+         (SELECT json_agg(json_build_object('action',a.action,'basis',a.basis,'said',m.id IS NOT NULL) ORDER BY a.created_at)
+           FROM app_actions a LEFT JOIN messages m ON a.basis->>'kind'='message'
+             AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid
+           WHERE a.turn_id=u.id) AS actions
        FROM turns u
        LEFT JOIN LATERAL (SELECT sum(cost_usd)::float8 AS cost,bool_or(cost_usd IS NULL) AS unpriced
          FROM model_usage WHERE turn_id=u.id) c ON true
        WHERE u.owner_id=$1 AND ($2::timestamptz IS NULL OR (u.created_at,u.id)<($2,$3::uuid))
+         AND ($4::uuid IS NULL OR u.session_id=$4)
          AND (c.cost>0 OR c.unpriced OR EXISTS(SELECT 1 FROM app_actions a WHERE a.turn_id=u.id))
        ORDER BY u.created_at DESC,u.id DESC LIMIT ${pageSize + 1}`,
-      [ownerId, before?.at ?? null, before?.id ?? null],
+      [ownerId, before?.at ?? null, before?.id ?? null, session ?? null],
     );
     const page = rows.slice(0, pageSize).map((row): TrustEntry => ({
       id: row.id,
@@ -353,10 +469,13 @@ export function createLedger({
       channel: String(row.channel).split(':')[0]!,
       error: row.status === 'failed' ? row.error : null,
       costUsd: row.cost,
-      actions: (row.actions ?? []).map((name: string) => {
-        const { app, label } = actionTitle(name);
-        return app ? `${app}: ${label}` : label;
-      }),
+      actions: (row.actions ?? []).map(
+        (item: { action: string; basis: TrustBasis | null; said: boolean }): TrustAction => {
+          const { app, label } = actionTitle(item.action);
+          const because = becauseOf(item.basis, item.said);
+          return { label: app ? `${app}: ${label}` : label, ...(because ? { because } : {}) };
+        },
+      ),
     }));
     const last = page.at(-1);
     return {
@@ -439,9 +558,21 @@ export function createLedger({
 
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/trust', () => read());
-    app.get('/api/trust/entries', (request) =>
-      entries(z.object({ at: z.iso.datetime(), id: z.uuid() }).strict().parse(request.query)),
-    );
+    app.get('/api/trust/entries', (request) => {
+      const query = z
+        .object({
+          at: z.iso.datetime().optional(),
+          id: z.uuid().optional(),
+          session: z.uuid().optional(),
+        })
+        .strict()
+        .refine((value) => Boolean(value.at) === Boolean(value.id))
+        .parse(request.query);
+      return entries(
+        query.at && query.id ? { at: query.at, id: query.id } : undefined,
+        query.session,
+      );
+    });
     app.put('/api/trust/limit', (request) => setLimits(request.body));
   }
 
@@ -474,13 +605,20 @@ export function createLedger({
     agent,
     curator,
     decisions,
+    speech,
+    attributeMediaUsage,
     action,
     limitReached,
     checkIn,
     limits,
     setLimits,
-    messageCosts,
+    sessionCosts,
+    receipts,
     withTurn: <T>(turnId: string, run: () => T) => activeTurn.run(turnId, run),
+    withExecution: <T>(
+      execution: ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>,
+      run: () => T,
+    ) => activeExecution.run(execution, run),
     read,
     report,
     registerRoutes,

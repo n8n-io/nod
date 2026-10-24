@@ -1,7 +1,9 @@
 import type { CaptureResult, PostHog } from 'posthog-js';
 import { posthogConfig, type AnalyticsConfiguration } from '../../shared/analytics';
+import { modelProviders, type ModelProvider } from '../../shared/models';
 import { desktopSettingsAvailable } from './desktop';
 import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
+import { feedbackActivity } from './feedback-activity';
 
 type AnalyticsEvents = {
   nod_onboarding_step_viewed: {
@@ -45,7 +47,7 @@ type AnalyticsEvents = {
     result: 'opened' | 'needs_access_setup';
   };
   nod_model_selected: {
-    provider: 'openai' | 'anthropic' | 'openrouter' | 'compatible' | 'other';
+    provider: ModelProvider | 'other';
     entry: 'settings' | 'onboarding';
     recommended: boolean;
   };
@@ -112,7 +114,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     result: ['opened', 'needs_access_setup'],
   },
   nod_model_selected: {
-    provider: ['openai', 'anthropic', 'openrouter', 'compatible', 'other'],
+    provider: [...modelProviders, 'other'],
     entry: ['settings', 'onboarding'],
     recommended: [true, false],
   },
@@ -391,6 +393,7 @@ export function captureAnalytics<Event extends keyof AnalyticsEvents>(
   ...args: AnalyticsEvents[Event] extends undefined ? [] : [AnalyticsEvents[Event]]
 ) {
   try {
+    feedbackActivity.record(event, args[0]);
     if (configuration?.enabled) posthog?.capture(event, args[0]);
   } catch {}
 }
@@ -411,6 +414,7 @@ export function analyticsForCurrentSession(): typeof captureAnalytics {
 }
 
 export function capturePageview(path: string) {
+  feedbackActivity.record('screen', { screen: analyticsRoute(path) });
   if (!configuration?.enabled) return;
   const route = analyticsRoute(path);
   if (route === lastPage) return;

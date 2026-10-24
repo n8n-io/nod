@@ -6,6 +6,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   writeFile,
@@ -31,6 +32,7 @@ const signingMode = process.env.NOD_SIGNING_MODE || 'self-signed';
 const shaPattern = /^[a-f0-9]{40}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
 const maximumAssetBytes = 2 * 1024 ** 3;
+const windowsRuntimeArchive = 'nod-Runtime-win32-x64.tar.gz';
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, {
@@ -235,13 +237,43 @@ async function plan() {
         arch: target,
         platform: `darwin-${target}`,
         linux_runner:
-          target === 'arm64' ? 'blacksmith-8vcpu-ubuntu-2404-arm' : 'blacksmith-8vcpu-ubuntu-2404',
-        mac_runner: target === 'arm64' ? 'macos-15' : 'macos-15-intel',
+          target === 'arm64'
+            ? 'blacksmith-16vcpu-ubuntu-2404-arm'
+            : 'blacksmith-16vcpu-ubuntu-2404',
+        mac_runner: 'blacksmith-12vcpu-macos-15',
+        node_arch: target,
         docker_arch: target === 'arm64' ? 'arm64' : 'amd64',
       });
     }
+    const windows = JSON.parse(
+      run(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], {
+        env: { ...process.env, NOD_DESKTOP_TARGET: 'win32-x64' },
+      }),
+    ).fingerprint;
+    if (!hashPattern.test(windows)) throw new Error('Invalid runtime fingerprint.');
+    const windowsRuntime = gh([
+      'api',
+      `repos/${releaseRepository}/releases?per_page=100`,
+      '--paginate',
+      '--jq',
+      '.[] | {tag_name, draft, assets: [.assets[] | {name}]}',
+    ])
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find(
+        (release) =>
+          !release.draft &&
+          /^nod-v/.test(release.tag_name) &&
+          [`runtime-win32-x64-${windows}.json`, windowsRuntimeArchive].every((name) =>
+            release.assets?.some((asset) => asset.name === name),
+          ),
+      );
     await outputValues({
       ...first,
+      windows_runtime_fingerprint: windows,
+      windows_runtime_tag: windowsRuntime?.tag_name || '',
+      runtime_refresh: process.env.NOD_RUNTIME_REFRESH || 'local',
       mac_matrix: JSON.stringify({ include: targets }),
       runtime_matrix: JSON.stringify({
         include: targets.filter((target) => target.runtime_reused !== 'true'),
@@ -421,11 +453,11 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
       ],
       repository,
     );
-  for (const file of files) {
+  for (const file of files)
     if ((await stat(file)).size >= maximumAssetBytes)
       throw new Error('GitHub release assets must be smaller than 2 GiB.');
-    gh(['release', 'upload', tag, file, '--repo', repository, '--clobber'], repository);
-  }
+  if (files.length)
+    gh(['release', 'upload', tag, ...files, '--repo', repository, '--clobber'], repository);
   release = releaseByTag(repository, tag);
   if (
     !release?.draft ||
@@ -746,6 +778,59 @@ async function draftApp({ stageOnly = false } = {}) {
   });
 }
 
+async function windowsRuntime(fingerprint, manifest, archive, asset) {
+  const bytes = (await stat(archive)).size;
+  const sha256 = await hash(archive);
+  if (
+    !hashPattern.test(fingerprint) ||
+    manifest.version !== 1 ||
+    manifest.platform !== 'win32-x64' ||
+    manifest.fingerprint !== fingerprint ||
+    manifest.guest?.file !== 'guest.tar.gz' ||
+    manifest.guest.sha256 !== sha256 ||
+    manifest.guest.bytes !== bytes ||
+    (asset && (asset.digest !== `sha256:${sha256}` || asset.size !== bytes))
+  )
+    throw new Error('The Windows runtime does not match its manifest.');
+}
+
+async function reuseWindowsRuntime() {
+  const tag = process.env.NOD_WINDOWS_RUNTIME_TAG;
+  const fingerprint = process.env.NOD_WINDOWS_RUNTIME_FINGERPRINT;
+  const assets = join(root, '.local/windows-runtime-assets');
+  const name = `runtime-win32-x64-${fingerprint}.json`;
+  const release = /^nod-v/.test(tag || '') && releaseByTag(releaseRepository, tag);
+  if (!release || release.draft) throw new Error('The reused Windows runtime is unavailable.');
+  await mkdir(assets, { recursive: true });
+  gh(
+    [
+      'release',
+      'download',
+      tag,
+      '--repo',
+      releaseRepository,
+      '--pattern',
+      name,
+      '--pattern',
+      windowsRuntimeArchive,
+      '--dir',
+      assets,
+      '--clobber',
+    ],
+    releaseRepository,
+  );
+  const manifest = JSON.parse(await readFile(join(assets, name), 'utf8'));
+  await windowsRuntime(
+    fingerprint,
+    manifest,
+    join(assets, windowsRuntimeArchive),
+    release.assets.find((entry) => entry.name === windowsRuntimeArchive),
+  );
+  await rename(join(assets, windowsRuntimeArchive), join(assets, 'guest.tar.gz'));
+  delete manifest.fingerprint;
+  await writeFile(join(assets, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+}
+
 async function draftAll() {
   const prepared = await configuredRelease(root);
   const version = prepared.version;
@@ -786,6 +871,17 @@ async function draftAll() {
     `${metadata.installer.sha256}  ${metadata.installer.file}\n${metadata.runtime.sha256}  ${metadata.runtime.file}`
   )
     throw new Error('The Windows checksums do not match.');
+  const windowsFingerprint = JSON.parse(
+    run(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], {
+      env: { ...process.env, NOD_DESKTOP_TARGET: 'win32-x64' },
+    }),
+  ).fingerprint;
+  const windowsManifest = join(windows, `runtime-win32-x64-${windowsFingerprint}.json`);
+  await windowsRuntime(
+    windowsFingerprint,
+    JSON.parse(await readFile(windowsManifest, 'utf8')),
+    join(windows, windowsRuntimeArchive),
+  );
   for (const target of ['arm64', 'x64']) {
     const environment = {
       ...process.env,
@@ -814,7 +910,7 @@ async function draftAll() {
     marker,
     files: ['nod-Setup-x64.exe', 'nod-Runtime-win32-x64.tar.gz', 'release-win32-x64.json']
       .map((name) => join(windows, name))
-      .concat(sum),
+      .concat(sum, windowsManifest),
   });
   const expected = [
     'nod-arm64.dmg',
@@ -830,6 +926,7 @@ async function draftAll() {
     'update-darwin-x64.json',
     'release-win32-x64.json',
     'nod-Runtime-win32-x64.tar.gz',
+    basename(windowsManifest),
   ];
   if (expected.some((name) => release.assets.filter((asset) => asset.name === name).length !== 1))
     throw new Error('All three platform bundles are required before publication.');
@@ -873,4 +970,5 @@ if (command === 'plan') await plan();
 else if (command === 'draft') await draftApp();
 else if (command === 'stage') await draftApp({ stageOnly: true });
 else if (command === 'draft-all') await draftAll();
-else throw new Error('Expected plan, draft, stage or draft-all.');
+else if (command === 'reuse-windows-runtime') await reuseWindowsRuntime();
+else throw new Error('Expected plan, draft, stage, draft-all or reuse-windows-runtime.');

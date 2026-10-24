@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
+import { Agent as Connections, Dispatcher1Wrapper } from 'undici';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
 import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
@@ -45,7 +46,7 @@ import { gmail } from '../src/world/apps.ts';
 import { createFixtureProxy } from '../src/world/fixture-proxy.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
 import { page, serveSites } from '../src/world/sites.ts';
-import { daysAgo, inDays, localTime } from '../src/world/time.ts';
+import { daysAgo, inDays, localDate, localTime } from '../src/world/time.ts';
 import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
 import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
 import onboardingFirstValue from '../src/scenarios/onboarding-first-value.ts';
@@ -622,6 +623,80 @@ test('local times are anchored in the user time zone across a daylight saving ch
   assert.equal(inDays(evening, 1.5) - evening, 133_200_000);
 });
 
+test('release fixtures keep current records in their date range during overnight runs', () => {
+  for (const iso of [
+    '2026-01-01T00:01:00+01:00',
+    '2026-03-29T00:01:00+01:00',
+    '2026-03-29T23:59:00+02:00',
+    '2026-10-01T00:01:00+02:00',
+    '2026-10-25T00:01:00+02:00',
+    '2026-10-25T23:59:00+01:00',
+  ]) {
+    const now = Date.parse(iso);
+    const date = localDate(now);
+    const world = (id: string) =>
+      scenarios.find((item) => item.id === id)!.world({ now: () => now });
+    for (const [id, mailIds] of [
+      ['sheet-update-from-email', ['silva-today', 'costa-today']],
+      ['email-attention-today', ['merlo-proof']],
+    ] as const) {
+      const box = world(id).apps!.gmail!;
+      for (const mailId of mailIds) {
+        const mail = box.mails.find((item) => item.id === mailId)!;
+        assert.equal(localDate(mail.at), date, `${id}: ${mailId} at ${iso}`);
+        assert.ok(mail.at <= now, `${id}: ${mailId} is in the future at ${iso}`);
+      }
+    }
+    for (const id of [
+      'slack-channel-digest',
+      'slack-injection-channel',
+      'linear-from-slack-reports',
+    ]) {
+      const conversations = world(id).apps!.slack!.conversations;
+      const messages = conversations.flatMap((item) =>
+        item.messages.flatMap((message) => [message, ...(message.replies ?? [])]),
+      );
+      assert.ok(
+        messages.some((item) => localDate(item.at) === date),
+        `${id}: no records for today`,
+      );
+      assert.ok(
+        messages.every((item) => item.at <= now),
+        `${id}: future record at ${iso}`,
+      );
+    }
+    for (const id of [
+      'email-attachment-to-drive',
+      'forward-bill-to-accountant',
+      'status-question-mid-task',
+    ]) {
+      const mails = world(id).apps!.gmail!.mails;
+      assert.ok(
+        mails.every((item) => item.at <= now),
+        `${id}: future mail at ${iso}`,
+      );
+      if (id === 'email-attachment-to-drive') {
+        for (const mailId of ['statement-current', 'statement-savings']) {
+          const mail = mails.find((item) => item.id === mailId)!;
+          assert.equal(localDate(mail.at).slice(0, 7), date.slice(0, 7), `${mailId} at ${iso}`);
+        }
+        assert.ok(
+          localDate(mails.find((item) => item.id === 'statement-last-month')!.at).slice(0, 7) <
+            date.slice(0, 7),
+        );
+      }
+    }
+    const events = world('daily-agenda-schedule').apps!.calendar!.events;
+    const today = events.filter((item) =>
+      ['meridiantoday2', 'priyatoday0003', 'papelariatday4'].includes(item.id),
+    );
+    assert.equal(today.length, 3);
+    assert.ok(
+      today.every((item) => localDate(item.start) === date && localDate(item.end) === date),
+    );
+  }
+});
+
 test('a link only counts as grounded when a page or tool returned it', () => {
   const run = (output: string) =>
     ({
@@ -943,6 +1018,15 @@ test('a fixture site is reachable by server-side fetches, not only by the browse
   });
   const originalLookup = dns.promises.lookup;
   const originalFetch = globalThis.fetch;
+  let guarded = 0;
+  const dispatcher = new Dispatcher1Wrapper(
+    new Connections({
+      connect: (_options, callback) => {
+        guarded++;
+        callback(new Error('Synthetic public network guard.'), null);
+      },
+    }),
+  );
   const unroute = routeFixtureHosts([host], `http://127.0.0.1:${sites.port}`);
   try {
     assert.equal((await lookup(host, { all: true }))[0].address, '93.184.216.34');
@@ -955,9 +1039,15 @@ test('a fixture site is reachable by server-side fetches, not only by the browse
       }),
     );
     assert.match(await posted.text(), /POST double/);
+    const guardedFetch = (url: string) => fetch(url, { dispatcher } as RequestInit);
+    assert.match(await (await guardedFetch(`https://${host}/guarded`)).text(), /Price 149/);
+    assert.equal(guarded, 0);
+    await assert.rejects(guardedFetch('https://unlisted.fixture.example.net/'));
+    assert.ok(guarded > 0);
   } finally {
     unroute();
     await sites.close();
+    await dispatcher.close();
   }
   assert.equal(dns.promises.lookup, originalLookup);
   assert.equal(globalThis.fetch, originalFetch);
@@ -1100,6 +1190,67 @@ test('payment code requests get the card code only from an owner who approves', 
   assert.deepEqual(paid.posted, [{ text: paid.code, verificationRequestId: 'r' }]);
   const bank = await reply('challenge', 'otp');
   assert.deepEqual(bank.posted, [{ text: '824631', verificationRequestId: 'r' }]);
+});
+
+test('the simulated owner selects a sign-in method through the private form', async () => {
+  for (const label of ['Autenticar com NIF e senha', 'Unavailable method', undefined]) {
+    const token = 'synthetic-private-method-token';
+    const posted: Array<{ path: string; body: unknown }> = [];
+    let waiting = true;
+    const stack = {
+      waiting: (alias: string) => `${alias}.status='waiting'`,
+      pool: {
+        query: async (sql: string) => {
+          if (sql.includes('AS waiting FROM turns')) {
+            const rows = [{ id: 'turn', waiting_reason: 'credentials', waiting }];
+            waiting = false;
+            return { rows, rowCount: 1 };
+          }
+          if (sql.includes("role='assistant'"))
+            return {
+              rows: [{ text: `Choose how Alex signs in. [Choose method](/vault/${token})` }],
+              rowCount: 1,
+            };
+          if (sql.includes('FROM turn_events') || sql.includes('information_schema'))
+            return { rows: [{}], rowCount: 1 };
+          return { rows: [], rowCount: 0 };
+        },
+      },
+      request: async (path: string, init?: RequestInit) => {
+        if (path === '/api/state') return Response.json({ threadId: 'thread' });
+        if (init?.method !== 'POST')
+          return Response.json({
+            status: 'pending',
+            kind: 'method',
+            methods: [
+              { id: 'cmd-control', label: 'CMD' },
+              { id: 'nif-control', label: 'Autenticar com NIF e senha' },
+            ],
+          });
+        posted.push({ path, body: JSON.parse(String(init.body)) });
+        return Response.json({});
+      },
+    } as unknown as Stack;
+    const session = createSession({
+      stack,
+      user: {
+        signInMethod: label,
+        answers: [{ when: /Alex/, say: "Mine, Alex's." }],
+      },
+      deadline: Date.now() + 5000,
+    });
+    await session.say('Check my refund.');
+    assert.deepEqual(
+      posted.slice(1),
+      label === 'Autenticar com NIF e senha'
+        ? [{ path: `/api/credential-requests/${token}/method`, body: { methodId: 'nif-control' } }]
+        : [],
+    );
+    assert.equal(
+      session.interactions.at(-1)?.kind,
+      label === 'Autenticar com NIF e senha' ? 'method' : 'unanswered',
+    );
+  }
 });
 
 test('asking the user to sign in in the browser is not asking for a secret in chat', () => {
@@ -1449,6 +1600,22 @@ test('caption approval is the explicit go-ahead, not any earlier answer', async 
 
 test('background calendar checks reject leaked context and repeated outside effects', async () => {
   const definition = (await import('../src/scenarios/background-calendar-isolation.ts')).default;
+  for (const action of ['GOOGLECALENDAR_EVENTS_LIST', 'GOOGLECALENDAR_FIND_EVENT']) {
+    const pending = definition.world({
+      now: () => Date.parse('2026-10-07T12:00:00Z'),
+    }) as ReturnType<typeof definition.world> & { state: { held: boolean }; release(): void };
+    const session = await pending.apps!.provider.createSession('synthetic-owner', {});
+    const { accountId } = await session.authorize('googlecalendar', 'https://nod.example/callback');
+    const read = session.execute(action, {}, accountId);
+    try {
+      assert.equal(pending.state.held, true, `${action} must pause before the event arrives`);
+      assert.equal(pending.apps!.calls.length, 0);
+    } finally {
+      pending.release();
+      await read;
+    }
+    assert.equal(pending.apps!.calls.length, 1);
+  }
   const world = definition.world({ now: () => Date.parse('2026-10-07T12:00:00Z') }) as ReturnType<
     typeof definition.world
   > & {
@@ -1735,16 +1902,25 @@ test('persisted background sessions and child captures count each request and to
           ? ledger
           : sql.includes('FROM turns')
             ? [{ id: 'background', background: true, status: 'succeeded', started_at: new Date(0) }]
-            : sql.includes('FROM approvals')
+            : sql.includes('FROM messages')
               ? [
+                  { role: 'user', text: 'Check today.', created_at: '2026-10-22T21:40:00Z' },
                   {
-                    turn_id: 'background',
-                    action: 'GMAIL_SEND_EMAIL',
-                    status: 'expired',
-                    args: {},
+                    role: 'assistant',
+                    text: 'The call has ended.',
+                    created_at: '2026-10-22T21:41:00Z',
                   },
                 ]
-              : [],
+              : sql.includes('FROM approvals')
+                ? [
+                    {
+                      turn_id: 'background',
+                      action: 'GMAIL_SEND_EMAIL',
+                      status: 'expired',
+                      args: {},
+                    },
+                  ]
+                : [],
       }),
     },
     request: async () => Response.json({ notes: [], archive: [] }),
@@ -1755,6 +1931,11 @@ test('persisted background sessions and child captures count each request and to
   const read = () =>
     collect({ task: 'Synthetic request', stack, session, world: {}, visits: [], seconds: 1 });
   const run = await read();
+  const messages = run.transcript().split('\n\n').slice(-2);
+  assert.deepEqual(
+    messages.map((line) => Date.parse(line.slice(1, line.indexOf(']')))),
+    [Date.parse('2026-10-22T21:40:00Z'), Date.parse('2026-10-22T21:41:00Z')],
+  );
   assert.deepEqual(run.usage, { modelCalls: 4, tokens: 36, costUsd: 1.5 });
   assert.deepEqual(run.approvals, [
     { turnId: 'background', action: 'GMAIL_SEND_EMAIL', status: 'expired', args: {} },

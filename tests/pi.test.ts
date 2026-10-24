@@ -13,11 +13,12 @@ import {
   createAgentSession,
   SessionManager,
   SettingsManager,
+  ModelRuntime,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
-import type { RuntimeContext } from '../src/ports/agent.ts';
+import { appConfirmation, type AgentToolResult, type RuntimeContext } from '../src/ports/agent.ts';
 import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/computer.ts';
 import {
   closeInterruptedCalls,
@@ -562,6 +563,448 @@ test('codemode scripts reach only workspace and web tools, each call through the
   }
 });
 
+test('native codemode sequences keep fresh results, cancellation and partial completion inside one guarded script', async (t) => {
+  const app = {
+    name: 'Fixture Calculator',
+    bundleId: 'test.fixture.calculator',
+    pid: 42,
+    active: false,
+  };
+  const action = (step: string) =>
+    `tools.computer({action:'act',app:'Fixture Calculator',step:'key',key:${JSON.stringify(step)}})`;
+  const scripts = {
+    success: `
+      const opened = JSON.parse(await tools.computer({action:'look',app:'Fixture Calculator'}));
+      if (!opened.tree.includes('ready')) throw new Error('Unexpected initial state');
+      const entered = JSON.parse(await ${action('1')});
+      if (!entered.done || !entered.tree.includes('entered')) throw new Error('Unexpected entry');
+      const computed = JSON.parse(await ${action('Return')});
+      if (!computed.done || !computed.tree.includes('result 4842')) throw new Error('Unexpected result');
+      const artifact = JSON.parse(await tools.computer({action:'share_screenshot',app:'Fixture Calculator'}));
+      return JSON.stringify({result:4842, artifact:artifact.id});
+    `,
+    exit: `void ${action('Return')}.catch(() => {}); await tools.ls({}); return 'Script ended';`,
+    timeout: `// @options: {"timeout_ms": 1000}\nawait ${action('Return')};`,
+    deadline: `await ${action('Return')};`,
+    failure: `await ${action('1')}; try { await ${action('Return')}; } catch {} await ${action('2')};`,
+    uncertain: `await ${action('1')}; try { await ${action('Return')}; } catch {} await ${action('2')};`,
+    cap: `for (let i=0;i<20;i++) { try { await tools.computer({action:'look',app:'Fixture Calculator'}); } catch {} }`,
+    confirmation: `try { await ${action('Return')}; } catch {} await ${action('2')};`,
+    parallel: `
+      const first = JSON.parse(await tools.computer({action:'look',app:'Fixture Calculator'}));
+      await tools.ls({});
+      await tools.computer({action:'act',app:'Fixture Calculator',step:'press',ref:first.tree.split(' ')[0]});
+    `,
+    direct_overlap: `await tools.computer({action:'look',app:'Fixture Calculator'});`,
+    direct_owner: `await tools.computer({action:'look',app:'Fixture Calculator'});`,
+    non_native: `await tools.ls({}); return 'Workspace sequence completed';`,
+  };
+  for (const mode of Object.keys(scripts) as Array<keyof typeof scripts>)
+    await t.test(mode, { timeout: 15_000 }, async (t) => {
+      const directory = await mkdtemp(join(tmpdir(), 'nod-native-codemode-'));
+      const requests: string[] = [];
+      const calls: string[] = [];
+      const effects: string[] = [];
+      const observations: string[] = [];
+      const resultFailures: boolean[] = [];
+      const overlaps: string[] = [];
+      let enter!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      let release!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let workspaceCalls = 0;
+      let ref = '';
+      let direct: Promise<unknown> | undefined;
+      let signal: AbortSignal | undefined;
+      let definition: ToolDefinition | undefined;
+      const agent = createPiAgent({
+        provider: 'openai',
+        apiKey: 'fixture-key',
+        sessionRoot: join(directory, 'sessions'),
+        configRoot: join(directory, 'config'),
+        createSession: async (options) => {
+          definition = options!.customTools!.find((tool) => tool.name === 'computer');
+          const result = await createAgentSession(options);
+          result.session.agent.streamFunction = (model, request) => {
+            requests.push(JSON.stringify(request.messages));
+            const first = requests.length === 1;
+            const latest = request.messages.at(-1);
+            if (latest?.role === 'toolResult') resultFailures.push(latest.isError === true);
+            if (mode === 'direct_owner') {
+              if (first)
+                direct = definition!.execute(
+                  'direct-owner',
+                  { action: 'look', app: app.name },
+                  undefined,
+                  undefined,
+                  undefined as never,
+                );
+              else release();
+            }
+            const message: AssistantMessage = {
+              ...fauxAssistantMessage(
+                first
+                  ? (mode === 'parallel'
+                      ? ['native-script-a', 'native-script-b']
+                      : ['native-script']
+                    ).map((id) => ({
+                      type: 'toolCall',
+                      id,
+                      name: 'codemode',
+                      arguments: { code: scripts[mode] },
+                    }))
+                  : 'Synthetic completion.',
+              ),
+              provider: model.provider,
+              model: model.id,
+              api: model.api,
+              stopReason: first ? 'toolUse' : 'stop',
+            };
+            const stream = createAssistantMessageEventStream();
+            stream.push({ type: 'done', reason: first ? 'toolUse' : 'stop', message });
+            return stream;
+          };
+          return result;
+        },
+      });
+      const runtime = createAgentRuntime({
+        agent,
+        computer: fakeComputer(),
+        workspace: fakeWorkspace({
+          open: () => ({
+            path: directory,
+            instructions: 'Disposable native sequence fixture',
+            exec: async () => {
+              if (mode === 'exit') await entered;
+              if (mode === 'parallel') {
+                if (++workspaceCalls === 2) release();
+                await barrier;
+              }
+              if (mode === 'non_native') t.mock.timers.tick(60_000);
+              return { exitCode: 0 };
+            },
+          }),
+        }),
+        observe: (_turnId, event) => {
+          if (mode === 'parallel' && event.type === 'tool_end' && event.name === 'codemode')
+            release();
+          if (event.type === 'tool_end' && event.name === 'codemode' && event.output)
+            observations.push(
+              (event.output as AgentToolResult).content
+                .map((part) => (part.type === 'text' ? part.text : ''))
+                .join('\n'),
+            );
+        },
+      });
+      if (mode === 'deadline' || mode === 'non_native') {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        if (mode === 'deadline') void entered.then(() => t.mock.timers.tick(60_000));
+      }
+      try {
+        const result = await runtime.runTurn({
+          threadId: randomUUID(),
+          sessionId: randomUUID(),
+          turnId: randomUUID(),
+          prompt: 'Run the synthetic native sequence',
+          history: [],
+          attachments: [],
+          workspacePath: directory,
+          signal: new AbortController().signal,
+          emit: async () => {},
+          reply: async () => {},
+          delta: () => {},
+          publish: async () => {
+            throw new Error('Unexpected workspace publication');
+          },
+          requestCredential: async () => ({ url: '/credentials/fixture' }),
+          integration: async () => ({}),
+          manage: async () => ({}),
+          computer: async (args, admit, currentSignal) => {
+            signal = currentSignal;
+            calls.push(String(args.action === 'act' ? (args.key ?? args.ref) : args.action));
+            enter();
+            await admit?.(mode === 'confirmation');
+            if (mode === 'confirmation')
+              return { [appConfirmation]: 'Allow this synthetic action?' };
+            if (mode === 'parallel') {
+              if (args.action === 'look') ref = `e${calls.length}`;
+              else {
+                assert.equal(args.ref, ref);
+                effects.push(ref);
+              }
+              return {
+                ...(args.action === 'act' ? { done: true } : {}),
+                app,
+                tree: `${ref} ready`,
+              };
+            }
+            if (mode === 'direct_overlap' && calls.length === 1)
+              overlaps.push(
+                await definition!
+                  .execute(
+                    'overlapping-direct',
+                    { action: 'look', app: app.name },
+                    undefined,
+                    undefined,
+                    undefined as never,
+                  )
+                  .then(
+                    () => 'ran',
+                    () => 'refused',
+                  ),
+              );
+            if (mode === 'direct_owner') await barrier;
+            if (mode === 'exit' || mode === 'timeout' || mode === 'deadline') {
+              await setTimeout(mode === 'timeout' ? 1500 : 100, undefined, {
+                signal: currentSignal,
+              });
+              currentSignal?.throwIfAborted();
+              effects.push('late effect');
+              return { done: true, app, tree: 'finished' };
+            }
+            if (mode === 'failure' && args.key === 'Return')
+              throw new Error('Synthetic action result is uncertain');
+            if (mode === 'uncertain' && args.key === 'Return') return { result: 'unavailable' };
+            if (args.action === 'act') effects.push(String(args.key));
+            if (args.action === 'share_screenshot') {
+              assert.deepEqual(effects, ['1', 'Return']);
+              return {
+                id: 'fixture-artifact',
+                name: 'fixture.png',
+                mimeType: 'image/png',
+                size: 1,
+                url: '/api/artifacts/fixture',
+                source: 'computer_screenshot',
+              };
+            }
+            return {
+              ...(args.action === 'act' ? { done: true } : {}),
+              app,
+              tree:
+                args.action === 'look'
+                  ? `ready ${'unneeded-native-tree-'.repeat(1000)}`
+                  : args.key === '1'
+                    ? 'entered'
+                    : 'result 4842',
+            };
+          },
+        });
+        await direct;
+        if (mode === 'confirmation') {
+          assert.equal(result.status, 'waiting_user');
+          assert.deepEqual(calls, ['Return']);
+          assert.deepEqual(effects, []);
+          assert.equal(requests.length, 1);
+        } else {
+          assert.equal(requests.length, 2);
+          const output = observations.join('\n');
+          if (mode === 'success') {
+            assert.deepEqual(calls, ['look', '1', 'Return', 'share_screenshot']);
+            assert.deepEqual(effects, ['1', 'Return']);
+            assert.ok(requests[1].includes('fixture-artifact'));
+            assert.ok(!requests[1].includes('unneeded-native-tree-'));
+            assert.ok(output.includes('"status":"done"'));
+            await assert.rejects(
+              definition!.execute(
+                'foreign-script/1',
+                { action: 'look', app: app.name },
+                undefined,
+                undefined,
+                undefined as never,
+              ),
+            );
+            assert.equal(calls.length, 4);
+          } else if (mode === 'parallel') {
+            assert.deepEqual(calls, ['look', 'e1']);
+            assert.deepEqual(effects, ['e1']);
+          } else if (mode === 'direct_overlap') {
+            assert.deepEqual(calls, ['look']);
+            assert.deepEqual(overlaps, ['refused']);
+          } else if (mode === 'direct_owner') {
+            assert.deepEqual(calls, ['look']);
+          } else if (mode === 'non_native') {
+            assert.deepEqual(calls, []);
+            assert.deepEqual(resultFailures, [false]);
+          } else if (mode === 'cap') {
+            assert.equal(calls.length, 16);
+          } else if (mode === 'failure' || mode === 'uncertain') {
+            assert.deepEqual(calls, ['1', 'Return']);
+            assert.deepEqual(effects, ['1']);
+            assert.ok(output.includes('"status":"done"'));
+            assert.ok(output.includes('"status":"unknown"'));
+          } else {
+            assert.deepEqual(calls, ['Return']);
+            assert.deepEqual(effects, []);
+            assert.equal(signal?.aborted, true);
+            assert.ok(output.includes('"status":"unknown"'));
+          }
+        }
+      } finally {
+        enter();
+        release();
+        await runtime.dispose();
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+});
+
+test('parent Stop saves completed native steps and an uncertain pending step for the reopened Pi session', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-native-stop-resume-'));
+  const threadId = randomUUID();
+  const controller = new AbortController();
+  const requests: string[] = [];
+  const calls: string[] = [];
+  const effects: string[] = [];
+  let enter!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let manager: SessionManager | undefined;
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture-key',
+    sessionRoot: join(directory, 'sessions'),
+    configRoot: join(directory, 'config'),
+    createSession: async (options) => {
+      manager = options!.sessionManager;
+      const result = await createAgentSession(options);
+      result.session.agent.streamFunction = (model, request) => {
+        requests.push(JSON.stringify(request.messages));
+        const first = requests.length === 1;
+        const message: AssistantMessage = {
+          ...fauxAssistantMessage(
+            first
+              ? [
+                  {
+                    type: 'toolCall',
+                    id: 'stopped-native-script',
+                    name: 'codemode',
+                    arguments: {
+                      code: "await tools.computer({action:'act',app:'Fixture Calculator',step:'key',key:'1'}); await tools.computer({action:'act',app:'Fixture Calculator',step:'key',key:'Return'});",
+                    },
+                  },
+                ]
+              : 'The earlier completed step was preserved; the pending step needs inspection.',
+          ),
+          provider: model.provider,
+          model: model.id,
+          api: model.api,
+          stopReason: first ? 'toolUse' : 'stop',
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: 'done', reason: first ? 'toolUse' : 'stop', message });
+        return stream;
+      };
+      return result;
+    },
+  });
+  const runtime = createAgentRuntime({
+    agent,
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  const context: RuntimeContext = {
+    threadId,
+    sessionId: threadId,
+    turnId: randomUUID(),
+    prompt: 'Run the synthetic native sequence',
+    history: [],
+    attachments: [],
+    workspacePath: directory,
+    signal: controller.signal,
+    emit: async () => {},
+    reply: async () => {},
+    delta: () => {},
+    publish: async () => {
+      throw new Error('Unexpected publication');
+    },
+    requestCredential: async () => ({ url: '/credentials/fixture' }),
+    integration: async () => ({}),
+    manage: async () => ({}),
+    computer: async (args, admit, signal) => {
+      calls.push(String(args.key));
+      await admit?.(false);
+      if (args.key === 'Return') {
+        enter();
+        await blocked;
+        signal?.throwIfAborted();
+      }
+      effects.push(String(args.key));
+      return {
+        done: true,
+        app: { name: 'Fixture Calculator', bundleId: 'test.fixture.calculator' },
+        tree: 'Synthetic fresh state',
+      };
+    },
+  };
+  try {
+    const stopped = runtime.runTurn(context).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await pending;
+    controller.abort(new Error('Synthetic owner Stop'));
+    const deadline = new AbortController();
+    try {
+      const result = await Promise.race([
+        stopped,
+        setTimeout(1000, 'stop waited for the pending native operation', {
+          signal: deadline.signal,
+        }).catch(() => undefined),
+      ]);
+      assert.ok(
+        result instanceof Error,
+        'Stop must finish while the pending native operation remains blocked',
+      );
+    } finally {
+      deadline.abort();
+    }
+    assert.deepEqual(effects, ['1']);
+    const interrupted = manager!
+      .buildSessionContext()
+      .messages.filter(
+        (message) => message.role === 'toolResult' && message.toolName === 'codemode',
+      );
+    assert.equal(interrupted.length, 1);
+    const interruptedResult = interrupted[0];
+    assert.ok(interruptedResult?.role === 'toolResult');
+    const text = interruptedResult.content
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join('\n');
+    const receipt = JSON.parse(text.match(/Computer step receipts: (\[[^\n]+\])/)?.[1] ?? 'null');
+    assert.deepEqual(receipt, [
+      { action: 'act', step: 'key', status: 'done' },
+      { action: 'act', step: 'key', status: 'unknown' },
+    ]);
+    await runtime.runTurn({
+      ...context,
+      turnId: randomUUID(),
+      signal: new AbortController().signal,
+      prompt: 'Continue by checking the interrupted work, without repeating completed steps.',
+    });
+    assert.equal(requests.length, 2);
+    assert.ok(requests[1].includes('Computer step receipts:'));
+    assert.ok(requests[1].includes('\\"status\\":\\"done\\"'));
+    assert.ok(requests[1].includes('\\"status\\":\\"unknown\\"'));
+    assert.deepEqual(calls, ['1', 'Return']);
+    release();
+    await setTimeout(0);
+    assert.deepEqual(effects, ['1']);
+  } finally {
+    release();
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 // Local Pi sessions: rebase, legacy credential scrubbing, dangling tool calls, restore.
 
 async function fixture() {
@@ -1046,6 +1489,17 @@ test('real Pi prunes stale native observations without losing outcomes or saved 
     kind: 'act',
   });
   seed('unobserved-act', 'act', wrap({ done: true, observation: 'unavailable' }), { kind: 'act' });
+  seed('completed-open', 'open', wrap({ done: true, app, tree: 'old-open-tree' }), {
+    kind: 'open',
+    prune: true,
+  });
+  seed('unobserved-open', 'open', wrap({ done: true, observation: 'unavailable' }), {
+    kind: 'open',
+  });
+  seed('uncertain-open', 'open', wrap({ done: false, app, tree: 'keep uncertain open' }), {
+    kind: 'open',
+  });
+  seed('unmarked-open', 'open', wrap({ done: true, app, tree: 'keep legacy open' }));
   seed('wrong-wrapper', 'look', [
     { type: 'text', text: `Other data\n${JSON.stringify({ app, tree: 'keep other wrapper' })}` },
   ]);
@@ -1217,6 +1671,8 @@ test('real Pi prunes stale native observations without losing outcomes or saved 
     assert.deepEqual(completion.app, app);
     assert.equal('tree' in completion, false);
     assert.ok(!requests[0].includes('old-act-tree-'));
+    assert.match(JSON.stringify(first.get('completed-open')), /done.*true/);
+    assert.ok(!requests[0].includes('old-open-tree'));
     assert.ok(!requests[0].includes('old-legacy-tree-'));
     assert.ok(!requests[0].includes('old-marked-tree-'));
     const second = results(requests[1]);
@@ -1685,9 +2141,10 @@ test('a previous turn error reaches the next turn only as neutralised untrusted 
   }
 });
 
-test('a turn posts its opening line, an update after a quiet stretch and its final reply, never other narration', async (t) => {
+test('a turn posts its opening line and final reply, shows the lines between as live steps and answers a message sent mid-turn', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-narration-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
+  let continued: string[] = [];
   const runtime = createAgentRuntime({
     agent: {
       open: async (input) => ({
@@ -1697,15 +2154,21 @@ test('a turn posts its opening line, an update after a quiet stretch and its fin
         prompt: async (text) => {
           for (const words of [
             'Reading the synthetic comments.',
-            'Found three synthetic threads.',
+            ...(/quietly|directly/.test(text) ? [''] : []),
+            'Found three synthetic threads.\nAll of them mention pricing.',
           ]) {
             input.onEvent({ type: 'message_start' });
-            input.onEvent({ type: 'text_delta', text: words });
+            if (words) input.onEvent({ type: 'text_delta', text: words });
             input.onEvent({ type: 'message_end', status: 'succeeded' });
-            await input.tools
-              .find((item) => item.name === 'manage_personal_context')!
-              .execute({ action: 'memory_find', args: { query: 'synthetic' } });
-            if (/after a quiet stretch/.test(text)) t.mock.timers.tick(31_000);
+            if (!words && /directly/.test(text))
+              await input.tools
+                .find((item) => item.name === 'send_message')!
+                .execute({ text: 'There are three.' });
+            else
+              await input.tools
+                .find((item) => item.name === 'manage_personal_context')!
+                .execute({ action: 'memory_find', args: { query: 'synthetic' } });
+            continued.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
           }
           const answer = /without an answer/.test(text) ? '' : 'The synthetic summary is ready.';
           input.onEvent({ type: 'message_start' });
@@ -1726,48 +2189,98 @@ test('a turn posts its opening line, an update after a quiet stretch and its fin
     doneWhen: 'The summary is delivered.',
     revision: 1,
   };
-  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   try {
-    for (const [prompt, taskContext, expected] of [
+    for (const [prompt, taskContext, replies, steps] of [
       [
         'Summarize the synthetic comments',
         undefined,
         ['Reading the synthetic comments.', 'The synthetic summary is ready.'],
+        ['Found three synthetic threads.'],
       ],
       [
         'Summarize the synthetic comments without an answer',
         undefined,
-        ['Reading the synthetic comments.', 'Found three synthetic threads.'],
-      ],
-      ['Summarize the synthetic comments', task, ['The synthetic summary is ready.']],
-      [
-        'Summarize the synthetic comments after a quiet stretch',
-        undefined,
         [
           'Reading the synthetic comments.',
-          'Found three synthetic threads.',
-          'The synthetic summary is ready.',
+          'Found three synthetic threads.\nAll of them mention pricing.',
         ],
+        ['Found three synthetic threads.'],
       ],
       [
-        'Summarize the synthetic comments after a quiet stretch on telegram',
-        undefined,
-        ['Reading the synthetic comments.', 'The synthetic summary is ready.'],
+        'Summarize the synthetic comments',
+        task,
+        ['The synthetic summary is ready.'],
+        ['Reading the synthetic comments.', 'Found three synthetic threads.'],
+      ],
+      [
+        'Summarize the synthetic comments while the owner steers',
+        task,
+        [
+          'Found three synthetic threads.\nAll of them mention pricing.',
+          'The synthetic summary is ready.',
+        ],
+        ['Reading the synthetic comments.'],
+      ],
+      [
+        'Summarize the synthetic comments while the owner steers quietly',
+        task,
+        [
+          'Found three synthetic threads.\nAll of them mention pricing.',
+          'The synthetic summary is ready.',
+        ],
+        ['Reading the synthetic comments.'],
+      ],
+      [
+        'Summarize the synthetic comments while the owner steers directly',
+        task,
+        ['There are three.', 'The synthetic summary is ready.'],
+        ['Reading the synthetic comments.', 'Found three synthetic threads.'],
       ],
     ] as const) {
-      const replies: string[] = [];
+      const posted: string[] = [];
+      const events: Array<[string, string]> = [];
+      let steered = false;
+      continued = [];
       const result = await runtime.runTurn({
         ...context(directory),
         turnId: randomUUID(),
         prompt,
         ...(taskContext ? { taskContext, background: true } : {}),
-        ...(prompt.endsWith('on telegram') ? { channel: 'telegram' } : {}),
+        ...(/steers/.test(prompt)
+          ? {
+              takeMessages: async () =>
+                steered
+                  ? []
+                  : ((steered = true),
+                    [{ id: randomUUID(), text: 'Also count them', attachments: [] }]),
+            }
+          : {}),
+        emit: async (type, summary) => {
+          events.push([type, summary]);
+        },
         reply: async (text) => {
-          replies.push(text);
+          posted.push(text);
         },
       });
       assert.equal(result.status, 'succeeded');
-      assert.deepEqual(replies, expected);
+      assert.deepEqual(posted, replies);
+      assert.deepEqual(
+        events.filter(([type]) => type === 'step').map(([, summary]) => summary),
+        steps,
+      );
+      assert.equal(
+        continued.some((text) => text.includes('Also count them')),
+        /steers/.test(prompt),
+      );
+      assert.equal(
+        events.some(([type]) => type === 'steered'),
+        /steers/.test(prompt),
+      );
+      assert.equal(events.filter(([type]) => type === 'final').length, 1);
+      assert.ok(
+        events.findIndex(([type]) => type === 'final') <
+          events.findIndex(([type]) => type === 'agent_complete'),
+      );
     }
   } finally {
     await runtime.dispose();
@@ -2907,13 +3420,21 @@ test('OpenRouter requests in both formats make one provider attempt', async () =
       if (String(input) === 'https://openrouter.ai/api/v1/key')
         return Response.json({ data: { is_management_key: false } });
       return Response.json({
-        data: ['openai/gpt-6.1-sol', 'anthropic/claude-opus-5.5'].map((id) => ({
+        data: [
+          'openai/gpt-6.1-sol',
+          'anthropic/claude-opus-5.5',
+          'google/gemini-3.1-flash-lite-image',
+          'fixture/media-generator',
+        ].map((id) => ({
           id,
           name: id,
           context_length: 100000,
           supported_parameters: ['tools', 'reasoning'],
           reasoning: { supported_efforts: ['low', 'medium', 'high'] },
-          architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+          architecture: {
+            input_modalities: ['text', 'image'],
+            output_modalities: id === 'fixture/media-generator' ? ['text', 'image'] : ['text'],
+          },
           pricing: { prompt: '0.000002', completion: '0.00001' },
         })),
       });
@@ -2923,6 +3444,7 @@ test('OpenRouter requests in both formats make one provider attempt', async () =
     type: 'api_key',
     key: 'fixture-router-key',
   });
+  assert.equal(definitions.length, 2);
   const apis = new Set<string>();
   for (const definition of definitions) {
     const { runtime, model } = await createPiModelRuntime({
@@ -3403,6 +3925,949 @@ test('LM Studio servers list tool-trained chat models with their loaded context 
   );
 });
 
+test('native provider discovery uses owned keys, bounded Google pagination and tool-capable account models', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const calls: string[] = [];
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      calls.push(url.href);
+      assert.equal(init?.redirect, 'error');
+      const headers = new Headers(init?.headers);
+      if (url.hostname === 'generativelanguage.googleapis.com') {
+        assert.equal(url.pathname, '/v1beta/models');
+        assert.equal(headers.get('authorization'), null);
+        if (headers.get('x-goog-api-key') !== 'fixture-google-key')
+          return Response.json({ error: { message: 'fixture-rejected-key' } }, { status: 400 });
+        return Response.json(
+          url.searchParams.get('pageToken') === 'next&private=1'
+            ? {
+                models: [
+                  {
+                    name: 'models/gemini-2.5-pro',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                  {
+                    name: 'models/gemini-2.5-flash',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                ],
+              }
+            : {
+                models: [
+                  {
+                    name: 'models/gemini-2.5-flash',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                  {
+                    name: 'models/gemini-3.1-flash-lite-image',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                  {
+                    name: 'models/gemini-3.1-flash-live-preview',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                  { name: 'models/gemini-4-argon', supportedGenerationMethods: ['countTokens'] },
+                  {
+                    name: 'models/../../evil.test?key=fixture-google-key',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
+                ],
+                nextPageToken: 'next&private=1',
+              },
+        );
+      }
+      assert.equal(url.href, 'https://api.mistral.ai/v1/models');
+      assert.equal(headers.get('authorization'), 'Bearer fixture-mistral-key');
+      return Response.json({
+        data: [
+          {
+            id: 'mistral-large-latest',
+            capabilities: { completion_chat: true, function_calling: true },
+          },
+          {
+            id: 'codestral-latest',
+            capabilities: { completion_chat: true, function_calling: false },
+          },
+          {
+            id: 'mistral-small-latest',
+            archived: true,
+            capabilities: { completion_chat: true, function_calling: true },
+          },
+          {
+            id: 'mistral-medium-latest',
+            capabilities: { completion_chat: false, function_calling: true },
+          },
+        ],
+      });
+    },
+  });
+  const google = await backend.catalog('google', 'api_key', {
+    type: 'api_key',
+    key: 'fixture-google-key',
+  });
+  assert.deepEqual(google.map(({ choice }) => choice.id).sort(), [
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+  ]);
+  assert.ok(google.every(({ spec }) => spec.api === 'google-generative-ai'));
+  const mistral = await backend.catalog('mistral', 'api_key', {
+    type: 'api_key',
+    key: 'fixture-mistral-key',
+  });
+  assert.deepEqual(
+    mistral.map(({ choice }) => choice.id),
+    ['mistral-large-latest'],
+  );
+  assert.equal(mistral[0].spec.api, 'mistral-conversations');
+  await assert.rejects(
+    backend.catalog('google', 'api_key', { type: 'api_key', key: 'fixture-rejected-key' }),
+    (error: Error) =>
+      /didn’t accept/.test(error.message) && !error.message.includes('fixture-rejected-key'),
+  );
+  assert.equal(new URL(calls[1]).searchParams.get('private'), null);
+  const before = calls.length;
+  await assert.rejects(
+    backend.catalog('unregistered' as 'google', 'api_key', {
+      type: 'api_key',
+      key: 'fixture-google-key',
+    }),
+  );
+  assert.equal(calls.length, before);
+  let pages = 0;
+  const repeating = createPiModelBackend({
+    fetch: async () => {
+      pages++;
+      return Response.json({ models: [], nextPageToken: 'repeated' });
+    },
+  });
+  await assert.rejects(
+    repeating.catalog('google', 'api_key', { type: 'api_key', key: 'fixture-google-key' }),
+  );
+  assert.equal(pages, 2);
+});
+
+test('native provider streams retain Google, Anthropic and OpenAI tool protocols and exact credential destinations', async (t) => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const { DefaultResourceLoader, SettingsManager } =
+    await import('@earendil-works/pi-coding-agent');
+  const directory = await mkdtemp(join(tmpdir(), 'nod-provider-contract-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const backend = createPiModelBackend({
+    fetch: async () => {
+      throw new Error('Unexpected catalog request.');
+    },
+  });
+  const cases = [
+    {
+      provider: 'google',
+      id: 'gemini-2.5-flash',
+      host: 'generativelanguage.googleapis.com',
+      path: '/v1beta/models/gemini-2.5-flash:streamGenerateContent',
+      header: 'x-goog-api-key',
+      prefix: '',
+    },
+    {
+      provider: 'minimax',
+      id: 'MiniMax-M3',
+      host: 'api.minimax.io',
+      path: '/anthropic/v1/messages',
+      header: 'x-api-key',
+      prefix: '',
+    },
+    {
+      provider: 'groq',
+      id: 'openai/gpt-oss-120b',
+      host: 'api.groq.com',
+      path: '/openai/v1/chat/completions',
+      header: 'authorization',
+      prefix: 'Bearer ',
+    },
+    {
+      provider: 'ant-ling',
+      id: 'Ling-3.1-flash',
+      host: 'api.ant-ling.com',
+      path: '/v1/chat/completions',
+      header: 'authorization',
+      prefix: 'Bearer ',
+      effort: 'medium',
+    },
+    {
+      provider: 'ant-ling',
+      id: 'Ling-3.1-flash',
+      host: 'api.ant-ling.com',
+      path: '/v1/chat/completions',
+      header: 'authorization',
+      prefix: 'Bearer ',
+      effort: 'off',
+    },
+  ] as const;
+  for (const entry of cases) {
+    const definition = (await backend.catalog(entry.provider, 'api_key')).find(
+      ({ choice }) => choice.id === entry.id,
+    )!;
+    assert.ok(definition, entry.provider);
+    const effort = 'effort' in entry ? entry.effort : 'medium';
+    if (entry.provider === 'ant-ling')
+      assert.deepEqual(definition.choice.efforts, ['off', 'medium']);
+    const key = `fixture-${entry.provider}-key`;
+    const { runtime, model } = await createPiModelRuntime({
+      provider: entry.provider,
+      method: 'api_key',
+      definition,
+      effort,
+      read: async () => ({ type: 'api_key', key }),
+    });
+    const sent: unknown[] = [];
+    let executed = 0;
+    const settingsManager = SettingsManager.inMemory({
+      retry: { enabled: false },
+      compaction: { enabled: false },
+    });
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: directory,
+      agentDir: directory,
+      settingsManager,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      systemPrompt: 'Use the synthetic fixture tool, then report its result.',
+    });
+    await resourceLoader.reload();
+    const { session } = await createAgentSession({
+      cwd: directory,
+      agentDir: directory,
+      settingsManager,
+      resourceLoader,
+      sessionManager: SessionManager.inMemory(directory),
+      modelRuntime: runtime,
+      model,
+      thinkingLevel: effort,
+      tools: ['inspect_fixture'],
+      customTools: [
+        {
+          name: 'inspect_fixture',
+          label: 'Inspect fixture',
+          description: 'Read a synthetic fixture.',
+          parameters: Type.Object({ path: Type.String() }),
+          execute: async (_id, args) => {
+            assert.deepEqual(args, { path: 'fixture.txt' });
+            executed++;
+            return { content: [{ type: 'text', text: 'fixture-result' }], details: {} };
+          },
+        },
+      ],
+    });
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      assert.equal(url.hostname, entry.host);
+      assert.equal(url.pathname, entry.path);
+      const headers = new Headers(
+        init?.headers ?? (input instanceof Request ? input.headers : undefined),
+      );
+      assert.equal(headers.get(entry.header), entry.prefix + key);
+      const body = JSON.parse(
+        String(init?.body ?? (input instanceof Request ? await input.text() : '{}')),
+      );
+      sent.push(body);
+      if (entry.provider === 'ant-ling') {
+        assert.deepEqual(body.thinking, { type: effort === 'off' ? 'disabled' : 'enabled' });
+        assert.equal(body.reasoning, undefined);
+        assert.equal(body.reasoning_effort, undefined);
+      }
+      const finished = sent.length > 1;
+      if (finished) assert.match(JSON.stringify(body), /fixture-result/);
+      let events: unknown[];
+      if (entry.provider === 'google') {
+        assert.equal(body.tools[0].functionDeclarations[0].name, 'inspect_fixture');
+        events = [
+          {
+            candidates: [
+              {
+                content: {
+                  role: 'model',
+                  parts: finished
+                    ? [{ text: 'Fixture inspected.' }]
+                    : [
+                        {
+                          functionCall: { name: 'inspect_fixture', args: { path: 'fixture.txt' } },
+                        },
+                      ],
+                },
+                finishReason: 'STOP',
+              },
+            ],
+            usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 4, totalTokenCount: 14 },
+          },
+        ];
+      } else if (entry.provider === 'minimax') {
+        assert.equal(body.tools[0].name, 'inspect_fixture');
+        events = [
+          {
+            type: 'message_start',
+            message: {
+              id: 'msg_fixture',
+              type: 'message',
+              role: 'assistant',
+              model: entry.id,
+              content: [],
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 10, output_tokens: 0 },
+            },
+          },
+          {
+            type: 'content_block_start',
+            index: 0,
+            content_block: finished
+              ? { type: 'text', text: '' }
+              : {
+                  type: 'tool_use',
+                  id: 'call_fixture',
+                  name: 'inspect_fixture',
+                  input: {},
+                },
+          },
+          {
+            type: 'content_block_delta',
+            index: 0,
+            delta: finished
+              ? { type: 'text_delta', text: 'Fixture inspected.' }
+              : { type: 'input_json_delta', partial_json: '{"path":"fixture.txt"}' },
+          },
+          { type: 'content_block_stop', index: 0 },
+          {
+            type: 'message_delta',
+            delta: { stop_reason: finished ? 'end_turn' : 'tool_use' },
+            usage: { output_tokens: 4 },
+          },
+          { type: 'message_stop' },
+        ];
+      } else {
+        assert.equal(body.tools[0].function.name, 'inspect_fixture');
+        events = [
+          {
+            id: 'chat_fixture',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: entry.id,
+            choices: [
+              {
+                index: 0,
+                delta: finished
+                  ? { role: 'assistant', content: 'Fixture inspected.' }
+                  : {
+                      role: 'assistant',
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: 'call_fixture',
+                          type: 'function',
+                          function: {
+                            name: 'inspect_fixture',
+                            arguments: '{"path":"fixture.txt"}',
+                          },
+                        },
+                      ],
+                    },
+                finish_reason: finished ? 'stop' : 'tool_calls',
+              },
+            ],
+          },
+        ];
+      }
+      return new Response(
+        events
+          .map(
+            (event) =>
+              `${entry.provider === 'minimax' ? `event: ${(event as { type: string }).type}\n` : ''}data: ${JSON.stringify(event)}\n\n`,
+          )
+          .join('') + (entry.provider === 'groq' ? 'data: [DONE]\n\n' : ''),
+        { headers: { 'content-type': 'text/event-stream' } },
+      );
+    }) as typeof fetch;
+    try {
+      await session.prompt('Inspect the fixture file.');
+      const message = session.messages.find((message) => message.role === 'assistant');
+      assert.ok(message?.role === 'assistant');
+      assert.equal(message.stopReason, 'toolUse', message.errorMessage);
+      assert.equal(executed, 1);
+      assert.equal(sent.length, 2);
+      const call = message.content.find((block) => block.type === 'toolCall');
+      assert.equal(call?.name, 'inspect_fixture');
+      assert.deepEqual(call?.arguments, { path: 'fixture.txt' });
+      const reply = session.messages.at(-1);
+      assert.ok(reply?.role === 'assistant');
+      assert.equal(reply.stopReason, 'stop', reply.errorMessage);
+      assert.equal(
+        reply.content
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text)
+          .join(''),
+        'Fixture inspected.',
+      );
+      assert.ok(!JSON.stringify(sent).includes(key));
+    } finally {
+      globalThis.fetch = original;
+      session.dispose();
+    }
+  }
+});
+
+test('native account catalogs never send a provider key to a different service or accept a failed listing', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const { apiKeyModelProviders, modelProviderInfo } = await import('../src/shared/models.ts');
+  const cases = [
+    ['xai', 'https://api.x.ai/v1/models'],
+    ['groq', 'https://api.groq.com/openai/v1/models'],
+    ['cerebras', 'https://api.cerebras.ai/v1/models'],
+    ['deepseek', 'https://api.deepseek.com/models'],
+    ['moonshotai', 'https://api.moonshot.ai/v1/models'],
+    ['moonshotai-cn', 'https://api.moonshot.cn/v1/models'],
+    ['together', 'https://api.together.xyz/v1/models'],
+  ] as const;
+  for (const [provider, destination] of cases) {
+    let status = 200;
+    const key = `fixture-${provider}-key`;
+    const backend = createPiModelBackend({
+      fetch: async (input, init) => {
+        assert.equal(String(input), destination);
+        assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+        assert.equal(init?.redirect, 'error');
+        if (status !== 200) return Response.json({ message: `Synthetic ${key}` }, { status });
+        const [allowed, unavailable] = await backend.catalog(provider, 'api_key');
+        const data = [
+          { id: allowed.choice.id },
+          { id: unavailable.choice.id, active: false },
+          { id: 'models/../../private' },
+        ];
+        return Response.json(provider === 'together' ? data : { data });
+      },
+    });
+    const models = await backend.catalog(provider, 'api_key', { type: 'api_key', key });
+    assert.equal(models.length, 1);
+    assert.equal(models[0].spec.provider, provider);
+    for (status of [401, 403, 429, 503, 307]) {
+      await assert.rejects(
+        backend.catalog(provider, 'api_key', { type: 'api_key', key }),
+        (error: Error) => !error.message.includes(key),
+      );
+    }
+  }
+  const bundled = createPiModelBackend({
+    fetch: async () => {
+      throw new Error('A bundled catalog must not send a key.');
+    },
+  });
+  for (const provider of apiKeyModelProviders.filter(
+    (provider) => modelProviderInfo[provider].catalog === 'bundled',
+  )) {
+    const models = await bundled.catalog(provider, 'api_key', {
+      type: 'api_key',
+      key: 'fixture-bundled-key',
+    });
+    assert.ok(models.length > 0, provider);
+    assert.ok(
+      models.every(({ spec }) => spec.provider === provider),
+      provider,
+    );
+  }
+});
+
+test('Radius uses its account catalog, rejects moved gateways and streams tool calls with redacted failures', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const key = 'fixture-radius-key';
+  let destination = 'https://radius.pi.dev/v1';
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      assert.equal(String(input), 'https://radius.pi.dev/v1/config');
+      assert.equal(init?.redirect, 'error');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      const model = {
+        id: 'fixture-account-model',
+        name: 'Fixture account model',
+        reasoning: true,
+        input: ['text', 'image'],
+        cost: { input: 2, output: 4, cacheRead: 1, cacheWrite: 2 },
+        contextWindow: 64000,
+        maxTokens: 8000,
+        thinkingLevelMap: { medium: 'balanced', high: 'deep' },
+      };
+      return Response.json({
+        baseUrl: destination,
+        models: [model, { ...model, id: 'bad/../../model' }, { ...model, id: 'image-generator' }],
+      });
+    },
+  });
+  const definitions = await backend.catalog('radius', 'api_key', { type: 'api_key', key });
+  assert.deepEqual(
+    definitions.map(({ choice }) => choice.id),
+    ['fixture-account-model'],
+  );
+  destination = 'https://untrusted.example/v1';
+  await assert.rejects(backend.catalog('radius', 'api_key', { type: 'api_key', key }));
+  const { runtime, model } = await createPiModelRuntime({
+    provider: 'radius',
+    method: 'api_key',
+    definition: definitions[0],
+    effort: 'medium',
+    read: async () => ({ type: 'api_key', key }),
+  });
+  let calls = 0;
+  const prompt = {
+    messages: [{ role: 'user' as const, content: 'Inspect the fixture.', timestamp: 1 }],
+    tools: [
+      {
+        name: 'inspect_fixture',
+        description: 'Inspect a fixture.',
+        parameters: Type.Object({ path: Type.String() }),
+      },
+    ],
+  };
+  const answer = await runtime.completeSimple(model, prompt, {
+    fetch: async (input, init) => {
+      calls++;
+      assert.equal(String(input), 'https://radius.pi.dev/v1/messages');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      assert.equal(init?.redirect, 'error');
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.model, 'fixture-account-model');
+      assert.equal(body.context.messages[0].toolsAdded[0].name, 'inspect_fixture');
+      assert.ok(!JSON.stringify(body).includes(key));
+      const events = [
+        { type: 'start' },
+        {
+          type: 'toolcall_start',
+          contentIndex: 0,
+          id: 'fixture-call',
+          toolName: 'inspect_fixture',
+        },
+        { type: 'toolcall_delta', contentIndex: 0, delta: '{"path":"fixture.txt"}' },
+        {
+          type: 'toolcall_end',
+          contentIndex: 0,
+          toolCall: {
+            type: 'toolCall',
+            id: 'fixture-call',
+            name: 'inspect_fixture',
+            arguments: { path: 'fixture.txt' },
+          },
+        },
+        {
+          type: 'done',
+          reason: 'toolUse',
+          usage: {
+            input: 10,
+            output: 4,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 14,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        },
+      ];
+      return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''), {
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    },
+  });
+  assert.equal(answer.stopReason, 'toolUse', answer.errorMessage);
+  assert.deepEqual(answer.content[0], {
+    type: 'toolCall',
+    id: 'fixture-call',
+    name: 'inspect_fixture',
+    arguments: { path: 'fixture.txt' },
+  });
+  const failure = await runtime.completeSimple(model, prompt, {
+    maxRetries: 5,
+    fetch: async () => {
+      calls++;
+      return Response.json({ error: { message: `Synthetic failure ${key}` } }, { status: 503 });
+    },
+  });
+  assert.equal(failure.stopReason, 'error');
+  assert.ok(!JSON.stringify(failure).includes(key));
+  assert.equal(calls, 2);
+});
+
+test('Cloudflare catalogs and streams use only the owned account and gateway with no ambient fallback', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const accountId = 'a'.repeat(32);
+  const key = 'fixture-cloudflare-key';
+  const credential = { type: 'cloudflare' as const, accountId, gatewayId: 'owned-gateway', key };
+  const catalogCalls: string[] = [];
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      catalogCalls.push(url.href);
+      assert.equal(url.origin, 'https://api.cloudflare.com');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      assert.equal(init?.redirect, 'error');
+      if (url.pathname.endsWith('/ai/models/search')) {
+        assert.equal(url.pathname, `/client/v4/accounts/${accountId}/ai/models/search`);
+        return Response.json({
+          success: true,
+          result: [
+            {
+              name:
+                url.searchParams.get('page') === '1'
+                  ? '@cf/openai/gpt-oss-120b'
+                  : '@cf/moonshotai/kimi-k2.6',
+            },
+          ],
+          result_info: { total_pages: 2 },
+        });
+      }
+      assert.equal(
+        url.pathname,
+        `/client/v4/accounts/${accountId}/ai-gateway/gateways/owned-gateway`,
+      );
+      return Response.json({ success: true, result: { id: 'owned-gateway' } });
+    },
+  });
+  const workers = await backend.catalog('cloudflare-workers-ai', 'api_key', credential);
+  assert.equal(workers.length, 2);
+  const gateway = await backend.catalog('cloudflare-ai-gateway', 'api_key', credential);
+  const count = catalogCalls.length;
+  await assert.rejects(
+    backend.catalog('cloudflare-workers-ai', 'api_key', { ...credential, accountId: '../wrong' }),
+  );
+  await assert.rejects(
+    backend.catalog('cloudflare-ai-gateway', 'api_key', { ...credential, gatewayId: undefined }),
+  );
+  assert.equal(catalogCalls.length, count);
+  const previous = {
+    account: process.env.CLOUDFLARE_ACCOUNT_ID,
+    gateway: process.env.CLOUDFLARE_GATEWAY_ID,
+    key: process.env.CLOUDFLARE_API_KEY,
+  };
+  process.env.CLOUDFLARE_ACCOUNT_ID = 'b'.repeat(32);
+  process.env.CLOUDFLARE_GATEWAY_ID = 'ambient-gateway';
+  process.env.CLOUDFLARE_API_KEY = 'fixture-ambient-key';
+  let calls = 0;
+  try {
+    for (const [provider, definition, destination] of [
+      [
+        'cloudflare-workers-ai',
+        workers.find(({ choice }) => choice.id === '@cf/openai/gpt-oss-120b')!,
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`,
+      ],
+      [
+        'cloudflare-ai-gateway',
+        gateway.find(({ choice }) => choice.id === 'claude-sonnet-5-5')!,
+        `https://gateway.ai.cloudflare.com/v1/${accountId}/owned-gateway/anthropic/v1/messages?beta=true`,
+      ],
+      [
+        'cloudflare-ai-gateway',
+        gateway.find(({ choice }) => choice.id === 'gpt-6.1-sol')!,
+        `https://gateway.ai.cloudflare.com/v1/${accountId}/owned-gateway/openai/responses`,
+      ],
+    ] as const) {
+      assert.ok(definition);
+      const { runtime, model } = await createPiModelRuntime({
+        provider,
+        method: 'api_key',
+        definition,
+        effort: 'medium',
+        read: async () => credential,
+      });
+      let observed: { url: string; redirect?: RequestRedirect; headers: Headers } | undefined;
+      const failure = await runtime.completeSimple(
+        model,
+        { messages: [{ role: 'user', content: 'Synthetic fixture', timestamp: 1 }] },
+        {
+          maxRetries: 5,
+          fetch: async (input, init) => {
+            calls++;
+            observed = {
+              url: String(input),
+              redirect: init?.redirect,
+              headers: new Headers(init?.headers),
+            };
+            return Response.json(
+              { error: { message: `Synthetic failure ${key}` } },
+              { status: 503 },
+            );
+          },
+        },
+      );
+      assert.ok(observed);
+      assert.equal(observed.url, destination);
+      assert.equal(observed.redirect, 'error');
+      assert.equal(
+        observed.headers.get(
+          provider === 'cloudflare-workers-ai' ? 'authorization' : 'cf-aig-authorization',
+        ),
+        `Bearer ${key}`,
+      );
+      if (provider === 'cloudflare-ai-gateway') {
+        assert.equal(observed.headers.get('authorization'), null);
+        assert.equal(observed.headers.get('x-api-key'), null);
+      }
+      assert.equal(failure.stopReason, 'error');
+      assert.match(failure.errorMessage ?? '', /Synthetic failure/);
+      assert.ok(!JSON.stringify(failure).includes(key));
+    }
+    assert.equal(calls, 3);
+    const missingAccount = await createPiModelRuntime({
+      provider: 'cloudflare-ai-gateway',
+      method: 'api_key',
+      definition: gateway[0],
+      effort: 'medium',
+      read: async () => ({ type: 'api_key', key }),
+    });
+    const refused = await missingAccount.runtime.completeSimple(
+      missingAccount.model,
+      { messages: [{ role: 'user', content: 'Synthetic fixture', timestamp: 1 }] },
+      {
+        fetch: async () => {
+          calls++;
+          return new Response(null, { status: 503 });
+        },
+      },
+    );
+    assert.equal(refused.stopReason, 'error');
+    assert.match(refused.errorMessage ?? '', /Cloudflare connection is unavailable/);
+    assert.equal(calls, 3);
+  } finally {
+    for (const [name, value] of Object.entries({
+      CLOUDFLARE_ACCOUNT_ID: previous.account,
+      CLOUDFLARE_GATEWAY_ID: previous.gateway,
+      CLOUDFLARE_API_KEY: previous.key,
+    })) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
+test('cloud connections list only the account’s models and send each key only to its service', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const requests: string[] = [];
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      requests.push(url);
+      assert.equal(init?.redirect, 'error');
+      if (url.startsWith('https://bedrock.eu-west-1.amazonaws.com/')) {
+        if (headers.get('authorization') !== 'Bearer fixture-bedrock-key')
+          return Response.json({ message: 'Synthetic denial' }, { status: 403 });
+        if (url.includes('/foundation-models?'))
+          return Response.json({
+            modelSummaries: [{ modelId: 'amazon.nova-pro-v1:0' }, { modelId: 'fixture.v1:0' }],
+          });
+        assert.match(url, /\/inference-profiles\?type=SYSTEM_DEFINED&maxResults=1000/);
+        return Response.json(
+          url.includes('nextToken=fixture-page')
+            ? {
+                inferenceProfileSummaries: [
+                  { inferenceProfileId: 'eu.anthropic.claude-opus-5-5', status: 'ACTIVE' },
+                ],
+              }
+            : {
+                inferenceProfileSummaries: [
+                  { inferenceProfileId: 'fixture.profile', status: 'ACTIVE' },
+                ],
+                nextToken: 'fixture-page',
+              },
+        );
+      }
+      if (url === 'https://down.openai.azure.com/openai/v1/models')
+        return Response.json({ error: { message: 'Synthetic outage' } }, { status: 503 });
+      if (url.startsWith('https://aiplatform.googleapis.com/v1/publishers/google/models/'))
+        return new Response(null, {
+          status: headers.get('x-goog-api-key') === 'fixture-vertex-key' ? 200 : 400,
+        });
+      if (url === 'https://fixture.openai.azure.com/openai/v1/models') {
+        assert.equal(headers.get('api-key'), 'fixture-azure-key');
+        return Response.json({ data: [] });
+      }
+      throw new Error('Unexpected model service request.');
+    },
+  });
+  const bedrock = await backend.catalog('amazon-bedrock', 'api_key', {
+    type: 'bedrock',
+    key: 'fixture-bedrock-key',
+    region: 'eu-west-1',
+  });
+  assert.deepEqual(bedrock.map(({ choice }) => choice.id).sort(), [
+    'amazon.nova-pro-v1:0',
+    'eu.anthropic.claude-opus-5-5',
+  ]);
+  await assert.rejects(
+    backend.catalog('amazon-bedrock', 'api_key', {
+      type: 'bedrock',
+      key: 'fixture-wrong-key',
+      region: 'eu-west-1',
+    }),
+    /didn’t accept this key/,
+  );
+  const sent = requests.length;
+  await assert.rejects(
+    backend.catalog('amazon-bedrock', 'api_key', {
+      type: 'bedrock',
+      key: 'fixture-bedrock-key',
+      region: 'example.test/#',
+    }),
+  );
+  assert.equal(requests.length, sent);
+  const vertex = await backend.catalog('google-vertex', 'api_key', {
+    type: 'api_key',
+    key: 'fixture-vertex-key',
+  });
+  assert.ok(vertex.length > 1);
+  await assert.rejects(
+    backend.catalog('google-vertex', 'api_key', { type: 'api_key', key: 'fixture-wrong-key' }),
+    /didn’t accept this API key/,
+  );
+  const azure = await backend.catalog('azure', 'api_key', {
+    type: 'azure',
+    url: 'https://fixture.openai.azure.com/openai/v1',
+    key: 'fixture-azure-key',
+    model: 'gpt-6.1-sol',
+    deployment: 'fixture-deployment',
+  });
+  assert.deepEqual(
+    azure.map(({ choice }) => choice.id),
+    ['gpt-6.1-sol'],
+  );
+  await assert.rejects(
+    backend.catalog('azure', 'api_key', {
+      type: 'azure',
+      url: 'https://down.openai.azure.com/openai/v1',
+      key: 'fixture-azure-key',
+      model: 'gpt-6.1-sol',
+      deployment: 'fixture-deployment',
+    }),
+    (error: Error) => !error.message.includes('didn’t accept'),
+  );
+});
+
+test('cloud model requests use the connection’s Region, API key and Azure deployment, once and without leaking the key', async (t) => {
+  const { createServer } = await import('node:http');
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const received: { url?: string; key?: string; model?: unknown }[] = [];
+  const tunnels = new Set<string>();
+  const server = createServer((request, response) => {
+    let text = '';
+    request.on('data', (chunk) => (text += chunk));
+    request.on('end', () => {
+      if (request.url?.startsWith('/moved/')) {
+        response.writeHead(307, { location: '/openai/v1/responses' });
+        return response.end();
+      }
+      received.push({
+        url: request.url,
+        key: request.headers['api-key'] as string | undefined,
+        model: JSON.parse(text || '{}').model,
+      });
+      response.writeHead(503, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: { message: 'Synthetic failure fixture-azure-key' } }));
+    });
+  });
+  server.on('connect', (request, socket) => {
+    tunnels.add(request.url ?? '');
+    socket.destroy();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const { port } = server.address() as import('node:net').AddressInfo;
+  const prompt = {
+    messages: [{ role: 'user' as const, content: 'Synthetic fixture', timestamp: 1 }],
+  };
+  const credential = {
+    type: 'azure' as const,
+    url: `http://127.0.0.1:${port}/openai/v1`,
+    key: 'fixture-azure-key',
+    model: 'gpt-6.1-sol',
+    deployment: 'fixture-deployment',
+  };
+  const backend = createPiModelBackend({ fetch: async () => Response.json({ data: [] }) });
+  const [azureDefinition] = await backend.catalog('azure', 'api_key', credential);
+  for (const url of [credential.url, `http://127.0.0.1:${port}/moved/openai/v1`]) {
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'azure',
+      method: 'api_key',
+      definition: azureDefinition,
+      effort: 'low',
+      read: async () => ({ ...credential, url }),
+    });
+    const failed = await runtime.completeSimple(model, prompt, { maxRetries: 5 });
+    assert.equal(failed.stopReason, 'error');
+    assert.ok(!JSON.stringify(failed).includes('fixture-azure-key'));
+  }
+  assert.deepEqual(received, [
+    {
+      url: '/openai/v1/responses?api-version=v1',
+      key: 'fixture-azure-key',
+      model: 'fixture-deployment',
+    },
+  ]);
+
+  const vertexCalls: { url: string; key: string | null }[] = [];
+  const send = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    vertexCalls.push({
+      url: String(input instanceof Request ? input.url : input),
+      key: new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get(
+        'x-goog-api-key',
+      ),
+    });
+    return Response.json(
+      { error: { code: 503, message: 'Synthetic fixture-vertex-key', status: 'UNAVAILABLE' } },
+      { status: 503 },
+    );
+  }) as typeof fetch;
+  try {
+    const [vertexDefinition] = await backend.catalog('google-vertex', 'api_key');
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'google-vertex',
+      method: 'api_key',
+      definition: vertexDefinition,
+      effort: 'low',
+      read: async () => ({ type: 'api_key', key: 'fixture-vertex-key' }),
+    });
+    const failed = await runtime.completeSimple(model, prompt, { maxRetries: 5 });
+    assert.equal(failed.stopReason, 'error');
+    assert.ok(!JSON.stringify(failed).includes('fixture-vertex-key'));
+  } finally {
+    globalThis.fetch = send;
+  }
+  assert.equal(vertexCalls.length, 1);
+  assert.ok(vertexCalls[0].url.startsWith('https://aiplatform.googleapis.com/'));
+  assert.equal(vertexCalls[0].key, 'fixture-vertex-key');
+
+  const proxy = process.env.HTTPS_PROXY;
+  process.env.HTTPS_PROXY = `http://127.0.0.1:${port}`;
+  try {
+    const bedrockDefinition = (await backend.catalog('amazon-bedrock', 'api_key')).find(
+      ({ choice }) => choice.id === 'eu.anthropic.claude-opus-5-5',
+    )!;
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'amazon-bedrock',
+      method: 'api_key',
+      definition: bedrockDefinition,
+      effort: 'low',
+      read: async () => ({ type: 'bedrock', key: 'fixture-bedrock-key', region: 'eu-west-1' }),
+    });
+    const failed = await runtime.completeSimple(model, prompt, {});
+    assert.equal(failed.stopReason, 'error');
+    assert.ok(!JSON.stringify(failed).includes('fixture-bedrock-key'));
+  } finally {
+    if (proxy === undefined) delete process.env.HTTPS_PROXY;
+    else process.env.HTTPS_PROXY = proxy;
+  }
+  assert.deepEqual([...tunnels], ['bedrock-runtime.eu-west-1.amazonaws.com:443']);
+});
+
 test('the Pi transcript keeps model changes for the next turn and leaves background turns out', async () => {
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
   const backend = createPiModelBackend({
@@ -3511,6 +4976,95 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('image analysis passes image blocks to Pi and does not retry a failed charged request', async () => {
+  const image = {
+    type: 'image' as const,
+    data: Buffer.from('synthetic pixels').toString('base64'),
+    mimeType: 'image/png',
+  };
+  let calls = 0;
+  let failed = false;
+  const runtime = {
+    setRuntimeApiKey: async () => {},
+    getModel: () => ({ provider: 'anthropic', id: 'claude-haiku-4-5' }),
+    completeSimple: async (_model: unknown, context: { messages: Array<{ content: unknown }> }) => {
+      calls++;
+      assert.deepEqual(context.messages[0].content, [
+        { type: 'text', text: '{"request":"Read the label"}' },
+        image,
+      ]);
+      const reply = fauxAssistantMessage('{"description":"Synthetic label"}');
+      if (failed) reply.stopReason = 'error';
+      return reply;
+    },
+  };
+  const curator = createPiMemoryCurator({
+    provider: 'anthropic',
+    model: 'claude-haiku-4-5',
+    apiKey: 'fixture',
+    runtime: runtime as never,
+  });
+  const request = {
+    task: 'vision' as const,
+    instructions: 'Read images',
+    input: { request: 'Read the label' },
+    images: [image],
+  };
+  assert.deepEqual(await curator.curate(request), { description: 'Synthetic label' });
+  failed = true;
+  await assert.rejects(curator.curate(request), /image model is unavailable/);
+  assert.equal(calls, 2);
+});
+
+test('subscription image analysis retains an API-price estimate for the task check-in', async (t) => {
+  t.mock.method(ModelRuntime, 'create', async () => ({
+    registerProvider() {},
+    refresh: async () => {},
+    streamSimple() {},
+    getModel: () => ({ provider: 'openai', id: 'fixture-vision' }),
+    completeSimple: async () => ({
+      ...fauxAssistantMessage('{"description":"Synthetic label"}'),
+      usage: {
+        input: 10,
+        output: 5,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 15,
+        cost: { input: 0.2, output: 0.1, cacheRead: 0, cacheWrite: 0, total: 0.3 },
+      },
+    }),
+  }));
+  const curator = createPiMemoryCurator({
+    provider: 'openai',
+    configured: () => true,
+    resolve: async () => ({
+      provider: 'openai',
+      method: 'subscription',
+      effort: 'off',
+      definition: {
+        choice: {
+          id: 'fixture-vision',
+          name: 'Fixture',
+          images: true,
+          efforts: ['off'],
+          contextWindow: 32_000,
+        },
+        spec: { provider: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1' },
+      },
+      read: async () => chatgptFixtureCredential(),
+    }),
+  });
+  const usage: Array<Partial<ProviderUsageEvent>> = [];
+  await curator.curate(
+    { task: 'vision', instructions: 'Read images', input: {} },
+    undefined,
+    (value) => usage.push(value),
+  );
+  assert.equal(usage.length, 1);
+  assert.equal(usage[0].costUsd, null);
+  assert.equal(usage[0].estimateUsd, 0.3);
 });
 
 test('the memory model reply is read whole when a skill body holds its own code block', async () => {

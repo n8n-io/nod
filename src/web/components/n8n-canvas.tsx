@@ -32,8 +32,8 @@ import {
   Webhook,
   Wrench,
   X,
-  type LucideIcon,
-} from 'lucide-react';
+  type IconComponent,
+} from './icons';
 import { formatNumber } from '../lib/date-format';
 import { safeMessageLink } from '../lib/message-links';
 import { CodeView } from './attachment-code';
@@ -78,7 +78,7 @@ const outputLabels: Record<string, string[]> = {
   filter: ['kept', 'discarded'],
   splitInBatches: ['done', 'loop'],
 };
-const icons: Record<string, LucideIcon> = {
+const icons: Record<string, IconComponent> = {
   manualTrigger: MousePointerClick,
   scheduleTrigger: Clock,
   cron: Clock,
@@ -97,7 +97,7 @@ const icons: Record<string, LucideIcon> = {
   httpRequest: Globe,
   agent: Bot,
 };
-const families: Array<[RegExp, LucideIcon]> = [
+const families: Array<[RegExp, IconComponent]> = [
   [/^lm/, Sparkles],
   [/^memory/, Brain],
   [/^vectorStore/, Database],

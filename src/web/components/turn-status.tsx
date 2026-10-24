@@ -1,4 +1,4 @@
-import { CircleCheck, CircleDashed, LoaderCircle, MessageCircle, CircleAlert } from 'lucide-react';
+import { CircleCheck, CircleDashed, LoaderCircle, MessageCircle, CircleAlert } from './icons';
 import type { TurnStatus } from '../../shared/contracts';
 
 export const statusLabels: Record<TurnStatus, string> = {

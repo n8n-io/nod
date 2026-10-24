@@ -6,7 +6,7 @@ import type { UserScript } from './scenario.ts';
 import type { Simulator } from './judge.ts';
 
 export interface Interaction {
-  kind: 'question' | 'chat' | 'approval' | 'secret' | 'unanswered' | 'stalled';
+  kind: 'question' | 'chat' | 'approval' | 'secret' | 'method' | 'unanswered' | 'stalled';
   text: string;
   reply?: string;
   action?: string;
@@ -144,6 +144,7 @@ export function createSession(options: {
       ? {
           token,
           kind: request.kind as string,
+          methods: request.methods as Array<{ id: string; label: string }> | undefined,
         }
       : undefined;
   }
@@ -159,7 +160,8 @@ export function createSession(options: {
     if (turn.waiting_reason === 'credentials')
       for (const started = Date.now(); ; await sleep(250)) {
         const form = await credentialForm(text);
-        if (form && user.signIn) return { kind: 'form' as const, form, text };
+        if (form && (form.kind === 'method' || user.signIn))
+          return { kind: 'form' as const, form, text };
         if (form) return { kind: 'question' as const, text };
         const state = await (await stack.request('/api/state')).json();
         const request = (state.verificationRequests ?? []).find(
@@ -253,6 +255,16 @@ export function createSession(options: {
     }
     if (pending.kind === 'form') {
       const { form } = pending;
+      if (form.kind === 'method') {
+        const method = form.methods?.find((item) => item.label === user.signInMethod);
+        if (!method) {
+          interactions.push({ kind: 'unanswered', text: pending.text, at });
+          return false;
+        }
+        interactions.push({ kind: 'method', text: pending.text, reply: method.label, at });
+        await post(`/api/credential-requests/${form.token}/method`, { methodId: method.id });
+        return true;
+      }
       const login = user.signIn!;
       interactions.push({ kind: 'secret', requestKind: 'password', text: pending.text, at });
       await post(`/api/credential-requests/${form.token}`, {

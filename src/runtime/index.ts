@@ -21,6 +21,7 @@ import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { firstInstruction, ownerContext, steeredInstruction, systemPrompt } from './prompt.ts';
+import { untrustedBlock } from '../shared/untrusted.ts';
 import { currentUserTime } from './time-context.ts';
 import { connectedTools, nodTools } from './tools.ts';
 import type { Turn } from './turn.ts';
@@ -57,11 +58,8 @@ const admissions = new AsyncLocalStorage<{
   asked: boolean;
   admit(asks: boolean): Promise<void>;
 }>();
+const toolSignals = new AsyncLocalStorage<AbortSignal>();
 const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
-const browserLink = /\]\(\/browser\)/;
-const handsOverBrowser = (name: string, params: unknown) =>
-  name === 'ask_user' &&
-  browserLink.test(String((params as { question?: unknown } | null)?.question));
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
 const reportingTools = new Set(['ask_user', 'send_message', 'share_file', 'task']);
 const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
@@ -117,6 +115,12 @@ export function createAgentRuntime(dependencies: {
   redactError?(text: string): string;
   observe?(turnId: string, event: RuntimeObservation): void;
   pageVisited?(url: string, subagent: boolean): void;
+  analyzeImages?(
+    images: AgentImage[],
+    request: string,
+    signal: AbortSignal,
+    execution: ExecutionScope & { onEvent(event: AgentEvent): void },
+  ): Promise<string | undefined>;
 }) {
   const { agent, computer, skills } = dependencies;
   const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
@@ -177,8 +181,8 @@ export function createAgentRuntime(dependencies: {
     let bufferedText = '';
     let streamedText = '';
     let streamSubmitted = false;
-    let firstMessage = true;
-    let lastSpoke = Date.now();
+    let speakNext = !context.taskContext;
+    let replyOwed = false;
     let answered = false;
     let lastNote = '';
     let reported = false;
@@ -213,14 +217,20 @@ export function createAgentRuntime(dependencies: {
       await context.reply(trimmed, id, replyToMessageId);
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
-      lastSpoke = Date.now();
+      replyOwed = false;
     };
     const reply = deliverReply;
-    const pause = async (reason: 'question' | 'approval' | 'credentials', message?: string) => {
+    let handoffBrowserId: string | undefined;
+    const pause: Turn['pause'] = async (reason, message) => {
+      if (browsed) {
+        const hold = computer.hold(browserId, true);
+        if (reason === 'browser') await hold;
+        else await hold.catch(() => {});
+      }
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
-      waitingFor = reason;
+      waitingFor = reason === 'browser' ? 'question' : reason;
       waitingMessage = message;
-      if (browsed) await computer.hold(browserId, true).catch(() => {});
+      if (reason === 'browser') handoffBrowserId = browserId;
       stopped = true;
       abortSession();
     };
@@ -234,7 +244,7 @@ export function createAgentRuntime(dependencies: {
 
     const flushText = () => {
       if (bufferedText && !stopped && speaks) {
-        if (firstMessage) context.delta(bufferedText, (streamId ??= randomUUID()));
+        if (speakNext || replyOwed) context.delta(bufferedText, (streamId ??= randomUUID()));
         streamedText += bufferedText;
       }
       bufferedText = '';
@@ -276,10 +286,22 @@ export function createAgentRuntime(dependencies: {
       name: string,
       params: unknown,
       execute: () => Promise<unknown>,
-      { nested = false, execution: source = execution } = {},
+      {
+        nested = false,
+        execution: source = execution,
+        signal: callSignal,
+        cancellationSummary,
+      }: {
+        nested?: boolean;
+        execution?: ExecutionScope;
+        signal?: AbortSignal;
+        cancellationSummary?: () => string | undefined;
+      } = {},
     ): Promise<AgentToolResult> => {
       const label = name.replaceAll('_', ' ');
+      const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
       const pending = (async () => {
+        operation.throwIfAborted();
         assertActive();
         if (overBudget() && !reportingTools.has(name)) {
           if (source === execution) checkInBlocked = true;
@@ -323,18 +345,20 @@ export function createAgentRuntime(dependencies: {
         let result: AgentToolResult;
         try {
           assertActive();
-          await untilAborted(pendingReplies, signal);
+          await untilAborted(pendingReplies, operation);
           assertActive();
           await context.emit('tool_start', label, event());
+          operation.throwIfAborted();
           assertActive();
-          const output = await untilAborted(execute(), signal);
-          signal.throwIfAborted();
+          const output = await untilAborted(execute(), operation);
+          operation.throwIfAborted();
           if (
             name === 'send_message' ||
             (name === 'task' && (params as { action?: unknown } | null)?.action === 'start')
           )
             reported = true;
           if (!stopped) await context.emit('tool_complete', label, event());
+          operation.throwIfAborted();
           result = isToolResult(output) ? output : textResult(output);
           if (
             !nested &&
@@ -346,16 +370,18 @@ export function createAgentRuntime(dependencies: {
         } catch (error) {
           if (!stopped) await context.emit('tool_failed', label, event()).catch(() => {});
           const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
-          const failure = signal.aborted
-            ? 'The action was cancelled.'
+          const failure = operation.aborted
+            ? ['The action was cancelled.', cancellationSummary?.()?.slice(0, 4000)]
+                .filter(Boolean)
+                .join('\n')
             : await spill(
                 (dependencies.redactError ?? String)(
                   browserFailure ?? (error instanceof Error ? error.message : String(error)),
                 ),
               );
-          end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
+          end({ status: operation.aborted ? 'cancelled' : 'failed', error: failure });
           if (
-            !signal.aborted &&
+            !operation.aborted &&
             !stopped &&
             status === 'succeeded' &&
             name === 'browser' &&
@@ -366,7 +392,6 @@ export function createAgentRuntime(dependencies: {
             return textResult({ status: 'blocked', code: error.code, message: browserFailure });
           throw new Error(failure);
         }
-        signal.throwIfAborted();
         return result;
       })();
       activeToolCalls.add(pending);
@@ -425,8 +450,13 @@ export function createAgentRuntime(dependencies: {
             ...(deferred ? { deferred } : {}),
             parallel: Boolean(deferred) || parallelTools.has(name),
             execute: async (params, options) => {
+              const operation = options?.signal
+                ? AbortSignal.any([signal, options.signal])
+                : signal;
+              operation.throwIfAborted();
               assertActive();
-              if (browserTools.has(name) || handsOverBrowser(name, params)) await take();
+              if (browserTools.has(name)) await take();
+              operation.throwIfAborted();
               assertActive();
               const admitted = deferred || orderedTools.has(name) ? admission() : undefined;
               const run = () =>
@@ -440,17 +470,17 @@ export function createAgentRuntime(dependencies: {
                         `Invalid ${name} arguments${error ? ` at ${error.path || '/'}: ${error.message}` : ''}.`,
                       );
                     }
-                    if (handsOverBrowser(name, params))
-                      await computer.currentPage(turn.execution.browserId).catch(() => {
-                        throw new Error(
-                          'Open the page in your browser before handing it to the user.',
-                        );
-                      });
                     return execute(params);
                   },
-                  { execution: turn.execution, nested: Boolean(options?.nested) },
+                  {
+                    execution: turn.execution,
+                    nested: Boolean(options?.nested),
+                    signal: operation,
+                  },
                 );
-              return admitted ? admissions.run(admitted.gate, run).finally(admitted.settle) : run();
+              return toolSignals.run(operation, () =>
+                admitted ? admissions.run(admitted.gate, run).finally(admitted.settle) : run(),
+              );
             },
           };
         });
@@ -470,7 +500,7 @@ export function createAgentRuntime(dependencies: {
           computer:
             context.computer &&
             ((args: Record<string, unknown>) =>
-              context.computer!(args, admissions.getStore()?.admit)),
+              context.computer!(args, admissions.getStore()?.admit, toolSignals.getStore())),
         },
         computer: browser,
         pageVisited: dependencies.pageVisited,
@@ -584,9 +614,11 @@ export function createAgentRuntime(dependencies: {
       const root = resolve(context.workspacePath);
       const inline = async (
         attachments: RuntimeContext['attachments'],
+        request: string,
         budget = { left: imageBudget },
       ) => {
         const images: AgentImage[] = [];
+        const paths: string[] = [];
         const omitted = new Set<string>();
         for (const attachment of attachments) {
           if (!imageTypes.has(attachment.mimeType)) continue;
@@ -595,7 +627,7 @@ export function createAgentRuntime(dependencies: {
           const limit = Math.min(imageBytes, budget.left);
           try {
             const bytes =
-              session?.readsImages !== false && limit > 0
+              (session?.readsImages !== false || dependencies.analyzeImages) && limit > 0
                 ? Buffer.from(
                     await dependencies.workspace.readArtifact(
                       threadId,
@@ -609,6 +641,7 @@ export function createAgentRuntime(dependencies: {
             if (!bytes || bytes.length > limit) omitted.add(attachment.path);
             else {
               budget.left -= bytes.length;
+              paths.push(attachment.path);
               images.push({
                 type: 'image',
                 data: bytes.toString('base64'),
@@ -619,6 +652,33 @@ export function createAgentRuntime(dependencies: {
             signal.throwIfAborted();
             omitted.add(attachment.path);
           }
+        }
+        if (session?.readsImages === false) {
+          let description: string | undefined;
+          if (images.length && dependencies.analyzeImages && !overBudget()) {
+            try {
+              description = await untilAborted(
+                dependencies.analyzeImages(images, request, signal, {
+                  ...execution,
+                  onEvent: countUsage,
+                }),
+                signal,
+              );
+            } catch {
+              signal.throwIfAborted();
+            }
+          }
+          for (const path of paths) omitted.add(path);
+          return {
+            images: [],
+            omitted,
+            analysis: description
+              ? untrustedBlock(
+                  'image analysis',
+                  JSON.stringify({ files: paths.map((path) => relative(root, path)), description }),
+                )
+              : undefined,
+          };
         }
         return { images, omitted };
       };
@@ -642,11 +702,28 @@ export function createAgentRuntime(dependencies: {
           (async () => {
             const budget = { left: imageBudget };
             const messages = [];
-            for (const message of await takeMessages()) {
-              const { images, omitted } = await inline(message.attachments, budget);
-              messages.push({ text: instruct(steeredInstruction(message, omitted)), images });
+            const incoming = await takeMessages();
+            if (incoming.length) {
+              checkInSpent = checkInStrikes = 0;
+              replyOwed = true;
             }
-            if (messages.length) checkInSpent = checkInStrikes = 0;
+            for (const message of incoming) {
+              const { images, omitted, analysis } = await inline(
+                message.attachments,
+                message.text,
+                budget,
+              );
+              messages.push({
+                text: instruct(steeredInstruction(message, omitted, analysis)),
+                images,
+              });
+            }
+            if (messages.length) {
+              pendingReplies = pendingReplies.then(() =>
+                context.emit('steered', '', { execution }).catch(() => {}),
+              );
+              void pendingReplies.catch(() => {});
+            }
             return messages;
           }),
         onEvent: (event) => {
@@ -668,18 +745,23 @@ export function createAgentRuntime(dependencies: {
               !modelError &&
               (event.status === undefined || event.status === 'succeeded')
             ) {
-              if (
-                !context.taskContext &&
-                (firstMessage ||
-                  Date.now() - lastSpoke >=
-                    (!context.channel || context.channel === 'web' ? 30_000 : 180_000))
-              ) {
+              if (speakNext || replyOwed) {
                 queueStreamReply(text, streamId ?? randomUUID());
-                lastSpoke = Date.now();
                 lastNote = '';
-              } else lastNote = text;
+                replyOwed = false;
+              } else {
+                lastNote = text;
+                const step = (dependencies.redactError ?? String)(text.split('\n')[0]!).replace(
+                  /\s+/g,
+                  ' ',
+                );
+                pendingReplies = pendingReplies.then(() =>
+                  context.emit('step', step, { execution }).catch(() => {}),
+                );
+                void pendingReplies.catch(() => {});
+              }
             }
-            firstMessage = false;
+            speakNext = false;
             completeStream();
           }
           if (event.type === 'error') modelError = event.message;
@@ -695,14 +777,22 @@ export function createAgentRuntime(dependencies: {
             bufferedText += event.text;
             if (/[.!?\n]\s*$/.test(bufferedText)) flushText();
           }
-          if (event.type === 'final') queueStreamReply(event.text, streamId ?? randomUUID());
+          if (event.type === 'final') {
+            pendingReplies = pendingReplies.then(() =>
+              context.emit('final', '', { execution }).catch(() => {}),
+            );
+            queueStreamReply(event.text, streamId ?? randomUUID());
+          }
         },
       });
       session = await opening;
       signal.throwIfAborted();
       const resumed = session.resumed;
-      const { images, omitted } = await inline(context.attachments);
-      await session!.prompt(instruct(firstInstruction(context, resumed, omitted)), images);
+      const { images, omitted, analysis } = await inline(context.attachments, context.prompt);
+      await session!.prompt(
+        instruct(firstInstruction(context, resumed, omitted, analysis)),
+        images,
+      );
       await pendingReplies;
       signal.throwIfAborted();
       if (checkInStopped && status === 'succeeded')
@@ -739,9 +829,7 @@ export function createAgentRuntime(dependencies: {
         ...(result ? { result } : {}),
         ...(waitingFor ? { waitingFor } : {}),
         ...(waitingMessage ? { message: waitingMessage } : {}),
-        ...(waitingMessage && browserLink.test(waitingMessage)
-          ? { handoffBrowserId: browserId }
-          : {}),
+        ...(handoffBrowserId ? { handoffBrowserId } : {}),
       };
     } finally {
       stopped = true;

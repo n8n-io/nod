@@ -22,6 +22,8 @@ var refs: [String: ElementState] = [:]
 var targets: [String: Target] = [:]
 var observedApp: NSRunningApplication?
 var observedFocus: ElementState?
+var observedScope: String?
+var refSerial = UInt64.random(in: 1...(UInt64.max / 2))
 
 func attr(_ element: AXUIElement, _ name: String) -> AnyObject? {
   var value: AnyObject?
@@ -124,7 +126,8 @@ func describe(_ running: NSRunningApplication) -> [String: Any] {
   ]
 }
 
-func look(_ query: String) throws -> [String: Any] {
+func look(_ query: String, scope: String) throws -> [String: Any] {
+  guard UUID(uuidString: scope) != nil else { throw Failure(message: "Look requires an active task.") }
   guard AXIsProcessTrusted() else { throw Failure(message: "accessibility_permission") }
   let running = try app(query)
   let root = AXUIElementCreateApplication(running.processIdentifier)
@@ -132,6 +135,7 @@ func look(_ query: String) throws -> [String: Any] {
   refs = [:]
   targets = [:]
   observedApp = running
+  observedScope = scope
   var windowFingerprints: [(AXUIElement, String)] = []
   func fingerprintWindow(_ window: AXUIElement) throws -> String {
     if let saved = windowFingerprints.first(where: { CFEqual($0.0, window) }) { return saved.1 }
@@ -145,7 +149,7 @@ func look(_ query: String) throws -> [String: Any] {
   var visited = 0
   var truncated = false
   func walk(_ element: AXUIElement, _ depth: Int) {
-    guard count < 2000, visited < 4000, depth < 40 else { truncated = true; return }
+    guard count < 2000, visited < 4000, depth < 40, refSerial < UInt64.max else { truncated = true; return }
     visited += 1
     guard let saved = try? state(element, root, windowFingerprint: fingerprintWindow) else { return }
     let role = (text(element, kAXRoleAttribute) ?? "unknown").replacingOccurrences(of: "AX", with: "")
@@ -153,7 +157,8 @@ func look(_ query: String) throws -> [String: Any] {
     if !["Group", "unknown", "SplitGroup", "ScrollArea", "Layout"].contains(role) {
       let line = description(element, preview: true)
       count += 1
-      let ref = "e\(count)"
+      refSerial += 1
+      let ref = "e\(refSerial)"
       refs[ref] = saved
       lines.append(String(repeating: "  ", count: depth) + "- \(line) [ref=\(ref)]")
     }
@@ -182,6 +187,9 @@ func focused(_ root: AXUIElement) throws -> AXUIElement {
 }
 
 func inspect(_ request: [String: Any]) throws -> [String: Any] {
+  guard let scope = request["scope"] as? String, scope == observedScope else {
+    throw Failure(message: "Look again in this task before acting.")
+  }
   guard AXIsProcessTrusted() else { throw Failure(message: "accessibility_permission") }
   let running = try observed(request["app"] as? String ?? "")
   let root = AXUIElementCreateApplication(running.processIdentifier)
@@ -230,9 +238,22 @@ func act(_ request: [String: Any]) throws -> [String: Any] {
   refs = [:]
   observedApp = nil
   observedFocus = nil
+  observedScope = nil
   switch action {
   case "type", "key":
-    try post(running.processIdentifier, request)
+    try post(running.processIdentifier, request) {
+      let element = try focused(root)
+      try owned(element, root)
+      let window = axElement(element, kAXWindowAttribute) ?? axElement(root, kAXFocusedWindowAttribute)
+      if let window { try owned(window, root) }
+      let sameWindow: Bool
+      if let before = current.window, let after = window { sameWindow = CFEqual(before, after) }
+      else { sameWindow = current.window == nil && window == nil }
+      guard CFEqual(current.element, element), sameWindow,
+        text(element, kAXSubroleAttribute) != "AXSecureTextField" else {
+        throw Failure(message: "The focused control changed. Look again to check what completed.")
+      }
+    }
   default:
     let target = current.element
     let result: AXError
@@ -282,10 +303,11 @@ func keyCode(_ name: String, _ flags: CGEventFlags, source: TISInputSource? = ni
   throw Failure(message: "Cannot resolve \(name) in the current keyboard layout. Use a visible app control instead.")
 }
 
-func post(_ pid: pid_t, _ request: [String: Any]) throws {
+func post(_ pid: pid_t, _ request: [String: Any], validate: () throws -> Void) throws {
   let source = CGEventSource(stateID: .privateState)
   if request["action"] as? String == "type" {
     for character in (request["text"] as? String ?? "") {
+      try validate()
       let units = Array(String(character).utf16)
       for down in [true, false] {
         guard let event = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: down) else {
@@ -313,6 +335,7 @@ func post(_ pid: pid_t, _ request: [String: Any]) throws {
     }
   }
   let code = try keyCode(last, flags)
+  try validate()
   for down in [true, false] {
     guard let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else {
       throw Failure(message: "Mac keyboard input is unavailable. Look again to check what completed.")
@@ -416,7 +439,7 @@ func handle(_ message: [String: Any]) async throws -> Any {
   case "resolve": return describe(try app(query))
   case "identify": return try identify(query)
   case "open": return try await open(query)
-  case "look": return try look(query)
+  case "look": return try look(query, scope: message["scope"] as? String ?? "")
   case "inspect": return try inspect(message)
   case "act": return try act(message)
   case "screenshot": return try await screenshot(query)
