@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { apiResponse } from '../lib/api';
+import { NodGlyph } from './motion';
 import { Button, Field, Input, Notice } from './ui';
 
 export function ServerAccess({ onConnected }: { onConnected(): Promise<boolean> }) {
@@ -34,10 +35,17 @@ export function ServerAccess({ onConnected }: { onConnected(): Promise<boolean> 
     }
   }
   return (
-    <main className="empty-state">
-      <form className="server-access" onSubmit={(event) => void connect(event)}>
-        <h1>Connect to nod</h1>
-        <p>Enter the authentication token for this server.</p>
+    <main className="server-access-page">
+      <form
+        className="server-access"
+        aria-labelledby="server-access-title"
+        onSubmit={(event) => void connect(event)}
+      >
+        <header className="server-access-header">
+          <NodGlyph size={72} mode="still" />
+          <h1 id="server-access-title">Connect to nod</h1>
+          <p>Enter your server’s token to open your assistant.</p>
+        </header>
         <Field label="Authentication token">
           <Input
             type="password"
@@ -53,6 +61,9 @@ export function ServerAccess({ onConnected }: { onConnected(): Promise<boolean> 
         <Button type="submit" disabled={busy || !key.trim()}>
           {busy ? 'Connecting…' : 'Connect'}
         </Button>
+        <p className="server-access-note">
+          Your chats, files and connected apps stay on this server.
+        </p>
       </form>
     </main>
   );
