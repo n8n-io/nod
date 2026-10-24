@@ -39,6 +39,7 @@ import { apiResponse } from '../lib/api';
 import { Button } from './ui';
 import { SharedMessageCard } from './shared-message-card';
 import { StickerPlayer } from './sticker-player';
+import { AudioPlayer } from './audio-player';
 
 const minimumWidth = 360;
 const minimumChat = 360;
@@ -143,102 +144,6 @@ function VideoView({
   );
 }
 
-function AudioView({
-  item,
-  onDetail,
-  onError,
-}: {
-  item: ImagePreview;
-  onDetail(detail: string): void;
-  onError(): void;
-}) {
-  const audio = useRef<HTMLAudioElement>(null);
-  const frame = useRef(0);
-  const [peaks, setPeaks] = useState<number[] | null>(null);
-  const [progress, setProgress] = useState(0);
-  useEffect(() => {
-    const controller = new AbortController();
-    if (item.size > 30_000_000) return;
-    void (async () => {
-      try {
-        const response = await fetch(item.url, {
-          signal: controller.signal,
-          credentials: 'same-origin',
-        });
-        const decoded = await new OfflineAudioContext(1, 1, 44_100).decodeAudioData(
-          await response.arrayBuffer(),
-        );
-        const channel = decoded.getChannelData(0);
-        const step = Math.max(1, Math.floor(channel.length / 96));
-        const values = Array.from({ length: 96 }, (_, index) => {
-          let sum = 0;
-          let count = 0;
-          for (let sample = index * step; sample < (index + 1) * step; sample += 8) {
-            sum += (channel[sample] ?? 0) ** 2;
-            count += 1;
-          }
-          return Math.sqrt(sum / Math.max(1, count));
-        });
-        const top = Math.max(...values) || 1;
-        if (!controller.signal.aborted)
-          setPeaks(values.map((value) => Math.max(0.08, value / top)));
-      } catch {}
-    })();
-    return () => {
-      controller.abort();
-      cancelAnimationFrame(frame.current);
-    };
-  }, [item.url, item.size]);
-  const follow = () => {
-    const element = audio.current;
-    if (!element) return;
-    setProgress(element.duration ? element.currentTime / element.duration : 0);
-    if (!element.paused) frame.current = requestAnimationFrame(follow);
-  };
-  return (
-    <div className="artifact-stage is-audio">
-      <div className="artifact-audio">
-        {peaks ? (
-          <div
-            className="artifact-waveform"
-            aria-hidden="true"
-            onClick={(event) => {
-              const element = audio.current;
-              if (!element?.duration) return;
-              const box = event.currentTarget.getBoundingClientRect();
-              element.currentTime = ((event.clientX - box.left) / box.width) * element.duration;
-              follow();
-            }}
-          >
-            {peaks.map((peak, index) => (
-              <span
-                key={index}
-                className={index / peaks.length < progress ? 'is-played' : undefined}
-                style={{ height: `${peak * 100}%` }}
-              />
-            ))}
-          </div>
-        ) : (
-          <span className="artifact-audio-art" aria-hidden="true">
-            <FileGlyph name={item.name} mimeType={item.mimeType ?? ''} size={48} />
-          </span>
-        )}
-        <audio
-          ref={audio}
-          controls
-          preload="metadata"
-          src={item.url}
-          aria-label={item.name}
-          onLoadedMetadata={(event) => onDetail(duration(event.currentTarget.duration))}
-          onPlay={follow}
-          onSeeked={follow}
-          onError={onError}
-        />
-      </div>
-    </div>
-  );
-}
-
 const ArtifactView = memo(function ArtifactView({
   item,
   mode,
@@ -276,7 +181,12 @@ const ArtifactView = memo(function ArtifactView({
     return <AttachmentData item={item} kind="text" mode="code" stage={stage} onDetail={onDetail} />;
   if (kind === 'image') return <ImageView item={item} onDetail={onDetail} onError={fail} />;
   if (kind === 'video') return <VideoView item={item} onDetail={onDetail} onError={fail} />;
-  if (kind === 'audio') return <AudioView item={item} onDetail={onDetail} onError={fail} />;
+  if (kind === 'audio')
+    return (
+      <div className="artifact-stage is-audio">
+        <AudioPlayer item={item} onDuration={(seconds) => onDetail(duration(seconds))} />
+      </div>
+    );
   if (kind === 'pdf') return <PdfPreview url={item.url} onDetail={onDetail} />;
   return <AttachmentData item={item} kind={kind} mode={mode} stage={stage} onDetail={onDetail} />;
 });

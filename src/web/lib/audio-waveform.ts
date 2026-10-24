@@ -1,4 +1,4 @@
-import { apiBytes } from './api';
+import { apiBytes, requestAccountVersion } from './api';
 import { ownedArtifactUrl } from './attachment-url';
 
 const oggCrc = Uint32Array.from({ length: 256 }, (_, index) => {
@@ -99,6 +99,263 @@ function boundedOpus(bytes: Uint8Array) {
   return ended && packet > 2 && packetSize === 0 && durationMs > 0;
 }
 
+function boundedWav(bytes: Uint8Array, view: DataView) {
+  if (view.getUint32(8) !== 0x57415645 || view.getUint32(4, true) + 8 !== bytes.length)
+    return false;
+  let bytesPerSecond = 0;
+  let alignment = 0;
+  let data = 0;
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const type = view.getUint32(offset);
+    const length = view.getUint32(offset + 4, true);
+    offset += 8;
+    if (offset + length > bytes.length) return false;
+    if (type === 0x666d7420) {
+      if (bytesPerSecond || length < 16) return false;
+      let format = view.getUint16(offset, true);
+      const channels = view.getUint16(offset + 2, true);
+      const rate = view.getUint32(offset + 4, true);
+      const bits = view.getUint16(offset + 14, true);
+      alignment = view.getUint16(offset + 12, true);
+      bytesPerSecond = view.getUint32(offset + 8, true);
+      if (format === 0xfffe) {
+        if (length < 40) return false;
+        const extension = view.getUint16(offset + 16, true);
+        const precision = view.getUint16(offset + 18, true);
+        const mask = view.getUint32(offset + 20, true);
+        format = view.getUint32(offset + 24, true);
+        let speakers = 0;
+        for (let remaining = mask; remaining; remaining &= remaining - 1) speakers++;
+        if (
+          extension < 22 ||
+          extension > length - 18 ||
+          !precision ||
+          precision > bits ||
+          (format === 3 && precision !== bits) ||
+          mask & ~0x3ffff ||
+          (speakers && speakers !== channels) ||
+          view.getUint32(offset + 28) !== 0x00001000 ||
+          view.getUint32(offset + 32) !== 0x800000aa ||
+          view.getUint32(offset + 36) !== 0x00389b71
+        )
+          return false;
+      }
+      if (
+        ![1, 3].includes(format) ||
+        ![1, 2].includes(channels) ||
+        rate < 8000 ||
+        rate > 192000 ||
+        !(format === 3 ? [32, 64] : [8, 16, 24, 32]).includes(bits) ||
+        alignment !== (channels * bits) / 8 ||
+        bytesPerSecond !== rate * alignment
+      )
+        return false;
+    } else if (type === 0x64617461) {
+      if (!bytesPerSecond || data || !length || length % alignment) return false;
+      data = length;
+    }
+    offset += length + (length % 2);
+  }
+  return offset === bytes.length && data > 0 && data / bytesPerSecond <= 600;
+}
+
+function boundedMp3(bytes: Uint8Array) {
+  let offset = 0;
+  if (bytes[0] === 73 && bytes[1] === 68 && bytes[2] === 51) {
+    if (bytes.length < 10 || ![2, 3, 4].includes(bytes[3])) return false;
+    let size = 0;
+    for (const value of bytes.subarray(6, 10)) {
+      if (value & 128) return false;
+      size = size * 128 + value;
+    }
+    offset = 10 + size + (bytes[3] === 4 && bytes[5] & 16 ? 10 : 0);
+  }
+  const bitrates = [
+    [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+    [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+  ];
+  let seconds = 0;
+  let format = -1;
+  while (offset + 4 <= bytes.length) {
+    if (
+      bytes.length - offset === 128 &&
+      bytes[offset] === 84 &&
+      bytes[offset + 1] === 65 &&
+      bytes[offset + 2] === 71
+    ) {
+      offset += 128;
+      break;
+    }
+    const version = (bytes[offset + 1] >> 3) & 3;
+    const frequency = (bytes[offset + 2] >> 2) & 3;
+    const bitrate = bitrates[version === 3 ? 1 : 0][bytes[offset + 2] >> 4];
+    if (
+      bytes[offset] !== 255 ||
+      (bytes[offset + 1] & 0xe6) !== 0xe2 ||
+      version === 1 ||
+      frequency === 3 ||
+      !bitrate
+    )
+      return false;
+    const nextFormat = version * 4 + frequency;
+    if (format !== -1 && format !== nextFormat) return false;
+    format = nextFormat;
+    const rate = [44100, 48000, 32000][frequency] / (version === 3 ? 1 : version === 2 ? 2 : 4);
+    const samples = version === 3 ? 1152 : 576;
+    offset += Math.floor(((samples / 8) * bitrate * 1000) / rate) + ((bytes[offset + 2] >> 1) & 1);
+    seconds += samples / rate;
+    if (seconds > 600) return false;
+  }
+  return seconds > 0 && offset === bytes.length;
+}
+
+function boundedM4a(bytes: Uint8Array, view: DataView) {
+  type Box = { type: string; start: number; end: number };
+  const invalid = () => {
+    throw new Error('Waveform unavailable.');
+  };
+  const boxes = (start: number, end: number) => {
+    const result: Box[] = [];
+    while (start < end) {
+      if (start + 8 > end || result.length >= 256) invalid();
+      const type = String.fromCharCode(...bytes.subarray(start + 4, start + 8));
+      let size = view.getUint32(start);
+      let header = 8;
+      if (size === 1) {
+        if (start + 16 > end) invalid();
+        size = Number(view.getBigUint64(start + 8));
+        header = 16;
+      }
+      if (!size) size = end - start;
+      if (!Number.isSafeInteger(size) || size < header || start + size > end) invalid();
+      result.push({ type, start: start + header, end: start + size });
+      start += size;
+    }
+    return result;
+  };
+  const one = (items: Box[], type: string) => {
+    const found = items.filter((item) => item.type === type);
+    if (found.length !== 1) invalid();
+    return found[0];
+  };
+  const children = (box: Box) => boxes(box.start, box.end);
+  const clock = (box: Box) => {
+    const version = bytes[box.start];
+    if (version > 1 || box.end - box.start < (version ? 32 : 20)) invalid();
+    const rate = view.getUint32(box.start + (version ? 20 : 12));
+    const length = version
+      ? Number(view.getBigUint64(box.start + 24))
+      : view.getUint32(box.start + 16);
+    if (!rate || !Number.isSafeInteger(length) || length <= 0 || length / rate > 600) invalid();
+    return rate;
+  };
+  const root = boxes(0, bytes.length);
+  if (root.some((box) => box.type === 'moof')) return false;
+  one(root, 'ftyp');
+  const data = one(root, 'mdat');
+  const movie = children(one(root, 'moov'));
+  if (movie.some((box) => ['mvex', 'cmov'].includes(box.type))) return false;
+  const movieRate = clock(one(movie, 'mvhd'));
+  const track = children(one(movie, 'trak'));
+  const edits = track.filter((box) => box.type === 'edts');
+  if (edits.length > 1) return false;
+  if (edits.length) {
+    const edit = one(children(edits[0]), 'elst');
+    if (edit.end - edit.start < 8 || bytes[edit.start] !== 0) return false;
+    const count = view.getUint32(edit.start + 4);
+    if (count > 2 || edit.end - edit.start !== 8 + count * 12) return false;
+    let length = 0;
+    for (let index = 0; index < count; index++) {
+      const offset = edit.start + 8 + index * 12;
+      length += view.getUint32(offset);
+      if (view.getUint32(offset + 8) !== 0x10000) return false;
+    }
+    if (length / movieRate > 600) return false;
+  }
+  const media = children(one(track, 'mdia'));
+  const mediaRate = clock(one(media, 'mdhd'));
+  const handler = one(media, 'hdlr');
+  if (handler.end - handler.start < 12 || view.getUint32(handler.start + 8) !== 0x736f756e)
+    return false;
+  const samples = children(one(children(one(media, 'minf')), 'stbl'));
+  const description = one(samples, 'stsd');
+  if (description.end - description.start < 8 || view.getUint32(description.start + 4) !== 1)
+    return false;
+  const format = one(boxes(description.start + 8, description.end), 'mp4a');
+  if (
+    format.end - format.start < 28 ||
+    view.getUint16(format.start + 8) !== 0 ||
+    ![1, 2].includes(view.getUint16(format.start + 16))
+  )
+    return false;
+  const esds = one(boxes(format.start + 28, format.end), 'esds');
+  const descriptor = (offset: number, end: number, tag: number) => {
+    if (bytes[offset++] !== tag) invalid();
+    let size = 0;
+    for (let count = 0; ; count++) {
+      if (count === 4 || offset >= end) invalid();
+      const value = bytes[offset++];
+      size = size * 128 + (value & 127);
+      if (!(value & 128)) break;
+    }
+    if (offset + size > end) invalid();
+    return { start: offset, end: offset + size };
+  };
+  const stream = descriptor(esds.start + 4, esds.end, 3);
+  if (stream.end - stream.start < 3 || bytes[stream.start + 2] !== 0) return false;
+  const config = descriptor(stream.start + 3, stream.end, 4);
+  if (config.end - config.start < 13 || bytes[config.start] !== 0x40) return false;
+  const specific = descriptor(config.start + 13, config.end, 5);
+  if (specific.end - specific.start < 2) return false;
+  const first = bytes[specific.start];
+  const second = bytes[specific.start + 1];
+  const sampleRate = [
+    96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+  ][((first & 7) << 1) | (second >> 7)];
+  if (first >> 3 !== 2 || !sampleRate || ![1, 2].includes((second >> 3) & 15)) return false;
+  const timing = one(samples, 'stts');
+  if (timing.end - timing.start < 8) return false;
+  const entries = view.getUint32(timing.start + 4);
+  if (timing.end - timing.start !== 8 + entries * 8) return false;
+  let count = 0;
+  let length = 0;
+  for (let index = 0; index < entries; index++) {
+    const offset = timing.start + 8 + index * 8;
+    const amount = view.getUint32(offset);
+    const delta = view.getUint32(offset + 4);
+    if (!amount || !delta) return false;
+    count += amount;
+    length += amount * delta;
+    if ((count * 1024) / sampleRate > 600 || length / mediaRate > 600) return false;
+  }
+  const sizes = one(samples, 'stsz');
+  if (sizes.end - sizes.start < 12 || view.getUint32(sizes.start + 8) !== count) return false;
+  const fixedSize = view.getUint32(sizes.start + 4);
+  if (!count || sizes.end - sizes.start !== 12 + (fixedSize ? 0 : count * 4)) return false;
+  let total = fixedSize * count;
+  if (!fixedSize)
+    for (let index = 0; index < count; index++) {
+      const size = view.getUint32(sizes.start + 12 + index * 4);
+      if (!size) return false;
+      total += size;
+    }
+  return total <= data.end - data.start;
+}
+
+function boundedAudio(bytes: Uint8Array) {
+  if (bytes.length < 12) return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  try {
+    if (view.getUint32(0) === 0x4f676753) return boundedOpus(bytes);
+    if (view.getUint32(0) === 0x52494646) return boundedWav(bytes, view);
+    if (view.getUint32(4) === 0x66747970) return boundedM4a(bytes, view);
+    return boundedMp3(bytes);
+  } catch {
+    return false;
+  }
+}
+
 let previous: Promise<void> = Promise.resolve();
 
 export function loadAudioWaveform(
@@ -107,8 +364,11 @@ export function loadAudioWaveform(
   duration: number,
   signal: AbortSignal,
 ) {
+  const account = requestAccountVersion();
   const load = previous.then(async () => {
     signal.throwIfAborted();
+    if (account !== requestAccountVersion())
+      throw new DOMException('The account changed.', 'AbortError');
     const limit = 25 * 1024 * 1024;
     if (
       !ownedArtifactUrl(url) ||
@@ -122,20 +382,37 @@ export function loadAudioWaveform(
       throw new Error('Waveform unavailable.');
     const bytes = await apiBytes(url, limit, { signal, redirect: 'error' });
     signal.throwIfAborted();
-    if (!boundedOpus(bytes)) throw new Error('Waveform unavailable.');
+    if (!boundedAudio(bytes)) throw new Error('Waveform unavailable.');
     const decoded = await new OfflineAudioContext(1, 1, 8000).decodeAudioData(bytes.buffer);
     signal.throwIfAborted();
-    if (decoded.duration > 600) throw new Error('Waveform unavailable.');
-    const channel = decoded.getChannelData(0);
-    const width = channel.length / 64;
+    if (account !== requestAccountVersion())
+      throw new DOMException('The account changed.', 'AbortError');
+    if (
+      !Number.isFinite(decoded.duration) ||
+      decoded.duration <= 0 ||
+      decoded.duration > 600 ||
+      ![1, 2].includes(decoded.numberOfChannels)
+    )
+      throw new Error('Waveform unavailable.');
+    const channels = Array.from({ length: decoded.numberOfChannels }, (_, index) =>
+      decoded.getChannelData(index),
+    );
+    const width = decoded.length / 64;
     const stride = Math.max(1, Math.floor(width / 256));
     const values = Array.from({ length: 64 }, (_, index) => {
       let sum = 0;
       let count = 0;
-      for (let sample = Math.floor(index * width); sample < (index + 1) * width; sample += stride) {
-        sum += channel[sample] ** 2;
-        count++;
-      }
+      for (const channel of channels)
+        for (
+          let sample = Math.floor(index * width);
+          sample < (index + 1) * width;
+          sample += stride
+        ) {
+          const value = channel[sample] ?? 0;
+          if (!Number.isFinite(value)) throw new Error('Waveform unavailable.');
+          sum += value ** 2;
+          count++;
+        }
       return Math.sqrt(sum / Math.max(1, count));
     });
     const top = Math.max(...values) || 1;
