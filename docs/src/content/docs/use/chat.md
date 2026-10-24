@@ -30,6 +30,18 @@ Select **Find in conversation** to search stored messages in the current convers
 
 An action confirmation shows its current state beside the question. **Done** means the confirmed action finished. **Outcome unclear** means it failed or stopped after execution started. It can still have changed the target. Check the result before you try again. nod does not repeat it automatically.
 
+## Send an audio message
+
+Select **Record an audio message** beside the send button and allow microphone access. Select **Stop recording** when you finish, listen to the preview, then select **Send audio**. You can discard the recording or record it again before sending. Recordings can be up to five minutes long. They stay in this window until you send them and are not restored after a reload.
+
+nod transcribes the recording and uses it as your message. The transcript and recording stay together in the conversation. If sending fails, your recording and typed text remain available. A recording that answers a private verification request is handled privately instead of being added to the conversation.
+
+By default, nod sends an audio reply after its written answer when you send audio. Select **Play audio** to listen; replies do not play automatically. A failed or very long spoken reply leaves the written answer available.
+
+In **Settings → General → Voice**, choose **When I send audio**, **Every reply**, or **Off**. Choose an assistant voice and select **Preview voice** to listen before using it. Previews use that voice’s language, or your browser’s language for multilingual voices. These voices are AI-generated. **Manage connections** opens your model connections, including OpenRouter for ElevenLabs voices. You don’t need a separate ElevenLabs key.
+
+nod reuses your existing OpenRouter or OpenAI connection for speech. OpenRouter offers ElevenLabs and Kokoro voices. When neither connection supports speech, select **Enable local audio** to download the local speech models once. Local transcription uses Whisper and supports multiple languages. Local replies offer English and Brazilian Portuguese voices from Kokoro. Choose a local voice that matches your conversation. ElevenLabs and OpenAI voices support more languages, including Portuguese, Spanish and French. Downloads need an internet connection; downloaded models run on the computer hosting nod. To use local speech even with a connected API, choose a local assistant voice in Voice settings. Both transcription and replies then run locally. Local speech can take longer on slower computers. A ChatGPT or Claude subscription alone does not include those providers' speech APIs.
+
 ## Listen to audio
 
 Audio attachments play directly in chat. Select **Play audio** to listen, then **Pause audio** to pause. Starting another attachment pauses the previous one.

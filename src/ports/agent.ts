@@ -207,6 +207,7 @@ export interface RuntimeResult {
   message?: string;
   handoffBrowserId?: string;
   result?: string;
+  spokenReply?: string;
 }
 export interface AgentImage {
   type: 'image';

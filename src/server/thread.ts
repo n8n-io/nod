@@ -12,6 +12,7 @@ import { dataRoot, databaseUrl, ownerId } from './config.ts';
 import { delta, refresh, working } from './events.ts';
 import { localArtifacts, type ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
+import type { GeneratedAudio } from '../ports/speech.ts';
 import type { Artifact, MessageReaction } from '../shared/contracts.ts';
 import type {
   BrowserConnectionRequest,
@@ -73,6 +74,8 @@ export interface SubmitUserMessageOptions {
   clientMessageId?: string;
   prompt?: string;
   answer?: ChatConfirmationInput['answer'];
+  prepareAttachments?: (client: PoolClient, threadId: string) => Promise<Artifact[]>;
+  persistSubmission?: (client: PoolClient, result: SubmitUserMessageResult) => Promise<void>;
 }
 export interface SubmitUserMessageResult {
   threadId: string;
@@ -129,7 +132,8 @@ export interface ThreadDependencies {
   taskLedger?: (threadId: string) => Promise<NonNullable<RuntimeContext['tasks']>>;
   startTurn?: (turn: TurnRef) => Promise<void>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
-  speech: Pick<SpeechService, 'synthesize'>;
+  speech: Pick<SpeechService, 'synthesize'> & Partial<Pick<SpeechService, 'configured'>>;
+  audioReplies?: () => Promise<'voice' | 'always' | 'never'>;
   requestCredential: (
     turn: TurnRef,
     input: Parameters<RuntimeContext['requestCredential']>[0],
@@ -406,11 +410,11 @@ export async function submitUserMessage(
     seenMessageId: options.seenMessageId,
     clientMessageId: options.clientMessageId,
     sourceId: options.sourceId,
-    hasAttachments: attachments.length > 0,
+    hasAttachments: attachments.length > 0 || Boolean(options.prepareAttachments),
   };
   const answer = options.client
     ? options.answer
-    : await readAnswer(text, attachments.length > 0, options, confirmAction);
+    : await readAnswer(text, confirmation.hasAttachments, options, confirmAction);
   const submit = async (client: PoolClient): Promise<SubmitUserMessageResult> => {
     const thread = await lockThread(client);
     if (options.threadId !== undefined && options.threadId !== thread.id)
@@ -494,6 +498,7 @@ export async function submitUserMessage(
       ],
     );
     if (taskTarget) await taskTarget.record(turnId);
+    const prepared = (await options.prepareAttachments?.(client, thread.id)) ?? [];
     await client.query(
       "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8)",
       [
@@ -502,7 +507,7 @@ export async function submitUserMessage(
         text,
         thread.id,
         turnId,
-        JSON.stringify(attachments),
+        JSON.stringify([...attachments, ...prepared]),
         options.replyToMessageId ?? null,
         options.replyQuote ?? null,
       ],
@@ -512,7 +517,12 @@ export async function submitUserMessage(
   };
   let result: SubmitUserMessageResult;
   try {
-    result = options.client ? await submit(options.client) : await transaction(submit, pool);
+    const persist = async (client: PoolClient) => {
+      const result = await submit(client);
+      await options.persistSubmission?.(client, result);
+      return result;
+    };
+    result = options.client ? await persist(options.client) : await transaction(persist, pool);
   } catch (error) {
     const { code, constraint } = (error ?? {}) as { code?: string; constraint?: string };
     if (options.clientMessageId && code === '23505' && constraint === 'messages_pkey')
@@ -997,6 +1007,9 @@ async function loadMessage(messageId: string | null) {
       }
     : undefined;
   return {
+    voice: ((message?.attachments ?? []) as StoredAttachment[]).some((file) =>
+      file.mimeType?.startsWith('audio/'),
+    ),
     uploads: [
       ...((message?.attachments ?? []) as StoredAttachment[]),
       ...((replyTo?.attachments ?? []) as StoredAttachment[]),
@@ -1132,15 +1145,18 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await ensureCurrent();
       return call(...args);
     };
+  const replies: Array<{ id: string; text: string }> = [];
+  let explicitAudio = false;
   const post = async (
     text: string,
     attachments: Artifact[] = [],
     streamId?: string,
     replyToMessageId?: string,
   ) => {
-    await current((client) =>
+    const id = await current((client) =>
       insertAssistantMessage(client, ref, text, attachments, streamId, replyToMessageId),
     );
+    if (text.trim()) replies.push({ id, text });
     refresh();
   };
   const shared: Artifact[] = [];
@@ -1201,6 +1217,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     await ensureCurrent();
     const loaded = await loadTurnContext(turn, dependencies);
     let sourceMessageId = loaded.sourceMessageId;
+    let voice = loaded.voice;
+    let ownerMessage = turn.source === 'user';
     const stagedFiles = new Map<string, string>();
     const stageUploads = async (items: StoredAttachment[]) => {
       const ids = items.map((item) => String(item?.id ?? '')).filter(Boolean);
@@ -1394,7 +1412,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
               }
               const messages = [];
               for (const message of taken) {
-                const { uploads, replyTo } = await loadMessage(message.id);
+                const loadedMessage = await loadMessage(message.id);
+                const { uploads, replyTo } = loadedMessage;
+                voice = loadedMessage.voice;
+                ownerMessage = true;
                 messages.push({
                   ...message,
                   attachments: await stageUploads(uploads),
@@ -1404,6 +1425,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
               return messages;
             },
       createAudio: async (text) => {
+        explicitAudio = true;
         const audio = await fenced(() => dependencies.speech.synthesize(text, signal))();
         return attach(audio.bytes, audio.fileName, audio.mimeType, 'Audio generated by AI.');
       },
@@ -1448,6 +1470,62 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await post(result.result, shared.splice(0));
     if (shared.length && (result.status === 'succeeded' || !result.message))
       await post('', shared.splice(0));
+    const finalReply = result.spokenReply
+      ? replies.findLast(({ text }) => text.trim() === result.spokenReply!.trim())
+      : replies.at(-1);
+    const questionText =
+      result.status === 'waiting_user' &&
+      (result.waitingFor ?? 'question') === 'question' &&
+      !result.handoffBrowserId
+        ? result.message
+        : undefined;
+    let questionAudio: GeneratedAudio | undefined;
+    const speechText = (questionText ?? finalReply?.text)
+      ?.replace(/```[\s\S]*?```/g, '')
+      .replace(/!?\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/^[ \t]*(?:#{1,6}|>|[-*+]|\d+\.)[ \t]+/gm, '')
+      .replace(/(\*\*|__|`)(.*?)\1/g, '$2')
+      .trim();
+    if (
+      (result.status === 'succeeded' || questionText) &&
+      ownerMessage &&
+      speechText &&
+      speechText.length <= 4096 &&
+      !explicitAudio &&
+      dependencies.speech.configured
+    ) {
+      try {
+        const mode = await dependencies.audioReplies?.();
+        if (mode === 'always' || (mode === 'voice' && voice)) {
+          const audio = await fenced(() => dependencies.speech.synthesize(speechText, signal))();
+          if (questionText) questionAudio = audio;
+          else if (finalReply) {
+            await current(async (client) => {
+              const artifact = await artifacts.storeArtifact(
+                audio.bytes,
+                audio.fileName,
+                audio.mimeType,
+                threadId,
+                client,
+              );
+              await insertAssistantMessage(
+                client,
+                ref,
+                'Audio generated by AI.',
+                [artifact],
+                undefined,
+                finalReply.id,
+              );
+            });
+            refresh();
+          }
+        }
+      } catch (error) {
+        signal.throwIfAborted();
+        logFailure('speech_reply_failed', error, { threadId, turnId });
+      }
+    }
     await current(async (client) => {
       if (result.status === 'succeeded') return finishTurn(client, turnId, 'succeeded');
       const waiting = await finishTurn(client, turnId, 'waiting', {
@@ -1458,6 +1536,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         handoffBrowserId: result.handoffBrowserId,
       });
       if (waiting && result.message) {
+        if (questionAudio)
+          shared.push(
+            await artifacts.storeArtifact(
+              questionAudio.bytes,
+              questionAudio.fileName,
+              questionAudio.mimeType,
+              threadId,
+              client,
+            ),
+          );
         const messageId = await insertAssistantMessage(
           client,
           ref,

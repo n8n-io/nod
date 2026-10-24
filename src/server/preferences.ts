@@ -1,9 +1,16 @@
 import { z } from 'zod';
 import type { Pool } from 'pg';
+import { speechVoices } from '../shared/speech.ts';
 
 const hourCycles = ['auto', 'h12', 'h23'] as const;
 export const preferencesSchema = z
   .object({
+    speechVoice: z
+      .string()
+      .max(80)
+      .refine((id) => speechVoices.some((voice) => voice.id === id))
+      .nullable(),
+    speechReply: z.enum(['voice', 'always', 'never']),
     notificationRule: z.string().max(4000),
     rules: z.string().max(4000),
     timeZone: z.string().nullable(),
@@ -16,6 +23,8 @@ export const preferencesSchema = z
   .strict();
 export type Preferences = z.infer<typeof preferencesSchema>;
 export const defaultPreferences: Preferences = {
+  speechVoice: null,
+  speechReply: 'voice',
   notificationRule: '',
   rules: '',
   timeZone: null,
@@ -49,7 +58,7 @@ function canonicalLocale(value: string) {
   return null;
 }
 const columns =
-  'notification_rule AS "notificationRule",rules,time_zone AS "timeZone",locale,hour_cycle AS "hourCycle",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd"';
+  'speech_voice AS "speechVoice",speech_reply AS "speechReply",notification_rule AS "notificationRule",rules,time_zone AS "timeZone",locale,hour_cycle AS "hourCycle",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd"';
 function ianaTimeZone(value: string) {
   try {
     new Intl.DateTimeFormat('en', { timeZone: value });
@@ -82,12 +91,13 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
     async update(raw: unknown): Promise<Preferences> {
       const patch = validate(raw);
       const result = await pool.query(
-        `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle,rules)
-        VALUES($1,COALESCE($2,$7),$3,COALESCE($4,$8),COALESCE($5,$9),COALESCE($6::boolean,$10::boolean),$11,COALESCE($12,$13),COALESCE($16,''))
+        `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle,rules,speech_voice,speech_reply)
+        VALUES($1,COALESCE($2,$7),$3,COALESCE($4,$8),COALESCE($5,$9),COALESCE($6::boolean,$10::boolean),$11,COALESCE($12,$13),COALESCE($16,''),$17,COALESCE($18,'voice'))
         ON CONFLICT(owner_id) DO UPDATE SET notification_rule=COALESCE($2,preferences.notification_rule),rules=COALESCE($16,preferences.rules),
         time_zone=CASE WHEN $15 THEN $3 ELSE preferences.time_zone END,quiet_start=COALESCE($4,preferences.quiet_start),quiet_end=COALESCE($5,preferences.quiet_end),
         quiet_hours_enabled=COALESCE($6,preferences.quiet_hours_enabled),locale=CASE WHEN $14 THEN $11 ELSE preferences.locale END,
-        hour_cycle=COALESCE($12,preferences.hour_cycle)
+        hour_cycle=COALESCE($12,preferences.hour_cycle),speech_reply=COALESCE($18,preferences.speech_reply),
+        speech_voice=CASE WHEN $19 THEN $17 ELSE preferences.speech_voice END
         RETURNING ${columns}`,
         [
           ownerId,
@@ -106,6 +116,9 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
           patch.locale !== undefined,
           patch.timeZone !== undefined,
           patch.rules ?? null,
+          patch.speechVoice ?? null,
+          patch.speechReply ?? null,
+          patch.speechVoice !== undefined,
         ],
       );
       return result.rows[0];

@@ -1,6 +1,9 @@
 import Fastify, { type FastifyReply } from 'fastify';
 import multipart from '@fastify/multipart';
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
+import type { SpeechService } from './speech.ts';
+import { messageInput, registerAudioMessages } from './audio-messages.ts';
 import type { ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { pool } from './db.ts';
@@ -62,6 +65,8 @@ export interface AppDependencies {
   linkReplay?: (turnId: string, sessionId: string) => void;
   admission?: WorkAdmission;
   artifacts?: ArtifactService;
+  speech?: SpeechService;
+  attributeAudioUsage?: (client: PoolClient, ids: string[], turnId: string) => Promise<void>;
   submitMessage?: typeof submitUserMessage;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
   computer?: Pick<
@@ -117,7 +122,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
   );
   if (desktopAccess && dependencies.admission) registerWorkAdmission(app, dependencies.admission);
   app.setErrorHandler((error, request, reply) => {
-    const known = error instanceof Error ? (error as Error & { statusCode?: number }) : undefined;
+    const known =
+      error instanceof Error
+        ? (error as Error & { statusCode?: number; retryable?: boolean })
+        : undefined;
     const status = error instanceof z.ZodError ? 400 : known?.statusCode || 500;
     if (status >= 500)
       logFailure('request_failed', error, {
@@ -126,6 +134,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         status,
       });
     reply.code(status).send({
+      ...(known?.retryable === true ? { retryable: true } : {}),
       error:
         error instanceof z.ZodError
           ? 'Check the supplied values.'
@@ -135,6 +144,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     });
   });
   await app.register(multipart, { limits: { fileSize: fileBytes, files: 1, fields: 5 } });
+  registerAudioMessages(app, dependencies);
   app.get('/api/health', async () => {
     await pool.query('SELECT 1');
     const release = process.env.NOD_IMAGE_RELEASE || process.env.NOD_RELEASE;
@@ -268,18 +278,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     return reset;
   });
   app.post('/api/messages', async (request) => {
-    const input = z
-      .object({
-        text: z.string().trim().default(''),
-        attachmentIds: z.array(z.uuid()).default([]),
-        replyToMessageId: z.uuid().optional(),
-        replyQuote: z.string().trim().min(1).max(4000).optional(),
-        seenMessageId: z.uuid().optional(),
-        clientMessageId: z.uuid().optional(),
-        threadId: z.uuid().optional(),
-        verificationRequestId: z.uuid().optional(),
-      })
-      .strict()
+    const input = messageInput
       .refine((value) => value.text.length > 0 || value.attachmentIds.length > 0)
       .parse(request.body);
     const clientMessageId = input.clientMessageId ?? randomUUID();

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { SpeechProvider } from '../../ports/speech.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 import { readSpeechResponse } from '../speech.ts';
+import { speechVoices } from '../../shared/speech.ts';
 
 export function createOpenAISpeechProvider(options: {
   apiKey?: string | (() => Promise<string | undefined>);
@@ -48,6 +49,8 @@ export function createOpenAISpeechProvider(options: {
   }
   return {
     id: 'openai',
+    voices: speechVoices.filter((voice) => voice.engine === 'OpenAI'),
+    defaultVoice: `openai:${options.voice ?? 'coral'}`,
     get configured() {
       return options.configured?.() ?? Boolean(options.apiKey);
     },
@@ -119,19 +122,27 @@ export function createOpenAISpeechProvider(options: {
         return result.text;
       });
     },
-    async synthesize(text, signal, report) {
+    async synthesize(text, signal, report, synthesis) {
       signal?.throwIfAborted();
+      const selected = synthesis?.voice
+        ? speechVoices.find((voice) => voice.id === synthesis.voice && voice.engine === 'OpenAI')
+        : undefined;
+      if (synthesis?.voice !== undefined && !selected)
+        throw new Error('That voice is unavailable.');
+      const voice = selected?.id.split(':')[1] ?? options.voice ?? 'coral';
       const model = options.speechModel || 'gpt-4o-mini-tts';
       return measured(model, 'synthesize', signal, report, async (usage) => {
+        const authorization = await headers();
+        signal?.throwIfAborted();
         const response = await request('https://api.openai.com/v1/audio/speech', {
           method: 'POST',
           redirect: 'error',
           signal: AbortSignal.any([AbortSignal.timeout(600_000), ...(signal ? [signal] : [])]),
-          headers: { ...(await headers()), 'Content-Type': 'application/json' },
+          headers: { ...authorization, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model,
             input: text,
-            voice: options.voice || 'coral',
+            voice,
             response_format: 'opus',
           }),
         });

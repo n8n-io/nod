@@ -371,6 +371,16 @@ function isEngine(event) {
   );
 }
 
+function allowMicrophone(sender, details) {
+  return Boolean(
+    engineBound &&
+    details?.isMainFrame === true &&
+    trustedAppURL(details.requestingUrl) &&
+    (details.securityOrigin === undefined || trustedAppURL(details.securityOrigin)) &&
+    isEngine({ sender, senderFrame: sender?.mainFrame }),
+  );
+}
+
 function saveEngineDownload(event, item, sender, frame) {
   if (!isEngine({ sender, senderFrame: frame })) return;
   saveArtifactDownload(event, item, {
@@ -1593,6 +1603,22 @@ else {
       }
       nativeTheme.on('updated', publishPreferences);
       const appSession = session.fromPartition('persist:nod-app');
+      appSession.setPermissionCheckHandler((sender, permission, origin, details) => {
+        return (
+          permission !== 'media' ||
+          (details.mediaType === 'audio' &&
+            trustedAppURL(origin) &&
+            allowMicrophone(sender, details))
+        );
+      });
+      appSession.setPermissionRequestHandler((sender, permission, callback, details) => {
+        callback(
+          permission !== 'media' ||
+            (details.mediaTypes?.length === 1 &&
+              details.mediaTypes[0] === 'audio' &&
+              allowMicrophone(sender, details)),
+        );
+      });
       appSession.on('will-download', saveEngineDownload);
       appSession.webRequest.onBeforeSendHeaders((details, callback) => {
         const headers = { ...details.requestHeaders };

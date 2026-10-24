@@ -80,6 +80,13 @@ export async function copyEngineDependencies({
     const browserBinary = normalized.match(/\/agent-browser\/bin\/agent-browser-([^/]+)$/);
     if (browserBinary)
       return browserBinary[1] === `${platform}-${arch}${platform === 'win32' ? '.exe' : ''}`;
+    const inferenceBinary = normalized.match(
+      /\/onnxruntime-node\/bin\/napi-v\d+\/([^/]+)(?:\/([^/]+))?/,
+    );
+    if (inferenceBinary)
+      return (
+        inferenceBinary[1] === platform && (!inferenceBinary[2] || inferenceBinary[2] === arch)
+      );
     const tuiBinary = normalized.match(
       /\/@earendil-works\/pi-tui\/native\/(?:darwin|linux|win32)\/prebuilds\/([^/]+)(?:\/|$)/,
     );

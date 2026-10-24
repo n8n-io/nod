@@ -334,6 +334,173 @@
   font-weight: 500;
   margin-bottom: 0;
 }
+.record-button {
+  color: var(--muted-foreground);
+}
+.send-button.send-audio-button {
+  width: auto;
+  gap: 6px;
+  padding-inline: 12px;
+}
+.voice-recorder {
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--surface-subtle);
+}
+.voice-recorder-header,
+.voice-recorder-status,
+.voice-recorder-actions,
+.voice-recorder-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.voice-recorder-header {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.voice-recorder-status {
+  min-width: 0;
+  color: var(--accent);
+  font-size: var(--text-control);
+  font-weight: 500;
+}
+.voice-recorder-status svg {
+  flex-shrink: 0;
+}
+.voice-recorder-actions {
+  margin-left: auto;
+  gap: 4px;
+}
+.voice-recorder-actions .button-icon {
+  width: 32px;
+  height: 32px;
+  color: var(--muted-foreground);
+}
+.voice-recorder-input {
+  min-height: 36px;
+  padding-inline: 4px;
+}
+.voice-recorder-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--destructive);
+}
+.voice-recorder-time {
+  min-width: 36px;
+  font-size: var(--text-control);
+  font-variant-numeric: tabular-nums;
+}
+.voice-recorder-level {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  margin-inline: 8px;
+}
+.voice-recorder-level span {
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.voice-recorder-level span[data-active] {
+  background: var(--accent);
+}
+.voice-recorder-limit {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.recording-preview {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 4px;
+}
+.recording-preview audio {
+  display: none;
+}
+.recording-preview-position {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+.recording-preview-position input {
+  appearance: none;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 4px;
+  cursor: pointer;
+}
+.recording-preview-position input::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.recording-preview-position input::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.recording-preview-position input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 6px;
+}
+.recording-preview-time {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.recording-preview > p {
+  grid-column: 1 / -1;
+}
+.voice-recorder p {
+  margin: 8px 4px 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.voice-setup > .button {
+  margin-top: 12px;
+}
+.voice-setup-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.voice-setup-progress progress {
+  flex: 1;
+  min-width: 0;
+  height: 8px;
+  accent-color: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-recorder .spin,
+  .send-audio-button .spin {
+    animation: none;
+  }
+}
 .attachment-uploading {
   display: flex;
   align-items: center;

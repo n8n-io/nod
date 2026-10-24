@@ -1381,6 +1381,10 @@ test('a turn posts its opening line and final reply, shows the lines between as 
                 .execute({ action: 'memory_find', args: { query: 'synthetic' } });
             continued.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
           }
+          if (/with a follow-up/.test(text))
+            await input.tools
+              .find((item) => item.name === 'follow_up')!
+              .execute({ text: 'Should I compare the other options?' });
           const answer = /without an answer/.test(text) ? '' : 'The synthetic summary is ready.';
           input.onEvent({ type: 'message_start' });
           input.onEvent({ type: 'text_delta', text: answer });
@@ -1407,6 +1411,22 @@ test('a turn posts its opening line and final reply, shows the lines between as 
         undefined,
         ['Reading the synthetic comments.', 'The synthetic summary is ready.'],
         ['Found three synthetic threads.'],
+      ],
+      [
+        'Summarize the synthetic comments with a follow-up',
+        undefined,
+        [
+          'Reading the synthetic comments.',
+          'The synthetic summary is ready.',
+          'Should I compare the other options?',
+        ],
+        ['Found three synthetic threads.'],
+      ],
+      [
+        'Summarize the synthetic comments with a follow-up',
+        task,
+        ['The synthetic summary is ready.', 'Should I compare the other options?'],
+        ['Reading the synthetic comments.', 'Found three synthetic threads.'],
       ],
       [
         'Summarize the synthetic comments without an answer',
@@ -1475,6 +1495,8 @@ test('a turn posts its opening line and final reply, shows the lines between as 
       });
       assert.equal(result.status, 'succeeded');
       assert.deepEqual(posted, replies);
+      if (/with a follow-up/.test(prompt))
+        assert.equal(result.spokenReply, 'The synthetic summary is ready.');
       assert.deepEqual(
         events.filter(([type]) => type === 'step').map(([, summary]) => summary),
         steps,

@@ -365,3 +365,53 @@
 .account-settings-body .field-hint a:hover {
   color: var(--link-hover);
 }
+
+.voice-settings .account-preference-row > .input,
+.voice-settings-choice {
+  width: min(320px, 60%);
+}
+.voice-settings-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.voice-settings-choice .input {
+  min-width: 0;
+  flex: 1;
+}
+.voice-settings .field-hint {
+  line-height: 1.5;
+}
+.voice-preview-loading {
+  animation: spin 1s linear infinite;
+}
+.voice-settings-providers {
+  display: grid;
+  margin-top: 16px;
+}
+.voice-settings-providers .field-hint {
+  max-width: 56ch;
+  margin: 0;
+}
+.voice-settings-providers .button {
+  flex-shrink: 0;
+}
+.voice-settings-download {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+}
+@container account-settings (max-width: 400px) {
+  .voice-settings .account-preference-row > .input,
+  .voice-settings-choice {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-preview-loading {
+    animation: none;
+  }
+}

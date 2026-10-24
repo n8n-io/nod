@@ -97,6 +97,11 @@ export async function initializeDatabase() {
       mime_type text NOT NULL, size integer NOT NULL, storage_path text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS audio_messages (
+      owner_id text NOT NULL, message_id uuid NOT NULL, thread_id uuid NOT NULL REFERENCES threads(id),
+      fingerprint text NOT NULL, response jsonb, created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY(owner_id,message_id)
+    );
     CREATE TABLE IF NOT EXISTS preferences (
       owner_id text PRIMARY KEY, notification_rule text NOT NULL DEFAULT '', time_zone text,
       quiet_start text NOT NULL DEFAULT '22:00', quiet_end text NOT NULL DEFAULT '08:00',
@@ -104,6 +109,8 @@ export async function initializeDatabase() {
       hour_cycle text NOT NULL DEFAULT 'auto' CHECK (hour_cycle IN ('auto','h12','h23'))
     );
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS rules text NOT NULL DEFAULT '';
+    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS speech_voice text;
+    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS speech_reply text NOT NULL DEFAULT 'voice' CHECK (speech_reply IN ('voice','always','never'));
     DO $$ BEGIN
       IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='preferences'::regclass AND attname='time_zone' AND attnotnull) THEN
         ALTER TABLE preferences ALTER COLUMN time_zone DROP NOT NULL, ALTER COLUMN time_zone DROP DEFAULT;

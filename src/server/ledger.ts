@@ -299,13 +299,24 @@ export function createLedger({
       get transcriptionConfigured() {
         return base.transcriptionConfigured;
       },
-      async synthesize(text, signal, onUsage) {
+      get voices() {
+        return base.voices;
+      },
+      get defaultVoice() {
+        return base.defaultVoice;
+      },
+      async synthesize(text, signal, onUsage, options) {
         if (await limitReached()) throw new Error(spendingLimitReached);
         try {
-          return await base.synthesize(text, signal, (usage) => {
-            report(usage);
-            onUsage?.(usage);
-          });
+          return await base.synthesize(
+            text,
+            signal,
+            (usage) => {
+              report(usage);
+              onUsage?.(usage);
+            },
+            options,
+          );
         } finally {
           await flushUsage();
         }

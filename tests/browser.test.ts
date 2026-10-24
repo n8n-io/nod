@@ -3433,6 +3433,33 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
       Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      const microphoneRequests = [], recorders = [];
+      Object.defineProperty(navigator, 'mediaDevices', {
+        value: { getUserMedia: () => new Promise((resolve, reject) => microphoneRequests.push({ resolve, reject })) },
+      });
+      globalThis.MediaRecorder = class {
+        static isTypeSupported(type) { return type === 'audio/mp4'; }
+        state = 'inactive';
+        constructor(stream, options) {
+          this.stream = stream;
+          this.mimeType = options.mimeType;
+          recorders.push(this);
+        }
+        start() { this.state = 'recording'; }
+        stop() {
+          this.state = 'inactive';
+          queueMicrotask(() => {
+            this.ondataavailable?.({ data: new Blob(['synthetic audio'], { type: this.mimeType }) });
+            this.onstop?.();
+          });
+        }
+      };
+      const microphone = () => {
+        const track = { stopped: false, stop() { this.stopped = true; } };
+        return { track, getTracks: () => [track], getAudioTracks: () => [track] };
+      };
+      dom.window.HTMLMediaElement.prototype.pause = () => {};
+      dom.window.HTMLMediaElement.prototype.load = () => {};
       const rect = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
       HTMLElement.prototype.getBoundingClientRect = () => rect;
       HTMLElement.prototype.getClientRects = () => [];
@@ -3449,8 +3476,9 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         return url;
       };
       URL.revokeObjectURL = (url) => revoked.push(url);
-      fetch = (url, options) =>
-        new Promise((resolve, reject) => {
+      fetch = (url, options) => {
+        if (url === '/api/speech') return Promise.resolve(Response.json({ transcription: true }));
+        return new Promise((resolve, reject) => {
           assert.ok(url === '/api/uploads' || url.endsWith('/metadata'));
           assert.equal(options.headers.get('X-nod-Account'), 'synthetic-owner');
           const request = { url, options, resolve, reject };
@@ -3461,7 +3489,8 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
             { once: true },
           );
         });
-      const { createElement, useState, act } = await import('react');
+      };
+      const { createElement, useState, StrictMode, act } = await import('react');
       const { createRoot } = await import('react-dom/client');
       const { Composer } = await import('./src/web/components/composer.tsx');
       const { fileBytes } = await import('./src/shared/files.ts');
@@ -3489,8 +3518,8 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
             setText,
             replyTo: null,
             clearReply() {},
-            onSend: async (text, attachments) => {
-              sends.push({ text, attachments });
+            onSend: async (text, attachments, recording) => {
+              sends.push({ text, attachments, ...(recording ? { recording } : {}) });
               return result;
             },
           }),
@@ -3563,7 +3592,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       let closed = false;
       try {
         localStorage.setItem('nod.send-with-enter', 'false');
-        await act(async () => root.render(createElement(Fixture)));
+        await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture))));
         await settle(() => document.querySelector('[contenteditable]'));
         await edit();
         for (const modifiers of [{ isComposing: true }, { keyCode: 229 }]) {
@@ -3701,7 +3730,7 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         localStorage.setItem('synthetic-owner.thread', JSON.stringify({ version: 1, text: 'Restored synthetic request', reply: null, attachments: restoredFiles, missing: [] }));
         root = createRoot(document.getElementById('root'));
         closed = false;
-        await act(async () => root.render(createElement(Fixture, { draftKey: 'synthetic-owner.thread' })));
+        await act(async () => root.render(createElement(StrictMode, null, createElement(Fixture, { draftKey: 'synthetic-owner.thread' }))));
         await settle(() => requests.length === 8);
         assert.equal(requests[4].url, artifact.url + '/metadata');
         assert.equal(document.querySelector('[aria-label="Send message"]').disabled, true);
@@ -3723,6 +3752,66 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await settle(() => !document.querySelector('[aria-label="Send message"]').disabled);
         await submit();
         assert.deepEqual(sends[2], { text: 'Restored synthetic request', attachments: restoredFiles });
+        assert.equal(microphoneRequests.length, 0);
+        await act(async () => replaceText('Keep this synthetic draft'));
+        await click('Record an audio message');
+        assert.equal(microphoneRequests.length, 1);
+        await click('Cancel recording');
+        const cancelled = microphone();
+        await act(async () => microphoneRequests[0].resolve(cancelled));
+        assert.equal(cancelled.track.stopped, true);
+        assert.equal(recorders.length, 0);
+        assert.equal(currentText, 'Keep this synthetic draft');
+        await click('Record an audio message');
+        await act(async () => microphoneRequests[1].reject(new DOMException('Blocked', 'NotAllowedError')));
+        assert.equal(currentText, 'Keep this synthetic draft');
+        assert.ok(document.querySelector('[role="alert"]'));
+        await click('Record an audio message');
+        const recorded = microphone();
+        await act(async () => microphoneRequests[2].resolve(recorded));
+        assert.equal(recorders[0].mimeType, 'audio/mp4');
+        assert.equal(recorded.track.stopped, false);
+        await submit();
+        assert.equal(sends.length, 3);
+        assert.equal(requests.length, 10);
+        await act(async () =>
+          Array.from(document.querySelectorAll('button')).find((button) => button.textContent === 'Stop recording').click(),
+        );
+        assert.equal(recorded.track.stopped, true);
+        await settle(() => document.querySelector('audio'));
+        const preview = document.querySelector('audio').src;
+        assert.ok(document.querySelector('audio').getAttribute('src')?.startsWith('blob:'));
+        assert.equal(revoked.includes(preview), false);
+        assert.equal(requests.length, 10);
+        await act(async () =>
+          window.dispatchEvent(new CustomEvent('nod:attach-artifact', { detail: artifact })),
+        );
+        result = { sent: false, restoreText: true };
+        await submit();
+        await settle(() => currentText === 'Keep this synthetic draft' && drafts.length === 1);
+        assert.equal(sends[3].recording.type, 'audio/mp4');
+        assert.equal(sends[3].recording.name, 'Voice message.m4a');
+        assert.equal(document.querySelector('audio').src, preview);
+        assert.equal(revoked.includes(preview), false);
+        assert.equal(sends[3].attachments[0].id, artifact.id);
+        result = { sent: true };
+        await submit();
+        await settle(() => !document.querySelector('audio'));
+        assert.equal(sends[4].recording, sends[3].recording);
+        assert.equal(revoked.filter((url) => url === preview).length, 1);
+        await click('Record an audio message');
+        const changedOwner = microphone();
+        await act(async () => microphoneRequests[3].resolve(changedOwner));
+        await act(async () => setRequestAccount('another-synthetic-owner'));
+        await settle(() => changedOwner.track.stopped);
+        assert.equal(document.querySelector('audio'), null);
+        await click('Record an audio message');
+        await act(async () => root.unmount());
+        closed = true;
+        const afterUnmount = microphone();
+        await act(async () => microphoneRequests[4].resolve(afterUnmount));
+        assert.equal(afterUnmount.track.stopped, true);
+        assert.equal(recorders.length, 2);
       } finally {
         if (!closed) await act(async () => root.unmount());
         dom.window.close();

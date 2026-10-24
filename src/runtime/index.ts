@@ -779,6 +779,7 @@ export function createAgentRuntime(dependencies: {
         context.taskContext && taskResult && taskResult.trim() !== lastReply
           ? taskResult
           : undefined;
+      const spokenReply = result?.trim() || lastReply;
       if (status === 'succeeded' && followUps.length) {
         if (result) {
           await deliverReply(result);
@@ -794,6 +795,7 @@ export function createAgentRuntime(dependencies: {
       return {
         status,
         ...(result ? { result } : {}),
+        ...(spokenReply ? { spokenReply } : {}),
         ...(waitingFor ? { waitingFor } : {}),
         ...(waitingMessage ? { message: waitingMessage } : {}),
         ...(handoffBrowserId ? { handoffBrowserId } : {}),

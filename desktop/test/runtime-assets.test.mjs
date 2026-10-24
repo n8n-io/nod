@@ -1150,6 +1150,7 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
         'synthetic-extension': '1.0.0',
         'synthetic-linux': '1.0.0',
         '@synthetic/intel': '1.0.0',
+        'onnxruntime-node': '1.0.0',
       },
       devDependencies: { 'synthetic-tool': '1.0.0' },
     }),
@@ -1180,6 +1181,16 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
       JSON.stringify({ name, os: name.includes('linux') ? ['linux'] : ['darwin'], cpu: ['x64'] }),
     );
   }
+  const inference = join(source, 'node_modules', 'onnxruntime-node');
+  await mkdir(inference, { recursive: true });
+  await writeFile(join(inference, 'package.json'), JSON.stringify({ name: 'onnxruntime-node' }));
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    for (const arch of ['arm64', 'x64']) {
+      const directory = join(inference, 'bin', 'napi-v3', platform, arch);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'onnxruntime_binding.node'), 'synthetic native binary');
+    }
+  }
   await copyEngineDependencies({ root: source, target });
   for (const path of [
     'synthetic-linux',
@@ -1187,8 +1198,42 @@ test('packaged engine loads dynamic dependencies and binary links outside the ch
     'synthetic-tool',
     'synthetic-helper',
     '.bin/tool',
+    'onnxruntime-node/bin/napi-v3/linux',
+    'onnxruntime-node/bin/napi-v3/win32',
+    'onnxruntime-node/bin/napi-v3/darwin/x64',
   ])
     await assert.rejects(stat(join(target, 'node_modules', path)), { code: 'ENOENT' });
+  assert.equal(
+    await readFile(
+      join(
+        target,
+        'node_modules/onnxruntime-node/bin/napi-v3/darwin/arm64/onnxruntime_binding.node',
+      ),
+      'utf8',
+    ),
+    'synthetic native binary',
+  );
+  const windowsTarget = join(root, 'windows-application');
+  await copyEngineDependencies({
+    root: source,
+    target: windowsTarget,
+    platform: 'win32',
+    arch: 'x64',
+  });
+  assert.ok(
+    (
+      await stat(
+        join(
+          windowsTarget,
+          'node_modules/onnxruntime-node/bin/napi-v3/win32/x64/onnxruntime_binding.node',
+        ),
+      )
+    ).isFile(),
+  );
+  await assert.rejects(
+    stat(join(windowsTarget, 'node_modules/onnxruntime-node/bin/napi-v3/darwin')),
+    { code: 'ENOENT' },
+  );
   assert.equal(
     JSON.parse(
       await readFile(

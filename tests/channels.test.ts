@@ -3,6 +3,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
+import { fork } from 'node:child_process';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import Fastify from 'fastify';
@@ -21,9 +22,14 @@ import { createChannelSessionStore } from '../src/server/channel-session.ts';
 import { createChannelMedia } from '../src/server/channel-media.ts';
 import { createSpeech } from '../src/server/speech.ts';
 import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
-import { createOpenRouterTranscriptionProvider } from '../src/providers/openrouter/speech.ts';
+import { createLocalSpeechProvider } from '../src/providers/local-speech/index.ts';
+import { decodeLocalAudio } from '../src/providers/local-speech/audio.ts';
+import {
+  createOpenRouterSpeechProvider,
+  createOpenRouterTranscriptionProvider,
+} from '../src/providers/openrouter/speech.ts';
 import { createArtifactService } from '../src/server/artifacts.ts';
-import { mkdtemp, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Artifact } from '../src/shared/contracts.ts';
@@ -1426,6 +1432,262 @@ test('speech uses a bounded transcription request and generates Ogg voice output
   await assert.rejects(failed.transcribe!({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }));
   await assert.rejects(failed.synthesize('Synthetic provider error'));
   assert.equal(cancelled, 2);
+});
+
+test('speech honors the selected OpenAI voice and refuses voices from another engine before requesting audio', async () => {
+  const requests: Record<string, unknown>[] = [];
+  const service = createSpeech(
+    createOpenAISpeechProvider({
+      apiKey: 'fixture-never-live',
+      fetch: async (_url, init) => {
+        requests.push(JSON.parse(String(init?.body)));
+        return new Response(Buffer.from('synthetic speech'));
+      },
+    }),
+  );
+  await service.synthesize('Synthetic reply.', undefined, { voice: 'openai:cedar' });
+  assert.equal(requests[0].voice, 'cedar');
+  await assert.rejects(
+    service.synthesize('Synthetic reply.', undefined, { voice: 'elevenlabs:sarah' }),
+  );
+  await assert.rejects(
+    service.synthesize('Synthetic reply.', undefined, { voice: 'openai:missing' }),
+  );
+  assert.equal(requests.length, 1);
+});
+
+test('OpenRouter speech reuses the current key for selected voices and never silently changes the selected engine', async () => {
+  let key: string | undefined = 'fixture-openrouter-first';
+  const requests: { authorization: string | null; body: Record<string, unknown> }[] = [];
+  const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  const provider = createOpenRouterSpeechProvider({
+    apiKey: async () => key,
+    configured: () => Boolean(key),
+    fetch: async (url, init) => {
+      assert.equal(String(url), 'https://openrouter.ai/api/v1/audio/speech');
+      assert.equal(init?.redirect, 'error');
+      assert.ok(init?.signal);
+      requests.push({
+        authorization: new Headers(init.headers).get('authorization'),
+        body: JSON.parse(String(init.body)),
+      });
+      return new Response(Buffer.from('synthetic mp3'), {
+        headers: { 'Content-Type': 'audio/mpeg' },
+      });
+    },
+  });
+  const service = createSpeech({
+    ...provider,
+    get configured() {
+      return provider.configured;
+    },
+    synthesize: (text, signal, _report, options) =>
+      provider.synthesize(text, signal, (event) => usage.push(event), options),
+  });
+  assert.equal(service.configured, true);
+  assert.equal(service.transcriptionConfigured, false);
+  const audio = await service.synthesize('Synthetic reply.', undefined, {
+    voice: 'elevenlabs:brian',
+  });
+  assert.equal(audio.mimeType, 'audio/mpeg');
+  assert.equal(audio.fileName, 'reply.mp3');
+  assert.deepEqual(requests[0].body, {
+    model: 'elevenlabs/eleven-v4-turbo',
+    input: 'Synthetic reply.',
+    voice: 'brian',
+    response_format: 'mp3',
+  });
+  key = 'fixture-openrouter-rotated';
+  await service.synthesize('Another synthetic reply.', undefined, { voice: 'kokoro:bf_emma' });
+  assert.equal(requests[1].body.model, 'hexgrad/kokoro-82m');
+  assert.equal(requests[1].body.voice, 'bf_emma');
+  assert.equal(requests[1].authorization, 'Bearer fixture-openrouter-rotated');
+  for (const voice of ['openai:coral', 'local:af_heart', 'elevenlabs:missing', ''])
+    await assert.rejects(service.synthesize('Synthetic reply.', undefined, { voice }));
+  key = undefined;
+  assert.equal(service.configured, false);
+  await assert.rejects(service.synthesize('Synthetic reply.'));
+  await assert.rejects(provider.synthesize('Synthetic reply.'));
+  assert.equal(requests.length, 2);
+  assert.equal(usage.length, 2);
+  assert.notEqual(usage[0].id, usage[1].id);
+  assert.equal(usage[0].costUsd, null);
+  assert.equal(usage[0].pricing, 'unavailable');
+  assert.equal(usage[1].model, 'hexgrad/kokoro-82m');
+  assert.doesNotMatch(
+    JSON.stringify(usage),
+    /fixture-openrouter|Synthetic|synthetic mp3|brian|bf_emma/,
+  );
+});
+
+test('OpenRouter speech refuses failed, empty, oversized and non-audio responses and honors cancellation', async () => {
+  let failure: 'status' | 'mime' | 'empty' | 'size' | 'abort' = 'status';
+  let cancelled = 0;
+  let calls = 0;
+  const controller = new AbortController();
+  const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  const provider = createOpenRouterSpeechProvider({
+    apiKey: async () => 'fixture-never-live',
+    configured: () => true,
+    fetch: async (_url, init) => {
+      calls++;
+      if (failure === 'abort') {
+        controller.abort();
+        init!.signal!.throwIfAborted();
+      }
+      return new Response(
+        new ReadableStream({
+          start(stream) {
+            if (failure === 'empty') stream.close();
+            if (failure === 'size') stream.enqueue(Buffer.alloc(50 * 1024 * 1024 + 1));
+          },
+          cancel() {
+            cancelled++;
+          },
+        }),
+        {
+          status: failure === 'status' ? 503 : 200,
+          headers: { 'Content-Type': failure === 'mime' ? 'application/json' : 'audio/mpeg' },
+        },
+      );
+    },
+  });
+  for (failure of ['status', 'mime', 'empty', 'size', 'abort'] as const)
+    await assert.rejects(
+      provider.synthesize('Synthetic reply.', controller.signal, (event) => usage.push(event)),
+    );
+  assert.equal(calls, 5);
+  assert.equal(cancelled, 3);
+  assert.deepEqual(
+    usage.map((event) => event.status),
+    ['failed', 'failed', 'failed', 'failed', 'cancelled'],
+  );
+  await assert.rejects(provider.synthesize('Synthetic reply.', controller.signal));
+  assert.equal(calls, 5);
+  const abortWhileResolvingKey = new AbortController();
+  const late = createOpenRouterSpeechProvider({
+    apiKey: async () => {
+      abortWhileResolvingKey.abort();
+      return 'fixture-never-live';
+    },
+    configured: () => true,
+    fetch: async () => {
+      throw new Error('A cancelled request must not be sent.');
+    },
+  });
+  await assert.rejects(late.synthesize('Synthetic reply.', abortWhileResolvingKey.signal), {
+    name: 'AbortError',
+  });
+});
+
+test('on-device speech starts only when enabled, isolates the worker environment, and kills cancelled work without replay', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-speech-worker-'));
+  const worker = join(root, 'worker.mjs');
+  await writeFile(
+    worker,
+    `
+    process.on('message', (message) => {
+      if (message.method === 'prepare') {
+        process.send({ id: message.id, type: 'ready' });
+      } else if (message.text !== 'Synthetic delayed reply.') {
+        const bytes = new Uint8Array(46);
+        process.send({ id: message.id, type: 'audio', bytes });
+      }
+    });
+  `,
+  );
+  const children: ReturnType<typeof fork>[] = [];
+  const provider = createLocalSpeechProvider({
+    cacheDir: join(root, 'models'),
+    fork: (_path, args, options) => {
+      assert.deepEqual(
+        Object.keys(options!.env!)
+          .sort()
+          .filter(
+            (name) =>
+              ![
+                'PATH',
+                'SystemRoot',
+                'TMPDIR',
+                'TMP',
+                'TEMP',
+                'LANG',
+                'ELECTRON_RUN_AS_NODE',
+              ].includes(name),
+          ),
+        [],
+      );
+      assert.equal(options!.serialization, 'advanced');
+      const child = fork(worker, args, options);
+      children.push(child);
+      return child;
+    },
+  });
+  t.after(async () => {
+    await provider.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  assert.equal(provider.configured, false);
+  await assert.rejects(provider.synthesize('Synthetic reply.'));
+  assert.equal(children.length, 0);
+  await provider.prepare();
+  assert.equal(provider.configured, true);
+  assert.equal(provider.transcriptionConfigured, true);
+  await assert.rejects(
+    provider.synthesize('Synthetic reply.', undefined, undefined, { voice: 'elevenlabs:sarah' }),
+  );
+  const controller = new AbortController();
+  const cancelled = assert.rejects(
+    provider.synthesize('Synthetic delayed reply.', controller.signal),
+    { name: 'AbortError' },
+  );
+  const queued = assert.rejects(provider.synthesize('Synthetic queued reply.'), {
+    name: 'AbortError',
+  });
+  const stopped = new Promise<void>((resolve) => children[0].once('exit', () => resolve()));
+  controller.abort();
+  await Promise.all([cancelled, queued, stopped]);
+  assert.equal(children[0].signalCode, 'SIGKILL');
+  assert.equal(children.length, 1);
+  assert.equal((await provider.synthesize('Synthetic new reply.')).mimeType, 'audio/wav');
+  assert.equal(children.length, 2);
+  await provider.close();
+  assert.equal(provider.configured, false);
+  await assert.rejects(provider.prepare());
+});
+
+test('on-device speech decodes a real WAV into bounded mono samples and refuses unsupported recordings', async () => {
+  const samples = 48000;
+  const wav = Buffer.alloc(44 + samples * 4);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(wav.length - 8, 4);
+  wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(2, 22);
+  wav.writeUInt32LE(48000, 24);
+  wav.writeUInt32LE(48000 * 4, 28);
+  wav.writeUInt16LE(4, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(samples * 4, 40);
+  for (let i = 0; i < samples; i++) {
+    const value = Math.round(Math.sin((i * 2 * Math.PI * 440) / 48000) * 12000);
+    wav.writeInt16LE(value, 44 + i * 4);
+    wav.writeInt16LE(value, 46 + i * 4);
+  }
+  const decoded = await decodeLocalAudio(wav, 'audio/wav');
+  assert.ok(Math.abs(decoded.length - 16000) < 4);
+  const rms = Math.sqrt(decoded.reduce((sum, value) => sum + value * value, 0) / decoded.length);
+  assert.ok(rms > 0.2 && rms < 0.3);
+  const transported = Buffer.alloc(wav.length + 1);
+  wav.copy(transported, 1);
+  assert.deepEqual(await decodeLocalAudio(transported.subarray(1), 'audio/wav'), decoded);
+  const muted = Buffer.from(wav);
+  muted.fill(0, 44);
+  await assert.rejects(decodeLocalAudio(muted, 'audio/wav'), { message: 'silence' });
+  await assert.rejects(decodeLocalAudio(wav, 'audio/mp4'));
+  await assert.rejects(decodeLocalAudio(Buffer.alloc(0), 'audio/wav'));
 });
 
 test('OpenRouter transcribes with its own current key, bounds responses, and reports cost without content', async () => {

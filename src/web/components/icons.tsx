@@ -14,6 +14,7 @@ import {
   Merge as LucideMerge,
   ListOrdered as LucideListOrdered,
   MapPin as LucideMapPin,
+  Mic as LucideMic,
   Monitor as LucideMonitor,
   MonitorSmartphone as LucideMonitorSmartphone,
   Moon as LucideMoon,
@@ -190,6 +191,7 @@ export const KeyRound = lucide(LucideKeyRound);
 export const Leaf = lucide(LucideLeaf);
 export const ListOrdered = lucide(LucideListOrdered);
 export const MapPin = lucide(LucideMapPin);
+export const Mic = lucide(LucideMic);
 export const Merge = lucide(LucideMerge);
 export const Monitor = lucide(LucideMonitor);
 export const MonitorSmartphone = lucide(LucideMonitorSmartphone);

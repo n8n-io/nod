@@ -9,6 +9,7 @@ import pg from 'pg';
 import { createChannelSettings } from '../src/server/channel-settings.ts';
 import type { ApplicationAdapters } from '../src/server/composition.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
+import type { SpeechProvider } from '../src/ports/speech.ts';
 import type { MessagingAttachment } from '../src/ports/messaging.ts';
 import { createLedger } from '../src/server/ledger.ts';
 import { memoryObjectStore } from './fixtures/object-store.ts';
@@ -18,6 +19,79 @@ import { accessCookie, accessKey } from '../src/server/access.ts';
 import { analyticsRoutes, createAnalytics } from '../src/server/analytics.ts';
 import { gunzipSync } from 'node:zlib';
 import { createChannelSessionStore } from '../src/server/channel-session.ts';
+import { createSpeech } from '../src/server/speech.ts';
+import { registerSpeechSettings } from '../src/server/speech-settings.ts';
+import type { createPreferencesStore } from '../src/server/preferences.ts';
+
+test('speech previews reject unavailable voices, serialize generation and release cancelled requests', async (t) => {
+  let calls = 0;
+  let started!: () => void;
+  let finish!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const signals: AbortSignal[] = [];
+  const voices: string[] = [];
+  const app = Fastify();
+  registerSpeechSettings(app, {
+    preferences: { get: async () => ({ locale: 'pt-PT' }) } as ReturnType<
+      typeof createPreferencesStore
+    >,
+    speech: createSpeech({
+      id: 'fixture',
+      configured: true,
+      voices: [
+        { id: 'openai:coral', name: 'Coral', description: 'Synthetic voice', engine: 'OpenAI' },
+      ],
+      synthesize: async (_text, signal, _report, options) => {
+        calls++;
+        signals.push(signal!);
+        voices.push(options!.voice!);
+        if (calls === 1) {
+          started();
+          await held;
+        }
+        return {
+          bytes: Buffer.from('synthetic-audio'),
+          mimeType: 'audio/wav',
+          fileName: 'preview.wav',
+        };
+      },
+    }),
+  });
+  const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+  t.after(async () => {
+    finish();
+    await app.close();
+  });
+  const send = (voice: string, signal?: AbortSignal) =>
+    fetch(origin + '/api/speech/preview', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ voice }),
+      signal,
+    });
+  assert.equal((await send('elevenlabs:sarah')).status, 400);
+  assert.equal(calls, 0);
+  const controller = new AbortController();
+  const first = send('openai:coral', controller.signal).catch(() => undefined);
+  await ready;
+  assert.equal((await send('openai:coral')).status, 409);
+  controller.abort();
+  await first;
+  for (let attempt = 0; attempt < 100 && !signals[0].aborted; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(signals[0].aborted, true);
+  const next = await send('openai:coral');
+  assert.equal(next.status, 200);
+  assert.equal(next.headers.get('cache-control'), 'no-store');
+  assert.equal(next.headers.get('content-type'), 'audio/wav');
+  assert.equal(await next.text(), 'synthetic-audio');
+  assert.deepEqual(voices, ['openai:coral', 'openai:coral']);
+});
 
 test('analytics drops revoked owner queues while preserving another owner and rechecks dispatch consent', async (t) => {
   const received: { distinct_id: string; event: string }[] = [];
@@ -169,10 +243,11 @@ test(
     process.env.DATABASE_URL = url.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
     process.env.NOD_DATA_ROOT = join(objects, 'runtime');
-    const { pool } = await import('../src/server/db.ts');
+    const { pool, initializeDatabase } = await import('../src/server/db.ts');
+    await initializeDatabase();
     const { createApplication, createDefaultAdapters } =
       await import('../src/server/composition.ts');
-    const { dataRoot, port } = await import('../src/server/config.ts');
+    const { dataRoot, port, ownerId } = await import('../src/server/config.ts');
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     const defaults = createDefaultAdapters({
@@ -242,6 +317,59 @@ test(
         assert.equal(requests.length, beforeFailure + 1);
         if (provider === 'openrouter') await assert.rejects(speech.synthesize('Synthetic reply'));
         await adapters.models!.close();
+      }
+      const localChoice = createDefaultAdapters({
+        OPENAI_API_KEY: 'fixture-openai',
+        OPENROUTER_API_KEY: 'fixture-router',
+      });
+      const { createPreferencesStore } = await import('../src/server/preferences.ts');
+      const preferences = createPreferencesStore(pool, ownerId);
+      const localProvider = localChoice.localSpeech as typeof localChoice.localSpeech &
+        SpeechProvider & { transcribe: NonNullable<SpeechProvider['transcribe']> };
+      let localCalls = 0;
+      const localTranscribe = t.mock.method(
+        localProvider,
+        'transcribe',
+        async (recording: Parameters<NonNullable<SpeechProvider['transcribe']>>[0]) => {
+          localCalls++;
+          assert.deepEqual(recording, audio);
+          return 'Synthetic local transcription';
+        },
+      );
+      const settings = Fastify();
+      registerSpeechSettings(settings, {
+        speech: createSpeech(localChoice.speech),
+        preferences,
+        inputFormat: localChoice.speechInputFormat,
+      });
+      try {
+        await preferences.update({ speechVoice: 'local:bf_emma' });
+        const beforeLocal = requests.length;
+        assert.equal(
+          await createSpeech(localChoice.speech).transcribe(audio),
+          'Synthetic local transcription',
+        );
+        assert.equal(localCalls, 1);
+        assert.equal(requests.length, beforeLocal);
+        const localSettings = (await settings.inject('/api/speech')).json();
+        assert.equal(localSettings.speechVoice, 'local:bf_emma');
+        assert.equal(localSettings.transcriptionFormat, 'wav');
+        await preferences.update({ speechVoice: null });
+        speechFails = false;
+        assert.equal(
+          await createSpeech(localChoice.speech).transcribe(audio),
+          'Synthetic transcription',
+        );
+        assert.equal(localCalls, 1);
+        assert.equal(requests.length, beforeLocal + 1);
+        assert.equal(requests.at(-1)?.url, 'https://api.openai.com/v1/audio/transcriptions');
+        assert.equal((await settings.inject('/api/speech')).json().transcriptionFormat, undefined);
+      } finally {
+        localTranscribe.mock.restore();
+        await preferences.update({ speechVoice: null });
+        await settings.close();
+        await localChoice.localSpeech!.close();
+        await localChoice.models!.close();
       }
       await assert.rejects(createSpeech(defaults.speech).transcribe(audio));
     } finally {

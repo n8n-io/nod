@@ -401,7 +401,15 @@ async function runningDesktop(
   });
   let openAtLogin = false;
   let requestHeaders;
+  let permissionCheck;
+  let permissionRequest;
   const appSession = Object.assign(new EventEmitter(), {
+    setPermissionCheckHandler: (handler) => {
+      permissionCheck = handler;
+    },
+    setPermissionRequestHandler: (handler) => {
+      permissionRequest = handler;
+    },
     webRequest: {
       onBeforeSendHeaders: (handler) => {
         requestHeaders = handler;
@@ -721,6 +729,12 @@ async function runningDesktop(
     rendererReady,
     updateMenu,
     headers: (details) => new Promise((resolve) => requestHeaders(details, resolve)),
+    checkPermission: (...args) => permissionCheck?.(...args) ?? true,
+    requestPermission: (sender, permission, details) =>
+      new Promise((resolve) => {
+        if (permissionRequest) permissionRequest(sender, permission, resolve, details);
+        else resolve(true);
+      }),
   };
 }
 
@@ -2238,6 +2252,60 @@ test('desktop proxy overrides reach only isolated source engines and retain orig
     }),
     /profile path must be absolute/,
   );
+});
+
+test('microphone access requires audio from an owned top-level app frame', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('Media permissions need no engine request.'));
+  f.showEngine();
+  const window = f.windows.at(-1);
+  const sender = window.webContents;
+  const origin = 'http://127.0.0.1:4310';
+  const details = {
+    requestingUrl: `${origin}/`,
+    securityOrigin: origin,
+    isMainFrame: true,
+  };
+  const check = (candidate = sender, overrides = {}, requestingOrigin = origin) =>
+    f.checkPermission(candidate, 'media', requestingOrigin, {
+      ...details,
+      mediaType: 'audio',
+      ...overrides,
+    });
+  const request = (candidate = sender, overrides = {}) =>
+    f.requestPermission(candidate, 'media', { ...details, mediaTypes: ['audio'], ...overrides });
+  assert.equal(check(), true);
+  assert.equal(await request(), true);
+  for (const candidate of [null, { mainFrame: sender.mainFrame }]) {
+    assert.equal(check(candidate), false);
+    assert.equal(await request(candidate), false);
+  }
+  for (const overrides of [
+    { isMainFrame: false },
+    { isMainFrame: undefined },
+    { requestingUrl: 'https://example.test/' },
+    { requestingUrl: `${origin}/api/artifacts/synthetic` },
+    { requestingUrl: undefined },
+    { securityOrigin: 'https://example.test' },
+  ]) {
+    assert.equal(check(sender, overrides), false);
+    assert.equal(await request(sender, overrides), false);
+  }
+  assert.equal(check(sender, {}, 'https://example.test'), false);
+  for (const mediaType of ['video', 'unknown', undefined])
+    assert.equal(check(sender, { mediaType }), false);
+  for (const mediaTypes of [['video'], ['audio', 'video'], [], undefined])
+    assert.equal(await request(sender, { mediaTypes }), false);
+  for (const url of ['https://example.test/', `${origin}/api/artifacts/synthetic`]) {
+    sender.mainFrame.url = url;
+    assert.equal(check(), false);
+    assert.equal(await request(), false);
+  }
+  sender.mainFrame.url = `${origin}/`;
+  assert.equal(f.checkPermission(sender, 'notifications', origin, details), true);
+  assert.equal(await f.requestPermission(sender, 'notifications', details), true);
+  window.destroy();
+  assert.equal(check(), false);
+  assert.equal(await request(), false);
 });
 
 test('native artifact saving requires an owned main frame on the current trusted app', async (t) => {
