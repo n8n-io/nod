@@ -3680,7 +3680,7 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
   if(path==='/api/apps/discovery/'+id+'/authorize'){
     const body=JSON.parse(options.body);
     requests.push(body);
-    if(body.restartAttempt&&body.restartAttempt!==current?.attempt)return Response.json({error:'This sign-in changed.'},{status:409});
+    if(body.restartAttempt!==undefined&&body.restartAttempt!==(oauthStatus==='pending'?current.attempt:null))return Response.json({error:'This sign-in changed.'},{status:409});
     current=next();oauthStatus='pending';return Response.json(current);
   }
   if(path==='/api/apps/discovery/'+id){
@@ -3703,6 +3703,7 @@ await type('synthetic-wrong-client');
 await click('Continue to Fixture MCP');
 await waitFor(()=>button('Start again'),'Authorization must remain pending');
 assert.equal(requests[0].clientId,'synthetic-wrong-client');
+assert.equal(requests[0].restartAttempt,null,'Initial registration must be bound to an idle proposal');
 oauthStatus='failed';
 await focus();
 await waitFor(()=>button('Try again'),'Failed authorization must expose recovery');
@@ -3715,7 +3716,21 @@ await type('synthetic-correct-client');
 await click('Continue to Fixture MCP');
 await waitFor(()=>button('Start again'),'The corrected registration must authorize');
 assert.equal(requests.at(-1).clientId,'synthetic-correct-client');
-assert.equal(requests.at(-1).restartAttempt,undefined,'A failed attempt must not be replaced again');
+assert.equal(requests.at(-1).restartAttempt,null,'A failed attempt must be bound to the idle proposal');
+oauthStatus='failed';
+await focus();
+await click('Try again');
+await waitFor(input,'The failed registration must reopen for editing');
+current=next();oauthStatus='pending';
+const newerWhileEditing=current;
+const beforeEditorSubmit=requests.length;
+const startsBeforeEditorSubmit=starts;
+await click('Continue to Fixture MCP');
+await waitFor(()=>button('Start again'),'A stale editor must reconcile the newer pending attempt');
+assert.equal(requests.length,beforeEditorSubmit+1,'A stale editor must not retry automatically');
+assert.equal(requests.at(-1).restartAttempt,null,'A terminal editor must declare its idle proposal state');
+assert.equal(starts,startsBeforeEditorSubmit,'A stale terminal editor must not replace a newer sign-in');
+assert.equal(current.attempt,newerWhileEditing.attempt);
 const old=current;
 current=next();
 const replacement=current;
@@ -4301,7 +4316,10 @@ test(
         url: `/api/apps/discovery/${customId}/authorize`,
         payload: { returnTo: 'window', ...payload },
       });
-    const oldCustom = await startCustom({ clientId: 'synthetic-client-id' });
+    const oldCustom = await startCustom({
+      clientId: 'synthetic-client-id',
+      restartAttempt: null,
+    });
     assert.equal(oldCustom.statusCode, 200, oldCustom.body);
     assert.deepEqual((await startCustom({})).json(), oldCustom.json());
     const currentCustom = await startCustom({
@@ -4324,7 +4342,17 @@ test(
     assert.equal(currentCustomStatus.statusCode, 200, currentCustomStatus.body);
     assert.equal(currentCustomStatus.json().attempt, currentCustom.json().attempt);
     assert.equal(currentCustomStatus.json().authorizationUrl, currentCustom.json().url);
-    assert.equal(await finishInWindow(currentCustom.json(), 'code=fixture-code'), 'connected');
+    assert.equal(await finishInWindow(currentCustom.json(), 'code=fail'), 'failed');
+    assert.equal((await web.inject(`/api/apps/discovery/${customId}`)).json().attempt, undefined);
+    const newerWhileEditing = await startCustom({ restart: true, restartAttempt: null });
+    assert.equal(newerWhileEditing.statusCode, 200, newerWhileEditing.body);
+    const beforeStaleEditor = states.length;
+    assert.equal((await startCustom({ restart: true, restartAttempt: null })).statusCode, 409);
+    assert.equal(states.length, beforeStaleEditor);
+    const reconciled = await web.inject(`/api/apps/discovery/${customId}`);
+    assert.equal(reconciled.json().attempt, newerWhileEditing.json().attempt);
+    assert.equal(reconciled.json().authorizationUrl, newerWhileEditing.json().url);
+    assert.equal(await finishInWindow(newerWhileEditing.json(), 'code=fixture-code'), 'connected');
     assert.equal((await web.inject(`/api/apps/discovery/${customId}`)).json().attempt, undefined);
   },
 );

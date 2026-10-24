@@ -772,13 +772,14 @@ export async function createDiscoveredConnections(
         restartAttempt: z
           .string()
           .regex(/^[A-Za-z0-9_-]{43}$/)
+          .nullable()
           .optional(),
       })
       .strict()
       .parse(input);
     const suppliedStateHash = restartAttempt
       ? createHash('sha256').update(restartAttempt).digest('hex')
-      : undefined;
+      : restartAttempt;
     let attempt: ProposalRow | undefined;
     let authorizationFailed = false;
     try {
@@ -786,7 +787,7 @@ export async function createDiscoveredConnections(
         const pending = await proposal(id, client, true);
         if (
           (expectedStateHash && pending.oauth_state_hash !== expectedStateHash) ||
-          (suppliedStateHash && pending.oauth_state_hash !== suppliedStateHash)
+          (suppliedStateHash !== undefined && pending.oauth_state_hash !== suppliedStateHash)
         )
           throw error('This sign-in changed. Use the newest window or try again.', 409);
         const path = pending.paths[0];

@@ -319,7 +319,7 @@ export function AppDiscoveryDialog({
     setError('');
     const previous = pending.current;
     const restartAttempt =
-      previous?.attempt ?? (discovery.oauthStatus === 'pending' ? discovery.attempt : undefined);
+      previous?.attempt ?? (discovery.oauthStatus === 'pending' ? discovery.attempt : null) ?? null;
     if (previous) show({ ...previous, url: undefined, outcome: undefined, opened: false });
     try {
       const result = await api<{ url: string; attempt?: string }>(
@@ -330,7 +330,7 @@ export function AppDiscoveryDialog({
             ...(enteredClientId ? { clientId: enteredClientId } : {}),
             returnTo: 'window',
             restart: true,
-            ...(restartAttempt ? { restartAttempt } : {}),
+            restartAttempt,
           }),
           signal: controller.signal,
         },
