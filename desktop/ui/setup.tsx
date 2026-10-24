@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { SetupProgress } from '../../src/web/components/setup-progress';
 import { Welcome } from '../../src/web/pages/onboarding/steps/welcome';
+import { Introduction } from '../../src/web/pages/onboarding/steps/intro';
 import { OnboardingFrame } from '../../src/web/pages/onboarding/frame';
+import { startupMessage, type StartupStage } from '../../src/shared/desktop-startup';
 import { initializeFocusVisibility } from '../../src/web/lib/focus';
 import '../../src/web/theme.css';
 import '../../src/web/components/motion.css';
@@ -10,9 +12,11 @@ import '../../src/web/components/setup-progress.css';
 import '../../src/web/components/controls.css';
 import '../../src/web/pages/onboarding/onboarding.css';
 import '../../src/web/pages/onboarding/steps/welcome.css';
+import '../../src/web/pages/onboarding/steps/intro.css';
 
 type RuntimeStatus = {
   phase?: string;
+  stage?: StartupStage;
   message?: string;
   error?: string;
   progress?: number;
@@ -22,6 +26,8 @@ type RuntimeStatus = {
 };
 
 type Status = RuntimeStatus & {
+  remote?: boolean;
+  engineReady?: boolean;
   windowError?: string;
   unlockingKeys?: boolean;
   platform?: string;
@@ -192,11 +198,22 @@ function Startup() {
         : { phase: 'preparing' },
   );
   const [busy, setBusy] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [settingsError, setSettingsError] = useState('');
   const [welcome, setWelcome] = useState<WelcomeChoice | null>(null);
+  const currentWelcome = useRef<WelcomeChoice | null>(null);
+  const localChoiceSaved = useRef(false);
+  const [welcomeStep, setWelcomeStep] = useState<'welcome' | 'waiting' | 'intro'>('welcome');
+  const [handingOff, setHandingOff] = useState(false);
   const [welcomeError, setWelcomeError] = useState('');
   const pending = useRef(false);
+  const recoveryPending = useRef(false);
+
+  function acceptWelcome(choice: WelcomeChoice) {
+    currentWelcome.current = choice;
+    setWelcome(choice);
+  }
 
   useEffect(() => {
     if (!desktop) return;
@@ -221,7 +238,10 @@ function Startup() {
         .then(([preferences, settings]) => {
           if (!active) return;
           applyPreferences(preferences);
-          if (firstSetup) setWelcome(settings.welcome ?? { usageData: false, continued: false });
+          if (firstSetup) {
+            localChoiceSaved.current = Boolean(settings.welcome);
+            acceptWelcome(settings.welcome ?? { usageData: false, continued: false });
+          }
         })
         .catch(() => {
           if (active) setSettingsError('Your saved settings could not be opened. Try again.');
@@ -240,10 +260,14 @@ function Startup() {
     if (initialized) void desktop?.ready?.();
   }, [initialized]);
 
+  useEffect(() => {
+    if (welcomeStep === 'waiting' && status.engineReady) setWelcomeStep('intro');
+  }, [welcomeStep, status.engineReady]);
+
   async function run(action: () => Promise<Status | undefined>) {
-    if (pending.current) return;
-    pending.current = true;
-    setBusy(true);
+    if (recoveryPending.current) return;
+    recoveryPending.current = true;
+    setRecovering(true);
     try {
       const value = await action();
       if (value) setStatus(value);
@@ -255,8 +279,8 @@ function Startup() {
         error: cause instanceof Error ? cause.message : 'nod could not start. Try again.',
       }));
     } finally {
-      pending.current = false;
-      setBusy(false);
+      recoveryPending.current = false;
+      setRecovering(false);
     }
   }
 
@@ -265,13 +289,16 @@ function Startup() {
     pending.current = true;
     setBusy(true);
     setWelcomeError('');
+    if (choice.continued) setHandingOff(true);
     try {
       const saved = await desktop.saveSettings({ welcome: choice });
-      setWelcome(saved.welcome ?? choice);
+      localChoiceSaved.current = true;
+      acceptWelcome(saved.welcome ?? choice);
       if (choice.continued) await desktop.prepare();
     } catch (cause) {
       const message =
         cause instanceof Error ? cause.message : 'Your choice could not be saved. Try again.';
+      setHandingOff(false);
       setWelcomeError(message);
       if (choice.continued) setStatus({ phase: 'error', error: message });
       throw cause;
@@ -281,21 +308,55 @@ function Startup() {
     }
   }
 
-  if (firstSetup && welcome && !welcome.continued)
+  if (
+    firstSetup &&
+    welcome &&
+    welcomeStep !== 'waiting' &&
+    (!welcome.continued ||
+      (handingOff &&
+        status.engineReady &&
+        status.phase !== 'error' &&
+        status.runtime?.phase !== 'error' &&
+        !status.windowError))
+  )
     return (
       <>
         <div className="titlebar" aria-hidden="true" />
-        <OnboardingFrame step="welcome">
-          <div className="ob-screen" inert={busy}>
-            <Welcome
-              arrived="forward"
-              onBack={() => {}}
-              onNext={() => void saveWelcome({ ...welcome, continued: true }).catch(() => {})}
-              usage={{
-                enabled: welcome.usageData,
-                onChange: (usageData) => saveWelcome({ usageData, continued: false }),
-              }}
-            />
+        <OnboardingFrame step={welcomeStep}>
+          <div className="ob-screen" inert={busy && !handingOff} aria-busy={busy || handingOff}>
+            {welcomeStep === 'welcome' ? (
+              <Welcome
+                local
+                arrived="forward"
+                onBack={() => {}}
+                actionLabel="Use this computer"
+                onNext={() =>
+                  void run(async () => {
+                    if (!currentWelcome.current) return;
+                    await saveWelcome({ ...currentWelcome.current, continued: false });
+                    setWelcomeStep(status.engineReady ? 'intro' : 'waiting');
+                    return desktop?.prepare();
+                  })
+                }
+              />
+            ) : (
+              <Introduction
+                local
+                arrived="forward"
+                continuing={handingOff}
+                onBack={() => setWelcomeStep('welcome')}
+                onNext={() => {
+                  if (currentWelcome.current)
+                    void saveWelcome({ ...currentWelcome.current, continued: true }).catch(
+                      () => {},
+                    );
+                }}
+                usage={{
+                  enabled: welcome.usageData,
+                  onChange: (usageData) => saveWelcome({ usageData, continued: false }),
+                }}
+              />
+            )}
           </div>
           {welcomeError && (
             <p className="ob-native-error" role="alert">
@@ -328,8 +389,9 @@ function Startup() {
       ? runtime
       : status;
   const unlocking = status.unlockingKeys && !failure;
+  const working = busy || recovering;
   const error =
-    !busy && failure
+    !working && failure
       ? failure.error || failure.message || 'nod could not start. Try again.'
       : undefined;
   const progress =
@@ -344,7 +406,7 @@ function Startup() {
     ? status.platform === 'darwin'
       ? 'nod uses your Mac’s Keychain to protect your saved connections. Allow access if macOS asks.'
       : 'nod uses your system’s secure storage to protect your saved connections.'
-    : busy
+    : working
       ? firstSetup
         ? 'Preparing your workspace and browser.'
         : 'Opening your saved workspace.'
@@ -357,16 +419,15 @@ function Startup() {
     <>
       <div className="titlebar" aria-hidden="true" />
       <SetupProgress
+        local={!status.remote}
         title={
           error
             ? 'nod needs another try'
-            : unlocking
-              ? 'Keeping your connections secure'
-              : firstSetup
-                ? 'Getting nod ready'
-                : 'Opening nod'
+            : status.remote
+              ? 'Connecting to your server…'
+              : startupMessage(active.stage)
         }
-        description={description}
+        description={unlocking || error ? description : undefined}
         error={error}
         progress={progress}
       >
@@ -374,7 +435,7 @@ function Startup() {
           <div className="recovery-actions">
             <button
               type="button"
-              disabled={busy}
+              disabled={working}
               onClick={() =>
                 void run(async () => {
                   if (failure.needsServerConnection) {
@@ -387,15 +448,18 @@ function Startup() {
                       desktop.getSettings(),
                     ]);
                     applyPreferences(preferences);
-                    if (firstSetup)
-                      setWelcome(settings.welcome ?? { usageData: false, continued: false });
+                    if (firstSetup) {
+                      localChoiceSaved.current = Boolean(settings.welcome);
+                      acceptWelcome(settings.welcome ?? { usageData: false, continued: false });
+                    }
                     setSettingsError('');
                   }
+                  if (firstSetup && !localChoiceSaved.current) return;
                   return desktop.prepare({ retry: true });
                 })
               }
             >
-              {busy
+              {working
                 ? 'Trying again…'
                 : failure.needsServerConnection
                   ? 'Reconnect to server'
@@ -404,7 +468,7 @@ function Startup() {
             {(failure.needsWsl || runtime?.needsWsl) && (
               <button
                 type="button"
-                disabled={busy}
+                disabled={working}
                 onClick={() => void run(() => desktop.installWsl())}
               >
                 Install WSL
@@ -413,7 +477,7 @@ function Startup() {
             {(failure.needsRuntimeArchive || runtime?.needsRuntimeArchive) && (
               <button
                 type="button"
-                disabled={busy}
+                disabled={working}
                 onClick={() =>
                   void run(async () => {
                     const result = await desktop.importRuntime();

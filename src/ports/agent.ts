@@ -92,6 +92,7 @@ export interface RuntimeContext {
   connectedApps?: ConnectedApp[];
   mcpServers?: ConnectedMcpServer[];
   currentMessageId?: string;
+  firstConversationTurn?: boolean;
   replyTo?: { id: string; role: string; text: string; attachments?: MessageAttachment[] };
   history: Array<{
     role: string;

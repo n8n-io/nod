@@ -16,10 +16,9 @@ import {
   type IntegrationSearch,
   type IntegrationServiceInfo,
   type IntegrationSession,
-  type InboxThread,
   type SentEmail,
 } from '../ports/integrations.ts';
-import { integrationServiceIds, integrationServices } from '../shared/integrations.ts';
+import { integrationMetadata, integrationServiceIds } from '../shared/integrations.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import {
   DiscoveredConnectionError,
@@ -73,6 +72,11 @@ const returnPaths = {
   chat: '/',
 } as const;
 type ReturnTarget = keyof typeof returnPaths;
+type EmailAccount = {
+  accountId: string;
+  providerId: string;
+  configurationId: string | null;
+};
 const serviceSchema = z.object({
   slug: slugSchema,
   name: z.string().trim().min(1).max(200),
@@ -119,6 +123,7 @@ type ConnectionRow = {
   inbox_checked_at: Date | null;
   inbox_failed: boolean;
   inbox_reconnect_required: boolean;
+  writing_style_pending: EmailAccount | null;
   account_name: string | null;
   account_email: string | null;
   account_active: boolean;
@@ -140,14 +145,15 @@ type IntegrationOptions = {
   ): Promise<unknown>;
   provider: IntegrationProvider;
   resumeConnection?(turnId: string, service: Slug): Promise<boolean>;
-  learnWritingStyle?(
-    read: (signal: AbortSignal) => Promise<SentEmail[]>,
-    stop: AbortSignal,
-  ): Promise<void>;
-  briefInbox?(
-    read: (signal: AbortSignal) => Promise<InboxThread[]>,
-    stop: AbortSignal,
-  ): Promise<void>;
+  writingStyle?: {
+    enabled(): Promise<boolean>;
+    ready(): boolean;
+    learn(
+      read: (signal: AbortSignal) => Promise<SentEmail[]>,
+      stop: AbortSignal,
+      validate: (signal: AbortSignal) => Promise<void>,
+    ): Promise<void>;
+  };
   readWorkspaceFile?(turn: TurnRef, path: string, maxBytes: number): Promise<Uint8Array>;
   baseUrl: string;
   callbackReturnTo?: 'window';
@@ -244,7 +250,8 @@ export async function initializeIntegrationSchema(pool: Pool) {
       ADD COLUMN IF NOT EXISTS replaces_connection_id uuid,
       ADD COLUMN IF NOT EXISTS inbox_poll_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_claim_id text,
       ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,
-      ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false;
+      ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS writing_style_pending jsonb;
     INSERT INTO app_setup_links(owner_id,link_hash,slug)
       SELECT owner_id,setup_link_hash,slug FROM app_connections WHERE setup_link_hash IS NOT NULL
       ON CONFLICT DO NOTHING;
@@ -292,13 +299,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     .parse(provider.id);
   let serviceCatalog: Map<string, IntegrationServiceInfo> | undefined;
   function serviceInfo(slug: string): IntegrationServiceInfo {
-    const featured = Object.hasOwn(integrationServices, slug)
-      ? integrationServices[slug as keyof typeof integrationServices]
-      : undefined;
     const info = serviceCatalog?.get(slug);
-    if (info) return { ...info, ...featured };
-    if (featured) return { slug, ...featured };
-    return { slug, name: slug.replaceAll('_', ' '), description: '' };
+    return { slug, ...info, ...integrationMetadata(slug, info) };
   }
   function providerForRow(row: Pick<ConnectionRow, 'provider_id'>) {
     if (row.provider_id !== providerId)
@@ -446,7 +448,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         return featured(left.slug) - featured(right.slug) || left.name.localeCompare(right.name);
       })
       .map((service) => ({
-        ...service,
+        ...serviceInfo(service.slug),
         status: 'disconnected',
         triggersEnabled: false,
         supportsTriggers: supportsWatch(service.slug),
@@ -741,6 +743,25 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         (row) => row.account_id && row.account_active && !row.revoked && configurationMatches(row),
       )
       .map((row) => connectionAnalytics(row.slug));
+  }
+
+  async function binding(connectionId: string, client?: PoolClient) {
+    const row = (
+      await (client ?? pool).query<ConnectionRow>(
+        `SELECT * FROM app_connections WHERE owner_id=$1 AND id=$2${client ? ' FOR SHARE' : ''}`,
+        [configuredOwner, z.uuid().parse(connectionId)],
+      )
+    ).rows[0];
+    if (row)
+      return row.account_id && !row.revoked && row.account_active && configurationMatches(row)
+        ? JSON.stringify([
+            row.account_id,
+            row.provider_id,
+            row.configuration_id,
+            row.watch_revision,
+          ])
+        : undefined;
+    return options.discovered?.binding(connectionId, client);
   }
 
   async function icon(connectionId: string) {
@@ -1044,6 +1065,57 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     }
   }
 
+  async function emailAccount(id: string, expected: EmailAccount, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const current = await selectConnection(configuredOwner, 'gmail', id);
+    if (
+      current.account_id !== expected.accountId ||
+      current.provider_id !== expected.providerId ||
+      current.configuration_id !== expected.configurationId
+    )
+      throw new IntegrationError('This connected account is unavailable.', 404);
+    signal.throwIfAborted();
+    return expected.accountId;
+  }
+
+  async function resumeWritingStyle() {
+    const style = options.writingStyle;
+    if (!style || closed) return;
+    if (!(await style.enabled())) {
+      await pool.query(
+        'UPDATE app_connections SET writing_style_pending=NULL WHERE owner_id=$1 AND writing_style_pending IS NOT NULL',
+        [configuredOwner],
+      );
+      return;
+    }
+    if (!style.ready()) return;
+    for (const row of await connectionRows(configuredOwner)) {
+      const pending = row.writing_style_pending;
+      if (!pending) continue;
+      stop.signal.throwIfAborted();
+      const claimed = await pool.query(
+        'UPDATE app_connections SET writing_style_pending=NULL WHERE id=$1 AND owner_id=$2 AND writing_style_pending=$3::jsonb RETURNING id',
+        [row.id, configuredOwner, JSON.stringify(pending)],
+      );
+      if (!claimed.rowCount) continue;
+      const selected = rowProvider(row);
+      if (!selected?.sentEmails || row.slug !== 'gmail') continue;
+      await style
+        .learn(
+          async (signal) => {
+            signal.throwIfAborted();
+            if (!(await style.enabled())) throw new Error('Memory saving is disabled.');
+            return selected.sentEmails!(await emailAccount(row.id, pending, signal), signal);
+          },
+          stop.signal,
+          async (signal) => {
+            await emailAccount(row.id, pending, signal);
+          },
+        )
+        .catch(() => {});
+    }
+  }
+
   async function completeConnection(
     parsed: unknown,
     pending: ConnectionRow,
@@ -1068,6 +1140,17 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       },
       verifiedAccount,
     });
+    const email: EmailAccount = {
+      accountId: query.accountId,
+      providerId: row.provider_id,
+      configurationId: row.configuration_id,
+    };
+    const pendingStyle =
+      row.slug === 'gmail' &&
+      providerForRow(row).sentEmails &&
+      (await options.writingStyle?.enabled().catch(() => false))
+        ? email
+        : null;
     let connectedId = row.id;
     let previousTrigger = row.trigger_id;
     await transaction(async (client) => {
@@ -1174,6 +1257,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           [row.id, remote.accountName ?? null, remote.accountEmail ?? null, query.accountId],
         );
       }
+      await client.query(
+        'UPDATE app_connections SET writing_style_pending=$3::jsonb WHERE id=$1 AND owner_id=$2',
+        [connectedId, configuredOwner, pendingStyle && JSON.stringify(pendingStyle)],
+      );
     }, pool);
     options.refresh?.();
     const selected = providerForRow(row);
@@ -1184,22 +1271,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         await selected.deleteAccount(row.account_id).catch(() => {});
     }
     if (supportsWatch(row.slug)) await activateWatch(connectedId);
-    if (row.slug === 'gmail' && configurationMatches(row)) {
-      if (selected.sentEmails && options.learnWritingStyle)
-        void background(() =>
-          options.learnWritingStyle!(
-            (signal) => selected.sentEmails!(query.accountId, signal),
-            stop.signal,
-          ),
-        )?.catch(() => {});
-      if (selected.inboxThreads && options.briefInbox)
-        void background(() =>
-          options.briefInbox!(
-            (signal) => selected.inboxThreads!(query.accountId, signal),
-            stop.signal,
-          ),
-        )?.catch(() => {});
-    }
+    void background(resumeWritingStyle)?.catch(() => {});
     if (row.turn_id)
       return (await options.resumeConnection?.(row.turn_id, row.slug).catch(() => false)) ?? false;
     return false;
@@ -1216,7 +1288,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         throw new IntegrationError('This connected account is unavailable.', 404);
       row = current.rows[0];
       await client.query(
-        `UPDATE app_connections SET revoked=true,triggers_enabled=false,watch_requested=false,
+        `UPDATE app_connections SET revoked=true,triggers_enabled=false,watch_requested=false,writing_style_pending=NULL,
          callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=NULL,setup_link_hash=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
          watch_revision=watch_revision+1,inbox_cursor=NULL,inbox_poll_at=NULL,inbox_claim_id=NULL,inbox_checked_at=NULL,inbox_failed=false,inbox_reconnect_required=false
          WHERE id=$1 AND owner_id=$2 AND provider_id=$3`,
@@ -1313,6 +1385,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     args: Record<string, unknown>,
     turn?: TurnRef,
     signal?: AbortSignal,
+    expectedBinding?: string,
   ) {
     if (
       action === 'CONNECTED_HTTP' ||
@@ -1322,7 +1395,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       assertOwner(ownerId);
       if (!options.discovered)
         throw new IntegrationError('Discovered connections are unavailable.', 503);
-      return options.discovered.execute(action, args, turn, signal);
+      return options.discovered.execute(action, args, turn, signal, expectedBinding);
     }
     assertOwner(ownerId);
     const connectionId = z.uuid().safeParse(args.connectionId);
@@ -1340,7 +1413,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           const { connectionId: _connectionId, ...providerArgs } = args;
           const result = await withAccountSession(ownerId, [row], signal, async (session) => {
             const current = await selectedConnection(ownerId, action, args);
-            if (current.account_id !== row.account_id)
+            if (
+              current.account_id !== row.account_id ||
+              (expectedBinding !== undefined && (await binding(row.id)) !== expectedBinding)
+            )
               throw new IntegrationError('The selected account changed.', 409);
             signal?.throwIfAborted();
             return session.execute(action, providerArgs, row.account_id!, signal);
@@ -1369,6 +1445,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     args: Record<string, unknown>,
     turn?: TurnRef,
     signal?: AbortSignal,
+    expectedBinding?: string,
   ) {
     assertOwner(ownerId);
     signal?.throwIfAborted();
@@ -1496,6 +1573,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       await prepare(ownerId, action, args, turn, signal),
       turn,
       signal,
+      expectedBinding,
     );
   }
 
@@ -2267,6 +2345,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
 
   return {
     registerRoutes,
+    resumeWritingStyle,
+    binding,
     execute,
     executeApproved,
     prepare,

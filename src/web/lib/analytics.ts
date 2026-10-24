@@ -7,11 +7,10 @@ import { feedbackActivity } from './feedback-activity';
 
 type AnalyticsEvents = {
   nod_onboarding_step_viewed: {
-    step:
-      'welcome' | 'brain' | 'email' | 'about' | 'telegram' | 'notifications' | 'launch_at_login';
+    step: 'welcome' | 'intro' | 'brain' | 'email' | 'calendar' | 'apps' | 'launch_at_login';
     direction: 'forward' | 'back';
   };
-  nod_onboarding_step_skipped: { step: 'telegram' };
+  nod_onboarding_step_skipped: { step: 'email' | 'calendar' };
   nod_settings_viewed: {
     tab: 'general' | 'models' | 'app_connections' | 'memory';
   };
@@ -66,10 +65,10 @@ export type AnalyticsProperties<Event extends keyof AnalyticsEvents> = NonNullab
 const roles = ['assistant', 'user'];
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
   nod_onboarding_step_viewed: {
-    step: ['welcome', 'brain', 'email', 'about', 'telegram', 'notifications', 'launch_at_login'],
+    step: ['welcome', 'intro', 'brain', 'email', 'calendar', 'apps', 'launch_at_login'],
     direction: ['forward', 'back'],
   },
-  nod_onboarding_step_skipped: { step: ['telegram'] },
+  nod_onboarding_step_skipped: { step: ['email', 'calendar'] },
   nod_settings_viewed: {
     tab: ['general', 'models', 'app_connections', 'memory'],
   },

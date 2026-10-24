@@ -512,7 +512,7 @@ test('WhatsApp setup removes stale QR codes and recovers from failed and stalled
         return Response.json(link);
       };
       const root=createRoot(document.querySelector('#root'));
-      const hasQr=()=>Boolean(document.querySelector('.telegram-setup-qr svg'));
+      const hasQr=()=>Boolean(document.querySelector('.whatsapp-setup-qr svg'));
       const advance=async ms=>act(async()=>mock.timers.tick(ms));
       try {
         await act(async()=>root.render(createElement(WhatsAppSetup,{
@@ -611,6 +611,42 @@ test('WhatsApp setup closes the replacement generation despite stale polls and l
         if(!closeDuringRestart) await act(async()=>root.unmount());
         await settle(()=>cancelled.includes(nextId));
         assert.equal(cancelled.at(-1),nextId);
+      }
+      for(const [state,hasAccount] of [['connecting',false],['awaiting_scan',false],['disconnected',false],['failed',false],['logged_out',false],['connected',true],['disconnected',true]]) {
+        const linked=state==='connected';
+        const pairingId='33333333-3333-4333-8333-333333333333';
+        const writes=[];
+        let read=false,disconnects=0,done=0;
+        globalThis.fetch=async(path,options={})=>{
+          if(options.method){writes.push({path,method:options.method,body:JSON.parse(options.body)});return Response.json({ok:true});}
+          read=true;
+          return Response.json({state,pairingId,...(linked?{accountHandle:'15555550123'}:{qr:'synthetic-qr',expiresAt:new Date(Date.now()+60000).toISOString()})});
+        };
+        const root=createRoot(document.querySelector('#root'));
+        await act(async()=>root.render(createElement(WhatsAppSetup,{
+          setup:{provider:'whatsapp',enabled:true,mode:'linked',linkMode:'self-chat',connectionState:state,...(hasAccount?{accountHandle:'15555550123'}:{})},
+          busy:false,ready:true,error:'',onSave:async()=>assert.fail('Viewing pairing cannot save a connection'),onRefresh:async()=>{},onDone:()=>done++,onDisconnect:()=>disconnects++,
+        })));
+        await settle(()=>read);
+        const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent.trim()===text);
+        assert.equal(Boolean(button('Disconnect')),hasAccount,'only an established account offers disconnection');
+        assert.equal(Boolean(button('Start again')),state==='failed'||state==='logged_out','active pairing must not offer a destructive restart');
+        assert.deepEqual(writes,[],'displaying a pairing state is read-only');
+        if(hasAccount){
+          await act(async()=>button('Disconnect').click());
+          assert.equal(disconnects,1);
+          assert.deepEqual(writes,[],'Disconnect delegates to owned confirmation');
+        }
+        if(linked){
+          await act(async()=>button('Done').click());
+          assert.equal(done,1);
+        }
+        await act(async()=>root.unmount());
+        if(linked)assert.deepEqual(writes,[],'closing a connected account must not cancel or unlink it');
+        else{
+          await settle(()=>writes.length===1);
+          assert.deepEqual(writes,[{path:'/api/channel-settings/whatsapp/pairing',method:'DELETE',body:{pairingId}}],'closing pending setup cancels only its pairing generation');
+        }
       }
       globalThis.setTimeout=sleep;
       globalThis.clearTimeout=clear;

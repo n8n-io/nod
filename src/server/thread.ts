@@ -981,7 +981,11 @@ async function loadMessage(messageId: string | null) {
   const message = messageId
     ? (
         await pool.query(
-          `SELECT s.attachments,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments
+          `SELECT s.attachments,r.id,r.role,COALESCE(s.reply_quote,r.text) AS text,r.attachments AS reply_attachments,
+           s.role='user' AND NOT EXISTS (
+             SELECT 1 FROM messages earlier WHERE earlier.owner_id=s.owner_id AND earlier.thread_id=s.thread_id
+               AND earlier.role='user' AND (earlier.created_at,earlier.id)<(s.created_at,s.id)
+           ) AS first_conversation_turn
            FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
            WHERE s.id=$1 AND s.owner_id=$2`,
           [messageId, ownerId],
@@ -997,6 +1001,7 @@ async function loadMessage(messageId: string | null) {
       }
     : undefined;
   return {
+    firstConversationTurn: message?.first_conversation_turn === true,
     uploads: [
       ...((message?.attachments ?? []) as StoredAttachment[]),
       ...((replyTo?.attachments ?? []) as StoredAttachment[]),
@@ -1065,6 +1070,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     ...source,
     history: history.rows,
     context: {
+      firstConversationTurn: source.firstConversationTurn,
       timeZone,
       locale: preference?.locale || formattingLocale(timeZone ? timeZoneRegion(timeZone) : null),
       hourCycle: preference?.hour_cycle || defaultPreferences.hourCycle,

@@ -94,7 +94,7 @@ export function TelegramSetup({
   const setupError =
     error ||
     (unavailable && !state.paired && !setup?.managed
-      ? 'Set up the secure key store on this computer to connect Telegram.'
+      ? 'Set up nod’s secure key store to connect Telegram.'
       : '');
 
   function verify(event: React.FormEvent) {

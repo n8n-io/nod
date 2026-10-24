@@ -169,7 +169,7 @@ nod checks the key with a free token count and lists the Gemini models on Vertex
 
 </Steps>
 
-nod uses Azure's v1 API at that endpoint and sends the key only there. The endpoint needs HTTPS, unless it's on this computer. An address that ends at the resource or at `/openai` gets `/openai/v1` added. Any other path, such as an API gateway, is used as you enter it.
+nod uses Azure's v1 API at that endpoint and sends the key only there. The endpoint needs HTTPS, unless it uses a loopback address on nod's server. An address that ends at the resource or at `/openai` gets `/openai/v1` added. Any other path, such as an API gateway, is used as you enter it.
 
 Each deployment is one connection with one model. Add another connection for each deployment you want to use. The model you choose sets the context size and the prices nod counts toward your [spending](/use/spending/). Microsoft Entra ID sign-in isn't supported.
 

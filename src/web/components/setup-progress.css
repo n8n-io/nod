@@ -1,22 +1,35 @@
 .setup-progress {
+  position: relative;
   display: grid;
-  place-items: center;
+  grid-template-rows: minmax(28px, 2fr) auto minmax(28px, 3fr) auto;
   min-height: 100dvh;
-  padding: 56px 28px;
+  padding: 28px;
   background: var(--canvas);
   color: var(--foreground);
   text-align: center;
+  outline: none;
+}
+.setup-progress:focus {
   outline: none;
 }
 :root[data-desktop='true'] .setup-progress {
   min-height: calc(100dvh - var(--desktop-titlebar-height, 0px));
 }
 .setup-progress-content {
+  grid-row: 2;
+  justify-self: center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: min(100%, 420px);
+  width: min(100%, 520px);
   gap: 28px;
+}
+.setup-progress-mark {
+  display: block;
+  width: 112px;
+  height: 112px;
+  flex: none;
+  overflow: visible;
 }
 .setup-progress-message {
   display: grid;
@@ -27,8 +40,8 @@
   margin: 0;
   font-size: 24px;
   font-weight: 500;
-  letter-spacing: -0.65px;
-  line-height: 1.3;
+  letter-spacing: normal;
+  line-height: 1.5;
   text-wrap: balance;
 }
 .setup-progress-message p {
@@ -46,30 +59,31 @@
   gap: 12px;
 }
 .setup-progress-download {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: min(100%, 260px);
-  color: var(--muted-foreground);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.setup-progress-download progress {
-  appearance: none;
-  width: 100%;
-  height: 4px;
-  border: 0;
-  border-radius: 4px;
-  background: var(--border);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
   overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
-.setup-progress-download progress::-webkit-progress-bar {
-  background: var(--border);
+.setup-progress-note {
+  grid-row: 4;
+  max-width: 340px;
+  margin: 0 auto;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.5;
+  text-wrap: pretty;
 }
-.setup-progress-download progress::-webkit-progress-value {
-  background: var(--brand-pink);
-  border-radius: 4px;
-}
-.setup-progress-download progress::-moz-progress-bar {
-  background: var(--brand-pink);
+@media (max-width: 600px) {
+  .setup-progress-mark {
+    width: 96px;
+    height: 96px;
+  }
+  .setup-progress-message h1 {
+    font-size: 22px;
+  }
 }

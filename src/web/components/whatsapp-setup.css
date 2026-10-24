@@ -1,0 +1,43 @@
+.whatsapp-setup-status {
+  display: grid;
+  gap: 16px;
+}
+
+.whatsapp-setup-qr {
+  display: grid;
+  place-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--input-radius);
+  background: #fff;
+  line-height: 0;
+}
+
+.whatsapp-setup-qr svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.channel-wizard-step > .whatsapp-setup-hint {
+  text-align: center;
+}
+
+.whatsapp-connected-identity {
+  display: grid;
+  gap: 4px;
+  padding: 8px 0 16px;
+}
+
+.whatsapp-connected-identity strong {
+  color: var(--foreground);
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+
+.whatsapp-connected-identity span {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}

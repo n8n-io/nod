@@ -4006,11 +4006,10 @@ test('browser handoff retains pending-frame input and allows handback after an i
   assert.equal(result.exitCode, 0, result.stderr);
 });
 
-for (const surface of ['channels', 'onboarding'])
-  test(`Telegram setup preserves a pending identity and confirms it once on ${surface}`, async () => {
-    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-      timeoutMs: 20_000,
-      input: `
+test('Telegram setup preserves a pending identity and confirms it once on channels', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: `
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/channels', pretendToBeVisual: true });
@@ -4027,7 +4026,7 @@ for (const surface of ['channels', 'onboarding'])
       let setup = {
         provider: 'telegram', enabled: true, accountHandle: '@fixture_nod_bot', mode: 'polling',
         pairingExpiresAt: new Date(Date.now() + 900000).toISOString(),
-        pairingCandidate: ${surface === 'channels' ? 'undefined' : "{ id: '123456789', name: 'Fixture Person', username: 'fixture_person' }"},
+        pairingCandidate: undefined,
       };
       const writes = [];
       let confirm;
@@ -4047,20 +4046,11 @@ for (const surface of ['channels', 'onboarding'])
       const { act, createElement } = await import('react');
       const { createRoot } = await import('react-dom/client');
       const { Channels } = await import('./src/web/pages/channels.tsx');
-      const { Telegram } = await import('./src/web/pages/onboarding/steps/telegram.tsx');
       const root = createRoot(document.querySelector('#root'));
       try {
-        await act(async () => root.render(${
-          surface === 'channels'
-            ? 'createElement(Channels, { hosted: true })'
-            : "createElement(Telegram, { arrived: 'back', onNext() {}, onBack() {} })"
-        }));
-        ${
-          surface === 'channels'
-            ? `setup = { ...setup, pairingCandidate: { id: '123456789', name: 'Fixture Person', username: 'fixture_person' } };
-        await act(async () => document.querySelector('.channel-account-actions button').click());`
-            : ''
-        }
+        await act(async () => root.render(createElement(Channels, { hosted: true })));
+        setup = { ...setup, pairingCandidate: { id: '123456789', name: 'Fixture Person', username: 'fixture_person' } };
+        await act(async () => document.querySelector('.channel-account-actions button').click());
         assert.deepEqual(writes, []);
         const identity = document.querySelector('.telegram-setup-identity');
         assert.ok(identity.textContent.includes('123456789'));
@@ -4072,16 +4062,19 @@ for (const surface of ['channels', 'onboarding'])
         assert.equal(button.disabled, true);
         await act(async () => confirm());
         assert.equal(document.querySelector('.telegram-setup-identity'), null);
-        assert.ok(document.querySelector('.telegram-setup-connected').textContent.includes('123456789'));
+        const connected = document.querySelector('.channel-wizard-step[data-analytics-private]');
+        assert.ok(connected.textContent.includes(setup.accountHandle));
+        assert.ok(connected.textContent.includes(setup.pairedUser));
+        assert.equal(document.querySelector('[data-telegram-primary]'), null);
         assert.deepEqual(writes, [['/api/channel-settings/telegram/confirm', 'POST', {}]]);
       } finally {
         await act(async () => root.unmount());
         dom.window.close();
       }
     `,
-    });
-    assert.equal(result.exitCode, 0, result.stderr);
   });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
 
 test('feedback draft storage isolates owners', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {

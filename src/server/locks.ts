@@ -15,7 +15,8 @@ export async function lockSetup(client: Query, key: string) {
     await client.query(locksTable);
     await client.query('RELEASE SAVEPOINT nod_locks');
   } catch (error) {
-    if (!['23505', '42P07'].includes(String((error as { code?: unknown }).code))) throw error;
+    if (!['23505', '42P07', '42710'].includes(String((error as { code?: unknown }).code)))
+      throw error;
     await client.query('ROLLBACK TO SAVEPOINT nod_locks');
   }
   await lockKey(client, key);

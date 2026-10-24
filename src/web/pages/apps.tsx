@@ -4,12 +4,10 @@ import { flushSync } from 'react-dom';
 import * as Popover from '@radix-ui/react-popover';
 import {
   AlertCircle,
-  Check,
   ChevronDown,
   ExternalLink,
   ListFilter,
   LoaderCircle,
-  Plus,
   X,
 } from '../components/icons';
 import type { AppSetupStatus, Configuration, Connection } from '../../shared/contracts';
@@ -17,8 +15,10 @@ import { SetupNotice } from '../components/setup-notice';
 import { ServiceLogo } from '../components/service-logo';
 import { AppConnectionDialog, type AppSignIn } from '../components/app-connection-dialog';
 import { AppDiscoveryDialog } from '../components/app-discovery-dialog';
+import { AppAccountManager } from '../components/app-account-manager';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
+import { searchApps } from '../lib/app-search';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import {
   connectionGroups,
@@ -28,19 +28,7 @@ import {
 } from '../lib/secondary-pages';
 import { usePageData } from '../hooks/use-page-data';
 import { analyticsForCurrentSession, captureAnalytics } from '../lib/analytics';
-import {
-  Button,
-  Checkbox,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-  Field,
-  Input,
-  Loading,
-  Notice,
-  SearchField,
-} from '../components/ui';
+import { Button, Checkbox, Loading, Notice, SearchField } from '../components/ui';
 
 function accountLabel(account: Connection) {
   const identity = connectionIdentity(account);
@@ -187,67 +175,6 @@ function AppDescription({ name, description }: { name: string; description?: str
   );
 }
 
-export function ConnectedAccount({
-  account,
-  busy,
-  reconnecting = false,
-  onDisconnect,
-  onReconnect,
-}: {
-  account: Connection;
-  busy: boolean;
-  reconnecting?: boolean;
-  onDisconnect(trigger: HTMLButtonElement): void;
-  onReconnect?(): void;
-}) {
-  const issue = connectionIssue(account);
-  const label = accountLabel(account);
-  const identity = connectionIdentity(account);
-  return (
-    <div className="compact-account">
-      <div className="compact-account-details">
-        <span className="compact-account-name">{identity.primary}</span>
-        {identity.secondary && <span className="compact-account-email">{identity.secondary}</span>}
-        <p className="app-status" data-status={issue ? 'attention' : 'connected'}>
-          {issue ? (
-            <AlertCircle size={16} aria-hidden="true" />
-          ) : (
-            <Check size={16} aria-hidden="true" />
-          )}
-          {issue ?? 'Connected'}
-        </p>
-      </div>
-      <div className="app-account-actions">
-        {account.canReconnect &&
-          (account.status === 'disconnected' || account.reconnectRequired) &&
-          onReconnect && (
-            <Button
-              size="sm"
-              aria-label={`Reconnect ${label} to ${account.name}`}
-              aria-busy={reconnecting}
-              disabled={busy}
-              onClick={onReconnect}
-            >
-              {reconnecting && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
-              {reconnecting ? 'Opening…' : 'Reconnect'}
-            </Button>
-          )}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="account-disconnect"
-          data-disconnect-account={account.connectionId}
-          aria-label={`Disconnect ${label} from ${account.name}`}
-          disabled={busy}
-          onClick={(event) => onDisconnect(event.currentTarget)}
-        >
-          Disconnect
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 export function Apps({
   configuration,
   onAsk,
@@ -299,8 +226,6 @@ export function Apps({
   >();
   const [manageService, setManageService] = useState<string | null>(null);
   const [pointerRestoredService, setPointerRestoredService] = useState<string | null>(null);
-  const [disconnectAccount, setDisconnectAccount] = useState<Connection | null>(null);
-  const [disconnectError, setDisconnectError] = useState('');
   const discoveryId = new URLSearchParams(window.location.search).get('connect');
   const page = useRef<HTMLDivElement>(null);
   const catalogEnd = useRef<HTMLDivElement>(null);
@@ -308,18 +233,17 @@ export function Apps({
   const categorySearch = useRef<HTMLInputElement>(null);
   const manageTitle = useRef<HTMLHeadingElement>(null);
   const manageKeyboard = useRef(false);
-  const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const dialogService = useRef('');
   const actionRequest = useRef<AbortController | null>(null);
   const locked = Boolean(busy);
-  const groups = connectionGroups(connections ?? [], catalog ?? []);
+  const groups = connectionGroups(connections ?? [], catalog ?? []).map((group) => ({
+    ...group,
+    name: group.service.name,
+    slug: group.service.slug,
+    description: group.service.description ?? '',
+    category: (group.service.categories ?? []).join(' '),
+  }));
   const managed = groups.find((group) => group.key === manageService);
-  const addAccountConnection =
-    managed?.accounts.find(
-      (account) => account.slug === managed.service.slug && account.status !== 'not_configured',
-    ) ??
-    managed?.accounts.find((account) => account.status !== 'not_configured') ??
-    managed?.service;
   const categories = [
     ...new Set(groups.flatMap(({ service }) => (service.categories ?? []).map(categoryKey))),
   ].sort((left, right) => categoryLabel(left).localeCompare(categoryLabel(right)));
@@ -327,16 +251,12 @@ export function Apps({
     categoryLabel(name).toLocaleLowerCase().includes(categoryQuery.trim().toLocaleLowerCase()),
   );
   const search = query.trim().toLocaleLowerCase();
-  const filtered = groups.filter(
+  const filtered = searchApps(groups, query).filter(
     (group) =>
-      (!selectedCategories.length ||
-        group.service.categories?.some((category) =>
-          selectedCategories.includes(categoryKey(category)),
-        )) &&
-      (!search ||
-        `${group.service.name} ${group.service.slug} ${group.service.description ?? ''}`
-          .toLocaleLowerCase()
-          .includes(search)),
+      !selectedCategories.length ||
+      group.service.categories?.some((category) =>
+        selectedCategories.includes(categoryKey(category)),
+      ),
   );
   const connected = filtered.filter((group) => group.accounts.length);
   const available = filtered.filter((group) => !group.accounts.length);
@@ -631,14 +551,12 @@ export function Apps({
       if (actionRequest.current === request) actionRequest.current = null;
     }
   }
-  async function disconnect() {
-    const connection = disconnectAccount;
-    if (!connection?.connectionId || actionRequest.current || busy) return;
+  async function disconnect(connection: Connection) {
+    if (!connection.connectionId || actionRequest.current || busy) return;
     const capture = analyticsForCurrentSession();
     const request = new AbortController();
     actionRequest.current = request;
     setBusy(`disconnect:${connection.connectionId}`);
-    setDisconnectError('');
     try {
       await api(
         `/api/apps/${encodeURIComponent(connection.slug)}/accounts/${encodeURIComponent(connection.connectionId)}/disconnect`,
@@ -652,14 +570,13 @@ export function Apps({
       update((current) =>
         current ? removeConnection(current, connection.connectionId!) : current,
       );
-      setManageService(null);
-      setDisconnectAccount(null);
+      if (managed?.accounts.length === 1) setManageService(null);
       void refresh();
     } catch (cause) {
       if (request.signal.aborted) return;
-      setDisconnectError(errorMessage(cause));
       capture('nod_ui_error', { area: 'apps', action: 'disconnect' });
       void refresh();
+      throw cause;
     } finally {
       if (actionRequest.current === request) actionRequest.current = null;
       if (!request.signal.aborted) setBusy('');
@@ -678,7 +595,7 @@ export function Apps({
     setPointerRestoredService(
       !manageKeyboard.current && button?.dataset.manageService ? dialogService.current : null,
     );
-    button?.focus();
+    button?.focus({ preventScroll: true });
   }
 
   function cards(items: typeof groups, catalogCards = false) {
@@ -714,7 +631,6 @@ export function Apps({
                 onBlur={() => setPointerRestoredService(null)}
                 onClick={(event) => {
                   dialogService.current = key;
-                  dialogTrigger.current = null;
                   manageKeyboard.current = event.detail === 0;
                   setPointerRestoredService(null);
                   setError('');
@@ -1052,81 +968,20 @@ export function Apps({
           if (!managed?.accounts.length) restoreAppFocus();
         }}
       />
-      <Dialog
-        open={Boolean(managed?.accounts.length) && !disconnectAccount && !signIn}
-        onOpenChange={(open) => {
-          if (!open && !disconnectAccount) setManageService(null);
+      <AppAccountManager
+        group={managed}
+        suspended={Boolean(signIn) || Boolean(discoveryId)}
+        busy={locked}
+        titleRef={manageTitle}
+        onDismissError={() => setError('')}
+        onClose={() => setManageService(null)}
+        onConnect={(account, addAccount) => void connect(account, 'manage', addAccount)}
+        onDisconnect={disconnect}
+        onRestoreFocus={restoreAppFocus}
+        onKeyboard={() => {
+          manageKeyboard.current = true;
         }}
-      >
-        <DialogContent
-          className="app-manage-dialog"
-          onKeyDownCapture={(event) => {
-            if (event.key !== 'Escape') manageKeyboard.current = true;
-          }}
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            const id = dialogTrigger.current?.dataset.disconnectAccount;
-            const trigger = Array.from(
-              document.querySelectorAll<HTMLButtonElement>('[data-disconnect-account]'),
-            ).find((button) => button.dataset.disconnectAccount === id);
-            if (trigger) trigger.focus();
-            else manageTitle.current?.focus();
-          }}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            if (!signIn) restoreAppFocus();
-          }}
-        >
-          <div className="dialog-heading app-manage-heading">
-            {managed && <ServiceLogo {...managed.service} />}
-            <div>
-              <DialogTitle ref={manageTitle} tabIndex={-1}>
-                {managed?.service.name} accounts
-              </DialogTitle>
-              <DialogDescription>Choose which accounts nod can use.</DialogDescription>
-            </div>
-          </div>
-          <div className="app-manage-accounts">
-            {managed?.accounts.map((account) => (
-              <ConnectedAccount
-                key={account.connectionId}
-                account={account}
-                busy={locked}
-                reconnecting={busy === `reconnect:${account.connectionId}`}
-                onDisconnect={(trigger) => {
-                  dialogTrigger.current = trigger;
-                  dialogService.current = managed.key;
-                  setDisconnectError('');
-                  setDisconnectAccount(account);
-                }}
-                onReconnect={() => void connect(account, 'manage')}
-              />
-            ))}
-          </div>
-          <div className="dialog-actions app-manage-actions">
-            {!addAccountConnection?.browserUrl && (
-              <Button
-                size="sm"
-                data-add-account
-                disabled={locked || addAccountConnection?.status === 'not_configured'}
-                onClick={() =>
-                  addAccountConnection && void connect(addAccountConnection, 'manage', true)
-                }
-              >
-                {busy === `connect:${addAccountConnection?.slug}` ? (
-                  <LoaderCircle size={16} className="spin" aria-hidden="true" />
-                ) : (
-                  <Plus size={16} aria-hidden="true" />
-                )}
-                Add account
-              </Button>
-            )}
-            <Button variant="outline" size="sm" onClick={() => setManageService(null)}>
-              Done
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      />
       {discoveryId && (
         <AppDiscoveryDialog
           key={discoveryId}
@@ -1135,56 +990,6 @@ export function Apps({
           onConnected={() => window.location.assign('/apps')}
         />
       )}
-      <Dialog
-        open={Boolean(disconnectAccount)}
-        onOpenChange={(open) => {
-          if (!open && !busy) setDisconnectAccount(null);
-        }}
-      >
-        <DialogContent
-          className="app-disconnect-dialog"
-          aria-busy={Boolean(busy)}
-          onKeyDownCapture={(event) => {
-            if (event.key !== 'Escape') manageKeyboard.current = true;
-          }}
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            document.querySelector<HTMLButtonElement>('[data-keep-account]')?.focus();
-          }}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            const trigger = dialogTrigger.current;
-            if (trigger?.isConnected) trigger.focus();
-            else restoreAppFocus();
-          }}
-        >
-          <DialogTitle>
-            Disconnect from {disconnectAccount?.name.replace(/\s+MCP$/i, '')}?
-          </DialogTitle>
-          <DialogDescription>
-            {disconnectAccount && accountLabel(disconnectAccount)}
-            <span>nod will lose access to this account. You can connect it again later.</span>
-          </DialogDescription>
-          {disconnectError && <Notice>{disconnectError}</Notice>}
-          <div className="app-disconnect-actions">
-            <Button
-              data-keep-account
-              variant="outline"
-              disabled={Boolean(busy)}
-              onClick={() => setDisconnectAccount(null)}
-            >
-              Keep account
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={Boolean(busy)}
-              onClick={() => void disconnect()}
-            >
-              {busy ? 'Disconnecting…' : 'Disconnect'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

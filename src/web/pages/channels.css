@@ -142,11 +142,6 @@
   white-space: nowrap;
 }
 
-.channel-chip[data-status='connected'] {
-  background: var(--success-soft);
-  color: var(--success);
-}
-
 .channel-chip[data-status='needs-setup'] {
   background: var(--warning-soft);
   color: var(--warning);
@@ -176,14 +171,8 @@
 .channel-account-actions {
   display: flex;
   flex-wrap: wrap;
-  grid-column: 2 / -1;
   align-items: center;
   gap: 8px;
-}
-
-.channel-remove:hover:not(:disabled) {
-  background: var(--error-soft);
-  color: var(--error);
 }
 
 @container (max-width: 580px) {
@@ -199,11 +188,6 @@
 }
 
 @media (pointer: coarse) {
-  .channel-remove {
-    width: 40px;
-    height: 40px;
-  }
-
   .channel-connect,
   .channel-account-actions > .button {
     min-height: 40px;
@@ -249,6 +233,17 @@
 
 .channel-wizard {
   width: min(470px, calc(100vw - 32px));
+}
+
+.channel-wizard-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-right: 24px;
+}
+
+.channel-wizard-title > img {
+  flex-shrink: 0;
 }
 
 .channel-wizard-heading {
@@ -317,4 +312,21 @@
 
 .channel-wizard > .telegram-setup {
   margin: 24px 0;
+}
+
+.channel-manage-identity {
+  display: grid;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.channel-manage-identity strong {
+  color: var(--foreground);
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+
+.channel-manage-identity span {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
 }

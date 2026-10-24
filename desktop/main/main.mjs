@@ -83,6 +83,7 @@ let engineWindow;
 let engineFocusRequested = false;
 let pendingFeedback = false;
 let engine;
+let engineFailure;
 let welcomePassed = false;
 let welcomeNavigation = false;
 let transferringWelcome;
@@ -118,9 +119,11 @@ let status = {
   platform: process.platform,
   unlockingKeys: false,
   phase: 'idle',
+  stage: 'computer',
   message: 'Set up nod on your computer.',
   runtime: {
     phase: 'idle',
+    stage: 'computer',
     message: 'Your computer will prepare in the background.',
     needsRuntimeArchive: false,
   },
@@ -168,6 +171,7 @@ const lifecycle = createDesktopLifecycle({
     const runtime = { ...value, message: bounded(value.message) };
     if (
       preparing &&
+      !engineFailure &&
       !welcomeTransferError &&
       status.phase !== 'starting' &&
       value.phase !== 'error'
@@ -175,6 +179,7 @@ const lifecycle = createDesktopLifecycle({
       update({
         runtime,
         phase: 'preparing',
+        stage: runtime.stage,
         message: runtime.message,
         progress: value.progress,
         needsRuntimeArchive: false,
@@ -1009,6 +1014,7 @@ async function checkRemoteConnection(connection) {
 }
 
 async function startRemote(connection) {
+  update({ remote: true, phase: 'starting', message: 'Connecting to your server.' });
   const connected = await checkRemoteConnection(connection);
   if (quitting) return;
   remoteConnection = connected;
@@ -1111,6 +1117,7 @@ async function transferWelcome() {
         throw new Error('nod could not confirm your choice. Try again.');
       await settings.acknowledgeWelcome(saved.welcome);
     }
+    if (engineFailure) throw new Error(engineFailure);
     welcomeNavigation = true;
     welcomePassed = true;
     welcomeTransferError = undefined;
@@ -1135,12 +1142,12 @@ async function transferWelcome() {
 
 async function finishEnginePreparation(pending = false) {
   await appPreferences.sync();
-  if (quitting || !engine) throw new Error('nod is closing.');
+  if (quitting || !engine) throw new Error(engineFailure || 'nod is closing.');
   if (!onboardingCompleted) {
     const response = await engineRequest('/api/session');
     if (response.ok && (await response.json()).settings?.onboardingCompleted === true) {
       const saved = await settings.get();
-      if (saved.notifications && saved.launchAtLogin) {
+      if (saved.launchAtLogin) {
         applyPreferences(await settings.save({ onboardingCompleted: true }));
         onboardingCompleted = true;
         nativePreferencesPending = false;
@@ -1151,12 +1158,14 @@ async function finishEnginePreparation(pending = false) {
       }
     }
   }
+  if (quitting || !engine) throw new Error(engineFailure || 'nod is closing.');
   if (!pending && !engineRuntimeReady) {
     engine.postMessage({ type: 'nod-runtime-ready' });
     engineRuntimeReady = true;
   }
   update({
     phase: pending ? 'preparing' : 'ready',
+    stage: pending ? status.runtime.stage : 'ready',
     message: pending ? status.runtime.message : 'nod is running on your computer.',
     progress: pending ? status.runtime.progress : undefined,
     engineReady: true,
@@ -1454,6 +1463,7 @@ async function validateStart() {
 }
 
 async function startEngine({ runtime, signal, pending = false }) {
+  if (engineFailure) throw new Error(engineFailure);
   if (engine && enginePreferencesReady) return finishEnginePreparation(pending);
   if (engine) {
     if (!(await confirmRestart()))
@@ -1463,13 +1473,23 @@ async function startEngine({ runtime, signal, pending = false }) {
     await stopEngine();
   }
   if (quitting) throw new Error('nod is closing.');
+  const startup = setupWindow;
+  if (startup && pendingRenderers.has(startup)) await setupWindowLoaded;
+  if (quitting || signal.aborted) throw new Error('nod is closing.');
+  if (startup?.isDestroyed() || status.windowError)
+    throw new Error('nod could not open setup. Reopen the window, then try again.');
   const port = await availablePort();
   if (quitting || signal.aborted) throw new Error('nod is closing.');
   engineBound = false;
   authToken = randomBytes(32).toString('base64url');
   knownSecrets.add(authToken);
   engineOrigin = `http://127.0.0.1:${port}`;
-  update({ phase: 'starting', message: 'Unlocking your saved API keys…', unlockingKeys: true });
+  update({
+    phase: 'starting',
+    stage: 'storage',
+    message: 'Unlocking your saved API keys…',
+    unlockingKeys: true,
+  });
   await new Promise((accept) => setTimeout(accept, 50));
   if (quitting || signal.aborted) throw new Error('nod is closing.');
   const providerEnvironment = await settings.environment();
@@ -1527,7 +1547,7 @@ async function startEngine({ runtime, signal, pending = false }) {
   let diagnostics = '';
   let failure = '';
   child.stderr?.on('data', (chunk) => {
-    if (status.phase !== 'starting') return;
+    if (enginePreferencesReady && engineRuntimeReady) return;
     diagnostics = (diagnostics + chunk.toString()).slice(-4000);
     const lines = diagnostics.split('\n');
     diagnostics = lines.pop() || '';
@@ -1542,6 +1562,12 @@ async function startEngine({ runtime, signal, pending = false }) {
   });
   child.on('exit', (code) => {
     if (engine !== child) return;
+    if (!closingEngine)
+      failure =
+        (status.phase === 'error' && status.error) ||
+        (status.runtime.phase === 'error' && status.runtime.message) ||
+        failure ||
+        `nod’s background service stopped${enginePreferencesReady ? '' : ' before it was ready'}${Number.isInteger(code) ? ` (code ${code})` : ''}. Try again to restart it.`;
     stopNotifications?.();
     stopNotifications = undefined;
     if (!closingEngine) void writeDiagnostic(`Engine exited with code ${code}.`).catch(() => {});
@@ -1555,12 +1581,13 @@ async function startEngine({ runtime, signal, pending = false }) {
     for (const window of engineWindows) if (!window.isDestroyed()) window.destroy();
     engineWindows.clear();
     if (!quitting && !closingEngine) {
+      engineFailure = failure;
       update({
         phase: 'error',
-        message: 'nod stopped unexpectedly.',
-        error: 'Open settings and choose Start nod to recover.',
+        message: failure,
+        error: failure,
       });
-      showSettings();
+      showSettings('general', true);
     }
   });
   const deadline = Date.now() + 120_000;
@@ -1575,16 +1602,24 @@ async function startEngine({ runtime, signal, pending = false }) {
     } catch {}
     await new Promise((accept) => setTimeout(accept, 300));
   }
-  if (!ready) {
+  if (!ready || engine !== child || signal.aborted) {
     await stopEngine();
-    throw new Error(failure || 'nod could not start. Check your settings and try again.');
+    throw new Error(
+      failure || 'nod’s background service did not respond. Try again to restart it.',
+    );
   }
   enginePreferencesReady = true;
   return finishEnginePreparation(pending);
 }
 
 async function prepare(options = {}) {
-  if (preparing) return preparing;
+  if (engineFailure && options?.retry !== true) return status;
+  if (preparing) {
+    const retryAfterFailure = options?.retry === true && status.phase === 'error';
+    await preparing;
+    return retryAfterFailure ? prepare(options) : status;
+  }
+  if (options?.retry === true) engineFailure = undefined;
   preparing = (async () => {
     const connection = await settings.connection();
     if (quitting) return status;
@@ -1843,6 +1878,29 @@ else {
         setupWindow.destroy();
         showEngine();
       });
+      ipcMain.handle('nod:notifications:request', async (event, messageId) => {
+        if (
+          !isEngine(event) ||
+          quitting ||
+          !onboardingCompleted ||
+          typeof messageId !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+            messageId,
+          )
+        )
+          throw new Error('This action is unavailable.');
+        const response = await engineRequest('/api/onboarding/introduction');
+        if (!response.ok || (await response.json()).messageId !== messageId || !isEngine(event))
+          throw new Error('This introduction is unavailable.');
+        if (!(await settings.claimNotificationRequest())) return { status: 'skipped' };
+        let result = 'failed';
+        try {
+          if (!quitting && isEngine(event))
+            result = Notification.isSupported() ? 'requested' : 'unsupported';
+        } catch {}
+        applyPreferences(await settings.finishNotificationRequest(result));
+        return { status: result };
+      });
       ipcMain.handle('nod:feedback:context', (event) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         return feedbackContext();
@@ -1921,8 +1979,12 @@ else {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         if (options?.retry === true && !enginePreferencesReady) welcomeTransferError = undefined;
         await transferWelcome();
-        if (options?.retry === true && status.windowError) showEngine();
-        if (engineRuntimeReady) return status;
+        if (options?.retry === true && status.windowError) {
+          showEngine();
+          if (enginePreferencesReady && status.runtime.phase !== 'error') return status;
+        }
+        if (engineRuntimeReady || (!options?.retry && enginePreferencesReady && preparing))
+          return status;
         return prepare(options);
       });
       ipcMain.handle('nod:runtime:import', (event) => {
@@ -1988,15 +2050,12 @@ else {
         const removeData = Menu.getApplicationMenu?.()?.getMenuItemById('remove-local-data');
         if (removeData) removeData.enabled = !saved.serverUrl;
         onboardingCompleted = Boolean(saved.serverUrl) || saved.onboardingCompleted;
+        update({ remote: Boolean(saved.serverUrl) });
         applyPreferences(saved);
         guidedStartup = !saved.serverUrl && !saved.onboardingCompleted;
-        await showSettings('general', true);
-        if (
-          setupWindow &&
-          !setupWindow.isDestroyed() &&
-          (saved.serverUrl || saved.onboardingCompleted || saved.welcome?.continued)
-        )
-          void prepare();
+        const presented = showSettings('general', true);
+        if (saved.serverUrl || saved.onboardingCompleted || saved.welcome) void prepare();
+        await presented;
       } catch (error) {
         showSettings('general', true);
         update({ phase: 'error', message: bounded(error.message), error: bounded(error.message) });

@@ -16,10 +16,14 @@ For a local assistant, have a [supported model service](/connect/models/) ready 
 ```mermaid
 flowchart LR
   dl[Download<br/>the installer] --> open[Open and<br/>approve it]
-  open --> prep[nod prepares<br/>its computer]:::accent
-  open --> ob[Onboarding]
+  open --> local[Use this computer]
+  local --> prep[nod prepares<br/>its computer]:::accent
+  local --> ob[Onboarding]
+  open --> remote[Connect to a server]
+  remote --> address[Enter address<br/>and token]
   prep --> chat([Start chatting]):::go
   ob --> chat
+  address --> chat
 ```
 
 ## Install nod
@@ -37,9 +41,9 @@ You need macOS 14 or later, on Apple silicon or Intel. For a local assistant, th
 
 3. The first time, macOS asks whether to open an app downloaded from the internet. Select **Open**.
 
-4. At Welcome, choose **Connect to a server** to use an existing assistant. For a local assistant, choose whether to share usage data and select **Let's go**. Once storage is ready, connect a model and Gmail and answer the setup questions while the workspace and browser finish starting. Enable desktop notifications and **Open at login** to finish local setup. Telegram is optional. You can change the desktop preferences later in Settings. If macOS asks for your keychain password, approve it so nod can protect your saved keys.
+4. At Welcome, choose **Connect to a server** to use an existing assistant, or **Use this computer** to start a local one. Local setup offers optional email and calendar connections, then a model and other apps. Enable **Open at login** to finish local setup. On a new profile, nod enables desktop notifications when its first chat introduction appears. macOS may ask for permission. If macOS asks for your keychain password, approve it so nod can protect your saved keys.
 
-5. Keep your internet connection on. When setup and the computer are ready, nod opens your chat with the connections and answers you just saved. See [Your first conversation](/get-started/first-conversation/).
+5. Keep your internet connection on. When setup is ready, nod opens your chat with your saved connections. See [Your first conversation](/get-started/first-conversation/).
 
 </Steps>
 
@@ -73,11 +77,11 @@ Run it as your normal user, without `sudo`. It verifies the download, installs t
 
 2. Run `nod-Setup-x64.exe`. The preview isn't signed, so Windows can show a publisher warning. The installer adds nod to the Start menu.
 
-3. At Welcome, choose **Connect to a server** to use an existing assistant. For a local assistant, choose whether to share usage data and select **Let's go**. Once storage is ready, connect a model and Gmail and answer the setup questions while the workspace and browser finish starting. Enable desktop notifications and **Open at login** to finish local setup. Telegram is optional. You can change the desktop preferences later in Settings.
+3. At Welcome, choose **Connect to a server** to use an existing assistant, or **Use this computer** to start a local one. Local setup offers optional email and calendar connections, then a model and other apps. Enable **Open at login** to finish local setup. On a new profile, nod enables desktop notifications when its first chat introduction appears. Windows notification settings control delivery. You can change these preferences later in Settings.
 
 4. If nod needs WSL, follow its setup instructions and approve the administrator request. If Windows needs a restart, open nod again afterwards; your saved connections and settings are kept.
 
-5. Keep your internet connection on. When setup and the computer are ready, nod opens your chat with your saved connections and answers. See [Your first conversation](/get-started/first-conversation/).
+5. Keep your internet connection on. When setup is ready, nod opens your chat with your saved connections. See [Your first conversation](/get-started/first-conversation/).
 
 </Steps>
 

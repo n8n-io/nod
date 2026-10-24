@@ -338,12 +338,26 @@ test(
       )`);
       await Promise.all([first.initialize(), second.initialize()]);
       const borrowed = await f.database.connect();
+      const query = borrowed.query.bind(borrowed);
+      let collided = false;
       try {
         await borrowed.query('BEGIN');
         await borrowed.query("SET LOCAL lock_timeout='2s'");
+        borrowed.query = ((statement: string, values?: unknown[]) => {
+          if (
+            !collided &&
+            statement === 'CREATE TABLE IF NOT EXISTS nod_locks (key text PRIMARY KEY)'
+          ) {
+            collided = true;
+            return query("CREATE TYPE nod_locks AS ENUM ('collision')");
+          }
+          return query(statement, values);
+        }) as typeof borrowed.query;
         await createPostgresObjectStore({ database: borrowed, ownerId: 'owner-one' }).initialize();
+        assert.equal(collided, true);
         assert.equal((await borrowed.query('SHOW lock_timeout')).rows[0].lock_timeout, '2s');
       } finally {
+        borrowed.query = query;
         await borrowed.query('ROLLBACK');
         borrowed.release();
       }

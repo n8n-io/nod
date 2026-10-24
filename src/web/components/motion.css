@@ -66,6 +66,46 @@
     transform: translate(-0.5px, 0.5px) scale(1.04);
   }
 }
+.ob-glyph-bounce > circle,
+.ob-glyph-bounce > .ob-glyph-orbit {
+  transform-box: view-box;
+  transform-origin: center;
+}
+
+.ob-glyph-bounce > circle {
+  animation: ob-bounce-ring 1.5s 0.25s var(--ease-enter) infinite;
+}
+
+.ob-glyph-bounce > .ob-glyph-orbit {
+  animation: ob-bounce-dot 1.5s 0.4s var(--ease-enter) infinite;
+}
+
+@keyframes ob-bounce-ring {
+  0%,
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+  38% {
+    transform: translateY(6%) scaleY(0.93);
+  }
+  65% {
+    transform: translateY(-1%) scaleY(1);
+  }
+}
+
+@keyframes ob-bounce-dot {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(8%);
+  }
+  67% {
+    transform: translateY(-2%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ob-glyph *,
   .ob-glyph *::before,

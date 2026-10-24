@@ -1,13 +1,17 @@
 import type { ChannelProvider, ChannelSetupSummary, Connection } from '../../shared/contracts';
+import { integrationMetadata } from '../../shared/integrations';
 
 export function connectionGroups(connections: Connection[], catalog: Connection[] = []) {
   const knownServices = new Set(connections.map((connection) => connection.slug));
   const catalogServices = new Map(catalog.map((service) => [service.slug, service]));
   const groups = new Map<string, Connection[]>();
   for (const connection of [
-    ...connections.map((connection) =>
-      connection.connectionId ? connection : (catalogServices.get(connection.slug) ?? connection),
-    ),
+    ...connections.map((connection) => {
+      const service = catalogServices.get(connection.slug);
+      return connection.connectionId || !service
+        ? connection
+        : { ...service, ...integrationMetadata(connection.slug, service, connection) };
+    }),
     ...catalog.filter((service) => !knownServices.has(service.slug)),
   ]) {
     const key = connection.slug.replace(/_mcp$/, '');
@@ -27,12 +31,13 @@ export function connectionGroups(connections: Connection[], catalog: Connection[
       catalogServices.get(key) ??
       catalogServices.get(primary.slug) ??
       variants.find((connection) => !connection.connectionId);
+    const details = integrationMetadata(key, metadata, base, primary, ...variants);
     return {
       key,
       service: {
         ...primary,
-        name: (metadata?.name ?? base?.name ?? primary.name).replace(/\s+MCP$/i, ''),
-        description: metadata?.description,
+        name: details.name.replace(/\s+MCP$/i, ''),
+        description: details.description,
         logoUrl:
           metadata?.logoUrl ??
           primary.logoUrl ??

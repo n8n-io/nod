@@ -20,7 +20,7 @@ import {
   modelProviders,
   modelSource,
 } from '../../../../shared/models';
-import { Button, Input, SearchField } from '../../../components/ui';
+import { Button, Input, Notice, SearchField } from '../../../components/ui';
 import {
   CloudKeyFields,
   ModelKeyHelp,
@@ -457,7 +457,7 @@ function Setup({ c, provider }: { c: Connect; provider: ModelProvider }) {
   return <KeyForm c={c} provider={provider} autoFocus />;
 }
 
-function Connected({ c }: { c: Connect }) {
+function Connected({ c, onReconnect }: { c: Connect; onReconnect: () => void }) {
   const source = c.shown!;
   const saved = modelProviderInfo[source.provider]?.catalog === 'bundled';
   const choosing =
@@ -484,7 +484,7 @@ function Connected({ c }: { c: Connect }) {
               : choosing
                 ? 'Choose the model I should use.'
                 : missing
-                  ? 'The default model isn’t available for this account.'
+                  ? 'No supported models are available for this account.'
                   : saved
                     ? 'Access checked on first use. You can change the model any time.'
                     : 'I’ll use this model for every reply. You can change it any time.'}
@@ -507,6 +507,15 @@ function Connected({ c }: { c: Connect }) {
         >
           {c.models.busy && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
           Load models
+        </Button>
+      )}
+      {(source.status === 'loading' || missing) && (
+        <Button variant="ghost" disabled={c.locked} onClick={onReconnect}>
+          {source.provider === 'compatible'
+            ? 'Change server'
+            : source.method === 'api_key'
+              ? 'Use another API key'
+              : 'Use another account'}
         </Button>
       )}
       <Problem>{c.models.error}</Problem>
@@ -682,12 +691,25 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
         items={[<Bubble>Let’s connect an AI provider. Which one do you want me to use?</Bubble>]}
       />
       <Rise show={revealed >= 2} className="ob-brain-content">
-        {!c.data ? (
+        {!c.data && c.models.error ? (
+          <Notice>
+            <span data-analytics-private>{c.models.error}</span>{' '}
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={c.models.refreshing}
+              onClick={() => {
+                c.models.setError('');
+                void c.models.refresh();
+              }}
+            >
+              {c.models.refreshing ? 'Trying again…' : 'Try again'}
+            </Button>
+          </Notice>
+        ) : !c.data ? (
           <div className="ob-brain-status">
             <Spinner />
-            <p className="ob-brain-wait">
-              {c.models.error ? <span data-analytics-private>{c.models.error}</span> : 'Loading…'}
-            </p>
+            <p className="ob-brain-wait">Loading…</p>
           </div>
         ) : (
           <>
@@ -705,7 +727,13 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
             ) : (
               <Card page={page} direction={motion.direction}>
                 {view === 'done' ? (
-                  <Connected c={c} />
+                  <Connected
+                    c={c}
+                    onReconnect={() => {
+                      setPicked(c.shown!.provider);
+                      c.addAnother();
+                    }}
+                  />
                 ) : view === 'setup' ? (
                   <>
                     <header className="ob-brain-header">

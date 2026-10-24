@@ -62,7 +62,7 @@ nod doesn't learn about health, religion, politics, sexuality, gender identity, 
 
 ## Your writing style from Gmail
 
-When you connect Gmail, nod reads your own text from recent sent emails. It removes quoted, forwarded and automated mail first. It saves only how you write, with no facts, names or quotes, as one **Preferences** note labelled **Learned from your sent email**. A newer version replaces the old one.
+When you connect Gmail, nod reads your own text from recent sent emails. If you connect email before choosing a model during setup, this waits until you finish setup with a model connected. Turning off memory saving prevents this learning. It removes quoted, forwarded and automated mail first. It saves only how you write, with no facts, names or quotes, as one **Preferences** note labelled **Learned from your sent email**. A newer version replaces the old one.
 
 ## Bring memory from another assistant
 

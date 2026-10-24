@@ -17,7 +17,7 @@ export function NodGlyph({
   className,
 }: {
   size?: number;
-  mode?: 'idle' | 'thinking' | 'still';
+  mode?: 'idle' | 'thinking' | 'still' | 'bounce';
   reaction?: GlyphReaction | null;
   className?: string;
 }) {
@@ -47,7 +47,7 @@ export function NodGlyph({
   );
   return (
     <svg
-      className={cn('ob-glyph', className)}
+      className={cn('ob-glyph', mode === 'bounce' && 'ob-glyph-bounce', className)}
       viewBox="0 0 32 32"
       width={size}
       height={size}
@@ -59,11 +59,16 @@ export function NodGlyph({
         className="ob-glyph-orbit"
         data-phase={phase}
         onAnimationIteration={(event) => {
-          if (event.target !== event.currentTarget || live.current.thinking) return;
+          if (
+            event.target !== event.currentTarget ||
+            event.animationName !== 'ob-spin' ||
+            live.current.thinking
+          )
+            return;
           if (performance.now() - live.current.since > 600) setPhase('settle');
         }}
         onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget)
+          if (event.target === event.currentTarget && event.animationName === 'ob-spin-out')
             setPhase(live.current.thinking ? 'spin' : 'rest');
         }}
       >
