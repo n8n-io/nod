@@ -47,7 +47,14 @@ export async function validateTestReplacement(installed, candidate) {
       const identities = [];
       for (const application of [installed, candidate]) {
         const path = join(application, relative);
-        const entry = await lstat(path);
+        const entry = await lstat(path).catch((error) => {
+          if (relative && application === installed && error.code === 'ENOENT') return null;
+          throw error;
+        });
+        if (!entry) {
+          identities.push(null);
+          continue;
+        }
         if (
           (relative ? !entry.isFile() : !entry.isDirectory()) ||
           (await realpath(path)) !== resolve(path)
@@ -77,6 +84,11 @@ export async function validateTestReplacement(installed, candidate) {
         });
       }
       const [previous, next] = identities;
+      if (!previous) {
+        if (next.identifier !== 'nod-computer-use')
+          throw new Error('The new computer helper has an unexpected identifier.');
+        continue;
+      }
       if (
         (!relative && previous.identifier !== bundleId) ||
         previous.identifier !== next.identifier ||

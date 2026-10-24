@@ -3196,6 +3196,9 @@ test('local test installs preserve the running app when signing or identity chec
   for (const mode of [
     'first-install',
     'permanent',
+    'legacy',
+    'legacy-invalid-helper',
+    'legacy-changed-app',
     'ad-hoc',
     'failed',
     'invalid',
@@ -3231,8 +3234,10 @@ test('local test installs preserve the running app when signing or identity chec
       if (mode !== 'first-install') {
         await mkdir(dirname(join(installed, appPackage)), { recursive: true });
         await writeFile(join(installed, appPackage), JSON.stringify(previous));
-        await mkdir(dirname(join(installed, helper)), { recursive: true });
-        await writeFile(join(installed, helper), 'previous helper');
+        if (!mode.startsWith('legacy')) {
+          await mkdir(dirname(join(installed, helper)), { recursive: true });
+          await writeFile(join(installed, helper), 'previous helper');
+        }
       }
       await mkdir(join(root, 'desktop'), { recursive: true });
       await writeFile(
@@ -3330,8 +3335,15 @@ test('local test installs preserve the running app when signing or identity chec
             const path = args.at(-1);
             const previous = path === installed || path === join(installed, helper);
             const native = path.endsWith('nod-computer-use');
-            const identifier = native ? 'nod-computer-use' : 'dev.nod.desktop.setup-test';
-            const changed = !previous && mode === (native ? 'changed-helper' : 'changed-app');
+            const identifier = native
+              ? mode === 'legacy-invalid-helper'
+                ? 'unexpected-helper'
+                : 'nod-computer-use'
+              : 'dev.nod.desktop.setup-test';
+            const changed =
+              !previous &&
+              (mode === (native ? 'changed-helper' : 'changed-app') ||
+                (!native && mode === 'legacy-changed-app'));
             const adhoc = mode === 'ad-hoc' || (!previous && mode === 'downgrade');
             return `Identifier=${identifier}\n${adhoc ? 'Signature=adhoc' : 'Authority=Synthetic signer'}\ndesignated => identifier "${identifier}" and anchor H"${(changed ? 'b' : 'a').repeat(40)}"`;
           } else if (command === '/bin/ps') {
@@ -3345,7 +3357,17 @@ test('local test installs preserve the running app when signing or identity chec
         `(async () => { ${source.replaceAll('import.meta.url', JSON.stringify(url))}\nglobalThis.buildTest = build; })()`,
         context,
       );
-      if (['failed', 'invalid', 'changed-app', 'changed-helper', 'downgrade'].includes(mode)) {
+      if (
+        [
+          'failed',
+          'invalid',
+          'changed-app',
+          'changed-helper',
+          'downgrade',
+          'legacy-invalid-helper',
+          'legacy-changed-app',
+        ].includes(mode)
+      ) {
         await assert.rejects(
           context.buildTest(engine),
           mode === 'failed'
@@ -3368,7 +3390,7 @@ test('local test installs preserve the running app when signing or identity chec
           events,
           mode === 'first-install'
             ? ['sign-ad-hoc', 'verify-runtime']
-            : mode === 'permanent'
+            : ['permanent', 'legacy'].includes(mode)
               ? [
                   'verify-identity',
                   'sign-permanent',
@@ -3384,8 +3406,11 @@ test('local test installs preserve the running app when signing or identity chec
         const receipt = JSON.parse(
           await readFile(join(root, '.local', 'desktop-test-install', 'installed.json'), 'utf8'),
         );
-        assert.equal(receipt.signing.mode, mode === 'permanent' ? 'self-signed' : 'ad-hoc');
-        if (mode === 'permanent')
+        assert.equal(
+          receipt.signing.mode,
+          ['permanent', 'legacy'].includes(mode) ? 'self-signed' : 'ad-hoc',
+        );
+        if (['permanent', 'legacy'].includes(mode))
           assert.equal(receipt.signing.certificateSha256, env.NOD_SIGNING_CERTIFICATE_SHA256);
       }
     });
@@ -3430,6 +3455,16 @@ test(
       /^(?:# )?designated => (.+)$/m,
     )?.[1];
     assert.ok(requirement);
+    await t.test('removed sealed helper', async () => {
+      const damaged = join(temporary, 'removed-helper.app');
+      await cp(installed, damaged, { recursive: true });
+      await rm(join(damaged, helper));
+      assert.throws(() => codesign('--verify', '--deep', '--strict', damaged));
+      await assert.rejects(
+        validateTestReplacement(damaged, installed),
+        /test app signing identity/,
+      );
+    });
     for (const variation of [
       'identical',
       'changed-app',
