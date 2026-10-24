@@ -30,10 +30,10 @@ case "$platform" in linux/x86_64|linux/amd64) native=amd64 ;; linux/aarch64|linu
 [ "$architecture" = "$native" ] || { echo "This bundle is $architecture; Docker requires $native." >&2; exit 1; }
 sh setup.sh >/dev/null
 docker image load --input images.tar.gz >/dev/null
-while read -r reference expected; do
+while read -r reference config target; do
   case "$reference" in nod-server:bundle-*|nod-browser:bundle-*|nod-workspace:bundle-*) ;; *) echo 'Invalid bundled image reference.' >&2; exit 1 ;; esac
   actual=$(docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}}' "$reference")
-  [ "$actual" = "$expected linux/$architecture $revision" ] || { echo 'Loaded image does not match the bundle.' >&2; exit 1; }
+  [ "$actual" = "$config linux/$architecture $revision" ] || [ "$actual" = "$target linux/$architecture $revision" ] || { echo 'Loaded image does not match the bundle.' >&2; exit 1; }
 done < images.txt
 if [ "${1:-}" = --https ]; then
   docker compose --file compose.yaml --env-file .env --profile https up -d --no-build --wait --wait-timeout 180

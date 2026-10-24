@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
@@ -15,7 +15,7 @@ let directory = bundle
   ? join(scratch, 'installation')
   : fileURLToPath(new URL('.', import.meta.url));
 if (bundle) await cp(bundle, directory, { recursive: true, mode: constants.COPYFILE_FICLONE });
-const project = `nod-check-${randomUUID()}`;
+let project = `nod-check-${randomUUID()}`;
 let envFile = join(bundle ? directory : scratch, '.env');
 const installations = [{ directory, envFile, project }];
 const environment = Object.fromEntries(
@@ -23,8 +23,7 @@ const environment = Object.fromEntries(
     process.env[name] ? [[name, process.env[name]]] : [],
   ),
 );
-if (bundle) environment.COMPOSE_PROJECT_NAME = project;
-else environment.NOD_ENV_FILE = envFile;
+if (!bundle) environment.NOD_ENV_FILE = envFile;
 const command = (args, input, executable = 'docker') =>
   new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
@@ -112,8 +111,28 @@ try {
     await assert.rejects(readFile(envFile), { code: 'ENOENT' });
     await writeFile(join(directory, 'architecture'), architecture);
     await writeFile(join(directory, 'checksums.sha256'), checksums);
-    const installed = await shell('install.sh');
+    await shell('setup.sh');
     const generated = await readFile(envFile, 'utf8');
+    project = generated.match(/^COMPOSE_PROJECT_NAME=(.+)$/m)?.[1];
+    assert.ok(project);
+    assert.equal(
+      (
+        await command([
+          'ps',
+          '--all',
+          '--quiet',
+          '--filter',
+          `label=com.docker.compose.project=${project}`,
+        ])
+      ).trim(),
+      '',
+    );
+    assert.equal(
+      (await command(['volume', 'ls', '--quiet', '--filter', `name=^${project}_`])).trim(),
+      '',
+    );
+    installations[0].project = project;
+    const installed = await shell('install.sh');
     originalToken = generated.match(/^NOD_AUTH_TOKEN=(.+)$/m)?.[1];
     password = generated.match(/^NOD_POSTGRES_PASSWORD=(.+)$/m)?.[1];
     vault = generated.match(/^NOD_VAULT_KEY=(.+)$/m)?.[1];
@@ -228,6 +247,7 @@ try {
   const id = randomUUID();
   const probe = `
     import assert from 'node:assert/strict';
+    import { createHash } from 'node:crypto';
     import { mkdir, readFile, writeFile } from 'node:fs/promises';
     import { createDockerWorkspace } from './src/providers/docker/index.ts';
     import { createContainerBrowserComputer } from './src/providers/container-browser/index.ts';
@@ -249,19 +269,104 @@ try {
       await pool.query('INSERT INTO nod_hosting_probe VALUES ($1)',['synthetic-persistence']);
       await writeFile(root+'/hosting-probe','synthetic-persistence');
       await assert.rejects(browser.act(id,{action:'snapshot'}),error=>error.code==='browser_not_open');
+      const opened=await browser.act(id,{action:'open',url:'https://example.com/'});
+      assert.equal(new URL(opened.url).hostname,'example.com');
+      assert.ok(opened.text.includes('This domain is for use in documentation examples'),opened.text);
+      const marker='nod-browser-'+id;
+      await browser.act(id,{action:'evaluate',script:'(() => { const heading=document.createElement("h1"); heading.textContent='+JSON.stringify(marker)+'; const button=document.createElement("button"); button.textContent="Complete synthetic check"; button.onclick=()=>{heading.textContent+=" complete";}; document.body.replaceChildren(heading,button); })()'});
+      assert.ok((await browser.act(id,{action:'snapshot'})).text.includes(marker));
+      await browser.act(id,{action:'click',selector:'button'});
+      assert.ok((await browser.act(id,{action:'snapshot'})).text.includes(marker+' complete'));
+      const screenshot=await browser.screenshot(id);
+      assert.ok(screenshot && screenshot.length>1000);
+      assert.equal(screenshot.subarray(0,8).toString('hex'),'89504e470d0a1a0a');
+      assert.equal(screenshot.subarray(12,16).toString(),'IHDR');
+      assert.ok(screenshot.readUInt32BE(16)>0 && screenshot.readUInt32BE(20)>0);
+      console.log('Chromium opened a public page, rendered and clicked a synthetic control, and captured a PNG ('+screenshot.length+' bytes, sha256 '+createHash('sha256').update(screenshot).digest('hex')+').');
       const denied=await fetch('http://runtime:2375/containers/json');
       assert.equal(denied.status,403);
       const control=await session.exec(${JSON.stringify(networkScript)});
       assert.equal(control.exitCode,0);
     } finally {await workspace.dispose();await browser.dispose();await pool.end();}
   `;
-  await command(
-    ['exec', '-i', `${project}-server-1`, 'node', '--import', 'tsx', '--input-type=module'],
-    probe,
+  console.log(
+    (
+      await command(
+        ['exec', '-i', `${project}-server-1`, 'node', '--import', 'tsx', '--input-type=module'],
+        probe,
+      )
+    ).trim(),
   );
   console.log(
-    'Workspace execution, browser bridge, secret isolation, and private runtime network passed.',
+    'Workspace execution, Chromium rendering, secret isolation, and private runtime network passed.',
   );
+  const firstPostgres = (await compose('ps', '--quiet', 'postgres')).trim();
+  const firstDirectory = directory;
+  const firstEnvFile = envFile;
+  const firstEnvOverride = environment.NOD_ENV_FILE;
+  const secondDirectory = join(scratch, 'another installation with spaces');
+  await mkdir(secondDirectory);
+  for (const file of ['setup.sh', '.env.example', 'compose.yaml'])
+    await cp(join(directory, file), join(secondDirectory, file));
+  try {
+    directory = secondDirectory;
+    envFile = join(directory, '.env');
+    delete environment.NOD_ENV_FILE;
+    environment.COMPOSE_PROJECT_NAME = project;
+    await assert.rejects(shell('setup.sh'), /Compose project already has resources/);
+    await assert.rejects(readFile(envFile), { code: 'ENOENT' });
+    delete environment.COMPOSE_PROJECT_NAME;
+    await shell('setup.sh');
+    const secondProject = (await readFile(envFile, 'utf8')).match(
+      /^COMPOSE_PROJECT_NAME=(.+)$/m,
+    )?.[1];
+    assert.ok(secondProject);
+    assert.notEqual(secondProject, project);
+    installations.push({ directory, envFile, project: secondProject });
+    await compose('up', '-d', '--wait', '--wait-timeout', '120', 'postgres');
+    assert.equal(
+      (
+        await compose(
+          'exec',
+          '-T',
+          'postgres',
+          'psql',
+          '-U',
+          'nod',
+          '-d',
+          'nod',
+          '-Atc',
+          "SELECT to_regclass('public.nod_hosting_probe');",
+        )
+      ).trim(),
+      '',
+    );
+    await compose('down', '--volumes', '--remove-orphans');
+  } finally {
+    directory = firstDirectory;
+    envFile = firstEnvFile;
+    delete environment.COMPOSE_PROJECT_NAME;
+    if (firstEnvOverride) environment.NOD_ENV_FILE = firstEnvOverride;
+  }
+  assert.equal((await compose('ps', '--quiet', 'postgres')).trim(), firstPostgres);
+  assert.equal(
+    (
+      await compose(
+        'exec',
+        '-T',
+        'postgres',
+        'psql',
+        '-U',
+        'nod',
+        '-d',
+        'nod',
+        '-Atc',
+        'SELECT value FROM nod_hosting_probe;',
+      )
+    ).trim(),
+    'synthetic-persistence',
+  );
+  console.log('Fresh installations use independent data; occupied project names are refused.');
   const replacement = randomBytes(32).toString('base64url');
   await writeEnvironment(replacement);
   if (bundle) {

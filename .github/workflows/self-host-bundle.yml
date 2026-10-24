@@ -83,7 +83,7 @@ jobs:
       - name: Install packaging dependencies
         run: pnpm install --frozen-lockfile
       - name: Check release integrity and refusal paths
-        run: node --test --test-name-pattern='server release' desktop/test/runtime-assets.test.mjs
+        run: node --test --test-name-pattern='server (release|bundle)' desktop/test/runtime-assets.test.mjs
       - name: Set up Docker build cache
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
       - name: Exercise a checkout with private file permissions

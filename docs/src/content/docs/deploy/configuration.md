@@ -202,14 +202,14 @@ The self-hosting stack sets these names to `nod-workspace-<project>` and `nod-br
 
 These values belong in `deployment/self-host/.env` and control Compose. They are separate from the application settings above.
 
-| Variable               | What it does                                                                                                                             | Default      |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| `COMPOSE_PROJECT_NAME` | Names this installation's containers and volumes. Changing it selects different data; use the restore procedure to move an installation. | `nod-server` |
-| `NOD_BIND_ADDRESS`     | Host interface for the backend port. Keep loopback when using Caddy or another local proxy.                                              | `127.0.0.1`  |
-| `NOD_IMAGE_TAG`        | Tag assigned to the images built from your checked-out source. It does not download a published release.                                 | `local`      |
-| `NOD_SERVER_MEMORY`    | Server container's memory limit.                                                                                                         | `2g`         |
-| `NOD_BROWSER_MEMORY`   | Browser container's memory limit.                                                                                                        | `3g`         |
-| `NOD_WORKSPACE_MEMORY` | Workspace container's memory limit.                                                                                                      | `2g`         |
+| Variable               | What it does                                                                                                                             | Default                                                |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `COMPOSE_PROJECT_NAME` | Names this installation's containers and volumes. Changing it selects different data; use the restore procedure to move an installation. | Generated once by `setup.sh`; existing values are kept |
+| `NOD_BIND_ADDRESS`     | Host interface for the backend port. Keep loopback when using Caddy or another local proxy.                                              | `127.0.0.1`                                            |
+| `NOD_IMAGE_TAG`        | Tag assigned to the images built from your checked-out source. It does not download a published release.                                 | `local`                                                |
+| `NOD_SERVER_MEMORY`    | Server container's memory limit.                                                                                                         | `2g`                                                   |
+| `NOD_BROWSER_MEMORY`   | Browser container's memory limit.                                                                                                        | `3g`                                                   |
+| `NOD_WORKSPACE_MEMORY` | Workspace container's memory limit.                                                                                                      | `2g`                                                   |
 
 Compose sets `NOD_HOST`, `NOD_DATA_ROOT`, `WORKSPACE_CONTAINER`, `BROWSER_CONTAINER`, `NODE_ENV`, and `NOD_ENVIRONMENT` for its internal layout. These values override `.env` in the stack. Store data in the supplied volumes rather than changing container paths.
 

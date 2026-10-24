@@ -49,7 +49,9 @@ Check the full source commit in the release tag or workflow run before downloadi
 
 </Steps>
 
-The installer checks the bundle and Docker architecture, loads its exact application images, generates private keys, and waits for a healthy stack. An existing `.env` keeps its keys and settings. PostgreSQL and the runtime helpers download from pinned public images, so installation needs internet access. The server needs no Node.js, Git, registry login, or GitHub credentials.
+The installer checks the bundle and Docker architecture, loads its exact application images, generates private keys, and waits for a healthy stack. Each fresh installation gets its own Compose project name and data volumes. An existing `.env` keeps its keys, project name, and settings. PostgreSQL and the runtime helpers download from pinned public images, so installation needs internet access. The server needs no Node.js, Git, registry login, or GitHub credentials.
+
+For another independent assistant on the same computer, use a fresh folder and a different `PORT`. Run `sh setup.sh` before editing the new `.env`. Keep each installation's `COMPOSE_PROJECT_NAME` unchanged after its first start; use [Restore](/deploy/server-operations/#restore-into-a-fresh-installation) to move saved data into a new project.
 
 To configure a domain before the first start, run `sh setup.sh`, set `NOD_PUBLIC_URL` in `.env`, then run `sh install.sh --https`. See [Add public HTTPS](#add-public-https) for DNS and firewall setup.
 

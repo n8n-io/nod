@@ -20,8 +20,17 @@ fi
 if [ -e .env ]; then
   echo 'Using the existing .env. Its keys and data are unchanged.'
 else
+  project=${COMPOSE_PROJECT_NAME:-nod-$(openssl rand -hex 8)}
+  case "$project" in ''|*[!a-z0-9_-]*|[-_]*) echo 'COMPOSE_PROJECT_NAME must begin with a lowercase letter or digit and contain only lowercase letters, digits, hyphens or underscores.' >&2; exit 1 ;; esac
+  if [ -n "$(docker ps --all --quiet --filter "label=com.docker.compose.project=$project")" ] ||
+    [ -n "$(docker volume ls --quiet --filter "name=^${project}_")" ] ||
+    [ -n "$(docker network ls --quiet --filter "label=com.docker.compose.project=$project")" ]; then
+    echo 'That Compose project already has resources. Choose a different COMPOSE_PROJECT_NAME for this new installation.' >&2
+    exit 1
+  fi
   (
-    sed '/^NOD_AUTH_TOKEN=/d; /^NOD_VAULT_KEY=/d; /^NOD_POSTGRES_PASSWORD=/d' .env.example
+    sed '/^COMPOSE_PROJECT_NAME=/d; /^NOD_AUTH_TOKEN=/d; /^NOD_VAULT_KEY=/d; /^NOD_POSTGRES_PASSWORD=/d' .env.example
+    printf 'COMPOSE_PROJECT_NAME=%s\n' "$project"
     printf 'NOD_AUTH_TOKEN=%s\n' "$(openssl rand -hex 32)"
     printf 'NOD_VAULT_KEY=%s\n' "$(openssl rand -base64 32)"
     printf 'NOD_POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)"

@@ -41,6 +41,7 @@ import {
 } from '../../.github/scripts/prepare-desktop-release.mjs';
 import { verifyRuntimeRelease } from '../scripts/release-tools.mjs';
 import { draftServerRelease } from '../../.github/scripts/server-release.mjs';
+import { imageIdentities } from '../../deployment/self-host/image-identities.mjs';
 
 async function releaseRepository(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-release-history-')));
@@ -170,6 +171,95 @@ async function serverReleaseFixture(t) {
     draft: () => draftServerRelease({ root: f.root, directory, environment, request }),
   };
 }
+
+async function imageArchive(t, change = () => {}) {
+  const root = await mkdtemp(join(tmpdir(), 'nod-image-archive-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const contents = join(root, 'contents');
+  await mkdir(join(contents, 'blobs', 'sha256'), { recursive: true });
+  const blobs = new Map();
+  const add = (value) => {
+    const bytes = Buffer.from(JSON.stringify(value));
+    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    blobs.set(digest, bytes);
+    return { digest, size: bytes.length };
+  };
+  const revision = 'a'.repeat(40);
+  const architecture = 'arm64';
+  const manifest = [];
+  const index = { schemaVersion: 2, manifests: [] };
+  const expected = [];
+  for (const service of ['server', 'browser']) {
+    const reference = `nod-${service}:bundle-synthetic`;
+    const config = add({
+      architecture,
+      os: 'linux',
+      config: {
+        Env: [`SERVICE=${service}`],
+        Labels: { 'org.opencontainers.image.revision': revision },
+      },
+      rootfs: { type: 'layers', diff_ids: [] },
+    });
+    const image = add({ schemaVersion: 2, config, layers: [] });
+    const target = service === 'server' ? add({ schemaVersion: 2, manifests: [image] }) : image;
+    manifest.push({
+      Config: `blobs/sha256/${config.digest.slice(7)}`,
+      RepoTags: [reference],
+      Layers: [],
+    });
+    index.manifests.push({
+      ...target,
+      annotations: { 'io.containerd.image.name': `docker.io/library/${reference}` },
+    });
+    expected.push({ reference, config: config.digest, target: target.digest });
+  }
+  change({ blobs, manifest, index });
+  for (const [digest, bytes] of blobs)
+    await writeFile(join(contents, 'blobs', 'sha256', digest.slice(7)), bytes);
+  await writeFile(join(contents, 'manifest.json'), JSON.stringify(manifest));
+  await writeFile(join(contents, 'index.json'), JSON.stringify(index));
+  const archive = join(root, 'images.tar.gz');
+  await create({ cwd: contents, file: archive, gzip: true }, [
+    'blobs',
+    'index.json',
+    'manifest.json',
+  ]);
+  return {
+    expected,
+    read: (options = {}) =>
+      imageIdentities(
+        archive,
+        expected.map(({ reference }) => reference),
+        {
+          architecture,
+          revision,
+          ...options,
+        },
+      ),
+  };
+}
+
+test('server bundle binds classic and containerd identities to the same archived image', async (t) => {
+  const archive = await imageArchive(t);
+  assert.deepEqual(await archive.read(), archive.expected);
+  await assert.rejects(archive.read({ architecture: 'amd64' }), /platform, source or reference/);
+  await assert.rejects(archive.read({ revision: 'b'.repeat(40) }), /platform, source or reference/);
+});
+
+test('server bundle rejects image substitution and corrupt archive identity metadata', async (t) => {
+  const substitution = await imageArchive(t, ({ index }) => {
+    index.manifests[0].digest = index.manifests[1].digest;
+  });
+  await assert.rejects(substitution.read(), /platform, source or reference/);
+  const corrupt = await imageArchive(t, ({ blobs, index }) => {
+    blobs.set(index.manifests[0].digest, Buffer.from('{}'));
+  });
+  await assert.rejects(corrupt.read(), /content digest/);
+  const duplicate = await imageArchive(t, ({ manifest }) => {
+    manifest.push(manifest[0]);
+  });
+  await assert.rejects(duplicate.read(), /exactly once/);
+});
 
 test('server release refuses unapproved, public, branch and source-mismatched uploads', async (t) => {
   const f = await serverReleaseFixture(t);

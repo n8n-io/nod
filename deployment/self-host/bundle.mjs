@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { createGzip } from 'node:zlib';
 import { create } from 'tar';
 import { parse, stringify } from 'yaml';
+import { imageIdentities } from './image-identities.mjs';
 
 const run = promisify(execFile);
 const directory = fileURLToPath(new URL('.', import.meta.url));
@@ -63,10 +64,6 @@ const files = [
 await Promise.all(files.map((file) => copyFile(join(directory, file), join(bundle, file))));
 await writeFile(join(bundle, 'source-revision'), `${revision}\n`);
 await writeFile(join(bundle, 'architecture'), `${architecture}\n`);
-await writeFile(
-  join(bundle, 'images.txt'),
-  images.map((image) => `${image.reference} ${image.id}\n`).join(''),
-);
 const save = spawn('docker', ['image', 'save', ...images.map((image) => image.reference)], {
   stdio: ['ignore', 'pipe', 'inherit'],
 });
@@ -82,6 +79,18 @@ await Promise.all([
     createWriteStream(join(bundle, 'images.tar.gz'), { flags: 'wx' }),
   ),
 ]);
+const identities = await imageIdentities(
+  join(bundle, 'images.tar.gz'),
+  images.map((image) => image.reference),
+  { architecture, revision },
+);
+for (const [position, identity] of identities.entries())
+  if (![identity.config, identity.target].includes(images[position].id))
+    throw new Error('Exported image does not match the built image.');
+await writeFile(
+  join(bundle, 'images.txt'),
+  identities.map(({ reference, config, target }) => `${reference} ${config} ${target}\n`).join(''),
+);
 const digest = async (file) => {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(file)) hash.update(chunk);
