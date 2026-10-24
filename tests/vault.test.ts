@@ -4892,6 +4892,89 @@ test('chat removes private-entry actions only after the server confirms submissi
   }
 });
 
+test('chat app setup keeps confirmed completion until dismissal and ignores an older request', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<div id="root"></div>', {url:'http://localhost:4310/',pretendToBeVisual:true});
+Object.assign(globalThis, {
+  window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true,
+  getComputedStyle:dom.window.getComputedStyle.bind(dom.window),
+  requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),
+  cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window),
+  ...Object.fromEntries(['Node','NodeFilter','Event','CustomEvent','Element','HTMLElement','HTMLInputElement','MutationObserver'].map(name => [name,dom.window[name]])),
+});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+const {act,createElement}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {SetupActions}=await import('./src/web/components/setup-link.tsx');
+const links=['https://consent.example.test/first','https://consent.example.test/second'];
+const hashes=links.map(url=>createHash('sha256').update(url).digest('hex'));
+const completed=new Set();
+let releaseFirst;
+let held=false;
+let opened=0;
+window.open=()=>({closed:false,opener:null,document:{title:'',body:{textContent:''}},location:{set href(value){opened++;}},close(){this.closed=true;}});
+globalThis.fetch=async(path,init={})=>{
+  assert.equal(path,'/api/apps/setup-status');
+  const body=JSON.parse(init.body);
+  if(body.pairingUrl===links[0]&&!held){
+    held=true;
+    return new Promise(resolve=>{releaseFirst=()=>resolve(Response.json({completed:[hashes[0]],apps:[]}));});
+  }
+  return Response.json({completed:body.hashes.filter(hash=>completed.has(hash)),apps:body.hashes.filter(hash=>!completed.has(hash)).map(hash=>({hash,slug:'notion',name:'Synthetic workspace',available:true}))});
+};
+const root=createRoot(document.querySelector('#root'));
+const settle=()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,15));});
+const waitFor=async(check)=>{for(let i=0;i<100;i++){if(check())return;await settle();}assert.ok(check());};
+const dialog=()=>document.querySelector('[role="dialog"]');
+const action=(name)=>Array.from(dialog()?.querySelectorAll('button')??[]).find(button=>button.textContent.trim()===name);
+const click=async(element)=>{assert.ok(element);await act(async()=>element.dispatchEvent(new window.MouseEvent('click',{bubbles:true,cancelable:true})));};
+try {
+  await act(async()=>root.render(createElement(SetupActions,{actions:links.map((href,index)=>({href,setup:'app',label:'Synthetic '+index}))})));
+  await settle();
+  await click(document.querySelectorAll('[data-setup="app"]')[0]);
+  await waitFor(()=>held);
+  await click(action('Close'));
+  await waitFor(()=>!dialog());
+  await click(document.querySelectorAll('[data-setup="app"]')[1]);
+  await waitFor(()=>opened===1);
+  const current=dialog();
+  assert.ok(current.querySelector('[role="status"]'));
+  await act(async()=>releaseFirst());
+  await settle();
+  assert.equal(dialog(),current);
+  assert.equal(action('Done'),undefined);
+  assert.ok(current.querySelector('[role="status"]'));
+  completed.add(hashes[0]);
+  await act(async()=>window.dispatchEvent(new Event('focus')));
+  await settle();
+  assert.equal(dialog(),current);
+  assert.equal(action('Done'),undefined);
+  completed.add(hashes[1]);
+  await act(async()=>window.dispatchEvent(new Event('focus')));
+  await waitFor(()=>Boolean(action('Done')));
+  assert.equal(dialog(),current);
+  assert.equal(current.querySelector('[role="status"]'),null);
+  assert.equal(document.querySelector('[data-setup="app"]'),null);
+  await settle();
+  assert.equal(dialog(),current);
+  await click(action('Done'));
+  await waitFor(()=>!dialog());
+  assert.equal(opened,1);
+} finally {
+  releaseFirst?.();
+  await act(async()=>root.unmount());
+  dom.window.close();
+}
+`,
+  });
+  assert.equal(result.exitCode, 0, `${result.stdout}\n${result.stderr}`);
+});
+
 test('analytics routes collapse private paths to known pages', async () => {
   const { analyticsRoute, sanitizedAnalyticsUrl } =
     await import('../src/web/lib/analytics-privacy.ts');
@@ -5278,7 +5361,8 @@ globalThis.location=window.location;
 globalThis.ResizeObserver=class {observe(){} disconnect(){}};
 HTMLElement.prototype.scrollIntoView=function(){};
 window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
-window.open=()=>({closed:false,opener:null,location:{replace(){}},close(){}});
+let popupBlocked=false;
+window.open=()=>popupBlocked?null:({closed:false,opener:null,location:{replace(){}},close(){}});
 let channel;
 globalThis.BroadcastChannel=class {constructor(){channel=this;} close(){}};
 const {createElement,act}=await import('react');
@@ -5293,7 +5377,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 let root;
 let advances=0;
 const settle=(ms=15)=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,ms));});
-const waitFor=async(condition)=>{for(let i=0;i<100&&!condition();i++)await settle();assert.ok(condition(),'Expected the confirmed connection to advance its React step');};
+const waitFor=async(condition,message='Expected the confirmed connection to advance its React step')=>{for(let i=0;i<100&&!condition();i++)await settle();assert.ok(condition(),message);};
 const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent.trim()===text);
 const click=async(text)=>{await waitFor(()=>button(text)&&!button(text).disabled);await act(async()=>button(text).click());await settle();};
 async function mount(Component,arrived='forward') {
@@ -5317,6 +5401,9 @@ let failDisconnect=true;
 let gmailReconnect=false;
 let gmailCompleted=false;
 let gmailMissing=false;
+let gmailAvailable=true;
+let gmailPairingConfirmed=true;
+const gmailRequests=[];
 let failApps=false;
 let failTelegram=true;
 let failChannelLoad=false;
@@ -5340,7 +5427,7 @@ let failInterviewPost=0;
 let failInterviewSave=false;
 let expectedAnswers=['Synthetic project focus'];
 let telegram={provider:'telegram',enabled:true,mode:'polling',accountHandle:'@fixture_bot',pairingCandidate:{id:'123456',name:'Fixture'},pairingExpiresAt:new Date(Date.now()+600000).toISOString()};
-const attempt='A'.repeat(43);
+let gmailAttempt;
 window.fetch=globalThis.fetch=async(url,options={})=>{
   const path=new URL(url,window.location.href).pathname;
   const body=options.body?JSON.parse(options.body):{};
@@ -5409,8 +5496,8 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
     disconnectPending=false;
     return Response.json({disconnected:true});
   }
-  if(path==='/api/apps/gmail/connect')return Response.json({url:'https://connect.composio.dev/link/fixture',attempt});
-  if(path==='/api/apps/setup-status')return Response.json({completed:gmailCompleted?body.hashes:[],apps:gmailMissing?[]:body.hashes.map(hash=>({hash,pairingConfirmed:true}))});
+  if(path==='/api/apps/gmail/connect'){gmailRequests.push(body);gmailAttempt=String(gmailRequests.length).padStart(43,'A');return Response.json({url:'https://connect.composio.dev/link/fixture-'+gmailRequests.length,attempt:gmailAttempt});}
+  if(path==='/api/apps/setup-status')return Response.json({completed:gmailCompleted?body.hashes:[],apps:gmailMissing?[]:body.hashes.map(hash=>({hash,pairingConfirmed:gmailPairingConfirmed,available:gmailAvailable}))});
   if(path==='/api/channels')return failChannelLoad?Response.json({error:'Fixture channel refresh failed'},{status:503}):Response.json({channels:[],inbox:[],deliveries:[],error:null});
   if(path==='/api/channel-settings')return Response.json({ready:true,channels:[telegram]});
   if(path==='/api/channel-settings/telegram/confirm'){
@@ -5516,12 +5603,12 @@ disconnectPending=true;
 await mount(Email);
 await waitFor(()=>button('Retry disconnection'));
 assert.equal(disconnectCalls,0,'uncertain disconnection is never retried automatically');
-assert.ok(button('Connect Gmail').disabled);
+assert.ok((button('Connect Gmail')??button('Try again')).disabled);
 assert.ok(button('Continue').disabled);
 await click('Retry disconnection');
 assert.equal(disconnectCalls,1);
 assert.match(document.body.textContent,/Fixture disconnection unavailable/);
-assert.ok(button('Connect Gmail').disabled);
+assert.ok((button('Connect Gmail')??button('Try again')).disabled);
 assert.equal(advances,0);
 failDisconnect=false;
 await click('Retry disconnection');
@@ -5537,7 +5624,7 @@ await click('Connect Gmail');
 await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt:'B'.repeat(43)}}));
 assert.equal(advances,0,'foreign callback cannot advance');
 failApps=true;
-await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt}}));
+await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt:gmailAttempt}}));
 await settle();
 assert.equal(advances,0,'callback alone cannot advance without confirmed account state');
 failApps=false; gmailConnected=false; gmailReconnect=true;
@@ -5579,8 +5666,69 @@ await mount(Email);
 await click('Connect Gmail');
 gmailMissing=true;
 await act(async()=>window.dispatchEvent(new Event('focus')));
-await waitFor(()=>document.body.textContent.includes('Gmail didn’t connect'));
+await waitFor(()=>button('Try again')&&!button('Try again').disabled&&document.querySelector('[role="alert"]'),'An absent attempt must offer explicit recovery');
 assert.equal(advances,0,'an absent attempt without completion remains a failure');
+gmailConnected=false;gmailCompleted=false;gmailMissing=false;gmailAvailable=true;gmailPairingConfirmed=false;
+await mount(Email);
+await click('Connect Gmail');
+await act(async()=>window.dispatchEvent(new Event('focus')));
+assert.ok(button('Cancel'),'Available consent must remain pending');
+assert.equal(advances,0);
+assert.equal(document.querySelector('a[href^="https://connect.composio.dev/link/"]'),null,'A handed-off one-time consent link must not be offered again');
+const beforeRestart=gmailRequests.length;
+const olderAttempt=gmailAttempt;
+await click('Start again');
+assert.equal(gmailRequests.length,beforeRestart+1,'Only an explicit restart starts a new consent attempt');
+assert.notEqual(gmailAttempt,olderAttempt,'A restart must replace the active attempt');
+assert.ok(button('Cancel'),'The restarted attempt must remain pending');
+for(const connection of ['connected','cancelled','failed','expired']){
+  await act(async()=>channel.onmessage({data:{connection,service:'gmail',attempt:olderAttempt}}));
+  await settle();
+  assert.ok(button('Cancel'),'A stale callback must not settle restarted consent');
+  assert.equal(document.querySelector('[role="alert"]'),null);
+  assert.equal(advances,0);
+  assert.equal(gmailRequests.length,beforeRestart+1,'A stale callback cannot trigger another restart');
+}
+const pendingRequests=gmailRequests.length;
+const failedAttempt=gmailAttempt;
+gmailAvailable=false;
+await act(async()=>window.dispatchEvent(new Event('focus')));
+await waitFor(()=>button('Try again')&&!button('Try again').disabled,'Unavailable consent must stop waiting and offer a fresh sign-in');
+assert.equal(button('Cancel'),undefined,'Unavailable consent must stop waiting immediately');
+assert.ok(document.querySelector('[role="alert"]'),'Unavailable consent must expose recovery');
+assert.equal(gmailRequests.length,pendingRequests,'Unavailable consent must not retry automatically');
+assert.equal(advances,0,'Unavailable consent cannot finish onboarding');
+gmailAvailable=true;
+await click('Try again');
+assert.equal(gmailRequests.length,pendingRequests+1,'Explicit recovery must start fresh consent');
+assert.notEqual(gmailAttempt,failedAttempt,'Explicit recovery must receive a distinct attempt');
+assert.equal(document.querySelector('[role="alert"]'),null,'Retry clears the previous failure');
+for(const connection of ['connected','cancelled','failed','expired']){
+  await act(async()=>channel.onmessage({data:{connection,service:'gmail',attempt:failedAttempt}}));
+  await settle();
+  assert.ok(button('Cancel'),'A stale '+connection+' callback must leave the retry pending');
+  assert.equal(document.querySelector('[role="alert"]'),null,'A stale callback cannot replace the retry state');
+  assert.equal(advances,0,'A stale callback cannot advance onboarding');
+  assert.equal(gmailRequests.length,pendingRequests+1,'A stale callback cannot restart authorization');
+}
+gmailConnected=true;gmailCompleted=true;
+await act(async()=>window.dispatchEvent(new Event('focus')));
+await waitFor(()=>advances===1);
+assert.equal(document.querySelector('[role="alert"]'),null,'Confirmed retry must not show a failure');
+gmailConnected=false;gmailCompleted=false;gmailPairingConfirmed=false;popupBlocked=true;
+await mount(Email);
+await click('Connect Gmail');
+const consentLink=()=>document.querySelector('a[href^="https://connect.composio.dev/link/"]');
+await waitFor(consentLink,'A blocked popup must offer the unopened consent URL');
+const manual=consentLink();
+const beforeManual=gmailRequests.length;
+await act(async()=>{manual.addEventListener('click',event=>event.preventDefault(),{once:true});manual.click();});
+assert.equal(consentLink(),null,'A manually opened one-time link must not be offered again');
+assert.equal(gmailRequests.length,beforeManual,'Manual handoff uses the existing authorization');
+assert.ok(button('Start again'),'A consumed link can only be replaced by an explicit restart');
+await click('Cancel');
+assert.equal(gmailRequests.length,beforeManual,'Cancel cannot retry authorization');
+popupBlocked=false;gmailPairingConfirmed=true;
 await mount(Telegram);
 await click('Confirm');
 assert.equal(advances,0);
