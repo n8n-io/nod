@@ -113,12 +113,34 @@ function boundedWav(bytes: Uint8Array, view: DataView) {
     if (offset + length > bytes.length) return false;
     if (type === 0x666d7420) {
       if (bytesPerSecond || length < 16) return false;
-      const format = view.getUint16(offset, true);
+      let format = view.getUint16(offset, true);
       const channels = view.getUint16(offset + 2, true);
       const rate = view.getUint32(offset + 4, true);
       const bits = view.getUint16(offset + 14, true);
       alignment = view.getUint16(offset + 12, true);
       bytesPerSecond = view.getUint32(offset + 8, true);
+      if (format === 0xfffe) {
+        if (length < 40) return false;
+        const extension = view.getUint16(offset + 16, true);
+        const precision = view.getUint16(offset + 18, true);
+        const mask = view.getUint32(offset + 20, true);
+        format = view.getUint32(offset + 24, true);
+        let speakers = 0;
+        for (let remaining = mask; remaining; remaining &= remaining - 1) speakers++;
+        if (
+          extension < 22 ||
+          extension > length - 18 ||
+          !precision ||
+          precision > bits ||
+          (format === 3 && precision !== bits) ||
+          mask & ~0x3ffff ||
+          (speakers && speakers !== channels) ||
+          view.getUint32(offset + 28) !== 0x00001000 ||
+          view.getUint32(offset + 32) !== 0x800000aa ||
+          view.getUint32(offset + 36) !== 0x00389b71
+        )
+          return false;
+      }
       if (
         ![1, 3].includes(format) ||
         ![1, 2].includes(channels) ||

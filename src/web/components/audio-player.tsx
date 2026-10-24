@@ -113,7 +113,7 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
           const value = event.currentTarget.duration;
           const seconds = Number.isFinite(value) && value > 0 ? value : 0;
           setDuration(seconds);
-          onDuration?.(seconds);
+          if (seconds > 0) onDuration?.(seconds);
         }}
         onPlay={(event) => {
           document.querySelectorAll('audio').forEach((other) => {

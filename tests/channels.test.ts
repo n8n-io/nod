@@ -343,6 +343,25 @@ test('audio waveform decoding bounds WAV, MP3 and M4A samples before entering th
     bytes.writeUInt32LE(samples * 2, 40);
     return bytes;
   };
+  const extensibleWav = (bits = 24, format = 1) => {
+    const bytes = Buffer.alloc(68 + (128 * 2 * bits) / 8);
+    wav(128).copy(bytes, 0, 0, 36);
+    bytes.writeUInt32LE(bytes.length - 8, 4);
+    bytes.writeUInt32LE(40, 16);
+    bytes.writeUInt16LE(0xfffe, 20);
+    bytes.writeUInt16LE(2, 22);
+    bytes.writeUInt32LE((8000 * 2 * bits) / 8, 28);
+    bytes.writeUInt16LE((2 * bits) / 8, 32);
+    bytes.writeUInt16LE(bits, 34);
+    bytes.writeUInt16LE(22, 36);
+    bytes.writeUInt16LE(bits, 38);
+    bytes.writeUInt32LE(3, 40);
+    bytes.writeUInt32LE(format, 44);
+    Buffer.from('00001000800000aa00389b71', 'hex').copy(bytes, 48);
+    bytes.write('data', 60);
+    bytes.writeUInt32LE(bytes.length - 68, 64);
+    return bytes;
+  };
   const frame = Buffer.alloc(417);
   frame.set([0xff, 0xfb, 0x90, 0xc4]);
   const mp3 = Buffer.concat([frame, frame]);
@@ -362,11 +381,40 @@ test('audio waveform decoding bounds WAV, MP3 and M4A samples before entering th
   oversizedM4aSample.writeUInt32BE(0xffffffff, m4a.indexOf('stsz') + 16);
   const multichannelM4a = Buffer.from(m4a);
   multichannelM4a.writeUInt16BE(32, m4a.indexOf('mp4a') + 20);
-  const files = [
+  const paddedPcm = extensibleWav();
+  paddedPcm.writeUInt16LE(20, 38);
+  const unspecifiedSpeakers = extensibleWav();
+  unspecifiedSpeakers.writeUInt32LE(0, 40);
+  const corruptGuid = extensibleWav();
+  corruptGuid[59] ^= 1;
+  const invalidExtensibleWav = [
+    [16, 38],
+    [36, 21],
+    [36, 24],
+    [38, 0],
+    [38, 25],
+    [40, 7],
+  ].map(([offset, value]) => {
+    const bytes = extensibleWav();
+    bytes.writeUInt16LE(value, offset);
+    return bytes;
+  });
+  const reservedSpeaker = extensibleWav();
+  reservedSpeaker.writeUInt32LE(0x80000001, 40);
+  const invalidFloatPrecision = extensibleWav(32, 3);
+  invalidFloatPrecision.writeUInt16LE(24, 38);
+  const accepted = [
     wav(128),
     mp3,
     Buffer.concat([Buffer.from([73, 68, 51, 4, 0, 0, 0, 0, 0, 0]), mp3]),
     m4a,
+    extensibleWav(),
+    extensibleWav(32, 3),
+    paddedPcm,
+    unspecifiedSpeakers,
+  ];
+  const files = [
+    ...accepted,
     invalidWav,
     wav(4_800_001),
     invalidMp3,
@@ -377,6 +425,11 @@ test('audio waveform decoding bounds WAV, MP3 and M4A samples before entering th
     multichannelM4a,
     m4a.subarray(0, m4a.length - 1),
     Buffer.from('<html>Not audio</html>'),
+    extensibleWav(24, 2),
+    corruptGuid,
+    ...invalidExtensibleWav,
+    reservedSpeaker,
+    invalidFloatPrecision,
   ];
   const ids: string[] = files.map(() => randomUUID());
   const server = createServer((request, response) => {
@@ -416,9 +469,9 @@ test('audio waveform decoding bounds WAV, MP3 and M4A samples before entering th
         1,
         new AbortController().signal,
       ),
-      index < 4 ? /Native decoding unavailable/ : /Waveform unavailable/,
+      index < accepted.length ? /Native decoding unavailable/ : /Waveform unavailable/,
     );
-  assert.equal(decodes, 4);
+  assert.equal(decodes, accepted.length);
 });
 
 test('WhatsApp setup removes stale QR codes and recovers from failed and stalled reads', async () => {
