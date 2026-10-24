@@ -261,7 +261,7 @@ try {
     try {
       const chunks=[];
       const session=workspace.open({threadId:id,workspacePath:path,signal:new AbortController().signal});
-      const result=await session.exec('printf synthetic-persistence > probe.txt; test ! -S /var/run/docker.sock; test -z "$NOD_AUTH_TOKEN"; test -z "$NOD_VAULT_KEY"; test ! -e /app/.env; printf synthetic-output',{onData:chunk=>chunks.push(chunk)});
+      const result=await session.exec('printf synthetic-persistence > probe.txt && test ! -S /var/run/docker.sock && test -z "$NOD_AUTH_TOKEN" && test -z "$NOD_VAULT_KEY" && test ! -e /app/.env && printf synthetic-output',{onData:chunk=>chunks.push(chunk)});
       assert.equal(result.exitCode,0);
       assert.equal(Buffer.concat(chunks).toString(),'synthetic-output');
       assert.equal(await readFile(path+'/probe.txt','utf8'),'synthetic-persistence');
