@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { ChevronDown, Download, LoaderCircle, Pause, Play, RotateCcw, RotateCw } from './icons';
+import { Download, LoaderCircle, Pause, Play, RotateCcw } from './icons';
 import { loadAudioWaveform } from '../lib/audio-waveform';
 import { localPreviewUrl, ownedArtifactUrl } from '../lib/attachment-url';
 import type { ImagePreview } from './attachment-images';
@@ -92,10 +92,10 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
   const progress = duration ? Math.min(1, current / duration) : 0;
   const bars = peaks ? (
     peaks.map((peak, index) => (
-      <rect key={index} x={index * 4} y={20 - peak * 18} width="2.5" height={peak * 36} rx="1.25" />
+      <rect key={index} x={index * 5} y={24 - peak * 16} width="3" height={peak * 32} rx="1.5" />
     ))
   ) : (
-    <rect y="18.5" width="256" height="3" rx="1.5" />
+    <rect y="22.5" width="320" height="3" rx="1.5" />
   );
   return (
     <div
@@ -134,16 +134,6 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
           setFailed(true);
         }}
       />
-      <div className="audio-player-heading">
-        <span className="audio-player-name" title={item.name}>
-          {item.name}
-        </span>
-        <Button variant="ghost" size="icon" asChild>
-          <a href={item.url} download={item.name} aria-label={`Download ${item.name}`}>
-            <Download size={16} aria-hidden="true" />
-          </a>
-        </Button>
-      </div>
       <button
         type="button"
         className="audio-player-play"
@@ -178,10 +168,10 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
         )}
       </button>
       <div className="audio-player-track" data-waveform-ready={Boolean(peaks)}>
-        <svg viewBox="0 0 256 40" preserveAspectRatio="none" aria-hidden="true">
+        <svg viewBox="0 0 320 48" preserveAspectRatio="none" aria-hidden="true">
           <defs>
             <clipPath id={clip}>
-              <rect width={256 * progress} height="40" />
+              <rect width={320 * progress} height="48" />
             </clipPath>
           </defs>
           <g className="audio-player-bars">{bars}</g>
@@ -208,48 +198,32 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
         />
       </div>
       <div className="audio-player-info">
-        <span className="audio-player-time">
-          {audioTime(current)} / {duration ? audioTime(duration) : '–:––'}
+        <span
+          className="audio-player-time"
+          aria-label={`${audioTime(current)} of ${audioTime(duration)}`}
+        >
+          {audioTime(current)}
+          <span className="audio-player-total"> / {duration ? audioTime(duration) : '–:––'}</span>
         </span>
         <button
           type="button"
-          className="audio-player-skip"
-          disabled={!duration || failed}
-          aria-label="Back 10 seconds"
-          title="Back 10 seconds"
-          onClick={() => seek((audio.current?.currentTime ?? current) - 10)}
+          className="audio-player-rate"
+          disabled={failed}
+          aria-label={`Playback speed ${rate}×. Change speed`}
+          title="Change playback speed"
+          onClick={() => {
+            const speeds = [1, 1.25, 1.5, 2, 0.75];
+            if (audio.current)
+              audio.current.playbackRate = speeds[(speeds.indexOf(rate) + 1) % speeds.length];
+          }}
         >
-          <RotateCcw size={16} aria-hidden="true" />
-          <span aria-hidden="true">10</span>
+          {rate}×
         </button>
-        <button
-          type="button"
-          className="audio-player-skip"
-          disabled={!duration || failed}
-          aria-label="Forward 10 seconds"
-          title="Forward 10 seconds"
-          onClick={() => seek((audio.current?.currentTime ?? current) + 10)}
-        >
-          <RotateCw size={16} aria-hidden="true" />
-          <span aria-hidden="true">10</span>
-        </button>
-        <span className="audio-player-rate">
-          <select
-            aria-label="Playback speed"
-            disabled={failed}
-            value={rate}
-            onChange={(event) => {
-              if (audio.current) audio.current.playbackRate = Number(event.target.value);
-            }}
-          >
-            {[0.75, 1, 1.25, 1.5, 2].map((value) => (
-              <option key={value} value={value}>
-                {value}×
-              </option>
-            ))}
-          </select>
-          <ChevronDown size={12} aria-hidden="true" />
-        </span>
+        <Button variant="ghost" size="icon" className="audio-player-download" asChild>
+          <a href={item.url} download={item.name} aria-label={`Download ${item.name}`}>
+            <Download size={16} aria-hidden="true" />
+          </a>
+        </Button>
       </div>
       {failed && (
         <p className="audio-player-error" role="status">

@@ -378,7 +378,7 @@ test('audio waveform decoding bounds WAV, MP3 and M4A samples before entering th
     m4a.subarray(0, m4a.length - 1),
     Buffer.from('<html>Not audio</html>'),
   ];
-  const ids = files.map(() => randomUUID());
+  const ids: string[] = files.map(() => randomUUID());
   const server = createServer((request, response) => {
     const index = ids.indexOf(request.url!.split('/').at(-1)!);
     response.end(files[index]);

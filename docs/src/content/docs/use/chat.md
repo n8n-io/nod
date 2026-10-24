@@ -34,7 +34,9 @@ An action confirmation shows its current state beside the question. **Done** mea
 
 Audio attachments play directly in chat. Select **Play audio** to listen, then **Pause audio** to pause. Starting another attachment pauses the previous one.
 
-The waveform shows the sound in the file. Click or drag along it to seek, or use the controls to move backward or forward 10 seconds. Change the playback speed to 0.75×, 1×, 1.25×, 1.5×, or 2×. Select **Download** to save the file.
+The waveform shows the sound in the file. Click or drag along it to move backward or forward. With the waveform focused, press the Left or Right arrow key to move five seconds.
+
+Select the speed button to cycle through 1×, 1.25×, 1.5×, 2×, and 0.75×. Select **Download** to save the file.
 
 For large files or formats whose waveform your browser can't read, the player shows a seek track instead. Playback remains available if your browser supports the audio format.
 
