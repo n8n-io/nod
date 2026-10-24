@@ -795,6 +795,83 @@ expect(keyboardEvents == 2 && focusedTarget === otherTarget, "A focus-changing k
     }
   });
 
+  test('native Mac permission recovery opens settings only after a denied screen request', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nod-permission-recovery-'));
+    try {
+      const source = await readFile(
+        new URL('../desktop/computer-use/main.swift', import.meta.url),
+        'utf8',
+      );
+      const permissions = source.slice(
+        source.indexOf('func status()'),
+        source.indexOf('@MainActor\nfunc handle('),
+      );
+      const fixture = join(root, 'permissions.swift');
+      const executable = join(root, 'permissions');
+      await writeFile(
+        fixture,
+        `import Foundation
+typealias CFDictionary = [String: Bool]
+let kAXTrustedCheckOptionPrompt = Unmanaged.passRetained("prompt" as NSString)
+var screenAllowed = false
+var accessibilityAllowed = false
+var screenRequests = 0
+var accessibilityRequests = 0
+func CGPreflightScreenCaptureAccess() -> Bool { screenAllowed }
+func AXIsProcessTrusted() -> Bool { accessibilityAllowed }
+@discardableResult func CGRequestScreenCaptureAccess() -> Bool {
+  screenRequests += 1
+  return screenAllowed
+}
+@discardableResult func AXIsProcessTrustedWithOptions(_ options: CFDictionary) -> Bool {
+  accessibilityRequests += 1
+  return accessibilityAllowed
+}
+@MainActor final class NSWorkspace {
+  static let shared = NSWorkspace()
+  var opened: [URL] = []
+  @discardableResult func open(_ url: URL) -> Bool { opened.append(url); return true }
+}
+${permissions}
+@MainActor func verify() {
+  for _ in 0..<3 {
+    let current = status()
+    precondition(current["screen"] as? Bool == false)
+    precondition(current["accessibility"] as? Bool == false)
+  }
+  precondition(screenRequests == 0 && accessibilityRequests == 0 && NSWorkspace.shared.opened.isEmpty)
+  request("screen")
+  precondition(screenRequests == 1 && NSWorkspace.shared.opened.count == 1, "Denied requests must open System Settings")
+  precondition(NSWorkspace.shared.opened[0].absoluteString == "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+  precondition(status()["screen"] as? Bool == false, "Opening Settings must not mark permission granted")
+  request("screen")
+  precondition(screenRequests == 2 && NSWorkspace.shared.opened.count == 2)
+  screenAllowed = true
+  request("screen")
+  precondition(screenRequests == 3 && NSWorkspace.shared.opened.count == 2, "Allowed requests must not open Settings")
+  precondition(status()["screen"] as? Bool == true)
+  request("accessibility")
+  precondition(accessibilityRequests == 1 && NSWorkspace.shared.opened.count == 2)
+  precondition(status()["accessibility"] as? Bool == false)
+  accessibilityAllowed = true
+  precondition(status()["accessibility"] as? Bool == true)
+  precondition(screenRequests == 3 && accessibilityRequests == 1 && NSWorkspace.shared.opened.count == 2)
+}
+Task { @MainActor in verify(); exit(0) }
+dispatchMain()
+`,
+      );
+      const built = await runProcess('/usr/bin/swiftc', ['-O', '-o', executable, fixture], {
+        timeoutMs: 30_000,
+      });
+      assert.equal(built.exitCode, 0, built.stderr);
+      const result = await runProcess(executable, [], { timeoutMs: 10_000 });
+      assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('Mac shortcut keys resolve layout characters without posting keyboard events', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nod-keyboard-layout-'));
     try {

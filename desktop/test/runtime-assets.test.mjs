@@ -3188,12 +3188,21 @@ test('local test installs refuse normal apps and cannot reuse or follow foreign 
   assert.deepEqual(await readdir(foreign), ['test-profile.json']);
 });
 
-test('local test installs honor permanent signing and preserve the previous app on signing failure', async (t) => {
+test('local test installs preserve the running app when signing or identity checks fail', async (t) => {
   const source = (await readFile(new URL('../scripts/test-install.mjs', import.meta.url), 'utf8'))
     .replace(/^import[\s\S]*?;\n/gm, '')
     .replace(/^export /gm, '')
     .replace("await import('@electron/packager')", '({ packager: globalThis.packager })');
-  for (const mode of ['permanent', 'ad-hoc', 'failed', 'invalid']) {
+  for (const mode of [
+    'first-install',
+    'permanent',
+    'ad-hoc',
+    'failed',
+    'invalid',
+    'changed-app',
+    'changed-helper',
+    'downgrade',
+  ]) {
     await t.test(mode, async (t) => {
       const temporary = await realpath(await mkdtemp(join(tmpdir(), 'nod-test-signing-')));
       t.after(() => rm(temporary, { recursive: true, force: true }));
@@ -3201,6 +3210,15 @@ test('local test installs honor permanent signing and preserve the previous app 
       const home = join(temporary, 'home');
       const installed = join(home, 'Applications', 'nod Setup Test.app');
       const appPackage = join('Contents', 'Resources', 'app', 'package.json');
+      const helper = join(
+        'Contents',
+        'Resources',
+        'engine',
+        'desktop',
+        'computer-use',
+        '.build',
+        'nod-computer-use',
+      );
       const previous = {
         name: 'nod-setup-test',
         productName: 'nod Setup Test',
@@ -3210,22 +3228,25 @@ test('local test installs honor permanent signing and preserve the previous app 
       const engine = join(temporary, 'engine');
       await mkdir(engine);
       await writeFile(join(engine, 'runtime-release.json'), JSON.stringify(release));
-      await mkdir(dirname(join(installed, appPackage)), { recursive: true });
-      await writeFile(join(installed, appPackage), JSON.stringify(previous));
+      if (mode !== 'first-install') {
+        await mkdir(dirname(join(installed, appPackage)), { recursive: true });
+        await writeFile(join(installed, appPackage), JSON.stringify(previous));
+        await mkdir(dirname(join(installed, helper)), { recursive: true });
+        await writeFile(join(installed, helper), 'previous helper');
+      }
       await mkdir(join(root, 'desktop'), { recursive: true });
       await writeFile(
         join(root, 'desktop', 'package.json'),
         JSON.stringify({ devDependencies: { electron: '44.5.0' } }),
       );
-      const env =
-        mode === 'ad-hoc'
-          ? {}
-          : {
-              NOD_SIGNING_MODE: 'self-signed',
-              NOD_SIGNING_IDENTITY: mode === 'invalid' ? '-' : 'nod Synthetic Test Identity',
-              NOD_SIGNING_KEYCHAIN: join(temporary, 'synthetic.keychain'),
-              NOD_SIGNING_CERTIFICATE_SHA256: 'a'.repeat(64),
-            };
+      const env = ['first-install', 'ad-hoc', 'downgrade'].includes(mode)
+        ? {}
+        : {
+            NOD_SIGNING_MODE: 'self-signed',
+            NOD_SIGNING_IDENTITY: mode === 'invalid' ? '-' : 'nod Synthetic Test Identity',
+            NOD_SIGNING_KEYCHAIN: join(temporary, 'synthetic.keychain'),
+            NOD_SIGNING_CERTIFICATE_SHA256: 'a'.repeat(64),
+          };
       const events = [];
       const context = {
         constants,
@@ -3234,7 +3255,10 @@ test('local test installs honor permanent signing and preserve the previous app 
         mkdir,
         readFile,
         realpath,
-        rename,
+        rename: async (from, to) => {
+          if (from === installed) events.push('replace-previous');
+          return rename(from, to);
+        },
         rm,
         writeFile,
         dirname,
@@ -3284,6 +3308,13 @@ test('local test installs honor permanent signing and preserve the previous app 
             const stage = options.env.NOD_DESKTOP_STAGE;
             await mkdir(join(stage, 'app'), { recursive: true });
             await mkdir(join(stage, 'engine'));
+            await mkdir(join(stage, 'engine', 'desktop', 'computer-use', '.build'), {
+              recursive: true,
+            });
+            await writeFile(
+              join(stage, 'engine', 'desktop', 'computer-use', '.build', 'nod-computer-use'),
+              'candidate helper',
+            );
             await cp(
               join(engine, 'runtime-release.json'),
               join(stage, 'engine', 'runtime-release.json'),
@@ -3295,6 +3326,16 @@ test('local test installs honor permanent signing and preserve the previous app 
           } else if (command === '/usr/bin/codesign' && args.includes('--sign')) {
             assert.equal(args[args.indexOf('--sign') + 1], '-');
             events.push('sign-ad-hoc');
+          } else if (command === '/usr/bin/codesign' && args.includes('--display')) {
+            const path = args.at(-1);
+            const previous = path === installed || path === join(installed, helper);
+            const native = path.endsWith('nod-computer-use');
+            const identifier = native ? 'nod-computer-use' : 'dev.nod.desktop.setup-test';
+            const changed = !previous && mode === (native ? 'changed-helper' : 'changed-app');
+            const adhoc = mode === 'ad-hoc' || (!previous && mode === 'downgrade');
+            return `Identifier=${identifier}\n${adhoc ? 'Signature=adhoc' : 'Authority=Synthetic signer'}\ndesignated => identifier "${identifier}" and anchor H"${(changed ? 'b' : 'a').repeat(40)}"`;
+          } else if (command === '/bin/ps') {
+            events.push('inspect-running');
           }
           return '';
         },
@@ -3304,21 +3345,38 @@ test('local test installs honor permanent signing and preserve the previous app 
         `(async () => { ${source.replaceAll('import.meta.url', JSON.stringify(url))}\nglobalThis.buildTest = build; })()`,
         context,
       );
-      if (['failed', 'invalid'].includes(mode)) {
+      if (['failed', 'invalid', 'changed-app', 'changed-helper', 'downgrade'].includes(mode)) {
         await assert.rejects(
           context.buildTest(engine),
-          mode === 'failed' ? /signer failure/ : /permanent certificate identity/,
+          mode === 'failed'
+            ? /signer failure/
+            : mode === 'invalid'
+              ? /permanent certificate identity/
+              : /signing identity/,
         );
         assert.deepEqual(JSON.parse(await readFile(join(installed, appPackage), 'utf8')), previous);
-        assert.ok(!events.includes('sign-ad-hoc'));
-        assert.ok(!events.includes('verify-runtime'));
+        assert.ok(!events.includes('inspect-running'));
+        assert.ok(!events.includes('replace-previous'));
+        assert.deepEqual(await readdir(dirname(installed)), ['nod Setup Test.app']);
+        if (['failed', 'invalid'].includes(mode)) {
+          assert.ok(!events.includes('sign-ad-hoc'));
+          assert.ok(!events.includes('verify-runtime'));
+        }
       } else {
         await context.buildTest(engine);
         assert.deepEqual(
           events,
-          mode === 'permanent'
-            ? ['verify-identity', 'sign-permanent', 'verify-runtime']
-            : ['sign-ad-hoc', 'verify-runtime'],
+          mode === 'first-install'
+            ? ['sign-ad-hoc', 'verify-runtime']
+            : mode === 'permanent'
+              ? [
+                  'verify-identity',
+                  'sign-permanent',
+                  'verify-runtime',
+                  'inspect-running',
+                  'replace-previous',
+                ]
+              : ['sign-ad-hoc', 'verify-runtime', 'inspect-running', 'replace-previous'],
         );
         const saved = JSON.parse(await readFile(join(installed, appPackage), 'utf8'));
         assert.equal(saved.nodBuild.testProfile, true);
@@ -3333,3 +3391,103 @@ test('local test installs honor permanent signing and preserve the previous app 
     });
   }
 });
+
+test(
+  'local test replacements enforce real macOS designated requirements',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const { validateTestReplacement } = await import('../scripts/test-install.mjs');
+    const temporary = await realpath(await mkdtemp(join(tmpdir(), 'nod-test-requirements-')));
+    t.after(() => rm(temporary, { recursive: true, force: true }));
+    const codesign = (...args) =>
+      execFileSync('/usr/bin/codesign', args, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    const installed = join(temporary, 'installed.app');
+    const executable = join('Contents', 'MacOS', 'fixture');
+    const helper = join(
+      'Contents',
+      'Resources',
+      'engine',
+      'desktop',
+      'computer-use',
+      '.build',
+      'nod-computer-use',
+    );
+    await mkdir(dirname(join(installed, executable)), { recursive: true });
+    await mkdir(dirname(join(installed, helper)), { recursive: true });
+    await copyFile('/usr/bin/true', join(installed, executable));
+    await copyFile('/usr/bin/true', join(installed, helper));
+    await writeFile(
+      join(installed, 'Contents', 'Info.plist'),
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.nod.desktop.setup-test</string><key>CFBundleExecutable</key><string>fixture</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>1</string></dict></plist>`,
+    );
+    codesign('--force', '--sign', '-', '--identifier', 'nod-computer-use', join(installed, helper));
+    codesign('--force', '--sign', '-', installed);
+    const helperHash = await assetHash(join(installed, helper));
+    const requirement = codesign('--display', '--requirements', '-', installed).match(
+      /^(?:# )?designated => (.+)$/m,
+    )?.[1];
+    assert.ok(requirement);
+    for (const variation of [
+      'identical',
+      'changed-app',
+      'changed-helper',
+      'changed-identifier',
+      'copied-requirement',
+      'tampered',
+      'linked-helper',
+    ]) {
+      await t.test(variation, async () => {
+        const candidate = join(temporary, `${variation}.app`);
+        await cp(installed, candidate, { recursive: true });
+        if (variation === 'changed-app' || variation === 'copied-requirement') {
+          await copyFile('/bin/echo', join(candidate, executable));
+          codesign(
+            '--force',
+            '--sign',
+            '-',
+            ...(variation === 'copied-requirement'
+              ? ['--requirements', `=designated => ${requirement}`]
+              : []),
+            candidate,
+          );
+          if (variation === 'copied-requirement') {
+            codesign('--verify', '--strict', candidate);
+            assert.equal(
+              codesign('--display', '--requirements', '-', candidate).match(
+                /^(?:# )?designated => (.+)$/m,
+              )?.[1],
+              requirement,
+            );
+          }
+        } else if (variation === 'changed-helper') {
+          await copyFile('/bin/echo', join(candidate, helper));
+          codesign(
+            '--force',
+            '--sign',
+            '-',
+            '--identifier',
+            'nod-computer-use',
+            join(candidate, helper),
+          );
+          codesign('--force', '--sign', '-', candidate);
+        } else if (variation === 'changed-identifier') {
+          codesign('--force', '--sign', '-', '--identifier', 'dev.nod.changed', candidate);
+        } else if (variation === 'tampered') {
+          await writeFile(join(candidate, helper), 'unsigned replacement');
+        } else if (variation === 'linked-helper') {
+          await rm(join(candidate, helper));
+          await symlink(join(installed, helper), join(candidate, helper));
+          codesign('--force', '--sign', '-', candidate);
+        }
+        if (variation === 'identical') await validateTestReplacement(installed, candidate);
+        else
+          await assert.rejects(validateTestReplacement(installed, candidate), /signing identity/);
+        codesign('--verify', '--deep', '--strict', installed);
+        assert.equal(await assetHash(join(installed, helper)), helperHash);
+      });
+    }
+  },
+);

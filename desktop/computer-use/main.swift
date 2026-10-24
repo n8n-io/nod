@@ -420,11 +420,12 @@ func status() -> [String: Any] {
   ["accessibility": AXIsProcessTrusted(), "screen": CGPreflightScreenCaptureAccess()]
 }
 
+@MainActor
 func request(_ kind: String) {
   if kind == "accessibility" {
     AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
-  } else {
-    CGRequestScreenCaptureAccess()
+  } else if !CGRequestScreenCaptureAccess() {
+    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
   }
 }
 

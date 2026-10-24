@@ -38,6 +38,67 @@ export async function validateTestApplication(path) {
   return configuration;
 }
 
+export async function validateTestReplacement(installed, candidate) {
+  for (const [label, relative] of [
+    ['test app', ''],
+    ['computer helper', 'Contents/Resources/engine/desktop/computer-use/.build/nod-computer-use'],
+  ]) {
+    try {
+      const identities = [];
+      for (const application of [installed, candidate]) {
+        const path = join(application, relative);
+        const entry = await lstat(path);
+        if (
+          (relative ? !entry.isFile() : !entry.isDirectory()) ||
+          (await realpath(path)) !== resolve(path)
+        )
+          throw new Error('The signed code must not be a link.');
+        await run('/usr/bin/codesign', [
+          '--verify',
+          '--strict',
+          ...(!relative ? ['--deep'] : []),
+          path,
+        ]);
+        const detail = await run('/usr/bin/codesign', [
+          '--display',
+          '--verbose=4',
+          '--requirements',
+          '-',
+          path,
+        ]);
+        const identifiers = [...detail.matchAll(/^Identifier=(.+)$/gm)];
+        const requirements = [...detail.matchAll(/^(?:# )?designated => (.+)$/gm)];
+        if (identifiers.length !== 1 || requirements.length !== 1)
+          throw new Error('The signing identity is unavailable.');
+        identities.push({
+          identifier: identifiers[0][1],
+          requirement: requirements[0][1],
+          adhoc: /^Signature=adhoc$/m.test(detail),
+        });
+      }
+      const [previous, next] = identities;
+      if (
+        (!relative && previous.identifier !== bundleId) ||
+        previous.identifier !== next.identifier ||
+        previous.requirement !== next.requirement ||
+        previous.adhoc !== next.adhoc
+      )
+        throw new Error('The signing identity changed.');
+      await run('/usr/bin/codesign', [
+        '--verify',
+        '--strict',
+        '-R',
+        `=${previous.requirement}`,
+        join(candidate, relative),
+      ]);
+    } catch {
+      throw new Error(
+        `The ${label} signing identity changed or could not be verified. The installed app has been kept. Rebuild with the same permanent NOD_SIGNING_IDENTITY, NOD_SIGNING_KEYCHAIN and NOD_SIGNING_CERTIFICATE_SHA256. An intentional identity change requires a separate installation and new macOS permission grants.`,
+      );
+    }
+  }
+}
+
 export async function testProfile(directory, label, fresh = false) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(label || ''))
     throw new Error('Use a profile name containing letters, numbers, hyphens or underscores.');
@@ -108,11 +169,6 @@ async function build(source = '/Applications/nod.app/Contents/Resources/engine')
     throw new Error(
       'The verified runtime is not cached. Open the installed nod, or run node desktop/scripts/runtime-pack.mjs --seed-cache after pnpm run desktop:prepare.',
     );
-  const installed = await lstat(application).catch((error) => {
-    if (error.code !== 'ENOENT') throw error;
-    return null;
-  });
-  if (installed) await stop();
   const stage = join(work, 'stage');
   const output = join(work, 'build');
   const descriptor = join(resolve(source), 'runtime-release.json');
@@ -211,24 +267,38 @@ async function build(source = '/Applications/nod.app/Contents/Resources/engine')
   const candidate = join(dirname(application), `.${name}-${randomUUID()}.app`);
   const previous = `${candidate}.previous`;
   try {
-    await rename(built, candidate);
-  } catch (error) {
-    if (error.code !== 'EXDEV') throw error;
-    await cp(built, candidate, {
-      recursive: true,
-      mode: constants.COPYFILE_FICLONE,
-      verbatimSymlinks: true,
+    try {
+      await rename(built, candidate);
+    } catch (error) {
+      if (error.code !== 'EXDEV') throw error;
+      await cp(built, candidate, {
+        recursive: true,
+        mode: constants.COPYFILE_FICLONE,
+        verbatimSymlinks: true,
+      });
+    }
+    await validateTestApplication(candidate);
+    const installed = await lstat(application).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
     });
+    if (installed) {
+      await validateTestApplication(application);
+      await validateTestReplacement(application, candidate);
+      await stop();
+      await validateTestReplacement(application, candidate);
+      await rename(application, previous);
+    }
+    try {
+      await rename(candidate, application);
+    } catch (error) {
+      if (installed) await rename(previous, application);
+      throw error;
+    }
+    if (installed) await rm(previous, { recursive: true });
+  } finally {
+    await rm(candidate, { recursive: true, force: true });
   }
-  await validateTestApplication(candidate);
-  if (installed) await rename(application, previous);
-  try {
-    await rename(candidate, application);
-  } catch (error) {
-    if (installed) await rename(previous, application);
-    throw error;
-  }
-  if (installed) await rm(previous, { recursive: true });
   await writeFile(
     join(work, 'installed.json'),
     JSON.stringify(

@@ -197,9 +197,13 @@ node desktop/scripts/test-install.mjs stop
 
 Test profiles live under `~/Library/Application Support/nod Setup Test/test-profiles`. Rebuilding the test app preserves them. Reopening the same test app from Applications resumes the last selected profile, even without the installer’s launch environment. The helper accepts an installed engine directory or a generated runtime descriptor directory after `build`. Its matching runtime must already be in the verified cache.
 
-By default, the test app is ad-hoc signed. Rebuilding can invalidate Keychain, Accessibility, and Screen Recording approvals even when System Settings still shows the permissions as enabled. Finish rebuilding before granting permissions. If restarting doesn't restore access, remove and re-add the test app in the affected macOS permission lists.
+For repeated testing, use the same permanent signing identity on every build. Set `NOD_SIGNING_IDENTITY`, `NOD_SIGNING_KEYCHAIN`, and `NOD_SIGNING_CERTIFICATE_SHA256` before building. `NOD_SIGNING_MODE` defaults to `self-signed`. For `developer-id`, also set the matching `NOD_APPLE_TEAM_ID` and `NOD_NOTARY_PROFILE`. Keep the signing keychain outside test profiles and build directories so cleanup preserves it.
 
-To use an existing permanent signing identity, set `NOD_SIGNING_IDENTITY`, `NOD_SIGNING_KEYCHAIN`, and `NOD_SIGNING_CERTIFICATE_SHA256` before building. `NOD_SIGNING_MODE` defaults to `self-signed`. For `developer-id`, also set the matching `NOD_APPLE_TEAM_ID` and `NOD_NOTARY_PROFILE`. The installer validates the identity and signed build before replacing the installed test app. It doesn't create certificates or grant macOS permissions.
+The installer checks that the app and its computer-use helper keep their signing identities before closing or replacing the installed test app. A changed identity, identifier, or ad-hoc signature stops the installation and leaves the current app running. Reuse its signing configuration to continue.
+
+Without a permanent identity, the first build is ad-hoc signed. Finish building before granting permissions. To deliberately change its signing identity, quit the test app and move its bundle out of `~/Applications` before installing the replacement. Keep its test profiles. macOS may require Keychain approval and new Accessibility and Screen Recording grants.
+
+If System Settings shows a permission enabled but the rebuilt app can't use it, remove and re-add **nod Setup Test.app** in that permission list. Reopen the app if macOS asks you to quit, then check both permissions in nod. Don't reset permissions for other apps. The installer never grants macOS permissions.
 
 The test installer reuses the selected descriptor's verified workspace and browser images. To test image changes, build and seed that runtime first using the commands above. The test app isn't notarized. A fresh profile resets nod's settings, not macOS's app-wide permission grants.
 

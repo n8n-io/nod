@@ -41,6 +41,8 @@ Later, open **Settings**. Under **Your computer** you can turn it on or off, see
 
 Mac app control runs through nod Computer Use, a helper bundled with the desktop app. Allow the app named in the macOS permission prompt under **System Settings → Privacy & Security**. Return to nod after changing a permission so it can check again.
 
+If you previously denied Screen Recording, use its switch again. nod opens the Screen Recording page in System Settings so you can enable it there.
+
 If macOS asks you to quit, nod shows **Closing nod** while it stops its private computer. Wait for it to close, then reopen the same app from Applications if macOS hasn't reopened it. Your setup progress is saved.
 
 Commands run with a restricted environment inside a macOS sandbox profile. The profile blocks:
