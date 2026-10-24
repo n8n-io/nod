@@ -118,7 +118,7 @@ test(
     });
     const { createChatVerification } = await import('../src/server/chat-verification.ts');
     const { createSpeech } = await import('../src/server/speech.ts');
-    const transcriptions: Array<{ bytes: Buffer; name: string }> = [];
+    const transcriptions: Array<{ bytes: Buffer; name: string; signal?: AbortSignal }> = [];
     const spoken: string[] = [];
     const privateAudioCodes: string[] = [];
     let transcript = 'Synthetic spoken request';
@@ -134,8 +134,8 @@ test(
       get configured() {
         return speechReady;
       },
-      async transcribe(audio) {
-        transcriptions.push({ bytes: Buffer.from(audio.bytes), name: audio.name });
+      async transcribe(audio, signal) {
+        transcriptions.push({ bytes: Buffer.from(audio.bytes), name: audio.name, signal });
         await transcriptionGate;
         if (transcriptionError) throw transcriptionError;
         return transcript;
@@ -1684,16 +1684,50 @@ test(
       });
 
       await t.test(
+        'stopping all work cancels pending audio before transcription can create a turn',
+        async () => {
+          await waitFor(settledThread);
+          let releaseTranscription!: () => void;
+          transcriptionGate = new Promise<void>((resolve) => {
+            releaseTranscription = resolve;
+          });
+          const message = { threadId, clientMessageId: randomUUID() };
+          const before = transcriptions.length;
+          const pending = sendAudio(message).then((response) => response);
+          try {
+            await waitFor(() => transcriptions.length > before);
+            const stopped = await request('POST', '/api/thread/stop');
+            assert.equal(stopped.statusCode, 200, stopped.body);
+            assert.equal(transcriptions.at(-1)?.signal?.aborted, true);
+            const response = await pending;
+            assert.equal(response.statusCode, 409, response.body);
+            assert.equal(response.json().retryable, undefined);
+            transcriptionGate = undefined;
+            releaseTranscription();
+            await delay(30);
+            assert.equal(
+              (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [message.clientMessageId]))
+                .rowCount,
+              0,
+            );
+            assert.equal((await sendAudio(message)).statusCode, 409);
+            assert.equal(transcriptions.length, before + 1);
+            const following = await sendAudio({ threadId, clientMessageId: randomUUID() });
+            assert.equal(following.statusCode, 200, following.body);
+          } finally {
+            transcriptionGate = undefined;
+            releaseTranscription();
+            await pending;
+          }
+        },
+      );
+
+      await t.test(
         'spoken verification codes reach private entry without saving their recording or transcript',
         async () => {
           await waitFor(settledThread);
           const waiting = await thread.submitUserMessage('ask-credentials');
           await waitFor(settled(waiting.turnId));
-          const requestId = (
-            await db.pool.query('SELECT id FROM credential_requests WHERE turn_id=$1', [
-              waiting.turnId,
-            ])
-          ).rows[0].id;
           const before = (await db.pool.query('SELECT count(*)::int AS n FROM artifacts')).rows[0]
             .n;
           transcript = '739218';
@@ -1702,7 +1736,6 @@ test(
             const message = {
               threadId,
               clientMessageId: randomUUID(),
-              verificationRequestId: requestId,
             };
             const accepted = await sendAudio(
               message,
@@ -1736,6 +1769,79 @@ test(
               "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
               [waiting.turnId],
             );
+          }
+        },
+      );
+
+      await t.test(
+        'spoken verification stays bound to intake requests when they close or become unambiguous',
+        async () => {
+          for (const multiple of [false, true]) {
+            await waitFor(settledThread);
+            const waiting = await thread.submitUserMessage('ask-credentials');
+            await waitFor(settled(waiting.turnId));
+            const requestId = (
+              await db.pool.query('SELECT id FROM credential_requests WHERE turn_id=$1', [
+                waiting.turnId,
+              ])
+            ).rows[0].id;
+            if (multiple) {
+              const second = randomUUID();
+              await db.pool.query(
+                `INSERT INTO credential_requests(id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,selectors,inspection)
+                 VALUES($1,$2,$3,$4,$5,$5,'https://fixture.test','Synthetic second code','otp','{}','{}')`,
+                [second, `synthetic-${second}`, ownerId, threadId, waiting.turnId],
+              );
+            }
+            let releaseTranscription!: () => void;
+            transcriptionGate = new Promise<void>((resolve) => {
+              releaseTranscription = resolve;
+            });
+            transcript = '482613';
+            const before = transcriptions.length;
+            const privateBefore = privateAudioCodes.length;
+            const artifactsBefore = (
+              await db.pool.query('SELECT count(*)::int AS n FROM artifacts')
+            ).rows[0].n;
+            const message = { threadId, clientMessageId: randomUUID() };
+            const pending = sendAudio(message).then((response) => response);
+            try {
+              await waitFor(() => transcriptions.length > before);
+              await db.pool.query(
+                "UPDATE credential_requests SET status='superseded' WHERE id=$1",
+                [requestId],
+              );
+              transcriptionGate = undefined;
+              releaseTranscription();
+              const response = await pending;
+              assert.equal(response.statusCode, 409, response.body);
+              assert.equal(response.json().retryable, undefined);
+              assert.equal(privateAudioCodes.length, privateBefore);
+              assert.equal(
+                (
+                  await db.pool.query(
+                    'SELECT 1 FROM messages WHERE id=$1 UNION ALL SELECT 1 FROM turns WHERE message_id=$1',
+                    [message.clientMessageId],
+                  )
+                ).rowCount,
+                0,
+              );
+              assert.equal(
+                (await db.pool.query('SELECT count(*)::int AS n FROM artifacts')).rows[0].n,
+                artifactsBefore,
+              );
+              assert.equal((await sendAudio(message)).statusCode, 409);
+              assert.equal(transcriptions.length, before + 1);
+            } finally {
+              transcriptionGate = undefined;
+              releaseTranscription();
+              await pending;
+              transcript = 'Synthetic spoken request';
+              await db.pool.query(
+                "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+                [waiting.turnId],
+              );
+            }
           }
         },
       );
@@ -3195,9 +3301,11 @@ test(
           const reset = await request('POST', '/api/conversation/reset', {
             threadId: firstThreadId,
           });
+          const audioAborted = transcriptions.at(-1)?.signal?.aborted;
           transcriptionGate = undefined;
           releaseAudio();
           assert.equal((await pendingAudio).statusCode, 409);
+          assert.equal(audioAborted, true);
           assert.equal(
             (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [pendingAudioId])).rowCount,
             0,

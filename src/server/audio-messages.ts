@@ -10,6 +10,7 @@ import { lockThread, submitUserMessage } from './thread.ts';
 import { transaction } from './transaction.ts';
 import { refresh } from './events.ts';
 import type { SubmitMessageResponse } from '../shared/contracts.ts';
+import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 
 export const messageInput = z
   .object({
@@ -32,23 +33,32 @@ const conflict = () =>
     { statusCode: 409, retryable: false },
   );
 const invalid = (message: string) => Object.assign(new Error(message), { statusCode: 400 });
+const privateConflict = (message: string) =>
+  Object.assign(new Error(message), { statusCode: 409, retryable: false });
 
 export function registerAudioMessages(app: FastifyInstance, dependencies: AppDependencies) {
   const artifacts = dependencies.artifacts ?? localArtifacts;
-  const active = new Set<AbortController>();
+  const active = new Map<AbortController, string | undefined>();
+  const cancel = (threadId?: string) => {
+    for (const [controller, id] of active)
+      if (!threadId || !id || id === threadId)
+        controller.abort(privateConflict('This voice message was cancelled.'));
+  };
   app.addHook('preClose', async () => {
-    for (const controller of active) controller.abort();
+    cancel();
   });
   app.post('/api/messages/audio', async (request, reply) => {
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(120_000)]);
-    active.add(controller);
+    active.set(controller, undefined);
     const abort = () => controller.abort();
     request.raw.once('aborted', abort);
     reply.raw.once('close', abort);
     const cleanup: Array<() => Promise<void>> = [];
     let submitting = false;
     try {
+      const verificationRequests = (await dependencies.verification?.pending('web')) ?? [];
+      signal.throwIfAborted();
       let recording: { bytes: Buffer; mimeType: string; name: string } | undefined;
       let rawMessage: unknown;
       for await (const part of request.parts({
@@ -82,6 +92,8 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
       const input = messageInput
         .extend({ clientMessageId: z.uuid(), threadId: z.uuid() })
         .parse(rawMessage);
+      active.set(controller, input.threadId);
+      signal.throwIfAborted();
       const speech = dependencies.speech;
       const fingerprint = createHash('sha256')
         .update(JSON.stringify({ input, mimeType: recording.mimeType, name: recording.name }))
@@ -101,15 +113,15 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
         );
         if (stored.rowCount !== input.attachmentIds.length)
           throw invalid('An attachment is unavailable.');
-        if (
-          input.replyToMessageId &&
-          !(
-            await client.query(
-              'SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3',
-              [input.replyToMessageId, ownerId, thread.id],
-            )
-          ).rowCount
-        )
+        const replyTarget = input.replyToMessageId
+          ? (
+              await client.query<{ turn_id: string }>(
+                'SELECT turn_id FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3',
+                [input.replyToMessageId, ownerId, thread.id],
+              )
+            ).rows[0]
+          : undefined;
+        if (input.replyToMessageId && !replyTarget)
           throw invalid('The reply is unavailable in this conversation.');
         const claimed = await client.query(
           'INSERT INTO audio_messages(owner_id,message_id,thread_id,fingerprint) VALUES($1,$2,$3,$4) ON CONFLICT(owner_id,message_id) DO NOTHING RETURNING message_id',
@@ -124,7 +136,11 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
           ).rows[0];
           if (!receipt || receipt.fingerprint !== fingerprint || !receipt.response)
             throw conflict();
-          return { response: receipt.response as SubmitMessageResponse, attachments: [] };
+          return {
+            response: receipt.response as SubmitMessageResponse,
+            attachments: [],
+            replyTurnId: replyTarget?.turn_id,
+          };
         }
         if (!speech || !speech.transcriptionConfigured)
           throw Object.assign(
@@ -133,7 +149,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
           );
         if (
           !(dependencies.configuration?.() ?? configuration()).llmReady &&
-          !(await dependencies.verification?.pending('web'))?.length
+          !verificationRequests.length
         )
           throw Object.assign(
             new Error('Configure an agent provider before starting a conversation.'),
@@ -150,6 +166,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
           attachments: input.attachmentIds.map((id) =>
             artifactView(stored.rows.find((file) => file.id === id)!),
           ),
+          replyTurnId: replyTarget?.turn_id,
         };
       }, pool);
       if (accepted.response) return accepted.response;
@@ -160,6 +177,19 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
       signal.throwIfAborted();
       const text = [input.text, transcript].filter(Boolean).join('\n\n');
       if (text.length > 100_000) throw invalid('Send a shorter voice message.');
+      const codeLike =
+        classifyVerificationReply(text).kind !== 'ordinary' || Boolean(securityCodeIn(text));
+      let verificationRequestId = input.verificationRequestId;
+      if (!verificationRequestId && codeLike && verificationRequests.length) {
+        const eligible = verificationRequests.filter(
+          (pending) => !accepted.replyTurnId || pending.turnId === accepted.replyTurnId,
+        );
+        if (eligible.length !== 1)
+          throw privateConflict(
+            'Reply to the verification request you want to complete and record the code again.',
+          );
+        verificationRequestId = eligible[0].id;
+      }
       const persist = async (client: PoolClient, response: SubmitMessageResponse) => {
         signal.throwIfAborted();
         await client.query(
@@ -172,15 +202,15 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
       submitting = true;
       const verification = await dependencies.verification?.accept(text, {
         ...input,
+        verificationRequestId,
+        receiptOnly: codeLike && !verificationRequestId && !input.replyToMessageId,
         channel: 'web',
         persistVerification: persist,
       });
       if (verification) return verification;
       submitting = false;
-      if (input.verificationRequestId)
-        throw Object.assign(new Error('This verification request is no longer available.'), {
-          statusCode: 409,
-        });
+      if (verificationRequestId)
+        throw privateConflict('This verification request is no longer available.');
       if (!(dependencies.configuration?.() ?? configuration()).llmReady)
         throw Object.assign(
           new Error('Configure an agent provider before starting a conversation.'),
@@ -225,4 +255,5 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
       await Promise.all(cleanup.map((remove) => remove().catch(() => {})));
     }
   });
+  return { cancel };
 }

@@ -144,7 +144,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     });
   });
   await app.register(multipart, { limits: { fileSize: fileBytes, files: 1, fields: 5 } });
-  registerAudioMessages(app, dependencies);
+  const audioMessages = registerAudioMessages(app, dependencies);
   app.get('/api/health', async () => {
     await pool.query('SELECT 1');
     const release = process.env.NOD_IMAGE_RELEASE || process.env.NOD_RELEASE;
@@ -273,6 +273,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       return reply.code(404).send({ error: 'Not found.' });
     const { threadId } = z.object({ threadId: z.uuid() }).strict().parse(request.body);
     const { previousThreadId, browsers, ...reset } = await resetThread(threadId);
+    audioMessages.cancel(previousThreadId);
     for (const id of [previousThreadId, ...browsers])
       void dependencies.computer?.discard(id).catch(() => {});
     return reset;
@@ -322,6 +323,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     return submitted;
   });
   app.post('/api/thread/stop', async () => {
+    audioMessages.cancel();
     const { browsers } = await stopThread();
     await Promise.allSettled(browsers.map((id) => dependencies.computer?.clear(id)));
     return { ok: true };
