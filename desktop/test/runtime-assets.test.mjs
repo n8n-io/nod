@@ -91,6 +91,7 @@ test('speech distribution includes matching source and license and rejects chang
     copySpeechSources({
       root,
       target,
+      cacheDir,
       archives,
       fetch: async () => new Response(Buffer.alloc(200)),
     }),
@@ -2734,7 +2735,12 @@ test('runtime fingerprints cover dependencies and every source the images use, a
     }),
     windowsBefore,
   );
-  for (const path of [...windowsCopies, 'desktop/scripts/prepare-windows-runtime.mjs']) {
+  for (const path of [
+    ...windowsCopies,
+    'desktop/scripts/prepare-windows-runtime.mjs',
+    'desktop/scripts/speech-sources.mjs',
+    'desktop/licenses/speech.md',
+  ]) {
     const file = join(root, path);
     const source = await readFile(file, 'utf8');
     await writeFile(file, `${source}\n# synthetic runtime change\n`);
