@@ -1909,6 +1909,7 @@ test('persisted background sessions and child captures count each request and to
                     role: 'assistant',
                     text: 'The call has ended.',
                     created_at: '2026-10-22T21:41:00Z',
+                    presentation: { type: 'booking', title: 'Synthetic booking' },
                   },
                 ]
               : sql.includes('FROM approvals')
@@ -1937,6 +1938,11 @@ test('persisted background sessions and child captures count each request and to
     [Date.parse('2026-10-22T21:40:00Z'), Date.parse('2026-10-22T21:41:00Z')],
   );
   assert.deepEqual(run.usage, { modelCalls: 4, tokens: 36, costUsd: 1.5 });
+  assert.deepEqual(run.messages.at(-1)?.presentation, {
+    type: 'booking',
+    title: 'Synthetic booking',
+  });
+  assert.match(run.transcript(), /PRESENTATION:.*Synthetic booking/);
   assert.deepEqual(run.approvals, [
     { turnId: 'background', action: 'GMAIL_SEND_EMAIL', status: 'expired', args: {} },
   ]);
@@ -2292,6 +2298,41 @@ test('every release scenario fails a required code check when nod does nothing, 
     } finally {
       await served.close();
     }
+  }
+});
+
+test('visual evals require matching persisted and delivered data, not a presentation tool call', async () => {
+  const definition = scenarios.find((item) => item.id === 'inline-visual-seats')!;
+  const world = definition.world({ now: Date.now });
+  const expectation = definition
+    .expect(world)
+    .find((item) => item.id === 'delivers-the-visual-in-chat');
+  assert.equal(expectation?.kind, 'check');
+  if (expectation?.kind !== 'check') throw new Error('Missing delivery check');
+  const presentation = { version: 1, type: 'seats', title: 'AV204' };
+  for (const { saved, shown, pass } of [
+    { saved: false, shown: false, pass: false },
+    { saved: true, shown: false, pass: false },
+    { saved: false, shown: true, pass: false },
+    { saved: true, shown: true, pass: true },
+  ]) {
+    const run = quietRun(world);
+    run.tools.push({
+      name: 'send_message',
+      input: { text: 'Choose 12A.', presentation },
+      output: 'ok',
+      isError: false,
+      at: 0,
+      lead: '',
+    });
+    run.messages = saved
+      ? [{ role: 'assistant', text: 'Choose 12A.', at: 0, turnId: null, presentation }]
+      : [];
+    run.api = async () => ({
+      status: 200,
+      body: { messages: shown ? [{ presentation }] : [] },
+    });
+    assert.equal((await expectation.check(run)).pass, pass);
   }
 });
 

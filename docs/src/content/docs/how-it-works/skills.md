@@ -30,7 +30,7 @@ Four core guides skip this and are always in the static system prompt: connected
 
 ## The task guides
 
-The library has 26 task guides in [`src/runtime/skills`](https://github.com/n8n-io/nod/tree/main/src/runtime/skills).
+The library has 27 task guides in [`src/runtime/skills`](https://github.com/n8n-io/nod/tree/main/src/runtime/skills).
 
 | Home and life             | Work                    | Mail, files and research |
 | ------------------------- | ----------------------- | ------------------------ |
@@ -41,7 +41,7 @@ The library has 26 task guides in [`src/runtime/skills`](https://github.com/n8n-
 | `home-services`           | `project-operations`    | `inbox`                  |
 | `learning-and-study`      | `sales-and-crm`         | `research`               |
 | `personal-finance`        | `software-and-websites` | `writing-and-content`    |
-| `privacy-and-accounts`    | `n8n`                   |                          |
+| `privacy-and-accounts`    | `n8n`                   | `visual-replies`         |
 | `shopping`                |                         |                          |
 | `subscriptions-and-bills` |                         |                          |
 | `travel`                  |                         |                          |

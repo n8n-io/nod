@@ -5360,3 +5360,84 @@ test('chat draft recovery isolates owners and excludes private verification repl
   });
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
+
+test('visual replies keep exploration local, require opt-in maps and reject unsafe payloads', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'https://nod.fixture.invalid', pretendToBeVisual: true });
+      Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'Event', 'MouseEvent']) globalThis[name] = dom.window[name];
+      const requests = [];
+      globalThis.fetch = async (...args) => { requests.push(args); throw new Error('No request is expected'); };
+      const { createElement: h, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { MessagePresentation } = await import('./src/web/components/message-presentation.tsx');
+      const { ArtifactDrawerContext } = await import('./src/web/components/artifact-context.tsx');
+      const root = createRoot(document.getElementById('root'));
+      const opens = [];
+      const render = async (value) => act(async () => root.render(h(ArtifactDrawerContext.Provider, {value:{selectedId:null,open:(...args)=>opens.push(args),setDrafts:()=>{}}}, h(MessagePresentation,{value}))));
+      const common = {version:1,title:'Synthetic visual',sources:[]};
+      await render({...common,type:'seats',columns:['A','','C'],rows:[{label:'12',seats:[{column:'A',label:'12A',status:'available',note:'Window'},{column:'C',label:'12C',status:'unavailable',note:'Already occupied'}]}]});
+      const seat = document.querySelector('[aria-label="Seat 12C, unavailable"]');
+      assert.ok(seat);
+      await act(async () => seat.click());
+      assert.equal(seat.getAttribute('aria-pressed'),'true');
+      assert.match(document.querySelector('.seat-inspector').textContent,/Already occupied/);
+      assert.equal(requests.length,0);
+      assert.equal(opens.length,0);
+      await render({...common,type:'map',places:[{id:'one',name:'Place one',latitude:38.71,longitude:-9.14},{id:'two',name:'Place two',latitude:38.72,longitude:-9.15}]});
+      assert.equal(document.querySelector('iframe'),null);
+      await act(async () => document.querySelector('[aria-label="Show Place two"]').click());
+      assert.equal(document.querySelector('iframe'),null);
+      assert.match(document.querySelector('.place-detail').textContent,/38.72000, -9.15000/);
+      await act(async () => document.querySelector('.load-map').click());
+      const frame = document.querySelector('iframe');
+      assert.equal(new URL(frame.src).hostname,'www.openstreetmap.org');
+      assert.equal(new URL(frame.src).searchParams.get('marker'),'38.72,-9.15');
+      assert.equal(frame.getAttribute('referrerpolicy'),'no-referrer');
+      assert.equal(requests.length,0);
+      const artifactId='00000000-0000-4000-8000-000000000001';
+      await render({...common,type:'image',artifactId,alt:'Synthetic seating plan'});
+      assert.equal(document.querySelector('img').getAttribute('src'),'/api/artifacts/'+artifactId);
+      await act(async () => document.querySelector('.presentation-image-button').click());
+      assert.equal(opens.length,1);
+      assert.equal(opens[0][0],artifactId);
+      assert.equal(opens[0][1].element,document.querySelector('.presentation-image-button'));
+      await act(async () => document.querySelector('img').dispatchEvent(new Event('error')));
+      assert.equal(document.querySelector('img'),null);
+      assert.match(document.querySelector('.presentation-empty').textContent,/Synthetic seating plan/);
+      await render({...common,type:'booking',name:'<img src=x onerror=alert(1)>',status:'option',facts:[{label:'Total',value:'€100'}]});
+      assert.equal(document.querySelector('img'),null);
+      assert.match(document.querySelector('.booking-name').textContent,/<img src=x/);
+      await render({...common,type:'chart',chart:'bar',unit:'EUR',series:[{id:'actual',label:'Actual',points:[{label:'March',value:0},{label:'April',value:-1200}]},{id:'target',label:'Target',points:[{label:'March',value:1000},{label:'April',value:2000}]}]});
+      const seriesButtons = document.querySelectorAll('.chart-legend button');
+      await act(async () => seriesButtons[0].click());
+      assert.equal(seriesButtons[0].getAttribute('aria-pressed'),'false');
+      assert.equal(seriesButtons[1].disabled,true);
+      assert.equal(document.querySelectorAll('.presentation-chart rect').length,2);
+      assert.deepEqual([...document.querySelectorAll('.chart-data tbody tr:first-child td')].map(cell=>cell.textContent),['0','1000']);
+      assert.deepEqual([...document.querySelectorAll('.chart-data tbody tr:last-child td')].map(cell=>cell.textContent),['-1200','2000']);
+      await act(async () => seriesButtons[0].click());
+      assert.equal(document.querySelectorAll('.presentation-chart rect').length,4);
+      assert.equal(requests.length,0);
+      for (const value of [
+        {...common,type:'unknown'},
+        {...common,type:'image',artifactId:'https://tracker.example.com/pixel',alt:'image'},
+        {...common,type:'booking',name:'Booking',status:'confirmed',facts:[{label:'Price',value:'100'}],url:'javascript:alert(1)'},
+        {...common,type:'diagram',nodes:[{id:'a',label:'A'}],edges:[{from:'a',to:'missing'}]},
+      ]) {
+        await render(value);
+        assert.equal(document.querySelector('section'),null);
+        assert.ok(document.querySelector('[role="status"]'));
+        assert.equal(document.querySelector('a,iframe,img'),null);
+      }
+      assert.equal(requests.length,0);
+      await act(async () => root.unmount());
+      dom.window.close();
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});

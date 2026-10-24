@@ -382,6 +382,52 @@ test(
         await waitFor(() => held.has(submitted.turnId));
         return submitted;
       };
+      await t.test(
+        'raster downloads join one reply or flush once, while stop prevents delivery',
+        async () => {
+          for (const mode of ['visual', 'alone', 'stopped'] as const) {
+            const { turnId } = await submitHeld(`Held raster ${mode}`);
+            const context = held.get(turnId)!;
+            const artifact = await context.publishBrowserFile!({
+              bytes: Buffer.from('synthetic raster fixture'),
+              name: 'seat-plan.png',
+              mimeType: 'image/png',
+            });
+            const messages = async () =>
+              (
+                await db.pool.query(
+                  "SELECT attachments,presentation FROM messages WHERE turn_id=$1 AND role='assistant'",
+                  [turnId],
+                )
+              ).rows;
+            assert.deepEqual(await messages(), []);
+            if (mode === 'visual')
+              await context.reply('The window seat is on the left.', undefined, undefined, {
+                version: 1,
+                type: 'image',
+                title: 'Seat plan',
+                sources: [],
+                artifactId: artifact.id,
+                alt: 'Synthetic cabin plan with a left window seat.',
+              });
+            if (mode === 'stopped') await threads.stopThread();
+            release.get(turnId)!();
+            if (mode !== 'stopped') await succeeded(turnId);
+            const saved = await messages();
+            assert.equal(saved.length, mode === 'stopped' ? 0 : 1);
+            if (mode !== 'stopped') {
+              assert.deepEqual(
+                saved[0].attachments.map((item: Artifact) => item.id),
+                [artifact.id],
+              );
+              assert.equal(
+                saved[0].presentation?.artifactId ?? null,
+                mode === 'visual' ? artifact.id : null,
+              );
+            }
+          }
+        },
+      );
       const pdfFile = () => ({
         bytes: browserDownloadPdf,
         name: 'invoice.pdf',

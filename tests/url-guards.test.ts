@@ -1,3 +1,4 @@
+import { presentationSchema, presentationText } from '../src/shared/presentation.ts';
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
 import { once } from 'node:events';
@@ -885,4 +886,177 @@ test('the browser proxy refuses private network destinations, including names th
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test('chat presentations reject unsafe URLs, executable shapes and inconsistent references', () => {
+  const common = { version: 1, title: 'Synthetic visual', sources: [] };
+  const diagram = {
+    ...common,
+    type: 'diagram',
+    nodes: [
+      { id: 'request', label: 'Request' },
+      { id: 'answer', label: 'Answer' },
+    ],
+    edges: [{ from: 'request', to: 'answer' }],
+  };
+  const seats = {
+    ...common,
+    type: 'seats',
+    columns: ['A', '', 'B'],
+    rows: [{ label: '1', seats: [{ column: 'A', label: '1A', status: 'unknown' }] }],
+    recommended: '1A',
+  };
+  assert.ok(presentationSchema.safeParse(diagram).success);
+  assert.ok(presentationSchema.safeParse(seats).success);
+  for (const url of [
+    'javascript:alert(1)',
+    'data:text/html,hello',
+    'http://example.com',
+    'https://127.0.0.1',
+    'https://169.254.169.254/latest',
+    'https://[::1]',
+    'https://localhost',
+    'https://private.internal',
+    'https://user:pass@example.com',
+    'https://example.com:8443',
+    'https://example.com/?access_token=private',
+    'https://example.com/api/artifacts/private',
+    '/api/artifacts/private',
+  ]) {
+    assert.equal(
+      presentationSchema.safeParse({ ...diagram, sources: [{ label: 'Source', url }] }).success,
+      false,
+      url,
+    );
+    assert.equal(
+      presentationSchema.safeParse({
+        ...common,
+        type: 'booking',
+        name: 'Hotel',
+        status: 'option',
+        facts: [{ label: 'Night', value: 'Synthetic date' }],
+        url,
+      }).success,
+      false,
+      url,
+    );
+  }
+  for (const fragment of [
+    'token=synthetic-secret',
+    'id_token=synthetic-secret',
+    'code=synthetic-secret',
+  ]) {
+    const normalized = presentationSchema.parse({
+      ...diagram,
+      sources: [{ label: 'Source', url: `https://example.com/#${fragment}` }],
+    });
+    assert.equal(normalized.sources[0]?.url, 'https://example.com/');
+    assert.doesNotMatch(presentationText(normalized), /synthetic-secret/);
+  }
+  const seatText = presentationText(
+    presentationSchema.parse({
+      ...seats,
+      rows: [{ label: '12', seats: [{ column: 'A', label: 'Left window', status: 'unknown' }] }],
+      recommended: 'Left window',
+    }),
+  );
+  for (const detail of ['A · aisle · B', 'Row 12', 'A (Left window)', 'unknown', 'Recommended'])
+    assert.ok(seatText.includes(detail), detail);
+  for (const value of [
+    { ...diagram, version: 2 },
+    { ...diagram, type: 'html', html: '<script>alert(1)</script>' },
+    { ...diagram, script: 'fetch("https://example.com")' },
+    { ...diagram, nodes: [diagram.nodes[0], diagram.nodes[0]] },
+    { ...diagram, edges: [{ from: 'missing', to: 'answer' }] },
+    { ...seats, columns: ['', ''] },
+    { ...seats, columns: ['A', 'A'] },
+    { ...seats, columns: ['B'] },
+    { ...seats, recommended: '9F' },
+    { ...seats, rows: [seats.rows[0], seats.rows[0]] },
+    {
+      ...seats,
+      rows: [
+        {
+          label: '1',
+          seats: [...seats.rows[0].seats, { column: 'A', label: '1B', status: 'available' }],
+        },
+      ],
+    },
+    { ...common, type: 'image', artifactId: 'https://example.com/picture.png', alt: 'A picture' },
+    { ...common, type: 'map', places: [{ id: 'one', name: 'Place', latitude: 91, longitude: 0 }] },
+    {
+      ...common,
+      type: 'map',
+      places: [{ id: 'one', name: 'Place', latitude: 0, longitude: Infinity }],
+    },
+    { ...diagram, title: ' '.repeat(120) },
+  ])
+    assert.equal(presentationSchema.safeParse(value).success, false, JSON.stringify(value));
+  assert.equal(
+    presentationSchema.safeParse({
+      ...seats,
+      rows: Array.from({ length: 60 }, (_, index) => ({
+        label: String(index),
+        seats: [{ column: 'A', label: `${index}A`, status: 'unknown', note: '界'.repeat(240) }],
+      })),
+    }).success,
+    false,
+  );
+});
+
+test('charts accept signed finite data and reject ambiguous series or excessive values', () => {
+  const chart = {
+    version: 1,
+    type: 'chart',
+    title: 'Synthetic change',
+    sources: [],
+    chart: 'line',
+    unit: 'EUR',
+    series: [
+      {
+        id: 'net',
+        label: 'Net',
+        points: [
+          { label: 'January', value: -12.5 },
+          { label: 'February', value: 0 },
+        ],
+      },
+    ],
+  };
+  assert.ok(presentationSchema.safeParse(chart).success);
+  assert.ok(presentationSchema.safeParse({ ...chart, chart: 'bar' }).success);
+  for (const value of [
+    { ...chart, series: [...chart.series, chart.series[0]] },
+    {
+      ...chart,
+      series: [
+        ...chart.series,
+        { id: 'other', label: 'Other', points: [...chart.series[0].points].reverse() },
+      ],
+    },
+    {
+      ...chart,
+      series: [
+        { ...chart.series[0], points: [chart.series[0].points[0], chart.series[0].points[0]] },
+      ],
+    },
+    ...[Infinity, NaN, 1e13, -1e13].map((value) => ({
+      ...chart,
+      series: [{ id: 'bad', label: 'Bad', points: [{ label: 'January', value }] }],
+    })),
+    {
+      ...chart,
+      series: [
+        {
+          ...chart.series[0],
+          points: Array.from({ length: 25 }, (_, index) => ({
+            label: String(index),
+            value: index,
+          })),
+        },
+      ],
+    },
+    { ...chart, formula: 'fetch("https://example.com")' },
+  ])
+    assert.equal(presentationSchema.safeParse(value).success, false);
 });

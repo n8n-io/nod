@@ -1,3 +1,4 @@
+import type { Presentation } from '../src/shared/presentation.ts';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { rm, symlink, writeFile } from 'node:fs/promises';
@@ -19,7 +20,7 @@ const token = '987:fixture-never-live';
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',handoff_browser_id text,created_at timestamptz NOT NULL DEFAULT now());
-    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,delivered_channel text,created_at timestamptz NOT NULL DEFAULT now())`);
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',presentation jsonb,reply_to_message_id uuid,delivered_channel text,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
   return threadId;
@@ -1565,11 +1566,23 @@ test(
     });
     channels.registerRoutes(app);
     const filePaths: string[] = [];
-    const addReply = async (turnId: string, attachments: unknown[], text = 'Here is the file.') => {
+    const addReply = async (
+      turnId: string,
+      attachments: unknown[],
+      text = 'Here is the file.',
+      presentation?: unknown,
+    ) => {
       const id = randomUUID();
       await pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments) VALUES($1,$2,'assistant',$3,(SELECT thread_id FROM turns WHERE id=$4),$4,$5)",
-        [id, ownerId, text, turnId, JSON.stringify(attachments)],
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,presentation) VALUES($1,$2,'assistant',$3,(SELECT thread_id FROM turns WHERE id=$4),$4,$5,$6)",
+        [
+          id,
+          ownerId,
+          text,
+          turnId,
+          JSON.stringify(attachments),
+          presentation ? JSON.stringify(presentation) : null,
+        ],
       );
       return id;
     };
@@ -1830,6 +1843,87 @@ test(
       assert.equal((await state(forged)).state, 'sent');
       assert.doesNotMatch(texts.at(-1)!, /localhost/);
       assert.equal(sent.length, failedCount);
+      const flight: Presentation = {
+        version: 1,
+        type: 'flights',
+        title: 'Synthetic flight comparison',
+        caption: 'Prices include one traveler.',
+        asOf: '2026-10-24 10:00 UTC',
+        sources: [{ label: 'Synthetic fare source', url: 'https://example.com/fares' }],
+        options: [
+          {
+            id: 'direct',
+            airline: 'Synthetic Air',
+            flightNumber: 'ND123',
+            departure: { airport: 'LIS', time: '2026-11-02 09:00' },
+            arrival: { airport: 'LHR', time: '2026-11-02 11:50' },
+            duration: '2h 50m',
+            stops: 'Nonstop',
+            price: 'EUR 124 return',
+            baggage: 'One cabin bag',
+            recommended: true,
+            url: 'https://example.com/fares/direct',
+          },
+        ],
+      };
+      const visualReply = await addReply(turnId, [], 'Take the direct synthetic flight.', flight);
+      await channels.drain();
+      assert.equal((await state(visualReply)).state, 'sent');
+      const deliveredVisual = texts.at(-1)!;
+      for (const detail of [
+        'Take the direct',
+        'LIS',
+        'LHR',
+        '09:00',
+        '11:50',
+        'ND123',
+        '2h 50m',
+        'Nonstop',
+        'EUR 124 return',
+        'One cabin bag',
+        '2026-10-24',
+        'https://example.com/fares',
+      ])
+        assert.ok(deliveredVisual.includes(detail), detail);
+      assert.doesNotMatch(deliveredVisual, /artifactId|"version"|"options"|api\/artifacts/);
+      assert.equal(
+        (await pool.query('SELECT text FROM messages WHERE id=$1', [visualReply])).rows[0].text,
+        'Take the direct synthetic flight.',
+      );
+      const chart: Presentation = {
+        version: 1,
+        type: 'chart',
+        chart: 'bar',
+        title: 'Synthetic net',
+        sources: [],
+        unit: 'EUR',
+        series: [
+          {
+            id: 'net',
+            label: 'Net',
+            points: [
+              { label: 'January', value: -12.5 },
+              { label: 'February', value: 0 },
+            ],
+          },
+        ],
+      };
+      const chartReply = await addReply(
+        turnId,
+        [],
+        'January is negative; February is zero.',
+        chart,
+      );
+      await channels.drain();
+      assert.equal((await state(chartReply)).state, 'sent');
+      assert.match(texts.at(-1)!, /January: -12.5 EUR; February: 0 EUR/);
+      const invalidVisual = await addReply(turnId, [], 'Plain fallback survives.', {
+        ...flight,
+        version: 2,
+      });
+      await channels.drain();
+      assert.equal((await state(invalidVisual)).state, 'sent');
+      assert.equal(texts.at(-1), 'Plain fallback survives.');
       holdResolve = true;
       const changedAccount = await addReply(turnId, [image]);
       const pending = channels.drain();

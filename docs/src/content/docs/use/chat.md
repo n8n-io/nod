@@ -30,6 +30,14 @@ Select **Find in conversation** to search stored messages in the current convers
 
 An action confirmation shows its current state beside the question. **Done** means the confirmed action finished. **Outcome unclear** means it failed or stopped after execution started. It can still have changed the target. Check the result before you try again. nod does not repeat it automatically.
 
+## See visual answers
+
+When a visual makes an answer easier to understand, nod can include images, maps, flight comparisons, seat plans, booking summaries, diagrams, or charts.
+
+Each visual stays beside its explanation. Source links let you check the details, and changing information can include when nod checked it. Charts also show the underlying numbers. An illustrative seat plan doesn't establish availability. A proposed booking stays an option until nod has evidence of confirmation.
+
+Telegram and WhatsApp receive the answer and visual details as text, with source links and supported image attachments. The interactive version stays in nod's chat.
+
 ## Listen to audio
 
 Audio attachments play directly in chat. Select **Play audio** to listen, then **Pause audio** to pause. Starting another attachment pauses the previous one.

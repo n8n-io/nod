@@ -2,6 +2,7 @@
 @import './components/motion.css';
 @import './components/controls.css';
 @import './components/setup-progress.css';
+@import './components/message-presentation.css';
 
 @font-face {
   font-family: 'Geist';

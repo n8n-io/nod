@@ -1,0 +1,27 @@
+---
+name: visual-replies
+description: Present useful images, maps, flight comparisons, seat plans, booking summaries, diagrams and charts directly in chat. Use when seeing locations, options, layouts, relationships or trends makes an answer easier to understand.
+---
+
+# Visual replies
+
+Use a visual when it helps the user's decision or explanation. A simple fact or short answer needs only text. Choose one useful presentation per message; keep related information together.
+
+Call send_message with complete answer text and a presentation. Use version: 1, a type below, a short title and sources: [{label, url}]. caption and asOf are optional. Follow the tool schema for the remaining fields. Never put presentation JSON, HTML or executable code in the reply text. Do not repeat a successfully sent answer in the final response.
+
+Read the actual source before presenting its facts. Sources must be public HTTPS pages that support the visual, without credentials or private links. For a conceptual explanation or user-supplied material without a public source, use sources: [] and identify its basis in the text. Use asOf for the observed date, time and time zone when prices, schedules or availability can change. Never invent source links, coordinates, routes, prices, seat availability, data points or booking confirmation.
+
+| Type    | Use and evidence                                                                                                                                                                                                                                             |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| image   | Show a relevant map, seating plan, diagram or other explanatory image. Supply artifactId and descriptive alt text. Use an owned raster image from this conversation, not an external image URL, HTML or SVG.                                                 |
+| map     | Compare places with verified latitude and longitude, names and useful descriptions. Pins show locations, not checked routes or travel times.                                                                                                                 |
+| flights | Compare options under the same dates, travellers and fare conditions. Keep airport, local date/time, duration, stops, total price and baggage clear. Mark a recommendation only when its tradeoff is supported.                                              |
+| seats   | Show the sourced aircraft layout. An empty column marks an aisle. Use unknown when availability was not checked. Label an illustrative layout in caption and text; do not draw it as a live seat inventory. Use the original image for a venue seating plan. |
+| booking | Summarize a reservation or proposal with labelled facts. Use option, pending, confirmed or cancelled only as the evidence supports. Payment submission alone does not establish confirmation.                                                                |
+| diagram | Explain a small process or relationship using nodes and edges with valid IDs. Keep labels short and provide the explanation in text.                                                                                                                         |
+
+For a new image, obtain and inspect the actual file before sharing it. Download a remote original with browser download using its observed URL or download selector; opening an image tab alone does not enable a download with neither. A foreground raster image download stages the image for the next reply: use its returned id in the next send_message presentation without calling share_file again. Call share_file for other unshared workspace images, then use its returned id. share_screenshot already delivers its image; explain it in text without presenting it again. Never invent an artifact ID. Keep source attribution in sources and any limits in the caption or answer.
+
+Use chart for a small numerical comparison or trend. Set chart to bar for categories or line for ordered points. Supply series with id, label and points: [{label, value}], plus useful xLabel, yLabel and unit. Keep series on the same units and matching labels; preserve source dates and ordering. Use text when missing data cannot be shown faithfully; never fill a gap with zero. Use checked source numbers or a calculation already verified in the workspace. The visual does not run formulas. Include the conclusion and key values in text; the chart also exposes its underlying data.
+
+The text must stand on its own, including the recommendation, material facts, uncertainty and source links. On Telegram and WhatsApp use complete plain text without tables; nod also includes the presentation details and retains supported image attachments. A visual selection only explores information. It does not book, pay or authorize an outside action.

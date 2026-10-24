@@ -23,6 +23,7 @@ export interface ChatMessage {
   text: string;
   at: number;
   turnId: string | null;
+  presentation?: unknown;
 }
 
 export interface Run {
@@ -247,13 +248,14 @@ export async function collect(options: {
   const costKnown = usage.length > 0 && usage.every((row) => row.cost_usd !== null);
   const messages = (
     await stack.pool.query(
-      'SELECT role,text,turn_id,created_at FROM messages ORDER BY created_at, id',
+      "SELECT role,text,turn_id,created_at,to_jsonb(messages)->'presentation' AS presentation FROM messages ORDER BY created_at, id",
     )
   ).rows.map((row): ChatMessage => ({
     role: row.role,
     text: row.text ?? '',
     at: new Date(row.created_at).getTime(),
     turnId: row.turn_id,
+    ...(row.presentation ? { presentation: row.presentation } : {}),
   }));
   const turns = (
     await stack.pool.query(
@@ -383,7 +385,7 @@ export async function collect(options: {
             .filter((m) => m.text.trim())
             .map((m) => ({
               at: m.at,
-              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}`,
+              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}${m.presentation ? `\nPRESENTATION: ${JSON.stringify(m.presentation)}` : ''}`,
             })),
           ...tools.map((call) => ({
             at: call.at,
