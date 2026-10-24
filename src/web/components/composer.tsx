@@ -313,7 +313,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         `${rejected.map((file) => file.name).join(', ')} must be ${fileBytes / 1024 / 1024} MB or smaller. The other files were kept.`,
       );
       files = files.filter((file) => file.size <= fileBytes);
-      if (!files.length) return;
+      if (!files.length) {
+        restoreFocus();
+        return;
+      }
     }
     const first = files[0];
     captureAnalytics('nod_attachment_added', {
