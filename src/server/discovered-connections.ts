@@ -134,7 +134,7 @@ type ProposalRow = {
   turn_id: string | null;
   created_at: Date;
 };
-type ReturnTarget = 'apps' | 'onboarding' | 'window';
+type ReturnTarget = 'apps' | 'onboarding' | 'window' | 'desktop';
 
 const catalogMs = 10 * 60_000;
 
@@ -466,7 +466,7 @@ export async function createDiscoveredConnections(
       .object({
         instanceUrl: z.string().trim().min(3).max(2048),
         token: z.string().trim().min(8).max(8192).optional(),
-        returnTo: z.enum(['apps', 'onboarding', 'window']).optional(),
+        returnTo: z.enum(['apps', 'onboarding', 'window', 'desktop']).optional(),
       })
       .strict()
       .parse(input);
@@ -767,7 +767,7 @@ export async function createDiscoveredConnections(
     const { clientId, returnTo, restart, restartAttempt } = z
       .object({
         clientId: z.string().trim().min(1).max(500).optional(),
-        returnTo: z.enum(['apps', 'onboarding', 'window']).optional(),
+        returnTo: z.enum(['apps', 'onboarding', 'window', 'desktop']).optional(),
         restart: z.boolean().default(false),
         restartAttempt: z
           .string()

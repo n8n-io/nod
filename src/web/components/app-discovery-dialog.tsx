@@ -244,7 +244,7 @@ export function AppDiscoveryDialog({
           body: JSON.stringify({
             instanceUrl: typed,
             ...(token ? { token } : {}),
-            returnTo: 'window',
+            returnTo: external ? 'desktop' : 'window',
           }),
           signal: controller.signal,
         },
@@ -328,7 +328,7 @@ export function AppDiscoveryDialog({
           method: 'POST',
           body: JSON.stringify({
             ...(enteredClientId ? { clientId: enteredClientId } : {}),
-            returnTo: 'window',
+            returnTo: external ? 'desktop' : 'window',
             restart: true,
             restartAttempt,
           }),

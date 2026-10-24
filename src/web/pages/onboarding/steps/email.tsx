@@ -247,7 +247,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     try {
       const response = await api<{ url: string; attempt?: string }>('/api/apps/gmail/connect', {
         method: 'POST',
-        body: JSON.stringify({ returnTo: 'window' }),
+        body: JSON.stringify({ returnTo: external ? 'desktop' : 'window' }),
         signal: controller.signal,
       });
       if (controller.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');

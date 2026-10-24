@@ -4914,18 +4914,27 @@ const {SetupActions}=await import('./src/web/components/setup-link.tsx');
 const links=['https://consent.example.test/first','https://consent.example.test/second'];
 const hashes=links.map(url=>createHash('sha256').update(url).digest('hex'));
 const completed=new Set();
+const unavailable=new Set();
+const returnRequests=[];
+let returnOutcome='ready';
 let releaseFirst;
 let held=false;
 let opened=0;
 window.open=()=>({closed:false,opener:null,document:{title:'',body:{textContent:''}},location:{set href(value){opened++;}},close(){this.closed=true;}});
 globalThis.fetch=async(path,init={})=>{
-  assert.equal(path,'/api/apps/setup-status');
   const body=JSON.parse(init.body);
+  if(path==='/api/apps/setup-return'){
+    returnRequests.push(body);
+    if(returnOutcome==='completed')completed.add(body.hash);
+    if(returnOutcome==='replaced')unavailable.add(body.hash);
+    return Response.json(returnOutcome==='ready'?{ok:true}:{error:'Synthetic attempt changed'},{status:returnOutcome==='ready'?200:409});
+  }
+  assert.equal(path,'/api/apps/setup-status');
   if(body.pairingUrl===links[0]&&!held){
     held=true;
     return new Promise(resolve=>{releaseFirst=()=>resolve(Response.json({completed:[hashes[0]],apps:[]}));});
   }
-  return Response.json({completed:body.hashes.filter(hash=>completed.has(hash)),apps:body.hashes.filter(hash=>!completed.has(hash)).map(hash=>({hash,slug:'notion',name:'Synthetic workspace',available:true}))});
+  return Response.json({completed:body.hashes.filter(hash=>completed.has(hash)),apps:body.hashes.filter(hash=>!completed.has(hash)).map(hash=>({hash,slug:'notion',name:'Synthetic workspace',available:!unavailable.has(hash)}))});
 };
 const root=createRoot(document.querySelector('#root'));
 const settle=()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,15));});
@@ -4965,6 +4974,44 @@ try {
   await click(action('Done'));
   await waitFor(()=>!dialog());
   assert.equal(opened,1);
+  assert.equal(returnRequests.length,0,'Browser handoffs keep their stored return target');
+  const external=[];
+  window.nodDesktop={remote:true,openExternal:async(url)=>{external.push(url);assert.equal(returnRequests.at(-1).hash,createHash('sha256').update(url).digest('hex'));}};
+  for(const outcome of ['ready','completed','finishing','replaced']){
+    returnOutcome=outcome;
+    const href='https://consent.example.test/'+outcome;
+    const hash=createHash('sha256').update(href).digest('hex');
+    const before=returnRequests.length;
+    const openedBefore=external.length;
+    await act(async()=>root.render(createElement(SetupActions,{actions:[{href,setup:'app',label:'Synthetic remote'}]})));
+    await settle();
+    await act(async()=>window.dispatchEvent(new Event('focus')));
+    await settle();
+    assert.equal(returnRequests.length,before,'Status polling cannot change return targets');
+    await click(document.querySelector('[data-setup="app"]'));
+    await waitFor(()=>returnRequests.length===before+1);
+    assert.deepEqual(returnRequests.at(-1),{hash,returnTo:'desktop'});
+    if(outcome==='ready'){
+      await waitFor(()=>external.length===openedBefore+1);
+      await click(action('Close'));
+    }else if(outcome==='completed'){
+      await waitFor(()=>Boolean(action('Done')));
+      await click(action('Done'));
+    }else if(outcome==='finishing'){
+      await waitFor(()=>dialog()?.querySelector('[role="status"]')&&!dialog()?.querySelector('[role="alert"]'));
+      completed.add(hash);
+      await act(async()=>window.dispatchEvent(new Event('focus')));
+      await waitFor(()=>Boolean(action('Done')));
+      await click(action('Done'));
+    }else{
+      await waitFor(()=>Boolean(dialog()?.querySelector('[role="alert"]')));
+      assert.equal(dialog().querySelector('a'),null,'A replaced attempt cannot be opened manually');
+      await click(action('Not now'));
+    }
+    await waitFor(()=>!dialog());
+    assert.equal(external.length,openedBefore+(outcome==='ready'?1:0));
+    assert.equal(returnRequests.length,before+1,'Reconciliation cannot change an attempt again');
+  }
 } finally {
   releaseFirst?.();
   await act(async()=>root.unmount());
@@ -5669,6 +5716,8 @@ await act(async()=>window.dispatchEvent(new Event('focus')));
 await waitFor(()=>button('Try again')&&!button('Try again').disabled&&document.querySelector('[role="alert"]'),'An absent attempt must offer explicit recovery');
 assert.equal(advances,0,'an absent attempt without completion remains a failure');
 gmailConnected=false;gmailCompleted=false;gmailMissing=false;gmailAvailable=true;gmailPairingConfirmed=false;
+const desktopStart=gmailRequests.length;
+window.nodDesktop={remote:true,openExternal:async()=>{}};
 await mount(Email);
 await click('Connect Gmail');
 await act(async()=>window.dispatchEvent(new Event('focus')));
@@ -5715,6 +5764,8 @@ gmailConnected=true;gmailCompleted=true;
 await act(async()=>window.dispatchEvent(new Event('focus')));
 await waitFor(()=>advances===1);
 assert.equal(document.querySelector('[role="alert"]'),null,'Confirmed retry must not show a failure');
+assert.ok(gmailRequests.slice(desktopStart).every(request=>request.returnTo==='desktop'));
+delete window.nodDesktop;
 gmailConnected=false;gmailCompleted=false;gmailPairingConfirmed=false;popupBlocked=true;
 await mount(Email);
 await click('Connect Gmail');

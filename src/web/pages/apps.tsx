@@ -564,7 +564,7 @@ export function Apps({
         {
           method: 'POST',
           body: JSON.stringify({
-            returnTo: 'window',
+            returnTo: external ? 'desktop' : 'window',
             ...(restarting?.attempt ? { restartAttempt: restarting.attempt } : {}),
             ...(!addAccount || connection.accessPaths?.length
               ? { connectionId: connection.connectionId }
