@@ -24,6 +24,7 @@ export function AppConnectionDialog({
   onOpened,
   onRetry,
   onCloseAutoFocus,
+  fallbackOnly = false,
 }: {
   signIn?: AppSignIn;
   opening: boolean;
@@ -32,6 +33,7 @@ export function AppConnectionDialog({
   onOpened(): void;
   onRetry?(): void;
   onCloseAutoFocus?: ComponentProps<typeof DialogContent>['onCloseAutoFocus'];
+  fallbackOnly?: boolean;
 }) {
   const title = useRef<HTMLHeadingElement>(null);
   const outcome = signIn?.outcome ?? (error ? 'failed' : undefined);
@@ -67,7 +69,10 @@ export function AppConnectionDialog({
                 ? 'Your browser will open when sign-in is ready.'
                 : 'Review what nod can access in your browser.');
   return (
-    <Dialog open={Boolean(signIn)} onOpenChange={(open) => !open && onClose()}>
+    <Dialog
+      open={Boolean(signIn && (!fallbackOnly || (signIn.url && !signIn.opened && !opening)))}
+      onOpenChange={(open) => !open && onClose()}
+    >
       <DialogContent
         className="app-connect-dialog"
         onOpenAutoFocus={(event) => {
@@ -86,7 +91,7 @@ export function AppConnectionDialog({
             >
               <div className="app-connect-flow" aria-hidden="true">
                 <span className="app-connect-logo">
-                  <NodGlyph size={40} mode={!outcome && opening ? 'thinking' : 'still'} />
+                  <NodGlyph size={40} mode={!outcome && opening ? 'bounce' : 'still'} />
                 </span>
                 <span className="app-connect-route" data-pending={!outcome || undefined}>
                   <span />

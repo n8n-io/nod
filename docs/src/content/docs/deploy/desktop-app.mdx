@@ -31,7 +31,7 @@ flowchart LR
 <TabItem label="Mac" icon="apple">
 
 - Electron runs the app window and the nod server. While you use 1Password, a separate helper talks to the 1Password app; it's the only nod process allowed to load 1Password's library.
-- Lima and Apple's Virtualization framework run a private Ubuntu virtual machine. It gets half your memory, between 3 and 6 GiB, and a 24 GiB disk that grows as it's used. Its first boot installs the firewall packages it needs from the runtime pack, and uses Ubuntu's package servers only if that installation fails.
+- Lima and Apple's Virtualization framework run a private Ubuntu virtual machine. New installations use Ubuntu 26.04 LTS, including the systemd fixes for a [first-boot login-session race](https://github.com/lima-vm/lima/issues/5570) that could otherwise stall startup for several minutes. Existing installations keep their guest and data. The VM gets half your memory, between 3 and 6 GiB, and a 24 GiB disk that grows as it's used. Its first boot installs the matching firewall packages from the runtime pack, and uses Ubuntu's package servers only if that installation fails.
 - The VM holds PostgreSQL and separate workspace and browser containers. Docker runs only inside the VM.
 
 </TabItem>
@@ -49,13 +49,13 @@ The workspace and browser have separate networks, no access to your home folder,
 
 ## Onboarding during startup
 
-On a new desktop profile, the native window shows the same Welcome screen and analytics choice as the web app immediately. The private computer starts in the background. Once PostgreSQL is ready, the normal nod server opens the remaining onboarding steps while the workspace and browser finish starting. A model, Gmail, desktop notifications, and Open at login are required to finish setup. Telegram and analytics sharing are optional.
+On a new desktop profile, the native window shows Welcome while the private computer starts in the background. Get started waits for PostgreSQL and the server when needed, then opens the introduction and analytics choice automatically. Email and calendar are offered before model selection and can both be skipped. The workspace and browser continue starting during onboarding. A model and Open at login are required to finish desktop setup. Other apps, Telegram, WhatsApp and analytics sharing are optional.
 
-Before the server starts, the native window saves only the analytics choice and whether Welcome was completed. After the ordinary account API accepts that choice, nod records its acknowledgment and opens the main nod window for the remaining onboarding. A restart does not repeat Welcome or overwrite the saved analytics choice; the temporary marker is removed when onboarding completes. Sign-ins, keys, connections and introduction answers use the normal server and storage from the beginning; there is no separate setup backend or credential transfer.
+Before the server starts, the native window saves only the analytics choice and whether Welcome was completed. After the ordinary account API accepts that choice, nod records its acknowledgment. The introduction stays visible until the email step can show its account choices or an actionable error in the main window. That handoff does not wait for the full app catalog, workspace or browser. A restart does not repeat Welcome or overwrite the saved analytics choice; the temporary marker is removed when onboarding completes. Sign-ins, keys and connections use the normal server and storage from the beginning; there is no separate setup backend or credential transfer. The first chat asks what the owner is working on, under the normal chat and memory rules.
 
-Desktop setup requires notifications and Open at login to be enabled. Each preference is saved before continuing; Open at login is checked against the operating system. The notification preference does not confirm permission from the operating system. If alerts are blocked, allow nod in the computer’s notification settings. The web app uses the same onboarding without those native steps. A completed installation keeps its choices and skips onboarding after an update.
+Desktop setup requires Open at login to be enabled and checked against the operating system before continuing. A new profile requests native notification permission once when its first stored chat introduction appears. Existing notification choices are preserved. The operating system controls permission; enabling delivery does not authorize app monitoring or scheduled work. If alerts are blocked, allow nod in the computer’s notification settings. The web app uses the same onboarding without the native preference step. A completed installation keeps its choices and skips onboarding after an update.
 
-If the user finishes first, an animated nod logo stays visible until the workspace and browser are ready. Chat stays unavailable during that wait. Runtime failures offer an explicit retry without clearing saved connections. If notifications are enabled and nod is not focused, a single notification announces when setup is ready.
+If the user finishes first, an animated nod logo stays visible until the workspace and browser are ready and completion has been saved. If the services are already ready, chat opens directly without a preparation screen. Runtime failures offer an explicit retry without clearing saved connections. The logo uses the same bounce as Welcome while work continues and pauses on an error. Measured download progress remains available to assistive technology without treating individual downloads as total setup completion. The screen groups detailed startup events into a few messages, while diagnostics keep the individual stages. If completion reports a missing setup requirement, onboarding returns to the relevant step. If notifications are enabled and nod is not focused, a single notification announces when setup is ready.
 
 ## The runtime pack
 
@@ -153,7 +153,7 @@ Inside nod's distribution, drive mounts and Windows process access are turned of
 
 - Builds exist for Mac with Apple silicon or Intel, and Windows 11 x64. There are no Linux or Windows ARM builds.
 - Tasks run only while nod is open and the computer is awake.
-- WhatsApp needs a public HTTPS callback. The app doesn't relay webhooks to your computer.
+- WhatsApp Business needs a public HTTPS callback. Linking your own number uses a QR code instead.
 - A new installation starts with a fresh profile. There's no sync between devices or migration from a source install.
 
 ## Build the app

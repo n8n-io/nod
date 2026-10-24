@@ -7,9 +7,11 @@ sidebar:
 
 import { Steps } from '@astrojs/starlight/components';
 
-Connect Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many other apps from **Apps**. Select an app, sign in and review its permissions.
+Connect Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many other apps from **Apps**. Select an app, sign in and review its permissions. Search tolerates common typos and abbreviations, and **Categories** narrows the results. Scroll to browse more apps.
 
-During onboarding, select **Connect Gmail** and choose an inbox. Setup continues when the connection is confirmed. Add other apps later from **Apps**.
+During onboarding, connect **Gmail** or **Outlook** so nod can find emails that need a reply, pull out next steps and draft responses for you to review. Then connect **Google Calendar** or **Outlook Calendar** to work with upcoming meetings and available time. Outlook uses the same account connection for email and calendar, so an account connected in the email step is already shown in the calendar step. The permissions granted on the provider's consent screen still apply. Both steps are optional and have **Skip for now**. While signing in, progress and cancellation stay in the selected provider card. If the browser cannot open, use **Open sign-in** there; if signing in is interrupted, return to the card to try again.
+
+After model selection, the app step lists the full catalog by category. Use **Manage** to add or remove accounts, and select **Continue** whether or not you connect any tools. A count appears beside it when tools are connected, excluding email. You can also connect apps later from **Apps**.
 
 nod uses [Composio](https://composio.dev) for these connections. By default, app requests and results pass through n8n's hosted connection service and Composio. Source installs can [select a trusted connection service](/deploy/configuration/#apps-and-composio). nod checks each action before it reaches the connection service. Notion, Linear and n8n connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 

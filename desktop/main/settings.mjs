@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 
 const preferenceFields = ['launchAtLogin', 'notifications', 'onboardingCompleted'];
 const onboardingPreferenceSteps = ['notifications', 'launchAtLogin', 'complete'];
+const notificationRequests = ['pending', 'requested', 'chosen', 'unsupported', 'failed', 'legacy'];
 
 export function createSettingsStore(path, encryption, platform = process.platform) {
   let current;
@@ -73,6 +74,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         'theme',
         ...preferenceFields,
         'onboardingPreferenceStep',
+        'notificationRequest',
         'welcome',
         'secrets',
       ];
@@ -86,6 +88,8 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         preferenceFields.some((field) => typeof value[field] !== 'boolean') ||
         (value.onboardingPreferenceStep !== undefined &&
           !onboardingPreferenceSteps.includes(value.onboardingPreferenceStep)) ||
+        (value.notificationRequest !== undefined &&
+          !notificationRequests.includes(value.notificationRequest)) ||
         (value.welcome !== undefined &&
           (!record(value.welcome) ||
             Object.keys(value.welcome).some(
@@ -98,6 +102,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         Object.values(value.secrets).some((secret) => typeof secret !== 'string' || !secret)
       )
         throw new Error();
+      value.notificationRequest ??= 'legacy';
     } catch (error) {
       if (error.code !== 'ENOENT') throw new Error('nod could not open its saved settings.');
     }
@@ -106,6 +111,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       theme: 'system',
       launchAtLogin: false,
       notifications: false,
+      notificationRequest: 'pending',
       onboardingCompleted: false,
       secrets: {},
     };
@@ -167,11 +173,9 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       ...(value.welcome ? { welcome: { ...value.welcome } } : {}),
       onboardingPreferenceStep: value.onboardingCompleted
         ? 'complete'
-        : !value.notifications
-          ? 'notifications'
-          : value.onboardingPreferenceStep === 'complete' && !value.launchAtLogin
-            ? 'launchAtLogin'
-            : (value.onboardingPreferenceStep ?? 'notifications'),
+        : value.onboardingPreferenceStep === 'complete' && value.launchAtLogin
+          ? 'complete'
+          : 'launchAtLogin',
     };
   }
   return {
@@ -220,41 +224,51 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           if (typeof input[field] !== 'boolean') throw new Error('Check your preferences.');
           value[field] = input[field];
         }
+        if (input.notifications !== undefined) value.notificationRequest = 'chosen';
         if (input.onboardingPreferenceStep !== undefined) {
           const step = redacted(previous).onboardingPreferenceStep;
-          const next = step === 'notifications' ? 'launchAtLogin' : 'complete';
-          const answered =
-            input.onboardingPreferenceStep === 'launchAtLogin'
-              ? 'notifications'
-              : input.onboardingPreferenceStep === 'complete'
-                ? 'launchAtLogin'
-                : undefined;
           const repeated =
-            answered &&
             !previous.onboardingCompleted &&
-            input.onboardingPreferenceStep === step &&
-            input[answered] === previous[answered];
+            step === 'complete' &&
+            input.onboardingPreferenceStep === 'complete' &&
+            input.launchAtLogin === true;
           if (
             !repeated &&
-            (step === 'complete' || input.onboardingPreferenceStep !== next || input[step] !== true)
+            (step === 'complete' ||
+              input.onboardingPreferenceStep !== 'complete' ||
+              input.launchAtLogin !== true)
           )
             throw new Error('Choose your desktop preference before continuing.');
-          if (
-            !value.notifications ||
-            (input.onboardingPreferenceStep === 'complete' && !value.launchAtLogin)
-          )
-            throw new Error('Turn on notifications and Open at login to continue.');
           value.onboardingPreferenceStep = input.onboardingPreferenceStep;
         }
-        if (
-          value.onboardingCompleted &&
-          !previous.onboardingCompleted &&
-          (!value.notifications || !value.launchAtLogin)
-        )
-          throw new Error('Turn on notifications and Open at login to finish setup.');
+        if (value.onboardingCompleted && !previous.onboardingCompleted && !value.launchAtLogin)
+          throw new Error('Turn on Open at login to finish setup.');
         if (value.onboardingCompleted) delete value.welcome;
         await write(value);
         return redacted(value);
+      });
+    },
+    claimNotificationRequest() {
+      return exclusive(async () => {
+        const value = await read();
+        if (value.notificationRequest !== 'pending' || value.notifications) return false;
+        await write({ ...value, notificationRequest: 'requested' });
+        return true;
+      });
+    },
+    finishNotificationRequest(status) {
+      return exclusive(async () => {
+        if (!['requested', 'unsupported', 'failed'].includes(status))
+          throw new Error('This notification request is invalid.');
+        const value = await read();
+        if (value.notificationRequest !== 'requested') return redacted(value);
+        const next = {
+          ...value,
+          notificationRequest: status,
+          notifications: status === 'requested',
+        };
+        await write(next);
+        return redacted(next);
       });
     },
     acknowledgeWelcome(expected) {

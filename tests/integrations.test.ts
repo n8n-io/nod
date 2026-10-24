@@ -75,9 +75,10 @@ import { usagePdf } from '../src/server/usage-report.ts';
 import type { TrustEntry } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { createWorkAdmission } from '../src/server/work-admission.ts';
-import { integrationServiceIds } from '../src/shared/integrations.ts';
+import { integrationServiceIds, integrationServices } from '../src/shared/integrations.ts';
 import { connectedGmail } from '../src/shared/onboarding.ts';
 import { fileBytes } from '../src/shared/files.ts';
+import { connectionGroups } from '../src/web/lib/secondary-pages.ts';
 import { fakeComputer, fakeExecution, fakeWorkspace } from './runtime-fixtures.ts';
 
 const fixtureIdentityCheckpoint = {
@@ -1326,6 +1327,8 @@ test('app consent advances in one tab and consumes its non-exportable browser ke
         URL,
         btoa,
         Date,
+        setTimeout,
+        clearTimeout,
         fetch: async (path: string, options: RequestInit) => {
           assert.equal(path, '/start');
           assert.equal(new Headers(options.headers).get('x-nod-bridge'), 'synthetic-bridge-key');
@@ -2953,8 +2956,7 @@ async function appsFixture(
       | 'browserAccounts'
       | 'wake'
       | 'readWorkspaceFile'
-      | 'learnWritingStyle'
-      | 'briefInbox'
+      | 'writingStyle'
       | 'admission'
     >
   > = {},
@@ -3079,11 +3081,89 @@ async function appsFixture(
   };
 }
 
+test('app groups retain service metadata and account identity when catalog data is missing', () => {
+  const gmail: AppConnection = {
+    slug: 'gmail',
+    name: 'gmail',
+    status: 'connected',
+    connectionId: 'owned-gmail',
+    triggersEnabled: false,
+  };
+  const notes: AppConnection = {
+    slug: 'custom_notes',
+    name: 'Custom Notes',
+    description: 'Work with saved notes.',
+    status: 'connected',
+    connectionId: 'owned-notes',
+    triggersEnabled: false,
+  };
+  for (const catalog of [
+    [],
+    [
+      { slug: 'gmail', name: 'gmail', description: '' },
+      { slug: 'custom_notes', name: ' ', description: ' ' },
+    ].map((service): AppConnection => ({
+      ...service,
+      status: 'disconnected',
+      triggersEnabled: false,
+    })),
+  ]) {
+    const groups = connectionGroups([gmail, notes], catalog);
+    const mail = groups.find((group) => group.key === 'gmail')!;
+    assert.equal(mail.service.name, integrationServices.gmail.name);
+    assert.equal(mail.service.description, integrationServices.gmail.description);
+    assert.equal(mail.service.status, 'connected');
+    assert.deepEqual(mail.accounts, [gmail]);
+    const custom = groups.find((group) => group.key === 'custom_notes')!;
+    assert.equal(custom.service.name, notes.name);
+    assert.equal(custom.service.description, notes.description);
+    assert.deepEqual(custom.accounts, [notes]);
+  }
+  const native = { ...notes, connectionId: undefined, status: 'disconnected' as const };
+  const mcp = { ...notes, slug: 'custom_notes_mcp', name: 'Custom Notes MCP' };
+  const catalog: AppConnection = {
+    slug: notes.slug,
+    name: notes.name,
+    description: '',
+    status: 'disconnected',
+    triggersEnabled: false,
+    logoUrl: 'https://assets.example.test/notes.svg',
+    categories: ['Productivity'],
+  };
+  const [group] = connectionGroups([native, mcp], [catalog]);
+  assert.equal(group.service.description, notes.description);
+  assert.equal(group.service.logoUrl, catalog.logoUrl);
+  assert.deepEqual(group.service.categories, catalog.categories);
+  assert.deepEqual(group.accounts, [mcp]);
+  const [available] = connectionGroups([native], [catalog]);
+  assert.equal(available.service.description, notes.description);
+  const [described] = connectionGroups([notes], [{ ...catalog, description: 'Catalog purpose.' }]);
+  assert.equal(described.service.description, 'Catalog purpose.');
+});
+
 test(
   'managed app discovery keeps consent and underscore tool routing bound to owned accounts',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const f = await appsFixture(t);
+    const supported = f.provider.supportedServices!;
+    f.provider.supportedServices = supported.filter((slug) => slug !== 'outlook');
+    f.provider.listServices = async () => [];
+    const unavailable = (await f.app.inject({ url: '/api/apps' })).json<AppConnection[]>();
+    assert.equal(unavailable.find((entry) => entry.slug === 'outlook')?.status, 'not_configured');
+    const blocked = await f.app.inject({ method: 'POST', url: '/api/apps/outlook/connect' });
+    assert.equal(blocked.statusCode, 503, blocked.body);
+    assert.equal(f.callbacks.length, 0);
+    f.provider.supportedServices = supported;
+    let catalogRequests = 0;
+    f.provider.listServices = async () => {
+      catalogRequests++;
+      throw new Error('Synthetic catalog unavailable');
+    };
+    const personal = (await f.app.inject({ url: '/api/apps' })).json<AppConnection[]>();
+    assert.equal(personal.find((entry) => entry.slug === 'outlook')?.status, 'disconnected');
+    await f.connect('outlook');
+    assert.equal(catalogRequests, 0);
     let failure: Error | undefined;
     f.provider.listServices = async () => {
       if (failure) throw failure;
@@ -3096,9 +3176,22 @@ test(
           logoUrl: 'https://logos.composio.dev/api/foo_mcp',
           categories: ['Productivity', 'Meetings'],
         },
-        { slug: 'gmail', name: 'Gmail', description: '', categories: ['Email'] },
+        {
+          slug: 'gmail',
+          name: 'gmail',
+          description: '',
+          logoUrl: 'https://logos.composio.dev/api/gmail',
+          categories: ['Email'],
+        },
       ];
     };
+    const catalog = await f.app.inject({ url: '/api/apps/catalog' });
+    assert.equal(catalog.statusCode, 200, catalog.body);
+    const mail = catalog.json<AppConnection[]>().find((service) => service.slug === 'gmail')!;
+    assert.equal(mail.name, integrationServices.gmail.name);
+    assert.equal(mail.description, integrationServices.gmail.description);
+    assert.equal(mail.logoUrl, 'https://logos.composio.dev/api/gmail');
+    assert.deepEqual(mail.categories, ['Email']);
     const foo = await f.connect('foo');
     const consent = await f.app.inject({ method: 'POST', url: '/api/apps/foo_mcp/connect' });
     assert.equal(consent.statusCode, 200, consent.body);
@@ -3176,6 +3269,38 @@ test(
       connectionId: mcp.connectionId,
     });
     assert.deepEqual(f.executed, [{ action: 'FOO_MCP_LIST', args: {}, accountId }]);
+    const binding = await f.service.binding(mcp.connectionId!);
+    assert.ok(binding);
+    assert.equal(await f.service.binding(foreign), undefined);
+    await f.pool.query('UPDATE app_connections SET account_id=$2 WHERE id=$1', [
+      mcp.connectionId,
+      'replacement-account',
+    ]);
+    await assert.rejects(
+      f.service.execute(
+        'local-development',
+        'FOO_MCP_LIST',
+        { connectionId: mcp.connectionId },
+        undefined,
+        AbortSignal.timeout(1000),
+        binding,
+      ),
+      { statusCode: 409 },
+    );
+    assert.equal(f.executed.length, 1);
+    await f.pool.query('UPDATE app_connections SET account_id=$2 WHERE id=$1', [
+      mcp.connectionId,
+      accountId,
+    ]);
+    await f.service.execute(
+      'local-development',
+      'FOO_MCP_LIST',
+      { connectionId: mcp.connectionId },
+      undefined,
+      AbortSignal.timeout(1000),
+      binding,
+    );
+    assert.equal(f.executed.length, 2);
     const reconnect = await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
     assert.equal(reconnect.statusCode, 200, reconnect.body);
     const removed = await f.app.inject({
@@ -3188,7 +3313,7 @@ test(
 );
 
 test(
-  'connecting Gmail starts style learning and the inbox brief in the background on that account only',
+  'connecting Gmail starts style learning in the background on that account only',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const reads: string[] = [];
@@ -3199,21 +3324,17 @@ test(
     t.after(() => release());
     const jobs: Array<Promise<unknown>> = [];
     const f = await appsFixture(t, undefined, {
-      learnWritingStyle: async (read) => {
-        await held;
-        jobs.push(read(AbortSignal.timeout(1000)));
-      },
-      briefInbox: async (read) => {
-        await held;
-        jobs.push(read(AbortSignal.timeout(1000)));
+      writingStyle: {
+        enabled: async () => true,
+        ready: () => true,
+        learn: async (read) => {
+          await held;
+          jobs.push(read(AbortSignal.timeout(1000)));
+        },
       },
     });
     f.provider.sentEmails = async (accountId) => {
       reads.push(`sent:${accountId}`);
-      return [];
-    };
-    f.provider.inboxThreads = async (accountId) => {
-      reads.push(`inbox:${accountId}`);
       return [];
     };
     await f.connect('slack');
@@ -3222,7 +3343,182 @@ test(
     release();
     await delay(20);
     await Promise.all(jobs);
-    assert.deepEqual(reads.sort(), [`inbox:${gmail.accountId}`, `sent:${gmail.accountId}`]);
+    assert.deepEqual(reads, [`sent:${gmail.accountId}`]);
+
+    await t.test(
+      'deferred sent reads and late results reject revoked and replaced account bindings',
+      async (t) => {
+        const readers: Array<(signal: AbortSignal) => Promise<unknown>> = [];
+        const validators: Array<(signal: AbortSignal) => Promise<void>> = [];
+        const accessed: string[] = [];
+        const deferred = await appsFixture(t, undefined, {
+          writingStyle: {
+            enabled: async () => true,
+            ready: () => true,
+            learn: async (read, _stop, validate) => {
+              assert.ok(validate);
+              readers.push(read);
+              validators.push(validate);
+            },
+          },
+        });
+        deferred.provider.sentEmails = async (accountId) => {
+          accessed.push(accountId);
+          return [];
+        };
+        const kept = await deferred.connect('gmail');
+        const revoked = await deferred.connect('gmail');
+        for (let attempt = 0; attempt < 200 && readers.length < 2; attempt++) await delay(10);
+        assert.equal(readers.length, 2);
+        assert.equal(validators.length, 2);
+        deferred.provider.deleteAccount = async () => {
+          throw new Error('Synthetic account deletion unavailable');
+        };
+        const disconnect = await deferred.app.inject({
+          method: 'POST',
+          url: `/api/apps/gmail/accounts/${revoked.connectionId}/disconnect`,
+        });
+        assert.ok(disconnect.statusCode >= 400);
+        const inventory = await deferred.service.list('local-development', { refresh: false });
+        assert.equal(
+          inventory.find((account) => account.connectionId === revoked.connectionId)
+            ?.disconnectPending,
+          true,
+        );
+        assert.equal(
+          inventory.find((account) => account.connectionId === kept.connectionId)?.status,
+          'connected',
+        );
+        await assert.rejects(readers[1]!(AbortSignal.timeout(1000)), { statusCode: 404 });
+        await assert.rejects(validators[1]!(AbortSignal.timeout(1000)), { statusCode: 404 });
+        assert.deepEqual(accessed, []);
+        await readers[0]!(AbortSignal.timeout(1000));
+        await validators[0]!(AbortSignal.timeout(1000));
+        assert.deepEqual(accessed, [kept.accountId]);
+        await deferred.pool.query('UPDATE app_connections SET account_id=$2 WHERE id=$1', [
+          kept.connectionId,
+          'synthetic-replacement-account',
+        ]);
+        await assert.rejects(readers[0]!(AbortSignal.timeout(1000)), { statusCode: 404 });
+        await assert.rejects(validators[0]!(AbortSignal.timeout(1000)), { statusCode: 404 });
+        deferred.provider.configurationId = 'synthetic-replacement-configuration';
+        await deferred.pool.query(
+          'UPDATE app_connections SET account_id=$2,configuration_id=$3 WHERE id=$1',
+          [kept.connectionId, kept.accountId, deferred.provider.configurationId],
+        );
+        await assert.rejects(readers[0]!(AbortSignal.timeout(1000)), { statusCode: 404 });
+        await assert.rejects(validators[0]!(AbortSignal.timeout(1000)), { statusCode: 404 });
+        assert.deepEqual(accessed, [kept.accountId]);
+      },
+    );
+  },
+);
+
+test(
+  'deferred sent style survives restart with its original account and runs once',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const scenario of [
+      'ready',
+      'disabled at connection',
+      'disabled before resume',
+      'account replaced',
+      'configuration replaced',
+      'revoked',
+      'inactive',
+      'inbox cursor expired',
+      'read failed',
+    ])
+      await t.test(scenario, async (t) => {
+        let enabled = scenario !== 'disabled at connection';
+        let ready = false;
+        const reads: string[] = [];
+        const writingStyle = {
+          enabled: async () => enabled,
+          ready: () => ready,
+          learn: async (read: (signal: AbortSignal) => Promise<unknown>, stop: AbortSignal) => {
+            await read(stop);
+          },
+        };
+        const f = await appsFixture(t, undefined, { writingStyle });
+        f.provider.sentEmails = async (accountId) => {
+          reads.push(accountId);
+          if (scenario === 'read failed') throw new Error('Synthetic read failure');
+          return [];
+        };
+        const gmail = await f.connect('gmail');
+        if (scenario === 'ready')
+          await f.pool.query(
+            `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,writing_style_pending)
+             SELECT 'foreign-owner',slug,'foreign-account',provider_id,
+              jsonb_build_object('accountId','foreign-account','providerId',provider_id,'configurationId',configuration_id)
+             FROM app_connections WHERE id=$1`,
+            [gmail.connectionId],
+          );
+        assert.deepEqual(reads, []);
+        await f.app.close();
+        if (scenario === 'disabled before resume') enabled = false;
+        if (scenario === 'account replaced')
+          await f.pool.query('UPDATE app_connections SET account_id=$2 WHERE id=$1', [
+            gmail.connectionId,
+            'replacement-account',
+          ]);
+        if (scenario === 'configuration replaced') {
+          f.provider.configurationId = 'replacement-configuration';
+          await f.pool.query('UPDATE app_connections SET configuration_id=$2 WHERE id=$1', [
+            gmail.connectionId,
+            f.provider.configurationId,
+          ]);
+        }
+        if (scenario === 'revoked')
+          await f.pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [
+            gmail.connectionId,
+          ]);
+        if (scenario === 'inactive')
+          await f.pool.query('UPDATE app_connections SET account_active=false WHERE id=$1', [
+            gmail.connectionId,
+          ]);
+        if (scenario === 'inbox cursor expired')
+          await f.pool.query(
+            'UPDATE app_connections SET inbox_reconnect_required=true WHERE id=$1',
+            [gmail.connectionId],
+          );
+        const restarted = await createIntegrations(f.pool, {
+          ownerId: 'local-development',
+          provider: f.provider,
+          baseUrl: 'http://localhost:4310',
+          wake: async () => {},
+          writingStyle,
+        });
+        const app = Fastify();
+        restarted.registerRoutes(app);
+        try {
+          await restarted.resumeWritingStyle();
+          assert.deepEqual(reads, []);
+          ready = true;
+          await Promise.all([restarted.resumeWritingStyle(), restarted.resumeWritingStyle()]);
+          const expected = ['ready', 'inbox cursor expired', 'read failed'].includes(scenario)
+            ? [gmail.accountId]
+            : [];
+          assert.deepEqual(reads, expected);
+          enabled = true;
+          await restarted.resumeWritingStyle();
+          assert.deepEqual(reads, expected);
+          const pending = await f.pool.query(
+            'SELECT writing_style_pending FROM app_connections WHERE id=$1',
+            [gmail.connectionId],
+          );
+          assert.equal(pending.rows[0].writing_style_pending, null);
+          if (scenario === 'ready') {
+            const foreign = await f.pool.query(
+              "SELECT writing_style_pending FROM app_connections WHERE owner_id='foreign-owner'",
+            );
+            assert.equal(foreign.rows[0].writing_style_pending.accountId, 'foreign-account');
+          }
+        } finally {
+          await app.close();
+        }
+      });
   },
 );
 
@@ -5772,7 +6068,7 @@ function composioProxyFixture(
   };
 }
 
-async function managedReconnectFixture(t: TestContext, watchRequested = true) {
+async function managedReconnectFixture(t: TestContext, watchRequested = true, service = 'gmail') {
   const database = await hostedDatabase();
   const pool = database.pool;
   const app = Fastify();
@@ -5786,11 +6082,11 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
   const raw = client.getClient();
   const transport = raw.toolRouter.session;
   const ownerId = 'local-development';
-  const authConfigId = 'original-gmail-auth';
+  const authConfigId = `original-${service}-auth`;
   const remoteAccount = (id: string, status = 'ACTIVE') => ({
     id,
     user_id: ownerId,
-    toolkit: { slug: 'gmail' },
+    toolkit: { slug: service },
     auth_config: {
       id: authConfigId,
       auth_scheme: 'OAUTH2',
@@ -5814,6 +6110,7 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
   const resumed: Array<{ turnId: string; service: string }> = [];
   const control = {
     pause: async (_phase: string, _id: string) => {},
+    outlookMail: true,
   };
   t.mock.method(raw.toolkits, 'list', async () => ({ items: [], next_cursor: null }));
   t.mock.method(raw.authConfigs, 'list', async () => {
@@ -5848,8 +6145,8 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     await control.pause('create', id);
     return snapshot(id);
   });
-  const authorize = async (service: string, callbackUrl: string, reconnectAccountId?: string) => {
-    assert.equal(service, 'gmail');
+  const authorize = async (slug: string, callbackUrl: string, reconnectAccountId?: string) => {
+    assert.equal(slug, service);
     assert.equal(reconnectAccountId, 'old-account');
     const accountId = `replacement-${links.length + 1}`;
     accounts.set(accountId, remoteAccount(accountId, 'INITIATED'));
@@ -5875,8 +6172,8 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
       string,
       string | string[]
     >;
-    const gmail = bindings?.gmail;
-    assert.ok(typeof gmail === 'string' ? gmail === account : gmail?.includes(account));
+    const selected = bindings?.[service];
+    assert.ok(typeof selected === 'string' ? selected === account : selected?.includes(account));
     executed.push({ action, account });
     const response = {
       data: action === 'GMAIL_GET_PROFILE' ? { emailAddress: emails.get(account) } : { labels: [] },
@@ -5887,9 +6184,30 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     await control.pause('execute', account);
     return response;
   });
-  t.mock.method(client.tools, 'proxyExecute', async () => {
-    throw new Error('No unverified identity fallback is available.');
-  });
+  const profiles: string[] = [];
+  t.mock.method(
+    client.tools,
+    'proxyExecute',
+    async (request: Parameters<typeof client.tools.proxyExecute>[0]) => {
+      if (service !== 'outlook') throw new Error('No unverified identity fallback is available.');
+      assert.equal(
+        request.endpoint,
+        'https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName',
+      );
+      assert.equal(request.method, 'GET');
+      const account = request.connectedAccountId!;
+      assert.equal(accounts.get(account)?.user_id, ownerId);
+      profiles.push(account);
+      return {
+        status: 200,
+        data: {
+          displayName: 'Work',
+          mail: control.outlookMail ? emails.get(account) : null,
+          userPrincipalName: emails.get(account),
+        },
+      };
+    },
+  );
   t.mock.method(client.tools, 'getRawComposioToolBySlug', async (slug: string) => ({
     slug,
     name: slug,
@@ -5940,19 +6258,19 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_active,account_checked_at,
      account_email,account_name,watch_requested,watch_attempted,watch_revision,trigger_id,triggers_enabled,
      inbox_cursor,inbox_claim_id,inbox_failed,inbox_reconnect_required,configuration_id)
-     VALUES($1,'gmail','old-account','composio',false,now(),'work@example.test','Work', $2,true,7,
+     VALUES($1,$4,'old-account','composio',false,now(),'work@example.test','Work', $2,true,7,
      NULL,false,'old-cursor','old-claim',true,true,$3) RETURNING id`,
-    [ownerId, watchRequested, provider.configurationId],
+    [ownerId, watchRequested, provider.configurationId, service],
   );
   const connectionId = inserted.rows[0].id;
   await pool.query(
     `INSERT INTO integration_events(id,owner_id,summary,slug,account_id,trigger_id,provider_id,poll_connection_id)
-     VALUES('old-event',$1,'Synthetic old update','gmail','old-account','old-trigger','composio',$2)`,
-    [ownerId, connectionId],
+     VALUES('old-event',$1,'Synthetic old update',$3,'old-account','old-trigger','composio',$2)`,
+    [ownerId, connectionId, service],
   );
   const row = async () =>
     (await pool.query('SELECT * FROM app_connections WHERE id=$1', [connectionId])).rows[0];
-  const reconnect = (id = connectionId, slug = 'gmail') =>
+  const reconnect = (id = connectionId, slug = service) =>
     app.inject({ method: 'POST', url: `/api/apps/${slug}/connect`, payload: { connectionId: id } });
   const complete = async (link = links.at(-1)!, status = 'success', accountId = link.accountId) => {
     const url = new URL(link.callback);
@@ -5963,7 +6281,7 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     return new URL(response.headers.location!).searchParams.get('connection');
   };
   const disconnect = () =>
-    app.inject({ method: 'POST', url: `/api/apps/gmail/accounts/${connectionId}/disconnect` });
+    app.inject({ method: 'POST', url: `/api/apps/${service}/accounts/${connectionId}/disconnect` });
   return {
     app,
     pool,
@@ -5973,6 +6291,7 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     emails,
     control,
     configurations,
+    profiles,
     links,
     removed,
     unsubscribed,
@@ -5988,6 +6307,43 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     disconnect,
   };
 }
+
+test(
+  'Outlook reconnect keeps the verified Graph identity when mail is present or null',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const mail of [true, false])
+      await t.test(mail ? 'mail' : 'user principal name', async (t) => {
+        const f = await managedReconnectFixture(t, false, 'outlook');
+        f.control.outlookMail = mail;
+        f.accounts.get('old-account')!.status = 'ACTIVE';
+        const identity = await f.provider.inspectAccount('old-account', f.ownerId, {
+          verifyOwner: true,
+        });
+        assert.equal(identity.accountEmail, 'work@example.test');
+        assert.equal(identity.accountName, 'Work');
+        assert.deepEqual(f.profiles, ['old-account']);
+        f.accounts.get('old-account')!.status = 'EXPIRED';
+        const mismatch = await f.reconnect();
+        assert.equal(mismatch.statusCode, 200, mismatch.body);
+        const different = f.links.at(-1)!;
+        f.accounts.get(different.accountId)!.status = 'ACTIVE';
+        f.emails.set(different.accountId, 'different@example.test');
+        assert.equal(await f.complete(different), 'failed');
+        assert.equal((await f.row()).account_id, 'old-account');
+        assert.equal((await f.row()).account_email, identity.accountEmail);
+        const response = await f.reconnect();
+        assert.equal(response.statusCode, 200, response.body);
+        const attempt = f.links.at(-1)!;
+        f.accounts.get(attempt.accountId)!.status = 'ACTIVE';
+        assert.equal(await f.complete(attempt), 'connected');
+        assert.equal((await f.row()).account_email, identity.accountEmail);
+        assert.equal((await f.row()).account_id, attempt.accountId);
+        assert.deepEqual(f.profiles, ['old-account', different.accountId, attempt.accountId]);
+        assert.deepEqual(f.executed, []);
+      });
+  },
+);
 
 test(
   'managed reconnect preserves the owned connection and watch preference until matching consent completes',
@@ -6492,6 +6848,15 @@ test(
                   annotations: { readOnlyHint: true },
                 },
                 { name: 'find_user', description: 'Find a user by display name', inputSchema: {} },
+                {
+                  name: 'search_issues',
+                  description: 'Search issues by text',
+                  inputSchema: {
+                    type: 'object',
+                    properties: { query: { type: 'string' } },
+                    required: ['query'],
+                  },
+                },
               ],
             };
           },
@@ -6705,6 +7070,25 @@ test(
           ?.tools?.map((tool) => tool.name),
         ['list_records'],
       );
+      const onboardingQuery =
+        'Fixture app recent activity messages events tasks projects documents';
+      const scopedCatalog = await discovered.search(onboardingQuery, connectionId);
+      const available = scopedCatalog.accounts[0].paths.find((path) => path.id === mcpPath);
+      assert.ok(available && 'tools' in available);
+      assert.deepEqual(
+        available.tools.map((tool) => tool.name),
+        ['list_records', 'find_user', 'search_issues'],
+      );
+      assert.deepEqual(available.tools.find((tool) => tool.name === 'search_issues')?.inputSchema, {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+      });
+      const missing = await discovered.search('unmatched lookup', connectionId);
+      assert.deepEqual(
+        missing.accounts[0].paths.flatMap((path) => ('tools' in path ? path.tools : [])),
+        [],
+      );
       assert.equal(cliCalls, 0);
       await assert.rejects(
         discovered.execute(
@@ -6755,6 +7139,13 @@ test(
         await outcome;
       }
       blocked = undefined;
+      const unscopedCatalog = await discovered.search(onboardingQuery);
+      assert.deepEqual(
+        unscopedCatalog.accounts.flatMap((account) =>
+          account.paths.flatMap((path) => ('tools' in path ? path.tools : [])),
+        ),
+        [],
+      );
       assert.deepEqual(cliRuns, [
         { id: cliPath, command: 'fixturecli', source: { npm: '@fixture/cli@1.2.3' } },
       ]);
@@ -7471,7 +7862,14 @@ test('Composio catalog failures preserve owned accounts', async (t) => {
     sessionId: 'new-session',
     execute,
   }));
-  const provider = createComposioProvider({ proxy: composioProxyFixture(client) });
+  const authorize = t.mock.fn(async () => ({
+    accountId: 'fixture-outlook',
+    url: 'https://proxy.fixture.invalid/connect/outlook',
+    verificationSecret: 'fixture-outlook-verification',
+  }));
+  const provider = createComposioProvider({
+    proxy: composioProxyFixture(client, 'fixture-owner', { authorize }),
+  });
   await assert.rejects(provider.listServices!(), (error: Error) => {
     assert.ok(error instanceof IntegrationCatalogAccessDenied);
     assert.doesNotMatch(error.message, /private-provider-response/);
@@ -7480,6 +7878,10 @@ test('Composio catalog failures preserve owned accounts', async (t) => {
   const session = await provider.createSession('fixture-owner', { retired_mcp: ['owned-account'] });
   const configuration = create.mock.calls[0]!.arguments[1] as unknown as { toolkits: string[] };
   assert.ok(configuration.toolkits.includes('retired_mcp'));
+  const callback = 'http://localhost:4310/api/apps/callback';
+  await session.authorize('outlook', callback);
+  assert.deepEqual(authorize.mock.calls[0]!.arguments, ['outlook', callback]);
+  assert.equal(listing.mock.callCount(), 1);
   await session.execute('RETIRED_MCP_LIST', {}, 'owned-account');
   assert.equal(execute.mock.callCount(), 1);
   assert.equal(listing.mock.callCount(), 1);

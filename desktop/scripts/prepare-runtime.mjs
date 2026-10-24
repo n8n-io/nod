@@ -282,7 +282,7 @@ if (!imagesOnly) {
   await extract(dockerHost, 'docker-host');
   await chmod(join(assets, 'docker-host/docker/docker'), 0o755);
   dockerGuest = await download('Docker guest 28.5.1', downloads.dockerGuest, 'docker-guest.tar.gz');
-  guest = await download(`Ubuntu 24.04 ${nodeArchitecture}`, downloads.guest, 'guest.img');
+  guest = await download(`Ubuntu 26.04 ${nodeArchitecture}`, downloads.guest, 'guest.img');
   await rm(join(assets, 'guest-packages'), { recursive: true, force: true });
   await mkdir(join(assets, 'guest-packages'));
   for (const item of downloads.guestPackages) {

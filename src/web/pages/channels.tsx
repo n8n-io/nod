@@ -1,6 +1,6 @@
 import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ExternalLink, X } from '../components/icons';
+import { ArrowLeft, ArrowRight, ExternalLink } from '../components/icons';
 import { TelegramSetup } from '../components/telegram-setup';
 import { WhatsAppSetup } from '../components/whatsapp-setup';
 import type { ChannelProvider, ChannelSetupSummary } from '../../shared/contracts';
@@ -33,11 +33,10 @@ const providers = [
   },
 ];
 const channelStatus = {
-  connected: 'Connected',
   'needs-setup': 'Needs setup',
   'coming-soon': 'Coming soon',
 };
-const whatsappSteps = [
+export const whatsappSteps = [
   'Before you begin',
   'Choose the numbers',
   'Verify your business app',
@@ -186,7 +185,6 @@ function ChannelCard({
   connected,
   busy,
   onConnect,
-  onDisconnect,
   onPair,
 }: {
   provider: (typeof providers)[number];
@@ -195,11 +193,9 @@ function ChannelCard({
   connected: boolean;
   busy: boolean;
   onConnect(): void;
-  onDisconnect(trigger: HTMLButtonElement): void;
   onPair(): void;
 }) {
   const comingSoon = 'comingSoon' in provider;
-  const botUrl = setup?.provider === 'telegram' ? telegramBotUrl(setup.accountHandle) : null;
   const name = setup?.accountName?.trim();
   const handle = setup?.accountHandle?.trim();
   const distinctHandle =
@@ -219,7 +215,7 @@ function ChannelCard({
   const status: keyof typeof channelStatus | null = connected
     ? needsDelivery || needsPairing
       ? 'needs-setup'
-      : 'connected'
+      : null
     : comingSoon
       ? 'coming-soon'
       : null;
@@ -242,7 +238,9 @@ function ChannelCard({
               {name || handle || 'Saved configuration'}
               {distinctHandle && <span>{handle}</span>}
             </p>
-            {statusLabel && <p className="channel-account-status">{statusLabel}</p>}
+            {(needsDelivery || needsPairing) && statusLabel && (
+              <p className="channel-account-status">{statusLabel}</p>
+            )}
           </>
         ) : (
           <p className="channel-option-benefit">{provider.description}</p>
@@ -281,25 +279,15 @@ function ChannelCard({
                 )}
               </DialogContent>
             </Dialog>
-          ) : botUrl ? (
-            <Button asChild size="sm">
-              <a href={botUrl} target="_blank" rel="noopener noreferrer">
-                Start conversation
-                <ExternalLink size={16} />
-              </a>
-            </Button>
           ) : null}
           <Button
             variant="ghost"
-            size="icon"
-            className="channel-remove"
-            data-channel-remove={provider.id}
-            aria-label={`Remove ${provider.name} channel`}
-            title="Remove channel"
+            size="sm"
+            aria-label={`Manage ${provider.name}`}
             disabled={busy}
-            onClick={(event) => onDisconnect(event.currentTarget)}
+            onClick={onConnect}
           >
-            <X size={16} aria-hidden="true" />
+            Manage
           </Button>
         </div>
       ) : (
@@ -379,7 +367,9 @@ export function Channels() {
   const available = channels.filter((channel) => !channel.connected);
   useEffect(() => {
     if (telegramStage)
-      document.querySelector<HTMLElement>('[role="dialog"] [data-telegram-primary]')?.focus();
+      document
+        .querySelector<HTMLElement>('[role="dialog"] [data-telegram-primary]')
+        ?.focus({ preventScroll: true });
   }, [telegramStage]);
   function close() {
     setEditing(null);
@@ -440,9 +430,24 @@ export function Channels() {
     if (!provider || busy) return;
     setRemoveError('');
     const failure = await remove(provider);
-    if (failure === '') setRemoving(null);
-    else if (failure) setRemoveError(failure);
+    if (failure === '') {
+      setRemoving(null);
+      close();
+    } else if (failure) setRemoveError(failure);
   }
+  function confirmDisconnect(provider: ChannelProvider) {
+    removeTrigger.current =
+      document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
+    removeProvider.current = provider;
+    setRemoveError('');
+    setRemoving(provider);
+  }
+  const selected = channels.find((channel) => channel.provider.id === editing);
+  const managing = Boolean(
+    selected?.setup?.enabled &&
+    !whatsappCloud &&
+    (editing === 'telegram' ? telegramStatus.paired : selected.setup.mode !== 'linked'),
+  );
   function cards(items: typeof channels) {
     return (
       <div className="channel-options">
@@ -452,12 +457,6 @@ export function Channels() {
             {...channel}
             busy={busy || resuming || !settings?.ready}
             onConnect={() => open(channel.provider.id)}
-            onDisconnect={(trigger) => {
-              removeTrigger.current = trigger;
-              removeProvider.current = channel.provider.id;
-              setRemoveError('');
-              setRemoving(channel.provider.id);
-            }}
             onPair={() =>
               channel.provider.id === 'whatsapp' ? open('whatsapp') : void resumeTelegram()
             }
@@ -514,25 +513,25 @@ export function Channels() {
           aria-busy={busy}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
-            document.querySelector<HTMLButtonElement>('[data-keep-channel]')?.focus();
+            document
+              .querySelector<HTMLButtonElement>('[data-keep-channel]')
+              ?.focus({ preventScroll: true });
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             const trigger = removeTrigger.current;
-            if (trigger?.isConnected) trigger.focus();
+            if (trigger?.isConnected) trigger.focus({ preventScroll: true });
             else
               (
                 page.current?.querySelector<HTMLButtonElement>(
                   `[data-connect-channel="${removeProvider.current}"]`,
                 ) ?? document.querySelector<HTMLElement>('#workspace')
-              )?.focus();
+              )?.focus({ preventScroll: true });
           }}
         >
-          <DialogTitle>
-            Remove {removing === 'whatsapp' ? 'WhatsApp' : 'Telegram'} channel?
-          </DialogTitle>
+          <DialogTitle>Disconnect {removing === 'whatsapp' ? 'WhatsApp' : 'Telegram'}?</DialogTitle>
           <DialogDescription>
-            nod will stop receiving messages here. You will need its credentials to connect again.
+            nod will stop receiving messages here. You can connect again later.
           </DialogDescription>
           {removeError && <Notice>{removeError}</Notice>}
           <div className="channel-remove-actions">
@@ -542,10 +541,10 @@ export function Channels() {
               disabled={busy}
               onClick={() => setRemoving(null)}
             >
-              Keep channel
+              Keep connected
             </Button>
             <Button variant="destructive" disabled={busy} onClick={() => void disconnect()}>
-              {busy ? 'Removing…' : 'Remove channel'}
+              {busy ? 'Disconnecting…' : 'Disconnect'}
             </Button>
           </div>
         </DialogContent>
@@ -557,19 +556,74 @@ export function Channels() {
         }}
       >
         <DialogContent className="channel-wizard">
-          {editing === 'telegram' ? (
+          {managing ? (
             <>
-              <div className="channel-wizard-heading">
-                <img src="/logos/telegram.svg" alt="" width={24} height={24} />
-                <span>Telegram</span>
+              <DialogTitle className="channel-wizard-title">
+                <img src={`/logos/${editing}.svg`} alt="" width={24} height={24} />
+                {selected?.provider.name}
+              </DialogTitle>
+              <DialogDescription>Keep nod running to receive messages.</DialogDescription>
+              <div className="channel-wizard-step" data-analytics-private>
+                <div className="channel-manage-identity">
+                  <strong>
+                    {selected?.setup?.accountName ||
+                      selected?.setup?.accountHandle ||
+                      'Your account'}
+                  </strong>
+                  {selected?.setup?.accountName && selected.setup.accountHandle && (
+                    <span>{selected.setup.accountHandle}</span>
+                  )}
+                </div>
+                {editing === 'telegram' && (
+                  <p>
+                    Only{' '}
+                    {telegramSetup?.pairedUser ||
+                      telegramSetup?.pairedUsername ||
+                      telegramSetup?.allowedUserId}{' '}
+                    can message nod through this bot.
+                  </p>
+                )}
+                <div className="channel-wizard-actions">
+                  <Button
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => confirmDisconnect(editing!)}
+                  >
+                    Disconnect
+                  </Button>
+                  {editing === 'telegram' && telegramUrl ? (
+                    <Button asChild variant="outline">
+                      <a href={telegramUrl} target="_blank" rel="noopener noreferrer">
+                        Open Telegram
+                      </a>
+                    </Button>
+                  ) : editing === 'whatsapp' ? (
+                    <Button
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => {
+                        setFields({ connection: 'cloud' });
+                        setStep(0);
+                        setPolicy(false);
+                      }}
+                    >
+                      Update connection
+                    </Button>
+                  ) : null}
+                  <Button onClick={close}>Done</Button>
+                </div>
               </div>
-              <DialogTitle>
-                {telegramStatus.paired ? 'Telegram is connected' : 'Connect Telegram'}
+            </>
+          ) : editing === 'telegram' ? (
+            <>
+              <DialogTitle className="channel-wizard-title">
+                <img src="/logos/telegram.svg" alt="" width={24} height={24} />
+                {telegramStatus.paired ? 'Telegram' : 'Connect Telegram'}
               </DialogTitle>
               <DialogDescription>
                 {telegramStatus.paired
                   ? 'Send your bot a message to start.'
-                  : 'Create a bot, then link your Telegram account.'}
+                  : 'Create a bot, then link your account.'}
               </DialogDescription>
               <TelegramSetup
                 setup={telegramSetup}
@@ -594,6 +648,16 @@ export function Channels() {
                 }}
               />
               <div className="channel-wizard-actions">
+                {telegramSetup?.enabled && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy || resuming}
+                    onClick={() => confirmDisconnect('telegram')}
+                  >
+                    Disconnect
+                  </Button>
+                )}
                 {loadError && (
                   <Button
                     variant="outline"
@@ -604,9 +668,11 @@ export function Channels() {
                     {loading ? 'Retrying…' : 'Retry loading'}
                   </Button>
                 )}
-                <Button variant="ghost" size="sm" disabled={busy || resuming} onClick={close}>
-                  {telegramStatus.paired ? 'Done' : 'Close'}
-                </Button>
+                {telegramStatus.paired && (
+                  <Button variant="ghost" size="sm" disabled={busy || resuming} onClick={close}>
+                    Done
+                  </Button>
+                )}
                 {telegramStatus.paired && telegramUrl && (
                   <Button asChild size="sm">
                     <a
@@ -624,13 +690,14 @@ export function Channels() {
             </>
           ) : !whatsappCloud ? (
             <>
-              <div className="channel-wizard-heading">
+              <DialogTitle className="channel-wizard-title">
                 <img src="/logos/whatsapp.svg" alt="" width={24} height={24} />
-                <span>WhatsApp</span>
-              </div>
-              <DialogTitle>Connect WhatsApp</DialogTitle>
+                {selected?.setup?.connectionState === 'connected' ? 'WhatsApp' : 'Connect WhatsApp'}
+              </DialogTitle>
               <DialogDescription>
-                Link an account with a QR code. nod must be running to answer.
+                {selected?.setup?.connectionState === 'connected'
+                  ? 'Keep nod running to receive messages.'
+                  : 'Link an account with a QR code.'}
               </DialogDescription>
               <WhatsAppSetup
                 setup={channels.find((item) => item.provider.id === 'whatsapp')?.setup}
@@ -639,6 +706,7 @@ export function Channels() {
                 error={error}
                 onSave={async (input) => (await save('whatsapp', input)).ok}
                 onRefresh={load}
+                onDisconnect={() => confirmDisconnect('whatsapp')}
                 onCloud={() => {
                   setFields({ connection: 'cloud' });
                   setPolicy(false);

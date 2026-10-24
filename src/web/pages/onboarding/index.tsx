@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentType } from 'react';
 import type { AccountPreparationResponse, AccountUser } from '../../../shared/account';
+import { startupMessage } from '../../../shared/desktop-startup';
 import type { ModelsResponse } from '../../../shared/models';
 import {
   onboardingSteps,
@@ -10,6 +11,7 @@ import { Button, Notice } from '../../components/ui';
 import { SetupProgress } from '../../components/setup-progress';
 import {
   desktopSettingsAvailable,
+  desktopRendererReady,
   desktopStatus,
   subscribeDesktopStatus,
   retryDesktopRuntime,
@@ -17,14 +19,16 @@ import {
 } from '../../lib/desktop';
 import { DesktopPreferencesSetup } from './steps/desktop-preferences';
 import { useBrowserTimeZone } from '../../hooks/use-browser-time-zone';
+import { modelReady } from '../../hooks/use-models';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../../lib/analytics';
-import { clearStored, prepareSuggestions, readStep, writeStep } from './storage';
+import { clearStored, readStep, writeStep } from './storage';
 import { Welcome } from './steps/welcome';
+import { Introduction } from './steps/intro';
 import { Brain } from './steps/brain';
-import { About } from './steps/about';
 import { Email } from './steps/email';
-import { Telegram } from './steps/telegram';
+import { Calendar } from './steps/calendar';
+import { Apps } from './steps/apps';
 import { desktopOnboardingSteps, OnboardingFrame } from './frame';
 
 export type StepProps = {
@@ -33,15 +37,17 @@ export type StepProps = {
   onBack(): void;
   onSkip?(): void;
   nextLabel?: string;
+  onReady?(): void;
   usage?: { enabled: boolean; onChange(enabled: boolean): Promise<void> };
 };
 
 const screens: Record<OnboardingStep, ComponentType<StepProps>> = {
   welcome: Welcome,
+  intro: Introduction,
   brain: Brain,
-  about: About,
   email: Email,
-  telegram: Telegram,
+  calendar: Calendar,
+  apps: Apps,
 };
 
 type SetupStep = OnboardingStep | 'preferences';
@@ -75,17 +81,20 @@ export function Onboarding({
     if (nativePreferences) url.searchParams.delete('preferences');
     if (replay || welcomed || nativePreferences)
       window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-    const stored = readStep<{ owner: string; step: SetupStep; version?: number }>();
+    const stored = readStep<{ owner: string; step: string; version?: number }>();
+    const savedStep = ['about', 'telegram', 'messaging'].includes(stored?.step ?? '')
+      ? 'apps'
+      : stored?.step;
     const step: SetupStep = nativePreferences
       ? 'preferences'
       : stored?.owner === user.id &&
           stored.version === onboardingVersion &&
-          (onboardingSteps.includes(stored.step as OnboardingStep) ||
-            (desktop && stored.step === 'preferences')) &&
-          stored.step !== 'welcome'
-        ? stored.step
+          (onboardingSteps.includes(savedStep as OnboardingStep) ||
+            (desktop && savedStep === 'preferences')) &&
+          savedStep !== 'welcome'
+        ? (savedStep as SetupStep)
         : welcomed
-          ? 'brain'
+          ? 'email'
           : 'welcome';
     if (step === 'welcome') clearStored();
     return { step, arrived: 'forward' as StepProps['arrived'] };
@@ -94,9 +103,11 @@ export function Onboarding({
   const index = step === 'preferences' ? onboardingSteps.length : onboardingSteps.indexOf(step);
   const [preparation, setPreparation] = useState<'pending' | 'ready' | 'failed'>('pending');
   const [finishing, setFinishing] = useState(0);
+  const [waitingForServices, setWaitingForServices] = useState(false);
   const [completionFailed, setCompletionFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [runtimeError, setRuntimeError] = useState('');
+  const [runtimeStatus, setRuntimeStatus] = useState<DesktopStatus | null>(null);
   const [error, setError] = useState('');
   const [missing, setMissing] = useState<'brain' | 'email' | null>(null);
   const preparationRequest = useRef<AbortController | null>(null);
@@ -108,6 +119,10 @@ export function Onboarding({
     step: OnboardingStep;
     direction: StepProps['arrived'];
   } | null>(null);
+
+  useEffect(() => {
+    if (step !== 'email' && step !== 'calendar') desktopRendererReady();
+  }, [step]);
 
   useEffect(() => {
     writeStep({ owner: user.id, step, version: onboardingVersion });
@@ -126,7 +141,10 @@ export function Onboarding({
   }, [step, user.id]);
 
   useLayoutEffect(() => {
-    if (main.current) main.current.scrollTop = 0;
+    if (main.current) {
+      main.current.scrollTop = 0;
+      main.current.focus({ preventScroll: true });
+    }
   }, [step, user.id]);
 
   useEffect(() => {
@@ -134,7 +152,7 @@ export function Onboarding({
     let current = true;
     void api<ModelsResponse>('/api/models')
       .then((models) => {
-        if (!current || models.connections.some((item) => item.status !== 'reconnect')) return;
+        if (!current || modelReady(models)) return;
         setPosition({ step: 'brain', arrived: 'forward' });
       })
       .catch(() => {});
@@ -155,7 +173,6 @@ export function Onboarding({
   useEffect(() => {
     if (!finishing || preparation !== 'ready') return;
     const capture = analyticsForCurrentSession();
-    void prepareSuggestions(true);
     onComplete()
       .then(() => {
         clearStored();
@@ -186,6 +203,7 @@ export function Onboarding({
         status.runtime?.error ||
         (status.runtime?.phase === 'error' ? status.runtime.message : undefined);
       setRuntimeError(failure || '');
+      setRuntimeStatus(status);
     }
     const stop = subscribeDesktopStatus((status) => {
       received = true;
@@ -263,26 +281,37 @@ export function Onboarding({
   }
 
   function skipped() {
-    if (step === 'telegram') captureAnalytics('nod_onboarding_step_skipped', { step });
+    if (step === 'email' || step === 'calendar')
+      captureAnalytics('nod_onboarding_step_skipped', { step });
   }
 
   function next() {
-    if (step !== 'telegram' && step !== 'preferences') return void go(1);
-    if (desktop && step === 'telegram')
-      return setPosition({ step: 'preferences', arrived: 'forward' });
+    if (step !== 'apps' && step !== 'preferences') return void go(1);
+    if (desktop && step === 'apps') return setPosition({ step: 'preferences', arrived: 'forward' });
     if (finishing) return;
+    setWaitingForServices(preparation !== 'ready' || Boolean(runtimeError));
     setError('');
     setCompletionFailed(false);
     if (preparation === 'failed') void prepare();
     setFinishing((attempt) => attempt + 1);
   }
 
-  if (finishing) {
+  if (
+    finishing &&
+    (waitingForServices || preparation !== 'ready' || completionFailed || runtimeError)
+  ) {
     const failure =
       runtimeError || error || (preparation === 'failed' ? 'nod couldn’t finish setup.' : '');
+    const runtime = runtimeStatus?.runtime;
+    const activeRuntime = runtime && runtime.phase !== 'ready' ? runtime : runtimeStatus;
+    const title =
+      preparation === 'ready'
+        ? startupMessage('ready')
+        : startupMessage(activeRuntime?.stage ?? 'workspace');
     return (
       <SetupProgress
-        title={failure ? 'Setup needs another try.' : 'Finishing setup…'}
+        title={failure ? 'Setup needs another try.' : title}
+        progress={preparation === 'pending' ? activeRuntime?.progress : undefined}
         description={failure ? 'Your progress is saved.' : undefined}
         error={failure || undefined}
       >
@@ -320,7 +349,8 @@ export function Onboarding({
     </div>
   );
 
-  if (step === 'preferences') return <DesktopPreferencesSetup notice={recovery} onReady={next} />;
+  if (step === 'preferences')
+    return <DesktopPreferencesSetup notice={recovery} onReady={next} onBack={() => go(-1)} />;
 
   const Screen = screens[step];
   return (
@@ -330,16 +360,17 @@ export function Onboarding({
       onFeedback={onFeedback}
       mainRef={main}
     >
-      <div className="ob-screen">
+      <div className="ob-screen" inert={Boolean(finishing)} aria-busy={Boolean(finishing)}>
         <Screen
           key={step}
           arrived={arrived}
+          onReady={desktopRendererReady}
           onNext={next}
           onBack={() => void go(-1)}
           onSkip={skipped}
-          nextLabel={!desktop && step === 'telegram' ? 'Start chatting' : undefined}
+          nextLabel={!desktop && step === 'apps' ? 'Start chatting' : undefined}
           usage={
-            step === 'welcome' && onUsageData
+            step === 'intro' && onUsageData
               ? { enabled: usageData, onChange: onUsageData }
               : undefined
           }

@@ -11,50 +11,57 @@ This page walks you through nod's onboarding, your first tasks and what to do wh
 
 ## Onboarding at a glance
 
-nod opens onboarding the first time you use it. In the desktop app, you can answer and connect accounts while nod prepares its computer. Connect an AI provider and Gmail, then answer the setup questions. Telegram is optional.
+nod opens onboarding the first time you use it. In the desktop app, you can connect accounts while nod prepares its computer. Optionally connect email and calendar, choose an AI provider, then connect other tools if useful. nod gets to know you in the chat after setup.
 
 ```mermaid
-flowchart LR
-  hi[Welcome and<br/>usage data] --> model[Connect<br/>a model]:::accent
-  model --> gmail[Gmail]:::accent
-  gmail --> q[A few<br/>questions]
-  q --> tg[Telegram]:::muted
-  tg --> cards([First tasks<br/>in chat]):::go
+flowchart TD
+  start[Get started] --> hi[Say hi and<br/>usage data]
+  hi --> email[Email or skip]:::muted
+  email --> calendar[Calendar or skip]:::muted
+  calendar --> model[Connect<br/>a model]:::accent
+  model --> apps[Other tools]:::muted
+  apps --> chat([Get to know nod<br/>in chat]):::go
 ```
 
 ## Go through onboarding
 
 <Steps>
 
-1. **Say hi.** nod introduces itself and asks whether to **Share usage data**. It's off unless you turn it on, and you can change it later in **Settings → General**. Select **Let's go**.
+1. **Get started.** Select **Get started** on the welcome screen. The desktop app starts its services as soon as it opens. If storage is still preparing, a loading screen appears and continues automatically when storage is ready.
 
-2. **Connect a model.** Pick OpenAI, Anthropic or OpenRouter, or select **More providers** for Google Vertex AI, Amazon Bedrock, Azure OpenAI and **Your own server**. For OpenAI, select **Sign in with ChatGPT** to use your ChatGPT Plus or Pro plan. For OpenRouter, select **Sign in to OpenRouter** to have it create a key for nod. To paste a key for either one instead, select **Use an API key instead**. Anthropic takes an API key only, because Claude plans can't be used. Google Vertex AI needs an express mode key or a key bound to a service account with Vertex AI access, Amazon Bedrock a key and Region, and Azure OpenAI an endpoint, deployment and key. See [Connect a model](/connect/models/) for what to prepare. A provider you already connected shows a check; select it to use that connection. In the desktop app or a source install, you can pick **Your own server** to use a [local model](/connect/local-models/): check the server address, add a key only if the server needs one, then select **Connect**. Your key is encrypted and never shown to the model. nod then shows the provider it connected to and the model it will use, its default when available. You can change the model there, or later in **Models**. If nod asks you to choose a model, choose one, then select **Continue**.
+2. **Say hi.** nod introduces itself and asks whether to **Share usage data**. It's off unless you turn it on, and you can change it later in **Settings → General**. Select **Let’s go**. The introduction stays visible until email setup is ready to open.
 
-3. **Connect Gmail.** Select **Connect Gmail**, sign in to your inbox and review the permissions. Setup continues after Gmail connects. If sign-in fails, try again; your earlier progress stays saved. You can connect other apps later from **Apps**.
+3. **Connect email (optional).** Choose **Gmail** or **Outlook** to get help with replies and follow-ups. Sign in and review the permissions, or select **Skip for now**. Setup continues after the connection is confirmed. Failed sign-in does not erase your earlier progress. If you go **Back**, **Manage** opens the same account manager as Apps to add another account or confirm removal. Select **Continue** when you’re ready.
 
-4. **Answer a few questions.** nod says hello, then asks what you're working on and what it can take off your plate, and sometimes what you're aiming for. If you connected Gmail and its inbox summary is ready, it also mentions what it noticed in your inbox. It asks at most three questions and keeps an encrypted draft so you can resume after closing nod. Select **Continue** to save your answers to memory and remove the encrypted draft text. A browser session copy lets you revisit your answers until setup finishes or the tab closes. Select **Change my answers** to discard it and start again. A completion record lasts 30 days so returning to setup doesn't ask you to save the interview again.
+4. **Connect a calendar (optional).** Choose **Google Calendar** or **Outlook Calendar** to get help planning around your schedule and finding time for meetings. If you already connected Outlook, that account is available here. **Manage** offers the same account controls as email and keeps you on this step. Select **Continue** or **Skip for now**.
 
-   If a draft can’t be opened, **Try again** keeps it. **Start interview again** discards only that draft; saved connections and settings stay in place.
+5. **Connect a model.** Pick OpenAI, Anthropic or OpenRouter, or select **More providers** for Google Vertex AI, Amazon Bedrock, Azure OpenAI and **Your own server**. For OpenAI, select **Sign in with ChatGPT** to use your ChatGPT Plus or Pro plan. For OpenRouter, select **Sign in to OpenRouter** to have it create a key for nod. To paste a key for either one instead, select **Use an API key instead**. Anthropic takes an API key only, because Claude plans can't be used. Google Vertex AI needs an express mode key or a key bound to a service account with Vertex AI access in a project with billing enabled, Amazon Bedrock a key and Region, and Azure OpenAI an endpoint, deployment and key. See [Connect a model](/connect/models/) for what to prepare. A provider you already connected shows a check; select it to use that connection. In the desktop app or a source install, you can pick **Your own server** to use a [local model](/connect/local-models/): check the server address, add a key only if the server needs one, then select **Connect**. Your key is encrypted and never shown to the model. nod then shows the provider it connected to and the model it will use, its default when available. You can change the model there, or later in **Models**. If nod asks you to choose a model, choose one, then select **Continue**.
 
-5. **Connect Telegram (optional).** Follow the numbered steps. Scan the code or select **Open Telegram** to open BotFather, send `/newbot`, and choose a name and a username ending in `bot`. Select **I have my token**, paste BotFather's reply, and select **Connect bot**. In **Open your bot**, scan the new code or open Telegram, then press **Start**. Check your account details and select **Confirm**.
+6. **Connect other apps (optional).** Browse the categories or search by name, then select **Connect** and review the access requested by each app. Connected apps keep their place in the list. **Manage** opens the same account manager as Apps, where you can add another account or disconnect one. A count beside **Continue** shows connected tools, excluding email. Each app counts once, even with multiple accounts. Select **Continue** whenever you’re ready, including with no apps connected. You can add apps anytime from **Apps**.
 
-6. **Enable desktop preferences.** In the desktop app, turn on **Desktop notifications**, then select **Continue**. Turn on **Open at login**, then select **Start chatting**. Both are required to finish setup. You can change them later in **Settings → General**. If alerts are blocked, allow nod in your computer’s notification settings.
+7. **Open at login.** In the desktop app, enable **Open at login**, then select **Start chatting**. The first chat requests desktop notifications once. You can change both preferences in **Settings → General**.
 
 </Steps>
 
-Setup finishes after Telegram in the web app, or after desktop preferences in the app. If the computer is still preparing, nod shows its progress and opens chat when ready.
+Setup finishes after the apps step in the web app, or after desktop preferences in the app. If the computer is still preparing, nod shows its progress and opens chat automatically when ready. If it is already ready, chat opens directly. A startup failure offers **Try again** without clearing your connections. If setup needs a model connection, nod sends you back to that step.
 
 You can add more later from **Apps** and **Channels** in the sidebar. See [Connect apps](/connect/apps/) and [Channels](/use/channels/).
 
-To revisit setup in your browser, open `/onboarding?replay=1` on your nod address. This returns to Welcome while keeping saved connections, settings and your unfinished interview. Use **Change my answers** to restart the interview.
+To revisit setup in your browser, open `/onboarding?replay=1` on your nod address. This returns to Welcome while keeping saved connections and settings.
 
-In the desktop app, **Replay onboarding** opens the questions again without deleting saved connections or preferences. While first setup is still running, it returns to your current step. For a separate empty test install on a Mac, use the [Mac test installer](/contribute/desktop-releases/#test-a-local-mac-build); it creates a new isolated profile.
+In the desktop app, **Replay onboarding** opens setup again without deleting saved connections or preferences. While first setup is still running, it returns to your current step. For a separate empty test install on a Mac, use the [Mac test installer](/contribute/desktop-releases/#test-a-local-mac-build); it creates a new isolated profile.
 
 ## Start your first task
 
-nod greets you in the chat, by the first name on the Gmail account you connected when it has one, and lines up three first tasks as cards: one it can finish **Right now**, and two **Ongoing** jobs it keeps doing for you, such as a morning briefing or a weekly check-in. It bases them on your answers and, if you connected Gmail, on a short inbox summary prepared during setup. If no summary is ready, it uses recent inbox subjects and snippets instead. If a card doesn't come out right, you get a standard one in its place, such as **Plan my next two weeks**.
+nod opens the conversation by asking what you're working on and what it can take off your plate. Reply in chat, or ask for a task directly. There is no required interview. What you share follows the normal chat memory settings. The opening message also links to **Channels**, where you can connect Telegram or WhatsApp to chat from your phone. Keep nod running on your computer so it can reply.
 
-Each card shows where the task comes from (**Gmail**, **For you** or **Telegram**). Select **Do it**, or **Set it up** on an ongoing card, to send the card's title to nod as your message. The card shows **On it…** while nod works, then **Done** or **Set up**. You can also ignore the cards and type any request.
+On a new desktop installation, nod requests notification permission when its first chat message appears, so it can tell you when work is ready or needs your attention. Your operating system may show a permission prompt. If you decline, nod does not ask again automatically; you can allow notifications in your system settings later. Existing notification choices are kept. Desktop alerts do not authorize app monitoring or scheduled work.
+
+nod also prepares three starting task cards: one **Right now** and two **Ongoing** ideas. It reads a small sample from your connected tools to find work it could take off your plate. That might be a meeting to prepare for, a conversation waiting on you, or a recurring report. It uses only available read operations and respects your rules. Preparing suggestions never sends messages, changes your accounts, or starts ongoing work.
+
+If a tool can't be read or has nothing useful to surface, nod suggests work without claiming it found something. You can ignore the cards and type any request.
+
+Each card shows its connected tool, or **For you** for general suggestions. Select **Do it**, or **Set it up** on an ongoing card, to send the card's title to nod as your message. The card shows **On it…** while nod works, then **Done** or **Set up**.
 
 :::note[A card isn't your permission]
 The card's words are nod's, not yours. They can't on their own approve sending something to other people or deleting data, now or in a schedule the card set up.

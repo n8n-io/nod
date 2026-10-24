@@ -13,7 +13,7 @@ nod never sends what you write, what nod replies, what your apps return, or what
 
 ## Turn usage data on or off
 
-You turn on **Share usage data** in the first onboarding step, or later in **Settings → General**. Opt-in usage events and recordings start only in the app after your choice is saved; the native Welcome window sends neither.
+You turn on **Share usage data** in the introduction after **Get started**, or later in **Settings → General**. Opt-in usage events and recordings start only in the app after your choice is saved; the native Welcome window sends neither.
 
 Next to the switch, nod says: "Help us make nod better by sharing how you use it. Never your messages." It links to this page, which lists everything that is sent.
 
@@ -90,8 +90,8 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 | ------------------------------ | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `$pageview`                    | A page becomes visible                             | `route`: `/`, `/onboarding`, `/apps`, `/channels`, `/tasks`, `/usage`, `/vault`, `/settings`, `/browser`, `/credentials`, `/payments` or `/not-found`                                               |
 | `$snapshot`                    | Masked full or incremental recording               | PostHog replay metadata and masked snapshot data                                                                                                                                                    |
-| `nod_onboarding_step_viewed`   | An onboarding step appears                         | `step`: `welcome`, `brain`, `email`, `about`, `telegram`, `notifications`, `launch_at_login`; `direction`: `forward`, `back`                                                                        |
-| `nod_onboarding_step_skipped`  | You skip an onboarding step                        | `step`: `telegram`                                                                                                                                                                                  |
+| `nod_onboarding_step_viewed`   | An onboarding step appears                         | `step`: `welcome`, `intro`, `email`, `calendar`, `brain`, `apps`, `launch_at_login`; `direction`: `forward`, `back`                                                                                 |
+| `nod_onboarding_step_skipped`  | You skip an onboarding step                        | `step`: `email`, `calendar`                                                                                                                                                                         |
 | `nod_settings_viewed`          | A settings tab appears                             | `tab`: `general`, `models`, `app_connections`, `memory`                                                                                                                                             |
 | `nod_tab_viewed`               | A tab inside a page appears or you switch to it    | `page`: `tasks`, `apps`; `tab`: `current`, `scheduled`, `previous`, `all`, `connected`                                                                                                              |
 | `nod_chat_message_sent`        | The server accepts a message you sent from the app | `has_attachments`, `is_reply`; `source`: `composer`, `task_card`, `ask_nod`, `task_reply`                                                                                                           |
@@ -108,7 +108,7 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 | `nod_model_selected`           | A model choice you made is saved                   | `provider`: a supported provider ID or `other`; `entry`: `settings`, `onboarding`; `recommended`. Never the model name                                                                              |
 | `nod_ui_error`                 | An instrumented UI action or render fails          | `area`: `application`, `onboarding`, `chat`, `settings`, `apps`, `models`; `action`: `load`, `save`, `send`, `connect`, `disconnect`, `prepare`, `stop`, `render`. Never the error itself           |
 
-Onboarding asks about **Share usage data** in its first step. Step events are sent only after you turn it on, so the step where you choose is usually not recorded. The native Welcome screen is never recorded or reported later. Desktop notification and Open at login questions are reported when each appears. Setup finishes after the last required step. If you leave usage sharing off, onboarding sends nothing. Only Telegram can be skipped.
+Onboarding asks about **Share usage data** in the introduction after **Get started**. Step events are sent only after you turn it on, so the welcome screen and introduction are usually not recorded. The native welcome is not recorded. The introduction is recorded if sharing was already enabled when it appears; enabling sharing there does not backfill earlier events. The Open at login question is reported when it appears. Setup finishes after the last required step. If you leave usage sharing off, onboarding sends nothing. Email and calendar can be skipped. The apps step always lets you continue without connecting a tool.
 
 ### What nod does
 

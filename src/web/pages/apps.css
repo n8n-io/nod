@@ -307,114 +307,9 @@
 .apps-page .app-manage[data-pointer-restored]:focus {
   outline: none;
 }
-.app-manage-dialog {
-  width: min(440px, calc(100vw - 32px));
-}
-.app-status[data-status='connected'] {
-  background: var(--success-soft);
-  color: var(--success);
-}
 .app-status[data-status='attention'] {
   background: var(--warning-soft);
   color: var(--warning);
-}
-.app-manage-heading {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 16px;
-  padding-right: 24px;
-}
-.app-manage-heading > img,
-.app-manage-heading > svg {
-  flex: none;
-  margin-top: 4px;
-  color: var(--muted-foreground);
-}
-.app-manage-heading h2 {
-  overflow-wrap: anywhere;
-}
-.app-manage-heading h2:focus-visible {
-  outline: none;
-}
-.app-manage-heading p {
-  margin-top: 4px;
-}
-.app-manage-accounts {
-  margin-bottom: 16px;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-}
-.compact-account {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  padding: 16px 0;
-}
-.compact-account + .compact-account {
-  border-top: 1px solid var(--border);
-}
-.compact-account-details {
-  min-width: 0;
-  padding-top: 0;
-}
-.compact-account-name,
-.compact-account-email {
-  display: block;
-  font-size: var(--text-control);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.compact-account-name {
-  font-weight: 500;
-}
-.compact-account-email {
-  color: var(--muted-foreground);
-}
-.app-account-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-.app-manage-dialog .account-disconnect:hover:not(:disabled) {
-  color: var(--error);
-  background: var(--error-soft);
-}
-.app-manage-dialog .app-account-actions {
-  justify-content: flex-end;
-  flex-direction: column;
-  align-items: flex-end;
-}
-.app-manage-actions {
-  justify-content: space-between;
-}
-.app-disconnect-dialog {
-  width: min(400px, calc(100vw - 32px));
-}
-.app-disconnect-dialog > h2 {
-  padding-right: 24px;
-  font-size: 18px;
-}
-.app-disconnect-dialog > p {
-  overflow-wrap: anywhere;
-}
-.app-disconnect-dialog > p > span {
-  display: block;
-  margin-top: 8px;
-}
-.app-disconnect-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 24px;
-}
-.app-disconnect-dialog[aria-busy='true'] > .dialog-close {
-  visibility: hidden;
 }
 @container (max-width: 580px) {
   .apps-page .app-grid {
@@ -433,18 +328,7 @@
   }
 }
 @media (pointer: coarse) {
-  .apps-page .app-card > .button,
-  .app-account-actions > .button {
+  .apps-page .app-card > .button {
     min-height: 40px;
-  }
-}
-@media (max-width: 420px) {
-  .app-manage-dialog .compact-account {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-  .app-manage-dialog .app-account-actions {
-    flex-direction: row;
-    align-items: center;
   }
 }

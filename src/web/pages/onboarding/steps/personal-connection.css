@@ -1,0 +1,84 @@
+.ob-personal-choices {
+  display: grid;
+  gap: 16px;
+}
+.ob-personal-benefits,
+.ob-personal-muted {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.ob-personal-providers {
+  display: grid;
+  gap: 12px;
+}
+.ob-personal-provider {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--dialog-radius);
+  background: var(--surface);
+}
+.ob-personal-provider > .service-logo {
+  flex-shrink: 0;
+}
+.ob-personal-identity {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--text-control);
+}
+.ob-personal-identity > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ob-personal-name {
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: var(--text-control);
+  font-weight: 500;
+  line-height: 1.5;
+}
+.ob-personal-manage {
+  color: var(--muted-foreground);
+}
+.ob-personal-retry,
+.ob-personal-actions,
+.ob-personal-waiting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-control);
+}
+.ob-personal-provider > .ob-personal-retry {
+  flex-basis: 100%;
+}
+.ob-personal-waiting {
+  flex-wrap: nowrap;
+  gap: 6px;
+  color: var(--muted-foreground);
+}
+.ob-personal-waiting > svg {
+  flex-shrink: 0;
+}
+.ob-personal-actions {
+  gap: 4px;
+}
+.ob-personal-error {
+  color: var(--error);
+  font-size: var(--text-control);
+}
+@media (max-width: 640px) {
+  .ob-personal-provider {
+    padding: 16px;
+  }
+  .ob-personal-actions[data-recovery] {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
+}

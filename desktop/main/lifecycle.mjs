@@ -25,6 +25,7 @@ export function createDesktopLifecycle({
     if (closed) return;
     onRuntimeStatus({
       phase: 'preparing',
+      stage: 'computer',
       progress: undefined,
       needsRuntimeArchive: false,
       needsWsl: false,
@@ -71,12 +72,13 @@ export function createDesktopLifecycle({
           onStatus: (value) =>
             report({
               message: typeof value === 'string' ? value : value.message,
+              stage: typeof value === 'object' ? (value.stage ?? 'computer') : 'computer',
               progress: typeof value === 'object' ? value.progress : undefined,
             }),
         });
         runtime = prepared;
         checkOpen(controller.signal);
-        report({ phase: 'ready', message: 'Your local computer is ready.' });
+        report({ phase: 'ready', stage: 'ready', message: 'Your local computer is ready.' });
         return runtime;
       })
       .catch((error) => {

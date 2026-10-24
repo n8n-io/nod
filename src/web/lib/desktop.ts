@@ -1,4 +1,5 @@
 import type { ChatReadCursor } from './chat-unread';
+import type { StartupStage } from '../../shared/desktop-startup';
 
 export type DesktopPreferences = {
   theme: 'system' | 'light' | 'dark';
@@ -8,14 +9,22 @@ export type DesktopPreferences = {
 };
 
 export type DesktopSettings = DesktopPreferences & {
-  onboardingPreferenceStep: 'notifications' | 'launchAtLogin' | 'complete';
+  onboardingPreferenceStep: 'launchAtLogin' | 'complete';
 };
 
 export type DesktopStatus = {
   phase?: string;
+  stage?: StartupStage;
   message?: string;
   error?: string;
-  runtime?: { phase?: string; message?: string; error?: string };
+  progress?: number;
+  runtime?: {
+    phase?: string;
+    stage?: StartupStage;
+    message?: string;
+    error?: string;
+    progress?: number;
+  };
 };
 
 export type DesktopSettingsChange = { onboardingCompleted?: true } & Partial<
@@ -41,6 +50,9 @@ type DesktopWindow = Window & {
     onStatus?(listener: (status: DesktopStatus) => void): () => void;
     prepare?(options?: { retry: boolean }): Promise<DesktopStatus>;
     saveSettings(input: DesktopSettingsChange): Promise<DesktopSettings>;
+    requestNotifications?(messageId: string): Promise<{
+      status: 'requested' | 'skipped' | 'unsupported' | 'failed';
+    }>;
     removeAllData(): Promise<void>;
     onOpenSettings(listener: (section: DesktopSettingsSection) => void): () => void;
     onNavigate?(listener: (path: string) => void): () => void;
@@ -101,6 +113,10 @@ export function getDesktopSettings() {
 
 export function saveDesktopSettings(change: DesktopSettingsChange) {
   return settingsBridge().saveSettings(change);
+}
+
+export function requestDesktopNotifications(messageId: string) {
+  return (window as DesktopWindow).nodDesktop?.requestNotifications?.(messageId);
 }
 
 export function removeDesktopData() {

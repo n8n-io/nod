@@ -15,7 +15,15 @@ import {
   type IntegrationSession,
 } from '../../ports/integrations.ts';
 
-const toolkits = ['gmail', 'googlecalendar', 'googledrive', 'googlesheets', 'googledocs', 'slack'];
+const toolkits = [
+  'gmail',
+  'googlecalendar',
+  'googledrive',
+  'googlesheets',
+  'googledocs',
+  'slack',
+  'outlook',
+];
 type ManagedSession = Awaited<ReturnType<Composio['sessions']['create']>> &
   Pick<InstanceType<typeof ToolRouterSession>, 'search' | 'execute'>;
 type AccountIdentity = { expiresAt: number; accountName?: string; accountEmail?: string };
@@ -169,7 +177,11 @@ function identityFields(
   const email = z
     .email()
     .max(320)
-    .safeParse(data.email ?? data.emailAddress ?? data.id);
+    .safeParse(
+      service === 'outlook'
+        ? (data.mail ?? data.userPrincipalName)
+        : (data.email ?? data.emailAddress ?? data.id),
+    );
   const name = accountDisplayName.safeParse(data.name ?? data.displayName ?? data.display_name);
   if (!email.success && !name.success) return;
   return {
@@ -406,6 +418,10 @@ export function createComposioProvider(options: {
     else if (['googledrive', 'googledocs', 'googlesheets'].includes(service))
       endpoints.push(
         'https://www.googleapis.com/drive/v3/about?fields=user(displayName,emailAddress)',
+      );
+    else if (service === 'outlook')
+      endpoints.push(
+        'https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName',
       );
     for (const endpoint of endpoints) {
       try {

@@ -106,7 +106,7 @@ export function createOnboardingInterview(options: {
   pool: Pool;
   keyStore: CredentialKeyStore;
   curator: MemoryCurator;
-  brief(): Promise<Brief | undefined>;
+  brief?(): Promise<Brief | undefined>;
 }) {
   const binding = ['nod-onboarding-interview-v1', options.ownerId];
   function locked<T>(run: (store: PrivateObjectStore, client: PoolClient) => Promise<T>) {
@@ -201,7 +201,7 @@ export function createOnboardingInterview(options: {
       if (!options.curator.configured) return;
       let result: InterviewResponse | undefined;
       try {
-        const brief = await options.brief().catch(() => undefined);
+        const brief = await options.brief?.().catch(() => undefined);
         const parsed = reply.safeParse(
           await options.curator.curate(
             {
