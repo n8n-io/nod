@@ -148,6 +148,7 @@ test(
     const onboardingFor = (owner: string, configured = () => true) =>
       createOnboardingSuggestions({
         ownerId: owner,
+        timeZone: async () => 'UTC',
         curator: {
           id: 'fixture',
           get configured() {
@@ -1823,7 +1824,7 @@ test(
 
       await t.test(
         'onboarding prepares first tasks in the background, rebuilds once for a newer request and posts the latest once',
-        async () => {
+        async (t) => {
           block('Earlier synthetic request');
           const earlier = await thread.submitUserMessage('Earlier synthetic request');
           await waitFor(() => Boolean(ran(earlier.turnId)));
@@ -1839,6 +1840,7 @@ test(
           );
           await thread.stopThread();
           await waitFor(settledThread);
+          t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-24T12:00:00Z') });
           currentApps = [
             {
               slug: 'gmail',
@@ -1909,7 +1911,7 @@ test(
           assert.deepEqual(planInputs[0], {
             owner: ownerId,
             input: {
-              today: new Date().toISOString().slice(0, 10),
+              today: '2026-10-24',
               answers: [`Working on: a synthetic newsletter for ${ownerId}`],
               apps: [{ slug: 'gmail', name: 'Gmail' }],
               sources: ['gmail', 'web'],
@@ -1970,7 +1972,8 @@ test(
 
       await t.test(
         'first tasks refresh owned tools at delivery and exclude disconnected accounts from sources',
-        async () => {
+        async (t) => {
+          t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-24T12:00:00Z') });
           const firstOwner = 'synthetic-tools-owner';
           const otherOwner = 'synthetic-tools-other-owner';
           const connection = (
@@ -2023,7 +2026,7 @@ test(
             assert.deepEqual(initial, {
               owner: firstOwner,
               input: {
-                today: new Date().toISOString().slice(0, 10),
+                today: '2026-10-24',
                 answers: [`Working on: a synthetic newsletter for ${firstOwner}`],
                 apps: [{ slug: 'slack', name: 'Slack' }],
                 sources: ['slack', 'web'],
@@ -2033,7 +2036,7 @@ test(
             assert.deepEqual(planInputs.at(-1), {
               owner: otherOwner,
               input: {
-                today: new Date().toISOString().slice(0, 10),
+                today: '2026-10-24',
                 answers: [`Working on: a synthetic newsletter for ${otherOwner}`],
                 apps: [{ slug: 'notion', name: 'Notion' }],
                 sources: ['notion', 'web'],
@@ -2058,7 +2061,7 @@ test(
             assert.deepEqual(planInputs.at(-1), {
               owner: firstOwner,
               input: {
-                today: new Date().toISOString().slice(0, 10),
+                today: '2026-10-24',
                 answers: [`Working on: a synthetic newsletter for ${firstOwner}`],
                 apps: [{ slug: 'googlecalendar', name: 'Google Calendar' }],
                 sources: ['googlecalendar', 'web'],
@@ -2090,7 +2093,9 @@ test(
 
       await t.test(
         'connected onboarding discovery binds mixed accounts, rejects unknown schemas and drops revoked evidence',
-        async () => {
+        async (t) => {
+          const instant = new Date('2026-10-24T00:15:00Z');
+          t.mock.timers.enable({ apis: ['Date'], now: instant });
           for (const mode of [
             'mixed',
             'unknown',
@@ -2107,6 +2112,8 @@ test(
             'unavailable',
             'legacy_cache',
           ]) {
+            t.mock.timers.setTime(instant.getTime());
+            const expectedToday = mode === 'mixed' ? '2026-10-23' : '2026-10-24';
             const owner = `synthetic-discovery-${mode}`;
             const accounts = ['slack', 'slack', 'fixture-mcp'].map((slug, index) => ({
               connectionId: randomUUID(),
@@ -2120,6 +2127,7 @@ test(
             const calls: Array<{ account: string; action: string; args: Record<string, unknown> }> =
               [];
             const briefs: unknown[] = [];
+            const plannerBriefs: Array<{ source: string; summary: string }> = [];
             const pathId = randomUUID();
             const schema = {
               type: 'object',
@@ -2131,6 +2139,8 @@ test(
             let plans!: ReturnType<typeof createOnboardingSuggestions>;
             plans = createOnboardingSuggestions({
               ownerId: owner,
+              timeZone: async () =>
+                mode === 'mixed' ? 'America/Los_Angeles' : 'Pacific/Kiritimati',
               signal: closing.signal,
               answers: async () => [],
               telegram: async () => false,
@@ -2139,6 +2149,8 @@ test(
                 id: 'fixture',
                 configured: true,
                 curate: async ({ task, input }) => {
+                  assert.equal((input as { today: string }).today, expectedToday);
+                  if (mode === 'mixed') t.mock.timers.setTime(Date.parse('2026-10-25T00:15:00Z'));
                   if ('tools' in input) {
                     const tools = input.tools as Array<{ name: string }>;
                     return {
@@ -2153,12 +2165,21 @@ test(
                   if (task === 'brief') {
                     briefs.push(input);
                     return {
-                      summary: 'Juniper workshop needs a decision.',
+                      summary: JSON.stringify(input).includes('Maple')
+                        ? 'Maple launch needs a decision.'
+                        : (input as { source: string }).source === 'fixture-mcp'
+                          ? 'Cedar contract needs a decision.'
+                          : 'Juniper workshop needs a decision.',
+                      source: 'gmail',
                       waiting: [],
                       recurring: [],
                       upcoming: [],
                     };
                   }
+                  plannerBriefs.push(
+                    ...((input as { briefs?: Array<{ source: string; summary: string }> }).briefs ??
+                      []),
+                  );
                   if (mode === 'revoked_plan') active.clear();
                   if (mode === 'cancelled_plan') plans.cancel();
                   if (mode === 'cancelled_repair') {
@@ -2243,7 +2264,7 @@ test(
                       body: 'Code 482913',
                     },
                     {
-                      text: 'Juniper workshop decision at https://private.example.test/x; owner@example.test',
+                      text: `${account === accounts[0] ? 'Juniper workshop' : account === accounts[1] ? 'Maple launch' : 'Cedar contract'} decision at https://private.example.test/x; owner@example.test`,
                     },
                   ];
                 },
@@ -2297,7 +2318,18 @@ test(
                 JSON.stringify(briefs),
                 /482913|owner@example|sender@example|private\.example/,
               );
-              assert.match(JSON.stringify(briefs), /Juniper/);
+              assert.match(JSON.stringify(briefs), /Juniper|Maple/);
+              assert.ok(
+                plannerBriefs.some(
+                  (brief) => brief.source === 'fixture-mcp' && brief.summary.includes('Cedar'),
+                ),
+              );
+              assert.ok(
+                plannerBriefs.some(
+                  (brief) => brief.source === 'slack' && brief.summary.includes('Maple'),
+                ),
+              );
+              assert.ok(plannerBriefs.every((brief) => brief.source !== 'gmail'));
               assert.match(JSON.stringify(posted), /Juniper/);
               assert.doesNotMatch(JSON.stringify(posted), /binding-|connectionId|observations/);
             } else {

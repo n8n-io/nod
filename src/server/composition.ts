@@ -1019,6 +1019,7 @@ async function initializeApplication(
   const onboardingSuggestions = createOnboardingSuggestions({
     ownerId,
     curator: onboardingCurator,
+    timeZone: async () => (await getPreferences()).timeZone,
     mailCheck,
     answers: async () =>
       (await memory.load()).entries
