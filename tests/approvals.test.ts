@@ -2153,12 +2153,13 @@ test(
             const controller = new AbortController();
             const observations: Array<{ action: string; scope?: string }> = [];
             let failRules = false;
+            let appRunning = true;
             const policy = createComputerPolicy({
               pool: db.pool,
               ownerId,
               computer: {
                 shell: async () => assert.fail('This fixture does not run commands.'),
-                resolve: async () => nativeApp,
+                resolve: async () => (appRunning ? nativeApp : null),
                 open: async () => assert.fail('A running app must not be relaunched.'),
                 look: async (_app, _signal, scope) => {
                   observations.push({ action: 'look', scope });
@@ -2283,6 +2284,24 @@ test(
             );
             failRules = false;
             assert.equal(observations.length, 4);
+            if (action === 'open') {
+              await preferences.update({ rules: '' });
+              await assert.rejects(
+                policy.run(
+                  allowed,
+                  input,
+                  {
+                    rooted: true,
+                    admit: async () => {
+                      appRunning = false;
+                    },
+                  },
+                  controller.signal,
+                ),
+                (error: Error & { notRun?: boolean }) => error.notRun === true,
+              );
+              assert.equal(observations.length, 4);
+            }
           });
       });
 
@@ -2467,7 +2486,7 @@ test(
       await t.test(
         'completed native actions return fresh observations without replaying mutations',
         async (t) => {
-          for (const operation of ['act', 'open', 'open running'])
+          for (const operation of ['act', 'open', 'open running', 'open exited'])
             for (const outcome of [
               'fresh',
               'unavailable',
@@ -2475,7 +2494,9 @@ test(
               'revoke during look',
               'Stop during look',
               'changed observation',
-              ...(operation === 'open' ? ['changed app', 'blocked app'] : []),
+              ...(['open', 'open running'].includes(operation)
+                ? ['changed app', 'blocked app']
+                : []),
             ])
               await t.test(`${operation}: ${outcome}`, async (t) => {
                 const turn = await begin(`Press the synthetic button: ${outcome}.`);
@@ -2488,6 +2509,8 @@ test(
                 const expectedActions = operation === 'open running' ? 0 : 1;
                 let actions = 0;
                 let observations = 0;
+                let appRunning = operation !== 'open';
+                let executing = false;
                 const checked: Record<string, unknown>[] = [];
                 const nativeRoutes = Fastify();
                 t.after(() => nativeRoutes.close());
@@ -2502,7 +2525,13 @@ test(
                   computer: {
                     shell: async () => assert.fail('This fixture does not run commands.'),
                     apps: async () => assert.fail('A named app does not need a discovery call.'),
-                    resolve: async () => (operation === 'open' ? null : nativeApp),
+                    resolve: async () => {
+                      if (executing && outcome === 'changed app')
+                        return { name: 'Other Fixture App', bundleId: 'fixture.other-app' };
+                      if (executing && outcome === 'blocked app')
+                        return { name: 'Terminal', bundleId: 'com.apple.Terminal' };
+                      return appRunning ? nativeApp : null;
+                    },
                     identify: async () => nativeApp,
                     open: async (bundleId, signal) => {
                       signal.throwIfAborted();
@@ -2591,9 +2620,14 @@ test(
                 const pending = await proposal(turn.turnId);
                 assert.equal(checked.length, 1);
                 assert.deepEqual(checked[0], pending.args);
+                if (operation === 'open exited') {
+                  assert.equal(pending.args.running, true);
+                  appRunning = false;
+                }
                 const accepted = await confirm(pending.id, true);
                 assert.ok(accepted && 'turnId' in accepted);
                 t.after(() => finish(accepted.turnId, 'cancelled'));
+                executing = true;
                 executionResult = () => {
                   const call = calls.at(-1)!;
                   return policy.execute(call.action, call.args, {
@@ -4676,10 +4710,12 @@ test(
         await hold?.(signal);
         return { exitCode: 0, output: '' };
       },
-      resolve: async (name) =>
-        ['Calculator', 'EvilTerm', 'Missing Fixture App'].includes(name)
+      resolve: async (query) => {
+        const name = query.startsWith('fixture.') ? query.slice('fixture.'.length) : query;
+        return ['Calculator', 'EvilTerm', 'Missing Fixture App'].includes(name)
           ? null
-          : { name, bundleId: name === 'Terminal' ? 'com.apple.Terminal' : `fixture.${name}` },
+          : { name, bundleId: name === 'Terminal' ? 'com.apple.Terminal' : `fixture.${name}` };
+      },
       identify: async (name) =>
         name === 'Missing Fixture App'
           ? null

@@ -575,7 +575,13 @@ export function createComputerPolicy(options: {
       return completed(result);
     }
     if (args.action === 'open') {
-      const opened = args.running ? app : await computer.open!(app.bundleId, signal);
+      const running = args.running ? await computer.resolve!(app.bundleId, signal) : null;
+      signal.throwIfAborted();
+      if (!running && args.running && provenance.basis.kind === 'read')
+        throw Object.assign(new Error(`${app.name} is no longer running. Open it again.`), {
+          notRun: true,
+        });
+      const opened = running ?? (await computer.open!(app.bundleId, signal));
       signal.throwIfAborted();
       refuse(opened);
       if (opened.bundleId !== app.bundleId)

@@ -75,6 +75,8 @@ nod uses one Mac app step at a time, across all tasks. While it does, the menu b
 
 The menu-bar **Stop** ends tasks using your computer and leaves unrelated tasks running. An action already sent to an app can't be taken back. nod marks it uncertain and never runs it again.
 
+If a command times out, nod stops it and keeps its partial output. Completion remains unknown; nod checks the current state instead of repeating the command.
+
 Turning off **Let nod use your computer** stops computer work in progress. Removing an allowed app stops work in that app and prevents pending confirmations from using its old access. An action already sent may still have completed.
 
 ## Limits

@@ -13,6 +13,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { ComputerPermissionKind, MacApp, OwnerComputer } from '../../ports/owner-computer.ts';
 import { fileBytes } from '../../shared/files.ts';
+import { untrustedBlock } from '../../shared/untrusted.ts';
 
 const outputBytes = 256 * 1024;
 const defaultTimeoutMs = 10 * 60_000;
@@ -348,7 +349,7 @@ export function createMacComputer(options: {
           if (stopped === 'timeout')
             return reject(
               new Error(
-                `The command ran past ${Math.round(timeoutMs / 1000)} seconds and was stopped.`,
+                `The command ran past ${Math.round(timeoutMs / 1000)} seconds and was stopped. Completion is unknown. Check the current state; do not repeat the command.\n${untrustedBlock('partial Mac command output', output.text())}`,
               ),
             );
           resolve({ exitCode: code ?? 1, output: output.text() });

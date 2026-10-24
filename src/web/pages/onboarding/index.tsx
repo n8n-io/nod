@@ -370,7 +370,14 @@ export function Onboarding({
   );
 
   if (step === 'preferences')
-    return <DesktopPreferencesSetup notice={recovery} onReady={next} onBack={() => go(-1)} />;
+    return (
+      <DesktopPreferencesSetup
+        notice={recovery}
+        onReady={next}
+        onBack={() => go(-1)}
+        nextLabel={computerReady ? 'Start chatting' : 'Continue'}
+      />
+    );
 
   if (step === 'computer')
     return (

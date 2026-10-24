@@ -19,10 +19,12 @@ export function DesktopPreferencesSetup({
   onReady,
   onBack,
   notice,
+  nextLabel,
 }: {
   onReady(): void;
   onBack(): void;
   notice?: ReactNode;
+  nextLabel: string;
 }) {
   const [step, setStep] = useState<PreferenceStep | null>(null);
   const [error, setError] = useState('');
@@ -105,6 +107,7 @@ export function DesktopPreferencesSetup({
           error={error}
           choose={choose}
           onBack={onBack}
+          nextLabel={nextLabel}
         />
       ) : (
         <section className="ob-step">
@@ -137,12 +140,14 @@ function DesktopPreferenceQuestion({
   error,
   choose,
   onBack,
+  nextLabel,
 }: {
   saving: boolean;
   enabled: boolean;
   error: string;
   choose(enabled: boolean, advance?: boolean): Promise<void>;
   onBack(): void;
+  nextLabel: string;
 }) {
   const { revealed, typing, done, skip } = useReveal(sequence);
   const question = useRef<HTMLElement>(null);
@@ -198,7 +203,7 @@ function DesktopPreferenceQuestion({
         busy={saving}
         onBack={onBack}
         nextDisabled={!enabled}
-        nextLabel="Start chatting"
+        nextLabel={nextLabel}
         onNext={() => void choose(enabled, true)}
       />
     </section>

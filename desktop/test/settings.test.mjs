@@ -346,6 +346,98 @@ test('failed computer shutdown retains the runtime and permits an explicit retry
   assert.equal(stops, 2);
 });
 
+test('phase diagnostics cannot prevent startup or orderly shutdown', async (t) => {
+  for (const failingPhase of ['startup', 'shutdown']) {
+    await t.test(failingPhase, async () => {
+      const events = [];
+      const phases = [];
+      let shuttingDown = false;
+      const computer = { close: async () => events.push('computer closed') };
+      const lifecycle = createDesktopLifecycle({
+        prepareRuntime: async ({ onStorageReady }) => {
+          events.push('storage ready');
+          await onStorageReady(computer);
+          return computer;
+        },
+        validateStart: async () => {},
+        startEngine: async ({ pending }) =>
+          events.push(pending ? 'backend listening' : 'runtime ready'),
+        stopEngine: async () => events.push('engine stopped'),
+        onRuntimeStatus: () => {},
+        onPhase: ({ phase, state }) => {
+          phases.push(`${phase}:${state}`);
+          if (shuttingDown === (failingPhase === 'shutdown'))
+            throw new Error('Diagnostic sink unavailable');
+        },
+      });
+      await lifecycle.start();
+      assert.deepEqual(events, ['storage ready', 'backend listening', 'runtime ready']);
+      assert.ok(phases.includes('storage-ready:reached'));
+      shuttingDown = true;
+      await lifecycle.close();
+      assert.deepEqual(events.slice(-2), ['engine stopped', 'computer closed']);
+      assert.ok(phases.includes('computer-stop:settled'));
+      await lifecycle.close();
+      assert.equal(events.filter((event) => event === 'computer closed').length, 1);
+      assert.equal(lifecycle.busy, false);
+    });
+  }
+});
+
+test('phase diagnostics preserve preparation and shutdown failures', async (t) => {
+  for (const failingOperation of ['prepare', 'engine stop', 'computer stop']) {
+    await t.test(failingOperation, async () => {
+      const expected = Object.assign(new Error(`Synthetic ${failingOperation} failed`), {
+        code: 'NOD_RUNTIME_STOP_FAILED',
+      });
+      const events = [];
+      const statuses = [];
+      let failing = true;
+      let stopping = false;
+      const lifecycle = createDesktopLifecycle({
+        prepareRuntime: async () => {
+          if (failingOperation === 'prepare') throw expected;
+          return {
+            close: async () => {
+              events.push('computer stopped');
+              if (failing && failingOperation === 'computer stop') throw expected;
+            },
+          };
+        },
+        stopRuntime: async () => events.push('runtime cleanup retried'),
+        validateStart: async () => {},
+        startEngine: async () => {},
+        stopEngine: async () => {
+          events.push('engine stopped');
+          if (failing && failingOperation === 'engine stop') throw expected;
+        },
+        onRuntimeStatus: (value) => statuses.push(value),
+        onPhase: ({ state }) => {
+          if (state === 'settled' && (stopping || failingOperation === 'prepare'))
+            throw new Error('Diagnostic sink unavailable');
+        },
+      });
+      if (failingOperation === 'prepare') {
+        await assert.rejects(lifecycle.warmup(), (error) => error === expected);
+        assert.equal(statuses.at(-1).message, expected.message);
+        await lifecycle.close();
+        assert.deepEqual(events, ['engine stopped', 'runtime cleanup retried']);
+      } else {
+        await lifecycle.warmup();
+        stopping = true;
+        await assert.rejects(lifecycle.close(), (error) => error === expected);
+        assert.deepEqual(events, ['engine stopped', 'computer stopped']);
+        failing = false;
+        await lifecycle.close();
+        assert.equal(
+          events.filter((event) => event === 'computer stopped').length,
+          failingOperation === 'computer stop' ? 2 : 1,
+        );
+      }
+    });
+  }
+});
+
 async function runningDesktop(
   t,
   request,

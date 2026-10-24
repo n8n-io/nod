@@ -12,6 +12,7 @@ export const computerPermissions = [
 export function useComputer() {
   const [status, setStatus] = useState<ComputerStatus | null>(null);
   const [error, setError] = useState('');
+  const [mutationError, setMutationError] = useState('');
   const [busy, setBusy] = useState(false);
   const [requesting, setRequesting] = useState<ComputerPermission | null>(null);
   const [requested, setRequested] = useState<ComputerPermission | null>(null);
@@ -29,7 +30,6 @@ export function useComputer() {
     const request = new AbortController();
     reading.current = request;
     if (!quiet) {
-      setError('');
       setChecking(true);
     }
     try {
@@ -97,7 +97,7 @@ export function useComputer() {
     setRequesting(permission);
     if (permission) setRequested(permission);
     setChecking(false);
-    setError('');
+    setMutationError('');
     try {
       const value = await change();
       if (!active.current) return null;
@@ -105,7 +105,7 @@ export function useComputer() {
       setError(value.permissionError ?? '');
       return value;
     } catch (cause) {
-      if (active.current) setError(errorMessage(cause));
+      if (active.current) setMutationError(errorMessage(cause));
       return null;
     } finally {
       writing.current = false;
@@ -118,7 +118,7 @@ export function useComputer() {
 
   return {
     status,
-    error,
+    error: error || mutationError,
     busy,
     requesting,
     requested,

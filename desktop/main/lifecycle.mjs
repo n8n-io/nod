@@ -18,13 +18,19 @@ export function createDesktopLifecycle({
   let cleanupRequired = false;
   const controllers = new Set();
 
+  function reportPhase(value) {
+    try {
+      onPhase?.(value);
+    } catch {}
+  }
+
   async function measure(phase, run) {
     const started = Date.now();
-    onPhase?.({ phase, state: 'started' });
+    reportPhase({ phase, state: 'started' });
     try {
       return await run();
     } finally {
-      onPhase?.({ phase, state: 'settled', elapsedMs: Date.now() - started });
+      reportPhase({ phase, state: 'settled', elapsedMs: Date.now() - started });
     }
   }
 
@@ -73,7 +79,7 @@ export function createDesktopLifecycle({
             signal: controller.signal,
             onStorageReady: async (preparedStorage) => {
               checkOpen(controller.signal);
-              onPhase?.({
+              reportPhase({
                 phase: 'storage-ready',
                 state: 'reached',
                 elapsedMs: Date.now() - started,
