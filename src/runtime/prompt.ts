@@ -163,7 +163,7 @@ export function firstInstruction(
       currentInstruction: context.prompt,
       ...(imageAnalysis ? { imageAnalysis } : {}),
     },
-  )}${mode === 'conversation' ? `\n\n${firstConversationGuide}\n\n${replyStyle}` : ''}`;
+  )}${mode === 'conversation' ? `${context.firstConversationTurn ? `\n\n${firstConversationGuide}` : ''}\n\n${replyStyle}` : ''}`;
 }
 
 function workspaceAttachments(

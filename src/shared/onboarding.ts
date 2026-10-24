@@ -28,7 +28,7 @@ export type OnboardingInterviewState = OnboardingInterview | { resetVersion: str
 export type SuggestedTask = {
   id: string;
   title: string;
-  source: 'gmail' | 'web' | 'telegram';
+  source: string;
   kind?: 'now' | 'ongoing';
 };
 export type TaskSuggestions = { intro: string; tasks: SuggestedTask[] };

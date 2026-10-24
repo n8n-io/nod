@@ -1,9 +1,9 @@
 .setup-progress {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(0, 2fr) auto minmax(0, 3fr);
+  grid-template-rows: minmax(28px, 2fr) auto minmax(28px, 3fr) auto;
   min-height: 100dvh;
-  padding: 0 28px;
+  padding: 28px;
   background: var(--canvas);
   color: var(--foreground);
   text-align: center;
@@ -70,10 +70,7 @@
   border: 0;
 }
 .setup-progress-note {
-  position: absolute;
-  right: 28px;
-  bottom: 28px;
-  left: 28px;
+  grid-row: 4;
   max-width: 340px;
   margin: 0 auto;
   color: var(--muted-foreground);

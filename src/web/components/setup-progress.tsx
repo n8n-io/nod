@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { NodGlyph } from './motion';
+import { desktopLinksAvailable } from '../lib/desktop';
 
 export function SetupProgress({
   title,
@@ -48,8 +49,9 @@ export function SetupProgress({
         {children && <div className="setup-progress-actions">{children}</div>}
       </div>
       <p className="setup-progress-note">
-        Your workspace, browser and data stay on this computer. Your chosen AI providers process
-        requests; browsing and connected apps contact external services.
+        {desktopLinksAvailable() && 'Your workspace, browser and data stay on this computer. '}
+        Your chosen AI providers process requests; browsing and connected apps contact external
+        services.
       </p>
     </main>
   );

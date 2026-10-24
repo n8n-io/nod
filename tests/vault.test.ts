@@ -5492,7 +5492,8 @@ globalThis.location=window.location;
 globalThis.ResizeObserver=class {observe(){} disconnect(){}};
 HTMLElement.prototype.scrollIntoView=function(){};
 window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
-window.open=()=>({closed:false,opener:null,location:{replace(){}},close(){}});
+let popup;
+window.open=()=>popup={closed:false,opener:null,location:{replace(){}},close(){this.closed=true;}};
 let channel;
 globalThis.BroadcastChannel=class {constructor(){channel=this;} close(){}};
 const {createElement,act}=await import('react');
@@ -5743,7 +5744,9 @@ assert.equal(reconnectCalls.length,0,'an unhealthy account is never reconnected 
 currentAttempt='B'.repeat(43);
 await click('Reconnect Gmail');
 assert.deepEqual(reconnectCalls,['fixture-account'],'reconnection must target the owned account');
+assert.equal(popup.closed,false);
 await click('Cancel');
+assert.equal(popup.closed,true,'cancelling a waiting attempt closes its sign-in window');
 gmailReconnect=false;
 await act(async()=>channel.onmessage({data:{connection:'connected',service:'gmail',attempt:currentAttempt}}));
 await act(async()=>pageDataCache.refresh('/api/apps',true));
@@ -6861,6 +6864,7 @@ window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){
 const {createElement,act}=await import('react');
 const {createRoot}=await import('react-dom/client');
 const {App}=await import('./src/web/app.tsx');
+const {AppRoot}=await import('./src/web/components/app-boundary.tsx');
 const {sessionStore}=await import('./src/web/lib/session.ts');
 const {pageDataCache}=await import('./src/web/lib/page-data-cache.ts');
 const {writeStep}=await import('./src/web/pages/onboarding/storage.ts');
@@ -6912,7 +6916,7 @@ async function mount(step,failed){
   ready.length=0;
   void sessionStore.refresh({conceal:true});
   root=createRoot(document.getElementById('root'));
-  await act(async()=>root.render(createElement(App)));
+  await act(async()=>root.render(createElement(AppRoot,{children:sessionState=>createElement(App,{sessionState})})));
   await settle();
   assert.deepEqual(ready,[],'a pending session cannot reveal a placeholder renderer');
 }

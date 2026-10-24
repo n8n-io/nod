@@ -605,6 +605,44 @@ test(
         subject: 'Synthetic update',
         body: 'Synthetic body.',
       });
+      await t.test(
+        'onboarding reads require a strict decision and retain owner rules without message authority',
+        async () => {
+          await db.pool.query(
+            'INSERT INTO preferences(owner_id,rules) VALUES($1,$2) ON CONFLICT(owner_id) DO UPDATE SET rules=EXCLUDED.rules',
+            [ownerId, 'Ask before reading private project documents.'],
+          );
+          const schema = { description: 'Read existing records', inputSchema: { type: 'object' } };
+          const args = { connectionId: randomUUID(), tool: 'records_list', input: { limit: 5 } };
+          aligned = () => ({ run: true, because: 'read' });
+          assert.equal(
+            await trust.readOnly('CONNECTED_MCP_CALL', args, schema, AbortSignal.timeout(1000)),
+            false,
+          );
+          assert.deepEqual(reviews.at(-1), {
+            action: { name: 'CONNECTED_MCP_CALL', arguments: args, schema },
+            userRules: 'Ask before reading private project documents.',
+          });
+          for (const decision of [{ readOnly: false }, { readOnly: 'true' }, { run: true }, {}]) {
+            aligned = () => decision;
+            assert.equal(
+              await trust.readOnly('CONNECTED_MCP_CALL', args, schema, AbortSignal.timeout(1000)),
+              false,
+            );
+          }
+          aligned = () => ({ readOnly: true });
+          assert.equal(
+            await trust.readOnly('CONNECTED_MCP_CALL', args, schema, AbortSignal.timeout(1000)),
+            true,
+          );
+          const before = reviews.length;
+          await assert.rejects(
+            trust.readOnly('CONNECTED_MCP_CALL', args, schema, AbortSignal.abort()),
+          );
+          assert.equal(reviews.length, before);
+          await db.pool.query("UPDATE preferences SET rules='' WHERE owner_id=$1", [ownerId]);
+        },
+      );
       const askFor = async (turn: { threadId: string; turnId: string }, args: object) => {
         const verdict = await trust.check(turn, 'GMAIL_SEND_EMAIL', { ...args });
         assert.equal(verdict.confirm, true);

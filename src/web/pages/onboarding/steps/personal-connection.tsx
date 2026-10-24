@@ -82,6 +82,7 @@ export function PersonalConnection({
   const [provider, setProvider] = useState<PersonalProvider>();
   const [manageService, setManageService] = useState<PersonalProvider>();
   const request = useRef<AbortController | null>(null);
+  const signInWindow = useRef<Window | null>(null);
   const attempt = useRef<(PersonalTarget & { id: string }) | undefined>(undefined);
   const manageTrigger = useRef<HTMLButtonElement | null>(null);
   const manageCard = useRef<HTMLElement | null>(null);
@@ -89,6 +90,8 @@ export function PersonalConnection({
   const readyReported = useRef(false);
 
   function clearAttempt() {
+    signInWindow.current?.close();
+    signInWindow.current = null;
     setCompleted(undefined);
     attempt.current = undefined;
     setSignInUrl(undefined);
@@ -125,6 +128,7 @@ export function PersonalConnection({
       active.current = false;
       channel?.close();
       request.current?.abort();
+      signInWindow.current?.close();
       attempt.current = undefined;
     };
   }, []);
@@ -304,6 +308,7 @@ export function PersonalConnection({
     };
     const capture = analyticsForCurrentSession();
     capture('nod_app_connect_clicked', { entry: 'onboarding', result: 'opened' });
+    clearAttempt();
     const external = desktopLinksAvailable();
     const popup = external
       ? null
@@ -318,7 +323,7 @@ export function PersonalConnection({
     const controller = new AbortController();
     request.current = controller;
     controller.signal.addEventListener('abort', () => popup?.close(), { once: true });
-    clearAttempt();
+    signInWindow.current = popup;
     setProvider(slug);
     setPending('opening');
     setPairingConfirmed(false);
@@ -508,7 +513,28 @@ export function PersonalConnection({
                         target="_blank"
                         rel="noreferrer"
                         onClick={(event) => {
-                          if (!event.defaultPrevented && event.button === 0) setSignInOpened(true);
+                          if (
+                            event.defaultPrevented ||
+                            event.button !== 0 ||
+                            event.metaKey ||
+                            event.ctrlKey ||
+                            event.shiftKey ||
+                            event.altKey
+                          )
+                            return;
+                          if (desktopLinksAvailable()) {
+                            setSignInOpened(true);
+                            return;
+                          }
+                          event.preventDefault();
+                          const popup = window.open(
+                            signInUrl,
+                            `nod-connect-${slug}`,
+                            'popup,width=520,height=720',
+                          );
+                          if (popup) popup.opener = null;
+                          signInWindow.current = popup;
+                          setSignInOpened(Boolean(popup && !popup.closed));
                         }}
                       >
                         Open sign-in

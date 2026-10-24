@@ -26,7 +26,7 @@ import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { createMemoryService, importMemoryFile } from '../src/server/memory.ts';
 import { createOnboardingInterview } from '../src/server/onboarding-interview.ts';
 import { openVaultValue, sealVaultValue } from '../src/server/vault-crypto.ts';
-import { learnWritingStyle } from '../src/server/writing-style.ts';
+import { createWritingStyleLearning } from '../src/server/writing-style.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 
@@ -1516,7 +1516,11 @@ test('style learning sends only the owner’s own sent text and keeps one replac
     },
   };
   const memory = createMemoryService({
-    pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+    pool: {
+      query: async (sql: string) => ({
+        rows: sql.startsWith('SELECT to_char(now()') ? [{ now: new Date().toISOString() }] : [],
+      }),
+    } as unknown as pg.Pool,
     ownerId: 'style-owner',
     store: memoryObjectStore(),
   });
@@ -1552,7 +1556,8 @@ test('style learning sends only the owner’s own sent text and keeps one replac
       text: 'Synthetic digest.',
     },
   ];
-  const learn = () => learnWritingStyle({ memory, curator }, async () => sent);
+  const learning = createWritingStyleLearning({ memory, curator });
+  const learn = () => learning.learn(async () => sent);
   const entries = async () =>
     (await memory.load()).entries.map((entry) => [
       entry.area,
@@ -1561,7 +1566,24 @@ test('style learning sends only the owner’s own sent text and keeps one replac
       entry.origin,
     ]);
 
-  await learn();
+  let deferredReads = 0;
+  curator.configured = false;
+  assert.equal(learning.ready(), false);
+  await learning.learn(async () => {
+    deferredReads++;
+    return sent;
+  });
+  assert.equal(deferredReads, 0);
+  assert.equal(requests.length, 0);
+  assert.deepEqual(await entries(), []);
+  curator.configured = true;
+  assert.equal(learning.ready(), true);
+  await learning.learn(async () => {
+    deferredReads++;
+    return sent;
+  });
+  assert.equal(deferredReads, 1);
+  assert.equal(requests.length, 1);
   const input = JSON.stringify(requests[0].input);
   assert.doesNotMatch(
     input,
@@ -1612,10 +1634,80 @@ test('style learning sends only the owner’s own sent text and keeps one replac
     await learn();
     assert.deepEqual(await memory.load(), tree);
   }
-  await learnWritingStyle({ memory, curator }, async () => {
+  await learning.learn(async () => {
     throw new Error('Synthetic Gmail failure.');
   });
   assert.deepEqual(await memory.load(), tree);
+
+  for (const disableDuringRead of [false, true]) {
+    let pausedReads = 0;
+    const previousRequests: number = requests.length;
+    await memory.settings({ saving: disableDuringRead });
+    assert.equal(await learning.enabled(), disableDuringRead);
+    await learning.learn(async () => {
+      pausedReads++;
+      await memory.settings({ saving: false });
+      return sent;
+    });
+    assert.equal(pausedReads, disableDuringRead ? 1 : 0);
+    assert.equal(requests.length, previousRequests);
+    await memory.settings({ saving: true });
+    assert.deepEqual((await memory.load()).entries, tree.entries);
+  }
+
+  for (const cancelBeforeRead of [false, true]) {
+    const stop = new AbortController();
+    const previousRequests: number = requests.length;
+    let reads = 0;
+    if (cancelBeforeRead) stop.abort();
+    await learning.learn(async () => {
+      reads++;
+      stop.abort();
+      return sent;
+    }, stop.signal);
+    assert.equal(reads, cancelBeforeRead ? 0 : 1);
+    assert.equal(requests.length, previousRequests);
+    assert.deepEqual((await memory.load()).entries, tree.entries);
+  }
+  const stop = new AbortController();
+  const curate = curator.curate;
+  curator.curate = async () => {
+    stop.abort();
+    return { style: 'A synthetic late result.' };
+  };
+  await learning.learn(async () => sent, stop.signal);
+  assert.deepEqual((await memory.load()).entries, tree.entries);
+  curator.curate = curate;
+
+  for (const revokedDuring of ['read', 'model']) {
+    let current = true;
+    let modelCalls = 0;
+    curator.curate = async () => {
+      modelCalls++;
+      current = false;
+      return { style: 'A revoked account result.' };
+    };
+    await learning.learn(
+      async () => {
+        if (revokedDuring === 'read') current = false;
+        return sent;
+      },
+      undefined,
+      async () => {
+        if (!current) throw new Error('Synthetic revoked account.');
+      },
+    );
+    assert.equal(modelCalls, revokedDuring === 'read' ? 0 : 1);
+    assert.deepEqual((await memory.load()).entries, tree.entries);
+  }
+  curator.curate = async () => {
+    await memory.settings({ saving: false });
+    return { style: 'Memory was disabled during curation.' };
+  };
+  await learning.learn(async () => sent);
+  await memory.settings({ saving: true });
+  assert.deepEqual((await memory.load()).entries, tree.entries);
+  curator.curate = curate;
 
   await memory.change('preferences/writing-style', { text: 'Writing style: my own words.' });
   reply = { style: 'Formal and long.' };

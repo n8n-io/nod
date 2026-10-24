@@ -271,8 +271,8 @@ a svg {
 .search-field > .input {
   padding: 8px 40px;
 }
-.search-field > input[type='search']::-webkit-search-cancel-button,
-.search-field > input[type='search']::-webkit-search-decoration {
+.search-field:has(> .button) > input[type='search']::-webkit-search-cancel-button,
+.search-field:has(> .button) > input[type='search']::-webkit-search-decoration {
   -webkit-appearance: none;
 }
 .search-field > .button {

@@ -1187,11 +1187,21 @@ export async function createDiscoveredConnections(
     const input = z.record(z.string(), z.unknown()).parse(args.input ?? {});
     return { row, call: { kind: 'mcp' as const, path, tool, input } };
   }
+  async function binding(connectionId: string, client?: PoolClient) {
+    const row = (
+      await (client ?? pool).query<AccountRow>(
+        `SELECT * FROM discovered_connections WHERE owner_id=$1 AND id=$2 AND NOT reconnect_required${client ? ' FOR SHARE' : ''}`,
+        [owner, connectionId],
+      )
+    ).rows[0];
+    return row ? JSON.stringify([row.account_id, row.paths]) : undefined;
+  }
   async function execute(
     action: string,
     args: Record<string, unknown>,
     turn?: TurnRef,
     signal?: AbortSignal,
+    expectedBinding?: string,
   ) {
     const { row, call } = await selected(action, args);
     const { path } = call;
@@ -1213,6 +1223,13 @@ export async function createDiscoveredConnections(
         async () => {
           signal?.throwIfAborted();
           token = await tokenFor(row, path, signal);
+          const currentBinding = await binding(row.id);
+          if (
+            currentBinding !== JSON.stringify([row.account_id, row.paths]) ||
+            (expectedBinding !== undefined && currentBinding !== expectedBinding)
+          )
+            throw error('This connected account changed.', 409);
+          signal?.throwIfAborted();
           secrets.push(token);
           const environment =
             path.kind !== 'cli' || !path.env
@@ -1340,6 +1357,7 @@ export async function createDiscoveredConnections(
     );
   }
   return {
+    binding,
     analyticsConnections,
     list,
     setupServices,
