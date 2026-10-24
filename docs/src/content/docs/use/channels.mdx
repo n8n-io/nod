@@ -33,7 +33,7 @@ A long reply arrives as several messages. If a file doesn't arrive, open nod to 
 
 Open **Channels** in the sidebar, then select **Connect** on Telegram or WhatsApp. nod checks your details before it saves them, and keeps them encrypted, outside the chat.
 
-On a self-hosted server, leave that channel's environment variables blank or unset to use this setup. A channel configured through the environment is server-managed: edit its settings in `.env` and restart the server.
+On a self-hosted server, leave that channel's environment variables blank or unset to use this setup. A channel configured through the environment is server-managed: edit its settings in `.env` and [apply the configuration](/deploy/configuration/#apply-configuration-changes).
 
 <Tabs syncKey="channel">
 <TabItem label="Telegram">
@@ -88,9 +88,9 @@ Cloud API mode needs a [self-hosted server](/deploy/self-host/) with public HTTP
 <details>
 <summary>Configure channels in .env instead</summary>
 
-On a source install or self-hosted server, set the `TELEGRAM_*` or `WHATSAPP_*` values in [Configuration](/deploy/configuration/#channels), then restart. Any nonempty value makes that channel server-managed. The **Channels** page cannot edit or remove its configuration, and Telegram pairing is unavailable. A managed WhatsApp QR connection still lets you scan or renew its QR code.
+On a source install or self-hosted server, set the `TELEGRAM_*` or `WHATSAPP_*` values in [Configuration](/deploy/configuration/#channels), then [apply the configuration](/deploy/configuration/#apply-configuration-changes). Any nonempty value makes that channel server-managed. The **Channels** page cannot edit or remove its configuration, and Telegram pairing is unavailable. A managed WhatsApp QR connection still lets you scan or renew its QR code.
 
-To configure and pair the channel in the app, clear all its environment variables and restart. This restores any configuration previously saved through **Channels**.
+To configure and pair the channel in the app, clear all its environment variables and apply the configuration again. This restores any configuration previously saved through **Channels**.
 
 </details>
 
@@ -176,7 +176,7 @@ Reactions work both ways, as they do in the [nod app](/use/chat/#react-to-messag
 
 If a reaction send fails, its result can be unclear. nod keeps the attempt and does not send it again. You can ask nod to remove it. A failed removal keeps the previous reaction.
 
-A Telegram bot that uses a webhook only passes your reactions on to nod if nod registered that webhook with reactions turned on. If nod doesn't see your Telegram reactions, select **Connect bot** again in the channel settings. A bot that polls for messages, such as in the desktop app, needs nothing.
+A Telegram webhook must include `message_reaction` in its allowed update types to pass your reactions to nod. For an environment-managed channel, follow [Telegram webhooks](/deploy/configuration/#telegram-webhooks) to register it again. For a channel configured in the app, select **Connect bot** again in the channel settings. A bot that polls for messages, such as in the desktop app, already requests reactions.
 
 ## Commands
 

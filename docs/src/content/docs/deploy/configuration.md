@@ -13,7 +13,7 @@ Configure a source install or self-hosted server through environment variables. 
 - The [self-hosting stack](/deploy/self-host/) has its own `.env` in `deployment/self-host/`. Keep it private and include it in your backup.
 - For a direct source install, a variable set in your shell wins over the same variable in the repository `.env`.
 - For the self-hosting stack, put application settings in its private `.env`. Compose passes all supported model variables from this file through `env_file`; no edits to `compose.yaml` are needed. It does not forward arbitrary variables from your host shell. Keep `NOD_AUTH_TOKEN`, `NOD_VAULT_KEY`, and `NOD_POSTGRES_PASSWORD` in `.env` and unset shell overrides before setup or Compose.
-- nod reads settings when it starts. Restart a direct source process after changes. For Compose, run `docker compose up -d --wait` from the installation directory, adding `--profile https` before `up` when HTTPS is enabled. `docker compose restart` does not reload environment values.
+- nod reads settings when it starts. After editing `.env`, [apply the configuration changes](#apply-configuration-changes).
 - Most things don't need a variable. You connect models, apps and channels in the app, and nod saves them encrypted.
 - The desktop app doesn't read `.env`. When connected to a server, it uses that server's configuration. Its server address and token are client settings.
 
@@ -25,6 +25,18 @@ flowchart LR
   app[Settings in the app] --> db[(Encrypted<br/>in the database)]
   db --> server
 ```
+
+## Apply configuration changes
+
+For a Docker installation, run this from the folder containing its `.env` and `compose.yaml`:
+
+```sh title="Terminal"
+docker compose up -d --wait
+```
+
+If you use the bundled HTTPS proxy, run `docker compose --profile https up -d --wait` instead. Compose recreates containers whose configuration changed and preserves their data volumes. `docker compose restart` keeps the old environment values.
+
+For a direct source install, stop and start the nod process. The desktop app does not read `.env`; it uses the configuration of the server it connects to.
 
 ## Server and data
 
@@ -44,7 +56,7 @@ The access token grants full access to this server's assistant. `setup.sh` gener
 
 Omit `NOD_AUTH_TOKEN` and `NOD_PUBLIC_URL` from a local source configuration when you don't set them. An explicitly empty value is invalid. The Docker setup fills both in.
 
-Changing `NOD_AUTH_TOKEN` and restarting revokes the previous token. Reconnect your web and desktop clients with the new token. See [Rotate access](/deploy/server-operations/#rotate-access).
+Changing `NOD_AUTH_TOKEN` and [applying the configuration](#apply-configuration-changes) revokes the previous token. Reconnect your web and desktop clients with the new token. See [Rotate access](/deploy/server-operations/#rotate-access).
 
 For a remote server, set both values before starting:
 
@@ -131,7 +143,22 @@ Set `TELEGRAM_ENABLED=false` or `WHATSAPP_ENABLED=false` to disable a channel ex
 
 For QR setup, use **Channels** to scan the code. The `bot` and `self-chat` modes do not use the Meta access token, app secret, business phone number ID or webhook token. The saved device keys stay encrypted in the database. See [WhatsApp setup](/use/channels/#set-up-a-channel).
 
-The smallest Telegram configuration needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USER_ID`; it uses polling. For webhook mode, register `/api/webhooks/telegram` on your public origin with Telegram and use the same webhook secret.
+The smallest Telegram configuration needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USER_ID`; it uses polling.
+
+### Telegram webhooks
+
+Set `TELEGRAM_MODE=webhook` and `TELEGRAM_WEBHOOK_SECRET_TOKEN`, then [apply the configuration](#apply-configuration-changes). Register the webhook using Telegram's [setWebhook method](https://core.telegram.org/bots/api#setwebhook) with these fields:
+
+| Field                  | Value                                                         |
+| ---------------------- | ------------------------------------------------------------- |
+| `url`                  | Your public HTTPS origin followed by `/api/webhooks/telegram` |
+| `secret_token`         | The same value as `TELEGRAM_WEBHOOK_SECRET_TOKEN`             |
+| `allowed_updates`      | `["message", "message_reaction"]`                             |
+| `drop_pending_updates` | `false`                                                       |
+
+nod does not register environment-managed webhooks for you. Check [getWebhookInfo](https://core.telegram.org/bots/api#getwebhookinfo) for the saved URL, update types, and delivery errors. Register again after changing the public URL or webhook secret, or to enable reactions on an existing webhook.
+
+To switch to polling, remove the webhook with Telegram's [deleteWebhook method](https://core.telegram.org/bots/api#deletewebhook), keeping `drop_pending_updates=false`. Set `TELEGRAM_MODE=polling` and apply the configuration. Telegram does not allow polling while a webhook is registered.
 
 ## Analytics and feedback
 
@@ -148,7 +175,7 @@ The smallest Telegram configuration needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALL
 
 See [Analytics and recordings](/deploy/analytics/) for what's collected.
 
-Analytics go to the nod team's n8n-owned EU PostHog project, even in independent installations. There is no runtime override for that project. Feedback defaults to `https://internal.users.n8n.cloud/webhook/nod/feedback`; the dialog identifies the configured recipient before submission. To disable both collectors, set `NOD_ANALYTICS_ENABLED=false` and `NOD_FEEDBACK_ENABLED=false`, then restart nod. These settings apply to source installs and the desktop process environment. They do not disable model, app or update traffic.
+Analytics go to the nod team's n8n-owned EU PostHog project, even in independent installations. There is no runtime override for that project. Feedback defaults to `https://internal.users.n8n.cloud/webhook/nod/feedback`; the dialog identifies the configured recipient before submission. To disable both collectors, set `NOD_ANALYTICS_ENABLED=false` and `NOD_FEEDBACK_ENABLED=false`, then [apply the configuration](#apply-configuration-changes). These settings apply to source installs and the desktop process environment. They do not disable model, app or update traffic.
 
 For an operator-owned collector, set `NOD_FEEDBACK_URL=https://feedback.example.com/intake` and `NOD_FEEDBACK_RECEIPT_URL_PREFIX=https://issues.example.com/projects/nod/issues/`. A submitted receipt can then link to `https://issues.example.com/projects/nod/issues/123`, but not another project or origin. Receipt URLs cannot contain credentials, queries, fragments or encoded path separators. The collector uses nod's existing feedback envelope and receipt contract; setting an endpoint alone does not create a compatible service. `NOD_FEEDBACK_TOKEN`, when set, supplies the server-only `x-nod-feedback-token` header. It never goes to the browser or sandbox.
 
@@ -164,7 +191,7 @@ Set `OTEL_EXPORTER_OTLP_ENDPOINT` to send model request metadata to your own col
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 ```
 
-Restart nod after you set or remove the variable. For the desktop app, set it in the process environment before you start nod. The desktop app does not read `.env`.
+[Apply the configuration](#apply-configuration-changes) after you set or remove the variable. For the desktop app, set it in the process environment before you start nod. The desktop app does not read `.env`.
 
 ```mermaid
 flowchart LR

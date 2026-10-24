@@ -25,7 +25,7 @@ You ran `docker compose` yourself before nod created the database password. Run 
 
 ### Configure NOD_VAULT_KEY in server settings before saving a connection.
 
-nod has no key to encrypt saved credentials. Local macOS and Linux web installs normally create a protected key automatically. Other server configurations need an explicit key. If saved encrypted data exists, restore its original key instead of generating a new one. For a fresh server only, add a key to `.env`, then restart nod.
+nod has no key to encrypt saved credentials. Local macOS and Linux web installs normally create a protected key automatically. Other server configurations need an explicit key. If saved encrypted data exists, restore its original key instead of generating a new one. For a fresh server only, add a key to `.env`, then [apply the configuration](/deploy/configuration/#apply-configuration-changes).
 
 ```sh title="Terminal"
 sed -i.bak "s|^NOD_VAULT_KEY=.*|NOD_VAULT_KEY=$(openssl rand -base64 32)|" .env && rm .env.bak
@@ -35,7 +35,7 @@ Keep a copy of the key somewhere safe. Saved credentials can't be read without i
 
 ### The port is in use
 
-Another program uses port `4310`. Set another `PORT` in `.env` and restart. nod's database container also needs port `54329` on `127.0.0.1`.
+Another program uses port `4310`. Set another `PORT` in `.env` and [apply the configuration](/deploy/configuration/#apply-configuration-changes). Update your browser address and any SSH tunnel to match. A direct source install also needs database port `54329` on `127.0.0.1`; the self-hosting stack keeps its database port private.
 
 ### You lost the access link
 
