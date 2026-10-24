@@ -272,11 +272,12 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (!configuration().conversationResetEnabled)
       return reply.code(404).send({ error: 'Not found.' });
     const { threadId } = z.object({ threadId: z.uuid() }).strict().parse(request.body);
-    const { previousThreadId, browsers, ...reset } = await resetThread(threadId);
-    audioMessages.cancel(previousThreadId);
-    for (const id of [previousThreadId, ...browsers])
-      void dependencies.computer?.discard(id).catch(() => {});
-    return reset;
+    return audioMessages.pause(async () => {
+      const { previousThreadId, browsers, ...reset } = await resetThread(threadId);
+      for (const id of [previousThreadId, ...browsers])
+        void dependencies.computer?.discard(id).catch(() => {});
+      return reset;
+    }, threadId);
   });
   app.post('/api/messages', async (request) => {
     const input = messageInput
@@ -322,12 +323,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (replaySession) dependencies.linkReplay?.(submitted.turnId, replaySession);
     return submitted;
   });
-  app.post('/api/thread/stop', async () => {
-    audioMessages.cancel();
-    const { browsers } = await stopThread();
-    await Promise.allSettled(browsers.map((id) => dependencies.computer?.clear(id)));
-    return { ok: true };
-  });
+  app.post('/api/thread/stop', () =>
+    audioMessages.pause(async () => {
+      const { browsers } = await stopThread();
+      await Promise.allSettled(browsers.map((id) => dependencies.computer?.clear(id)));
+      return { ok: true };
+    }),
+  );
   app.get('/api/events', async (request, reply) => {
     reply.hijack();
     streams.add(reply.raw);

@@ -39,15 +39,28 @@ const privateConflict = (message: string) =>
 export function registerAudioMessages(app: FastifyInstance, dependencies: AppDependencies) {
   const artifacts = dependencies.artifacts ?? localArtifacts;
   const active = new Map<AbortController, string | undefined>();
+  let suspensions = 0;
   const cancel = (threadId?: string) => {
     for (const [controller, id] of active)
-      if (!threadId || !id || id === threadId)
+      if (!threadId || id === threadId)
         controller.abort(privateConflict('This voice message was cancelled.'));
   };
+  const pause = async <T>(operation: () => Promise<T>, threadId?: string) => {
+    suspensions++;
+    cancel(threadId);
+    try {
+      return await operation();
+    } finally {
+      suspensions--;
+    }
+  };
   app.addHook('preClose', async () => {
+    suspensions++;
     cancel();
   });
   app.post('/api/messages/audio', async (request, reply) => {
+    if (suspensions)
+      throw privateConflict('Work is stopping. Send the recording again when it finishes.');
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(120_000)]);
     active.set(controller, undefined);
@@ -205,6 +218,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
         verificationRequestId,
         receiptOnly: codeLike && !verificationRequestId && !input.replyToMessageId,
         channel: 'web',
+        signal,
         persistVerification: persist,
       });
       if (verification) return verification;
@@ -255,5 +269,5 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
       await Promise.all(cleanup.map((remove) => remove().catch(() => {})));
     }
   });
-  return { cancel };
+  return { pause };
 }

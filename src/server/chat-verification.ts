@@ -16,6 +16,7 @@ interface VerificationInput {
   verificationRequestId?: string;
   receiptOnly?: boolean;
   attachmentIds?: string[];
+  signal?: AbortSignal;
   persistOrdinary?: (client: PoolClient) => Promise<void>;
   persistVerification?: (client: PoolClient, response: SubmitMessageResponse) => Promise<void>;
 }
@@ -129,6 +130,7 @@ export async function createChatVerification(
     text: string,
     input: VerificationInput,
   ): Promise<SubmitMessageResponse | undefined> {
+    input.signal?.throwIfAborted();
     const reply = classifyVerificationReply(text);
     const codes = {
       otp: reply.kind === 'code' ? reply.code : undefined,
@@ -154,6 +156,7 @@ export async function createChatVerification(
     try {
       await client.query('BEGIN');
       const thread = await lockThread(client, options.ownerId);
+      input.signal?.throwIfAborted();
       if (input.threadId !== undefined && input.threadId !== thread.id)
         throw conflict('This conversation has been reset. Reload it before continuing.');
       const previous = (
@@ -298,6 +301,7 @@ export async function createChatVerification(
             : 'Send one verification code using 4 to 8 digits.',
         );
       const codeFingerprint = await fingerprint(code, input);
+      input.signal?.throwIfAborted();
       await client.query(
         `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id)
          VALUES($1,$2,'user',$3,$4,$5,$6)`,
@@ -314,6 +318,7 @@ export async function createChatVerification(
         'INSERT INTO chat_verification_submissions(message_id,request_id,code_fingerprint) VALUES($1,$2,$3)',
         [input.clientMessageId, request.id, codeFingerprint],
       );
+      input.signal?.throwIfAborted();
       await client.query('COMMIT');
       reserved = {
         threadId: thread.id,
@@ -331,6 +336,7 @@ export async function createChatVerification(
     options.refresh();
     let status: 'submitted' | 'unavailable';
     try {
+      input.signal?.throwIfAborted();
       const result =
         reserved.kind === 'payment'
           ? await options.submitPayment!(reserved.turnId, reserved.code, reserved.requestId)

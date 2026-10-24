@@ -1723,6 +1723,118 @@ test(
       );
 
       await t.test(
+        'audio admission stays closed while stop or reset waits for the thread lock',
+        async () => {
+          for (const operation of ['stop', 'reset']) {
+            await waitFor(settledThread);
+            const blocker = await db.pool.connect();
+            await blocker.query('BEGIN');
+            await thread.lockThread(blocker);
+            const pid = (await blocker.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+            const before = transcriptions.length;
+            const message = { threadId, clientMessageId: randomUUID() };
+            const stopping = request(
+              'POST',
+              operation === 'stop' ? '/api/thread/stop' : '/api/conversation/reset',
+              operation === 'stop' ? undefined : { threadId: randomUUID() },
+            ).then((response) => response);
+            let pending: ReturnType<typeof sendAudio> | undefined;
+            try {
+              await waitFor(async () =>
+                Boolean(
+                  (
+                    await db.pool.query(
+                      'SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+                      [pid],
+                    )
+                  ).rowCount,
+                ),
+              );
+              pending = sendAudio(message).then((response) => response);
+              const response = await Promise.race([pending, delay(1_000).then(() => undefined)]);
+              assert.equal(response?.statusCode, 409, response?.body);
+              assert.equal(transcriptions.length, before);
+            } finally {
+              await blocker.query('ROLLBACK');
+              blocker.release();
+              assert.equal((await stopping).statusCode, operation === 'stop' ? 200 : 409);
+              await pending;
+            }
+            const following = await sendAudio(message);
+            assert.equal(following.statusCode, 200, following.body);
+            await waitFor(settled(following.json().turnId));
+          }
+        },
+      );
+
+      await t.test(
+        'stopping a deferred private audio reservation prevents code delivery',
+        async () => {
+          await waitFor(settledThread);
+          const waiting = await thread.submitUserMessage('ask-credentials');
+          await waitFor(settled(waiting.turnId));
+          let releaseKey!: () => void;
+          let requestedKey = false;
+          const keyGate = new Promise<void>((resolve) => {
+            releaseKey = resolve;
+          });
+          const codes: string[] = [];
+          const delayedVerification = await createChatVerification(db.pool, {
+            ownerId,
+            keyStore: {
+              getKey: async () => {
+                requestedKey = true;
+                await keyGate;
+                return fixtureKey;
+              },
+            },
+            refresh() {},
+            submitCode: async (_owner, _turn, code) => {
+              codes.push(code);
+              return { status: 'submitted' };
+            },
+          });
+          const isolated = await createApp({
+            speech,
+            verification: delayedVerification,
+            configuration: () => ({ ...configuration(), llmReady: true }),
+          });
+          transcript = '382916';
+          const message = { threadId, clientMessageId: randomUUID() };
+          const pending = isolated.inject(audioRequest(message)).then((response) => response);
+          let stopping: typeof pending | undefined;
+          try {
+            await waitFor(() => requestedKey);
+            stopping = isolated
+              .inject({ method: 'POST', url: '/api/thread/stop', headers })
+              .then((response) => response);
+            await waitFor(() => Boolean(transcriptions.at(-1)?.signal?.aborted));
+            releaseKey();
+            assert.equal((await stopping).statusCode, 200);
+            assert.equal((await pending).statusCode, 409);
+            assert.deepEqual(codes, []);
+            assert.equal(
+              (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [message.clientMessageId]))
+                .rowCount,
+              0,
+            );
+            assert.equal((await isolated.inject(audioRequest(message))).statusCode, 409);
+            assert.deepEqual(codes, []);
+          } finally {
+            releaseKey();
+            await stopping;
+            await pending;
+            transcript = 'Synthetic spoken request';
+            await isolated.close();
+            await db.pool.query(
+              "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+              [waiting.turnId],
+            );
+          }
+        },
+      );
+
+      await t.test(
         'spoken verification codes reach private entry without saving their recording or transcript',
         async () => {
           await waitFor(settledThread);
