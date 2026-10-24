@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { check, judge, scenario } from '../scenario.ts';
 import { presentations } from '../world/inline-visuals.ts';
 import { page } from '../world/sites.ts';
@@ -47,7 +48,7 @@ export default scenario({
           pass:
             response.status === 200 &&
             (response.body.messages ?? []).some((message: { presentation?: unknown }) =>
-              saved.some((item) => JSON.stringify(item) === JSON.stringify(message.presentation)),
+              saved.some((item) => isDeepStrictEqual(item, message.presentation)),
             ),
           evidence: `${saved.length} saved charts; chat API status ${response.status}.`,
         };

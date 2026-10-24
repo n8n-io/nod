@@ -5,7 +5,7 @@ description: Present useful images, maps, flight comparisons, seat plans, bookin
 
 # Visual replies
 
-Use a visual when it helps the user's decision or explanation. A simple fact or short answer needs only text. Choose one useful presentation per message; keep related information together.
+Use a visual when it helps the user compare options, scan several related facts, or understand a layout, relationship or trend. Do not wait for an explicit visual request. A single fact or an explicit text-only request needs only text; a concise summary of several facts can still benefit from a visual. Choose one useful presentation per message; keep related information together. Use text when no type fits or the evidence cannot support it.
 
 Call send_message with complete answer text and a presentation. Use version: 1, a type below, a short title and sources: [{label, url}]. caption and asOf are optional. Follow the tool schema for the remaining fields. Never put presentation JSON, HTML or executable code in the reply text. Do not repeat a successfully sent answer in the final response.
 

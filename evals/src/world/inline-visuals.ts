@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { check, judge, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { textPng } from './png.ts';
@@ -77,9 +78,7 @@ export function inlineVisualScenario(definition: Case) {
             const state = await run.api('GET', '/api/state');
             const shown = (state.body.messages ?? []) as Array<{ presentation?: unknown }>;
             const matched = saved.filter((value) =>
-              shown.some(
-                (message) => JSON.stringify(message.presentation) === JSON.stringify(value),
-              ),
+              shown.some((message) => isDeepStrictEqual(message.presentation, value)),
             );
             return {
               pass: state.status === 200 && matched.length > 0,

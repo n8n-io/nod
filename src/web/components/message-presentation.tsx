@@ -544,11 +544,27 @@ function Diagram({ visual }: { visual: Visual<'diagram'> }) {
   const [selected, setSelected] = useState(visual.nodes[0]!.id);
   const markerId = useId().replaceAll(':', '');
   const nodes = new Map(visual.nodes.map((node, index) => [node.id, { ...node, index }]));
+  const active = new Set<string>();
+  const visited = new Set<string>();
+  const returns = new Set<(typeof visual.edges)[number]>();
+  const visit = (id: string) => {
+    if (visited.has(id)) return;
+    active.add(id);
+    for (const edge of visual.edges.filter((edge) => edge.from === id)) {
+      if (active.has(edge.to)) returns.add(edge);
+      else visit(edge.to);
+    }
+    active.delete(id);
+    visited.add(id);
+  };
+  for (const id of nodes.keys())
+    if (!visual.edges.some((edge) => edge.to === id && edge.from !== id)) visit(id);
+  for (const id of nodes.keys()) visit(id);
   const rows = new Map<string, number>();
   const pending = new Set(nodes.keys());
   for (let pass = 0; pass < nodes.size; pass++) {
     for (const id of pending) {
-      const parents = visual.edges.filter((edge) => edge.to === id && edge.from !== id);
+      const parents = visual.edges.filter((edge) => edge.to === id && !returns.has(edge));
       if (parents.some((edge) => !rows.has(edge.from))) continue;
       rows.set(id, Math.max(-1, ...parents.map((edge) => rows.get(edge.from)!)) + 1);
       pending.delete(id);

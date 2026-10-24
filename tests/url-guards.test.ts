@@ -962,6 +962,21 @@ test('chat presentations reject unsafe URLs, executable shapes and inconsistent 
   );
   for (const detail of ['A · aisle · B', 'Row 12', 'A (Left window)', 'unknown', 'Recommended'])
     assert.ok(seatText.includes(detail), detail);
+  const diagramText = presentationText(
+    presentationSchema.parse({
+      ...diagram,
+      nodes: [
+        { id: 'request', label: 'Service', detail: 'Receives the request' },
+        { id: 'answer', label: 'Service', detail: 'Returns the answer' },
+      ],
+    }),
+  );
+  for (const detail of [
+    'Service (request): Receives the request',
+    'Service (answer): Returns the answer',
+    'Service (request) → Service (answer)',
+  ])
+    assert.ok(diagramText.includes(detail), detail);
   for (const value of [
     { ...diagram, version: 2 },
     { ...diagram, type: 'html', html: '<script>alert(1)</script>' },

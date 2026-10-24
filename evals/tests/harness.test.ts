@@ -2310,11 +2310,12 @@ test('visual evals require matching persisted and delivered data, not a presenta
   assert.equal(expectation?.kind, 'check');
   if (expectation?.kind !== 'check') throw new Error('Missing delivery check');
   const presentation = { version: 1, type: 'seats', title: 'AV204' };
-  for (const { saved, shown, pass } of [
+  for (const { saved, shown, different, pass } of [
     { saved: false, shown: false, pass: false },
     { saved: true, shown: false, pass: false },
     { saved: false, shown: true, pass: false },
     { saved: true, shown: true, pass: true },
+    { saved: true, shown: true, different: true, pass: false },
   ]) {
     const run = quietRun(world);
     run.tools.push({
@@ -2330,7 +2331,11 @@ test('visual evals require matching persisted and delivered data, not a presenta
       : [];
     run.api = async () => ({
       status: 200,
-      body: { messages: shown ? [{ presentation }] : [] },
+      body: {
+        messages: shown
+          ? [{ presentation: { title: different ? 'AV205' : 'AV204', type: 'seats', version: 1 } }]
+          : [],
+      },
     });
     assert.equal((await expectation.check(run)).pass, pass);
   }

@@ -260,14 +260,19 @@ export function presentationText(value: Presentation) {
       );
   }
   if (value.type === 'diagram') {
+    const labels = new Map(
+      value.nodes.map((node) => [
+        node.id,
+        value.nodes.some((other) => other.id !== node.id && other.label === node.label)
+          ? `${node.label} (${node.id})`
+          : node.label,
+      ]),
+    );
     for (const node of value.nodes)
-      lines.push([node.label, node.detail].filter(Boolean).join(': '));
+      lines.push([labels.get(node.id), node.detail].filter(Boolean).join(': '));
     for (const edge of value.edges)
       lines.push(
-        [
-          `${value.nodes.find((node) => node.id === edge.from)!.label} → ${value.nodes.find((node) => node.id === edge.to)!.label}`,
-          edge.label,
-        ]
+        [`${labels.get(edge.from)} → ${labels.get(edge.to)}`, edge.label]
           .filter(Boolean)
           .join(': '),
       );
