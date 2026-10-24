@@ -3646,6 +3646,111 @@ process.exit(0);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+test('discovery OAuth recovery preserves editable registration and fences stale restarts', () => {
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeout: 25_000,
+    encoding: 'utf8',
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://127.0.0.1:51000/apps',pretendToBeVisual:true});
+for(const name of ['window','document','Node','Element','HTMLElement','HTMLInputElement','HTMLButtonElement','Event','CustomEvent','MutationObserver','getComputedStyle','sessionStorage','FormData'])Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:typeof dom.window[name]==='function'&&name[0]===name[0].toLowerCase()?dom.window[name].bind(dom.window):dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location=window.location;
+globalThis.ResizeObserver=class{observe(){}disconnect(){}};
+HTMLElement.prototype.scrollIntoView=function(){};
+window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
+window.open=()=>({closed:false,opener:null,location:{},close(){}});
+const {createElement,act}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {AppDiscoveryDialog}=await import('./src/web/components/app-discovery-dialog.tsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+const id='11111111-1111-4111-8111-111111111111';
+const requests=[];
+let current;
+let oauthStatus=null;
+let reads=0;
+let starts=0;
+let connected=0;
+const next=()=>({attempt:String(++starts).padStart(43,'A'),url:'https://fixture.example/authorize?attempt='+starts});
+window.fetch=globalThis.fetch=async(url,options={})=>{
+  const path=new URL(url,window.location.href).pathname;
+  if(path==='/api/apps/discovery/'+id+'/authorize'){
+    const body=JSON.parse(options.body);
+    requests.push(body);
+    if(body.restartAttempt&&body.restartAttempt!==current?.attempt)return Response.json({error:'This sign-in changed.'},{status:409});
+    current=next();oauthStatus='pending';return Response.json(current);
+  }
+  if(path==='/api/apps/discovery/'+id){
+    reads++;
+    return Response.json({name:'Fixture MCP',service:'fixture-mcp',paths:[{kind:'mcp',endpoint:'https://fixture.example/mcp',auth:'oauth',clientIdRequired:true}],oauthStatus,...(oauthStatus==='pending'?{attempt:current.attempt,authorizationUrl:current.url}:{})});
+  }
+  throw new Error('Unexpected fixture request '+path);
+};
+const settle=()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,15));});
+const waitFor=async(condition,message)=>{for(let index=0;index<100&&!condition();index++)await settle();assert.ok(condition(),message);};
+const button=name=>[...document.querySelectorAll('button')].find(item=>item.textContent.trim()===name);
+const click=async(name)=>{await waitFor(()=>button(name)&&!button(name).disabled,'Expected enabled '+name);await act(async()=>button(name).click());await settle();};
+const input=()=>document.querySelector('input[name="clientId"]');
+const type=async(value)=>{await act(async()=>{const node=input();Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(node,value);node.dispatchEvent(new Event('input',{bubbles:true}));});};
+const focus=async()=>{const before=reads;await act(async()=>window.dispatchEvent(new Event('focus')));await waitFor(()=>reads>before,'Focus must reconcile the proposal');await settle();};
+const root=createRoot(document.getElementById('root'));
+await act(async()=>root.render(createElement(AppDiscoveryDialog,{id,onClose(){assert.fail('Recovery must not dismiss the dialog');},onConnected(){connected++;}})));
+await waitFor(input,'The registration must be editable');
+await type('synthetic-wrong-client');
+await click('Continue to Fixture MCP');
+await waitFor(()=>button('Start again'),'Authorization must remain pending');
+assert.equal(requests[0].clientId,'synthetic-wrong-client');
+oauthStatus='failed';
+await focus();
+await waitFor(()=>button('Try again'),'Failed authorization must expose recovery');
+const beforeEdit=requests.length;
+await click('Try again');
+await waitFor(input,'Terminal recovery must allow correcting the client registration');
+assert.equal(input().value,'synthetic-wrong-client','Retry must preserve the entered registration for editing');
+assert.equal(requests.length,beforeEdit,'Opening the registration form must not authorize');
+await type('synthetic-correct-client');
+await click('Continue to Fixture MCP');
+await waitFor(()=>button('Start again'),'The corrected registration must authorize');
+assert.equal(requests.at(-1).clientId,'synthetic-correct-client');
+assert.equal(requests.at(-1).restartAttempt,undefined,'A failed attempt must not be replaced again');
+const old=current;
+current=next();
+const replacement=current;
+const beforeConflict=requests.length;
+const startsBeforeConflict=starts;
+await click('Start again');
+await waitFor(()=>button('Try again'),'A stale restart must reconcile the replacement');
+assert.equal(requests.length,beforeConflict+1,'A rejected stale restart must not retry automatically');
+assert.equal(requests.at(-1).restartAttempt,old.attempt,'Restart must name the attempt displayed in this tab');
+assert.equal(starts,startsBeforeConflict,'A stale tab must not invalidate the newer sign-in');
+assert.equal(current.attempt,replacement.attempt);
+await click('Try again');
+await waitFor(input,'A replaced registration must remain editable');
+assert.equal(input().value,'synthetic-correct-client');
+await click('Continue to Fixture MCP');
+await waitFor(()=>button('Start again'),'Explicit recovery may start a new attempt');
+assert.equal(requests.at(-1).restartAttempt,replacement.attempt,'Editing must retain the reconciled attempt fence');
+const latest=current;
+await click('Start again');
+await waitFor(()=>requests.at(-1).restartAttempt===latest.attempt&&button('Start again'),'The next restart must carry the replacement attempt');
+oauthStatus='connected';
+await focus();
+await waitFor(()=>button('Done'),'Completion must stay visible until dismissed');
+assert.equal(connected,0);
+await click('Done');
+assert.equal(connected,1);
+await act(async()=>root.unmount());
+dom.window.close();
+process.exit(0);
+`,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
 test(
   'desktop OAuth callbacks use a public completion page and preserve owned turn continuation',
   { skip: !process.env.TEST_DATABASE_URL },
@@ -3985,6 +4090,7 @@ test(
     assert.equal(states.length, 1);
     assert.equal((await status()).oauthStatus, 'pending');
     assert.equal((await status()).authorizationUrl, first.json().url);
+    assert.equal((await status()).attempt, first.json().attempt);
     const recovered = Fastify();
     t.after(() => recovered.close());
     (await createDiscoveredConnections(f.pool, options)).registerRoutes(recovered);
@@ -4198,14 +4304,28 @@ test(
     const oldCustom = await startCustom({ clientId: 'synthetic-client-id' });
     assert.equal(oldCustom.statusCode, 200, oldCustom.body);
     assert.deepEqual((await startCustom({})).json(), oldCustom.json());
-    const currentCustom = await startCustom({ restart: true });
+    const currentCustom = await startCustom({
+      restart: true,
+      restartAttempt: oldCustom.json().attempt,
+    });
     assert.equal(currentCustom.statusCode, 200, currentCustom.body);
     assert.notEqual(currentCustom.json().url, oldCustom.json().url);
     assert.notEqual(currentCustom.json().attempt, oldCustom.json().attempt);
     assert.deepEqual((await rawStatus(oldCustom.json().url)).apps, []);
     assert.equal(await finishInWindow(oldCustom.json(), 'code=old'), 'expired');
     assert.equal((await rawStatus(currentCustom.json().url)).apps[0].available, true);
+    const beforeStaleRestart = states.length;
+    assert.equal(
+      (await startCustom({ restart: true, restartAttempt: oldCustom.json().attempt })).statusCode,
+      409,
+    );
+    assert.equal(states.length, beforeStaleRestart);
+    const currentCustomStatus = await web.inject(`/api/apps/discovery/${customId}`);
+    assert.equal(currentCustomStatus.statusCode, 200, currentCustomStatus.body);
+    assert.equal(currentCustomStatus.json().attempt, currentCustom.json().attempt);
+    assert.equal(currentCustomStatus.json().authorizationUrl, currentCustom.json().url);
     assert.equal(await finishInWindow(currentCustom.json(), 'code=fixture-code'), 'connected');
+    assert.equal((await web.inject(`/api/apps/discovery/${customId}`)).json().attempt, undefined);
   },
 );
 

@@ -23,6 +23,7 @@ type Discovery = {
   localAddress?: string;
   oauthStatus?: 'pending' | 'connected' | 'cancelled' | 'failed' | null;
   authorizationUrl?: string;
+  attempt?: string;
   callbackUrl?: string;
   setupUrl?: string;
   setupText?: string;
@@ -38,6 +39,7 @@ type Discovery = {
     clientIdRequired?: boolean;
   }>;
 };
+type DiscoverySignIn = AppSignIn & { attempt?: string };
 
 function readCheckUrl(path: Discovery['paths'][number]) {
   if (!path.testPath || !path.endpoint) return null;
@@ -69,9 +71,9 @@ export function AppDiscoveryDialog({
   const [version, setVersion] = useState(0);
   const [clientId, setClientId] = useState('');
   const [instanceUrl, setInstanceUrl] = useState('');
-  const [signIn, setSignIn] = useState<AppSignIn>();
+  const [signIn, setSignIn] = useState<DiscoverySignIn>();
   const [unavailable, setUnavailable] = useState(false);
-  const pending = useRef<AppSignIn | undefined>(undefined);
+  const pending = useRef<DiscoverySignIn | undefined>(undefined);
   const loaded = useRef(false);
   const editing = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
@@ -90,7 +92,7 @@ export function AppDiscoveryDialog({
     connected.current();
   };
 
-  function show(value: AppSignIn | undefined) {
+  function show(value: DiscoverySignIn | undefined) {
     pending.current = value;
     setSignIn(value);
   }
@@ -144,7 +146,8 @@ export function AppDiscoveryDialog({
           show({
             ...identity(value),
             ...current,
-            url: current?.url ?? value.authorizationUrl,
+            url: value.authorizationUrl ?? current?.url,
+            attempt: value.attempt,
             outcome: replaced
               ? 'unavailable'
               : value.oauthStatus === 'pending'
@@ -234,7 +237,7 @@ export function AppDiscoveryDialog({
     setSaving(true);
     setError('');
     try {
-      const result = await api<{ url?: string }>(
+      const result = await api<{ url?: string; attempt?: string }>(
         `/api/apps/discovery/${encodeURIComponent(id)}/instance`,
         {
           method: 'POST',
@@ -261,7 +264,13 @@ export function AppDiscoveryDialog({
         window.location.origin,
         /^https?:\/\//i.test(typed) ? typed : `http://${typed}`,
       );
-      const next = { ...identity(discovery), accountLabel: typed, url, opened: false };
+      const next = {
+        ...identity(discovery),
+        accountLabel: typed,
+        url,
+        attempt: result.attempt,
+        opened: false,
+      };
       show(next);
       let opened = false;
       if (external) {
@@ -309,9 +318,11 @@ export function AppDiscoveryDialog({
     setSaving(true);
     setError('');
     const previous = pending.current;
+    const restartAttempt =
+      previous?.attempt ?? (discovery.oauthStatus === 'pending' ? discovery.attempt : undefined);
     if (previous) show({ ...previous, url: undefined, outcome: undefined, opened: false });
     try {
-      const result = await api<{ url: string }>(
+      const result = await api<{ url: string; attempt?: string }>(
         `/api/apps/discovery/${encodeURIComponent(id)}/authorize`,
         {
           method: 'POST',
@@ -319,6 +330,7 @@ export function AppDiscoveryDialog({
             ...(enteredClientId ? { clientId: enteredClientId } : {}),
             returnTo: 'window',
             restart: true,
+            ...(restartAttempt ? { restartAttempt } : {}),
           }),
           signal: controller.signal,
         },
@@ -337,7 +349,7 @@ export function AppDiscoveryDialog({
               : `http://${instanceUrl}`
             : undefined),
       );
-      const next = { ...identity(discovery), url, opened: false };
+      const next = { ...identity(discovery), url, attempt: result.attempt, opened: false };
       show(next);
       let opened = false;
       if (external) {
@@ -376,7 +388,7 @@ export function AppDiscoveryDialog({
   }
 
   function retry() {
-    if (paths[0]?.clientIdRequired && !clientId && discovery?.oauthStatus !== 'pending') {
+    if (paths[0]?.clientIdRequired && pending.current?.outcome) {
       editing.current = true;
       show(undefined);
       setError('');

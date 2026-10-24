@@ -764,20 +764,30 @@ export async function createDiscoveredConnections(
     return callback.href;
   }
   async function beginOAuth(id: string, input: unknown, expectedStateHash?: string) {
-    const { clientId, returnTo, restart } = z
+    const { clientId, returnTo, restart, restartAttempt } = z
       .object({
         clientId: z.string().trim().min(1).max(500).optional(),
         returnTo: z.enum(['apps', 'onboarding', 'window']).optional(),
         restart: z.boolean().default(false),
+        restartAttempt: z
+          .string()
+          .regex(/^[A-Za-z0-9_-]{43}$/)
+          .optional(),
       })
       .strict()
       .parse(input);
+    const suppliedStateHash = restartAttempt
+      ? createHash('sha256').update(restartAttempt).digest('hex')
+      : undefined;
     let attempt: ProposalRow | undefined;
     let authorizationFailed = false;
     try {
       const result = await transaction(async (client) => {
         const pending = await proposal(id, client, true);
-        if (expectedStateHash && pending.oauth_state_hash !== expectedStateHash)
+        if (
+          (expectedStateHash && pending.oauth_state_hash !== expectedStateHash) ||
+          (suppliedStateHash && pending.oauth_state_hash !== suppliedStateHash)
+        )
           throw error('This sign-in changed. Use the newest window or try again.', 409);
         const path = pending.paths[0];
         if (path?.kind !== 'mcp' || path.auth !== 'oauth')
@@ -1349,13 +1359,24 @@ export async function createDiscoveredConnections(
   }
   function registerRoutes(app: FastifyInstance) {
     app.get<{ Params: { id: string } }>('/api/apps/discovery/:id', async (request, reply) => {
-      let row = await proposal(request.params.id);
-      let authorizationUrl: string | undefined;
-      if (row.oauth_state_hash) {
-        const grant = await options.grantVault.read(row.id).catch(() => undefined);
-        if (grant) authorizationUrl = JSON.parse(grant.value).url;
-        else row = await proposal(request.params.id);
-      }
+      const { row, grant } = await transaction(async (client) => {
+        const row = await proposal(request.params.id, client, true);
+        const grant = row.oauth_state_hash
+          ? await options.grantVault.read(row.id, client).catch(() => undefined)
+          : undefined;
+        return { row, grant };
+      }, pool);
+      const saved = grant ? JSON.parse(grant.value) : undefined;
+      const attempt =
+        typeof saved?.attempt === 'string' &&
+        /^[A-Za-z0-9_-]{43}$/.test(saved.attempt) &&
+        createHash('sha256').update(saved.attempt).digest('hex') === row.oauth_state_hash
+          ? saved.attempt
+          : undefined;
+      const authorizationUrl =
+        typeof saved?.url === 'string' && (saved.attempt === undefined || attempt)
+          ? saved.url
+          : undefined;
       const address = officialMcp.get(row.service)?.instancePath && !row.paths.length;
       const localAddress = address ? await nearby(row.service) : undefined;
       return reply.header('Cache-Control', 'no-store').send({
@@ -1364,6 +1385,7 @@ export async function createDiscoveredConnections(
         ...(address ? { needsAddress: true, localAddress } : {}),
         oauthStatus: row.oauth_status === 'completing' ? 'pending' : row.oauth_status,
         authorizationUrl,
+        attempt,
         callbackUrl: row.paths.some((path) => path.kind === 'mcp' && path.clientIdRequired)
           ? callbackUrl()
           : undefined,
