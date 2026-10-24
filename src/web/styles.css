@@ -1231,16 +1231,8 @@ input[type='range']:disabled {
 .composer-tools {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
-}
-.composer-left {
-  display: flex;
-  gap: 0;
-  align-items: center;
-}
-.composer-left .button {
-  color: var(--muted-foreground);
 }
 .composer-right {
   display: flex;
@@ -2123,9 +2115,6 @@ input[type='range']:disabled {
   font-size: var(--text-body);
   line-height: 1.6;
   color: var(--placeholder);
-  opacity: 0.6;
-}
-.ghost-composer .composer-left .button {
   opacity: 0.6;
 }
 .ghost-send {

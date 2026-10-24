@@ -924,16 +924,12 @@
   font-size: 12px;
   flex-basis: 100%;
 }
-.file-action-notice button,
-.composer-send-preference {
+.file-action-notice button {
   color: var(--text-secondary);
   background: transparent;
   border: 0;
   cursor: pointer;
   font: inherit;
-}
-.composer-send-preference {
-  font-size: 12px;
 }
 .attachment-image-item {
   min-width: 0;
