@@ -42,7 +42,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
   let suspensions = 0;
   const cancel = (threadId?: string) => {
     for (const [controller, id] of active)
-      if (!threadId || id === threadId)
+      if (!threadId || !id || id === threadId)
         controller.abort(privateConflict('This voice message was cancelled.'));
   };
   const pause = async <T>(operation: () => Promise<T>, threadId?: string) => {

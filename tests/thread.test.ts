@@ -1768,6 +1768,72 @@ test(
       );
 
       await t.test(
+        'reset cancels audio intake whose multipart thread has not been read',
+        async () => {
+          await waitFor(settledThread);
+          const multipart = (await import('@fastify/multipart')).default;
+          const { registerAudioMessages } = await import('../src/server/audio-messages.ts');
+          const isolated = Fastify();
+          await isolated.register(multipart);
+          let reading = false;
+          let releaseRead!: () => void;
+          let releaseReset!: () => void;
+          const readGate = new Promise<void>((resolve) => {
+            releaseRead = resolve;
+          });
+          const resetGate = new Promise<void>((resolve) => {
+            releaseReset = resolve;
+          });
+          const intake = registerAudioMessages(isolated, {
+            speech,
+            verification: {
+              ...verification,
+              async pending(channel) {
+                reading = true;
+                await readGate;
+                return verification.pending(channel);
+              },
+            },
+            artifacts: localArtifacts,
+            submitMessage: userMessages.submit,
+            configuration: () => ({ ...configuration(), llmReady: true }),
+          });
+          const message = { threadId, clientMessageId: randomUUID() };
+          const before = transcriptions.length;
+          const pending = isolated.inject(audioRequest(message)).then((response) => response);
+          let resetting: Promise<void> | undefined;
+          try {
+            await waitFor(() => reading);
+            resetting = intake.pause(() => resetGate, threadId);
+            releaseRead();
+            const response = await pending;
+            assert.equal(response.statusCode, 409, response.body);
+            assert.equal(transcriptions.length, before);
+            assert.equal(
+              (
+                await db.pool.query('SELECT 1 FROM audio_messages WHERE message_id=$1', [
+                  message.clientMessageId,
+                ])
+              ).rowCount,
+              0,
+            );
+            assert.equal(
+              (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [message.clientMessageId]))
+                .rowCount,
+              0,
+            );
+          } finally {
+            releaseRead();
+            releaseReset();
+            await resetting;
+            await pending;
+            await isolated.close();
+            await waitFor(settledThread);
+          }
+        },
+      );
+
+      await t.test(
         'stopping a deferred private audio reservation prevents code delivery',
         async () => {
           await waitFor(settledThread);

@@ -226,6 +226,59 @@ test(
         },
       );
       await t.test(
+        'cancellation after reservation records no delivery and never replays started private entry',
+        async () => {
+          for (const afterEntry of [false, true]) {
+            await reset();
+            const request = await seed();
+            const controller = new AbortController();
+            const cancelled = new Error('Synthetic cancellation.');
+            const delivered: string[] = [];
+            const guarded = await createChatVerification(db.pool, {
+              ownerId,
+              keyStore: { getKey: async () => Buffer.alloc(32, 61) },
+              refresh() {
+                if (!afterEntry) controller.abort(cancelled);
+              },
+              submitCode: async (_owner, _turn, code) => {
+                delivered.push(code);
+                controller.abort(cancelled);
+                return { status: 'submitted' };
+              },
+            });
+            const clientMessageId = randomUUID();
+            await assert.rejects(
+              guarded.accept('563829', {
+                clientMessageId,
+                threadId: request.threadId,
+                signal: controller.signal,
+                persistVerification: async () => controller.signal.throwIfAborted(),
+              }),
+              (error: unknown) => error === cancelled,
+            );
+            const receipt = (
+              await db.pool.query(
+                `SELECT v.status,m.text FROM chat_verification_submissions v
+                 JOIN messages m ON m.id=v.message_id WHERE v.message_id=$1`,
+                [clientMessageId],
+              )
+            ).rows[0];
+            assert.equal(receipt.status, afterEntry ? 'submitted' : 'cancelled');
+            if (afterEntry) assert.match(receipt.text, /sent securely/);
+            else assert.match(receipt.text, /cancelled/i);
+            assert.deepEqual(delivered, afterEntry ? ['563829'] : []);
+            assert.doesNotMatch(JSON.stringify(receipt), /563829/);
+            const replay = await guarded.accept('563829', {
+              clientMessageId,
+              threadId: request.threadId,
+            });
+            assert.equal(replay?.verificationStatus, afterEntry ? 'submitted' : 'unavailable');
+            assert.equal(replay?.messageText, receipt.text);
+            assert.deepEqual(delivered, afterEntry ? ['563829'] : []);
+          }
+        },
+      );
+      await t.test(
         'Stop cancels a waiting payment before or during entry without restarting the task',
         async () => {
           for (const afterEntry of [false, true]) {

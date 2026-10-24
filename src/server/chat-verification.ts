@@ -26,10 +26,12 @@ export const texts = {
   otp: {
     masked: 'Verification code sent securely.',
     pending: 'Verification code received securely.',
+    cancelled: 'Verification code cancelled before sending.',
   },
   payment: {
     masked: 'Security code sent securely.',
     pending: 'Security code received securely.',
+    cancelled: 'Security code cancelled before sending.',
   },
 };
 const unavailableMessage =
@@ -334,28 +336,31 @@ export async function createChatVerification(
       client.release();
     }
     options.refresh();
-    let status: 'submitted' | 'unavailable';
-    try {
-      input.signal?.throwIfAborted();
-      const result =
-        reserved.kind === 'payment'
-          ? await options.submitPayment!(reserved.turnId, reserved.code, reserved.requestId)
-          : await options.submitCode(
-              options.ownerId,
-              reserved.turnId,
-              reserved.code,
-              reserved.requestId,
-            );
-      status = result.status === 'submitted' ? 'submitted' : 'unavailable';
-    } catch {
-      status = 'unavailable';
+    let status: 'submitted' | 'unavailable' | 'cancelled';
+    if (input.signal?.aborted) {
+      status = 'cancelled';
+    } else {
+      try {
+        const result =
+          reserved.kind === 'payment'
+            ? await options.submitPayment!(reserved.turnId, reserved.code, reserved.requestId)
+            : await options.submitCode(
+                options.ownerId,
+                reserved.turnId,
+                reserved.code,
+                reserved.requestId,
+              );
+        status = result.status === 'submitted' ? 'submitted' : 'unavailable';
+      } catch {
+        status = 'unavailable';
+      }
     }
     const response: SubmitMessageResponse = {
       threadId: reserved.threadId,
       turnId: reserved.turnId,
       messageId: input.clientMessageId,
-      messageText: texts[reserved.kind].masked,
-      verificationStatus: status,
+      messageText: texts[reserved.kind][status === 'cancelled' ? 'cancelled' : 'masked'],
+      verificationStatus: status === 'cancelled' ? 'unavailable' : status,
     };
     await pool.query(
       `WITH changed AS (
@@ -363,6 +368,10 @@ export async function createChatVerification(
        ) UPDATE messages SET text=$3 WHERE id IN (SELECT message_id FROM changed)`,
       [input.clientMessageId, status, response.messageText],
     );
+    if (status === 'cancelled') {
+      options.refresh();
+      input.signal?.throwIfAborted();
+    }
     if (input.persistVerification)
       await transaction((client) => input.persistVerification!(client, response), pool);
     if (status !== 'submitted' && !input.persistVerification) {
