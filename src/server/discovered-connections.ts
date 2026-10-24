@@ -129,10 +129,12 @@ type ProposalRow = {
   account_name: string | null;
   oauth_state_hash: string | null;
   oauth_status: 'pending' | 'completing' | 'connected' | 'cancelled' | 'failed' | null;
+  callback_return_to: ReturnTarget | null;
   connection_id: string | null;
   turn_id: string | null;
   created_at: Date;
 };
+type ReturnTarget = 'apps' | 'onboarding' | 'window';
 
 const catalogMs = 10 * 60_000;
 
@@ -270,6 +272,7 @@ export async function createDiscoveredConnections(
       ADD COLUMN IF NOT EXISTS replaced_at timestamptz;
     ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_status text,
       ADD COLUMN IF NOT EXISTS link_hash text, DROP COLUMN IF EXISTS thread_id,
+      ADD COLUMN IF NOT EXISTS callback_return_to text,
       ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
   `);
   const interrupted = await transaction(async (recovery) => {
@@ -324,16 +327,22 @@ export async function createDiscoveredConnections(
       name: string;
       completed: boolean;
       link_hash: string | null;
+      oauth_status: ProposalRow['oauth_status'];
     }>(
-      `SELECT id,service AS slug,name,oauth_status IS NOT DISTINCT FROM 'connected' AS completed,link_hash
+      `SELECT id,service AS slug,name,oauth_status IS NOT DISTINCT FROM 'connected' AS completed,link_hash,oauth_status
        FROM discovered_connection_proposals WHERE owner_id=$1
        AND (id=ANY($2::uuid[]) OR link_hash=ANY($3::text[]))
        AND (expires_at>now() OR oauth_status='connected')`,
       [owner, requested, hashes],
     );
-    return result.rows;
+    return result.rows.map(({ oauth_status, ...row }) => ({
+      ...row,
+      ...(row.link_hash && hashes.includes(row.link_hash)
+        ? { available: oauth_status === 'pending' || oauth_status === 'completing' }
+        : {}),
+    }));
   }
-  async function create(input: unknown, turn?: TurnRef) {
+  async function create(input: unknown, turn?: TurnRef, returnTo?: ReturnTarget) {
     const parsed = proposalSchema.parse(input);
     let name = parsed.name;
     if (parsed.paths.some((path) => path.auth === 'oauth')) {
@@ -384,8 +393,8 @@ export async function createDiscoveredConnections(
     }
     await pool.query(
       `INSERT INTO discovered_connection_proposals
-       (id,owner_id,service,name,paths,connection_id,turn_id,setup_url,setup_text)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+       (id,owner_id,service,name,paths,connection_id,turn_id,setup_url,setup_text,callback_return_to)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
         id,
         owner,
@@ -396,12 +405,13 @@ export async function createDiscoveredConnections(
         turn?.turnId ?? null,
         setupUrl,
         parsed.setupText ?? null,
+        returnTo ?? null,
       ],
     );
     return { id, name };
   }
-  async function propose(input: unknown, turn?: TurnRef) {
-    const { id, name } = await create(input, turn);
+  async function propose(input: unknown, turn?: TurnRef, returnTo?: ReturnTarget) {
+    const { id, name } = await create(input, turn, returnTo);
     return { name, url: `/apps?connect=${id}` };
   }
   const locals = new Map<string, { transport: DiscoveredTransport; oauth: DiscoveredOAuth }>();
@@ -430,7 +440,12 @@ export async function createDiscoveredConnections(
     const body = answer && 'body' in answer ? (answer.body as { resource?: unknown }) : null;
     return typeof body?.resource === 'string' ? server.local : undefined;
   }
-  async function addressProposal(service: string, turn?: TurnRef, connectionId?: string) {
+  async function addressProposal(
+    service: string,
+    turn?: TurnRef,
+    connectionId?: string,
+    returnTo?: ReturnTarget,
+  ) {
     const server = officialMcp.get(service)!;
     let name = server.name;
     if (connectionId) {
@@ -440,9 +455,9 @@ export async function createDiscoveredConnections(
     }
     const id = randomUUID();
     await pool.query(
-      `INSERT INTO discovered_connection_proposals (id,owner_id,service,name,paths,connection_id,turn_id)
-       VALUES($1,$2,$3,$4,'[]',$5,$6)`,
-      [id, owner, service, name, connectionId ?? null, turn?.turnId ?? null],
+      `INSERT INTO discovered_connection_proposals (id,owner_id,service,name,paths,connection_id,turn_id,callback_return_to)
+       VALUES($1,$2,$3,$4,'[]',$5,$6,$7)`,
+      [id, owner, service, name, connectionId ?? null, turn?.turnId ?? null, returnTo ?? null],
     );
     return { name, url: `/apps?connect=${id}` };
   }
@@ -451,6 +466,7 @@ export async function createDiscoveredConnections(
       .object({
         instanceUrl: z.string().trim().min(3).max(2048),
         token: z.string().trim().min(8).max(8192).optional(),
+        returnTo: z.enum(['apps', 'onboarding', 'window']).optional(),
       })
       .strict()
       .parse(input);
@@ -539,7 +555,7 @@ export async function createDiscoveredConnections(
     try {
       return parsed.token
         ? await complete(id, { token: parsed.token, accountName: url.host })
-        : await beginOAuth(id, {});
+        : await beginOAuth(id, { returnTo: parsed.returnTo });
     } catch (cause) {
       await pool.query(
         `UPDATE discovered_connection_proposals SET paths='[]'::jsonb,oauth_status=NULL,oauth_state_hash=NULL
@@ -576,16 +592,37 @@ export async function createDiscoveredConnections(
     if (officialMcp.get(service)?.instancePath) return addressProposal(service, turn, connectionId);
     return propose(official(service, connectionId), turn);
   }
-  async function authorize(service: string, connectionId?: string) {
+  async function authorize(
+    service: string,
+    connectionId?: string,
+    returnTo?: ReturnTarget,
+    restartAttempt?: string,
+  ) {
+    if (restartAttempt) {
+      const hash = createHash('sha256').update(restartAttempt).digest('hex');
+      const pending = (
+        await pool.query<Pick<ProposalRow, 'id' | 'name'>>(
+          `SELECT id,name FROM discovered_connection_proposals
+           WHERE owner_id=$1 AND service=$2 AND connection_id IS NOT DISTINCT FROM $3::uuid
+           AND oauth_state_hash=$4 AND expires_at>now()`,
+          [owner, service, connectionId ?? null, hash],
+        )
+      ).rows[0];
+      if (!pending) throw error('This sign-in changed. Use the newest window or try again.', 409);
+      return {
+        name: pending.name,
+        ...(await beginOAuth(pending.id, { restart: true, returnTo }, hash)),
+      };
+    }
     if (officialMcp.get(service)?.instancePath)
-      return addressProposal(service, undefined, connectionId);
-    const { id, name } = await create(official(service, connectionId));
-    return { name, ...(await beginOAuth(id, {})) };
+      return addressProposal(service, undefined, connectionId, returnTo);
+    const { id, name } = await create(official(service, connectionId), undefined, returnTo);
+    return { name, ...(await beginOAuth(id, { returnTo })) };
   }
   async function proposal(id: string, client: Pool | PoolClient = pool, lock = false) {
     const row = (
       await client.query<ProposalRow>(
-        `SELECT id,owner_id,service,name,paths,connection_id,turn_id,setup_url,setup_text,account_name,oauth_state_hash,oauth_status,created_at
+        `SELECT id,owner_id,service,name,paths,connection_id,turn_id,setup_url,setup_text,account_name,oauth_state_hash,oauth_status,callback_return_to,created_at
        FROM discovered_connection_proposals
        WHERE id=$1 AND owner_id=$2 AND expires_at>now()${lock ? ' FOR UPDATE' : ''}`,
         [z.uuid().parse(id), owner],
@@ -726,18 +763,33 @@ export async function createDiscoveredConnections(
     if (callback.hostname === 'localhost') callback.hostname = '127.0.0.1';
     return callback.href;
   }
-  async function beginOAuth(id: string, input: unknown) {
-    const { clientId } = z
+  async function beginOAuth(id: string, input: unknown, expectedStateHash?: string) {
+    const { clientId, returnTo, restart, restartAttempt } = z
       .object({
         clientId: z.string().trim().min(1).max(500).optional(),
+        returnTo: z.enum(['apps', 'onboarding', 'window']).optional(),
+        restart: z.boolean().default(false),
+        restartAttempt: z
+          .string()
+          .regex(/^[A-Za-z0-9_-]{43}$/)
+          .nullable()
+          .optional(),
       })
       .strict()
       .parse(input);
+    const suppliedStateHash = restartAttempt
+      ? createHash('sha256').update(restartAttempt).digest('hex')
+      : restartAttempt;
     let attempt: ProposalRow | undefined;
     let authorizationFailed = false;
     try {
       const result = await transaction(async (client) => {
         const pending = await proposal(id, client, true);
+        if (
+          (expectedStateHash && pending.oauth_state_hash !== expectedStateHash) ||
+          (suppliedStateHash !== undefined && pending.oauth_state_hash !== suppliedStateHash)
+        )
+          throw error('This sign-in changed. Use the newest window or try again.', 409);
         const path = pending.paths[0];
         if (path?.kind !== 'mcp' || path.auth !== 'oauth')
           throw error('This connection uses a token.');
@@ -745,13 +797,29 @@ export async function createDiscoveredConnections(
           throw error('This app is already connected.', 409);
         if (pending.oauth_status === 'completing')
           throw error('Sign-in is finishing. Wait a moment.', 409);
+        let saved: { url?: string; attempt?: string; clientId?: string } | undefined;
         if (pending.oauth_state_hash) {
-          const saved = JSON.parse((await options.grantVault.read(pending.id, client)).value);
-          if (typeof saved.url !== 'string')
-            throw error('Continue the sign-in already open in your browser.', 409);
-          return { url: saved.url };
+          saved = JSON.parse((await options.grantVault.read(pending.id, client)).value);
+          if (!restart) {
+            if (typeof saved?.url !== 'string')
+              throw error('Continue the sign-in already open in your browser.', 409);
+            if (returnTo)
+              await client.query(
+                'UPDATE discovered_connection_proposals SET callback_return_to=$3 WHERE id=$1 AND owner_id=$2',
+                [pending.id, owner, returnTo],
+              );
+            return {
+              url: saved.url,
+              ...(typeof saved.attempt === 'string' &&
+              /^[A-Za-z0-9_-]{43}$/.test(saved.attempt) &&
+              createHash('sha256').update(saved.attempt).digest('hex') === pending.oauth_state_hash
+                ? { attempt: saved.attempt }
+                : {}),
+            };
+          }
         }
-        if (path.clientIdRequired && !clientId) throw error('Enter the client ID.');
+        const selectedClientId = clientId ?? saved?.clientId;
+        if (path.clientIdRequired && !selectedClientId) throw error('Enter the client ID.');
         attempt = pending;
         const state = randomBytes(32).toString('base64url');
         let started: Awaited<ReturnType<DiscoveredOAuth['begin']>>;
@@ -761,7 +829,7 @@ export async function createDiscoveredConnections(
             callbackUrl(),
             state,
             path.scope,
-            clientId,
+            selectedClientId,
           );
         } catch {
           authorizationFailed = true;
@@ -769,7 +837,7 @@ export async function createDiscoveredConnections(
         }
         const updated = await client.query(
           `UPDATE discovered_connection_proposals
-         SET account_name=$3,oauth_state_hash=$4,oauth_status='pending',link_hash=$5
+         SET account_name=$3,oauth_state_hash=$4,oauth_status='pending',link_hash=$5,callback_return_to=$6
          WHERE id=$1 AND owner_id=$2 AND expires_at>now()`,
           [
             pending.id,
@@ -777,16 +845,22 @@ export async function createDiscoveredConnections(
             pending.account_name ?? pending.name,
             createHash('sha256').update(state).digest('hex'),
             createHash('sha256').update(started.url).digest('hex'),
+            returnTo ?? pending.callback_return_to,
           ],
         );
         if (!updated.rowCount) throw error('This connection request expired.', 409);
         await options.grantVault.put(
           pending.id,
-          JSON.stringify({ state: started.saved, url: started.url }),
+          JSON.stringify({
+            state: started.saved,
+            url: started.url,
+            attempt: state,
+            ...(selectedClientId ? { clientId: selectedClientId } : {}),
+          }),
           client,
           new Date(Date.now() + 15 * 60_000),
         );
-        return { url: started.url };
+        return { url: started.url, attempt: state };
       }, pool);
       if (attempt) track(attempt, 'started');
       return result;
@@ -838,7 +912,9 @@ export async function createDiscoveredConnections(
       return {
         outcome,
         service: pending.service,
-        returnTo: pending.turn_id ? ('chat' as const) : ('apps' as const),
+        attempt: parsed.state,
+        returnTo:
+          pending.callback_return_to ?? (pending.turn_id ? ('chat' as const) : ('apps' as const)),
       };
     }
     if (parsed.error || !parsed.code) return failed('cancelled');
@@ -875,7 +951,9 @@ export async function createDiscoveredConnections(
       return {
         outcome: result.continued ? ('continued' as const) : ('connected' as const),
         service: pending.service,
-        returnTo: pending.turn_id ? ('chat' as const) : ('apps' as const),
+        attempt: parsed.state,
+        returnTo:
+          pending.callback_return_to ?? (pending.turn_id ? ('chat' as const) : ('apps' as const)),
       };
     } catch {
       return failed('failed', failureReason);
@@ -1024,38 +1102,42 @@ export async function createDiscoveredConnections(
     options.refresh?.();
     return { ok: true };
   }
-  async function reconnect(service: string, templateId?: string) {
+  async function reconnect(service: string, templateId?: string, returnTo?: ReturnTarget) {
     const rows = await pool.query<AccountRow>(
       'SELECT * FROM discovered_connections WHERE owner_id=$1 AND service=$2 AND ($3::uuid IS NULL OR id=$3) ORDER BY created_at LIMIT 1',
       [owner, service, templateId ? z.uuid().parse(templateId) : null],
     );
     const row = rows.rows[0];
     if (!row) throw error('This service is unavailable.', 404);
-    return propose({
-      service,
-      name: row.name,
-      ...(row.reconnect_required ? { connectionId: row.id } : {}),
-      paths: row.paths.map((path) => {
-        if (path.kind === 'cli') {
-          if (!path.source || !path.env) throw error('Ask nod to set up this CLI again.', 409);
+    return propose(
+      {
+        service,
+        name: row.name,
+        ...(row.reconnect_required ? { connectionId: row.id } : {}),
+        paths: row.paths.map((path) => {
+          if (path.kind === 'cli') {
+            if (!path.source || !path.env) throw error('Ask nod to set up this CLI again.', 409);
+            return {
+              kind: path.kind,
+              command: path.command,
+              auth: path.auth,
+              env: path.env,
+              source: path.source,
+            };
+          }
           return {
             kind: path.kind,
-            command: path.command,
+            endpoint: path.endpoint,
             auth: path.auth,
-            env: path.env,
-            source: path.source,
+            ...(path.testPath ? { testPath: path.testPath } : {}),
+            ...(path.scope ? { scope: path.scope } : {}),
+            ...(path.clientIdRequired ? { clientIdRequired: path.clientIdRequired } : {}),
           };
-        }
-        return {
-          kind: path.kind,
-          endpoint: path.endpoint,
-          auth: path.auth,
-          ...(path.testPath ? { testPath: path.testPath } : {}),
-          ...(path.scope ? { scope: path.scope } : {}),
-          ...(path.clientIdRequired ? { clientIdRequired: path.clientIdRequired } : {}),
-        };
-      }),
-    });
+        }),
+      },
+      undefined,
+      returnTo,
+    );
   }
   async function search(query: string, connectionId?: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
@@ -1278,20 +1360,33 @@ export async function createDiscoveredConnections(
   }
   function registerRoutes(app: FastifyInstance) {
     app.get<{ Params: { id: string } }>('/api/apps/discovery/:id', async (request, reply) => {
-      let row = await proposal(request.params.id);
-      let authorizationUrl: string | undefined;
-      if (row.oauth_state_hash) {
-        const grant = await options.grantVault.read(row.id).catch(() => undefined);
-        if (grant) authorizationUrl = JSON.parse(grant.value).url;
-        else row = await proposal(request.params.id);
-      }
+      const { row, grant } = await transaction(async (client) => {
+        const row = await proposal(request.params.id, client, true);
+        const grant = row.oauth_state_hash
+          ? await options.grantVault.read(row.id, client).catch(() => undefined)
+          : undefined;
+        return { row, grant };
+      }, pool);
+      const saved = grant ? JSON.parse(grant.value) : undefined;
+      const attempt =
+        typeof saved?.attempt === 'string' &&
+        /^[A-Za-z0-9_-]{43}$/.test(saved.attempt) &&
+        createHash('sha256').update(saved.attempt).digest('hex') === row.oauth_state_hash
+          ? saved.attempt
+          : undefined;
+      const authorizationUrl =
+        typeof saved?.url === 'string' && (saved.attempt === undefined || attempt)
+          ? saved.url
+          : undefined;
       const address = officialMcp.get(row.service)?.instancePath && !row.paths.length;
       const localAddress = address ? await nearby(row.service) : undefined;
       return reply.header('Cache-Control', 'no-store').send({
+        service: row.service,
         name: row.name,
         ...(address ? { needsAddress: true, localAddress } : {}),
         oauthStatus: row.oauth_status === 'completing' ? 'pending' : row.oauth_status,
         authorizationUrl,
+        attempt,
         callbackUrl: row.paths.some((path) => path.kind === 'mcp' && path.clientIdRequired)
           ? callbackUrl()
           : undefined,

@@ -30,7 +30,9 @@ const unavailableReasons = {
 
 function connectionMessage(result?: string) {
   if (result === 'cancelled') return 'Sign-in cancelled. You can try again.';
-  if (result === 'failed' || result === 'expired') return 'Gmail didn’t connect. Try again?';
+  if (result === 'expired')
+    return 'This sign-in link is no longer active. Try again with a new window.';
+  if (result === 'failed') return 'Gmail didn’t connect. Try again with a new sign-in window.';
   return '';
 }
 
@@ -46,6 +48,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   const [pending, setPending] = useState<'opening' | 'waiting'>();
   const [pairingConfirmed, setPairingConfirmed] = useState(false);
   const [signInUrl, setSignInUrl] = useState<string>();
+  const [signInOpened, setSignInOpened] = useState(false);
   const [stale, setStale] = useState(false);
   const [pollFailing, setPollFailing] = useState(false);
   const [error, setError] = useState('');
@@ -58,6 +61,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     setCompleted(false);
     attempt.current = undefined;
     setSignInUrl(undefined);
+    setSignInOpened(false);
     setStale(false);
     setPollFailing(false);
   }
@@ -133,8 +137,8 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
           return true;
         }
         const app = result.apps.find((app) => app.hash === hash);
-        if (!app) {
-          settle('failed');
+        if (!app || app.available === false) {
+          settle('expired');
           return true;
         }
         if (app.pairingConfirmed === true && !confirmed) {
@@ -255,8 +259,14 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         setSignInUrl(url);
       });
       next = 'waiting';
-      if (external) await openConnection(url);
-      else if (popup && !popup.closed) popup.location.href = url;
+      if (external) {
+        await openConnection(url);
+        if (!controller.signal.aborted && attempt.current === response.attempt)
+          setSignInOpened(true);
+      } else if (popup && !popup.closed) {
+        popup.location.href = url;
+        setSignInOpened(true);
+      }
     } catch (cause) {
       popup?.close();
       clearAttempt();
@@ -334,20 +344,25 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   else if (gmailState === 'waiting')
     status = (
       <div className="ob-email-waiting">
-        <LoaderCircle size={18} className="spin" aria-hidden="true" />
-        <p>
-          {stale ? 'Didn’t finish signing in?' : 'Finish signing in in your browser.'}{' '}
-          {signInUrl && !pairingConfirmed && (
-            <a href={signInUrl} target="_blank" rel="noreferrer">
-              Open sign-in
-            </a>
-          )}
-        </p>
-        {stale && (
-          <Button variant="outline" size="sm" onClick={() => void connect()}>
-            Start again
-          </Button>
-        )}
+        <div className="ob-email-waiting-status" role="status">
+          <LoaderCircle size={18} className="spin" aria-hidden="true" />
+          <p>
+            {stale ? 'Still waiting for sign-in.' : 'Finish signing in in your browser.'}{' '}
+            {signInUrl && !signInOpened && !pairingConfirmed && (
+              <a
+                href={signInUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setSignInOpened(true)}
+              >
+                Open sign-in
+              </a>
+            )}
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => void connect()}>
+          Start again
+        </Button>
         <Button variant="ghost" size="sm" onClick={cancel}>
           Cancel
         </Button>
@@ -364,7 +379,10 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         </Button>
       </div>
     );
-  else status = <p className="ob-email-muted">Sign in to Gmail and review what nod can access.</p>;
+  else
+    status = error ? null : (
+      <p className="ob-email-muted">Sign in to Gmail and review what nod can access.</p>
+    );
 
   return (
     <section className="ob-step ob-email" data-analytics-public onClick={done ? undefined : skip}>
@@ -411,7 +429,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
                   {gmailState === 'opening' && (
                     <LoaderCircle size={16} className="spin" aria-hidden="true" />
                   )}
-                  Connect Gmail
+                  {error ? 'Try again' : 'Connect Gmail'}
                 </Button>
               )
             )}

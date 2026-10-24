@@ -13,6 +13,8 @@ Notion and Linear connect through their own hosted MCP servers, the same way as 
 
 If you ask nod in chat, it sends a link to a private setup page in nod, and you start the sign-in there. The service's sign-in link never appears in the chat, so the model and chat apps never see it.
 
+If sign-in is cancelled or fails, select **Try again** in the connection dialog. Select **Start again** if you closed the sign-in window. Finish in the newest window, then dismiss the confirmed connection with **Done**.
+
 nod can use every tool these servers offer, so it can read and change pages, issues and projects. Each change goes through the same [trust check](/trust/approvals/) as any app action. If nod can't refresh a sign-in because it expired or was revoked, **Apps** shows **Sign-in required** with **Reconnect** from then on.
 
 ## n8n
