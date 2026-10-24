@@ -30,6 +30,14 @@ Select **Find in conversation** to search stored messages in the current convers
 
 An action confirmation shows its current state beside the question. **Done** means the confirmed action finished. **Outcome unclear** means it failed or stopped after execution started. It can still have changed the target. Check the result before you try again. nod does not repeat it automatically.
 
+## Listen to audio
+
+Audio attachments play directly in chat. Select **Play audio** to listen, then **Pause audio** to pause. Starting another attachment pauses the previous one.
+
+The waveform shows the sound in the file. Click or drag along it to seek, or use the controls to move backward or forward 10 seconds. Change the playback speed to 0.75×, 1×, 1.25×, 1.5×, or 2×. Select **Download** to save the file.
+
+For large files or formats whose waveform your browser can't read, the player shows a seek track instead. Playback remains available if your browser supports the audio format.
+
 ## Keep talking while nod works
 
 You don't have to wait. The message box stays open while nod works. For work that takes more than a few seconds, nod says in one line what it will do, then answers. While it works, a bubble from nod at the bottom of the chat shows what it's doing right now, such as "Found two flights under budget, checking seats now", and the answer replaces it. Tasks you started show there too, with their title. In Telegram you see **typing…** and the same line as a live draft, and in WhatsApp **typing…**. None of this sends you a notification; see [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file nod shares is attached to its next answer, or sent on its own when none follows.

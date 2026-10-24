@@ -19,7 +19,7 @@ import {
 import { previewableUrl, publicMediaUrl } from '../src/shared/link-preview.ts';
 import { artifactImage, artifactPreview } from '../src/web/components/attachment-images.tsx';
 import { sandboxedDocument } from '../src/web/components/attachment-frame.tsx';
-import { localPreviewable } from '../src/web/lib/attachment-kind.ts';
+import { attachmentKind, localPreviewable } from '../src/web/lib/attachment-kind.ts';
 import { MessageText } from '../src/web/components/message.tsx';
 import type { Artifact } from '../src/shared/contracts.ts';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
@@ -743,6 +743,30 @@ test('file previews accept only owned artifact URLs and keep active content out 
     assert.equal(artifactImage(file), null);
     assert.equal(artifactPreview({ ...file, url: 'https://example.com/file' }), null);
   }
+  for (const [mimeType, name, kind] of [
+    ['audio/webm; codecs=opus', 'voice.webm', 'audio'],
+    [' Audio/MP4 ', 'voice.MP4', 'audio'],
+    ['audio/ogg', 'voice.ogv', 'audio'],
+    ['audio/mpeg', 'voice', 'audio'],
+    ['video/webm', 'clip.webm', 'video'],
+    ['application/octet-stream', 'clip.webm', 'video'],
+    ['audio/unknown', 'clip.webm', 'video'],
+    ['audio/webm', 'page.html', 'html'],
+    ['audio/webm', 'logo.svg', 'image'],
+  ]) {
+    const media = { ...picture, mimeType, name };
+    const preview = artifactPreview(media);
+    assert.ok(preview);
+    assert.equal(attachmentKind(preview.mimeType!, preview.name), kind);
+    for (const url of [
+      'https://example.com/voice.webm',
+      '//example.com/voice.webm',
+      'blob:https://example.com/voice',
+      '/api/artifacts/00000000-0000-4000-8000-000000000000?token=private',
+      '/api/artifacts/00000000-0000-4000-8000-000000000000/voice.webm',
+    ])
+      assert.equal(artifactPreview({ ...media, url }), null);
+  }
   assert.ok(artifactImage(picture));
   for (const url of [
     'https://example.com/image.png',
@@ -762,6 +786,11 @@ test('file previews accept only owned artifact URLs and keep active content out 
     ['application/octet-stream', 'feed.xml'],
     ['application/x-tgsticker', 'sticker'],
     ['application/octet-stream', 'sticker.tgs'],
+    ['audio/webm', 'page.html'],
+    ['audio/webm', 'logo.svg'],
+    ['audio/webm', 'feed.xml'],
+    ['text/html', 'voice.webm'],
+    ['image/svg+xml', 'voice.webm'],
   ])
     assert.equal(localPreviewable(mimeType, name), false, `${mimeType} ${name}`);
   for (const [mimeType, name] of [
@@ -769,6 +798,7 @@ test('file previews accept only owned artifact URLs and keep active content out 
     ['text/csv', 'data.csv'],
     ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'table.xlsx'],
     ['application/pdf', 'report.pdf'],
+    ['audio/webm; codecs=opus', 'voice.webm'],
   ])
     assert.equal(localPreviewable(mimeType, name), true, `${mimeType} ${name}`);
   const { document } = new JSDOM(

@@ -326,6 +326,101 @@ test('audio waveform reads refuse foreign URLs, oversized streams, redirects and
     );
 });
 
+test('audio waveform decoding bounds WAV, MP3 and M4A samples before entering the native decoder', async (t) => {
+  const wav = (samples: number) => {
+    const bytes = Buffer.alloc(44 + samples * 2);
+    bytes.write('RIFF');
+    bytes.writeUInt32LE(bytes.length - 8, 4);
+    bytes.write('WAVEfmt ', 8);
+    bytes.writeUInt32LE(16, 16);
+    bytes.writeUInt16LE(1, 20);
+    bytes.writeUInt16LE(1, 22);
+    bytes.writeUInt32LE(8000, 24);
+    bytes.writeUInt32LE(16000, 28);
+    bytes.writeUInt16LE(2, 32);
+    bytes.writeUInt16LE(16, 34);
+    bytes.write('data', 36);
+    bytes.writeUInt32LE(samples * 2, 40);
+    return bytes;
+  };
+  const frame = Buffer.alloc(417);
+  frame.set([0xff, 0xfb, 0x90, 0xc4]);
+  const mp3 = Buffer.concat([frame, frame]);
+  const m4a = Buffer.from(
+    'AAAAHGZ0eXBNNEEgAAACAE00QSBpc29taXNvMgAAAAhmcmVlAAAAIW1kYXTeAgBMYXZjNjIuMTEuMTAwAAIwQA4BGCAHAAADAm1vb3YAAABsbXZoZAAAAAAAAAAAAAAAAAAAA+gAAAAyAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAItdHJhawAAAFx0a2hkAAAAAwAAAAAAAAAAAAAAAQAAAAAAAAAyAAAAAAAAAAAAAAABAQAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAJGVkdHMAAAAcZWxzdAAAAAAAAAABAAAAMgAABAAAAQAAAAABpW1kaWEAAAAgbWRoZAAAAAAAAAAAAAAAAAAAH0AAAAWQVcQAAAAAAC1oZGxyAAAAAAAAAABzb3VuAAAAAAAAAAAAAAAAU291bmRIYW5kbGVyAAAAAVBtaW5mAAAAEHNtaGQAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAARRzdGJsAAAAanN0c2QAAAAAAAAAAQAAAFptcDRhAAAAAAAAAAEAAAAAAAAAAAABABAAAAAAH0AAAAAAADZlc2RzAAAAAAOAgIAlAAEABICAgBdAFQAAAAAAPoAAAARjBYCAgAUViFblAAaAgIABAgAAACBzdHRzAAAAAAAAAAIAAAABAAAEAAAAAAEAAAGQAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAACAAAAAQAAABxzdHN6AAAAAAAAAAAAAAACAAAAFQAAAAQAAAAUc3RjbwAAAAAAAAABAAAALAAAABpzZ3BkAQAAAHJvbGwAAAACAAAAAf//AAAAHHNiZ3AAAAAAcm9sbAAAAAEAAAACAAAAAQAAAGF1ZHRhAAAAWW1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALGlsc3QAAAAkqXRvbwAAABxkYXRhAAAAAQAAAABMYXZmNjIuMy4xMDA=',
+    'base64',
+  );
+  const invalidWav = wav(128);
+  invalidWav.writeUInt16LE(32, 22);
+  const invalidMp3 = Buffer.from(mp3);
+  invalidMp3[2] = 0xf0;
+  const excessiveM4a = Buffer.from(m4a);
+  excessiveM4a.writeUInt32BE(0xffffffff, m4a.indexOf('stts') + 12);
+  const invalidM4a = Buffer.from(m4a);
+  invalidM4a.writeUInt32BE(0xffffffff, m4a.indexOf('stsz') - 4);
+  const oversizedM4aSample = Buffer.from(m4a);
+  oversizedM4aSample.writeUInt32BE(0xffffffff, m4a.indexOf('stsz') + 16);
+  const multichannelM4a = Buffer.from(m4a);
+  multichannelM4a.writeUInt16BE(32, m4a.indexOf('mp4a') + 20);
+  const files = [
+    wav(128),
+    mp3,
+    Buffer.concat([Buffer.from([73, 68, 51, 4, 0, 0, 0, 0, 0, 0]), mp3]),
+    m4a,
+    invalidWav,
+    wav(4_800_001),
+    invalidMp3,
+    Buffer.concat(Array.from({ length: 23_000 }, () => frame)),
+    excessiveM4a,
+    invalidM4a,
+    oversizedM4aSample,
+    multichannelM4a,
+    m4a.subarray(0, m4a.length - 1),
+    Buffer.from('<html>Not audio</html>'),
+  ];
+  const ids = files.map(() => randomUUID());
+  const server = createServer((request, response) => {
+    const index = ids.indexOf(request.url!.split('/').at(-1)!);
+    response.end(files[index]);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const address = server.address() as { port: number };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input, options) =>
+    originalFetch(new URL(String(input), `http://127.0.0.1:${address.port}`), options);
+  const originalContext = Object.getOwnPropertyDescriptor(globalThis, 'OfflineAudioContext');
+  let decodes = 0;
+  Object.defineProperty(globalThis, 'OfflineAudioContext', {
+    configurable: true,
+    value: class {
+      async decodeAudioData() {
+        decodes++;
+        throw new Error('Native decoding unavailable in this test.');
+      }
+    },
+  });
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    if (originalContext) Object.defineProperty(globalThis, 'OfflineAudioContext', originalContext);
+    else Reflect.deleteProperty(globalThis, 'OfflineAudioContext');
+  });
+  for (const [index, file] of files.entries())
+    await assert.rejects(
+      loadAudioWaveform(
+        `/api/artifacts/${ids[index]}`,
+        file.length,
+        1,
+        new AbortController().signal,
+      ),
+      index < 4 ? /Native decoding unavailable/ : /Waveform unavailable/,
+    );
+  assert.equal(decodes, 4);
+});
+
 test('WhatsApp setup removes stale QR codes and recovers from failed and stalled reads', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
