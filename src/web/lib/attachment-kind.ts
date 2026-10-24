@@ -91,7 +91,11 @@ export function attachmentKind(mimeType: string, name = ''): AttachmentKind | nu
   const type = mimeType.split(';', 1)[0].trim().toLowerCase();
   if (/\.n8n\.json$/i.test(name)) return 'n8n-workflow';
   const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1].toLowerCase() ?? '';
-  return Object.hasOwn(extensionKinds, extension) ? extensionKinds[extension] : kindFromType(type);
+  const declaredKind = kindFromType(type);
+  const extensionKind = Object.hasOwn(extensionKinds, extension) ? extensionKinds[extension] : null;
+  return declaredKind === 'audio' && extensionKind === 'video'
+    ? declaredKind
+    : (extensionKind ?? declaredKind);
 }
 
 export function vectorImage(mimeType: string, name = '') {

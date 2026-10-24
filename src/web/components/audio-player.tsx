@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Download, LoaderCircle, Pause, Play } from './icons';
+import { Download, LoaderCircle, Pause, Play, RotateCcw } from './icons';
 import { loadAudioWaveform } from '../lib/audio-waveform';
-import { ownedArtifactUrl } from '../lib/attachment-url';
+import { localPreviewUrl, ownedArtifactUrl } from '../lib/attachment-url';
 import type { ImagePreview } from './attachment-images';
 import { Button } from './ui';
 
@@ -10,13 +10,18 @@ function audioTime(seconds: number) {
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
 }
 
-export function AudioPlayer({
-  item,
-  selected = false,
-}: {
+type AudioPlayerProps = {
   item: ImagePreview;
   selected?: boolean;
-}) {
+  onDuration?(duration: number): void;
+};
+
+export function AudioPlayer(props: AudioPlayerProps) {
+  if (!ownedArtifactUrl(props.item.url) && !localPreviewUrl(props.item.url)) return null;
+  return <Player key={props.item.url} {...props} />;
+}
+
+function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
   const container = useRef<HTMLDivElement>(null);
   const audio = useRef<HTMLAudioElement>(null);
   const frame = useRef(0);
@@ -48,7 +53,7 @@ export function AudioPlayer({
     return () => observer.disconnect();
   }, []);
   useEffect(() => {
-    if (!visible || !duration) return;
+    if (!visible || !duration || failed) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
     void loadAudioWaveform(item.url, item.size, duration, signal)
@@ -57,7 +62,7 @@ export function AudioPlayer({
       })
       .catch(() => {});
     return () => controller.abort();
-  }, [visible, duration, item.url, item.size]);
+  }, [visible, duration, item.url, item.size, failed]);
   useEffect(() => {
     const element = audio.current;
     return () => {
@@ -78,11 +83,20 @@ export function AudioPlayer({
     setPlaying(false);
     setWaiting(false);
   };
-  if (!ownedArtifactUrl(item.url)) return null;
+  const seek = (value: number) => {
+    const element = audio.current;
+    if (!element || !duration) return;
+    element.currentTime = Math.max(0, Math.min(duration, value));
+    setCurrent(element.currentTime);
+  };
   const progress = duration ? Math.min(1, current / duration) : 0;
-  const bars = (peaks ?? Array<number>(64).fill(0.08)).map((peak, index) => (
-    <rect key={index} x={index * 4} y={20 - peak * 18} width="2.5" height={peak * 36} rx="1.25" />
-  ));
+  const bars = peaks ? (
+    peaks.map((peak, index) => (
+      <rect key={index} x={index * 5} y={24 - peak * 16} width="3" height={peak * 32} rx="1.5" />
+    ))
+  ) : (
+    <rect y="22.5" width="320" height="3" rx="1.5" />
+  );
   return (
     <div
       className="audio-player"
@@ -97,7 +111,9 @@ export function AudioPlayer({
         preload="metadata"
         onDurationChange={(event) => {
           const value = event.currentTarget.duration;
-          setDuration(Number.isFinite(value) && value > 0 ? value : 0);
+          const seconds = Number.isFinite(value) && value > 0 ? value : 0;
+          setDuration(seconds);
+          if (seconds > 0) onDuration?.(seconds);
         }}
         onPlay={(event) => {
           document.querySelectorAll('audio').forEach((other) => {
@@ -111,6 +127,7 @@ export function AudioPlayer({
         onWaiting={() => setWaiting(true)}
         onPause={stopFollowing}
         onEnded={stopFollowing}
+        onRateChange={(event) => setRate(event.currentTarget.playbackRate)}
         onTimeUpdate={(event) => setCurrent(event.currentTarget.currentTime)}
         onError={() => {
           stopFollowing();
@@ -120,11 +137,19 @@ export function AudioPlayer({
       <button
         type="button"
         className="audio-player-play"
-        disabled={!visible || failed}
-        aria-label={playing ? 'Pause audio' : 'Play audio'}
+        disabled={!visible}
+        aria-label={failed ? 'Retry audio' : playing ? 'Pause audio' : 'Play audio'}
         onClick={() => {
           const element = audio.current;
           if (!element) return;
+          if (failed) {
+            setFailed(false);
+            setCurrent(0);
+            setDuration(0);
+            setPeaks(null);
+            element.load();
+            element.playbackRate = rate;
+          }
           if (element.paused)
             void element.play().catch(() => {
               if (element.error) setFailed(true);
@@ -132,7 +157,9 @@ export function AudioPlayer({
           else element.pause();
         }}
       >
-        {waiting ? (
+        {failed ? (
+          <RotateCcw size={20} aria-hidden="true" />
+        ) : waiting && playing ? (
           <LoaderCircle size={20} className="audio-player-loading" aria-hidden="true" />
         ) : playing ? (
           <Pause size={20} fill="currentColor" aria-hidden="true" />
@@ -141,10 +168,10 @@ export function AudioPlayer({
         )}
       </button>
       <div className="audio-player-track" data-waveform-ready={Boolean(peaks)}>
-        <svg viewBox="0 0 256 40" preserveAspectRatio="none" aria-hidden="true">
+        <svg viewBox="0 0 320 48" preserveAspectRatio="none" aria-hidden="true">
           <defs>
             <clipPath id={clip}>
-              <rect width={256 * progress} height="40" />
+              <rect width={320 * progress} height="48" />
             </clipPath>
           </defs>
           <g className="audio-player-bars">{bars}</g>
@@ -152,47 +179,57 @@ export function AudioPlayer({
             {bars}
           </g>
         </svg>
+        <span className="audio-player-position" style={{ left: `${progress * 100}%` }} />
         <input
           type="range"
           min="0"
           max={duration || 1}
-          step="0.05"
+          step="0.1"
           value={Math.min(current, duration)}
           disabled={!duration || failed}
           aria-label="Seek audio"
           aria-valuetext={`${audioTime(current)} of ${audioTime(duration)}`}
-          onChange={(event) => {
-            if (!audio.current) return;
-            audio.current.currentTime = Number(event.target.value);
-            setCurrent(audio.current.currentTime);
+          onChange={(event) => seek(Number(event.target.value))}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            seek(current + (event.key === 'ArrowLeft' ? -5 : 5));
           }}
         />
       </div>
       <div className="audio-player-info">
-        <span className="audio-player-time">
-          {failed
-            ? 'Audio unavailable'
-            : `${audioTime(current)} / ${duration ? audioTime(duration) : '–:––'}`}
+        <span
+          className="audio-player-time"
+          aria-label={`${audioTime(current)} of ${audioTime(duration)}`}
+        >
+          {audioTime(current)}
+          <span className="audio-player-total"> / {duration ? audioTime(duration) : '–:––'}</span>
         </span>
         <button
           type="button"
           className="audio-player-rate"
           disabled={failed}
-          aria-label={`Playback speed ${rate}. Change speed`}
+          aria-label={`Playback speed ${rate}×. Change speed`}
+          title="Change playback speed"
           onClick={() => {
-            const next = rate === 1 ? 1.5 : rate === 1.5 ? 2 : 1;
-            if (audio.current) audio.current.playbackRate = next;
-            setRate(next);
+            const speeds = [1, 1.25, 1.5, 2, 0.75];
+            if (audio.current)
+              audio.current.playbackRate = speeds[(speeds.indexOf(rate) + 1) % speeds.length];
           }}
         >
           {rate}×
         </button>
-        <Button variant="ghost" size="icon" asChild>
+        <Button variant="ghost" size="icon" className="audio-player-download" asChild>
           <a href={item.url} download={item.name} aria-label={`Download ${item.name}`}>
-            <Download size={15} aria-hidden="true" />
+            <Download size={16} aria-hidden="true" />
           </a>
         </Button>
       </div>
+      {failed && (
+        <p className="audio-player-error" role="status">
+          Audio unavailable. Retry or download the file.
+        </p>
+      )}
     </div>
   );
 }
