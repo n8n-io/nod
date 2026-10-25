@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import type { SpeechVoice } from '../../shared/speech';
 import { useModelSignIn, useModels } from '../hooks/use-models';
 import { ExternalLink, LoaderCircle, Mic } from './icons';
@@ -28,7 +28,7 @@ export function VoiceConnections({
   });
   const busy = models.busy || flow.pending || !!flow.signIn;
   const dirty = busy || Boolean(key.trim() || callback.trim());
-  useEffect(() => {
+  useLayoutEffect(() => {
     onBusyChange(dirty);
     return () => onBusyChange(false);
   }, [dirty, onBusyChange]);

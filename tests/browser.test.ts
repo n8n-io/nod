@@ -3463,6 +3463,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         ] };
       globalThis.fetch = (path, options) => {
         if (path === '/api/speech') return Promise.resolve(Response.json(settings));
+        if (path === '/api/models') return Promise.resolve(Response.json({ connections: [], selection: null }));
         if (path === '/api/speech/prepare') return new Promise((resolve, reject) => {
           preparations.push({ options, resolve });
           options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
@@ -3482,7 +3483,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
       let root = createRoot(document.querySelector('#root'));
       let mounted = true;
       const onBusyChange = value => busy.push(value);
-      const render = () => act(async () => root.render(createElement(VoiceSettings, { onBusyChange, onModels() {} })));
+      const render = () => act(async () => root.render(createElement(VoiceSettings, { onBusyChange })));
       const settle = async check => {
         for (let i = 0; i < 100 && !check(); i++)
           await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
@@ -3490,7 +3491,9 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
       };
       const trigger = () => [...document.querySelectorAll('button[aria-labelledby]')].find(button =>
         button.getAttribute('aria-labelledby').split(/\s+/).some(id => document.getElementById(id)?.textContent === 'Assistant voice'));
-      const picker = () => document.querySelector('[role="dialog"][aria-label="Choose a voice"]');
+      const dialog = label => [...document.querySelectorAll('[role="dialog"]')].find(element =>
+        element.getAttribute('aria-labelledby')?.split(/\s+/).some(id => document.getElementById(id)?.textContent === label));
+      const picker = () => dialog('Choose a voice');
       const click = (label, scope = document) => act(async () => {
         const button = scope.querySelector('[aria-label="' + label + '"]');
         assert.ok(button, 'Expected button: ' + label);
@@ -3565,7 +3568,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await openKeyboard('ArrowUp');
         released(players[2], thirdUrl);
         await click('Play ' + coral, picker());
-        await click('Close voice picker', picker());
+        await click('Close', picker());
         assert.equal(requests[5].options.signal.aborted, true);
         await resolve(5);
         assert.equal(players.length, 3);
@@ -3576,14 +3579,14 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(requests[6].options.signal.aborted, true);
         await resolve(6);
         assert.equal(players.length, 3);
-        await click('Close voice picker', picker());
+        await click('Close', picker());
         await settle(() => !picker());
         await click('Play ' + dora);
         await act(async () => requests[7].resolve(Response.json({ error: 'Synthetic preview failure' }, { status: 503 })));
         assert.ok(document.body.textContent.includes('Synthetic preview failure'));
         await openKeyboard('ArrowUp');
         assert.equal(document.body.textContent.includes('Synthetic preview failure'), false);
-        await click('Close voice picker', picker());
+        await click('Close', picker());
         await settle(() => !picker());
         await click('Play ' + dora);
         await resolve(8);
@@ -3607,14 +3610,17 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         mounted = true;
         await render();
         await settle(() => trigger());
-        const button = label => [...document.querySelectorAll('button')].find(item => item.textContent === label);
+        const button = label => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === label);
+        await open();
+        await act(async () => button('Add voices').click());
+        await settle(() => dialog('Add voices'));
         for (const outcome of ['cancel', 'failure', 'complete']) {
           await act(async () => button('Download voices').click());
           const preparation = preparations.at(-1);
           assert.equal(busy.at(-1), true, 'Local preparation must guard settings navigation');
           assert.equal(preparation.options.signal.aborted, false);
           if (outcome === 'cancel') {
-            await act(async () => button('Cancel').click());
+            await act(async () => button('Cancel download').click());
             assert.equal(preparation.options.signal.aborted, true);
           } else {
             if (outcome === 'complete') settings = { ...settings, local: { state: 'ready' } };
