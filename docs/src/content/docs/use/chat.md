@@ -38,11 +38,11 @@ nod transcribes the recording and uses it as your message. The transcript and re
 
 By default, nod sends an audio reply after its written answer when you send audio. Select **Play audio** to listen; replies do not play automatically. A failed or very long spoken reply leaves the written answer available.
 
-In **Settings → General → Voice**, choose **When I send audio**, **Every reply**, or **Off**. Choose an assistant voice and select **Preview voice** to listen. Write your own words in **Try a phrase** to hear a sample in your language. Leave it empty to hear the built-in sample. **Manage connections** opens your model connections, including OpenRouter for ElevenLabs voices. You don’t need a separate ElevenLabs key.
+In **Settings → General → Voice**, set **Spoken replies** to **Voice messages**, **Always**, or **Off**. Open **Assistant voice** to listen to samples before choosing a voice. **Voice services** opens your model connections, including OpenRouter for ElevenLabs voices. You don’t need a separate ElevenLabs key.
 
 nod reuses your existing OpenRouter or OpenAI connection for speech. ElevenLabs and OpenAI voices are multilingual: they speak the language of the reply. Kokoro voices have a specific language, shown beside their name. Through OpenRouter, Kokoro offers English, Spanish, French, Hindi, Italian, Japanese, Brazilian Portuguese and Mandarin Chinese. Pick a voice that matches your conversation; changing a voice doesn't change the language nod writes in.
 
-For speech without another account, select **Enable local audio** to download the models once (about 180 MB). Local transcription uses multilingual Whisper. Local replies offer English, Spanish, French, Hindi, Italian and Brazilian Portuguese voices from Kokoro. Downloads need an internet connection; downloaded models run on the computer hosting nod. Choose a local assistant voice to keep both transcription and replies local, including when you have an API connection. Local speech can take longer on slower computers. A ChatGPT or Claude subscription alone does not include those providers' speech APIs.
+For speech without another account, select **Download voices** to download the models once (about 180 MB). Local transcription uses multilingual Whisper. Local replies offer English, Spanish, French, Hindi, Italian and Brazilian Portuguese voices from Kokoro. Downloads need an internet connection; downloaded models run on the computer hosting nod. Choose a local assistant voice to keep both transcription and replies local, including when you have an API connection. Local speech can take longer on slower computers. A ChatGPT or Claude subscription alone does not include those providers' speech APIs.
 
 ## Listen to audio
 

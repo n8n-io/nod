@@ -50,6 +50,13 @@ test('speech previews reject unavailable voices, serialize generation and releas
       },
       voices: [
         { id: 'openai:coral', name: 'Coral', description: 'Synthetic voice', engine: 'OpenAI' },
+        {
+          id: 'local:pf_dora',
+          name: 'Dora',
+          description: 'Synthetic voice',
+          engine: 'Local',
+          language: 'pt-BR',
+        },
       ],
       synthesize: async (text, signal, _report, options) => {
         calls++;
@@ -99,26 +106,43 @@ test('speech previews reject unavailable voices, serialize generation and releas
     requests.map((request) => request.voice),
     ['openai:coral', 'openai:coral'],
   );
-  await t.test(
-    'custom previews bound text before generation and retain the chosen voice',
-    async () => {
-      const before = calls;
-      for (const text of ['', '   ', 'x'.repeat(501), 42]) {
-        assert.equal((await send('openai:coral', undefined, { text })).ok, false);
-        assert.equal(calls, before);
-      }
-      const text = 'Olá! Posso ajudar com o teu próximo projeto.';
-      const response = await send('openai:coral', undefined, { text: `  ${text}  `, locale: 'ja' });
+  await t.test('custom preview text is rejected before generation', async () => {
+    const before = calls;
+    for (const text of ['Olá! Posso ajudar com o teu próximo projeto.', '', '   ', 42, null]) {
+      assert.equal((await send('openai:coral', undefined, { text })).ok, false);
+      assert.equal(calls, before);
+    }
+  });
+  await t.test('preview samples follow voice language before browser locale', async () => {
+    const english = requests[0].text;
+    for (const [locale, script] of [
+      ['ar-SA', /\p{Script=Arabic}/u],
+      ['ko-KR', /\p{Script=Hangul}/u],
+      ['ru-RU', /\p{Script=Cyrillic}/u],
+      ['ja-JP', /\p{Script=Hiragana}/u],
+      ['hi-IN', /\p{Script=Devanagari}/u],
+    ] as const) {
+      const response = await send('openai:coral', undefined, { locale });
       assert.equal(response.status, 200);
       assert.equal(response.headers.get('cache-control'), 'no-store');
-      assert.deepEqual(requests.at(-1), { text, voice: 'openai:coral' });
-    },
-  );
-  await t.test('automatic previews pass the resolved default voice explicitly', async () => {
+      assert.equal(requests.at(-1)?.voice, 'openai:coral');
+      assert.match(requests.at(-1)!.text, script);
+    }
+    assert.equal((await send('openai:coral', undefined, { locale: 'pt-PT' })).status, 200);
+    const portuguese = requests.at(-1)!.text;
+    assert.notEqual(portuguese, english);
+    assert.equal((await send('local:pf_dora', undefined, { locale: 'ar-SA' })).status, 200);
+    assert.deepEqual(requests.at(-1), { text: portuguese, voice: 'local:pf_dora' });
+    for (const locale of ['en-GB', 'zz-ZZ']) {
+      assert.equal((await send('openai:coral', undefined, { locale })).status, 200);
+      assert.equal(requests.at(-1)?.text, english);
+    }
+  });
+  await t.test('default previews pass the resolved default voice explicitly', async () => {
     assert.equal((await send(null)).status, 200);
     assert.equal(requests.at(-1)?.voice, 'openai:coral');
   });
-  await t.test('unavailable automatic voices never reach synthesis', async () => {
+  await t.test('unavailable default voices never reach synthesis', async () => {
     const before = calls;
     for (const missing of [undefined, 'openai:missing']) {
       defaultVoice = missing;
@@ -161,16 +185,17 @@ test('OpenAI previews preserve configured voices and enforce the selected speech
         } as ReturnType<typeof createPreferencesStore>,
       });
       try {
-        const text = 'Bonjour, je peux vous aider.';
         const preview = (voice: string | null) =>
           app.inject({
             method: 'POST',
             url: '/api/speech/preview',
-            payload: { voice, text },
+            payload: { voice, locale: 'ja-JP' },
           });
         const response = await preview(null);
         assert.equal(response.statusCode, 200, response.body);
         assert.equal(response.body, 'synthetic-preview');
+        const text = (requests.at(-1) as { input: string }).input;
+        assert.match(text, /\p{Script=Hiragana}/u);
         assert.deepEqual(requests.at(-1), {
           model,
           input: text,

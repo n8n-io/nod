@@ -14,6 +14,9 @@ const previews: Record<string, string> = {
   ja: 'こんにちは、nodです。これが私の声です。何をお手伝いしましょうか。',
   zh: '你好，我是nod。这是我的声音。有什么我可以帮你的吗？',
   hi: 'नमस्ते, मैं nod हूँ। मेरी आवाज़ ऐसी है। मैं आपकी क्या मदद कर सकता हूँ?',
+  ar: 'مرحباً، أنا نود. هذا هو صوتي. كيف يمكنني مساعدتك؟',
+  ko: '안녕하세요, 저는 nod입니다. 제 목소리는 이렇습니다. 무엇을 도와드릴까요?',
+  ru: 'Здравствуйте, я nod. Так звучит мой голос. Чем я могу помочь?',
 };
 
 export function registerSpeechSettings(
@@ -70,11 +73,10 @@ export function registerSpeechSettings(
     }
   });
   app.post('/api/speech/preview', async (request, reply) => {
-    const { voice, locale, text } = z
+    const { voice, locale } = z
       .object({
         voice: z.string().max(80).nullable(),
         locale: z.string().max(35).optional(),
-        text: z.string().trim().min(1).max(500).optional(),
       })
       .strict()
       .parse(request.body);
@@ -87,11 +89,9 @@ export function registerSpeechSettings(
     reply.raw.once('close', stop);
     try {
       const language = (chosen.language ?? locale ?? 'en').toLowerCase().split('-')[0];
-      const audio = await speech.synthesize(
-        text ?? previews[language] ?? previews.en,
-        controller.signal,
-        { voice: chosen.id },
-      );
+      const audio = await speech.synthesize(previews[language] ?? previews.en, controller.signal, {
+        voice: chosen.id,
+      });
       return reply.header('Cache-Control', 'no-store').type(audio.mimeType).send(audio.bytes);
     } finally {
       reply.raw.off('close', stop);

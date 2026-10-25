@@ -3398,20 +3398,28 @@ test('Telegram chat cards require paired owned metadata and preserve ordinary li
   assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });
 
-test('voice previews bind the chosen phrase and voice, cancelling stale playback on edits and close', async () => {
+test('voice previews sample unsaved voices and cancel stale playback on selection and close', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
-      const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'https://nod.fixture.invalid' });
-      Object.assign(globalThis, { window: dom.window, document: dom.window.document,
-        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage });
-      for (const name of ['Node','Element','HTMLElement','HTMLTextAreaElement','Event'])
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement',
+        'Event', 'KeyboardEvent', 'CustomEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment'])
         globalThis[name] = dom.window[name];
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
       Object.defineProperty(navigator, 'language', { configurable: true, value: 'pt-PT' });
-      const requests = [], players = [], revoked = [];
+      const requests = [], writes = [], players = [], revoked = [];
       URL.createObjectURL = () => 'blob:preview-' + players.length;
       URL.revokeObjectURL = url => revoked.push(url);
       globalThis.Audio = function(url) {
@@ -3432,7 +3440,9 @@ test('voice previews bind the chosen phrase and voice, cancelling stale playback
       globalThis.fetch = (path, options) => {
         if (path === '/api/speech') return Promise.resolve(Response.json(settings));
         if (path === '/api/preferences') {
-          settings = { ...settings, ...JSON.parse(options.body) };
+          const change = JSON.parse(options.body);
+          writes.push(change);
+          settings = { ...settings, ...change };
           return Promise.resolve(Response.json(settings));
         }
         assert.equal(path, '/api/speech/preview');
@@ -3442,67 +3452,109 @@ test('voice previews bind the chosen phrase and voice, cancelling stale playback
       const { createRoot } = await import('react-dom/client');
       const { VoiceSettings } = await import('./src/web/components/voice-settings.tsx');
       let root = createRoot(document.querySelector('#root'));
+      let mounted = true;
       const render = () => act(async () => root.render(createElement(VoiceSettings, { onBusyChange() {}, onModels() {} })));
       const settle = async check => {
         for (let i = 0; i < 100 && !check(); i++)
           await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
         assert.ok(check(), 'Expected voice preview interaction to settle');
       };
-      const edit = value => act(async () => {
-        const input = document.querySelector('textarea');
-        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, value);
-        input.dispatchEvent(new Event('input', { bubbles: true }));
+      const trigger = () => [...document.querySelectorAll('button[aria-labelledby]')].find(button =>
+        button.getAttribute('aria-labelledby').split(/\s+/).some(id => document.getElementById(id)?.textContent === 'Assistant voice'));
+      const picker = () => document.querySelector('[role="dialog"][aria-label="Choose a voice"]');
+      const click = (label, scope = document) => act(async () => {
+        const button = scope.querySelector('[aria-label="' + label + '"]');
+        assert.ok(button, 'Expected button: ' + label);
+        button.click();
       });
-      const preview = () => act(async () => document.querySelector('[aria-label="Preview voice"]').click());
+      const open = async () => {
+        await act(async () => trigger().click());
+        await settle(() => picker());
+      };
       const resolve = index => act(async () => requests[index].resolve(new Response(new Blob(['Synthetic audio'], { type: 'audio/wav' }))));
+      const released = (player, url) => {
+        assert.equal(player.playing, false);
+        assert.equal(player.getAttribute('src'), null);
+        assert.equal(revoked.filter(value => value === url).length, 1);
+      };
+      const dora = 'Dora sample, Brazilian Portuguese, Local';
+      const coral = 'Coral sample, Warm and friendly, OpenAI';
       try {
         await render();
-        await settle(() => document.querySelector('textarea'));
-        await edit('  مرحباً، كيف حالك؟  ');
-        await preview();
-        assert.deepEqual(JSON.parse(requests[0].options.body), { voice: 'openai:coral', locale: 'pt-PT', text: 'مرحباً، كيف حالك؟' });
-        await edit('Olá, esta é uma frase de teste.');
+        await settle(() => trigger());
+        assert.equal(document.querySelector('textarea'), null);
+        await act(async () => {
+          trigger().focus();
+          trigger().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+        });
+        await settle(() => picker());
+        assert.equal(document.activeElement.getAttribute('aria-label'), 'Search voices');
+        await click('Play ' + dora, picker());
+        assert.deepEqual(JSON.parse(requests[0].options.body), { voice: 'local:pf_dora', locale: 'pt-PT' });
+        assert.deepEqual(writes, []);
+        assert.equal(settings.speechVoice, null);
+        await click('Play ' + coral, picker());
         assert.equal(requests[0].options.signal.aborted, true);
+        assert.deepEqual(JSON.parse(requests[1].options.body), { voice: 'openai:coral', locale: 'pt-PT' });
         await resolve(0);
         assert.equal(players.length, 0);
-        await preview();
         await resolve(1);
         assert.equal(players[0].playing, true);
         const firstUrl = players[0].src;
-        await edit('Outra frase.');
-        assert.equal(players[0].playing, false);
-        assert.equal(players[0].getAttribute('src'), null);
-        assert.equal(revoked.filter(url => url === firstUrl).length, 1);
-        await preview();
-        await act(async () => {
-          const voice = document.querySelector('select[id$="-voice"]');
-          voice.value = 'local:pf_dora';
-          voice.dispatchEvent(new Event('change', { bubbles: true }));
-        });
-        assert.equal(requests[2].options.signal.aborted, true);
+        await click('Stop ' + coral, picker());
+        released(players[0], firstUrl);
+        await click('Play ' + dora, picker());
         await resolve(2);
-        assert.equal(players.length, 1);
-        await settle(() => !document.querySelector('[aria-label="Preview voice"]').disabled);
-        await preview();
-        assert.deepEqual(JSON.parse(requests[3].options.body), { voice: 'local:pf_dora', locale: 'pt-PT', text: 'Outra frase.' });
-        await resolve(3);
         assert.equal(players[1].playing, true);
         const secondUrl = players[1].src;
-        await act(async () => root.unmount());
-        assert.equal(players[1].playing, false);
-        assert.equal(revoked.filter(url => url === secondUrl).length, 1);
-        root = createRoot(document.querySelector('#root'));
-        await render();
-        await settle(() => document.querySelector('textarea'));
-        await edit('   ');
-        await preview();
-        assert.deepEqual(JSON.parse(requests[4].options.body), { voice: 'local:pf_dora', locale: 'pt-PT' });
-        await act(async () => root.unmount());
-        assert.equal(requests[4].options.signal.aborted, true);
-        await resolve(4);
+        await act(async () => picker().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+        await settle(() => !picker());
+        await settle(() => document.activeElement === trigger());
+        released(players[1], secondUrl);
+        assert.deepEqual(writes, []);
+        await open();
+        await click('Play ' + dora, picker());
+        await click('Choose Dora, Brazilian Portuguese, Local', picker());
+        assert.equal(requests[3].options.signal.aborted, true);
+        await settle(() => !picker() && settings.speechVoice === 'local:pf_dora');
+        assert.deepEqual(writes, [{ speechVoice: 'local:pf_dora' }]);
+        await resolve(3);
         assert.equal(players.length, 2);
-      } finally {
+        await settle(() => trigger().getAttribute('aria-disabled') !== 'true');
+        await click('Play ' + dora);
+        assert.deepEqual(JSON.parse(requests[4].options.body), { voice: 'local:pf_dora', locale: 'pt-PT' });
+        await resolve(4);
+        assert.equal(players[2].playing, true);
+        const thirdUrl = players[2].src;
+        await open();
+        released(players[2], thirdUrl);
+        await click('Play ' + coral, picker());
+        await click('Close voice picker', picker());
+        assert.equal(requests[5].options.signal.aborted, true);
+        await resolve(5);
+        assert.equal(players.length, 3);
+        assert.deepEqual(writes, [{ speechVoice: 'local:pf_dora' }]);
+        await settle(() => !picker());
+        await click('Play ' + dora);
+        await resolve(6);
+        const fourthUrl = players[3].src;
         await act(async () => root.unmount());
+        mounted = false;
+        released(players[3], fourthUrl);
+        root = createRoot(document.querySelector('#root'));
+        mounted = true;
+        await render();
+        await settle(() => trigger());
+        await open();
+        await click('Play ' + coral, picker());
+        await act(async () => root.unmount());
+        mounted = false;
+        assert.equal(requests[7].options.signal.aborted, true);
+        await resolve(7);
+        assert.equal(players.length, 4);
+        assert.deepEqual(writes, [{ speechVoice: 'local:pf_dora' }]);
+      } finally {
+        if (mounted) await act(async () => root.unmount());
         dom.window.close();
       }
     `,
