@@ -821,6 +821,12 @@
   color: var(--accent);
   background: var(--accent-soft);
 }
+.diagram-node > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
 .diagram-detail {
   padding: 14px 20px;
 }

@@ -862,7 +862,7 @@ function Diagram({ visual }: { visual: Visual<'diagram'> }) {
                 title={item.label}
                 onClick={() => setSelected(item.id)}
               >
-                {item.label}
+                <span>{item.label}</span>
               </button>
             );
           })}
