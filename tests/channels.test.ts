@@ -2593,6 +2593,7 @@ test(
     let failReaction = false;
     const reacting: { provider: string; body: Record<string, unknown> }[] = [];
     const reactedTo: [string, string | null][] = [];
+    const replyTargets: { sourceId: string; messageId: string | undefined }[] = [];
     t.mock.method(
       globalThis,
       'fetch',
@@ -2657,7 +2658,8 @@ test(
       reacted: async (messageId, reaction) => {
         reactedTo.push([messageId, reaction]);
       },
-      submit: async (_text, sourceId, client, channel) => {
+      submit: async (_text, sourceId, client, channel, _messageId, _answer, replyToMessageId) => {
+        replyTargets.push({ sourceId, messageId: replyToMessageId });
         const turnId = await fixtureTurn(client, threadId, 'local-development', channel, sourceId);
         if (failSubmit) throw new Error('Fixture turn queue unavailable.');
         return turnId;
@@ -3005,6 +3007,51 @@ test(
         );
       assert.ok(parts.length > 1 && parts.every((part) => part.length <= 4096));
       assert.ok(paragraphs.every((paragraph) => parts.some((part) => part.includes(paragraph))));
+
+      await pool.query("UPDATE channel_inbox SET received_at=now() WHERE provider='whatsapp'");
+      const beforeWhatsApp = sent.length;
+      const flightRows = Array.from(
+        { length: 24 },
+        (_, index) =>
+          `| ${index === 0 ? 'Fare conditions '.repeat(70) : `Flight ${index}`} | EUR ${100 + index} |`,
+      );
+      const multipart = await addReply(
+        'channel:whatsapp:555000:wamid.good',
+        `${paragraphs.join('\n\n')}\n\n| Flight | Price |\n| --- | --- |\n${flightRows.join('\n')}\n\n[Source](https://example.com/flights)`,
+      );
+      await channels.drain();
+      const whatsappParts = sent.slice(beforeWhatsApp);
+      const bodies = whatsappParts.map(({ body }) => (body.text as { body: string }).body);
+      assert.ok(whatsappParts.every(({ provider }) => provider === 'whatsapp'));
+      assert.ok(bodies.length > 2 && bodies.every((body) => body.length <= 4096));
+      assert.ok(paragraphs.every((paragraph) => bodies.some((body) => body.includes(paragraph))));
+      assert.match(bodies.join('\n'), /Flight 23/);
+      assert.match(bodies.at(-1)!, /https:\/\/example.com\/flights/);
+      const providerIds = whatsappParts.map(
+        (_, index) => `wamid.fixture-out-${beforeWhatsApp + index + 1}`,
+      );
+      assert.deepEqual(
+        (
+          await pool.query('SELECT provider_message_ids FROM channel_outbox WHERE message_id=$1', [
+            multipart,
+          ])
+        ).rows[0].provider_message_ids,
+        providerIds,
+      );
+      for (const index of [0, Math.floor(providerIds.length / 2), providerIds.length - 1]) {
+        const nativeId = providerIds[index];
+        await sendWhatsApp(whatsappReaction(nativeId, '👍'));
+        assert.deepEqual(reactedTo.at(-1), [multipart, '👍']);
+        const reply = whatsappPayload(`wamid.chunk-reply-${index}`);
+        const value = reply.entry[0].changes[0].value;
+        Object.assign(value.messages[0], { context: { id: nativeId } });
+        assert.equal((await sendWhatsApp(reply)).statusCode, 200);
+        await channels.drain();
+        assert.deepEqual(replyTargets.at(-1), {
+          sourceId: `channel:whatsapp:555000:wamid.chunk-reply-${index}`,
+          messageId: multipart,
+        });
+      }
 
       for (const [sourceId, provider] of [
         ['channel:telegram:987:123456:10', 'telegram'],

@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { Chat, ConsoleLogger } from 'chat';
+import { Chat, ConsoleLogger, convertEmojiPlaceholders } from 'chat';
 import { TelegramAdapter } from '@chat-adapter/telegram';
-import { WhatsAppAdapter } from '@chat-adapter/whatsapp';
+import { WhatsAppAdapter, splitMessage } from '@chat-adapter/whatsapp';
 import { createPostgresState } from '@chat-adapter/state-pg';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -46,6 +46,12 @@ class Telegram extends TelegramAdapter {
 }
 
 class WhatsApp extends WhatsAppAdapter {
+  chunks(text: string) {
+    return splitMessage(
+      convertEmojiPlaceholders(this.formatConverter.fromMarkdown(text), 'whatsapp'),
+    );
+  }
+
   async typing(messageId: string) {
     const result = await this.graphApiRequest<{ success?: boolean }>(
       `/${this.phoneNumberId}/messages`,
@@ -547,10 +553,12 @@ export function createChatSdkTransport(
         input.replyToMessageId
           ? thread.reply(input.replyToMessageId, message)
           : thread.post(message);
-      for (const part of input.channelId === 'telegram'
-        ? chunks(caption ? '' : input.text)
-        : [input.text]) {
-        const sent = await post({ markdown: part });
+      const messages =
+        input.channelId === 'telegram'
+          ? chunks(caption ? '' : input.text).map((markdown) => ({ markdown }))
+          : whatsapp!.chunks(input.text).map((raw) => ({ raw }));
+      for (const message of messages) {
+        const sent = await post(message);
         id ||= sent.id;
         ids.push(sent.id);
       }
