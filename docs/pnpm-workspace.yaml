@@ -1,5 +1,7 @@
 packages: []
 nodeLinker: hoisted
+overrides:
+  katex@0.16.47: 0.18.2
 allowBuilds:
   esbuild: true
   sharp: true

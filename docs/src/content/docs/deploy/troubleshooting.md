@@ -25,7 +25,7 @@ You ran `docker compose` yourself before nod created the database password. Run 
 
 ### Configure NOD_VAULT_KEY in server settings before saving a connection.
 
-nod has no key to encrypt saved credentials. Local macOS and Linux web installs normally create a protected key automatically. Other server configurations need an explicit key. If saved encrypted data exists, restore its original key instead of generating a new one. For a fresh server only, add a key to `.env`, then restart nod.
+nod has no key to encrypt saved credentials. Local macOS and Linux web installs normally create a protected key automatically. Other server configurations need an explicit key. If saved encrypted data exists, restore its original key instead of generating a new one. For a fresh server only, add a key to `.env`, then [apply the configuration](/deploy/configuration/#apply-configuration-changes).
 
 ```sh title="Terminal"
 sed -i.bak "s|^NOD_VAULT_KEY=.*|NOD_VAULT_KEY=$(openssl rand -base64 32)|" .env && rm .env.bak
@@ -35,11 +35,11 @@ Keep a copy of the key somewhere safe. Saved credentials can't be read without i
 
 ### The port is in use
 
-Another program uses port `4310`. Set another `PORT` in `.env` and restart. nod's database container also needs port `54329` on `127.0.0.1`.
+Another program uses port `4310`. Set another `PORT` in `.env` and [apply the configuration](/deploy/configuration/#apply-configuration-changes). Update your browser address and any SSH tunnel to match. A direct source install also needs database port `54329` on `127.0.0.1`; the self-hosting stack keeps its database port private.
 
 ### You lost the access link
 
-nod prints a link with `#access=` when it starts, and your browser keeps the cookie. To get a new link, delete `access-key` in your data folder (`.local/` by default) and restart.
+For a local source install without `NOD_AUTH_TOKEN`, nod prints a link with `#access=` when it starts, and your browser keeps the cookie. To get a new link, delete `access-key` in your data folder (`.local/` by default) and restart. A server configured with `NOD_AUTH_TOKEN` prints its address without that link; use its configured token, or follow [Rotate access](/deploy/server-operations/#rotate-access).
 
 ## Desktop app
 
@@ -50,6 +50,16 @@ Every release is notarized by Apple. If macOS still blocks it, open **System Set
 ### macOS asks for Keychain access after an update
 
 macOS can ask again after nod is re-signed. Approve it in the macOS dialog. Never type your Mac password into the nod chat.
+
+While the keychain unlocks, nod keeps the startup screen and **Server connection** available. If it keeps waiting, check for a macOS prompt, unlock your keychain, then quit and reopen nod.
+
+### nod could not unlock your saved server token
+
+Select **Reconnect to server** and enter the same server address and `NOD_AUTH_TOKEN`. The app checks the connection before saving the token again in your computer's secure storage. If macOS asks for Keychain access, allow it there.
+
+Your assistant, chats, files and connected accounts are on the server. Reconnecting keeps them and your separate local assistant. Do not delete your local profile or reset the server to fix this error.
+
+On macOS, unlock your Mac keychain, then quit and reopen nod. On Windows, sign in to the same Windows account that saved the token and retry. Your saved token stays in place.
 
 ### Not enough free space to install the runtime
 
@@ -81,9 +91,9 @@ If the connection service is unavailable or reports a limit, try again later. If
 
 ## Channels
 
-### WhatsApp needs a public HTTPS callback
+### WhatsApp Cloud API needs a public HTTPS callback
 
-Meta delivers WhatsApp messages to a public HTTPS address. nod on your computer has none, and the desktop app doesn't relay webhooks. Expose only the `/api/webhooks/whatsapp` route and keep the rest of nod private.
+Meta's WhatsApp Cloud API delivers messages to a public HTTPS address. A local desktop assistant has no public callback, and the desktop app doesn't relay webhooks. Expose only the `/api/webhooks/whatsapp` route if you need that mode. The WhatsApp QR connection uses an outbound connection and does not need a public URL.
 
 Telegram doesn't need one. Leave **Public HTTPS callback** blank and nod receives Telegram messages locally.
 
@@ -95,7 +105,7 @@ The bot was set up with a webhook elsewhere. Remove that webhook to use local po
 
 ### A scheduled task didn't run
 
-Scheduled tasks run only while nod is open and your computer is awake. Closing the window keeps nod running in the menu bar or tray, but **Quit nod** stops it. Turn on **Open at login** in **Settings → General** if you rely on schedules.
+For a local desktop assistant, scheduled tasks run only while nod is open and your computer is awake. Closing the window keeps nod running in the menu bar or tray, but **Quit nod** stops it. Turn on **Open at login** in **Settings → General** if you rely on schedules. For a remote assistant, check that the server is running; closing a desktop client does not stop its schedules.
 
 ### An action shows as uncertain
 

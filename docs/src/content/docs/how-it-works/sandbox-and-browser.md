@@ -30,20 +30,20 @@ flowchart LR
 
 ## What each part can and can't reach
 
-|                       | Server                   | Sandbox user              | Connected CLI user        | Browser container                               |
-| --------------------- | ------------------------ | ------------------------- | ------------------------- | ----------------------------------------------- |
-| Provider keys         | Yes                      | No                        | No                        | No                                              |
-| Owner access key      | Yes                      | No                        | No                        | No                                              |
-| Vault values          | Yes                      | No                        | No                        | Only a value the server enters in a page        |
-| A connected CLI token | Yes                      | No                        | Its own token only        | No                                              |
-| Docker socket         | Yes, locally             | No                        | No                        | No                                              |
-| Workspace files       | Through a guarded reader | Yes                       | Files passed as arguments | No shared mounts                                |
-| Browser profiles      | Through the bridge       | No                        | No                        | Yes                                             |
-| Internet              | Yes                      | Yes, see the limits below | Yes, with the same limits | Public addresses only, saved profiles included. |
+|                       | Server                           | Sandbox user              | Connected CLI user        | Browser container                               |
+| --------------------- | -------------------------------- | ------------------------- | ------------------------- | ----------------------------------------------- |
+| Provider keys         | Yes                              | No                        | No                        | No                                              |
+| Owner access key      | Yes                              | No                        | No                        | No                                              |
+| Vault values          | Yes                              | No                        | No                        | Only a value the server enters in a page        |
+| A connected CLI token | Yes                              | No                        | Its own token only        | No                                              |
+| Docker control        | Local socket or restricted proxy | No                        | No                        | No                                              |
+| Workspace files       | Through a guarded reader         | Yes                       | Files passed as arguments | No shared mounts                                |
+| Browser profiles      | Through the bridge               | No                        | No                        | Yes                                             |
+| Internet              | Yes                              | Yes, see the limits below | Yes, with the same limits | Public addresses only, saved profiles included. |
 
 ## The workspace container
 
-Pi's native tools (`read`, `bash`, `edit`, `write`, `find` and `ls`) run inside the workspace through `WorkspaceSession.exec`. Each thread works in `/workspace/<thread ID>`. Locally, that's the `NOD_DATA_ROOT/workspaces` folder the server also uses. `/home/node` is a separate volume, so tools Pi installs persist.
+Pi's native tools (`read`, `bash`, `edit`, `write`, `find` and `ls`) run inside the workspace through `WorkspaceSession.exec`. Each thread works in `/workspace/<thread ID>`. A source install mounts `NOD_DATA_ROOT/workspaces`; self-hosted and desktop runtimes use a persistent workspace volume. `/home/node` is a separate volume, so tools Pi installs persist.
 
 - Commands run as the unprivileged `node` user, without sudo.
 - Bash gets no host environment. It sets the owner's `TZ` when known.
@@ -51,10 +51,12 @@ Pi's native tools (`read`, `bash`, `edit`, `write`, `find` and `ls`) run inside 
 
 Both the workspace and browser containers drop all capabilities, set `no-new-privileges` and have these limits:
 
-| Container | Source install (`compose.yaml`)                      | Desktop app                                        |
-| --------- | ---------------------------------------------------- | -------------------------------------------------- |
-| Workspace | 8 GB memory, 4 CPUs, 4,096 processes                 | 2 GB memory, 2 CPUs, 1,024 processes               |
-| Browser   | 8 GB memory, 6 CPUs, 4,096 processes, read-only root | 2 GB memory, 2 CPUs, 768 processes, read-only root |
+| Container | Source install (`compose.yaml`)                      | Local desktop runtime                              | Self-hosted server defaults                                |
+| --------- | ---------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------- |
+| Workspace | 8 GB memory, 4 CPUs, 4,096 processes                 | 2 GB memory, 2 CPUs, 1,024 processes               | 2 GB memory, no CPU limit, 512 processes                   |
+| Browser   | 8 GB memory, 6 CPUs, 4,096 processes, read-only root | 2 GB memory, 2 CPUs, 768 processes, read-only root | 3 GB memory, no CPU limit, 1,024 processes, read-only root |
+
+The self-hosted server reaches Docker through a restricted proxy for its workspace and browser containers. Its Compose configuration allows separate memory limits through `NOD_WORKSPACE_MEMORY` and `NOD_BROWSER_MEMORY`.
 
 ## The command supervisor
 
@@ -88,7 +90,7 @@ The browser is a separate trusted container. It doesn't share mounts or a networ
 | Language   | The owner's formatting locale, such as en-GB, sent as `Accept-Language` |
 | HTTP cache | Under `/tmp`, per session, outside saved profiles                       |
 
-Pi reads the page from agent-browser's accessibility snapshot, with `@eN` references, as plain text after the page URL. A snapshot returns up to 40,000 characters, and Pi reads the rest with an offset. nod runs no page-parsing scripts of its own.
+Pi reads the page from agent-browser's accessibility snapshot, with `@eN` references, as plain text after the page URL. A snapshot returns up to 40,000 characters, and Pi reads the rest with an offset. Pi interprets the page and chooses controls. The server also reads the selected control's form method and destination for the trust check, and the page's visible text when it prepares a confirmation question.
 
 Every browser command has a deadline: 60 seconds, or a wait's own timeout plus 30 seconds. That leaves room for agent-browser's own 30-second limit on each browser call, so only a browser that has stopped answering misses it. A browser that misses its deadline, is interrupted or doesn't close within 5 seconds is killed with all its Chromium processes. The next open starts it fresh with the same profile, so one stuck page never blocks later work. While a dialog is open, the observation is the dialog, and every action except open is refused until Pi accepts or dismisses it.
 
@@ -119,7 +121,7 @@ sequenceDiagram
 - An init script makes every passkey request fail at once and reports no passkey support, so a sign-in doesn't open a passkey prompt that the live view can't show.
 
 :::caution[Limits]
-In a source install, the workspace has internet access through normal Docker routing. There is no egress firewall, so a command can reach any address the host network can. The desktop app blocks workspace traffic to private and reserved address ranges. The browser reaches only public addresses. Inside the browser container, Chromium runs with its own sandbox turned off; the container is the boundary.
+In a source install or self-hosted server, the workspace has internet access through normal Docker routing. There is no egress firewall, so a command can reach any address the host network can. The desktop app's local runtime blocks workspace traffic to private and reserved address ranges. Connecting a desktop client to a server does not add that firewall to the server. The browser reaches only public addresses. Inside the browser container, Chromium runs with its own sandbox turned off; the container is the boundary.
 :::
 
 ## Related resources

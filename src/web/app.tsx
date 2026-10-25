@@ -13,6 +13,7 @@ import { prefetchPageData } from './hooks/use-page-data';
 import { Button, Notice } from './components/ui';
 import { ChatSkeleton } from './components/startup';
 import { SetupProgress } from './components/setup-progress';
+import { ServerAccess } from './components/server-access';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggle } from './components/sidebar-toggle';
@@ -600,15 +601,13 @@ function AccountApp({
     legacyBrowserLink,
   ]);
   if (sessionState.locked)
-    return (
-      <main className="empty-state">
-        <p>
-          {desktopSettingsAvailable()
-            ? 'Open nod in the desktop app.'
-            : 'Open nod from the link in your terminal.'}
-        </p>
-      </main>
-    );
+    if (!desktopSettingsAvailable()) return <ServerAccess onConnected={sessionState.refresh} />;
+    else
+      return (
+        <main className="empty-state">
+          <p>Open nod in the desktop app.</p>
+        </main>
+      );
   if (sessionState.loading) return <SetupProgress title="Opening nod…" />;
   if (!session?.user || !session.settings)
     return (

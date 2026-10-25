@@ -375,7 +375,7 @@ export function Apps({ onNext, onBack, nextLabel }: StepProps) {
         {
           method: 'POST',
           body: JSON.stringify({
-            returnTo: 'window',
+            returnTo: external ? 'desktop' : 'window',
             ...(!addAccount || connection.accessPaths?.length
               ? { connectionId: connection.connectionId }
               : {}),

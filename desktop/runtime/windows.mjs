@@ -119,7 +119,10 @@ async function download(
     throw new Error('The nod download failed its integrity check. Try again.');
 }
 
-export async function stageWindowsUpdate(candidate, { directory, resourcesPath, signal, fetch }) {
+export async function stageWindowsUpdate(
+  candidate,
+  { directory, resourcesPath, signal, fetch, includeRuntime = true },
+) {
   if (
     !/^\d+\.\d+\.\d+$/.test(candidate?.version) ||
     candidate.installer?.file !== 'nod-Setup-x64.exe' ||
@@ -130,13 +133,15 @@ export async function stageWindowsUpdate(candidate, { directory, resourcesPath, 
   await rm(directory, { recursive: true, force: true });
   await mkdir(target, { recursive: true });
   try {
-    const installed = JSON.parse(
-      await readFile(join(resourcesPath, 'windows-runtime/manifest.json'), 'utf8').catch(
-        () => '{}',
-      ),
-    );
-    if (installed.guest?.sha256 !== candidate.runtime.sha256)
-      await download(candidate.runtime, join(target, candidate.runtime.file), { signal, fetch });
+    if (includeRuntime) {
+      const installed = JSON.parse(
+        await readFile(join(resourcesPath, 'windows-runtime/manifest.json'), 'utf8').catch(
+          () => '{}',
+        ),
+      );
+      if (installed.guest?.sha256 !== candidate.runtime.sha256)
+        await download(candidate.runtime, join(target, candidate.runtime.file), { signal, fetch });
+    }
     await download(candidate.installer, join(target, candidate.installer.file), {
       signal,
       fetch,

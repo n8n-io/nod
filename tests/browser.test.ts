@@ -2909,6 +2909,29 @@ test('a restarted credential session serves only its cached masked image without
   }
 });
 
+test('environment model tokens are redacted without a model connection or secret observer', async () => {
+  const { environmentSecrets } = await import('../src/server/redaction.ts');
+  const { apiKeyModelProviders, modelProviderInfo } = await import('../src/shared/models.ts');
+  const tokens = apiKeyModelProviders.map(
+    (_provider, index) => `fixture-opaque-${index}-with/slash`,
+  );
+  const environment = Object.fromEntries(
+    apiKeyModelProviders.map((provider, index) => [modelProviderInfo[provider].env, tokens[index]]),
+  );
+  const databasePassword = 'fixture-database-secret/with-slash';
+  environment.DATABASE_URL = `postgresql://fixture:${encodeURIComponent(databasePassword)}@database.test/nod`;
+  environment.NOD_PUBLIC_URL = 'https://assistant.example.test';
+  const redact = createErrorRedactor(environmentSecrets(environment));
+  for (const token of [...tokens, databasePassword, environment.DATABASE_URL]) {
+    assert.equal(redact(`Provider rejected ${token}`), 'Provider rejected [redacted]');
+    assert.equal(
+      redact(`Provider rejected ${encodeURIComponent(token)}`),
+      'Provider rejected [redacted]',
+    );
+  }
+  assert.equal(redact(environment.NOD_PUBLIC_URL), environment.NOD_PUBLIC_URL);
+});
+
 test('redaction masks nested credentials, headers and encoded JSON before persistence', () => {
   const secret = 'fixture-provider-secret-with/slash';
   const padded = ` \t${secret}\r\n`;

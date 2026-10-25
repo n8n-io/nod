@@ -77,11 +77,13 @@ During quiet hours, nod keeps working on new mail and app activity, but messages
 
 ## Keep nod running
 
-:::caution[Runs need nod open]
-On the desktop app, schedules and background work run only while nod is open and your computer is awake. Closing the window keeps nod running in the menu bar or tray. **Quit nod** stops it. Turn on **Open at login** in **Settings → General** if you rely on schedules.
+:::caution[The assistant must stay running]
+A local desktop assistant runs schedules and background work only while nod is open and your computer is awake. A [self-hosted server](/deploy/self-host/) keeps running after you close its web or desktop client, provided the server stays awake and connected.
 :::
 
-If a run comes due while nod is closed, it runs once when nod is running again.
+For a local assistant, closing the window keeps nod running in the menu bar or tray. **Quit nod** stops it. Turn on **Open at login** in **Settings → General** if you rely on schedules.
+
+If a run comes due while the assistant is stopped, it runs once when nod is running again.
 
 ## Related resources
 

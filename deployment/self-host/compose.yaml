@@ -1,0 +1,193 @@
+name: nod-server
+
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: deployment/self-host/Dockerfile
+    image: nod-server:${NOD_IMAGE_TAG:-local}
+    restart: unless-stopped
+    init: true
+    env_file: ${NOD_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      NOD_ENVIRONMENT: production
+      NOD_HOST: 0.0.0.0
+      PORT: ${PORT:-4310}
+      NOD_DATA_ROOT: /var/lib/nod
+      NOD_PUBLIC_URL: ${NOD_PUBLIC_URL:-http://localhost:${PORT:-4310}}
+      NOD_AUTH_TOKEN: ${NOD_AUTH_TOKEN:?Run sh setup.sh first}
+      NOD_VAULT_KEY: ${NOD_VAULT_KEY:?Run sh setup.sh first}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://nod:${NOD_POSTGRES_PASSWORD:?Run sh setup.sh first}@postgres:5432/nod}
+      DOCKER_HOST: tcp://runtime:2375
+      WORKSPACE_CONTAINER: nod-workspace-${COMPOSE_PROJECT_NAME:-nod-server}
+      BROWSER_CONTAINER: nod-browser-${COMPOSE_PROJECT_NAME:-nod-server}
+    ports:
+      - '${NOD_BIND_ADDRESS:-127.0.0.1}:${PORT:-4310}:${PORT:-4310}'
+    volumes:
+      - server-data:/var/lib/nod
+      - workspace-data:/var/lib/nod/workspaces
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=1777,size=256m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    mem_limit: ${NOD_SERVER_MEMORY:-2g}
+    networks: [backend, control, outbound]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      runtime:
+        condition: service_started
+      browser:
+        condition: service_healthy
+      workspace:
+        condition: service_started
+    healthcheck:
+      test: ['CMD', 'node', '/app/healthcheck.mjs']
+      interval: 15s
+      timeout: 6s
+      retries: 10
+      start_period: 60s
+
+  postgres:
+    image: postgres:17-alpine@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nod
+      POSTGRES_PASSWORD: ${NOD_POSTGRES_PASSWORD:?Run sh setup.sh first}
+      POSTGRES_DB: nod
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nod -d nod']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  runtime:
+    image: node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+    restart: unless-stopped
+    init: true
+    command: ['node', '/app/docker-proxy.mjs']
+    environment:
+      WORKSPACE_CONTAINER: nod-workspace-${COMPOSE_PROJECT_NAME:-nod-server}
+      BROWSER_CONTAINER: nod-browser-${COMPOSE_PROJECT_NAME:-nod-server}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-proxy.mjs:/app/docker-proxy.mjs:ro
+    networks: [control]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 128m
+
+  browser:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.browser
+    image: nod-browser:${NOD_IMAGE_TAG:-local}
+    container_name: nod-browser-${COMPOSE_PROJECT_NAME:-nod-server}
+    hostname: nod-browser
+    restart: unless-stopped
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    pids_limit: 1024
+    mem_limit: ${NOD_BROWSER_MEMORY:-3g}
+    shm_size: 512m
+    volumes:
+      - browser-data:/data
+    tmpfs:
+      - /tmp:size=512m
+      - /home/node:uid=1000,gid=1000,mode=700,size=256m
+    networks: [browser]
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          'const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  workspace:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.workspace
+    image: nod-workspace:${NOD_IMAGE_TAG:-local}
+    container_name: nod-workspace-${COMPOSE_PROJECT_NAME:-nod-server}
+    restart: unless-stopped
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    mem_limit: ${NOD_WORKSPACE_MEMORY:-2g}
+    volumes:
+      - workspace-data:/workspace
+      - workspace-tools:/home/node
+    networks: [workspace]
+    command: ['sleep', 'infinity']
+
+  https:
+    image: caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    profiles: [https]
+    restart: unless-stopped
+    entrypoint: /bin/sh
+    command:
+      - -ec
+      - |
+        origin=$${NOD_PUBLIC_URL%/}
+        case "$$origin" in
+          https://*) authority=$${origin#https://} ;;
+          *) echo 'The HTTPS profile requires an https:// origin on port 443.' >&2; exit 1 ;;
+        esac
+        case "$$authority" in
+          ''|*[!a-zA-Z0-9.-]*) echo 'The HTTPS profile requires a DNS or IPv4 host on port 443. Use an existing proxy for other ports or IPv6.' >&2; exit 1 ;;
+        esac
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    environment:
+      NOD_PUBLIC_URL: ${NOD_PUBLIC_URL:-http://localhost:${PORT:-4310}}
+      PORT: ${PORT:-4310}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - https-data:/data
+      - https-config:/config
+    networks: [outbound]
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:2019/config/']
+      interval: 5s
+      timeout: 3s
+      retries: 6
+
+networks:
+  backend:
+    internal: true
+  control:
+    internal: true
+  outbound:
+  browser:
+  workspace:
+
+volumes:
+  server-data:
+  postgres-data:
+  workspace-data:
+  workspace-tools:
+  browser-data:
+  https-data:
+  https-config:

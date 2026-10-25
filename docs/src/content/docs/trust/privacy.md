@@ -1,24 +1,28 @@
 ---
 title: Your data and privacy
-description: Where nod keeps your data, what leaves your computer and to whom, and how to delete it.
+description: Where nod keeps your data, what it sends to other services, and how to delete it.
 sidebar:
   order: 11
 ---
 
-This page explains where nod keeps your data, what leaves your computer and to whom, and how to delete it.
+This page explains where nod keeps your data, what it sends to other services, and how to delete it.
 
-Desktop and source installs keep nod's database, workspace and browser on your computer. Requests go to your model and decision providers, and the apps you choose. Composio app requests and results pass through the configured connection service and Composio. The default service is hosted by n8n; source installs can [select another trusted service](/deploy/configuration/#apps-and-composio).
+Local desktop and source installs keep nod's database, workspace and browser on your computer. With a [self-hosted server](/deploy/self-host/), the server stores them along with your model credentials and Composio identity. Web and desktop clients reach that same assistant. Anyone administering the server or its storage may have access to its data.
+
+Requests go to your model and decision providers, and the apps you choose. Composio app requests and results pass through the configured connection service and Composio. The default service is hosted by n8n; server and source installs can [select another trusted service](/deploy/configuration/#apps-and-composio).
 
 The desktop app checks n8n's update service for new versions, which sees your IP address, app version and platform. Feedback, usage analytics and conversation traces are optional. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
 
 ## Where your data lives
 
-|                              | Desktop app                                                                                                                      | From source                                    |
+|                              | Local desktop assistant                                                                                                          | Local source install                           |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | nod server                   | Your computer                                                                                                                    | Your computer                                  |
 | Database, workspace, browser | A private virtual machine on your computer                                                                                       | Docker containers on your computer             |
 | Data folder                  | `~/Library/Application Support/nod/` and `~/.nod-desktop/` on a Mac. `%APPDATA%\nod\` and the `nod-` WSL distribution on Windows | `.local/` (`NOD_DATA_ROOT`) and Docker volumes |
 | Who can read it              | You                                                                                                                              | You                                            |
+
+A self-hosted server uses persistent Docker volumes and its private environment file; see [Storage and backups](/deploy/server-operations/). Connected desktop clients keep the server address and an OS-encrypted access token, plus preferences, drafts and temporary files. They do not create a separate assistant or Composio identity. Connecting does not move an existing local assistant to the server.
 
 Unfinished setup interviews are encrypted in your installation’s private storage. Continuing saves your answers to memory and removes the draft text; **Change my answers** discards it without saving. An encrypted completion marker contains only a random interview identifier and expiry, so returning through setup does not save old answers again. Drafts and completion markers expire after 30 days and are discarded the next time nod reads them. A completed interview can remain in the current tab while you go back through setup; that temporary copy is shown only while its completion marker is current and is cleared when onboarding finishes.
 
@@ -28,11 +32,14 @@ Unsent chat drafts stay in app or browser storage on this device, for your accou
 
 Desktop file actions prepare private copies in the system temporary folder. The cache holds up to eight files. Saving creates a separate file in Downloads. Temporary copies remain until cache eviction or app shutdown. A forced stop can leave a temporary copy behind.
 
-## What leaves your computer
+## What nod sends to other services
+
+For a remote assistant, model and app requests originate from the server. Desktop update checks, media playback and client analytics originate from the device you use.
 
 ```mermaid
 flowchart LR
-  nod[nod on your computer]:::accent
+  client[Desktop or web client]:::accent
+  client -- assistant requests --> nod["nod runtime<br/>on your computer or server"]:::accent
   nod -- prompts and results --> model[Model and decision providers]
   nod -- app actions with nod's connection --> managed["Configured connection service"]
   managed --> apps[Composio and<br/>your apps]
@@ -40,8 +47,9 @@ flowchart LR
   nod -- your chats --> chat[Telegram, WhatsApp]
   nod -- browsing --> web[Websites]
   nod -- searches --> search[Web search]
-  nod -- update checks and downloads --> n8n[n8n]:::muted
-  nod -. opt-in analytics .-> n8n[n8n]:::muted
+  client -- desktop update checks and downloads --> n8n[n8n]:::muted
+  client -. opt-in client analytics .-> n8n
+  nod -. opt-in runtime analytics .-> n8n
   nod -. opt-in traces .-> n8n[n8n]:::muted
   nod -. feedback you send .-> feedback[Configured feedback recipient]:::muted
 ```
@@ -63,7 +71,7 @@ Preview pages and images are fetched without your browser's cookies. After you s
 
 OpenAI API connections use GPT Decisions at OpenAI. OpenRouter sends decision checks to TypeSafe. An optional `TYPESAFE_API_KEY` selects TypeSafe directly, regardless of your chat connection. See [Decision checks](/connect/models/#decision-checks) for routing and billing.
 
-nod creates a random cryptographic identity for each installation and encrypts its private signing key with the installation's Vault key. On desktop, the operating system protects that Vault key. Source installs use a [configured or locally stored Vault key](/deploy/configuration/#vault). The connection service stores the public identity, admitted account references, usage counters and expiring connection state. It verifies signed requests and account ownership; knowing an identifier alone does not grant access.
+nod creates a random cryptographic identity for each assistant installation and encrypts its private signing key with the installation's Vault key. For a local desktop assistant, the operating system protects that Vault key. Server and source installs use a [configured or locally stored Vault key](/deploy/configuration/#vault). Remote clients use the server's identity, so connected accounts remain available across devices. The connection service stores the public identity, admitted account references, usage counters and expiring connection state. It verifies signed requests and account ownership; knowing an identifier alone does not grant access.
 
 You authorize each app, such as Gmail, with its provider. The Composio project key stays on the connection service. Your model keys stay encrypted on your installation. Provider keys never enter a prompt, nod's workspace or its browser.
 
@@ -93,9 +101,9 @@ Analytics have no fields for raw messages, nod's replies, tool arguments or resu
 
 ## Conversation traces
 
-Conversation traces are off until you turn on **Share conversation traces** in **Settings**. While it's on, each request nod makes to your model is sent with the model's reply to the nod team at n8n, through n8n's nod Traces service to n8n's LangSmith project in the EU. Traces are deleted after 14 days, and n8n doesn't use them to train AI models.
+Conversation traces are off until you turn on **Share conversation traces** in **Settings**. While it's on, nod sends scrubbed model requests and replies to its configured trace receiver. The default is n8n's nod Traces service, which forwards them to n8n's LangSmith project in the EU. There, traces are deleted after 14 days, and n8n doesn't use them to train AI models. A different receiver has its own access and retention policies.
 
-Before a trace leaves your computer, nod removes known secrets, your name, email addresses, phone numbers, card numbers, IBANs, crypto wallets, common ID numbers, IP addresses, personal fields in app data and images. A trace carries no account or device identifier, its conversation ID changes every day and whenever nod restarts, and your saved memory is left out. Removal is automatic and can miss details written in other forms, such as another person's name in a sentence, so traces are pseudonymised, not anonymous. See [Conversation traces](/trust/conversation-traces/) for every layer, an example and where traces go.
+Before a trace leaves the machine running your assistant, nod removes known secrets, your name, email addresses, phone numbers, card numbers, IBANs, crypto wallets, common ID numbers, IP addresses, personal fields in app data and images. A trace carries no account or device identifier, its conversation ID changes every day and whenever nod restarts, and your saved memory is left out. Removal is automatic and can miss details written in other forms, such as another person's name in a sentence, so traces are pseudonymised, not anonymous. See [Conversation traces](/trust/conversation-traces/) for every layer, an example and where traces go.
 
 ## Feedback
 
@@ -126,7 +134,10 @@ During setup, nod can read small samples from your connected tools to suggest fi
 - **Memories.** Open **Settings → Memory**, select a note and choose **Forget**. This deletes the note and its earlier versions. You can also ask nod to forget something.
 - **Vault items.** Open the item in **Vault** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
-- **Everything.** In the desktop app, select **Remove all data** in **Settings → General**. nod deletes your profile and private computer from the folders above, then quits. From source, stop nod and delete its `NOD_DATA_ROOT` folder (`.local/` by default) and its Docker volumes. Uninstalling the app alone keeps your data. A service you signed in to through nod may still list nod as a connected app until you remove it there.
+- **A local desktop assistant.** Select **Remove all data** in **Settings → General**. nod deletes your local profile and private computer, then quits. If connected to a server, first choose **Use this computer** in **Server connection**. This deletes no server data.
+- **A source install or self-hosted server.** Stop it, then remove its data directory and Docker volumes. For a server, follow [Server operations](/deploy/server-operations/). Disconnecting or uninstalling a client keeps the server's data.
+
+Uninstalling the desktop app alone keeps its data. A service you signed in to through nod may still list nod as a connected app until you remove it there.
 
 Disconnecting an app does not erase the connection service's installation or revocation records. **Remove all data** deletes local data, not those records. To request their removal from n8n's service, use **Send feedback**; for a custom service, contact its operator.
 

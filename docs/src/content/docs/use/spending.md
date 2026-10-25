@@ -83,7 +83,7 @@ nod finishes an action that has already started before it checks in. If the mode
 
 ## Check usage from Telegram or WhatsApp
 
-Send `/usage` for the same summary. It doesn't use the model or cost anything. Telegram also receives this month's statement as a PDF.
+Send `/usage` for a summary written by your selected model. That model call counts toward usage. Telegram and the WhatsApp QR connection also receive this month's statement as a PDF. With the WhatsApp Cloud API, open nod to get it.
 
 ## Ask nod
 

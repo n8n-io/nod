@@ -41,7 +41,7 @@
 ## Built to be trusted
 
 - **Authority comes from you.** A web page or an email can never give nod permission. The server checks every app action against what you asked, and asks you when it isn't sure.
-- **Your secrets never reach the model.** Vault fills saved logins and cards into the exact website, privately.
+- **Vault keeps saved secrets out of the model.** It fills saved logins and cards into the exact website, privately.
 - **What matters is on the record.** Every sign-in, every change or message sent through your apps, and every model cost, with a monthly spending limit.
 - **Runs on your computer.** With the desktop app or from source. You pick the model provider, and the code is open.
 
@@ -58,6 +58,8 @@
 
 ## Get nod
 
+**Self-hosted server.** Run one assistant on a VPS, cloud VM, or Mac mini and connect from your devices. See [Host your own server](docs/src/content/docs/deploy/self-host.mdx).
+
 **Desktop app.** Download the newest **nod** release for Mac (Apple silicon or Intel) or Windows (preview) from the [releases page](https://github.com/n8n-io/nod/releases). See [Install the desktop app](docs/src/content/docs/get-started/install-desktop.mdx).
 
 **From source**, on macOS or Linux with Node.js 24.21+, pnpm and Docker:
@@ -71,7 +73,7 @@ You also need a model connection: an OpenAI, Anthropic or OpenRouter API key, an
 
 ## Read the docs
 
-The docs are a site in [`docs/`](docs/README.md). Run them with `pnpm --dir docs dev`, or start reading here:
+Read the docs for this revision in [`docs/`](docs/README.md). Run the site locally with `pnpm --dir docs dev`, or start with these pages:
 
 | Section                                                              | What's inside                                         |
 | -------------------------------------------------------------------- | ----------------------------------------------------- |

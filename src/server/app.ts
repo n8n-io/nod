@@ -7,7 +7,15 @@ import { messageInput, registerAudioMessages } from './audio-messages.ts';
 import type { ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { pool } from './db.ts';
-import { configuration, dataRoot, desktopAccess, ownerId, port } from './config.ts';
+import {
+  accessOrigin,
+  authToken,
+  configuration,
+  dataRoot,
+  desktopAccess,
+  ownerId,
+  port,
+} from './config.ts';
 import { events, type ServerEvent } from './events.ts';
 import { artifactView, localArtifacts, type ArtifactService } from './artifacts.ts';
 import {
@@ -101,6 +109,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   const app = Fastify({
     logger: false,
     bodyLimit: 256 * 1024,
+    requestTimeout: 300_000,
     trustProxy: false,
     forceCloseConnections: true,
   });
@@ -118,7 +127,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
     port,
     desktopAccess
       ? { key: desktopAccess.token, desktop: true }
-      : { key: await accessKey(dataRoot) },
+      : {
+          key: authToken ?? (await accessKey(dataRoot)),
+          origin: accessOrigin,
+          bearer: authToken !== undefined,
+        },
   );
   if (desktopAccess && dependencies.admission) registerWorkAdmission(app, dependencies.admission);
   app.setErrorHandler((error, request, reply) => {

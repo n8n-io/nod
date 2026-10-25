@@ -140,10 +140,10 @@ export function createSessionStore(
         signal: controller.signal,
         cache: 'no-store',
       });
-      if (controller.signal.aborted || current !== version) return;
-      if (!validSession(session)) {
-        invalidate('Your account could not be opened. Try again.');
-        return;
+      if (controller.signal.aborted || current !== version) return false;
+      if (!validSession(session) || (snapshot.locked && !session.user)) {
+        invalidate('Your account could not be opened. Try again.', snapshot.locked);
+        return false;
       }
       if (
         grantUsageData &&
@@ -154,10 +154,12 @@ export function createSessionStore(
       )
         usageRevoked.delete(grantUsageData);
       accept(session);
+      return true;
     } catch (cause) {
-      if (controller.signal.aborted || current !== version) return;
+      if (controller.signal.aborted || current !== version) return false;
       if (cause instanceof ApiError && cause.status === 401) invalidate('', true);
       else publish({ loading: false, error: errorMessage(cause) });
+      return false;
     } finally {
       if (read === controller) read = undefined;
     }
@@ -235,15 +237,16 @@ export const sessionStore = createSessionStore(
 export async function claimAccess() {
   const key = new URLSearchParams(window.location.hash.slice(1)).get('access');
   if (!key) return false;
-  const response = await apiResponse('/api/access', {
-    method: 'POST',
-    body: JSON.stringify({ key }),
-  }).catch(() => undefined);
-  if (!response?.ok) return false;
   window.history.replaceState(
     window.history.state,
     '',
     window.location.pathname + window.location.search,
   );
+  const response = await apiResponse('/api/access', {
+    method: 'POST',
+    redirect: 'error',
+    body: JSON.stringify({ key }),
+  }).catch(() => undefined);
+  if (!response?.ok) return false;
   return true;
 }

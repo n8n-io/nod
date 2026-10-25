@@ -1,9 +1,14 @@
 import { useEffect } from 'react';
 import { NodGlyph } from '../../../components/motion';
 import { Button } from '../../../components/ui';
+import { desktopRuntimeAvailable } from '../../../lib/desktop';
 import type { StepProps } from '..';
 
-export function Welcome({ onNext }: StepProps) {
+export function Welcome({
+  onNext,
+  actionLabel = 'Get started',
+  local = desktopRuntimeAvailable(),
+}: StepProps & { actionLabel?: string; local?: boolean }) {
   useEffect(() => {
     const press = (event: KeyboardEvent) => {
       const surface =
@@ -24,9 +29,9 @@ export function Welcome({ onNext }: StepProps) {
         </h1>
         <p className="ob-welcome-copy">
           Real tasks, done for you, on your
-          <br className="ob-welcome-break" /> computer, with your permission.
+          <br className="ob-welcome-break" /> {local ? 'computer' : 'server'}, with your permission.
         </p>
-        <Button onClick={onNext}>Get started</Button>
+        <Button onClick={onNext}>{actionLabel}</Button>
       </div>
       <p className="ob-welcome-note">This is a preview version of nod, developed by n8n</p>
     </section>

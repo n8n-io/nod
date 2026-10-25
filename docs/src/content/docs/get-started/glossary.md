@@ -29,13 +29,13 @@ This page explains the words you'll meet in these docs. Select a term to read th
 
 ## Connections
 
-| Term                                 | What it means                                                                                                                                                                                                     |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Model connection](/connect/models/) | How nod reaches a model: an OpenAI, Anthropic, OpenRouter, Amazon Bedrock, Google Vertex AI or Azure OpenAI API key, a ChatGPT or OpenRouter account, or a local model server. A paid provider bills you for use. |
-| [Connected app](/connect/apps/)      | An account nod can use for you, such as Gmail, Calendar or Slack.                                                                                                                                                 |
-| [Composio](/connect/apps/)           | The service nod uses to connect many apps for you. You sign in to each app and choose what it can access.                                                                                                         |
-| [MCP](/connect/mcp-api-cli/)         | Model Context Protocol, a standard way for an app to offer tools to an assistant. Notion, Linear and n8n connect through their own MCP servers.                                                                   |
-| [Channel](/use/channels/)            | Another place to chat with nod besides the app: Telegram or WhatsApp.                                                                                                                                             |
+| Term                                 | What it means                                                                                                                                                |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Model connection](/connect/models/) | How nod reaches a model: a supported provider's API key, a ChatGPT or OpenRouter sign-in, or an OpenAI-compatible server. A paid provider bills you for use. |
+| [Connected app](/connect/apps/)      | An account nod can use for you, such as Gmail, Calendar or Slack.                                                                                            |
+| [Composio](/connect/apps/)           | The service nod uses to connect many apps for you. You sign in to each app and choose what it can access.                                                    |
+| [MCP](/connect/mcp-api-cli/)         | Model Context Protocol, a standard way for an app to offer tools to an assistant. Notion, Linear and n8n connect through their own MCP servers.              |
+| [Channel](/use/channels/)            | Another place to chat with nod besides the app: Telegram or WhatsApp.                                                                                        |
 
 ## Safety and control
 
@@ -53,9 +53,10 @@ This page explains the words you'll meet in these docs. Select a term to read th
 
 ## Running nod
 
-| Term                                                  | What it means                                                                                                      |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| [Owner access key](/get-started/install-from-source/) | The secret that opens a source install of nod. The access link nod prints when it starts saves it in your browser. |
+| Term                                                  | What it means                                                                                                                    |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| [Owner access key](/get-started/install-from-source/) | The secret that opens a local source install of nod. The access link nod prints when it starts saves it in your browser.         |
+| [Server access token](/deploy/self-host/)             | The `NOD_AUTH_TOKEN` configured on a self-hosted server. Enter it in the web or desktop client to reach that server's assistant. |
 
 ## Related resources
 

@@ -2137,3 +2137,50 @@ input[type='range']:disabled {
   color: var(--muted-foreground);
   box-shadow: none;
 }
+
+.server-access-page {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 48px 24px;
+}
+
+.server-access {
+  display: grid;
+  gap: 24px;
+  width: min(100%, 400px);
+  text-align: left;
+}
+
+.server-access-header {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.server-access-header > .ob-glyph {
+  margin-bottom: 12px;
+}
+
+.server-access-header h1 {
+  color: var(--foreground);
+  font-size: var(--text-title);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+}
+
+.server-access-header p {
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  line-height: 1.5;
+}
+
+.server-access-note {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  line-height: 1.5;
+  text-align: center;
+}

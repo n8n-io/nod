@@ -15,7 +15,7 @@ import { createLedger } from '../src/server/ledger.ts';
 import { memoryObjectStore } from './fixtures/object-store.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
-import { accessCookie, accessKey } from '../src/server/access.ts';
+import { accessCookie } from '../src/server/access.ts';
 import { analyticsRoutes, createAnalytics } from '../src/server/analytics.ts';
 import { gunzipSync } from 'node:zlib';
 import { createChannelSessionStore } from '../src/server/channel-session.ts';
@@ -378,6 +378,13 @@ test(
     process.env.DATABASE_URL = url.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
     process.env.NOD_DATA_ROOT = join(objects, 'runtime');
+    const authToken = randomBytes(32).toString('base64url');
+    const previousAuthToken = process.env.NOD_AUTH_TOKEN;
+    process.env.NOD_AUTH_TOKEN = authToken;
+    t.after(() => {
+      if (previousAuthToken === undefined) delete process.env.NOD_AUTH_TOKEN;
+      else process.env.NOD_AUTH_TOKEN = previousAuthToken;
+    });
     const { pool, initializeDatabase } = await import('../src/server/db.ts');
     await initializeDatabase();
     const { createApplication, createDefaultAdapters } =
@@ -710,7 +717,7 @@ test(
     const headers = {
       host: `localhost:${port}`,
       origin: `http://localhost:${port}`,
-      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+      cookie: `${accessCookie(port)}=${authToken}`,
     };
     try {
       const { logFailure } = await import('../src/server/failure-log.ts');
@@ -721,7 +728,7 @@ test(
         return { ok: true };
       });
       application.app.get('/api/diagnostics-fixture/:id', async () => {
-        throw new Error('Synthetic app render failed for example.person@example.com');
+        throw new Error(`Synthetic app render failed ${authToken} for example.person@example.com`);
       });
       await application.app.ready();
       const failedRequest = await application.app.inject({
@@ -729,6 +736,7 @@ test(
         headers,
       });
       assert.equal(failedRequest.statusCode, 500);
+      assert.equal(failedRequest.body.includes(authToken), false);
       const diagnostics = await application.app.inject({
         method: 'POST',
         url: '/api/feedback/report',
@@ -759,6 +767,7 @@ test(
         diagnostics.json().content,
         /example.person@example.com|other.person@example.com|synthetic-private-record/,
       );
+      assert.equal(diagnostics.json().content.includes(authToken), false);
       for (const [name, section] of Object.entries(diagnosticReport.coverage.sections))
         assert.equal((section as { status: string }).status, 'collected', name);
       const logDirectory = join(
@@ -779,6 +788,9 @@ test(
           .split('\n')
           .filter(Boolean)
           .map((line) => JSON.parse(line));
+      const persisted = await journal();
+      assert.ok(persisted.some((entry) => entry.data?.event === 'request_failed'));
+      assert.equal(JSON.stringify(persisted).includes(authToken), false);
       const flushJournal = async () => {
         assert.equal(
           (
@@ -899,7 +911,7 @@ test(
         application.app.inject({
           method: 'POST',
           url: '/api/webhooks/telegram',
-          headers: { 'content-type': 'application/json' },
+          headers: { host: headers.host, 'content-type': 'application/json' },
           payload: { id, text, replyTo },
         });
       assert.equal((await send(1, 'Fixture request')).statusCode, 200);

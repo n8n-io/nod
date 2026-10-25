@@ -727,6 +727,11 @@ export function createModelService(options: {
     async initialize() {
       await store.initialize();
       await store.change((state) => {
+        state.connections = state.connections.filter(
+          (row) => !row.managed || options.bootstrap?.credentials[row.provider],
+        );
+        if (!state.connections.some((row) => row.id === state.selection?.connectionId))
+          state.selection = null;
         for (const row of state.connections) {
           try {
             if (!credential(row)) row.status = 'reconnect';
