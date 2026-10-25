@@ -39,6 +39,7 @@ const parentTools = new Set([
   'browser_session',
   'ask_user',
   'send_message',
+  'create_audio',
   'manage_apps',
   'task',
 ]);
@@ -338,6 +339,7 @@ export function createAgentRuntime(dependencies: {
           signal.throwIfAborted();
           if (
             name === 'send_message' ||
+            name === 'create_audio' ||
             (name === 'task' && (params as { action?: unknown } | null)?.action === 'start')
           )
             reported = true;

@@ -1525,6 +1525,75 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     };
   }
 
+  test('ElevenLabs keys stay encrypted and owned without becoming a selectable chat model', async (t) => {
+    const f = await fixture(t);
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    const { modelEnvironment } = await import('../src/server/composition.ts');
+    const secret = 'fixture-elevenlabs-owned-secret';
+    const backend = createPiModelBackend({
+      fetch: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.origin === 'https://api.elevenlabs.io') {
+          assert.equal(new Headers(init?.headers).get('xi-api-key'), secret);
+          return Response.json({
+            voices: [{ voice_id: 'fixture_custom_voice', name: 'Synthetic custom voice' }],
+            has_more: false,
+          });
+        }
+        assert.equal(url.href, 'https://api.openai.com/v1/models');
+        return Response.json({ data: [{ id: 'gpt-6.1-sol' }] });
+      },
+    });
+    const owner = await f.create('fixture-speech-owner', backend);
+    const speechId = await owner.addKey('elevenlabs', secret);
+    assert.equal(owner.hasApiKey('elevenlabs'), true);
+    assert.equal(await owner.apiKey('elevenlabs'), secret);
+    assert.equal(owner.configured, false);
+    assert.equal(owner.current.configured, false);
+    assert.equal(owner.view().selection, null);
+    assert.deepEqual(owner.view().connections[0].models, []);
+    assert.deepEqual(owner.analyticsConnections(), []);
+    await assert.rejects(owner.resolve());
+    await assert.rejects(
+      owner.select({ connectionId: speechId, modelId: 'eleven_v4', effort: 'off' }),
+    );
+    assert.doesNotMatch(JSON.stringify(owner.view()), /fixture-elevenlabs-owned-secret/);
+    assert.doesNotMatch(
+      JSON.stringify((await f.database.query('SELECT * FROM model_connections')).rows),
+      /fixture-elevenlabs-owned-secret/,
+    );
+    assert.doesNotMatch(
+      JSON.stringify((await f.database.query('SELECT * FROM vault_app_grants')).rows),
+      /fixture-elevenlabs-owned-secret/,
+    );
+    const other = await f.create('fixture-other-speech-owner', backend);
+    assert.equal(await other.apiKey('elevenlabs'), undefined);
+    await other.remove(speechId);
+    assert.equal(await owner.apiKey('elevenlabs'), secret);
+    const chatId = await owner.addKey('openai', 'fixture-openai-key');
+    const selected = owner.view().selection;
+    assert.equal(selected?.connectionId, chatId);
+    await owner.refreshCatalog(speechId);
+    assert.deepEqual(owner.view().selection, selected);
+    assert.equal(owner.configured, true);
+    const reloaded = await f.create('fixture-speech-owner', backend);
+    assert.equal(await reloaded.apiKey('elevenlabs'), secret);
+    assert.deepEqual(reloaded.view().selection, selected);
+    await reloaded.remove(speechId);
+    assert.equal(await reloaded.apiKey('elevenlabs'), undefined);
+    assert.deepEqual(reloaded.view().selection, selected);
+    assert.throws(() => modelEnvironment({ LLM_PROVIDER: 'elevenlabs' }));
+    const managed = await f.create(
+      'fixture-managed-speech-owner',
+      backend,
+      modelEnvironment({ ELEVENLABS_API_KEY: secret }),
+    );
+    assert.equal(managed.hasApiKey('elevenlabs'), true);
+    assert.equal(managed.view().connections[0].managed, true);
+    assert.equal(managed.configured, false);
+    assert.equal(managed.view().selection, null);
+  });
+
   test('every environment model connection resolves only its managed credential and loses access after removal', async (t) => {
     const f = await fixture(t);
     const { modelEnvironment } = await import('../src/server/composition.ts');

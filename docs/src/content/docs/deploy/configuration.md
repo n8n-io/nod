@@ -78,6 +78,7 @@ Keys set here become server-managed connections. They stay in server memory and 
 | `OPENAI_API_KEY`             | Adds an OpenAI connection. It also turns on voice transcription and voice replies.                                                                                                                                   | Empty                                                            |
 | `ANTHROPIC_API_KEY`          | Adds an Anthropic connection.                                                                                                                                                                                        | Empty                                                            |
 | `OPENROUTER_API_KEY`         | Adds an OpenRouter connection with ElevenLabs and Kokoro voices. Also enables transcription when no OpenAI API connection is available.                                                                              | Empty                                                            |
+| `ELEVENLABS_API_KEY`         | Adds an ElevenLabs connection for account voices and transcription, without a chat model.                                                                                                                            | Empty                                                            |
 | `OPENAI_COMPATIBLE_BASE_URL` | Adds an [OpenAI-compatible server](/connect/local-models/), such as Ollama at `http://localhost:11434/v1`. The address must be reachable from nod's server.                                                          | Empty                                                            |
 | `OPENAI_COMPATIBLE_API_KEY`  | The key for that server, if it needs one.                                                                                                                                                                            | Empty                                                            |
 | `TYPESAFE_API_KEY`           | Selects direct Jev for reading approval replies and checking emails that give account access, regardless of the chat connection.                                                                                     | Empty                                                            |
@@ -89,7 +90,9 @@ The [provider settings table](/connect/models/#set-connections-in-server-setting
 
 Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an OpenRouter connection uses Jev through OpenRouter. Other connections use the selected model for confirmation replies and their smaller background model, when available, for email checks. Your selected model still writes messages. See [Decision checks](/connect/models/#decision-checks) for billing, data routing, and failure behavior.
 
-Voice also works with API keys saved in **Models**. OpenAI supplies spoken replies and takes precedence for transcription. OpenRouter supplies ElevenLabs and Kokoro voices, plus transcription when no OpenAI API connection is available. You can also [download local voices](#local-speech) without an API connection.
+Voice reuses OpenRouter and OpenAI API keys saved in **Models**. You can also connect these services or ElevenLabs under **Settings → General → Voice → Assistant voice → Add voices**. Set `ELEVENLABS_API_KEY` for a server-managed ElevenLabs connection; it supplies speech without adding a chat model. Allow Text to Speech, Speech to Text, and Voices read on the key.
+
+Selecting an ElevenLabs account voice uses ElevenLabs for transcription and replies. Otherwise, cloud transcription uses OpenAI, then OpenRouter, then ElevenLabs, depending on which connection is available. You can also [download local voices](#local-speech) without an API connection.
 
 ## Apps and Composio
 
@@ -229,7 +232,7 @@ The self-hosting stack sets these names to `nod-workspace-<project>` and `nod-br
 
 Select **Download voices** in **Settings → General → Voice** to prepare local speech, or enable it from chat. nod downloads pinned Whisper and Kokoro models into its data directory and runs them in a separate process on the runtime host. Audio is processed in memory. The worker receives no provider keys or connected account credentials. Local voices speak English, Spanish, French, Hindi, Italian or Brazilian Portuguese. When you enable local audio without a connected speech service, nod picks a voice matching your browser’s language when one is available. If you connect to a remote nod server, inference runs on that server.
 
-A connected OpenRouter or OpenAI speech service is selected before local speech for the default voice. Selecting a local voice explicitly uses local speech for both transcription and replies. nod does not change providers automatically after a failed paid request.
+The default voice uses OpenRouter, then OpenAI, then ElevenLabs, then local speech, depending on which connection is available. Selecting a local voice explicitly uses local speech for both transcription and replies. nod does not change providers automatically after a failed paid request.
 
 ## Docker stack settings
 

@@ -12,10 +12,11 @@ import { Button, Notice } from './ui';
 interface SpeechSettings {
   transcription: boolean;
   synthesis: boolean;
+  voicesError?: string;
   voices: readonly SpeechVoice[];
   speechVoice: string | null;
   defaultVoice?: string;
-  speechReply: 'voice' | 'always' | 'never';
+  speechReply: 'auto' | 'voice' | 'always' | 'never';
   local?: { state: 'not_downloaded' | 'downloading' | 'ready' | 'failed'; progress?: number };
 }
 
@@ -37,6 +38,8 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
   const [setupNotice, setSetupNotice] = useState(false);
   const [error, setError] = useState('');
   const [preparing, setPreparing] = useState(false);
+  const [catalogRefreshing, setCatalogRefreshing] = useState(false);
+  const catalogRequest = useRef<AbortController | null>(null);
   const prepareRequest = useRef<AbortController | null>(null);
   const saveRequest = useRef<AbortController | null>(null);
   const previewRequest = useRef<AbortController | null>(null);
@@ -59,13 +62,14 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
     setPreviewing(null);
   }
   useEffect(() => {
-    onBusyChange(saving || preparing || connectionBusy);
+    onBusyChange(saving || preparing || connectionBusy || catalogRefreshing);
     return () => onBusyChange(false);
-  }, [saving, preparing, connectionBusy, onBusyChange]);
+  }, [saving, preparing, connectionBusy, catalogRefreshing, onBusyChange]);
   useEffect(
     () => () => {
       saveRequest.current?.abort();
       prepareRequest.current?.abort();
+      catalogRequest.current?.abort();
       stop();
     },
     [],
@@ -99,8 +103,41 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
       }
     }
   }
+  async function refreshVoices() {
+    if (catalogRequest.current) return;
+    const controller = new AbortController();
+    catalogRequest.current = controller;
+    setCatalogRefreshing(true);
+    setError('');
+    try {
+      const result = await api<SpeechSettings>('/api/speech/voices/refresh', {
+        method: 'POST',
+        signal: controller.signal,
+      });
+      controller.signal.throwIfAborted();
+      update((current) =>
+        current
+          ? {
+              ...result,
+              speechVoice: current.speechVoice,
+              speechReply: current.speechReply,
+            }
+          : result,
+      );
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(errorMessage(cause));
+    } finally {
+      if (catalogRequest.current === controller) {
+        catalogRequest.current = null;
+        setCatalogRefreshing(false);
+      }
+    }
+  }
   async function save(change: Partial<AccountPreferences>) {
     if (saveRequest.current) return;
+    catalogRequest.current?.abort();
+    catalogRequest.current = null;
+    setCatalogRefreshing(false);
     stop();
     const controller = new AbortController();
     saveRequest.current = controller;
@@ -113,7 +150,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
           current && {
             ...current,
             speechVoice: saved.speechVoice ?? null,
-            speechReply: saved.speechReply ?? 'voice',
+            speechReply: saved.speechReply ?? 'auto',
           },
       );
       await refresh();
@@ -175,12 +212,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
     }
   }
   const setupBusy = preparing || connectionBusy;
-  const canAdd = Boolean(
-    data &&
-    ((data.local && data.local.state !== 'ready') ||
-      !data.voices.some((item) => item.engine === 'ElevenLabs' || item.engine === 'Kokoro') ||
-      !data.voices.some((item) => item.engine === 'OpenAI')),
-  );
+  const canAdd = Boolean(data);
   useEffect(() => {
     if (adding && !setupBusy && !canAdd) setAdding(false);
     if (!setupBusy) setSetupNotice(false);
@@ -195,6 +227,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
             <div className="voice-reply-options" role="group" aria-labelledby={`${id}-replies`}>
               {(
                 [
+                  ['auto', 'Auto'],
                   ['voice', 'When I send audio'],
                   ['always', 'Always'],
                   ['never', 'Off'],
@@ -212,6 +245,11 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
               ))}
             </div>
           </div>
+          {data.speechReply === 'auto' && (
+            <p className="field-hint voice-reply-hint">
+              nod chooses when to speak. You can ask for audio notes anytime.
+            </p>
+          )}
           <div className="account-preference-row account-picker-row">
             <span id={`${id}-voice`}>Assistant voice</span>
             <div className="voice-settings-choice">
@@ -224,7 +262,11 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
                 labelledBy={`${id}-voice`}
                 loading={previewing}
                 playing={playing}
-                error={setupNotice ? 'Finish or cancel setup first.' : error || loadError}
+                error={
+                  setupNotice
+                    ? 'Finish or cancel setup first.'
+                    : error || loadError || data.voicesError || ''
+                }
                 adding={adding}
                 setupBusy={setupBusy}
                 canAdd={canAdd}
@@ -277,8 +319,9 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
                       </div>
                     )}
                     <VoiceConnections
-                      availableEngines={data.voices.map((item) => item.engine)}
+                      voices={data.voices}
                       disabled={preparing}
+                      onRefresh={refreshVoices}
                       onBusyChange={setConnectionBusy}
                       onConnected={() => {
                         setError('');
@@ -324,16 +367,16 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
       ) : !loadError ? (
         <p className="field-hint">Loading voices…</p>
       ) : null}
-      {!pickerOpen && (loadError || error) && (
+      {!pickerOpen && (loadError || error || data?.voicesError) && (
         <Notice>
-          {loadError || error}
-          {loadError && (
+          {loadError || error || data?.voicesError}
+          {(loadError || data?.voicesError) && (
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              disabled={refreshing}
-              onClick={() => void refresh()}
+              disabled={refreshing || catalogRefreshing}
+              onClick={() => void (data?.voicesError ? refreshVoices() : refresh())}
             >
               Try again
             </Button>

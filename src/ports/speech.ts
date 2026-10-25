@@ -1,5 +1,9 @@
 import type { SpeechVoice } from '../shared/speech.ts';
 
+export class SpeechProviderError extends Error {
+  readonly statusCode = 400;
+}
+
 export interface SpeechSynthesisOptions {
   voice?: string;
 }
@@ -15,6 +19,7 @@ export interface SpeechProvider {
   transcriptionConfigured?: boolean;
   voices?: readonly SpeechVoice[];
   defaultVoice?: string;
+  refreshVoices?(signal?: AbortSignal, force?: boolean): Promise<void>;
   synthesize(
     text: string,
     signal?: AbortSignal,

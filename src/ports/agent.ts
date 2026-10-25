@@ -3,7 +3,12 @@ import type { ExecutionEvent, ExecutionScope } from '../shared/execution.ts';
 import type { ConnectedApp } from './integrations.ts';
 import type { DiscoveredTool } from './discovered.ts';
 import type { BrowserAction, BrowserPage, CredentialKind, WorkspaceSession } from './computer.ts';
-import type { AgentReactionResult, Artifact, MessageReaction } from '../shared/contracts.ts';
+import type {
+  AgentReactionResult,
+  Artifact,
+  MessageReaction,
+  SpeechReplyMode,
+} from '../shared/contracts.ts';
 
 export interface ModelUsageObservation {
   type: 'model_usage';
@@ -92,6 +97,7 @@ export interface RuntimeContext {
   connectedApps?: ConnectedApp[];
   mcpServers?: ConnectedMcpServer[];
   currentMessageId?: string;
+  speech?: { mode: SpeechReplyMode; available: boolean };
   firstConversationTurn?: boolean;
   replyTo?: { id: string; role: string; text: string; attachments?: MessageAttachment[] };
   history: Array<{

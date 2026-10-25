@@ -349,9 +349,10 @@ export interface ScheduleHistory {
   nextCursor: string | null;
 }
 export type HourCycle = 'auto' | 'h12' | 'h23';
+export type SpeechReplyMode = 'auto' | 'voice' | 'always' | 'never';
 export interface Preferences {
   speechVoice?: string | null;
-  speechReply?: 'voice' | 'always' | 'never';
+  speechReply?: SpeechReplyMode;
   notificationRule: string;
   rules: string;
   timeZone: string | null;

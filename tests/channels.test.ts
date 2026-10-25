@@ -23,6 +23,10 @@ import { createChannelSessionStore } from '../src/server/channel-session.ts';
 import { createChannelMedia } from '../src/server/channel-media.ts';
 import { createSpeech } from '../src/server/speech.ts';
 import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
+import {
+  createElevenLabsSpeechProvider,
+  readElevenLabsVoices,
+} from '../src/providers/elevenlabs/speech.ts';
 import { createLocalSpeechProvider } from '../src/providers/local-speech/index.ts';
 import { decodeLocalAudio } from '../src/providers/local-speech/audio.ts';
 import { phonemizeSpeech } from '../src/providers/local-speech/phonemizer.ts';
@@ -1616,6 +1620,453 @@ test('OpenRouter speech refuses failed, empty, oversized and non-audio responses
   await assert.rejects(late.synthesize('Synthetic reply.', abortWhileResolvingKey.signal), {
     name: 'AbortError',
   });
+});
+
+test('ElevenLabs lists owned custom voices with bounded pagination and never follows provider redirects', async () => {
+  const calls: URL[] = [];
+  const voices = await readElevenLabsVoices('fixture-elevenlabs-key', async (input, init) => {
+    const url = new URL(String(input));
+    calls.push(url);
+    assert.equal(url.origin, 'https://api.elevenlabs.io');
+    assert.equal(url.pathname, '/v2/voices');
+    assert.equal(url.searchParams.get('page_size'), '100');
+    assert.equal(init?.redirect, 'error');
+    assert.equal(new Headers(init?.headers).get('xi-api-key'), 'fixture-elevenlabs-key');
+    assert.ok(init?.signal);
+    return Response.json(
+      calls.length === 1
+        ? {
+            voices: [
+              {
+                voice_id: 'fixture_voice_alpha',
+                name: 'My custom voice',
+                description: 'Warm and clear',
+              },
+              { voice_id: '../../other', name: 'Invalid path' },
+            ],
+            has_more: true,
+            next_page_token: 'fixture-next',
+          }
+        : {
+            voices: [
+              {
+                voice_id: 'fixture_voice_beta',
+                name: 'Second voice',
+                labels: { accent: 'British', descriptive: 'Soft' },
+                preview_url: 'https://untrusted.example.test/private.mp3',
+              },
+            ],
+            has_more: false,
+            next_page_token: null,
+          },
+    );
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].searchParams.get('next_page_token'), 'fixture-next');
+  assert.deepEqual(
+    voices.map((voice) => [voice.id, voice.name, voice.engine, voice.source]),
+    [
+      ['elevenlabs-direct:fixture_voice_alpha', 'My custom voice', 'ElevenLabs', 'elevenlabs'],
+      ['elevenlabs-direct:fixture_voice_beta', 'Second voice', 'ElevenLabs', 'elevenlabs'],
+    ],
+  );
+  assert.doesNotMatch(JSON.stringify(voices), /preview_url|untrusted/);
+  let repeated = 0;
+  await assert.rejects(
+    readElevenLabsVoices('fixture-private-key', async () => {
+      repeated++;
+      return Response.json({ voices: [], has_more: true, next_page_token: 'same' });
+    }),
+    /voice/i,
+  );
+  assert.equal(repeated, 2);
+  await assert.rejects(
+    readElevenLabsVoices(
+      'fixture-private-key',
+      async () => new Response('fixture-private-key', { status: 401 }),
+    ),
+    (error) => error instanceof Error && !error.message.includes('fixture-private-key'),
+  );
+});
+
+test('ElevenLabs accepts first-page default voices beyond the requested page size', async () => {
+  const voices = await readElevenLabsVoices('fixture-key', async () =>
+    Response.json({
+      voices: Array.from({ length: 120 }, (_, index) => ({
+        voice_id: `fixture_${index}`,
+        name: `Voice ${index}`,
+      })),
+      has_more: false,
+    }),
+  );
+  assert.equal(voices.length, 120);
+  assert.equal(voices.at(-1)?.id, 'elevenlabs-direct:fixture_119');
+});
+
+test('ElevenLabs direct speech uses account voices and current credentials without changing the chat provider', async () => {
+  let key: string | undefined = 'fixture-elevenlabs-first';
+  const requests: { url: string; key: string | null; body: unknown }[] = [];
+  const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  const provider = createElevenLabsSpeechProvider({
+    apiKey: async () => key,
+    configured: () => Boolean(key),
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      assert.equal(url.origin, 'https://api.elevenlabs.io');
+      assert.equal(init?.redirect, 'error');
+      assert.ok(init?.signal);
+      const authorization = new Headers(init?.headers).get('xi-api-key');
+      if (url.pathname === '/v2/voices') {
+        return Response.json({
+          voices: [
+            {
+              voice_id: key?.endsWith('first') ? 'fixture_voice_alpha' : 'fixture_voice_beta',
+              name: 'Custom voice',
+            },
+          ],
+          has_more: false,
+        });
+      }
+      requests.push({
+        url: url.href,
+        key: authorization,
+        body: init?.body instanceof FormData ? init.body : JSON.parse(String(init?.body)),
+      });
+      return url.pathname === '/v1/speech-to-text'
+        ? Response.json({ text: 'Olá, vamos começar.', language_code: 'por' })
+        : new Response(Buffer.from('synthetic mp3'), {
+            headers: { 'Content-Type': 'audio/mpeg', 'character-cost': '8' },
+          });
+    },
+  });
+  await provider.refreshVoices!();
+  assert.equal(provider.defaultVoice, 'elevenlabs-direct:fixture_voice_alpha');
+  assert.equal(provider.configured, true);
+  assert.equal(provider.voices?.length, 1);
+  const audio = await provider.synthesize(
+    'A synthetic reply.',
+    undefined,
+    (event) => usage.push(event),
+    { voice: 'elevenlabs-direct:fixture_voice_alpha' },
+  );
+  assert.equal(audio.mimeType, 'audio/mpeg');
+  assert.equal(
+    requests[0].url,
+    'https://api.elevenlabs.io/v1/text-to-speech/fixture_voice_alpha?output_format=mp3_44100_128',
+  );
+  assert.deepEqual(requests[0].body, { text: 'A synthetic reply.', model_id: 'eleven_v4' });
+  for (const voice of [
+    'elevenlabs:sarah',
+    'openai:coral',
+    'elevenlabs-direct:missing',
+    'elevenlabs-direct:../private',
+  ])
+    await assert.rejects(provider.synthesize('Do not send.', undefined, undefined, { voice }));
+  assert.equal(requests.length, 1);
+  key = 'fixture-elevenlabs-rotated';
+  await assert.rejects(
+    provider.synthesize('Do not send.', undefined, undefined, {
+      voice: 'elevenlabs-direct:fixture_voice_alpha',
+    }),
+  );
+  await provider.synthesize('Another synthetic reply.', undefined, (event) => usage.push(event), {
+    voice: 'elevenlabs-direct:fixture_voice_beta',
+  });
+  assert.equal(requests[1].key, 'fixture-elevenlabs-rotated');
+  const transcript = await provider.transcribe!(
+    { bytes: Buffer.from('synthetic clip'), mimeType: 'audio/mp4', name: 'voice.m4a' },
+    undefined,
+    (event) => usage.push(event),
+  );
+  assert.equal(transcript, 'Olá, vamos começar.');
+  const form = requests[2].body as FormData;
+  assert.equal(form.get('model_id'), 'scribe_v2');
+  assert.equal(form.get('tag_audio_events'), 'false');
+  assert.equal(form.get('diarize'), 'false');
+  assert.equal(form.get('language_code'), null);
+  assert.equal((form.get('file') as File).type, 'audio/mp4');
+  assert.equal(await (form.get('file') as File).text(), 'synthetic clip');
+  assert.deepEqual(
+    usage.map((event) => [event.provider, event.model, event.status, event.costUsd]),
+    [
+      ['elevenlabs', 'eleven_v4', 'succeeded', null],
+      ['elevenlabs', 'eleven_v4', 'succeeded', null],
+      ['elevenlabs', 'scribe_v2', 'succeeded', null],
+    ],
+  );
+  assert.doesNotMatch(JSON.stringify(usage), /fixture-|synthetic|Olá/);
+  key = undefined;
+  assert.equal(provider.configured, false);
+  assert.deepEqual(provider.voices, []);
+  await assert.rejects(provider.synthesize('Do not send.'));
+  await assert.rejects(
+    provider.transcribe!({ bytes: Buffer.from('x'), mimeType: 'audio/wav', name: 'voice.wav' }),
+  );
+  assert.equal(requests.length, 3);
+});
+
+test('ElevenLabs voice refresh bypasses cache explicitly and discards results after key removal', async () => {
+  let key: string | undefined = 'fixture-elevenlabs-key';
+  let calls = 0;
+  let removeDuringRequest = false;
+  const provider = createElevenLabsSpeechProvider({
+    apiKey: async () => key,
+    configured: () => Boolean(key),
+    fetch: async () => {
+      calls++;
+      if (removeDuringRequest) key = undefined;
+      return Response.json({
+        voices: [{ voice_id: `fixture_voice_${calls}`, name: `Voice ${calls}` }],
+        has_more: false,
+      });
+    },
+  });
+  const service = createSpeech(provider);
+  await service.refreshVoices();
+  await service.refreshVoices();
+  assert.equal(calls, 1);
+  assert.equal(service.voices[0].id, 'elevenlabs-direct:fixture_voice_1');
+  await service.refreshVoices(undefined, true);
+  assert.equal(calls, 2);
+  assert.equal(service.voices[0].id, 'elevenlabs-direct:fixture_voice_2');
+  removeDuringRequest = true;
+  await assert.rejects(service.refreshVoices(undefined, true));
+  assert.equal(calls, 3);
+  assert.deepEqual(service.voices, []);
+  await assert.rejects(provider.synthesize('Never send.'));
+  assert.equal(calls, 3);
+});
+
+test('ElevenLabs catalog ordering preserves newer voices and fences cancelled or replaced credentials', async (t) => {
+  for (const scenario of ['newer', 'cancelled', 'rotated'] as const)
+    await t.test(scenario, async () => {
+      let key = 'fixture-original-key';
+      let catalogCalls = 0;
+      const synthesis: { voice: string; key: string | null }[] = [];
+      let entered!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => (entered = resolve));
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const newer = new AbortController();
+      const provider = createElevenLabsSpeechProvider({
+        apiKey: async () => key,
+        configured: () => true,
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname !== '/v2/voices') {
+            synthesis.push({
+              voice: url.pathname.split('/').at(-1)!,
+              key: new Headers(init?.headers).get('xi-api-key'),
+            });
+            return new Response('synthetic audio', {
+              headers: { 'Content-Type': 'audio/mpeg' },
+            });
+          }
+          const call = ++catalogCalls;
+          if (call === 1) {
+            entered();
+            await held;
+          } else if (scenario === 'cancelled') newer.abort();
+          const ids =
+            call === 1
+              ? ['common_voice']
+              : scenario === 'rotated'
+                ? ['rotated_voice']
+                : ['common_voice', 'new_voice'];
+          return Response.json({
+            voices: ids.map((voice_id) => ({ voice_id, name: voice_id })),
+            has_more: false,
+          });
+        },
+      });
+      const older = provider
+        .synthesize('Synthetic reply.', undefined, undefined, {
+          voice: 'elevenlabs-direct:common_voice',
+        })
+        .then(
+          (value) => ({ value, error: undefined }),
+          (error: unknown) => ({ value: undefined, error }),
+        );
+      try {
+        await started;
+        if (scenario === 'rotated') key = 'fixture-rotated-key';
+        if (scenario === 'cancelled')
+          await assert.rejects(provider.refreshVoices!(newer.signal, true));
+        else await provider.refreshVoices!(newer.signal, true);
+        release();
+        const result = await older;
+        if (scenario === 'rotated') {
+          assert.ok(result.error instanceof Error);
+          assert.equal(synthesis.length, 0);
+          assert.deepEqual(
+            provider.voices?.map((voice) => voice.id),
+            ['elevenlabs-direct:rotated_voice'],
+          );
+        } else {
+          assert.equal(result.error, undefined);
+          assert.equal(result.value?.bytes.toString(), 'synthetic audio');
+          assert.deepEqual(
+            provider.voices?.map((voice) => voice.id),
+            scenario === 'cancelled'
+              ? ['elevenlabs-direct:common_voice']
+              : ['elevenlabs-direct:common_voice', 'elevenlabs-direct:new_voice'],
+          );
+        }
+        if (scenario !== 'cancelled')
+          await provider.synthesize('Another synthetic reply.', undefined, undefined, {
+            voice: `elevenlabs-direct:${scenario === 'rotated' ? 'rotated_voice' : 'new_voice'}`,
+          });
+        assert.equal(catalogCalls, 2);
+        assert.equal(synthesis.length, scenario === 'newer' ? 2 : 1);
+        assert.ok(synthesis.every((request) => request.key === key));
+      } finally {
+        release();
+        await older;
+      }
+    });
+  await t.test('restored credential after failed discovery', async () => {
+    let key = 'fixture-original-key';
+    let catalogCalls = 0;
+    const provider = createElevenLabsSpeechProvider({
+      apiKey: async () => key,
+      configured: () => true,
+      fetch: async () => {
+        catalogCalls++;
+        if (key === 'fixture-rotated-key') return new Response('', { status: 503 });
+        return Response.json({
+          voices: [{ voice_id: 'original_voice', name: 'Original' }],
+          has_more: false,
+        });
+      },
+    });
+    await provider.refreshVoices!();
+    key = 'fixture-rotated-key';
+    await assert.rejects(provider.refreshVoices!());
+    assert.equal(provider.voices?.length, 0);
+    key = 'fixture-original-key';
+    await provider.refreshVoices!();
+    assert.equal(catalogCalls, 3);
+    assert.equal(provider.voices?.[0].id, 'elevenlabs-direct:original_voice');
+  });
+});
+
+test('ElevenLabs refuses failed, malformed and oversized audio without leaking provider data or retrying', async () => {
+  let mode: 'status' | 'mime' | 'empty' | 'size' | 'abort' = 'status';
+  let calls = 0;
+  let cancelled = 0;
+  const controller = new AbortController();
+  const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  const provider = createElevenLabsSpeechProvider({
+    apiKey: async () => 'fixture-private-key',
+    configured: () => true,
+    fetch: async (input, init) => {
+      if (new URL(String(input)).pathname === '/v2/voices')
+        return Response.json({
+          voices: [{ voice_id: 'fixture_voice', name: 'Fixture' }],
+          has_more: false,
+        });
+      calls++;
+      if (mode === 'abort') {
+        controller.abort();
+        init!.signal!.throwIfAborted();
+      }
+      return new Response(
+        new ReadableStream({
+          start(stream) {
+            if (mode === 'empty') stream.close();
+            if (mode === 'size') stream.enqueue(Buffer.alloc(50 * 1024 * 1024 + 1));
+          },
+          cancel() {
+            cancelled++;
+          },
+        }),
+        {
+          status: mode === 'status' ? 503 : 200,
+          headers: { 'Content-Type': mode === 'mime' ? 'application/json' : 'audio/mpeg' },
+        },
+      );
+    },
+  });
+  for (mode of ['status', 'mime', 'empty', 'size', 'abort'] as const)
+    await assert.rejects(
+      provider.synthesize('Synthetic private message.', controller.signal, (event) =>
+        usage.push(event),
+      ),
+      (error) => error instanceof Error && !/fixture-private|Synthetic/.test(error.message),
+    );
+  assert.equal(calls, 5);
+  assert.equal(cancelled, 3);
+  assert.deepEqual(
+    usage.map((event) => event.status),
+    ['failed', 'failed', 'failed', 'failed', 'cancelled'],
+  );
+  assert.doesNotMatch(JSON.stringify(usage), /fixture-private|Synthetic/);
+  await assert.rejects(provider.synthesize('Never send.', controller.signal));
+  assert.equal(calls, 5);
+});
+
+test('ElevenLabs preserves safe setup recovery through the speech service without exposing response data', async () => {
+  for (const operation of ['synthesize', 'transcribe'] as const) {
+    for (const status of [401, 403, 429, 503]) {
+      let calls = 0;
+      const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+      const provider = createElevenLabsSpeechProvider({
+        apiKey: async () => 'fixture-private-key',
+        configured: () => true,
+        fetch: async (input) => {
+          if (new URL(String(input)).pathname === '/v2/voices')
+            return Response.json({
+              voices: [{ voice_id: 'fixture_voice', name: 'Fixture' }],
+              has_more: false,
+            });
+          calls++;
+          return new Response('fixture-private-key and synthetic private transcript', { status });
+        },
+      });
+      const speech = createSpeech({
+        ...provider,
+        synthesize: (text, signal, _report, options) =>
+          provider.synthesize(text, signal, (event) => usage.push(event), options),
+        transcribe: (audio, signal) =>
+          provider.transcribe!(audio, signal, (event) => usage.push(event)),
+      });
+      await assert.rejects(
+        operation === 'synthesize'
+          ? speech.synthesize('Synthetic private message.')
+          : speech.transcribe({
+              bytes: Buffer.from('synthetic clip'),
+              mimeType: 'audio/wav',
+              name: 'voice.wav',
+            }),
+        (error) => {
+          assert.ok(error instanceof Error);
+          assert.doesNotMatch(error.message, /fixture-private|synthetic private|Synthetic private/);
+          if (status === 401) assert.match(error.message, /ElevenLabs.*API key.*reconnect/i);
+          if (status === 403)
+            assert.match(
+              error.message,
+              operation === 'synthesize'
+                ? /Text to speech.*permission/i
+                : /Speech to text.*permission/i,
+            );
+          if (status === 429) {
+            assert.match(error.message, /ElevenLabs.*limit.*account/i);
+            assert.doesNotMatch(error.message, /credits|balance|quota|rate|retry/i);
+          }
+          if (status === 503) assert.match(error.message, /failed/);
+          else assert.equal((error as Error & { statusCode?: number }).statusCode, 400);
+          return true;
+        },
+      );
+      assert.equal(calls, 1);
+      assert.equal(usage.length, 1);
+      assert.equal(usage[0].status, 'failed');
+      assert.doesNotMatch(
+        JSON.stringify(usage),
+        /fixture-private|synthetic private|Synthetic private/,
+      );
+    }
+  }
 });
 
 test('local pronunciation uses each bundled language dictionary and preserves Kokoro phonemes', async () => {

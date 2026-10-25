@@ -4,6 +4,7 @@ export interface SpeechVoice {
   description: string;
   engine: 'ElevenLabs' | 'Kokoro' | 'OpenAI' | 'Local';
   language?: string;
+  source?: 'elevenlabs' | 'openrouter' | 'openai' | 'local';
 }
 
 const localVoices = [
@@ -22,7 +23,7 @@ const localVoices = [
   { id: 'im_nicola', name: 'Nicola', description: 'Italian', language: 'it-IT' },
 ] as const;
 
-export const speechVoices = [
+const builtInSpeechVoices = [
   ...localVoices.map((voice) => ({
     ...voice,
     id: `local:${voice.id}` as const,
@@ -99,5 +100,21 @@ export const speechVoices = [
   { id: 'openai:shimmer', name: 'Shimmer', description: 'Multilingual', engine: 'OpenAI' },
   { id: 'openai:verse', name: 'Verse', description: 'Multilingual', engine: 'OpenAI' },
 ] as const satisfies readonly SpeechVoice[];
+
+export const speechVoices = builtInSpeechVoices.map(
+  (voice) =>
+    ({
+      ...voice,
+      source:
+        voice.engine === 'Local' ? 'local' : voice.engine === 'OpenAI' ? 'openai' : 'openrouter',
+    }) satisfies SpeechVoice,
+);
+
+export function isSpeechVoiceId(id: string) {
+  return (
+    speechVoices.some((voice) => voice.id === id) ||
+    /^elevenlabs-direct:[A-Za-z0-9_-]{1,64}$/.test(id)
+  );
+}
 
 export type SpeechVoiceId = (typeof speechVoices)[number]['id'];

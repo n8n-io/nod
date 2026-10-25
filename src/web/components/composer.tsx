@@ -103,6 +103,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [error, setError] = useState('');
   const [removed, setRemoved] = useState<DraftAttachment | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const sendButton = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const mounted = useRef(true);
   const attachmentValues = useRef<DraftAttachment[]>([]);
@@ -222,6 +223,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setPreparingAudio(false);
     setShowAudioSetup(false);
   }, [active]);
+  useEffect(() => {
+    if (active && recorder.phase === 'recording') sendButton.current?.focus();
+  }, [active, recorder.phase]);
   useEffect(() => {
     if (
       !showAudioSetup ||
@@ -439,24 +443,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       !editor ||
       !ready ||
       audioSend.current ||
-      (recorder.phase !== 'idle' && recorder.phase !== 'preview') ||
+      recorder.phase === 'requesting' ||
+      recorder.phase === 'finishing' ||
       attachmentValues.current.some((item) => item.state !== 'ready')
     )
       return;
-    if (recorder.needsPreparation) {
-      audioSend.current = true;
-      await recorder.prepare();
-      audioSend.current = false;
-      return;
-    }
     const sentText = composerMarkdown(editor.state.doc).trim();
     const sentAttachments = attachmentValues.current;
-    const sentRecording = recorder.recording?.file;
-    if (!sentText && !sentAttachments.length && !sentRecording) return;
-    if (sentRecording) {
-      audioSend.current = true;
-      setSendingAudio(true);
-    }
+    const includesAudio = recorder.phase === 'recording' || Boolean(recorder.recording);
+    if (!sentText && !sentAttachments.length && !includesAudio) return;
+    if (includesAudio) audioSend.current = true;
     const sequence = ++sends.current;
     pendingSends.current++;
     setError('');
@@ -467,6 +463,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     focus();
     let result: ComposerSendResult = { sent: false, restoreText: true };
     try {
+      let sentRecording: File | undefined;
+      if (includesAudio) {
+        const file = await recorder.finish();
+        if (!file || !mounted.current || editor.isDestroyed) return;
+        sentRecording = file;
+        setSendingAudio(true);
+      }
       result = await onSend(
         sentText,
         sentAttachments.map((item) => item.artifact!),
@@ -476,7 +479,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (mounted.current) setError(errorMessage(cause));
     } finally {
       pendingSends.current--;
-      if (sentRecording) {
+      if (includesAudio) {
         audioSend.current = false;
         if (mounted.current) {
           setSendingAudio(false);
@@ -548,7 +551,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     [attachments],
   );
   const { setDrafts } = drawer;
-  const recordingActive = recorder.phase !== 'idle' && recorder.phase !== 'preview';
+  const hasRecording = recorder.phase !== 'idle';
+  const recordingPending = recorder.phase === 'requesting' || recorder.phase === 'finishing';
   const microphoneTitle = !recorder.supported
     ? 'This browser cannot record audio'
     : speech?.transcription === false && !speech.local
@@ -613,10 +617,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       )}
       <form
         ref={form}
-        className="composer"
+        className={`composer${hasRecording ? ' has-recording' : ''}`}
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && !event.defaultPrevented && hasRecording && !sendingAudio) {
+            event.preventDefault();
+            recorder.discard();
+            focus();
+          }
         }}
         onDragOver={(event) => {
           if (event.dataTransfer.types.includes('Files')) event.preventDefault();
@@ -639,16 +650,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           void upload(Array.from(event.dataTransfer.files), 'drop');
         }}
       >
-        {active && (
-          <VoiceRecorder
-            recorder={recorder}
-            sending={sendingAudio}
-            onDiscard={() => {
-              recorder.discard();
-              focus();
-            }}
-          />
-        )}
         {showAudioSetup && speech?.local && (
           <VoiceSetup
             ready={speech.transcription}
@@ -759,6 +760,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </span>
         <div className="composer-tools">
           <div className="composer-left">
+            {active && hasRecording && (
+              <VoiceRecorder
+                recorder={recorder}
+                sending={sendingAudio}
+                onDiscard={() => {
+                  recorder.discard();
+                  focus();
+                }}
+              />
+            )}
             <input
               ref={fileInput}
               type="file"
@@ -768,16 +779,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               aria-label="Choose files"
               onChange={(event) => void upload(Array.from(event.target.files ?? []), 'picker')}
             />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Attach files"
-              title="Attach files or paste an image"
-              onClick={() => fileInput.current?.click()}
-            >
-              <Paperclip size={16} />
-            </Button>
+            {!hasRecording && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Attach files"
+                title="Attach files or paste an image"
+                onClick={() => fileInput.current?.click()}
+              >
+                <Paperclip size={16} />
+              </Button>
+            )}
           </div>
           <div className="composer-right">
             {recorder.phase === 'idle' && !showAudioSetup && (
@@ -823,33 +836,26 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               </Button>
             )}
             <Button
+              ref={sendButton}
               type="submit"
-              size={recorder.recording ? 'sm' : 'icon'}
-              className={`send-button${recorder.recording ? ' send-audio-button' : ''}`}
+              size="icon"
+              className={`send-button${hasRecording ? ' send-audio-button' : ''}`}
               aria-label={
                 sendingAudio
                   ? 'Sending audio'
-                  : recorder.needsPreparation
-                    ? 'Prepare audio message'
-                    : recorder.recording
-                      ? 'Send audio message'
-                      : 'Send message'
+                  : hasRecording
+                    ? 'Send audio message'
+                    : 'Send message'
               }
               disabled={
                 !ready ||
                 pendingUploads > 0 ||
-                recordingActive ||
+                recordingPending ||
                 sendingAudio ||
-                (!text.trim() && !attachments.length && !recorder.recording)
+                (!text.trim() && !attachments.length && !hasRecording)
               }
             >
               {sendingAudio ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={18} />}
-              {recorder.recording &&
-                (sendingAudio
-                  ? 'Sending…'
-                  : recorder.needsPreparation
-                    ? 'Prepare audio'
-                    : 'Send audio')}
             </Button>
           </div>
         </div>

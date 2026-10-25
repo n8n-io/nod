@@ -13,7 +13,7 @@ import { delta, refresh, working } from './events.ts';
 import { localArtifacts, type ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
 import type { GeneratedAudio } from '../ports/speech.ts';
-import type { Artifact, MessageReaction } from '../shared/contracts.ts';
+import type { Artifact, MessageReaction, SpeechReplyMode } from '../shared/contracts.ts';
 import type {
   BrowserConnectionRequest,
   BrowserStep,
@@ -133,7 +133,7 @@ export interface ThreadDependencies {
   startTurn?: (turn: TurnRef) => Promise<void>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'> & Partial<Pick<SpeechService, 'configured'>>;
-  audioReplies?: () => Promise<'voice' | 'always' | 'never'>;
+  audioReplies?: () => Promise<SpeechReplyMode>;
   requestCredential: (
     turn: TurnRef,
     input: Parameters<RuntimeContext['requestCredential']>[0],
@@ -1312,6 +1312,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     }
     await emit('started', 'Turn started.');
     const checkIn = await dependencies.checkIn?.(turn.session_id, turnId);
+    const speech = {
+      mode: (await dependencies.audioReplies?.()) ?? defaultPreferences.speechReply,
+      available: Boolean(dependencies.speech.configured),
+    };
     const result = await dependencies.runTurn({
       threadId,
       turnId,
@@ -1321,6 +1325,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       background: turn.background,
       channel: String(turn.channel).split(':')[0],
       ...loaded.context,
+      speech,
       taskContext,
       tasks,
       ...(checkIn ? { checkIn } : {}),

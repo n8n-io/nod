@@ -21,6 +21,7 @@ import { gunzipSync } from 'node:zlib';
 import { createChannelSessionStore } from '../src/server/channel-session.ts';
 import { createSpeech } from '../src/server/speech.ts';
 import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
+import { createElevenLabsSpeechProvider } from '../src/providers/elevenlabs/speech.ts';
 import { registerSpeechSettings } from '../src/server/speech-settings.ts';
 import {
   defaultPreferences,
@@ -28,6 +29,92 @@ import {
   type createPreferencesStore,
 } from '../src/server/preferences.ts';
 import { speechVoices } from '../src/shared/speech.ts';
+
+test('speech settings explicitly refresh account voices and keep other voices usable during a provider outage', async (t) => {
+  let version = 1;
+  let key = 'fixture-private-elevenlabs-key';
+  let calls = 0;
+  let unavailable = false;
+  const provider = createElevenLabsSpeechProvider({
+    apiKey: async () => key,
+    configured: () => true,
+    fetch: async (input) => {
+      assert.equal(new URL(String(input)).pathname, '/v2/voices');
+      calls++;
+      return unavailable
+        ? new Response('fixture-private-elevenlabs-key', { status: 503 })
+        : Response.json({
+            voices: [{ voice_id: `fixture_voice_${version}`, name: `Voice ${version}` }],
+            has_more: false,
+          });
+    },
+  });
+  const app = Fastify();
+  registerSpeechSettings(app, {
+    preferences: { get: async () => ({ ...defaultPreferences }) } as ReturnType<
+      typeof createPreferencesStore
+    >,
+    speech: createSpeech({
+      ...provider,
+      synthesize: (text, signal, report, options) =>
+        options?.voice === 'openai:coral'
+          ? Promise.resolve({
+              bytes: Buffer.from('synthetic preview'),
+              mimeType: 'audio/mpeg',
+              fileName: 'preview.mp3',
+            })
+          : provider.synthesize(text, signal, report, options),
+      get voices() {
+        return [
+          ...speechVoices.filter((voice) => voice.id === 'openai:coral'),
+          ...(provider.voices ?? []),
+        ];
+      },
+    }),
+  });
+  t.after(() => app.close());
+  const first = await app.inject('/api/speech');
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.headers['cache-control'], 'no-store');
+  assert.equal(first.json().voices[1].id, 'elevenlabs-direct:fixture_voice_1');
+  assert.doesNotMatch(first.body, /fixture-private-elevenlabs-key/);
+  version = 2;
+  await app.inject('/api/speech');
+  assert.equal(calls, 1);
+  const refreshed = await app.inject({
+    method: 'POST',
+    url: '/api/speech/voices/refresh',
+    payload: {},
+  });
+  assert.equal(refreshed.statusCode, 200);
+  assert.equal(calls, 2);
+  assert.equal(refreshed.json().voices[1].id, 'elevenlabs-direct:fixture_voice_2');
+  assert.equal(
+    validatePreferences({ speechVoice: 'elevenlabs-direct:fixture_voice_2' }).speechVoice,
+    'elevenlabs-direct:fixture_voice_2',
+  );
+  unavailable = true;
+  const failed = await app.inject({
+    method: 'POST',
+    url: '/api/speech/voices/refresh',
+    payload: {},
+  });
+  assert.equal(failed.statusCode, 200);
+  assert.equal(failed.json().synthesis, true);
+  assert.equal(failed.json().voices[0].id, 'openai:coral');
+  assert.match(failed.json().voicesError, /ElevenLabs/);
+  assert.doesNotMatch(failed.body, /fixture-private-elevenlabs-key/);
+  assert.equal(calls, 3);
+  key = 'fixture-rotated-elevenlabs-key';
+  const healthyPreview = await app.inject({
+    method: 'POST',
+    url: '/api/speech/preview',
+    payload: { voice: 'openai:coral' },
+  });
+  assert.equal(healthyPreview.statusCode, 200);
+  assert.equal(healthyPreview.body, 'synthetic preview');
+  assert.equal(calls, 3);
+});
 
 test('speech previews reject unavailable voices, serialize generation and release cancelled requests', async (t) => {
   let calls = 0;
@@ -591,6 +678,77 @@ test(
       await assert.rejects(createSpeech(defaults.speech).transcribe(audio));
     } finally {
       speechRequest.mock.restore();
+    }
+    const directRequests: string[] = [];
+    const directRequest = t.mock.method(
+      globalThis,
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        assert.equal(url.origin, 'https://api.elevenlabs.io');
+        assert.equal(new Headers(init?.headers).get('xi-api-key'), 'fixture-persisted-speech-key');
+        directRequests.push(url.pathname);
+        if (url.pathname === '/v2/voices')
+          return Response.json({
+            voices: [{ voice_id: 'fixture_persisted_voice', name: 'Saved account voice' }],
+            has_more: false,
+          });
+        if (url.pathname === '/v1/speech-to-text')
+          return Response.json({ text: 'Synthetic headless voice message' });
+        assert.equal(url.pathname, '/v1/text-to-speech/fixture_persisted_voice');
+        return new Response(Buffer.from('synthetic headless reply'), {
+          headers: { 'Content-Type': 'audio/mpeg' },
+        });
+      },
+    );
+    const savedSpeech = createDefaultAdapters({ NOD_VAULT_KEY: key.toString('base64') });
+    const { createPreferencesStore } = await import('../src/server/preferences.ts');
+    const speechPreferences = createPreferencesStore(pool, ownerId);
+    let directConnection: string | undefined;
+    try {
+      await savedSpeech.models!.initialize();
+      directConnection = await savedSpeech.models!.addKey(
+        'elevenlabs',
+        'fixture-persisted-speech-key',
+      );
+      await speechPreferences.update({ speechVoice: 'elevenlabs-direct:fixture_persisted_voice' });
+      await savedSpeech.models!.close();
+      for (const explicit of [true, false]) {
+        const restarted = createDefaultAdapters({ NOD_VAULT_KEY: key.toString('base64') });
+        try {
+          const beforeRestart = directRequests.length;
+          await restarted.models!.initialize();
+          assert.equal(directRequests.length, beforeRestart);
+          const speech = createSpeech(restarted.speech);
+          assert.equal(speech.configured, true);
+          assert.equal(speech.transcriptionConfigured, true);
+          assert.deepEqual(speech.voices, []);
+          assert.equal(speech.defaultVoice, undefined);
+          assert.equal(await speech.transcribe(audio), 'Synthetic headless voice message');
+          assert.deepEqual(directRequests.slice(beforeRestart), ['/v1/speech-to-text']);
+          const voice = explicit ? (await speechPreferences.get()).speechVoice : null;
+          const reply = await speech.synthesize(
+            'Synthetic headless reply',
+            undefined,
+            voice ? { voice } : undefined,
+          );
+          assert.equal(reply.bytes.toString(), 'synthetic headless reply');
+          assert.deepEqual(directRequests.slice(beforeRestart), [
+            '/v1/speech-to-text',
+            '/v2/voices',
+            '/v1/text-to-speech/fixture_persisted_voice',
+          ]);
+        } finally {
+          await restarted.localSpeech!.close();
+          await restarted.models!.close();
+        }
+      }
+    } finally {
+      await speechPreferences.update({ speechVoice: null });
+      if (directConnection) await savedSpeech.models!.remove(directConnection);
+      await savedSpeech.localSpeech!.close();
+      await savedSpeech.models!.close();
+      directRequest.mock.restore();
     }
     for (const mode of [undefined, 'cloud']) {
       const cloud = await defaults.messagingSetup!.create({

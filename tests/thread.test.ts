@@ -53,6 +53,17 @@ test(
         created_at timestamptz NOT NULL DEFAULT now(), started_at timestamptz, finished_at timestamptz
       )`,
     );
+    await admin.query(`
+      CREATE TABLE ${schema}.preferences (
+        owner_id text PRIMARY KEY, notification_rule text NOT NULL DEFAULT '', time_zone text,
+        quiet_start text NOT NULL DEFAULT '22:00', quiet_end text NOT NULL DEFAULT '08:00',
+        quiet_hours_enabled boolean NOT NULL DEFAULT true, locale text,
+        hour_cycle text NOT NULL DEFAULT 'auto',
+        speech_reply text NOT NULL DEFAULT 'voice' CHECK (speech_reply IN ('voice','always','never'))
+      );
+      INSERT INTO ${schema}.preferences(owner_id,speech_reply)
+        VALUES ('speech-existing-voice','voice'),('speech-existing-always','always'),('speech-existing-never','never');
+    `);
     const environment = {
       DATABASE_URL: process.env.DATABASE_URL,
       PGBOSS_SCHEMA: process.env.PGBOSS_SCHEMA,
@@ -126,7 +137,7 @@ test(
     let transcriptionGate: Promise<void> | undefined;
     let synthesisGate: Promise<void> | undefined;
     let synthesisError: Error | undefined;
-    let audioReplyMode: 'voice' | 'always' | 'never' = 'never';
+    let audioReplyMode: 'auto' | 'voice' | 'always' | 'never' = 'never';
     let speechReady = true;
     let chatReady = true;
     const speech = createSpeech({
@@ -369,7 +380,11 @@ test(
       artifacts: localArtifacts,
       runTurn: async (context) => {
         runs.push(context);
-        if (context.prompt === 'audio-explicit-fixture')
+        if (
+          ['audio-explicit-fixture', 'Answer in audio notes.', 'And the next option?'].includes(
+            context.prompt,
+          )
+        )
           await context.createAudio!('Synthetic explicit voice reply');
         if (context.prompt === 'audio-follow-up-fixture') {
           await context.reply('The synthetic answer is ready.');
@@ -784,7 +799,16 @@ test(
             assert.equal((await preferences.get()).speechVoice, 'kokoro:bf_emma');
             assert.equal((await preferences.get()).speechReply, 'never');
             assert.equal((await foreign.get()).speechVoice, null);
-            assert.equal((await foreign.get()).speechReply, 'voice');
+            assert.equal((await foreign.get()).speechReply, 'auto');
+            assert.equal((await foreign.update({ quietHoursEnabled: false })).speechReply, 'auto');
+            for (const mode of ['voice', 'always', 'never'] as const)
+              assert.equal(
+                (await createPreferencesStore(db.pool, `speech-existing-${mode}`).get())
+                  .speechReply,
+                mode,
+              );
+            await preferences.update({ speechReply: 'auto' });
+            assert.equal((await preferences.get()).speechReply, 'auto');
             await preferences.update({ quietHoursEnabled: false });
             assert.equal((await preferences.get()).speechVoice, 'kokoro:bf_emma');
             await assert.rejects(
@@ -2115,6 +2139,10 @@ test(
             const before = spoken.length;
             const request = await thread.submitUserMessage('audio-format-fixture', [clip]);
             await waitFor(settled(request.turnId));
+            assert.deepEqual(runs.find((run) => run.turnId === request.turnId)!.speech, {
+              mode: 'voice',
+              available: true,
+            });
             assert.equal(spoken.length, before + 1);
             assert.equal(spoken.at(-1), 'See the update at the source.');
             const messages = await assistantMessages(request.turnId);
@@ -2175,6 +2203,88 @@ test(
             synthesisError = undefined;
             synthesisGate = undefined;
             releaseSynthesis?.();
+          }
+        },
+      );
+
+      await t.test(
+        'Auto leaves spoken delivery to the agent while preserving conversation, ownership and stop',
+        async () => {
+          const clip = await storeArtifact(
+            Buffer.from('Synthetic voice request'),
+            'auto.ogg',
+            'audio/ogg',
+            threadId,
+          );
+          const audioMessages = async (id: string) =>
+            (
+              await db.pool.query(
+                "SELECT m.id,m.owner_id,m.attachments FROM messages m WHERE turn_id=$1 AND role='assistant' AND jsonb_array_length(attachments)>0",
+                [id],
+              )
+            ).rows;
+          let release: (() => void) | undefined;
+          try {
+            audioReplyMode = 'auto';
+            const before = spoken.length;
+            const initial = await thread.submitUserMessage('Answer in audio notes.');
+            await waitFor(settled(initial.turnId));
+            assert.equal(spoken.length, before + 1);
+            const messages = await audioMessages(initial.turnId);
+            assert.equal(messages.length, 1);
+            assert.equal(messages[0].owner_id, ownerId);
+            assert.deepEqual(
+              await localArtifacts.readArtifact(messages[0].attachments[0].id),
+              Buffer.from('Synthetic generated audio'),
+            );
+            const followUp = await thread.submitUserMessage('And the next option?');
+            await waitFor(settled(followUp.turnId));
+            const context = runs.find((run) => run.turnId === followUp.turnId)!;
+            assert.deepEqual(context.speech, { mode: 'auto', available: true });
+            assert.ok(
+              context.history.some(
+                (message) => message.role === 'user' && message.text === 'Answer in audio notes.',
+              ),
+            );
+            assert.equal(spoken.length, before + 2);
+            assert.equal((await audioMessages(followUp.turnId)).length, 1);
+            const text = await thread.submitUserMessage('Send the command as text.', [clip]);
+            await waitFor(settled(text.turnId));
+            assert.equal(spoken.length, before + 2);
+            assert.equal((await audioMessages(text.turnId)).length, 0);
+            speechReady = false;
+            const unavailable = await thread.submitUserMessage('Synthetic unavailable voice.');
+            await waitFor(settled(unavailable.turnId));
+            assert.deepEqual(runs.find((run) => run.turnId === unavailable.turnId)!.speech, {
+              mode: 'auto',
+              available: false,
+            });
+            assert.equal(spoken.length, before + 2);
+            speechReady = true;
+            audioReplyMode = 'never';
+            const requested = await thread.submitUserMessage('audio-explicit-fixture');
+            await waitFor(settled(requested.turnId));
+            assert.equal(spoken.length, before + 3);
+            assert.equal((await audioMessages(requested.turnId)).length, 1);
+            audioReplyMode = 'auto';
+            synthesisGate = new Promise<void>((resolve) => {
+              release = resolve;
+            });
+            const stopped = await thread.submitUserMessage('audio-explicit-fixture');
+            await waitFor(() => spoken.length === before + 4);
+            await thread.stopThread();
+            release!();
+            synthesisGate = undefined;
+            const following = await thread.submitUserMessage('Continue in text.');
+            await waitFor(settled(following.turnId));
+            assert.equal(await turnStatus(stopped.turnId), 'cancelled');
+            assert.equal((await audioMessages(stopped.turnId)).length, 0);
+            assert.equal(spoken.length, before + 4);
+          } finally {
+            release?.();
+            synthesisGate = undefined;
+            speechReady = true;
+            audioReplyMode = 'never';
           }
         },
       );

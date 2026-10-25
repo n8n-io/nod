@@ -104,12 +104,15 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
   const recordingValue = useRef<Recording | null>(null);
   const conversionContext = useRef<AudioContext | null>(null);
   const generation = useRef(0);
+  const completion = useRef<{ generation: number; resolve(file: File | null): void } | null>(null);
   const phaseRef = useRef<RecordingPhase>('idle');
   const currentScope = useRef(scope);
   const currentFormat = useRef(targetFormat);
   const currentEnabled = useRef(enabled);
+  const enabledVersion = useRef(0);
   currentScope.current = scope;
   currentFormat.current = targetFormat;
+  if (currentEnabled.current !== enabled) enabledVersion.current++;
   currentEnabled.current = enabled;
   const supported =
     typeof MediaRecorder !== 'undefined' &&
@@ -122,6 +125,8 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
   }
 
   function release() {
+    completion.current?.resolve(null);
+    completion.current = null;
     generation.current++;
     if (active.current) discardCapture(active.current);
     active.current = null;
@@ -174,7 +179,7 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
     } catch {
       if (operation === generation.current) {
         setError(
-          'Your recording could not be prepared. It is still here. Prepare audio to retry, or record a new message.',
+          'Your recording could not be prepared. Send to try again, or record a new message.',
         );
         changePhase('preview');
       }
@@ -198,6 +203,29 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
     } catch {
       fail('The recording could not be saved. Try recording it again.');
     }
+  }
+
+  async function finish() {
+    const operation = generation.current;
+    const account = requestAccountVersion();
+    const scope = currentScope.current;
+    const activity = enabledVersion.current;
+    let file: File | null;
+    if (phaseRef.current === 'recording') {
+      const finished = new Promise<File | null>((resolve) => {
+        completion.current = { generation: operation, resolve };
+      });
+      stop();
+      file = await finished;
+    } else if (phaseRef.current === 'preview') file = await prepare();
+    else return null;
+    return operation === generation.current &&
+      account === requestAccountVersion() &&
+      scope === currentScope.current &&
+      activity === enabledVersion.current &&
+      currentEnabled.current
+      ? file
+      : null;
   }
 
   async function start() {
@@ -284,8 +312,13 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
         recordingValue.current = { file, url, duration: capture.duration };
         setRecording(recordingValue.current);
         setNotice(capture.notice ?? '');
-        if (currentFormat.current === 'wav') await prepare();
+        let prepared: File | null = file;
+        if (currentFormat.current === 'wav') prepared = await prepare();
         else changePhase('preview');
+        if (completion.current?.generation === operation) {
+          completion.current.resolve(prepared);
+          completion.current = null;
+        }
       };
       let analyser: AnalyserNode | undefined;
       let samples: Uint8Array<ArrayBuffer> | undefined;
@@ -350,10 +383,8 @@ export function useVoiceRecorder(scope?: string, targetFormat?: 'wav', enabled =
     supported,
     start,
     stop,
+    finish,
     discard,
-    prepare,
-    needsPreparation:
-      targetFormat === 'wav' && Boolean(recording && recording.file.type !== 'audio/wav'),
     clearError: () => setError(''),
   };
 }

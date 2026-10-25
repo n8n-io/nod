@@ -10,7 +10,7 @@ import {
   type RuntimeObservation,
 } from '../ports/agent.ts';
 import {
-  apiKeyModelProviders,
+  apiKeyConnectionProviders,
   lightestEffort,
   modelProviderInfo,
   modelProviders,
@@ -81,6 +81,7 @@ import {
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
+import { createElevenLabsSpeechProvider } from '../providers/elevenlabs/speech.ts';
 import {
   createOpenRouterTranscriptionProvider,
   createOpenRouterSpeechProvider,
@@ -221,7 +222,7 @@ export function modelEnvironment(
     model: env.LLM_MODEL || undefined,
     credentials: {
       ...Object.fromEntries(
-        apiKeyModelProviders.flatMap((id) => {
+        apiKeyConnectionProviders.flatMap((id) => {
           const key = env[modelProviderInfo[id].env]?.trim();
           if (!key) return [];
           return [
@@ -305,6 +306,10 @@ export function createDefaultAdapters(
         ? Promise.resolve(env.OPENROUTER_API_KEY)
         : models.apiKey('openrouter'),
     configured: () => Boolean(env.OPENROUTER_API_KEY) || models.hasApiKey('openrouter'),
+  });
+  const elevenLabsSpeech = createElevenLabsSpeechProvider({
+    apiKey: () => models.apiKey('elevenlabs'),
+    configured: () => models.hasApiKey('elevenlabs'),
   });
   const openRouterTranscription = createOpenRouterTranscriptionProvider({
     apiKey: () =>
@@ -393,7 +398,9 @@ export function createDefaultAdapters(
     localSpeech,
     speechInputFormat: (voice) =>
       voice?.startsWith('local:') ||
-      (!openAISpeech.configured && !openRouterTranscription.configured)
+      (!openAISpeech.configured &&
+        !openRouterTranscription.configured &&
+        !elevenLabsSpeech.configured)
         ? 'wav'
         : undefined,
     speech: {
@@ -403,49 +410,68 @@ export function createDefaultAdapters(
           ? openRouterSpeech.defaultVoice
           : openAISpeech.configured
             ? openAISpeech.defaultVoice
-            : localSpeech.defaultVoice;
+            : elevenLabsSpeech.configured
+              ? elevenLabsSpeech.defaultVoice
+              : localSpeech.defaultVoice;
       },
       get configured() {
-        return openRouterSpeech.configured || openAISpeech.configured || localSpeech.configured;
+        return (
+          openRouterSpeech.configured ||
+          openAISpeech.configured ||
+          elevenLabsSpeech.configured ||
+          localSpeech.configured
+        );
       },
       get transcriptionConfigured() {
         return (
           openAISpeech.configured ||
           openRouterTranscription.configured ||
+          elevenLabsSpeech.configured ||
           localSpeech.transcriptionConfigured === true
         );
       },
       get voices() {
         return [
+          ...(elevenLabsSpeech.configured ? (elevenLabsSpeech.voices ?? []) : []),
           ...(openRouterSpeech.configured ? (openRouterSpeech.voices ?? []) : []),
           ...(openAISpeech.configured ? (openAISpeech.voices ?? []) : []),
           ...(localSpeech.configured ? (localSpeech.voices ?? []) : []),
         ];
       },
+      refreshVoices: (signal, force) => elevenLabsSpeech.refreshVoices!(signal, force),
       synthesize: (text, signal, report, options) => {
         const selected = options?.voice?.startsWith('local:')
           ? localSpeech
-          : options?.voice?.startsWith('openai:')
-            ? openAISpeech
-            : options?.voice
-              ? openRouterSpeech
-              : openRouterSpeech.configured
+          : options?.voice?.startsWith('elevenlabs-direct:')
+            ? elevenLabsSpeech
+            : options?.voice?.startsWith('openai:')
+              ? openAISpeech
+              : options?.voice
                 ? openRouterSpeech
-                : openAISpeech.configured
-                  ? openAISpeech
-                  : localSpeech;
+                : openRouterSpeech.configured
+                  ? openRouterSpeech
+                  : openAISpeech.configured
+                    ? openAISpeech
+                    : elevenLabsSpeech.configured
+                      ? elevenLabsSpeech
+                      : localSpeech;
         return selected.synthesize(text, signal, report, options);
       },
       transcribe: async (audio, signal, report) => {
-        const local = (await voicePreferences.get()).speechVoice?.startsWith('local:');
+        const voice = (await voicePreferences.get()).speechVoice;
+        const local = voice?.startsWith('local:');
         signal?.throwIfAborted();
         return local
           ? localSpeech.transcribe!(audio, signal, report)
-          : openAISpeech.configured
-            ? openAISpeech.transcribe!(audio, signal, report)
-            : openRouterTranscription.configured
-              ? openRouterTranscription.transcribe(audio, signal, report)
-              : localSpeech.transcribe!(audio, signal, report);
+          : voice?.startsWith('elevenlabs-direct:')
+            ? elevenLabsSpeech.transcribe!(audio, signal, report)
+            : openAISpeech.configured
+              ? openAISpeech.transcribe!(audio, signal, report)
+              : openRouterTranscription.configured
+                ? openRouterTranscription.transcribe(audio, signal, report)
+                : elevenLabsSpeech.configured
+                  ? elevenLabsSpeech.transcribe!(audio, signal, report)
+                  : localSpeech.transcribe!(audio, signal, report);
       },
     },
     integrations,

@@ -32,15 +32,17 @@ An action confirmation shows its current state beside the question. **Done** mea
 
 ## Send an audio message
 
-Select **Record an audio message** beside the send button and allow microphone access. Select **Stop recording** when you finish, listen to the preview, then select **Send audio**. You can discard the recording or record it again before sending. Recordings can be up to five minutes long. They stay in this window until you send them and are not restored after a reload.
+Select **Record an audio message** beside the send button and allow microphone access. Select **Send** when you finish. To listen first, select **Preview**. You can discard the recording before sending. Recordings can be up to five minutes long. They stay in this window until you send them and are not restored after a reload.
 
 nod transcribes the recording and uses it as your message. The transcript and recording stay together in the conversation. If sending fails, your recording and typed text remain available. A recording that answers a private verification request is handled privately instead of being added to the conversation.
 
-By default, nod sends an audio reply after its written answer when you send audio. Select **Play audio** to listen; replies do not play automatically. A failed or very long spoken reply leaves the written answer available.
+With **Auto**, nod chooses when a spoken reply helps. Ask it to answer in audio notes to keep a conversation in that format, or ask for text when you prefer reading. Select **Play audio** to listen; replies do not play automatically.
 
-In **Settings → General → Voice**, open **Assistant voice** to hear a fixed sample and choose a voice. Set **Spoken replies** to **When I send audio**, **Always**, or **Off**.
+In **Settings → General → Voice**, open **Assistant voice** to hear a fixed sample and choose a voice. Set **Spoken replies** to **Auto**, **When I send audio**, **Always**, or **Off**. Auto is the default for new settings; existing choices stay unchanged. Off stops automatic spoken replies, but you can still explicitly request an audio file.
 
-Your existing OpenRouter or OpenAI API connection makes its voices available automatically. For more choices, select **Add voices** in the same dialog. Download free voices, sign in to OpenRouter for ElevenLabs and Kokoro voices, or add an OpenAI API key. You can also use an OpenRouter key. You don't need a separate ElevenLabs key, and your connected chat model stays selected.
+Your existing OpenRouter or OpenAI API connection makes its voices available automatically. For more choices, select **Add voices** in the same dialog. Download free voices, sign in to OpenRouter for ElevenLabs and Kokoro voices, or connect your ElevenLabs or OpenAI account with an API key. Through OpenRouter, you don't need a separate ElevenLabs key. Your connected chat model stays selected.
+
+A direct ElevenLabs connection brings in voices saved in your account. Give the key Text to Speech, Speech to Text, and Voices read access. Select **Browse voices** to add or create voices on ElevenLabs, then **Refresh voices** to see them in nod. Use **Manage connection** to disconnect a saved key. Where a voice is available from more than one service, the picker shows which connection it uses. Samples and replies use that service’s credits.
 
 ElevenLabs and OpenAI voices are multilingual: they speak the language of the reply. Kokoro voices have a specific language, shown beside their name. Through OpenRouter, Kokoro offers English, Spanish, French, Hindi, Italian, Japanese, Brazilian Portuguese and Mandarin Chinese. Pick a voice that matches your conversation; changing a voice doesn't change the language nod writes in.
 

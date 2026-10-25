@@ -393,6 +393,28 @@
   background: var(--surface);
   box-shadow: var(--shadow-sm);
 }
+.voice-reply-hint {
+  margin: -4px 0 8px;
+  text-align: right;
+}
+.voice-library-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-underline-offset: 3px;
+}
+.voice-library-link:hover {
+  color: var(--foreground);
+}
+.voice-connect-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
 .voice-settings-choice {
   display: flex;
   align-items: center;
@@ -590,6 +612,21 @@
   gap: 8px;
   margin: 12px 0 0 32px;
 }
+.voice-connect-manage {
+  margin: 12px 0 0 32px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.voice-connect-manage summary {
+  cursor: pointer;
+}
+.voice-connection-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
 .voice-connect-form {
   display: grid;
   gap: 12px;
@@ -620,8 +657,11 @@
   }
   .voice-reply-options button {
     flex: 1;
+    padding-inline: 8px;
+    font-size: 12px;
   }
-  .voice-settings-disclosure {
+  .voice-settings-disclosure,
+  .voice-reply-hint {
     text-align: left;
   }
 }

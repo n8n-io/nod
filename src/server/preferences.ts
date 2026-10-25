@@ -1,16 +1,12 @@
 import { z } from 'zod';
 import type { Pool } from 'pg';
-import { speechVoices } from '../shared/speech.ts';
+import { isSpeechVoiceId } from '../shared/speech.ts';
 
 const hourCycles = ['auto', 'h12', 'h23'] as const;
 export const preferencesSchema = z
   .object({
-    speechVoice: z
-      .string()
-      .max(80)
-      .refine((id) => speechVoices.some((voice) => voice.id === id))
-      .nullable(),
-    speechReply: z.enum(['voice', 'always', 'never']),
+    speechVoice: z.string().max(128).refine(isSpeechVoiceId).nullable(),
+    speechReply: z.enum(['auto', 'voice', 'always', 'never']),
     notificationRule: z.string().max(4000),
     rules: z.string().max(4000),
     timeZone: z.string().nullable(),
@@ -24,7 +20,7 @@ export const preferencesSchema = z
 export type Preferences = z.infer<typeof preferencesSchema>;
 export const defaultPreferences: Preferences = {
   speechVoice: null,
-  speechReply: 'voice',
+  speechReply: 'auto',
   notificationRule: '',
   rules: '',
   timeZone: null,
@@ -92,7 +88,7 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
       const patch = validate(raw);
       const result = await pool.query(
         `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle,rules,speech_voice,speech_reply)
-        VALUES($1,COALESCE($2,$7),$3,COALESCE($4,$8),COALESCE($5,$9),COALESCE($6::boolean,$10::boolean),$11,COALESCE($12,$13),COALESCE($16,''),$17,COALESCE($18,'voice'))
+        VALUES($1,COALESCE($2,$7),$3,COALESCE($4,$8),COALESCE($5,$9),COALESCE($6::boolean,$10::boolean),$11,COALESCE($12,$13),COALESCE($16,''),$17,COALESCE($18,'auto'))
         ON CONFLICT(owner_id) DO UPDATE SET notification_rule=COALESCE($2,preferences.notification_rule),rules=COALESCE($16,preferences.rules),
         time_zone=CASE WHEN $15 THEN $3 ELSE preferences.time_zone END,quiet_start=COALESCE($4,preferences.quiet_start),quiet_end=COALESCE($5,preferences.quiet_end),
         quiet_hours_enabled=COALESCE($6,preferences.quiet_hours_enabled),locale=CASE WHEN $14 THEN $11 ELSE preferences.locale END,

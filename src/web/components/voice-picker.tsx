@@ -11,6 +11,13 @@ import {
   SearchField,
 } from './ui';
 
+function sourceLabel(voice: SpeechVoice) {
+  if (voice.engine === 'Local') return 'Free voices';
+  return voice.source === 'openrouter' || /^(elevenlabs|kokoro):/.test(voice.id)
+    ? `${voice.engine} · OpenRouter`
+    : voice.engine;
+}
+
 export function VoiceSample({
   voice,
   loading,
@@ -24,7 +31,7 @@ export function VoiceSample({
   disabled?: boolean;
   onPlay(): void;
 }) {
-  const label = `${loading || playing ? 'Stop' : 'Play'} ${voice.name} sample, ${voice.description}, ${voice.engine}`;
+  const label = `${loading || playing ? 'Stop' : 'Play'} ${voice.name} sample, ${voice.description}, ${sourceLabel(voice)}`;
   return (
     <Button
       type="button"
@@ -105,7 +112,7 @@ export function VoicePicker({
     .split(/\s+/);
   const matches = voices.filter((voice) =>
     words.every((word) =>
-      `${voice.name} ${voice.description} ${voice.language ?? 'Multilingual'} ${voice.engine}`
+      `${voice.name} ${voice.description} ${voice.language ?? 'Multilingual'} ${sourceLabel(voice)}`
         .normalize('NFKD')
         .replace(/[\u0300-\u036f]/g, '')
         .toLowerCase()
@@ -223,17 +230,11 @@ export function VoicePicker({
               clearLabel="Clear voice search"
             />
             <div className="voice-picker-options">
-              {[...new Set(matches.map((voice) => voice.engine))].map((engine) => (
-                <div
-                  key={engine}
-                  role="group"
-                  aria-label={engine === 'Local' ? 'Local voices' : engine}
-                >
-                  <p className="voice-picker-group">
-                    {engine === 'Local' ? 'Local voices' : engine}
-                  </p>
+              {[...new Set(matches.map(sourceLabel))].map((engine) => (
+                <div key={engine} role="group" aria-label={engine}>
+                  <p className="voice-picker-group">{engine}</p>
                   {matches
-                    .filter((voice) => voice.engine === engine)
+                    .filter((voice) => sourceLabel(voice) === engine)
                     .map((voice) => (
                       <div
                         className="voice-picker-option"

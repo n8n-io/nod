@@ -45,7 +45,7 @@ import {
   SearchField,
 } from './ui';
 
-const modelProviderLogos: Record<ModelProvider, string> = {
+const modelProviderLogos: Partial<Record<ModelProvider, string>> = {
   openai: 'models/openai',
   anthropic: 'models/anthropic',
   google: 'models/google',
@@ -101,7 +101,7 @@ export function ModelProviderLogo({
       style={{
         width: size,
         height: size,
-        maskImage: `url('/logos/${modelProviderLogos[provider]}.svg')`,
+        maskImage: `url('/logos/${modelProviderLogos[provider] ?? 'server'}.svg')`,
       }}
       aria-hidden="true"
     />

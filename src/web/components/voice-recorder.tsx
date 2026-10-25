@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { useVoiceRecorder } from '../hooks/use-voice-recorder';
-import { LoaderCircle, Mic, Pause, Play, RotateCcw, Square, Trash2, X } from './icons';
+import { LoaderCircle, Mic, Pause, Play, RotateCcw, Trash2, X } from './icons';
 import { Button } from './ui';
 
 function recordingTime(milliseconds: number) {
@@ -138,107 +138,91 @@ export function VoiceRecorder({
   sending: boolean;
   onDiscard(): void;
 }) {
-  const stopButton = useRef<HTMLButtonElement>(null);
   const discardButton = useRef<HTMLButtonElement>(null);
   const { phase, recording, elapsed, level } = recorder;
-  const preview = phase === 'preview' && recording;
+  const preview = phase === 'preview' && recording && !sending;
   useEffect(() => {
     if (phase === 'requesting') discardButton.current?.focus();
-    else if (phase === 'recording') stopButton.current?.focus();
   }, [phase]);
   if (phase === 'idle') return null;
   return (
     <section
-      className="voice-recorder"
+      className="voice-recorder voice-recorder-inline"
       aria-label="Audio message"
       data-analytics-private
-      onKeyDown={(event) => {
-        if (event.key === 'Escape' && !sending) {
-          event.preventDefault();
-          onDiscard();
-        }
-      }}
     >
-      <div className="voice-recorder-header">
-        <div className="voice-recorder-status" role="status">
-          {phase === 'requesting' || phase === 'finishing' || sending ? (
+      <div className="voice-recorder-bar">
+        <Button
+          ref={discardButton}
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={phase === 'requesting' ? 'Cancel recording' : 'Discard recording'}
+          title={phase === 'requesting' ? 'Cancel recording' : 'Discard recording'}
+          onClick={onDiscard}
+          disabled={sending}
+        >
+          <Trash2 size={16} />
+        </Button>
+        {preview ? (
+          <RecordingPreview key={recording.url} recording={recording} sending={sending} />
+        ) : phase === 'recording' ? (
+          <div className="voice-recorder-input">
+            <span className="voice-recorder-dot" aria-hidden="true" />
+            <span className="voice-recorder-time" role="timer" aria-label="Recording duration">
+              {recordingTime(elapsed)}
+            </span>
+            <div
+              className="voice-recorder-level"
+              role="meter"
+              aria-label="Microphone input level"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(level * 100)}
+            >
+              {Array.from({ length: 8 }, (_, index) => (
+                <span key={index} data-active={level > index / 8 || undefined} />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="voice-recorder-status" role="status">
             <LoaderCircle size={16} className="spin" />
-          ) : (
-            <Mic size={16} />
-          )}
-          <span>
-            {phase === 'requesting'
-              ? 'Waiting for your microphone…'
-              : phase === 'finishing'
-                ? 'Preparing audio…'
+            <span>
+              {phase === 'requesting'
+                ? 'Waiting for microphone…'
                 : sending
-                  ? 'Sending audio…'
-                  : preview
-                    ? 'Ready to send'
-                    : 'Recording'}
-          </span>
-        </div>
-        <div className="voice-recorder-actions">
-          {preview ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => void recorder.start()}
-              disabled={sending}
-            >
-              <RotateCcw size={14} />
-              Record again
-            </Button>
-          ) : phase === 'recording' ? (
-            <Button
-              ref={stopButton}
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={recorder.stop}
-            >
-              <Square size={12} solid />
-              Stop recording
-            </Button>
-          ) : null}
+                  ? 'Sending…'
+                  : 'Preparing audio…'}
+            </span>
+          </div>
+        )}
+        {preview ? (
           <Button
-            ref={discardButton}
             type="button"
             variant="ghost"
             size="icon"
-            aria-label={phase === 'requesting' ? 'Cancel recording' : 'Discard recording'}
-            title={phase === 'requesting' ? 'Cancel recording' : 'Discard recording'}
-            onClick={onDiscard}
-            disabled={sending}
+            aria-label="Record again"
+            title="Record again"
+            onClick={() => void recorder.start()}
           >
-            <Trash2 size={16} />
+            <RotateCcw size={16} />
           </Button>
-        </div>
-      </div>
-      {preview ? (
-        <RecordingPreview key={recording.url} recording={recording} sending={sending} />
-      ) : phase === 'recording' ? (
-        <div className="voice-recorder-input">
-          <span className="voice-recorder-dot" aria-hidden="true" />
-          <span className="voice-recorder-time" role="timer" aria-label="Recording duration">
-            {recordingTime(elapsed)}
-          </span>
-          <div
-            className="voice-recorder-level"
-            role="meter"
-            aria-label="Microphone input level"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(level * 100)}
+        ) : phase === 'recording' ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="voice-recorder-preview"
+            aria-label="Stop and preview recording"
+            title="Stop and preview recording"
+            onClick={recorder.stop}
           >
-            {Array.from({ length: 16 }, (_, index) => (
-              <span key={index} data-active={level > index / 16 || undefined} />
-            ))}
-          </div>
-          <span className="voice-recorder-limit">5 min max</span>
-        </div>
-      ) : null}
+            <Play size={14} />
+            <span>Preview</span>
+          </Button>
+        ) : null}
+      </div>
       {preview && recorder.notice && <p>{recorder.notice}</p>}
     </section>
   );

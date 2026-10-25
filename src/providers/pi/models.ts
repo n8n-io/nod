@@ -11,6 +11,7 @@ import { Agent, Dispatcher1Wrapper } from 'undici';
 import { z } from 'zod';
 import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose';
 import { ModelAuthError } from '../../ports/models.ts';
+import { ElevenLabsConnectionError, readElevenLabsVoices } from '../elevenlabs/speech.ts';
 import type {
   ModelAccess,
   ModelBackend,
@@ -611,6 +612,20 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       return { url: url.toString(), state, result, complete };
     },
     async catalog(provider: ModelProvider, method: ModelMethod, credential?: ModelCredential) {
+      if (provider === 'elevenlabs') {
+        if (credential?.type !== 'api_key' || method !== 'api_key')
+          throw new ModelAuthError('Connect ElevenLabs with an API key.');
+        try {
+          await readElevenLabsVoices(credential.key, request);
+          return [];
+        } catch (error) {
+          throw new ModelAuthError(
+            error instanceof ElevenLabsConnectionError
+              ? error.message
+              : 'ElevenLabs voices could not be loaded. Try again.',
+          );
+        }
+      }
       if (!modelProviders.includes(provider))
         throw new Error('This model provider is unavailable.');
       if (provider === 'compatible') return endpointCatalog(credential);

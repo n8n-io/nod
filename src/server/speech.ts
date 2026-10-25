@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import type { GeneratedAudio, SpeechProvider, SpeechSynthesisOptions } from '../ports/speech.ts';
+import {
+  SpeechProviderError,
+  type GeneratedAudio,
+  type SpeechProvider,
+  type SpeechSynthesisOptions,
+} from '../ports/speech.ts';
 import type { ProviderUsageEvent } from '../ports/provider-usage.ts';
 import { spendingLimitReached } from './ledger.ts';
 
@@ -41,6 +46,10 @@ export function createSpeech(provider: SpeechProvider) {
     get defaultVoice() {
       return provider.defaultVoice;
     },
+    async refreshVoices(signal?: AbortSignal, force = false) {
+      signal?.throwIfAborted();
+      await cancellable(provider.refreshVoices?.(signal, force) ?? Promise.resolve(), signal);
+    },
     async transcribe(
       audio: { bytes: Uint8Array; mimeType: string; name: string },
       signal?: AbortSignal,
@@ -67,6 +76,7 @@ export function createSpeech(provider: SpeechProvider) {
         signal?.throwIfAborted();
         if (
           error instanceof TranscriptionLengthError ||
+          error instanceof SpeechProviderError ||
           (error instanceof Error && error.message === spendingLimitReached)
         )
           throw error;
@@ -98,7 +108,11 @@ export function createSpeech(provider: SpeechProvider) {
         return result;
       } catch (error) {
         signal?.throwIfAborted();
-        if (error instanceof Error && error.message === spendingLimitReached) throw error;
+        if (
+          error instanceof SpeechProviderError ||
+          (error instanceof Error && error.message === spendingLimitReached)
+        )
+          throw error;
         throw new Error('Speech generation failed.');
       }
     },

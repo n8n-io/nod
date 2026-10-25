@@ -110,7 +110,10 @@ export async function initializeDatabase() {
     );
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS rules text NOT NULL DEFAULT '';
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS speech_voice text;
-    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS speech_reply text NOT NULL DEFAULT 'voice' CHECK (speech_reply IN ('voice','always','never'));
+    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS speech_reply text NOT NULL DEFAULT 'auto';
+    ALTER TABLE preferences DROP CONSTRAINT IF EXISTS preferences_speech_reply_check;
+    ALTER TABLE preferences ADD CONSTRAINT preferences_speech_reply_check CHECK (speech_reply IN ('auto','voice','always','never'));
+    ALTER TABLE preferences ALTER COLUMN speech_reply SET DEFAULT 'auto';
     DO $$ BEGIN
       IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='preferences'::regclass AND attname='time_zone' AND attnotnull) THEN
         ALTER TABLE preferences ALTER COLUMN time_zone DROP NOT NULL, ALTER COLUMN time_zone DROP DEFAULT;

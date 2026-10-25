@@ -3516,7 +3516,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.equal(player.getAttribute('src'), null);
         assert.equal(revoked.filter(value => value === url).length, 1);
       };
-      const dora = 'Dora sample, Brazilian Portuguese, Local';
+      const dora = 'Dora sample, Brazilian Portuguese, Free voices';
       const coral = 'Coral sample, Warm and friendly, OpenAI';
       try {
         await render();
@@ -3553,7 +3553,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.deepEqual(writes, []);
         await open();
         await click('Play ' + dora, picker());
-        await click('Choose Dora, Brazilian Portuguese, Local', picker());
+        await click('Choose Dora, Brazilian Portuguese, Free voices', picker());
         assert.equal(requests[3].options.signal.aborted, true);
         await settle(() => !picker() && settings.speechVoice === 'local:pf_dora');
         assert.deepEqual(writes, [{ speechVoice: 'local:pf_dora' }]);
@@ -3632,6 +3632,17 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
           if (outcome === 'failure') assert.ok(document.body.textContent.includes('Synthetic download failure'));
           if (outcome === 'complete') assert.equal(button('Download voices'), undefined);
         }
+        await click('Close', picker());
+        await settle(() => !picker());
+        await act(async () => button('Auto').click());
+        await settle(() => settings.speechReply === 'auto' && busy.at(-1) === false);
+        assert.deepEqual(writes.at(-1), { speechReply: 'auto' });
+        await act(async () => root.unmount());
+        mounted = false;
+        root = createRoot(document.querySelector('#root'));
+        mounted = true;
+        await render();
+        await settle(() => button('Auto')?.getAttribute('aria-pressed') === 'true');
       } finally {
         if (mounted) await act(async () => root.unmount());
         dom.window.close();
@@ -3676,8 +3687,8 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
       Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
-      const microphoneRequests = [], recorders = [];
-      let captureType = 'audio/mp4', speechFormat;
+      const microphoneRequests = [], recorders = [], stoppedRecordings = [];
+      let captureType = 'audio/mp4', speechFormat, delayStop = false;
       Object.defineProperty(navigator, 'mediaDevices', {
         value: { getUserMedia: () => new Promise((resolve, reject) => microphoneRequests.push({ resolve, reject })) },
       });
@@ -3692,10 +3703,12 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         start() { this.state = 'recording'; }
         stop() {
           this.state = 'inactive';
-          queueMicrotask(() => {
+          const finish = () => {
             this.ondataavailable?.({ data: new Blob(['synthetic audio'], { type: this.mimeType }) });
             this.onstop?.();
-          });
+          };
+          if (delayStop) stoppedRecordings.push(finish);
+          else queueMicrotask(finish);
         }
       };
       const microphone = () => {
@@ -4019,24 +4032,28 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => microphoneRequests[2].resolve(recorded));
         assert.equal(recorders[0].mimeType, 'audio/mp4');
         assert.equal(recorded.track.stopped, false);
+        assert.equal(document.activeElement, document.querySelector('[aria-label="Send audio message"]'));
+        assert.equal(document.querySelector('[aria-label="Send audio message"]').disabled, false);
+        await act(async () =>
+          window.dispatchEvent(new CustomEvent('nod:attach-artifact', { detail: artifact })),
+        );
+        result = { sent: false, restoreText: true };
+        delayStop = true;
+        await submit();
         await submit();
         assert.equal(sends.length, 3);
         assert.equal(requests.length, 10);
-        await act(async () =>
-          Array.from(document.querySelectorAll('button')).find((button) => button.textContent === 'Stop recording').click(),
-        );
         assert.equal(recorded.track.stopped, true);
+        assert.equal(stoppedRecordings.length, 1);
+        await act(async () => stoppedRecordings.shift()());
+        delayStop = false;
+        await settle(() => currentText === 'Keep this synthetic draft' && drafts.length === 1);
+        assert.equal(sends.length, 4);
         await settle(() => document.querySelector('audio'));
         const preview = document.querySelector('audio').src;
         assert.ok(document.querySelector('audio').getAttribute('src')?.startsWith('blob:'));
         assert.equal(revoked.includes(preview), false);
         assert.equal(requests.length, 10);
-        await act(async () =>
-          window.dispatchEvent(new CustomEvent('nod:attach-artifact', { detail: artifact })),
-        );
-        result = { sent: false, restoreText: true };
-        await submit();
-        await settle(() => currentText === 'Keep this synthetic draft' && drafts.length === 1);
         assert.equal(sends[3].recording.type, 'audio/mp4');
         assert.equal(sends[3].recording.name, 'Voice message.m4a');
         assert.equal(document.querySelector('audio').src, preview);
@@ -4077,15 +4094,37 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         assert.equal(recorders.length, 3);
         await click('Discard recording');
         assert.equal(revoked.filter((url) => url === retained.url).length, 1);
+        delayStop = true;
+        for (const outcome of ['discard', 'leave-and-return']) {
+          const before = sends.length;
+          await click('Record an audio message');
+          const interrupted = microphone();
+          await act(async () => microphoneRequests.at(-1).resolve(interrupted));
+          await submit();
+          assert.equal(interrupted.track.stopped, true);
+          assert.equal(stoppedRecordings.length, 1);
+          if (outcome === 'discard') await click('Discard recording');
+          else {
+            await act(async () => changeActive(false));
+            await act(async () => changeActive(true));
+          }
+          await act(async () => stoppedRecordings.shift()());
+          await settle(() => currentText === 'Keep this draft while navigating');
+          assert.equal(sends.length, before);
+          if (outcome === 'discard') assert.equal(document.querySelector('audio'), null);
+          else {
+            assert.ok(document.querySelector('audio'));
+            await click('Discard recording');
+          }
+        }
+        delayStop = false;
         speechFormat = 'wav';
         captureType = 'audio/wav';
         await act(async () => window.dispatchEvent(new Event('focus')));
         await click('Record an audio message');
         const nativeWave = microphone();
-        await act(async () => microphoneRequests[6].resolve(nativeWave));
-        await act(async () =>
-          Array.from(document.querySelectorAll('button')).find((button) => button.textContent === 'Stop recording').click(),
-        );
+        await act(async () => microphoneRequests.at(-1).resolve(nativeWave));
+        await click('Stop and preview recording');
         assert.equal(nativeWave.track.stopped, true);
         await settle(() => document.querySelector('audio') && !document.querySelector('[aria-label="Send audio message"]')?.disabled);
         await submit();
@@ -4117,20 +4156,18 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         };
         await click('Record an audio message');
         const needsConversion = microphone();
-        await act(async () => microphoneRequests[7].resolve(needsConversion));
-        await act(async () =>
-          Array.from(document.querySelectorAll('button')).find((button) => button.textContent === 'Stop recording').click(),
-        );
+        await act(async () => microphoneRequests.at(-1).resolve(needsConversion));
+        const beforeConversionSend = sends.length;
+        await submit();
         assert.equal(needsConversion.track.stopped, true);
-        await settle(() => document.querySelector('audio') && document.querySelector('[aria-label="Prepare audio message"]'));
+        await settle(() => document.querySelector('audio') && !document.querySelector('[aria-label="Send audio message"]').disabled);
+        assert.equal(sends.length, beforeConversionSend);
         const unconverted = created.at(-1);
         assert.equal(unconverted.file.type, 'audio/mp4');
         assert.equal(revoked.includes(unconverted.url), false);
-        const beforeConversionSend = sends.length;
         conversionFails = false;
         await submit();
-        await settle(() => document.querySelector('[aria-label="Send audio message"]'));
-        assert.equal(sends.length, beforeConversionSend);
+        await settle(() => sends.length === beforeConversionSend + 1);
         assert.equal(revoked.filter((url) => url === unconverted.url).length, 1);
         const converted = created.at(-1);
         assert.equal(converted.file.type, 'audio/wav');
@@ -4141,7 +4178,6 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         assert.equal(wave.getUint32(40, true), 32000);
         assert.deepEqual(Array.from({ length: 5 }, (_, index) => wave.getInt16(44 + index * 2, true)), [-32768, -16384, 0, 16383, 32767]);
         assert.ok(contextsClosed >= 3);
-        await submit();
         assert.equal(sends.length, beforeConversionSend + 1);
         assert.equal(sends.at(-1).recording, converted.file);
         await settle(() => !document.querySelector('audio'));
@@ -4149,9 +4185,9 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         await act(async () => root.unmount());
         closed = true;
         const afterUnmount = microphone();
-        await act(async () => microphoneRequests[8].resolve(afterUnmount));
+        await act(async () => microphoneRequests.at(-1).resolve(afterUnmount));
         assert.equal(afterUnmount.track.stopped, true);
-        assert.equal(recorders.length, 5);
+        assert.equal(recorders.length, 7);
       } finally {
         if (!closed) await act(async () => root.unmount());
         dom.window.close();

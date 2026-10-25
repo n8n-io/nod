@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import type { SpeechService } from './speech.ts';
 import type { LocalSpeechControls } from '../ports/speech.ts';
@@ -31,8 +31,20 @@ export function registerSpeechSettings(
   const { speech, preferences } = options;
   let preview: AbortController | undefined;
   const preparations = new Set<AbortController>();
-  app.get('/api/speech', async (_request, reply) => {
+  async function current(reply: FastifyReply, force = false) {
     reply.header('Cache-Control', 'no-store');
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    reply.raw.once('close', stop);
+    let voicesError: string | undefined;
+    try {
+      await speech.refreshVoices(controller.signal, force);
+    } catch {
+      controller.signal.throwIfAborted();
+      voicesError = 'ElevenLabs voices could not be loaded. Try again.';
+    } finally {
+      reply.raw.off('close', stop);
+    }
     const saved = await preferences.get();
     const transcriptionFormat = options.inputFormat?.(saved.speechVoice);
     return {
@@ -42,9 +54,17 @@ export function registerSpeechSettings(
       speechVoice: saved.speechVoice,
       defaultVoice: speech.defaultVoice,
       speechReply: saved.speechReply,
+      ...(voicesError ? { voicesError } : {}),
       ...(options.local ? { local: options.local.status() } : {}),
       ...(transcriptionFormat ? { transcriptionFormat } : {}),
     };
+  }
+  app.get('/api/speech', async (_request, reply) => current(reply));
+  app.post('/api/speech/voices/refresh', async (request, reply) => {
+    z.object({})
+      .strict()
+      .parse(request.body ?? {});
+    return current(reply, true);
   });
   app.post('/api/speech/prepare', async (request, reply) => {
     const { locale } = z
@@ -76,7 +96,7 @@ export function registerSpeechSettings(
   app.post('/api/speech/preview', async (request, reply) => {
     const { voice, locale } = z
       .object({
-        voice: z.string().max(80).nullable(),
+        voice: z.string().max(128).nullable(),
         locale: z.string().max(35).optional(),
       })
       .strict()

@@ -1,24 +1,30 @@
 import { useLayoutEffect, useState } from 'react';
 import type { SpeechVoice } from '../../shared/speech';
 import { useModelSignIn, useModels } from '../hooks/use-models';
-import { ExternalLink, LoaderCircle, Mic } from './icons';
+import { Check, ExternalLink, LoaderCircle, Mic, RefreshCw } from './icons';
+import { modelProviderNames } from '../../shared/models';
 import { ModelKeyHelp, ModelProviderLogo } from './models';
 import { Button, Field, Input, Notice } from './ui';
 
 export function VoiceConnections({
-  availableEngines,
+  voices,
+  onRefresh,
   onConnected,
   onBusyChange,
   disabled = false,
 }: {
-  availableEngines: readonly SpeechVoice['engine'][];
+  voices: readonly SpeechVoice[];
+  onRefresh(): Promise<void>;
   onConnected(): void;
   onBusyChange(busy: boolean): void;
   disabled?: boolean;
 }) {
   const models = useModels();
-  const [keyProvider, setKeyProvider] = useState<'openrouter' | 'openai' | null>(null);
+  const [keyProvider, setKeyProvider] = useState<'elevenlabs' | 'openrouter' | 'openai' | null>(
+    null,
+  );
   const [key, setKey] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   const [callback, setCallback] = useState('');
   const flow = useModelSignIn(models, () => {
     setKey('');
@@ -26,27 +32,39 @@ export function VoiceConnections({
     setKeyProvider(null);
     onConnected();
   });
-  const busy = models.busy || flow.pending || !!flow.signIn;
+  const busy = models.busy || flow.pending || !!flow.signIn || refreshing;
   const dirty = busy || Boolean(key.trim() || callback.trim());
   useLayoutEffect(() => {
     onBusyChange(dirty);
     return () => onBusyChange(false);
   }, [dirty, onBusyChange]);
-  function addKey(provider: 'openrouter' | 'openai') {
+  function addKey(provider: 'elevenlabs' | 'openrouter' | 'openai') {
     setKey('');
     setCallback('');
     models.setError('');
     setKeyProvider(provider);
   }
-  const providers = (['openrouter', 'openai'] as const).filter(
-    (provider) =>
-      provider === keyProvider ||
-      flow.signIn?.provider === provider ||
-      (provider === 'openrouter'
-        ? !availableEngines.some((engine) => engine === 'ElevenLabs' || engine === 'Kokoro')
-        : !availableEngines.includes('OpenAI')),
-  );
-  if (!providers.length) return null;
+  const directConnections =
+    models.data?.connections.filter((connection) => connection.provider === 'elevenlabs') ?? [];
+  const providers = ['elevenlabs', 'openrouter', 'openai'] as const;
+  function connected(provider: (typeof providers)[number]) {
+    return (
+      voices.some(
+        (voice) =>
+          voice.source === provider ||
+          (!voice.source &&
+            (provider === 'openrouter'
+              ? /^(elevenlabs|kokoro):/.test(voice.id)
+              : voice.id.startsWith(provider === 'elevenlabs' ? 'elevenlabs-direct:' : 'openai:'))),
+      ) ||
+      models.data?.connections.some(
+        (connection) =>
+          connection.provider === provider &&
+          connection.status === 'connected' &&
+          connection.method !== 'subscription',
+      )
+    );
+  }
   return (
     <div className="voice-connections">
       {!models.data && models.loading ? (
@@ -58,54 +76,136 @@ export function VoiceConnections({
         providers.map((provider) => (
           <section className="voice-connect-option" key={provider}>
             <div className="voice-connect-heading">
-              {provider === 'openrouter' ? (
+              {provider === 'elevenlabs' ? (
                 <Mic size={22} aria-hidden="true" />
               ) : (
                 <ModelProviderLogo provider={provider} size={22} />
               )}
               <div>
-                <h3>{provider === 'openrouter' ? 'ElevenLabs' : 'OpenAI'}</h3>
+                <h3>{modelProviderNames[provider]}</h3>
                 <p>
-                  {provider === 'openrouter'
-                    ? 'Natural voices through OpenRouter. Uses your credits.'
-                    : 'Connect an OpenAI API key. Billed separately from a ChatGPT plan.'}
+                  {connected(provider)
+                    ? provider === 'elevenlabs'
+                      ? 'Use the voices saved in your ElevenLabs account.'
+                      : 'Ready with your saved connection.'
+                    : provider === 'elevenlabs'
+                      ? 'Use voices from your ElevenLabs account.'
+                      : provider === 'openrouter'
+                        ? 'ElevenLabs and more, using your OpenRouter credits.'
+                        : 'Use an OpenAI API key. Separate from a ChatGPT plan.'}
                 </p>
               </div>
             </div>
-            {keyProvider !== provider && flow.signIn?.provider !== provider && (
+            {connected(provider) && keyProvider !== provider && (
               <div className="voice-connect-actions">
-                {provider === 'openrouter' && (
+                <span className="voice-connect-ready">
+                  <Check size={14} /> Connected
+                </span>
+                {provider === 'elevenlabs' && (
+                  <>
+                    <a
+                      className="voice-library-link"
+                      href="https://elevenlabs.io/app/voice-library"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Browse voices <ExternalLink size={13} />
+                    </a>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={disabled || (busy && !refreshing) || Boolean(key.trim())}
+                      aria-disabled={refreshing || undefined}
+                      onClick={() => {
+                        if (refreshing) return;
+                        setRefreshing(true);
+                        void onRefresh().finally(() => setRefreshing(false));
+                      }}
+                    >
+                      <RefreshCw
+                        size={14}
+                        className={refreshing ? 'voice-preview-loading' : undefined}
+                      />
+                      Refresh voices
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+            {!connected(provider) &&
+              keyProvider !== provider &&
+              flow.signIn?.provider !== provider && (
+                <div className="voice-connect-actions">
+                  {provider === 'openrouter' && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={disabled || busy || Boolean(key.trim())}
+                      onClick={() => {
+                        setKey('');
+                        setKeyProvider(null);
+                        setCallback('');
+                        void flow.connect('openrouter');
+                      }}
+                    >
+                      {flow.pending && !flow.signIn ? (
+                        <>
+                          <LoaderCircle size={14} className="voice-preview-loading" />
+                          Opening sign-in…
+                        </>
+                      ) : (
+                        'Sign in with OpenRouter'
+                      )}
+                    </Button>
+                  )}
                   <Button
                     type="button"
+                    variant={provider === 'openrouter' ? 'ghost' : 'outline'}
                     size="sm"
                     disabled={disabled || busy || Boolean(key.trim())}
-                    onClick={() => {
-                      setKey('');
-                      setKeyProvider(null);
-                      setCallback('');
-                      void flow.connect('openrouter');
-                    }}
+                    onClick={() => addKey(provider)}
                   >
-                    {flow.pending && !flow.signIn ? (
-                      <>
-                        <LoaderCircle size={14} className="voice-preview-loading" />
-                        Opening sign-in…
-                      </>
-                    ) : (
-                      'Sign in with OpenRouter'
-                    )}
+                    {provider === 'openrouter' ? 'Use API key' : 'Connect'}
                   </Button>
+                </div>
+              )}
+            {provider === 'elevenlabs' && directConnections.length > 0 && (
+              <details className="voice-connect-manage">
+                <summary>Manage connection</summary>
+                {directConnections.map((connection) => (
+                  <div className="voice-connection-entry" key={connection.id}>
+                    <span>
+                      {connection.managed
+                        ? 'Set up on this device'
+                        : connection.keyEnding
+                          ? `Key …${connection.keyEnding}`
+                          : 'Saved key'}
+                      {connection.status === 'reconnect' && ' · Reconnect to continue'}
+                    </span>
+                    {!connection.managed && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={disabled || busy || Boolean(key.trim())}
+                        onClick={() => {
+                          void models
+                            .change(`/api/models/connections/${connection.id}`, 'DELETE')
+                            .then((removed) => {
+                              if (removed) void onRefresh();
+                            });
+                        }}
+                      >
+                        Disconnect
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                {directConnections.length > 1 && (
+                  <p className="field-hint">Keep one ElevenLabs connection to use its voices.</p>
                 )}
-                <Button
-                  type="button"
-                  variant={provider === 'openrouter' ? 'ghost' : 'outline'}
-                  size="sm"
-                  disabled={disabled || busy || Boolean(key.trim())}
-                  onClick={() => addKey(provider)}
-                >
-                  {provider === 'openrouter' ? 'Use API key' : 'Add API key'}
-                </Button>
-              </div>
+              </details>
             )}
             {keyProvider === provider && (
               <form
@@ -125,7 +225,7 @@ export function VoiceConnections({
                     });
                 }}
               >
-                <Field label={`${provider === 'openrouter' ? 'OpenRouter' : 'OpenAI'} API key`}>
+                <Field label={`${modelProviderNames[provider]} API key`}>
                   <Input
                     type="password"
                     value={key}
@@ -140,6 +240,12 @@ export function VoiceConnections({
                   />
                 </Field>
                 <ModelKeyHelp provider={provider} />
+                {provider === 'elevenlabs' && (
+                  <p className="field-hint">
+                    Allow Text to Speech, Speech to Text and Voices read. You can set a credit
+                    limit.
+                  </p>
+                )}
                 <div className="voice-connect-actions">
                   <Button type="submit" size="sm" disabled={disabled || busy || !key.trim()}>
                     {models.busy ? 'Connecting…' : 'Connect'}
