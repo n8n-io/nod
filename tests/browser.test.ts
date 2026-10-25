@@ -5411,6 +5411,8 @@ test('visual replies keep exploration local, require opt-in maps and reject unsa
       assert.match(document.querySelector('.seat-inspector').textContent,/Already occupied/);
       assert.equal(seat.textContent,'12C');
       assert.equal(document.querySelectorAll('.seat-empty').length,1);
+      await act(async () => [...document.querySelectorAll('.seat-section-controls button')].find(button=>button.textContent==='Economy').click());
+      assert.equal(document.querySelector('[aria-label="Seat 12A, unknown, Business, Upper deck"]'),null);
       await act(async () => [...document.querySelectorAll('.seat-section-controls button')].find(button=>button.textContent==='All sections').click());
       const upperSeat = document.querySelector('[aria-label="Seat 12A, unknown, Business, Upper deck"]');
       await act(async () => upperSeat.click());
@@ -5514,6 +5516,8 @@ test('visual replies keep exploration local, require opt-in maps and reject unsa
       assert.deepEqual(lineIdentities(),[originalLines[0],originalLines[2]]);
       assert.deepEqual([...document.querySelectorAll('.chart-data tbody tr:last-child td')].map(cell=>cell.textContent),['20','25','22']);
       const linePlot=document.querySelector('.chart-line-plot');
+      await act(async () => linePlot.focus());
+      assert.equal(document.activeElement,linePlot);
       await act(async () => linePlot.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Home',bubbles:true})));
       assert.match(document.querySelector('.chart-reading').textContent,/March/);
       assert.deepEqual([...document.querySelectorAll('.chart-reading dd')].map(cell=>cell.textContent),['10','12']);

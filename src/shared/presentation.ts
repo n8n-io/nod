@@ -274,12 +274,14 @@ export const presentationSchema = z
         if (venue.rating && venue.rating.value > venue.rating.scale)
           invalid('A rating cannot exceed its source scale.');
     if (value.type === 'chart') {
+      const first = value.series[0];
+      if (!first) return;
       if (!unique(value.series.map((series) => series.id)))
         invalid('Chart series IDs must be unique.');
       if (value.series.some((series) => !unique(series.points.map((point) => point.label))))
         invalid('Chart point labels must be unique within each series.');
       if (value.chart === 'line') {
-        const labels = JSON.stringify(value.series[0].points.map((point) => point.label));
+        const labels = JSON.stringify(first.points.map((point) => point.label));
         if (
           value.series.some(
             (series) => JSON.stringify(series.points.map((point) => point.label)) !== labels,
@@ -290,11 +292,11 @@ export const presentationSchema = z
       if (value.chart === 'pie' || value.chart === 'donut') {
         if (value.series.length !== 1)
           invalid('A pie or donut chart must contain exactly one series.');
-        if (value.series[0].points.length > 12)
+        if (first.points.length > 12)
           invalid('A pie or donut chart can contain at most 12 slices.');
         if (value.series.some((series) => series.points.some((point) => point.value < 0)))
           invalid('Pie and donut values cannot be negative.');
-        if (!value.series[0].points.some((point) => point.value > 0))
+        if (!first.points.some((point) => point.value > 0))
           invalid('A pie or donut chart must contain a positive value.');
       }
     }

@@ -1530,6 +1530,20 @@ test('charts accept signed finite data and reject ambiguous series or excessive 
   };
   assert.ok(presentationSchema.safeParse(chart).success);
   assert.ok(presentationSchema.safeParse({ ...chart, chart: 'bar' }).success);
+  for (const kind of ['bar', 'line', 'pie', 'donut']) {
+    assert.equal(
+      presentationSchema.safeParse({ ...chart, chart: kind, series: [] }).success,
+      false,
+    );
+    assert.equal(
+      presentationSchema.safeParse({
+        ...chart,
+        chart: kind,
+        series: [{ ...chart.series[0], points: [] }],
+      }).success,
+      false,
+    );
+  }
   for (const kind of ['pie', 'donut']) {
     const radial = {
       ...chart,

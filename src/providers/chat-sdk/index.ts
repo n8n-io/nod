@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Chat, ConsoleLogger, convertEmojiPlaceholders } from 'chat';
 import { TelegramAdapter } from '@chat-adapter/telegram';
-import { WhatsAppAdapter, splitMessage } from '@chat-adapter/whatsapp';
+import { WhatsAppAdapter, WhatsAppApiError, splitMessage } from '@chat-adapter/whatsapp';
 import { createPostgresState } from '@chat-adapter/state-pg';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -46,7 +46,17 @@ class Telegram extends TelegramAdapter {
   }
 }
 
+class WhatsAppUploadError extends Error {}
+
 class WhatsApp extends WhatsAppAdapter {
+  protected override async uploadMedia(file: { data: Buffer; filename: string; mimeType: string }) {
+    try {
+      return await super.uploadMedia(file);
+    } catch (cause) {
+      throw new WhatsAppUploadError('The image could not be uploaded.', { cause });
+    }
+  }
+
   chunks(text: string) {
     return splitMessage(
       convertEmojiPlaceholders(this.formatConverter.fromMarkdown(text), 'whatsapp'),
@@ -622,20 +632,36 @@ export function createChatSdkTransport(
             unsent.push(file);
             continue;
           }
-          const sent = await post({
-            markdown: '',
-            attachments: [
-              {
-                type: 'image',
-                data: Buffer.from(bytes),
-                name: file.name,
-                mimeType: file.mimeType,
-                size: file.size,
-              },
-            ],
-          });
-          id ||= sent.id;
-          ids.push(sent.id);
+          try {
+            const sent = await post({
+              markdown: '',
+              attachments: [
+                {
+                  type: 'image',
+                  data: Buffer.from(bytes),
+                  name: file.name,
+                  mimeType: file.mimeType,
+                  size: file.size,
+                },
+              ],
+            });
+            id ||= sent.id;
+            ids.push(sent.id);
+          } catch (cause) {
+            if (
+              cause instanceof WhatsAppUploadError ||
+              (cause instanceof WhatsAppApiError &&
+                cause.errorCode !== undefined &&
+                cause.status >= 400 &&
+                cause.status < 500 &&
+                cause.status !== 408 &&
+                cause.status !== 499)
+            ) {
+              unsent.push(file);
+              continue;
+            }
+            throw cause;
+          }
           continue;
         }
         if (

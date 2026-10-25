@@ -2586,6 +2586,7 @@ test(
     const threadId = await createFixtureTables(pool, 'local-development');
     const sent: { provider: string; body: Record<string, unknown> }[] = [];
     const handoffPresentations: unknown[] = [];
+    const unavailableFiles: string[][] = [];
     const whatsappFileId = randomUUID();
     const pngId = randomUUID();
     const jpegId = randomUUID();
@@ -2617,7 +2618,8 @@ test(
       [wrongSizeImageId, { ...attachment('changed.png', 'image/png', 'changed bytes'), size: 1 }],
     ]);
     const uploaded: Array<{ name: string; mimeType: string; bytes: Buffer }> = [];
-    let failImage = false;
+    let uploadFailure: 'rejected' | 'network' | 'missing-id' | undefined;
+    let imageFailure: 'rejected' | 'network' | 'missing-id' | 'server' | undefined;
     let providerCalls = 0;
     let failSend = false;
     let failSubmit = false;
@@ -2666,6 +2668,15 @@ test(
             mimeType: image.type,
             bytes: Buffer.from(await image.arrayBuffer()),
           });
+          const failure = uploadFailure;
+          uploadFailure = undefined;
+          if (failure === 'network') throw new Error('Upload response unavailable.');
+          if (failure === 'missing-id') return Response.json({});
+          if (failure === 'rejected')
+            return Response.json(
+              { error: { code: 131053, message: 'Image upload rejected.' } },
+              { status: 400 },
+            );
           return Response.json({ id: `fixture-media-${uploaded.length}` });
         }
         if (/^https:\/\/graph\.facebook\.com\/v\d+\.0\/555000\/messages$/.test(url)) {
@@ -2676,7 +2687,17 @@ test(
             });
           }
           sent.push({ provider: 'whatsapp', body });
-          if (body.type === 'image' && failImage) throw new Error('Possible image acceptance.');
+          if (body.type === 'image') {
+            const failure = imageFailure;
+            imageFailure = undefined;
+            if (failure === 'network') throw new Error('Possible image acceptance.');
+            if (failure === 'missing-id') return Response.json({ messages: [] });
+            if (failure === 'rejected' || failure === 'server')
+              return Response.json(
+                { error: { code: 131000, message: 'Image was not delivered.' } },
+                { status: failure === 'rejected' ? 400 : 500 },
+              );
+          }
           return Response.json({ messages: [{ id: `wamid.fixture-out-${sent.length}` }] });
         }
         throw new Error('Unexpected fixture provider call.');
@@ -2688,6 +2709,7 @@ test(
       present: async (_thread, input) => {
         assert.doesNotMatch(JSON.stringify(input), /private-token|api\/artifacts/);
         if (input.kind === 'delivery' && input.secureAction) handoffPresentations.push(input);
+        if (input.kind === 'delivery' && input.files) unavailableFiles.push(input.files);
         return 'Continua na aplicação nod.';
       },
       transport: createChatSdkTransport(pool, fixtureEnv),
@@ -3177,24 +3199,82 @@ test(
           .rows[0].state,
         'sent',
       );
-      failImage = true;
-      const uncertainImage = await addReply(
-        'channel:whatsapp:555000:wamid.good',
-        'Sending the screenshot.',
-        [{ id: pngId }],
-      );
-      await channels.drain();
-      assert.equal(
-        (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [uncertainImage]))
-          .rows[0].state,
-        'uncertain',
-      );
-      const attemptedImages = sent.length;
-      const attemptedUploads = uploaded.length;
-      await channels.drain();
-      assert.equal(sent.length, attemptedImages);
-      assert.equal(uploaded.length, attemptedUploads);
-      failImage = false;
+      for (const failure of [
+        'upload-rejected',
+        'upload-network',
+        'upload-missing-id',
+        'rejected',
+      ]) {
+        uploadFailure =
+          failure === 'upload-rejected'
+            ? 'rejected'
+            : failure === 'upload-network'
+              ? 'network'
+              : failure === 'upload-missing-id'
+                ? 'missing-id'
+                : undefined;
+        imageFailure = failure === 'rejected' ? 'rejected' : undefined;
+        const failedImage = await addReply(
+          'channel:whatsapp:555000:wamid.good',
+          'The second image should still arrive.',
+          [{ id: pngId }, { id: jpegId }],
+        );
+        const beforeFailure: number = sent.length;
+        const beforeUpload: number = uploaded.length;
+        const beforeNotice = unavailableFiles.length;
+        await channels.drain();
+        assert.equal(uploaded.length, beforeUpload + 2);
+        assert.deepEqual(unavailableFiles.slice(beforeNotice), [['page.png']]);
+        const delivered = sent.slice(beforeFailure);
+        assert.deepEqual(
+          delivered.map(({ body }) => body.type),
+          failure === 'rejected' ? ['text', 'image', 'image', 'text'] : ['text', 'image', 'text'],
+        );
+        assert.deepEqual(delivered.at(-2)!.body.image, { id: `fixture-media-${uploaded.length}` });
+        assert.match(JSON.stringify(delivered.at(-1)!.body), /Continua na aplicação nod/);
+        const acceptedIds: string[] = delivered.flatMap((_, index) =>
+          failure === 'rejected' && index === 1
+            ? []
+            : [`wamid.fixture-out-${beforeFailure + index + 1}`],
+        );
+        assert.deepEqual(
+          (
+            await pool.query(
+              'SELECT state,provider_message_ids FROM channel_outbox WHERE message_id=$1',
+              [failedImage],
+            )
+          ).rows[0],
+          { state: 'sent', provider_message_ids: acceptedIds },
+        );
+        await channels.drain();
+        assert.equal(sent.length, beforeFailure + delivered.length);
+        assert.equal(uploaded.length, beforeUpload + 2);
+      }
+      for (const failure of ['network', 'missing-id', 'server'] as const) {
+        imageFailure = failure;
+        const uncertainImage = await addReply(
+          'channel:whatsapp:555000:wamid.good',
+          'Sending the screenshot.',
+          [{ id: pngId }, { id: jpegId }],
+        );
+        const beforeUpload: number = uploaded.length;
+        const beforeNotice = unavailableFiles.length;
+        await channels.drain();
+        assert.equal(
+          (
+            await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [
+              uncertainImage,
+            ])
+          ).rows[0].state,
+          'uncertain',
+        );
+        assert.equal(uploaded.length, beforeUpload + 1);
+        assert.equal(unavailableFiles.length, beforeNotice);
+        const attemptedImages: number = sent.length;
+        await channels.drain();
+        assert.equal(sent.length, attemptedImages);
+        assert.equal(uploaded.length, beforeUpload + 1);
+      }
 
       for (const [sourceId, provider] of [
         ['channel:telegram:987:123456:10', 'telegram'],
