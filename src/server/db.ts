@@ -51,6 +51,8 @@ export async function initializeDatabase() {
       END IF;
     END $$;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS parent_turn_id uuid;
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS proactive boolean NOT NULL DEFAULT false;
+    UPDATE turns SET proactive=true WHERE source='event' AND status IN ('queued','running','waiting') AND NOT proactive;
     CREATE OR REPLACE FUNCTION turns_session() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       NEW.session_id := COALESCE(NEW.session_id, CASE WHEN NEW.background THEN NEW.id ELSE NEW.thread_id END);
       RETURN NEW;
@@ -104,6 +106,9 @@ export async function initializeDatabase() {
       hour_cycle text NOT NULL DEFAULT 'auto' CHECK (hour_cycle IN ('auto','h12','h23'))
     );
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS rules text NOT NULL DEFAULT '';
+    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS proactive_min_gap_minutes integer NOT NULL DEFAULT 120;
+    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS proactive_daily_limit integer NOT NULL DEFAULT 2;
+    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS proactive_paused boolean NOT NULL DEFAULT false;
     DO $$ BEGIN
       IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='preferences'::regclass AND attname='time_zone' AND attnotnull) THEN
         ALTER TABLE preferences ALTER COLUMN time_zone DROP NOT NULL, ALTER COLUMN time_zone DROP DEFAULT;

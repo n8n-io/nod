@@ -4355,3 +4355,48 @@ test('the memory model reply is read whole when a skill body holds its own code 
   const reply = await curator.curate({ task: 'skill', instructions: '', input: {} });
   assert.deepEqual(reply, { skill: { description: 'Use when building', body } });
 });
+
+test('restricted Pi sessions load no sandbox, web, or code tools', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-restricted-'));
+  let captured: Parameters<typeof createAgentSession>[0];
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture-key',
+    sessionRoot: directory,
+    createSession: async (options) => {
+      captured = options;
+      return createAgentSession(options);
+    },
+  });
+  try {
+    const session = await agent.open({
+      ...fakeExecution(randomUUID(), randomUUID()),
+      ...sandbox,
+      restricted: true,
+      systemPrompt: 'Fixture',
+      tools: [
+        {
+          name: 'read_source',
+          description: 'Fixed read',
+          parameters: { type: 'object', properties: {} },
+          execute: async () => ({ content: [] }),
+        },
+      ],
+      shouldStop: () => false,
+      onEvent: () => {},
+    });
+    assert.equal(captured!.noTools, 'builtin');
+    assert.deepEqual(
+      captured!.customTools!.map((tool) => tool.name),
+      ['read_source'],
+    );
+    const extensionTools = captured!
+      .resourceLoader!.getExtensions()
+      .extensions.flatMap((extension) => [...extension.tools.keys()]);
+    assert.deepEqual(extensionTools, []);
+    await session.dispose();
+  } finally {
+    await agent.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

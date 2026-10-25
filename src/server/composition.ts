@@ -34,6 +34,7 @@ import {
   type Workspace,
 } from '../ports/computer.ts';
 import { fileBytes } from '../shared/files.ts';
+import type { ObservationProvider } from '../ports/proactivity.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import { privateEmailResult, type MailCheck } from './integration-result.ts';
@@ -104,7 +105,13 @@ import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals, turnOrigin } from './approvals.ts';
 import { createCommunication, publicText } from './communication.ts';
+import { createNotificationRouting } from './notification-routing.ts';
+import { logFailure } from './failure-log.ts';
 import { createTrust } from './trust.ts';
+import { untrustedBlock } from '../shared/untrusted.ts';
+import { createProactivity, sourceRead } from './proactivity.ts';
+import { createObservationSources } from './observation-sources.ts';
+import { createTaskObservations } from './task-observations.ts';
 import type { TrustBasis } from './trust-basis.ts';
 import { localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
@@ -127,7 +134,12 @@ import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
 import { createPool, initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
 import { createIntegrations, initializeIntegrationSchema } from './integrations.ts';
-import { createErrorRedactor, environmentSecrets } from './redaction.ts';
+import {
+  createErrorRedactor,
+  createRedactor,
+  createTextRedactor,
+  environmentSecrets,
+} from './redaction.ts';
 import { createLedger, limitsInput } from './ledger.ts';
 import { usageFileName, usagePdf } from './usage-report.ts';
 import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
@@ -178,6 +190,7 @@ export interface ApplicationAdapters {
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
+  observations?: ObservationProvider[];
   keyStore: CredentialKeyStore;
   passwordManager?: PasswordManager;
   memoryCurator?: MemoryCurator;
@@ -738,10 +751,32 @@ async function initializeApplication(
   });
   await tasks.initialize();
   const activity = createActivity({ pool, ownerId });
+  let proactivity!: ReturnType<typeof createProactivity>;
+  let privateReady = false;
+  const preparationRule = createNotificationRouting(review);
   const triage = createTriage({
     consumers,
     connectedApps: () => integrations.connectedApps(ownerId, true),
+    preparation: async (rule, rules, sourceId) => {
+      if (!privateReady) throw new Error('Background sources are starting.');
+      const catalog = await observations.sources();
+      const supported = sourceId
+        ? catalog.some((source) => source.id === sourceId && source.readable) ||
+          (await integrations.activitySources()).some(
+            (source) => source.connectionId === sourceId && source.supported,
+          )
+        : catalog.some((source) => source.readable && source.id !== 'work:tasks');
+      return supported && (await preparationRule(rule, rules));
+    },
+    signal: async (sourceId, client) => {
+      const catalog = await observations.sources(client);
+      await proactivity.signal(
+        catalog.some((source) => source.id === sourceId) ? sourceId : `connections:${sourceId}`,
+        client,
+      );
+    },
     sweep: () => vault.forgetExpiredHolds(),
+    due: () => proactivity.due(),
   });
   const grantVault = await createAppGrantVault(pool, {
     ownerId,
@@ -800,6 +835,7 @@ async function initializeApplication(
     resumeConnection: resumeAfterConnection,
     writingStyle,
     wake: triage.triageEvent,
+    removeActivity: (id, client) => proactivity.forgetSource(`connections:${id}`, client),
     refresh,
     baseUrl: publicOrigin,
     callbackReturnTo: desktopMode ? 'window' : undefined,
@@ -945,47 +981,91 @@ async function initializeApplication(
   };
   const approvals = await createApprovals(
     async (action, args, provenance) => {
+      if (
+        action !== 'NOD_read_source' &&
+        (
+          await pool.query('SELECT proactive FROM turns WHERE id=$1 AND owner_id=$2', [
+            provenance.turnId,
+            ownerId,
+          ])
+        ).rows[0]?.proactive
+      )
+        throw Object.assign(
+          new Error(
+            'This background session can only read and prepare private work. Start an ordinary request to take this action.',
+          ),
+          { notRun: true },
+        );
       const result = await (action === 'NOD_browser'
         ? replayBrowserStep(args, provenance)
-        : action === 'NOD_vault_allow'
-          ? vaultAccess.allow(args)
-          : action === 'NOD_limits_update'
-            ? ledger.setLimits(args)
-            : action.startsWith('NOD_memory_') || action === 'NOD_model_select'
-              ? withTurnLock(provenance.turnId, () =>
-                  personal.manage(action.slice('NOD_'.length), args, provenance),
-                )
-              : action.startsWith('NOD_')
-                ? personal.manage(action.slice('NOD_'.length), args, provenance)
-                : (async () => {
-                    const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
-                    const ready = hasWorkspaceFiles(args)
-                      ? await integrations
-                          .prepare(ownerId, action, args, turn)
-                          .catch((error: unknown) => {
-                            throw Object.assign(
-                              error instanceof Error ? error : new Error(String(error)),
-                              { notRun: true },
-                            );
+        : action === 'NOD_read_source'
+          ? (async () => {
+              const result = await ledger.withTurn(provenance.turnId, () =>
+                observations.read(sourceRead.parse(args), AbortSignal.timeout(45000)),
+              );
+              await ledger.action(provenance.turnId, action, { kind: 'approved' });
+              return result;
+            })()
+          : action === 'NOD_vault_allow'
+            ? vaultAccess.allow(args)
+            : action === 'NOD_limits_update'
+              ? ledger.setLimits(args)
+              : action.startsWith('NOD_memory_') || action === 'NOD_model_select'
+                ? withTurnLock(provenance.turnId, () =>
+                    personal.manage(action.slice('NOD_'.length), args, provenance),
+                  )
+                : action.startsWith('NOD_')
+                  ? personal.manage(action.slice('NOD_'.length), args, provenance)
+                  : (async () => {
+                      const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
+                      const ready = hasWorkspaceFiles(args)
+                        ? await integrations
+                            .prepare(ownerId, action, args, turn)
+                            .catch((error: unknown) => {
+                              throw Object.assign(
+                                error instanceof Error ? error : new Error(String(error)),
+                                { notRun: true },
+                              );
+                            })
+                        : args;
+                      const result = await integrations.executeApproved(
+                        ownerId,
+                        action,
+                        ready,
+                        turn,
+                      );
+                      await ledger.action(provenance.turnId, action, { kind: 'approved' });
+                      return privateEmailResult(
+                        (
+                          await saveIntegrationFiles(result, async (file) => {
+                            const name = `${randomUUID()}-${basename(file.name)}`;
+                            await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                            return name;
                           })
-                      : args;
-                    const result = await integrations.executeApproved(ownerId, action, ready, turn);
-                    await ledger.action(provenance.turnId, action, { kind: 'approved' });
-                    return privateEmailResult(
-                      (
-                        await saveIntegrationFiles(result, async (file) => {
-                          const name = `${randomUUID()}-${basename(file.name)}`;
-                          await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                          return name;
-                        })
-                      ).value,
-                      mailCheck,
-                    );
-                  })());
+                        ).value,
+                        mailCheck,
+                      );
+                    })());
       analytics.actionExecuted(ownerId, action);
       return result;
     },
     async (action, args, expectedRevision) => {
+      if (action === 'NOD_read_source') {
+        const input = sourceRead.parse(args);
+        if (!(await proactivity.canRun()))
+          throw Object.assign(
+            new Error('Proactive work is paused or at its daily spending limit.'),
+            { notRun: true },
+          );
+        if (
+          !(await observations.sources()).some(
+            (item) =>
+              item.id === input.sourceId && item.readable && input.revision === item.revision,
+          )
+        )
+          throw Object.assign(new Error('This source is no longer available.'), { notRun: true });
+        return;
+      }
       if (['NOD_browser', 'NOD_vault_allow'].includes(action)) return;
       if (action === 'NOD_limits_update') limitsInput.parse(args);
       else if (action.startsWith('NOD_')) {
@@ -1210,6 +1290,84 @@ async function initializeApplication(
     ownerId,
     review,
   });
+  const observations = createObservationSources(
+    [
+      {
+        id: 'connections',
+        sources: async (client?: import('pg').PoolClient) =>
+          (await integrations.activitySources(client)).map((source) => ({
+            id: source.connectionId,
+            label: source.account,
+            description: 'Read-only records from ' + source.service,
+            revision: source.revision,
+            readable: source.supported && source.active,
+            mode: source.supported ? ('prepare' as const) : ('classic' as const),
+            pollIntervalMs: source.eventDriven ? undefined : 30 * 60000,
+            changeToken: source.changeToken,
+          })),
+        read: (id, input, signal) =>
+          integrations.readActivity({ connectionId: id, ...input }, signal),
+      },
+      createTaskObservations(pool, ownerId, createRedactor(secrets)),
+      ...(adapters.observations ?? []),
+    ],
+    { secrets, check: mailCheck },
+  );
+  proactivity = createProactivity({
+    pool,
+    ownerId,
+    redact: createTextRedactor(secrets),
+    sources: async (client) => {
+      const catalog = await observations.sources(client);
+      const prefs = await triage.getPreferences();
+      const preparing =
+        !prefs.notificationRule.trim() ||
+        (await preparationRule(prefs.notificationRule, prefs.rules));
+      return catalog.map((source) =>
+        !preparing || source.mode === 'classic'
+          ? {
+              ...source,
+              mode: 'classic' as const,
+              pollIntervalMs: undefined,
+              changeToken: undefined,
+            }
+          : { ...source, mode: 'prepare' as const },
+      );
+    },
+    read: async (turn, input, signal) => {
+      const source = (await observations.sources()).find(
+        (item) => item.id === input.sourceId && item.readable,
+      );
+      if (!source) throw new Error('This source has no supported activity reader.');
+      const bound = { ...input, revision: source.revision };
+      const verdict = await trust.check(turn, 'NOD_read_source', {
+        ...bound,
+        source: source.label,
+        description: source.description,
+        operation: 'Read current records from this registered read-only source.',
+      });
+      return approvals.request(turn, 'NOD_read_source', bound, {
+        allowed: !verdict.confirm,
+        signal,
+        details: {
+          source: source.label,
+          description: source.description,
+          ...(verdict.confirm ? { reason: verdict.reason } : {}),
+        },
+        run: async () => {
+          const result = await observations.read(bound, signal);
+          await ledger.action(
+            turn.turnId,
+            'NOD_read_source',
+            verdict.confirm ? { kind: 'approved' } : verdict.basis,
+          );
+          return result;
+        },
+      });
+    },
+  });
+  await proactivity.initialize();
+  privateReady = true;
   vaultAccess = await createVaultAccess(pool, {
     ownerId,
     check: trust.check,
@@ -1247,7 +1405,12 @@ async function initializeApplication(
       present: communication.present,
       analytics: captureAnalytics,
       currentModel: () => adapters.model,
-      observeTurn: conversationAnalytics.observe,
+      observeTurn: (turnId, operation) =>
+        conversationAnalytics.observe(turnId, operation).finally(() => {
+          void admission
+            .run(() => proactivity.due())
+            ?.catch((error) => logFailure('proactivity_wake', error));
+        }),
       consumers,
       artifacts,
       writeArtifact: workspace.writeArtifact.bind(workspace),
@@ -1256,10 +1419,16 @@ async function initializeApplication(
       executeConfirmation: approvals.executeConfirmed,
       bindVerificationQuestion: chatVerification.bindQuestion,
       reactToMessage: reactions.react,
-      runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
+      proactivity: proactivity.context,
+      runTurn: (context) =>
+        ledger.withTurn(context.turnId, () =>
+          runtime.runTurn(context).finally(() => proactivity.release(context.turnId)),
+        ),
       spendingLimitReached: ledger.limitReached,
       checkIn: ledger.checkIn,
-      skipTurn: triage.staleCheck,
+      skipTurn: async (sourceId) =>
+        (await triage.staleCheck(sourceId)) ||
+        (sourceId.startsWith('proactivity:') && !(await proactivity.canRun())),
       accountProfile,
       connectedApps: integrations.connectedApps,
       mcpServers: discovered.servers,
@@ -1344,6 +1513,15 @@ async function initializeApplication(
       },
       speech,
       manage: async (turn, action, args, { admit, ...provenance }) => {
+        if (action === 'prepared_list')
+          return untrustedBlock(
+            'prepared work',
+            JSON.stringify(await proactivity.prepared(args, undefined, turn)),
+          );
+        if (action === 'prepared_update') {
+          const { id, state, snoozedUntil, feedback } = await proactivity.control(args, turn);
+          return { id, state, snoozedUntil, feedback };
+        }
         if (action === 'limits_update') {
           const input = limitsInput.parse(args);
           const verdict = await trust.check(turn, 'NOD_limits_update', input);
@@ -1908,6 +2086,7 @@ async function initializeApplication(
     personal,
     memory,
     triage,
+    proactivity,
     integrations,
     vault,
     channels,

@@ -74,7 +74,7 @@ The release suite adds 159 cases of everyday work across every connected app, th
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 228 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 228 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
@@ -592,3 +592,36 @@ These cases cover model-generated app confirmations and approval decisions with 
 - [Contribute to nod](/contribute/)
 - [Checks and tests](/contribute/checks-and-tests/)
 - [Pull requests](/contribute/pull-requests/)
+
+## Measure proactive discovery
+
+The `proactivity-population-*` release cases contain noisy source populations. Each has 24 records, two useful matters and one important item on the second page. Half use the production policy; half use a concise baseline in the eval harness. Both arms keep the same model, tools, source data, Trust checks and attention limits. The baseline is not a production setting.
+
+Run both arms for every population with the same model and repeat count. Use `--scenario` to set an explicit order; the runner preserves it. Keep answer keys and score rules fixed before the run. Retain setup failures and record any corrected test version.
+
+```sh title="Terminal"
+pnpm run eval:capability run --scenario proactivity-population-1-engine,proactivity-population-1-baseline --repeat 3 --label proactive-comparison
+pnpm run eval:capability proactivity-report proactive-comparison
+```
+
+The report separates prepared-work precision, opportunity recall, important misses, unwanted notifications, duplicates, draft quality, cost and attempt duration. A missing measurement stays missing. Repeats of one population are not independent owner situations. The four fixture populations cannot prove superiority over other products. Do not report model grades as owner ratings, measured edits or sustained benefit.
+
+For real use, measure with owners over actual elapsed days. A complete-window source audit supplies a denominator for owner-reported recall. Feedback only on delivered nudges cannot reveal missed opportunities.
+
+## Stress proactive work
+
+The `proactivity-stress-*` release cases test changed source state, noisy pages, source outages, repeated signals, owner controls, hostile source text, language and changed goals. Each attempt uses the real runtime and a synthetic source provider. The held-out variants change record format or source order; the memory variant adds 160 historical notes through the owner API.
+
+Run an engine and baseline case with the same selected model and judge. Keep all required checks and source data fixed before the run. Use a new run label and record the reason when a check changes.
+
+```sh title="Terminal"
+pnpm run eval:capability run --scenario proactivity-stress-late-page-engine,proactivity-stress-late-page-baseline --repeat 3 --label proactive-stress
+```
+
+See [Proactivity evidence](/how-it-works/proactivity-evidence/) for the method and claim limits. A pass requires correct quiet behaviour as well as useful prepared work. Consolidation is valid when one enquiry keeps all required account details.
+
+The `proactivity-stress-endurance-*` cases add an 18-page scan across bounded wakes and 12 event phases for repeated signals, dismissal or snooze. Each has a changed-context variant. Keep the single-message long-scan check: saving routine work must not consume the attention needed for a later deadline.
+
+```sh title="Terminal"
+pnpm run eval:capability run --scenario proactivity-stress-endurance-late-page-engine,proactivity-stress-endurance-holdout-late-page-engine --repeat 2 --label proactive-endurance
+```

@@ -58,12 +58,12 @@ nod keeps an eye on your connected apps only after you say so. Connecting an app
 
 How nod checks:
 
-- **Gmail.** nod checks for new inbox mail every five minutes. Once you've said yes, each new message starts a quiet background run that decides whether there's useful work, such as preparing a reply. Until then, nod only saves the message.
-- **Other connected apps.** Each update works the same way. For an app without updates, nod checks the account for new activity in the same kind of quiet run, at most every 30 minutes per account.
+- **Gmail.** nod checks for new inbox mail every five minutes. After you ask for updates, new activity starts a quiet assessment.
+- **Other sources.** Registered read-only sources declare their own periodic interval. The engine checks them under the same scope, attention limits, and spending limit. Sources can include saved work or custom providers, as well as connected accounts.
 
-Work nod starts on its own reads and drafts. It sends, deletes or changes something only when you've told it to do that on its own, such as "whenever Ana sends an invoice, forward it to accounting@acme.com". Anything else waits for your yes. [Your rules](/trust/approvals/#your-rules) can change both: a rule to go ahead lets an action run without asking, and a rule to ask first makes nod ask even when your standing instruction covers the action. See [Standing instructions](/trust/approvals/#standing-instructions). To change or stop it, select it in **Usage**, or tell nod, for example "stop flagging Slack messages".
+Proactive work can read, prepare private work, and notify you. It cannot send, delete, submit, book, buy, or change connected apps, even when the standing instruction asks for a change. It nudges you in chat, and you answer in words. See [Nudges](/use/nudges/). A later owner request starts ordinary work through Trust.
 
-The first time nod messages you about something on its own, such as a calendar change, it sends a short second message to say it will keep doing this. When that first message asks you something, the line goes in it, before the question, so a short reply still answers the question. Tell it to stop or to do less at any time. After a one-off job that will come up again, such as this week's top posts or a reply to a client, nod offers once, in its own message, to keep doing it, unless a schedule already covers it. It sets nothing up until you say yes. When you act on something background work brought you, such as asking nod to reply, and it will come up again, nod offers once to do it without asking next time.
+A schedule remains a separate request. Its saved instruction can cover app actions, subject to Trust and payment approval.
 
 ## Edit schedule details
 

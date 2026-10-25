@@ -96,6 +96,8 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     );
     stack = await (starting = startStack({
       model,
+      observations: world.observations,
+      proactiveBaseline: world.proactiveBaseline,
       integrations:
         world.apps?.provider ??
         (await import('./world/apps.ts')).createApps(

@@ -80,6 +80,10 @@ export function parseModel(value: string, environment: Record<string, string | u
 }
 
 export interface Stack {
+  proactivity: {
+    view(): Promise<import('../../src/shared/proactivity.ts').ProactivityView>;
+    control(input: Record<string, unknown>): Promise<unknown>;
+  };
   request(
     path: string,
     init?: RequestInit & { headers?: Record<string, string> },
@@ -108,6 +112,8 @@ export function createStackRequest(baseUrl: string, cookie: string): Stack['requ
 export async function startStack(options: {
   model: Model;
   integrations: IntegrationProvider;
+  observations?: import('../../src/ports/proactivity.ts').ObservationProvider[];
+  proactiveBaseline?: boolean;
   siteHosts: string[];
   siteUpstreamPort: number;
   hermetic: boolean;
@@ -319,9 +325,10 @@ export async function startStack(options: {
       dataRoot: join(directory, '.local'),
       container: browserContainer,
     });
-    const capture = createCapture();
+    const capture = createCapture(options.proactiveBaseline);
     const { observations, prompts } = capture;
     application = await createApplication({
+      observations: options.observations,
       observe: capture.observe,
       agent: capture.agent(
         createPiAgent({
@@ -403,7 +410,9 @@ export async function startStack(options: {
     await application.app.listen({ host: '127.0.0.1', port });
     const baseUrl = `http://localhost:${port}`;
     const cookie = `${accessCookie(port)}=${await accessKey(join(directory, '.local'))}`;
+    const engine = application.proactivity;
     return {
+      proactivity: { view: () => engine.view(), control: (input) => engine.control(input) },
       request: createStackRequest(baseUrl, cookie),
       waiting: (alias) => waitingTurnSql?.(alias) ?? `${alias}.status='waiting'`,
       origin: baseUrl,
@@ -431,6 +440,13 @@ export async function startStack(options: {
         const legacy = (
           await pool.query("SELECT to_regclass('notifications') IS NOT NULL AS found")
         ).rows[0].found;
+        const observationSources: string[] = [];
+        for (const provider of options.observations ?? [])
+          for (const source of await provider.sources())
+            if (source.readable) observationSources.push(`${provider.id}:${source.id}`);
+        if (!legacy)
+          for (const source of await application!.integrations.activitySources())
+            if (source.active) observationSources.push(source.connectionId);
         const queued = legacy
           ? await (
               application!.triage.triageEvent as unknown as (
@@ -439,7 +455,12 @@ export async function startStack(options: {
                 intent: string,
               ) => Promise<unknown>
             )(summary, eventId, 'inspect_message')
-          : await application!.triage.triageEvent(summary, eventId);
+          : await application!.triage.triageEvent(
+              summary,
+              eventId,
+              undefined,
+              observationSources.length ? observationSources : undefined,
+            );
         const turnId =
           typeof queued === 'string'
             ? queued

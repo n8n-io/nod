@@ -27,6 +27,7 @@ export interface ChatMessage {
 
 export interface Run {
   api: Session['api'];
+  proactivity: Session['proactivity'];
   task: string;
   messages: ChatMessage[];
   replies: string[];
@@ -372,6 +373,7 @@ export async function collect(options: {
     world,
     apps: world.apps,
     api: session.api,
+    proactivity: session.proactivity,
     read: (path) => session.workspace.read(filePath(path)),
     async text(path) {
       return (await session.workspace.read(filePath(path)))?.toString('utf8') ?? '';

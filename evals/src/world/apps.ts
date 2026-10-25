@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type {
   IntegrationProvider,
   IntegrationService,
@@ -1723,6 +1723,81 @@ export function createApps(
     supportedServices: [...byService.keys()],
     webhooksConfigured: false,
     supportsSubscriptions: [],
+    activityServices: ['gmail', 'googlecalendar'],
+    async activity(service, accountId, input, signal) {
+      signal.throwIfAborted();
+      if (accounts.get(accountId)?.service !== service || !accounts.get(accountId)?.active)
+        throw new Error('This synthetic account is unavailable.');
+      const hash = (value: unknown) =>
+        createHash('sha256').update(JSON.stringify(value)).digest('hex');
+      const offset = input.cursor ? Number(input.cursor) : 0;
+      if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid fixture cursor.');
+      if (service === 'gmail') {
+        const mails = (world.gmail?.mails ?? []).filter(
+          (mail) =>
+            !mail.labels.some((label) =>
+              [
+                'DRAFT',
+                'TRASH',
+                'SPAM',
+                'CATEGORY_PROMOTIONS',
+                'CATEGORY_SOCIAL',
+                'CATEGORY_FORUMS',
+              ].includes(label),
+            ),
+        );
+        const ids = input.ids ?? [
+          ...new Set(
+            mails
+              .filter((mail) => !input.since || mail.at >= Date.parse(input.since))
+              .map((mail) => mail.threadId),
+          ),
+        ];
+        const selected = input.ids ? ids : ids.slice(offset, offset + 20);
+        return {
+          records: selected.map((id) => {
+            const thread = mails.filter((mail) => mail.threadId === id).sort((a, b) => a.at - b.at);
+            return {
+              id,
+              version: hash(thread),
+              available: thread.length > 0,
+              data: {
+                messages: thread.slice(-8).map((mail) => ({
+                  id: mail.id,
+                  from: mail.from,
+                  to: mail.to,
+                  subject: mail.subject,
+                  text: mail.body,
+                  receivedAt: new Date(mail.at).toISOString(),
+                  sent: mail.labels.includes('SENT'),
+                })),
+              },
+            };
+          }),
+          ...(!input.ids && ids.length > offset + 20 ? { nextCursor: String(offset + 20) } : {}),
+        };
+      }
+      const events = world.calendar?.events ?? [];
+      const ids = input.ids ?? events.map((event) => event.id);
+      return {
+        records: (input.ids ? ids : ids.slice(offset, offset + 20)).map((id) => {
+          const event = events.find((event) => event.id === id);
+          return {
+            id,
+            version: hash(event ?? null),
+            available: Boolean(event),
+            data: event
+              ? {
+                  ...event,
+                  start: { dateTime: new Date(event.start).toISOString() },
+                  end: { dateTime: new Date(event.end).toISOString() },
+                }
+              : {},
+          };
+        }),
+        ...(!input.ids && ids.length > offset + 20 ? { nextCursor: String(offset + 20) } : {}),
+      };
+    },
     async createSession(ownerId): Promise<IntegrationSession> {
       return {
         id: randomUUID(),

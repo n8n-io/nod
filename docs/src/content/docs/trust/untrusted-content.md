@@ -55,6 +55,10 @@ The checker sees a browser step's website, control, the form it sends and typed 
 
 [`src/shared/untrusted.ts`](https://github.com/n8n-io/nod/blob/main/src/shared/untrusted.ts) (wrapper) · [`src/runtime/untrusted.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/untrusted.ts) · [`src/server/trust.ts`](https://github.com/n8n-io/nod/blob/main/src/server/trust.ts) · [`src/server/memory-learning.ts`](https://github.com/n8n-io/nod/blob/main/src/server/memory-learning.ts)
 
+## Proactive work
+
+An event can cause a source read and private preparation. That restricted worker has no connected writes, browser steps, commands, or settings changes. Explicit owner automations use ordinary background work through Trust. Event content cannot select that path or grant permission. Source records reach the model as untrusted results. The engine stores source references separately from personal memory. A fresh version check controls delivery, but it does not prove that a draft is factually correct. See [Proactivity engine](/how-it-works/proactivity/).
+
 ## Related resources
 
 - [Trust and Vault](/trust/)

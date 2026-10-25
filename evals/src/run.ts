@@ -92,6 +92,8 @@ export function select(
     options.scenarioIds?.some((id) => !scenarios.some((item) => item.id === id))
   )
     throw new Error('No matching scenario. Use "list" to see the available ones.');
+  if (options.scenarioIds)
+    chosen.sort((a, b) => options.scenarioIds!.indexOf(a.id) - options.scenarioIds!.indexOf(b.id));
   const hour = Number(
     new Intl.DateTimeFormat('en-GB', {
       hour: 'numeric',

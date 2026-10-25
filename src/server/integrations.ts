@@ -117,6 +117,9 @@ type ConnectionRow = {
   watch_requested: boolean;
   watch_attempted: boolean;
   watch_revision: number;
+  activity_token: string | null;
+  activity_failed: boolean;
+  activity_claim_id: string | null;
   inbox_cursor: string | null;
   inbox_poll_at: Date | null;
   inbox_claim_id: string | null;
@@ -142,8 +145,10 @@ type IntegrationOptions = {
     prompt: string,
     eventId: string,
     current?: (client: PoolClient) => Promise<boolean>,
+    connectionId?: string,
   ): Promise<unknown>;
   provider: IntegrationProvider;
+  removeActivity?(connectionId: string, client: PoolClient): Promise<void>;
   resumeConnection?(turnId: string, service: Slug): Promise<boolean>;
   writingStyle?: {
     enabled(): Promise<boolean>;
@@ -251,7 +256,11 @@ export async function initializeIntegrationSchema(pool: Pool) {
       ADD COLUMN IF NOT EXISTS inbox_poll_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_claim_id text,
       ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false,
-      ADD COLUMN IF NOT EXISTS writing_style_pending jsonb;
+      ADD COLUMN IF NOT EXISTS writing_style_pending jsonb,
+      ADD COLUMN IF NOT EXISTS activity_token text,
+      ADD COLUMN IF NOT EXISTS activity_failed boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS activity_poll_at timestamptz,
+      ADD COLUMN IF NOT EXISTS activity_claim_id text;
     INSERT INTO app_setup_links(owner_id,link_hash,slug)
       SELECT owner_id,setup_link_hash,slug FROM app_connections WHERE setup_link_hash IS NOT NULL
       ON CONFLICT DO NOTHING;
@@ -322,6 +331,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   let closed = false;
   let refreshing: Promise<void> | undefined;
   let polling: Promise<void> | undefined;
+  let activityPolling: Promise<void> | undefined;
   const stop = new AbortController();
   function background(operation: () => Promise<void>) {
     if (closed) return undefined;
@@ -338,11 +348,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       throw new IntegrationError('This account is unavailable.', 403);
   }
 
-  async function connectionRows(ownerId: string) {
+  async function connectionRows(ownerId: string, client?: PoolClient) {
     assertOwner(ownerId);
     return (
-      await pool.query<ConnectionRow>(
-        'SELECT * FROM app_connections WHERE owner_id=$1 ORDER BY created_at,id',
+      await (client ?? pool).query<ConnectionRow>(
+        `SELECT * FROM app_connections WHERE owner_id=$1 ORDER BY created_at,id${client ? ' FOR SHARE' : ''}`,
         [ownerId],
       )
     ).rows;
@@ -1298,6 +1308,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         "UPDATE integration_events SET state='discarded' WHERE poll_connection_id=$1 AND owner_id=$2 AND state IN ('queued','processing')",
         [row.id, configuredOwner],
       );
+      await options.removeActivity?.(row.id, client);
     }, pool);
     if (!row.revoked) track(row.slug, 'disconnected');
     const sdk = rowProvider(row);
@@ -1772,6 +1783,175 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return row && provider.inboxSnippets ? provider.inboxSnippets(row.account_id!, signal) : [];
   }
 
+  const activityRevision = (row: ConnectionRow) =>
+    createHash('sha256')
+      .update(
+        JSON.stringify([
+          row.provider_id,
+          row.configuration_id,
+          row.slug,
+          provider.activityIdentity?.(row.slug, row.account_id!, row.account_email) ??
+            row.account_id,
+        ]),
+      )
+      .digest('hex');
+
+  async function activitySources(client?: PoolClient) {
+    return (await connectionRows(configuredOwner, client))
+      .filter((row) => row.account_id && !row.revoked && configurationMatches(row))
+      .map((row) => {
+        const native =
+          provider.activitySignals?.includes(row.slug) &&
+          row.watch_requested &&
+          !row.inbox_failed &&
+          !row.inbox_reconnect_required;
+        const checked = Boolean(
+          provider.activityChangeToken && provider.activityChangeServices?.includes(row.slug),
+        );
+        return {
+          connectionId: row.id,
+          account: row.account_email || row.account_name || row.slug,
+          service: row.slug,
+          revision: activityRevision(row),
+          active: row.account_active && row.watch_requested && (!checked || !row.activity_failed),
+          changeToken: checked
+            ? (row.activity_token ?? 'initial')
+            : native
+              ? createHash('sha256')
+                  .update(row.inbox_cursor ?? 'initial')
+                  .digest('hex')
+              : undefined,
+          eventDriven: Boolean(
+            row.watch_requested && (checked || native || (row.triggers_enabled && row.trigger_id)),
+          ),
+          supported: Boolean(provider.activity && provider.activityServices?.includes(row.slug)),
+        };
+      });
+  }
+
+  async function readActivity(
+    input: {
+      connectionId: string;
+      revision?: string;
+      ids?: string[];
+      since?: string;
+      cursor?: string;
+      asOf?: string;
+    },
+    signal: AbortSignal,
+  ) {
+    const current = async () =>
+      (await connectionRows(configuredOwner)).find(
+        (row) =>
+          row.id === input.connectionId &&
+          row.account_id &&
+          row.account_active &&
+          !row.revoked &&
+          configurationMatches(row),
+      );
+    const row = await current();
+    if (!row || !provider.activity || !provider.activityServices?.includes(row.slug))
+      throw new Error('This connection has no supported activity reader.');
+    if (input.revision !== undefined && input.revision !== activityRevision(row))
+      throw Object.assign(new Error('The source changed before its read.'), { notRun: true });
+    const result = await provider.activity(row.slug, row.account_id!, input, signal);
+    signal.throwIfAborted();
+    const latest = await current();
+    if (
+      !latest ||
+      latest.account_id !== row.account_id ||
+      activityRevision(latest) !== activityRevision(row)
+    )
+      throw new Error('The connection changed during the source check.');
+    return result;
+  }
+
+  function pollActivityChanges() {
+    if (
+      closed ||
+      !provider.configured ||
+      !provider.activityChangeToken ||
+      !provider.activityChangeServices?.length
+    )
+      return Promise.resolve();
+    if (activityPolling) return activityPolling;
+    activityPolling = (async () => {
+      const { rows } = await pool.query<ConnectionRow>(
+        `WITH due AS (SELECT id FROM app_connections WHERE owner_id=$1 AND provider_id=$2 AND slug=ANY($3::text[])
+        AND watch_requested AND account_active AND NOT revoked AND account_id IS NOT NULL
+        AND ($4::text IS NULL OR configuration_id=$4) AND (activity_poll_at IS NULL OR activity_poll_at<=now())
+        ORDER BY activity_poll_at NULLS FIRST LIMIT 4 FOR UPDATE SKIP LOCKED)
+        UPDATE app_connections c SET activity_poll_at=now()+interval '30 minutes',activity_claim_id=$5
+        FROM due WHERE c.id=due.id RETURNING c.*`,
+        [
+          configuredOwner,
+          providerId,
+          provider.activityChangeServices,
+          provider.configurationId ?? null,
+          randomBytes(16).toString('hex'),
+        ],
+      );
+      await Promise.all(
+        rows.map(async (row) => {
+          const signal = AbortSignal.any([stop.signal, AbortSignal.timeout(15000)]);
+          let onAbort = () => {};
+          try {
+            const token = z
+              .string()
+              .min(1)
+              .max(2048)
+              .parse(
+                await Promise.race([
+                  provider.activityChangeToken!(row.slug, row.account_id!, signal),
+                  new Promise<never>((_, reject) => {
+                    onAbort = () => reject(signal.reason);
+                    signal.addEventListener('abort', onAbort, { once: true });
+                    if (signal.aborted) onAbort();
+                  }),
+                ]),
+              );
+            signal.throwIfAborted();
+            await pool.query(
+              `UPDATE app_connections SET activity_token=$1,activity_failed=false WHERE id=$2 AND owner_id=$3 AND provider_id=$4
+            AND account_id=$5 AND watch_revision=$6 AND activity_claim_id=$7 AND watch_requested AND account_active AND NOT revoked
+            AND configuration_id IS NOT DISTINCT FROM $8`,
+              [
+                token,
+                row.id,
+                configuredOwner,
+                providerId,
+                row.account_id,
+                row.watch_revision,
+                row.activity_claim_id,
+                row.configuration_id,
+              ],
+            );
+          } catch {
+            await pool.query(
+              `UPDATE app_connections SET activity_failed=true,activity_poll_at=now()+interval '5 minutes' WHERE id=$1 AND owner_id=$2
+            AND provider_id=$3 AND account_id=$4 AND watch_revision=$5 AND activity_claim_id=$6
+            AND configuration_id IS NOT DISTINCT FROM $7 AND watch_requested AND account_active AND NOT revoked`,
+              [
+                row.id,
+                configuredOwner,
+                providerId,
+                row.account_id,
+                row.watch_revision,
+                row.activity_claim_id,
+                row.configuration_id,
+              ],
+            );
+          } finally {
+            signal.removeEventListener('abort', onAbort);
+          }
+        }),
+      );
+    })().finally(() => {
+      activityPolling = undefined;
+    });
+    return activityPolling;
+  }
+
   function pollInboxes() {
     if (closed || !provider.configured || !provider.pollInbox) return Promise.resolve();
     if (polling) return polling;
@@ -1941,7 +2121,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           );
         try {
           if (!(await current())) continue;
-          await options.wake(event.summary, event.id, current);
+          const connectionId = (
+            await pool.query<{ id: string }>(
+              `SELECT c.id FROM integration_events e JOIN app_connections c ON ${matchingConnection}
+             WHERE e.id=$4 AND e.provider_id=$1 AND e.owner_id=$2 AND ($3::text IS NULL OR c.configuration_id=$3) LIMIT 1`,
+              [...scope, event.id],
+            )
+          ).rows[0]?.id;
+          await options.wake(event.summary, event.id, current, connectionId);
           await pool.query(
             `UPDATE integration_events e SET state='delivered' WHERE e.provider_id=$1 AND e.owner_id=$2 AND e.id=$4
              AND e.state='processing' AND e.claimed_at=$5::timestamptz AND EXISTS (${currentConnection})`,
@@ -1964,6 +2151,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     void background(drain)?.catch(() => {});
     void background(syncWatches)?.catch(() => {});
     void background(pollInboxes)?.catch(() => {});
+    void background(pollActivityChanges)?.catch(() => {});
   }, 5000);
   timer.unref();
 
@@ -1972,7 +2160,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       closed = true;
       clearInterval(timer);
       stop.abort();
-      await Promise.all([refreshing, polling]);
+      await Promise.all([refreshing, polling, activityPolling]);
     });
     app.register(async (scope) => {
       scope.setErrorHandler((error, _request, reply) => {
@@ -2347,6 +2535,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     registerRoutes,
     resumeWritingStyle,
     binding,
+    activitySources,
+    readActivity,
     execute,
     executeApproved,
     prepare,
@@ -2493,6 +2683,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     drain,
     syncWatches,
     pollInboxes,
+    pollActivityChanges,
     ready: provider.configured,
   };
 }

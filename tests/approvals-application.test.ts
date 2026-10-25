@@ -84,6 +84,8 @@ test(
     let methodBindings = 0;
     let dialogOpen = false;
     let formTarget = 'https://bank.example.test/transfer/send';
+    let sourceRevision = 'v1';
+    let sourceReads = 0;
     let appOutage = false;
     let appResult: unknown;
     let repeatAfterConfirm: { action: string; args: Record<string, unknown> } | undefined;
@@ -184,9 +186,11 @@ test(
                   const result = await options.tools
                     .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
                     .execute(
-                      plan.tool === 'browser' || plan.tool === 'sign_in'
-                        ? { action: plan.action, ...plan.args }
-                        : { action: plan.action, args: plan.args },
+                      plan.tool === 'read_source'
+                        ? plan.args
+                        : plan.tool === 'browser' || plan.tool === 'sign_in'
+                          ? { action: plan.action, ...plan.args }
+                          : { action: plan.action, args: plan.args },
                     );
                   results.set(options.turnId, result);
                   return;
@@ -277,6 +281,24 @@ test(
             return session;
           },
         },
+        observations: [
+          {
+            id: 'fixture',
+            sources: async () => [
+              {
+                id: 'notes',
+                label: 'Synthetic notes',
+                description: 'Read current synthetic notes.',
+                revision: sourceRevision,
+                readable: true,
+              },
+            ],
+            read: async () => {
+              sourceReads++;
+              return { records: [] };
+            },
+          },
+        ],
         speech: {
           id: 'fixture',
           configured: false,
@@ -722,6 +744,72 @@ test(
         },
       );
 
+      await t.test('a source approval cannot read a reconnected source', async () => {
+        const previous = await application.triage.getPreferences();
+        const previousCheckCost = checkCost;
+        const previousDecisionCost = decisionCost;
+        checkCost = 0;
+        decisionCost = 0;
+        const prompt = 'Synthetic source revision check ' + randomUUID();
+        plans.set(prompt, {
+          tool: 'read_source',
+          action: 'read',
+          args: { sourceId: 'fixture:notes', ids: ['record/1'] },
+        });
+        try {
+          await application.triage.updatePreferences({
+            notificationRule: 'Read synthetic notes and prepare private work.',
+            rules: '',
+          });
+          const turnId = await enqueueTurn(prompt, {
+            source: 'event',
+            background: true,
+            proactive: true,
+          });
+          await waitFor(turnId, 'waiting');
+          const [card] = await approvalsFor(turnId);
+          assert.equal(sourceReads, 0);
+          sourceRevision = 'v2';
+          const approved = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: card.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(approved.statusCode, 200, approved.body);
+          await waitFor(approved.json().turnId, 'succeeded');
+          assert.equal(sourceReads, 0);
+          assert.equal((await approvalsFor(turnId))[0].status, 'expired');
+        } finally {
+          sourceRevision = 'v1';
+          checkCost = previousCheckCost;
+          decisionCost = previousDecisionCost;
+          await application.triage.updatePreferences(previous);
+        }
+      });
+      await t.test('an old proactive approval cannot enable a connected write', async () => {
+        const before = integrationFixture.writes.length;
+        const held = await propose(
+          'GMAIL_SEND_EMAIL',
+          {
+            recipient_email: 'blocked@example.test',
+            subject: 'Synthetic old approval',
+            body: 'This must stay private.',
+          },
+          'apps',
+        );
+        const [card] = await approvalsFor(held);
+        assert.equal(card.status, 'pending');
+        await pool.query('UPDATE turns SET proactive=true WHERE id=$1', [held]);
+        const approved = await request('POST', '/api/messages', {
+          text: 'Yes',
+          replyToMessageId: card.confirmation_message_id,
+          clientMessageId: randomUUID(),
+        });
+        assert.equal(approved.statusCode, 200, approved.body);
+        await waitFor(approved.json().turnId, 'succeeded');
+        assert.equal(integrationFixture.writes.length, before);
+        assert.equal((await approvalsFor(held))[0].status, 'expired');
+      });
       await t.test(
         'a rejected generated confirmation cannot create an approval or send an email',
         async () => {

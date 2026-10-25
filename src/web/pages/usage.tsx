@@ -399,7 +399,7 @@ function Sentence({
         <br />
         On its own, nod{' '}
         <StatementValue
-          text={rule ? 'follows your instruction' : 'watches nothing'}
+          text={rule ? 'follows your instruction' : 'prepares private work automatically'}
           label="Standing instruction"
         >
           {(close) => (
@@ -408,8 +408,8 @@ function Sentence({
               value={rule}
               label="Standing instruction"
               placeholder="Whenever Ana sends an invoice, forward it to accounting@acme.com."
-              hint="nod reads and drafts on its own, and does only what this says."
-              remove="Stop"
+              hint="Private preparation runs automatically. This instruction can guide it or request outside actions through Trust."
+              remove="Clear instruction"
               onSaved={() => {
                 close();
                 onSaved();

@@ -1,5 +1,6 @@
 import type { Composio, ToolRouterSession } from '@composio/core';
 import { z } from 'zod';
+import { readActivity, activityChangeToken } from './activity.ts';
 import { integrationServices, type IntegrationServiceInfo } from '../../shared/integrations.ts';
 import { createComposioFiles } from './downloads.ts';
 import type { createComposioProxy } from './proxy.ts';
@@ -633,6 +634,17 @@ export function createComposioProvider(options: {
     sentEmails: (accountId, signal) => readSentEmails(client.tools, accountId, signal),
     inboxSnippets: (accountId, signal) => readInboxSnippets(client.tools, accountId, signal),
     inboxThreads: (accountId, signal) => readInboxThreads(client.tools, accountId, signal),
+    activity: (service, accountId, input, signal) =>
+      readActivity(client.tools, service, accountId, input, signal),
+    activityServices: ['gmail', 'googlecalendar'],
+    activitySignals: ['gmail'],
+    activityChangeServices: ['googlecalendar'],
+    activityChangeToken: (service, accountId, signal) =>
+      activityChangeToken(client.tools, service, accountId, signal),
+    activityIdentity: (service, accountId, email) =>
+      ['gmail', 'googlecalendar'].includes(service) && email && z.email().safeParse(email).success
+        ? email.trim().toLowerCase()
+        : accountId,
     async pollInbox(accountId, cursor, signal) {
       const deadline = AbortSignal.timeout(25_000);
       const operation = AbortSignal.any([signal, deadline]);

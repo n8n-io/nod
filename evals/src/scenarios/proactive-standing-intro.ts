@@ -1,5 +1,5 @@
 import { noWrites } from '../checks.ts';
-import { check, judge, scenario } from '../scenario.ts';
+import { check, scenario } from '../scenario.ts';
 import { calendar, createApps } from '../world/apps.ts';
 import { localTime } from '../world/time.ts';
 
@@ -10,7 +10,7 @@ const zone = 'Europe/Madrid';
 
 export default scenario({
   id: 'proactive-standing-intro',
-  title: 'The first unprompted update says nod will keep doing it, once',
+  title: 'A second useful calendar update waits under the shared attention limit',
   linear: 'LAB-508',
   capabilities: ['apps', 'progress'],
   tier: 'pr',
@@ -109,7 +109,7 @@ export default scenario({
           ).length,
       );
       return {
-        pass: delivered[0] === 2 && delivered[1] === 1,
+        pass: delivered[0] === 1 && delivered[1] === 0,
         evidence: `messages per update: ${delivered.join(', ')}`,
       };
     });
@@ -121,21 +121,14 @@ export default scenario({
         aspect: 'process',
         failure: 'scope',
       }),
-      judge(
-        'first-update-says-it-will-keep-doing-this',
-        'The first update is two messages. The first reports that the 1:1 with Niklas moved from 10:00 to 09:00 tomorrow (Europe/Madrid), and is not held back behind a question. The second is a short separate message saying nod will keep flagging calendar changes like this and that the owner can tell it to stop or do less. Neither lists other things nod can do.',
-        { failure: 'format' },
-      ),
-      judge(
-        'second-update-does-not-repeat-it',
-        'The second update reports that the design review with Priya moved to tomorrow at 09:15 and now overlaps the 09:00 to 09:30 1:1 with Niklas, and no message in it repeats that nod will keep flagging calendar changes or how to stop it.',
-        { failure: 'format' },
-      ),
-      judge(
-        'second-update-is-one-message',
-        'The second update arrives as a single message, without a follow-up correction or restatement.',
-        { required: false, failure: 'format' },
-      ),
+      check('second-result-is-prepared', async (run) => {
+        const issues = (await run.proactivity.view()).issues;
+        return {
+          pass: issues.some((issue: { draft: string; summary: string }) =>
+            /Priya|review/i.test(issue.draft + ' ' + issue.summary),
+          ),
+        };
+      }),
     ];
   },
 });
