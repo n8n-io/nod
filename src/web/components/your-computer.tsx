@@ -172,9 +172,7 @@ export function ComputerPermissions({
           <span className="computer-permission-control">
             {status.permissionError ? (
               <small id={`${id}-${key}-state`}>Not checked</small>
-            ) : status.permissions[key] ? (
-              <small className="computer-permission-allowed">Allowed</small>
-            ) : requesting === key ? (
+            ) : status.permissions[key] ? null : requesting === key ? (
               <small role="status">Opening…</small>
             ) : requested === key && checking ? (
               <small role="status">Checking…</small>

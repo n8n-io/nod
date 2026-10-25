@@ -81,9 +81,6 @@
   align-items: center;
   gap: 8px;
 }
-.computer-permission-control .computer-permission-allowed {
-  color: var(--success);
-}
 .computer-permission-control .switch[aria-checked='true']:disabled {
   opacity: 1;
 }
