@@ -393,8 +393,10 @@
   background: var(--surface);
   box-shadow: var(--shadow-sm);
 }
-.voice-reply-hint {
+.account-region .field-hint.voice-reply-hint {
   margin: -4px 0 8px;
+}
+.voice-reply-hint {
   text-align: right;
 }
 .voice-library-link {

@@ -112,7 +112,7 @@ export function VoicePicker({
     .split(/\s+/);
   const matches = voices.filter((voice) =>
     words.every((word) =>
-      `${voice.name} ${voice.description} ${voice.language ?? 'Multilingual'} ${sourceLabel(voice)}`
+      `${voice.name} ${voice.description} ${voice.language ?? 'Multilingual'} ${voice.engine} ${sourceLabel(voice)}`
         .normalize('NFKD')
         .replace(/[\u0300-\u036f]/g, '')
         .toLowerCase()
