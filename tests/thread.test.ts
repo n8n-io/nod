@@ -2286,6 +2286,10 @@ test(
             t.mock.timers.setTime(instant.getTime());
             const expectedToday = mode === 'mixed' ? '2026-10-23' : '2026-10-24';
             const owner = `synthetic-discovery-${mode}`;
+            t.after(async () => {
+              await db.pool.query('DELETE FROM messages WHERE owner_id=$1', [owner]);
+              await db.pool.query('DELETE FROM onboarding_suggestions WHERE owner_id=$1', [owner]);
+            });
             const slugs = ['slack', 'slack', 'fixture-mcp'];
             const accounts = Array.from({ length: mode === 'large' ? 30 : 3 }, (_, index) => ({
               connectionId: randomUUID(),
@@ -2506,12 +2510,21 @@ test(
                   .map((account) => account.connectionId)
                   .sort(),
               );
-              assert.deepEqual(calls.at(-1)?.args, {
-                connectionId: accounts[2]!.connectionId,
-                pathId,
-                tool: 'list_records',
-                input: { limit: 2 },
-              });
+              assert.deepEqual(
+                calls.filter((call) => call.account === accounts[2]!.connectionId),
+                [
+                  {
+                    account: accounts[2]!.connectionId,
+                    action: 'CONNECTED_MCP_CALL',
+                    args: {
+                      connectionId: accounts[2]!.connectionId,
+                      pathId,
+                      tool: 'list_records',
+                      input: { limit: 2 },
+                    },
+                  },
+                ],
+              );
               assert.doesNotMatch(
                 JSON.stringify(briefs),
                 /482913|owner@example|sender@example|private\.example/,
@@ -2547,8 +2560,6 @@ test(
               if (mode === 'revoked_read' || mode === 'revoked_plan' || mode === 'cancelled')
                 assert.doesNotMatch(JSON.stringify(posted), /Juniper/);
             }
-            await db.pool.query('DELETE FROM messages WHERE owner_id=$1', [owner]);
-            await db.pool.query('DELETE FROM onboarding_suggestions WHERE owner_id=$1', [owner]);
           }
         },
       );
