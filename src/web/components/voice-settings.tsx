@@ -4,7 +4,8 @@ import type { SpeechVoice } from '../../shared/speech';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage } from '../lib/api';
 import { savePreferences } from '../lib/preferences';
-import { LoaderCircle } from './icons';
+import { Download, LoaderCircle } from './icons';
+import { VoiceConnections } from './voice-connections';
 import { VoicePicker, VoiceSample } from './voice-picker';
 import { Button, Notice } from './ui';
 
@@ -18,13 +19,7 @@ interface SpeechSettings {
   local?: { state: 'not_downloaded' | 'downloading' | 'ready' | 'failed'; progress?: number };
 }
 
-export function VoiceSettings({
-  onBusyChange,
-  onModels,
-}: {
-  onBusyChange(busy: boolean): void;
-  onModels(): void;
-}) {
+export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): void }) {
   const {
     data,
     error: loadError,
@@ -37,6 +32,9 @@ export function VoiceSettings({
   const [previewing, setPreviewing] = useState<string | null>(null);
   const [playing, setPlaying] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [connectionBusy, setConnectionBusy] = useState(false);
+  const [setupNotice, setSetupNotice] = useState(false);
   const [error, setError] = useState('');
   const [preparing, setPreparing] = useState(false);
   const prepareRequest = useRef<AbortController | null>(null);
@@ -61,9 +59,9 @@ export function VoiceSettings({
     setPreviewing(null);
   }
   useEffect(() => {
-    onBusyChange(saving || preparing);
+    onBusyChange(saving || preparing || connectionBusy);
     return () => onBusyChange(false);
-  }, [saving, preparing, onBusyChange]);
+  }, [saving, preparing, connectionBusy, onBusyChange]);
   useEffect(
     () => () => {
       saveRequest.current?.abort();
@@ -90,6 +88,7 @@ export function VoiceSettings({
         signal: controller.signal,
       });
       await refresh();
+      setAdding(false);
     } catch (cause) {
       if (!controller.signal.aborted) setError(errorMessage(cause));
     } finally {
@@ -175,17 +174,28 @@ export function VoiceSettings({
       }
     }
   }
+  const setupBusy = preparing || connectionBusy;
+  const canAdd = Boolean(
+    data &&
+    ((data.local && data.local.state !== 'ready') ||
+      !data.voices.some((item) => item.engine === 'ElevenLabs' || item.engine === 'Kokoro') ||
+      !data.voices.some((item) => item.engine === 'OpenAI')),
+  );
+  useEffect(() => {
+    if (adding && !setupBusy && !canAdd) setAdding(false);
+    if (!setupBusy) setSetupNotice(false);
+  }, [adding, setupBusy, canAdd]);
   return (
     <section className="account-region voice-settings" aria-labelledby={`${id}-heading`}>
       <h2 id={`${id}-heading`}>Voice</h2>
-      {data?.synthesis ? (
+      {data ? (
         <>
           <div className="account-preference-row account-picker-row">
             <span id={`${id}-replies`}>Spoken replies</span>
             <div className="voice-reply-options" role="group" aria-labelledby={`${id}-replies`}>
               {(
                 [
-                  ['voice', 'Voice messages'],
+                  ['voice', 'When I send audio'],
                   ['always', 'Always'],
                   ['never', 'Off'],
                 ] as const
@@ -214,10 +224,77 @@ export function VoiceSettings({
                 labelledBy={`${id}-voice`}
                 loading={previewing}
                 playing={playing}
-                error={error}
+                error={setupNotice ? 'Finish or cancel setup first.' : error || loadError}
+                adding={adding}
+                setupBusy={setupBusy}
+                canAdd={canAdd}
+                onAddingChange={(next) => {
+                  setError('');
+                  setAdding(next);
+                }}
+                setup={
+                  <>
+                    {data.local && data.local.state !== 'ready' && (
+                      <div className="voice-connect-option">
+                        <div className="voice-connect-heading">
+                          <Download size={20} aria-hidden="true" />
+                          <div>
+                            <h3>Free voices</h3>
+                            <p>No account needed. Download once, about 180 MB.</p>
+                          </div>
+                        </div>
+                        <div className="voice-connect-actions">
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={
+                              connectionBusy || preparing || data.local.state === 'downloading'
+                            }
+                            onClick={() => void prepare()}
+                          >
+                            {preparing || data.local.state === 'downloading' ? (
+                              <>
+                                <LoaderCircle size={14} className="voice-preview-loading" />
+                                Downloading…
+                                {data.local.progress !== undefined &&
+                                  ` ${Math.round(data.local.progress)}%`}
+                              </>
+                            ) : (
+                              'Download voices'
+                            )}
+                          </Button>
+                          {preparing && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => prepareRequest.current?.abort()}
+                            >
+                              Cancel download
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    <VoiceConnections
+                      availableEngines={data.voices.map((item) => item.engine)}
+                      disabled={preparing}
+                      onBusyChange={setConnectionBusy}
+                      onConnected={() => {
+                        setError('');
+                        void refresh().then(() => setAdding(false));
+                      }}
+                    />
+                  </>
+                }
                 onOpenChange={(open) => {
+                  if (!open && setupBusy) {
+                    setSetupNotice(true);
+                    return;
+                  }
                   stop();
                   setError('');
+                  if (open) setAdding(data.voices.length === 0);
                   setPickerOpen(open);
                 }}
                 onChange={(speechVoice) => {
@@ -244,63 +321,25 @@ export function VoiceSettings({
             </p>
           )}
         </>
-      ) : (
-        <p className="field-hint">
-          {data
-            ? 'Hear nod’s replies aloud. Download voices or connect a voice service.'
-            : 'Loading voices…'}
-        </p>
-      )}
-      {data && (
-        <div className="voice-settings-providers">
-          {data.local && data.local.state !== 'ready' && (
-            <div className="voice-settings-setup">
-              <div>
-                <span>Local voices</span>
-                <p className="field-hint">One download, no account. About 180 MB.</p>
-              </div>
-              <div className="voice-settings-download">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={saving || preparing || data.local.state === 'downloading'}
-                  onClick={() => void prepare()}
-                >
-                  {preparing || data.local.state === 'downloading' ? (
-                    <>
-                      <LoaderCircle size={14} className="voice-preview-loading" />
-                      Downloading…
-                      {data.local.progress !== undefined && ` ${Math.round(data.local.progress)}%`}
-                    </>
-                  ) : (
-                    'Download voices'
-                  )}
-                </Button>
-                {preparing && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => prepareRequest.current?.abort()}
-                  >
-                    Cancel
-                  </Button>
-                )}
-              </div>
-            </div>
-          )}
-          <div className="voice-settings-services">
-            {!data.voices.some((item) => item.engine !== 'Local') && (
-              <p className="field-hint">More voices with OpenRouter or OpenAI.</p>
-            )}
-            <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={onModels}>
-              Voice services
+      ) : !loadError ? (
+        <p className="field-hint">Loading voices…</p>
+      ) : null}
+      {!pickerOpen && (loadError || error) && (
+        <Notice>
+          {loadError || error}
+          {loadError && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={refreshing}
+              onClick={() => void refresh()}
+            >
+              Try again
             </Button>
-          </div>
-        </div>
+          )}
+        </Notice>
       )}
-      {(loadError || (error && !pickerOpen)) && <Notice>{loadError || error}</Notice>}
     </section>
   );
 }

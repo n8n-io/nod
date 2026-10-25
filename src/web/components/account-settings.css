@@ -403,8 +403,8 @@
 .voice-picker-trigger {
   flex: 1;
   min-width: 0;
-  min-height: 56px;
-  padding: 8px 12px;
+  min-height: 48px;
+  padding: 6px 12px;
   height: auto;
 }
 .voice-picker-label {
@@ -440,27 +440,44 @@
   background: var(--accent-soft);
 }
 .voice-picker-panel {
-  z-index: 55;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  width: min(380px, calc(100vw - 24px));
-  max-height: min(480px, calc(100dvh - 24px), var(--radix-popover-content-available-height));
-  padding: 8px;
+  gap: 16px;
+  width: min(460px, calc(100vw - 32px));
+  max-height: min(620px, calc(100dvh - 48px));
+  padding: 24px;
   overflow: hidden;
-  outline: none;
 }
 .voice-picker-heading {
   display: flex;
+  flex: none;
   align-items: center;
-  justify-content: space-between;
-  padding-left: 8px;
-  font-size: var(--text-control);
+  gap: 8px;
+  padding-right: 24px;
+}
+.voice-picker-heading h2 {
+  margin: 0;
+  font-size: 18px;
   font-weight: 500;
+  line-height: 1.4;
+  outline: none;
 }
 .voice-picker-heading .button {
   width: 28px;
   height: 28px;
+  margin-left: -4px;
+}
+.voice-picker-footer {
+  flex: none;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.voice-picker-footer > .button {
+  margin-left: -8px;
+}
+.voice-picker-setup {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .voice-picker-panel > .search-field {
   flex: none;
@@ -531,44 +548,68 @@
 .voice-preview-loading {
   animation: spin 1s linear infinite;
 }
-.voice-settings-providers {
+.voice-connect-option {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+.voice-picker-setup > .voice-connect-option:first-child,
+.voice-picker-setup > .voice-connections:first-child .voice-connect-option:first-child {
+  padding-top: 4px;
+}
+.voice-picker-setup > .voice-connect-option:last-child,
+.voice-connections .voice-connect-option:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.voice-connect-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.voice-connect-heading > svg,
+.voice-connect-heading > .model-provider-logo {
+  flex: none;
+  margin-top: 2px;
+  color: var(--muted-foreground);
+}
+.voice-connect-heading h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.voice-connect-heading p,
+.voice-connect-form > p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.voice-connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0 32px;
+}
+.voice-connect-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.voice-connect-form .voice-connect-actions {
+  margin: 0;
+}
+.voice-connect-form details {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.voice-connect-form summary {
+  cursor: pointer;
+}
+.voice-connect-form details form {
   display: grid;
   gap: 12px;
   margin-top: 12px;
-}
-.voice-settings-setup {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 0;
-}
-.voice-settings-setup > div > span {
-  font-size: var(--text-control);
-}
-.voice-settings-services {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.voice-settings-services > .button {
-  margin-left: auto;
-  color: var(--muted-foreground);
-}
-.voice-settings-services .field-hint {
-  margin: 0;
-}
-.voice-settings-download {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-}
-.voice-settings-download .button {
-  white-space: nowrap;
 }
 .voice-settings-disclosure {
   text-align: right;
@@ -580,10 +621,6 @@
   }
   .voice-reply-options button {
     flex: 1;
-  }
-  .voice-settings-setup {
-    align-items: flex-start;
-    flex-direction: column;
   }
   .voice-settings-disclosure {
     text-align: left;

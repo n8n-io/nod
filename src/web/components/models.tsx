@@ -772,7 +772,8 @@ export function ModelSettings({
           </a>
         </p>
         <p className="model-footnote">
-          Voice input uses an OpenAI or OpenRouter API key. Voice replies need OpenAI.
+          Voice uses an OpenAI API key, OpenRouter, or free local voices. Set it up in Settings →
+          General → Voice.
         </p>
       </details>
     </div>

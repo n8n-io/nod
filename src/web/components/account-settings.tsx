@@ -624,9 +624,7 @@ export function AccountSettings({
                     onChange={native.save}
                   />
                 )}
-                {open && (
-                  <VoiceSettings onBusyChange={setVoiceBusy} onModels={() => changeTab('Models')} />
-                )}
+                {open && <VoiceSettings onBusyChange={setVoiceBusy} />}
                 <PreferencesForm onDirtyChange={setPreferencesDirty} />
                 <section className="account-region" aria-labelledby={`${id}-privacy`}>
                   <h2 id={`${id}-privacy`} data-analytics-public>
