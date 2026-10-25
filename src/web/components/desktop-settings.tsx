@@ -3,12 +3,13 @@ import { Bell, Power } from './icons';
 import {
   getDesktopSettings,
   saveDesktopSettings,
+  openServerConnectionSettings,
   subscribeDesktopPreferences,
   type DesktopSettings,
   type DesktopSettingsChange,
 } from '../lib/desktop';
 import { errorMessage } from '../lib/api';
-import { Switch } from './ui';
+import { Button, Switch } from './ui';
 
 export function useDesktopSettings(enabled = true) {
   const [settings, setSettings] = useState<DesktopSettings | null>(null);
@@ -73,6 +74,12 @@ export function DesktopOptions({
 }) {
   return (
     <div className="desktop-options">
+      <div className="account-preference-row">
+        <span>Assistant location</span>
+        <Button variant="outline" size="sm" onClick={() => void openServerConnectionSettings()}>
+          Server connection
+        </Button>
+      </div>
       {(
         [
           ['launchAtLogin', 'Open at login', Power],

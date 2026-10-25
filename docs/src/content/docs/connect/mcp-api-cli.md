@@ -21,11 +21,11 @@ nod can use every tool these servers offer, so it can read and change pages, iss
 
 nod builds, tests and changes n8n workflows and n8n Agents through your n8n instance's MCP server. Open **Apps**, select **Connect** on n8n and enter your n8n address, such as `https://you.app.n8n.cloud` or `localhost:5678`. nod opens n8n's own sign-in and consent page. To use an access token instead, open **Use an access token instead** and paste the token from n8n under **Settings**, **Instance-level MCP**.
 
-If n8n runs on this computer at its default address, `http://localhost:5678`, the form opens with that address filled in, so connecting takes one click. nod checks only that address when the form opens, and connects only when you select **Connect n8n**.
+If n8n answers at `http://localhost:5678` from nod's server, the form opens with that address filled in. nod checks only that address when the form opens, and connects only when you select **Connect n8n**.
 
 If n8n doesn't answer, turn on MCP access in n8n under **Settings**, **Instance-level MCP**, and try again.
 
-The address can be on your computer or your local network, such as a self-hosted n8n. Only an address you enter or confirm yourself can be local, never one the model proposes. nod sends that connection's requests and its token only to that address. `localhost` and `127.0.0.1` count as the same address when the port matches, because n8n can name itself either way.
+The address can be on nod's computer or its local network, such as a self-hosted n8n. Inside Docker, `localhost` refers to nod's container. Only an address you enter or confirm yourself can be local, never one the model proposes. nod sends that connection's requests and its token only to that address. `localhost` and `127.0.0.1` count as the same address when the port matches, because n8n can name itself either way.
 
 nod loads n8n's tools only when a task needs them and follows n8n's own guide for its tools, plus a short [n8n task guide](/how-it-works/skills/). It writes workflow code to a file in its workspace, checks it with n8n, then creates and tests the workflow with sample data before it reports back. A test doesn't run the steps that send or write to another service, so nod checks the data each of those steps would have sent. Each n8n action goes through the [trust check](/trust/approvals/), like every app action. See [Build with n8n](/use/n8n/) for what to ask.
 
@@ -68,7 +68,7 @@ Nothing comes from the workspace user's files or settings. A program that the mo
 
 ## Send and receive files
 
-To attach a workspace file to a Composio action, nod passes `{workspaceFile, mimeType, name?}`. The server reads and checks the files and uploads them to Composio only when the action runs. If the trust check asks you first, nothing is uploaded until you say yes, and declining sends nothing. Files in one action can total 90 MB. Your yes covers the exact files nod showed you: if one is changed or deleted before the action runs, nothing is sent and nod has to ask again.
+To attach a workspace file to a Composio action, nod passes `{workspaceFile, mimeType, name?}`. The server reads and checks the files and uploads them to Composio only when the action runs. If the trust check asks you first, nothing is uploaded until you say yes, and declining sends nothing. Each file can be up to 15 MB, and files in one action can total 90 MB. Your yes covers the exact files nod showed you: if one is changed or deleted before the action runs, nothing is sent and nod has to ask again.
 
 Files that apps send back, up to 90 MB each, are saved privately in the workspace one at a time. nod sees each file's name, type and size, and up to four images of 5 MB or less. Nothing reaches your chat until nod shares it.
 

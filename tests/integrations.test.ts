@@ -3787,7 +3787,7 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
   if(path==='/api/apps/gmail/connect'){
     requests.push(body);
     if(restartBlocked&&body.restartAttempt)return Response.json({error:'Sign-in is finishing.'},{status:409});
-    return Response.json({url:'https://connect.composio.dev/link/synthetic-'+requests.length,attempt:String(requests.length).repeat(43)});
+    return Response.json({url:'https://connect.composio.dev/link/synthetic-'+requests.length,attempt:String(requests.length).padStart(43,'A')});
   }
   if(path==='/api/apps/setup-status'){
     polls++;
@@ -3834,7 +3834,7 @@ await waitFor(waiting,'An explicit retry must start a new attempt');
 assert.equal(dialog(),firstDialog,'Retry must keep the current dialog open');
 assert.equal(document.querySelector('[role="alert"]'),null,'Retry must clear the previous failure');
 assert.deepEqual(requests,[{returnTo:'window',connectionId},{returnTo:'window',connectionId}]);
-await broadcast('connected',String(requests.length).repeat(43));
+await broadcast('connected',String(requests.length).padStart(43,'A'));
 assert.ok(waiting(),'A callback alone cannot confirm a connection before server verification');
 completed=true;
 await focus();
@@ -3848,7 +3848,7 @@ completed=false;hold=true;
 await click(reconnect);
 await waitFor(()=>release,'The old attempt poll must be in flight');
 const restartDialog=dialog();
-const oldAttempt=String(requests.length).repeat(43);
+const oldAttempt=String(requests.length).padStart(43,'A');
 await click('Start again');
 await waitFor(()=>requests.length===4&&waiting(),'Explicit restart must open a new attempt');
 assert.equal(dialog(),restartDialog,'Explicit restart must retain its dialog');
@@ -3862,7 +3862,7 @@ for(const outcome of ['connected','cancelled','failed','expired']){
   assert.ok(waiting(),'A stale callback cannot settle the newer attempt');
   assert.equal(requests.length,4,'A stale callback cannot restart authorization');
 }
-await broadcast('failed',String(requests.length).repeat(43));
+await broadcast('failed',String(requests.length).padStart(43,'A'));
 await waitFor(()=>button('Try again'),'Current failure must offer direct recovery');
 assert.equal(dialog(),restartDialog);
 assert.equal(requests.length,4);
@@ -3871,7 +3871,7 @@ await click('Try again');
 await waitFor(waiting,'Failure recovery requires an explicit new attempt');
 assert.equal(requests.length,5);
 assert.deepEqual(requests.at(-1),{returnTo:'window',connectionId},'A terminal retry must not replace an active attempt');
-await broadcast('cancelled',String(requests.length).repeat(43));
+await broadcast('cancelled',String(requests.length).padStart(43,'A'));
 await waitFor(()=>button('Try again'),'Current cancellation must offer direct recovery');
 assert.equal(dialog(),restartDialog);
 await terminalFocus();
@@ -3918,7 +3918,7 @@ popupBlocked=false;
 await click('Add account');
 await waitFor(waiting,'A new add-account attempt must be active');
 const completingDialog=dialog();
-const completingAttempt=String(requests.length).repeat(43);
+const completingAttempt=String(requests.length).padStart(43,'A');
 const beforeConflict=requests.length;
 restartBlocked=true;
 await click('Start again');
@@ -3932,6 +3932,17 @@ await waitFor(()=>button('Done')&&!waiting(),'The original completing attempt mu
 assert.equal(dialog(),completingDialog);
 assert.equal(requests.length,beforeConflict+1,'Completion cannot start another authorization');
 await click('Done');
+restartBlocked=false;completed=false;
+let externalOpened=0;
+window.nodDesktop={remote:true,openExternal:async()=>{externalOpened++;}};
+await click(reconnect);
+await waitFor(()=>externalOpened===1&&waiting(),'Remote desktop must hand off consent');
+assert.deepEqual(requests.at(-1),{returnTo:'desktop',connectionId});
+const remoteAttempt=String(requests.length).padStart(43,'A');
+await click('Start again');
+await waitFor(()=>externalOpened===2&&waiting(),'Remote desktop restart must hand off once');
+assert.deepEqual(requests.at(-1),{returnTo:'desktop',connectionId,restartAttempt:remoteAttempt});
+await click('Close');
 await act(async()=>root.unmount());
 pageDataCache.clear();
 dom.window.close();
@@ -3959,6 +3970,7 @@ globalThis.ResizeObserver=class{observe(){}disconnect(){}};
 HTMLElement.prototype.scrollIntoView=function(){};
 window.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});
 window.open=()=>({closed:false,opener:null,location:{},close(){}});
+window.nodDesktop={remote:true,openExternal:async()=>{}};
 const {createElement,act}=await import('react');
 const {createRoot}=await import('react-dom/client');
 const {AppDiscoveryDialog}=await import('./src/web/components/app-discovery-dialog.tsx');
@@ -3999,6 +4011,7 @@ await type('synthetic-wrong-client');
 await click('Continue to Fixture MCP');
 await waitFor(()=>button('Start again'),'Authorization must remain pending');
 assert.equal(requests[0].clientId,'synthetic-wrong-client');
+assert.equal(requests[0].returnTo,'desktop');
 assert.equal(requests[0].restartAttempt,null,'Initial registration must be bound to an idle proposal');
 oauthStatus='failed';
 await focus();
@@ -4233,6 +4246,193 @@ test(
         401,
       );
     }
+    await t.test(
+      'remote clients bind their return target to the exact owned attempt',
+      async (t) => {
+        const f = await appsFixture(t);
+        const baseUrl = 'https://server.fixture.example';
+        const headers = {
+          host: new URL(baseUrl).host,
+          authorization: 'Bearer synthetic-server-token',
+        };
+        const resumed: string[] = [];
+        const resumeConnection = async (id: string) => {
+          resumed.push(id);
+          return true;
+        };
+        const inspectAccount = f.provider.inspectAccount;
+        f.provider.inspectAccount = async (...args) => ({
+          ...(await inspectAccount(...args)),
+          accountEmail: 'owner@example.test',
+          authConfigId: 'synthetic-auth-config',
+        });
+        f.provider.reconnectAccount = async (_owner, service, _account, callback) => ({
+          ...(await f.session.authorize(service, callback)),
+          authConfigId: 'synthetic-auth-config',
+        });
+        const discovered = await createDiscoveredConnections(f.pool, {
+          ownerId,
+          baseUrl,
+          grantVault: await createAppGrantVault(f.pool, {
+            ownerId,
+            keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 2) },
+          }),
+          resumeConnection,
+          transport: {
+            validateEndpoint: async (endpoint) => endpoint,
+            http: async () => ({ status: 200, body: null }),
+            listTools: async () => ({ tools: [{ name: 'list_records', inputSchema: {} }] }),
+            callTool: async () => ({}),
+          },
+          oauth: {
+            begin: async (_endpoint, redirectUri, state) => ({
+              url: `https://consent.fixture.example/authorize?state=${state}`,
+              saved: { redirectUri },
+            }),
+            finish: async (_endpoint, saved) => ({
+              ...saved,
+              tokens: { access_token: 'synthetic-access-token', token_type: 'Bearer' },
+            }),
+            refresh: async () => assert.fail('No refresh is expected.'),
+          },
+        });
+        const service = await createIntegrations(f.pool, {
+          ownerId,
+          provider: f.provider,
+          baseUrl,
+          discovered,
+          resumeConnection,
+          wake: async () => {},
+        });
+        const app = Fastify();
+        t.after(() => app.close());
+        registerLocalAccess(app, 4310, {
+          key: 'synthetic-server-token',
+          origin: baseUrl,
+          bearer: true,
+        });
+        service.registerRoutes(app);
+        const post = (url: string, payload: Record<string, unknown>) =>
+          app.inject({ method: 'POST', url, headers, payload });
+        const complete = async (
+          state: string,
+          target: 'window' | 'desktop',
+          slug: string,
+          account?: string,
+          outcome = 'connected',
+        ) => {
+          const response = await app.inject({
+            url: `/api/apps/callback?state=${state}&code=synthetic-code${account ? `&account=${account}` : ''}&desktop=${target === 'desktop' ? '0' : '1'}&returnTo=https://foreign.example&redirect=https://foreign.example`,
+            headers: { host: headers.host },
+          });
+          assert.equal(response.statusCode, 302, response.body);
+          const destination = new URL(response.headers.location!);
+          assert.equal(destination.origin, baseUrl);
+          assert.equal(destination.pathname, '/connected.html');
+          assert.equal(destination.searchParams.get('desktop'), target === 'desktop' ? '1' : null);
+          assert.equal(destination.searchParams.get('attempt'), state);
+          assert.equal(destination.searchParams.get('service'), slug);
+          assert.equal(destination.searchParams.get('connection'), outcome);
+        };
+        for (const returnTo of ['window', 'desktop'] as const) {
+          const initial = await post('/api/apps/gmail/connect', { returnTo });
+          assert.equal(initial.statusCode, 200, initial.body);
+          assert.match(initial.json().attempt, /^[A-Za-z0-9_-]{43}$/);
+          const account = [...f.accounts.keys()].at(-1)!;
+          await complete(initial.json().attempt, returnTo, 'gmail', account);
+          const connectionId = (await service.list()).find(
+            (row) => row.accountId === account,
+          )!.connectionId;
+          const reconnect = await post('/api/apps/gmail/connect', { returnTo, connectionId });
+          assert.equal(reconnect.statusCode, 200, reconnect.body);
+          await complete(
+            reconnect.json().attempt,
+            returnTo,
+            'gmail',
+            [...f.accounts.keys()].at(-1)!,
+          );
+          const first = await post('/api/apps/notion/connect', { returnTo });
+          assert.equal(first.statusCode, 200, first.body);
+          const restarted = await post('/api/apps/notion/connect', {
+            returnTo,
+            restartAttempt: first.json().attempt,
+          });
+          assert.equal(restarted.statusCode, 200, restarted.body);
+          assert.notEqual(restarted.json().attempt, first.json().attempt);
+          const stale = await app.inject({
+            url: `/api/apps/callback?state=${first.json().attempt}&code=old&desktop=1`,
+            headers: { host: headers.host },
+          });
+          assert.equal(new URL(stale.headers.location!).searchParams.get('connection'), 'expired');
+          assert.equal(new URL(stale.headers.location!).searchParams.get('desktop'), null);
+          await complete(restarted.json().attempt, returnTo, 'notion');
+          const addressed = await post('/api/apps/n8n/connect', { returnTo });
+          const proposalId = new URL(addressed.json().url, baseUrl).searchParams.get('connect');
+          const instance = await post(`/api/apps/discovery/${proposalId}/instance`, {
+            instanceUrl: `https://${returnTo}.n8n.example`,
+            returnTo,
+          });
+          assert.equal(instance.statusCode, 200, instance.body);
+          await complete(instance.json().attempt, returnTo, 'n8n');
+        }
+        const turn = { threadId: randomUUID(), turnId: randomUUID() };
+        const chat = (await service.manageConnections(
+          'connect',
+          'gmail',
+          turn,
+          undefined,
+          true,
+        )) as { url: string };
+        const callback = new URL(f.callbacks.at(-1)!);
+        const state = callback.searchParams.get('state')!;
+        const account = [...f.accounts.keys()].at(-1)!;
+        const hash = createHash('sha256').update(chat.url).digest('hex');
+        assert.equal(
+          (
+            await app.inject({
+              method: 'POST',
+              url: '/api/apps/setup-return',
+              headers: { host: headers.host },
+              payload: { hash, returnTo: 'desktop' },
+            })
+          ).statusCode,
+          401,
+        );
+        assert.equal(
+          (await post('/api/apps/setup-return', { hash, returnTo: 'https://foreign.example' }))
+            .statusCode,
+          400,
+        );
+        for (const mutation of [
+          "owner_id='foreign-owner'",
+          'revoked=true',
+          "callback_claim_id='claimed'",
+          "callback_expires=now()-interval '1 minute'",
+        ]) {
+          await f.pool.query(`UPDATE app_connections SET ${mutation} WHERE setup_link_hash=$1`, [
+            hash,
+          ]);
+          assert.equal(
+            (await post('/api/apps/setup-return', { hash, returnTo: 'desktop' })).statusCode,
+            409,
+          );
+          await f.pool.query(
+            "UPDATE app_connections SET owner_id=$2,revoked=false,callback_claim_id=NULL,callback_expires=now()+interval '10 minutes' WHERE setup_link_hash=$1",
+            [hash, ownerId],
+          );
+        }
+        assert.equal(
+          (await post('/api/apps/setup-return', { hash, returnTo: 'desktop' })).statusCode,
+          200,
+        );
+        await complete(state, 'desktop', 'gmail', account, 'continued');
+        assert.deepEqual(resumed, [turn.turnId]);
+        assert.equal(
+          (await post('/api/apps/setup-return', { hash, returnTo: 'desktop' })).statusCode,
+          409,
+        );
+      },
+    );
   },
 );
 

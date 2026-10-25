@@ -51,7 +51,7 @@ flowchart LR
   open([Open the PR]):::accent --> ci[CI and<br/>title check]
   ci --> review[Review by<br/>n8n-labs]
   review --> merge[Squash merge<br/>to main]:::go
-  merge --> after[Deploy and next<br/>desktop release]:::muted
+  merge --> after[Next desktop release<br/>or server update]:::muted
 ```
 
 - Workflows from first-time contributors start after a maintainer approves them.
@@ -65,7 +65,7 @@ Require **Conventional PR title** in the status checks for `main`. In the merge 
 
 ## From merge to release
 
-Merged changes reach desktop users in the next desktop release. A maintainer runs **Release desktop**, merges its version pull request, and CI publishes one GitHub release. Installed Mac apps then update on their own. See [Desktop releases](/contribute/desktop-releases/). Source installs pick up changes with `git pull`.
+Merged changes reach desktop users in the next desktop release. A maintainer runs **Release desktop**, merges its version pull request, and CI publishes one GitHub release. Installed Mac and Windows apps then update on their own. See [Desktop releases](/contribute/desktop-releases/). Self-hosted servers follow the [server update procedure](/deploy/server-operations/); merging does not update a running server.
 
 ## Dependency updates
 
@@ -92,7 +92,7 @@ Major updates, pre-1.0 npm versions, npm prereleases and unclassified updates al
 
 The [merge workflow](https://github.com/n8n-io/nod/blob/main/.github/workflows/dependabot-auto-merge.yml) never checks out pull request code. It binds the approval and merge to one signed Dependabot commit and waits up to 60 minutes for checks. If checks fail or the commit changes, the pull request stays open. After you fix or rerun CI, rerun the merge workflow if needed.
 
-GitHub doesn't trigger workflows from a merge made with `GITHUB_TOKEN`, so the workflow starts CI on `main` itself. That CI run then deploys as usual. If the dispatch fails, rerun CI on `main` by hand.
+GitHub doesn't trigger workflows from a merge made with `GITHUB_TOKEN`, so the workflow starts CI on `main` itself. It validates the merged source; it does not deploy the docs or update running servers. If the dispatch fails, rerun CI on `main` by hand.
 
 <details>
 <summary>Repository settings auto-merge needs</summary>
@@ -108,8 +108,6 @@ GitHub doesn't trigger workflows from a merge made with `GITHUB_TOKEN`, so the w
 :::caution[Not every pin is covered]
 Dependabot doesn't update Python packages installed inline in Dockerfiles, tools downloaded by pinned workflow commands, or the desktop runtime's custom build lock. Update those by hand.
 :::
-
-Known vulnerabilities that reach only the docs site and have no usable fix are listed in [`docs/osv-scanner.toml`](https://github.com/n8n-io/nod/blob/main/docs/osv-scanner.toml), each with its reason and a review date. OSV-Scanner and OpenSSF Scorecard skip them until that date.
 
 ## Related resources
 

@@ -387,6 +387,32 @@ export function SetupActions({
       timer.current = window.setTimeout(() => void check(), 5000);
       if (!pending.opened) {
         if (external) {
+          try {
+            await api('/api/apps/setup-return', {
+              method: 'POST',
+              body: JSON.stringify({ hash: app.hash, returnTo: 'desktop' }),
+              signal: controller.signal,
+            });
+          } catch (cause) {
+            if (cause instanceof ApiError && cause.status === 409) {
+              const latest = await readAppLinks([href], controller.signal);
+              if (!current()) return;
+              if (latest.completed.includes(href)) {
+                complete(href);
+                confirmed(href);
+                return;
+              }
+              if (latest.apps.get(href)?.available) {
+                setSignIn((value) =>
+                  value?.url === href ? { ...value, opened: true, reopened: true } : value,
+                );
+                setOpening(false);
+                return;
+              }
+            }
+            throw cause;
+          }
+          if (!current()) return;
           await openConnection(href);
           opened.current.add(href);
         } else if (popup && !popup.closed) {

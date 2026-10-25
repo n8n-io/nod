@@ -82,7 +82,7 @@ HTML files run in a sandbox, apart from nod. Their scripts work, but they can't 
 
 Previews have size limits: 4 MB for text, Markdown, HTML and spreadsheets, 25 MB for Word documents and 60 MB for presentations. Download larger files to open them.
 
-Files nod saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents, up to 50 MB each. WhatsApp can't receive files from nod, so open nod to get them. See [Telegram and WhatsApp](/use/channels/).
+Files nod saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. Telegram and the WhatsApp QR connection receive shared files up to 50 MB each. With the WhatsApp Cloud API, open nod to get files. See [Telegram and WhatsApp](/use/channels/).
 
 ## One workspace for all tasks
 

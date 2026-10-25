@@ -10,11 +10,238 @@ import type { ChannelSetupConfiguration } from '../src/ports/channel-settings.ts
 import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
-import { createChannelSettings } from '../src/server/channel-settings.ts';
+import {
+  createChannelSettings,
+  managedChannelEnvironment,
+} from '../src/server/channel-settings.ts';
 import { createChannels } from '../src/server/channels.ts';
 import type { LiveWork } from '../src/server/activity.ts';
 
 const token = '987:fixture-never-live';
+
+test('channel environment rejects ambiguous flags and disables explicitly configured accounts', () => {
+  assert.deepEqual(
+    managedChannelEnvironment({ TELEGRAM_ENABLED: '', TELEGRAM_BOT_TOKEN: '', WHATSAPP_MODE: '' }),
+    {},
+  );
+  for (const environment of [
+    { TELEGRAM_ENABLED: 'yes' },
+    { WHATSAPP_ENABLED: '0' },
+    { WHATSAPP_POLICY_CONFIRMED: 'yes' },
+    { TELEGRAM_MODE: 'unknown' },
+    { WHATSAPP_MODE: 'unknown' },
+    { WHATSAPP_MODE: 'self-chat' },
+    { WHATSAPP_MODE: 'bot', WHATSAPP_POLICY_CONFIRMED: 'true' },
+    { WHATSAPP_MODE: 'bot', WHATSAPP_POLICY_CONFIRMED: 'true', WHATSAPP_ALLOWED_NUMBER: '123' },
+    { WHATSAPP_MODE: 'self-chat', WHATSAPP_POLICY_CONFIRMED: 'false' },
+  ])
+    assert.throws(() => managedChannelEnvironment(environment));
+  const disabled = managedChannelEnvironment({
+    TELEGRAM_ENABLED: 'false',
+    TELEGRAM_BOT_TOKEN: token,
+    TELEGRAM_ALLOWED_USER_ID: '42',
+  });
+  assert.equal(disabled.telegram?.TELEGRAM_ENABLED, 'false');
+  const polling = managedChannelEnvironment({
+    TELEGRAM_BOT_TOKEN: token,
+    TELEGRAM_ALLOWED_USER_ID: '42',
+  });
+  assert.equal(polling.telegram?.TELEGRAM_ENABLED, 'true');
+  assert.equal(polling.telegram?.TELEGRAM_MODE, 'polling');
+  assert.match(polling.telegram!.TELEGRAM_WEBHOOK_SECRET_TOKEN!, /^[A-Za-z0-9_-]{43}$/);
+});
+
+test(
+  'managed channels shadow saved credentials, refuse changes and restore saved configuration when removed',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_channel_managed_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const apps: ReturnType<typeof Fastify>[] = [];
+    t.after(async () => {
+      await Promise.all(apps.map((app) => app.close()));
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const key = randomBytes(32);
+    let verified = 0;
+    const options = {
+      ownerId: 'managed-fixture',
+      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      verifier: createChatSdkSetupVerifier({
+        fetch: async (url) => {
+          verified++;
+          if (String(url).endsWith('/getMe'))
+            return Response.json({
+              ok: true,
+              result: { id: 987, is_bot: true, first_name: 'Fixture bot', username: 'fixture_bot' },
+            });
+          assert.equal(String(url), `https://api.telegram.org/bot${token}/getWebhookInfo`);
+          return Response.json({ ok: true, result: { url: '' } });
+        },
+      }),
+      apply: async () => {},
+    };
+    const original = await createChannelSettings(pool, options);
+    const originalApp = Fastify();
+    apps.push(originalApp);
+    original.registerRoutes(originalApp);
+    assert.equal(
+      (
+        await originalApp.inject({
+          method: 'PUT',
+          url: '/api/channel-settings/telegram',
+          payload: { botToken: token },
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(
+      (
+        await originalApp.inject({
+          method: 'POST',
+          url: '/api/channel-settings/telegram/user',
+          payload: { allowedUserId: '99' },
+        })
+      ).statusCode,
+      200,
+    );
+    const saved = await original.environment();
+    await pool.query(
+      `UPDATE channel_settings SET summary=summary || '{"webhookStatus":"registration_pending"}'::jsonb`,
+    );
+    const rows = (await pool.query('SELECT * FROM channel_settings')).rows;
+    const serverToken = '654:server-fixture-never-live';
+    const managed = managedChannelEnvironment({
+      TELEGRAM_BOT_TOKEN: serverToken,
+      TELEGRAM_ALLOWED_USER_ID: '42',
+      WHATSAPP_ENABLED: 'false',
+      WHATSAPP_ACCESS_TOKEN: 'synthetic-server-meta-token',
+    });
+    const settings = await createChannelSettings(pool, {
+      ...options,
+      managed,
+      keyStore: {
+        id: 'fixture',
+        configured: true,
+        getKey: async () => {
+          throw new Error('Managed settings must not decrypt old credentials.');
+        },
+      },
+    });
+    const app = Fastify();
+    apps.push(app);
+    settings.registerRoutes(app);
+    const environment = await settings.environment();
+    assert.equal(environment.TELEGRAM_BOT_TOKEN, serverToken);
+    assert.equal(environment.TELEGRAM_ALLOWED_USER_ID, '42');
+    assert.equal(environment.TELEGRAM_PAIRING_CODE_HASH, undefined);
+    assert.equal(environment.WHATSAPP_ENABLED, 'false');
+    const before = verified;
+    assert.equal(await settings.recover(), true);
+    for (const provider of ['telegram', 'whatsapp'])
+      for (const method of ['PUT', 'DELETE'] as const)
+        assert.equal(
+          (
+            await app.inject({
+              method,
+              url: `/api/channel-settings/${provider}`,
+              ...(method === 'PUT' ? { payload: {} } : {}),
+            })
+          ).statusCode,
+          409,
+        );
+    for (const action of ['pairing', 'confirm', 'user'])
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/channel-settings/telegram/${action}`,
+            payload: { allowedUserId: '11' },
+          })
+        ).statusCode,
+        409,
+      );
+    assert.equal(verified, before);
+    const status = await settings.status();
+    assert.equal(status.channels.find((channel) => channel.provider === 'telegram')?.managed, true);
+    assert.equal(
+      status.channels.find((channel) => channel.provider === 'whatsapp')?.enabled,
+      false,
+    );
+    for (const secret of [serverToken, 'synthetic-server-meta-token'])
+      assert.equal(JSON.stringify(status).includes(secret), false);
+    assert.deepEqual((await pool.query('SELECT * FROM channel_settings')).rows, rows);
+    const restored = await createChannelSettings(pool, options);
+    assert.deepEqual(await restored.environment(), saved);
+    assert.equal((await restored.status()).channels[0]?.managed, undefined);
+    let pairingId = randomUUID();
+    let restarts = 0;
+    const linked = await createChannelSettings(pool, {
+      ...options,
+      managed: managedChannelEnvironment({
+        WHATSAPP_MODE: 'self-chat',
+        WHATSAPP_POLICY_CONFIRMED: 'true',
+      }),
+      linkStatus: async () => ({
+        state: 'awaiting_scan',
+        pairingId,
+        qr: 'synthetic-pairing-qr',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      cancelPairing: async (candidate, restart) => candidate === pairingId && restart === true,
+      apply: async (environment) => {
+        assert.equal(environment.WHATSAPP_MODE, 'self-chat');
+        assert.equal(environment.WHATSAPP_POLICY_CONFIRMED, 'true');
+        pairingId = randomUUID();
+        restarts++;
+      },
+    });
+    const linkedApp = Fastify();
+    apps.push(linkedApp);
+    linked.registerRoutes(linkedApp);
+    const qr = await linkedApp.inject('/api/channel-settings/whatsapp/pairing');
+    assert.equal(qr.statusCode, 200);
+    assert.equal(qr.json().qr, 'synthetic-pairing-qr');
+    assert.equal(JSON.stringify(await linked.status()).includes('synthetic-pairing-qr'), false);
+    assert.equal(
+      (
+        await linkedApp.inject({
+          method: 'POST',
+          url: '/api/channel-settings/whatsapp/pairing',
+          payload: { pairingId: randomUUID() },
+        })
+      ).statusCode,
+      400,
+    );
+    assert.equal(restarts, 0);
+    assert.equal(
+      (
+        await linkedApp.inject({
+          method: 'DELETE',
+          url: '/api/channel-settings/whatsapp/pairing',
+          payload: { pairingId },
+        })
+      ).statusCode,
+      409,
+    );
+    const refreshed = await linkedApp.inject({
+      method: 'POST',
+      url: '/api/channel-settings/whatsapp/pairing',
+      payload: { pairingId },
+    });
+    assert.equal(refreshed.statusCode, 200);
+    assert.notEqual(refreshed.json().pairingId, qr.json().pairingId);
+    assert.equal(restarts, 1);
+    assert.deepEqual((await pool.query('SELECT * FROM channel_settings')).rows, rows);
+  },
+);
 
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);

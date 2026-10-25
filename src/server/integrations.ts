@@ -68,6 +68,7 @@ const returnPaths = {
   apps: '/apps',
   onboarding: '/onboarding',
   window: '/connected.html',
+  desktop: '/connected.html',
   chat: '/',
 } as const;
 type ReturnTarget = keyof typeof returnPaths;
@@ -913,7 +914,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       for (const previous of discarded) await discardReconnect(previous);
       return {
         url: attempt.url,
-        ...(returnTo === 'window' ? { attempt: nonce } : {}),
+        ...(returnTo === 'window' || returnTo === 'desktop' ? { attempt: nonce } : {}),
       };
     } catch (error) {
       track(slug, 'failed', connectionFailure(error));
@@ -1054,7 +1055,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       );
       return {
         url: attempt.url,
-        ...(returnTo === 'window' ? { attempt: nonce } : {}),
+        ...(returnTo === 'window' || returnTo === 'desktop' ? { attempt: nonce } : {}),
       };
     } catch (error) {
       const cleared = await clearReconnect(row.id, hash);
@@ -2095,10 +2096,25 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           .send(Buffer.from(value.bytes));
       });
       options.discovered?.registerRoutes(scope);
+      scope.post('/api/apps/setup-return', async (request, reply) => {
+        const { hash, returnTo } = z
+          .object({ hash: z.string().regex(/^[a-f0-9]{64}$/), returnTo: z.literal('desktop') })
+          .strict()
+          .parse(request.body);
+        const changed = await pool.query(
+          `UPDATE app_connections SET callback_return_to=$3
+           WHERE owner_id=$1 AND setup_link_hash=$2 AND callback_hash IS NOT NULL
+           AND callback_claim_id IS NULL AND callback_expires>now() AND NOT revoked RETURNING id`,
+          [configuredOwner, hash, returnTo],
+        );
+        if (!changed.rowCount)
+          throw new IntegrationError('This sign-in link is no longer available.', 409);
+        return reply.header('Cache-Control', 'no-store').send({ ok: true });
+      });
       scope.post<{ Params: { slug: string } }>('/api/apps/:slug/connect', async (request) => {
         const input = z
           .object({
-            returnTo: z.enum(['apps', 'onboarding', 'window']).default('apps'),
+            returnTo: z.enum(['apps', 'onboarding', 'window', 'desktop']).default('apps'),
             connectionId: z.uuid().optional(),
             restartAttempt: z
               .string()
@@ -2202,6 +2218,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 )
               ).rows[0];
               if (claimed) {
+                returnTo = Object.hasOwn(returnPaths, claimed.callback_return_to)
+                  ? claimed.callback_return_to
+                  : 'apps';
                 let verifiedAccountId: string | undefined;
                 try {
                   const result = await providerForRow(claimed).parseCallback(request.query, {
@@ -2217,7 +2236,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                     const resumed = await completeConnection(result, claimed, (id) => {
                       verifiedAccountId = id;
                     });
-                    outcome = resumed && returnTo === 'chat' ? 'continued' : 'connected';
+                    outcome = resumed ? 'continued' : 'connected';
                   }
                 } catch {
                   outcome = 'failed';
@@ -2239,13 +2258,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             }
           }
         }
-        const destination = options.callbackReturnTo ?? returnTo;
+        const destination = options.callbackReturnTo ? 'desktop' : returnTo;
+        const completionPage = destination === 'window' || destination === 'desktop';
         return reply
           .header('Cache-Control', 'no-store')
           .header('Referrer-Policy', 'no-referrer')
           .redirect(
             new URL(
-              `${returnPaths[destination]}?connection=${outcome}${(destination === 'chat' || destination === 'window') && service ? `&service=${service}` : ''}${destination === 'window' && attempt ? `&attempt=${attempt}` : ''}${options.callbackReturnTo === 'window' ? '&desktop=1' : ''}`,
+              `${returnPaths[destination]}?connection=${outcome}${(destination === 'chat' || completionPage) && service ? `&service=${service}` : ''}${completionPage && attempt ? `&attempt=${attempt}` : ''}${destination === 'desktop' ? '&desktop=1' : ''}`,
               options.baseUrl,
             ).href,
           );

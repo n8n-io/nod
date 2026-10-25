@@ -5,11 +5,9 @@ sidebar:
   order: 9
 ---
 
-import { Badge, Steps } from '@astrojs/starlight/components';
+import { Steps } from '@astrojs/starlight/components';
 
 nod can complete a checkout with a card saved in Vault, but only after you approve that one payment. The model never sees the card number or security code.
-
-<Badge text="Desktop and source installs" variant="note" />
 
 ## Save a card
 
@@ -21,7 +19,7 @@ nod can complete a checkout with a card saved in Vault, but only after you appro
 
 </Steps>
 
-nod never saves the card's security code. You enter it for each payment. Codes saved by earlier versions are deleted the next time nod opens your Vault.
+nod never saves the card's security code. You enter it for each payment.
 
 If nod reaches a checkout and you have no card saved, select its add-card action to open this form beside chat. Save the card, then tell nod to continue. You can also add it in **Vault**.
 
@@ -44,7 +42,7 @@ In nod web or desktop, nod shows the checkout with the card fields hidden. Selec
 
 ### From Telegram or WhatsApp
 
-Chat apps can't approve payments or receive security codes. nod asks you to open the same conversation in nod on your desktop, where the **Approve payment** form waits. After you approve, nod replies in the original chat.
+Chat apps can't approve payments or receive security codes. nod asks you to open the same conversation in its web or desktop app, where the **Approve payment** form waits. After you approve, nod replies in the original chat.
 
 ## What happens after you approve
 

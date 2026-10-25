@@ -73,9 +73,7 @@ To change to an available model, you can also tell nod which model and service t
 
 nod uses OpenAI's [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) for open-source and locally hosted apps. Requests go to the OpenAI API and use your plan's included usage. ChatGPT lists nod under [Settings → Usage](https://chatgpt.com/settings/usage), where you can see and limit its usage or disconnect it. It needs ChatGPT Plus or Pro. On other plans, OpenAI's consent page says a required permission isn't available, and the sign-in fails. In a workspace your organization manages, an admin has to allow third-party apps first, or OpenAI says your organization hasn't enabled access for this app. Otherwise, connect an OpenAI API key instead.
 
-ChatGPT sign-in listens for the browser on port `1455` of your computer. If another program uses that port, nod stops with an error before it opens OpenAI.
-
-A ChatGPT connection made with an earlier version of nod needs one reconnect in **Settings > Models**.
+ChatGPT sign-in listens on port `1455` where nod's server runs. If another program uses that port, nod stops with an error before it opens OpenAI. When connecting to a remote server, the final browser address may not load on your device. Copy that full address into **Callback URL** in nod and select **Complete sign-in**. The server checks the sign-in and stores the connection; you do not need to expose port `1455` publicly.
 
 </TabItem>
 <TabItem label="Anthropic">
@@ -171,7 +169,7 @@ nod checks the key with a free token count and lists the Gemini models on Vertex
 
 </Steps>
 
-nod uses Azure's v1 API at that endpoint and sends the key only there. The endpoint needs HTTPS, unless it's on this computer. An address that ends at the resource or at `/openai` gets `/openai/v1` added. Any other path, such as an API gateway, is used as you enter it.
+nod uses Azure's v1 API at that endpoint and sends the key only there. The endpoint needs HTTPS, unless it uses a loopback address on nod's server. An address that ends at the resource or at `/openai` gets `/openai/v1` added. Any other path, such as an API gateway, is used as you enter it.
 
 Each deployment is one connection with one model. Add another connection for each deployment you want to use. The model you choose sets the context size and the prices nod counts toward your [spending](/use/spending/). Microsoft Entra ID sign-in isn't supported.
 
@@ -197,7 +195,7 @@ All the models from your connections appear in one searchable list. Choosing a m
 
 You can connect several accounts of one service, such as two ChatGPT accounts or a personal and a work API key. A ChatGPT connection shows the account's email. A key connection, including one an OpenRouter sign-in created, shows the key's last four characters, which the model never sees. Signing in again with an account you already connected, or adding the same key or server address to the same service again, updates that connection instead of adding another.
 
-If your selected connection is removed or needs reconnecting, the next connection you add or reconnect becomes your model. If only your model disappears from a working connection, nod keeps your choice and asks you to choose another. nod doesn't switch by itself after a failed request.
+If your selected connection is removed or needs reconnecting, the next connection you add or reconnect in **Models** becomes your model. If only your model disappears from a working connection, nod keeps your choice and asks you to choose another. nod doesn't switch by itself after a failed request.
 
 | To                      | Do this                                                                                               |
 | ----------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -220,7 +218,7 @@ Two checks can use a decision model: reading whether your reply to a confirmatio
 
 Pick a capable model if nod acts for you: the [trust check](/trust/approvals/) runs on it. Use the [decision evals](/contribute/evals/#compare-decision-checks) to compare models on synthetic permission checks before changing the model you rely on.
 
-| Current connection     | Decision checks                                        |
+| Current connection     | Confirmation replies                                   |
 | ---------------------- | ------------------------------------------------------ |
 | OpenAI API key         | GPT Decisions (`gpt-6-luna`) with the same key         |
 | OpenRouter             | Jev (`typesafe/jev-1.13`) with the same OpenRouter key |
@@ -228,19 +226,21 @@ Pick a capable model if nod acts for you: the [trust check](/trust/approvals/) r
 
 These calls are billed through the connection that runs them. GPT Decisions is paid API use, separate from a ChatGPT subscription. OpenRouter sends the checks to TypeSafe, even when you selected a chat model from another provider. See [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) and [Jev on OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/).
 
-In a source install, set `TYPESAFE_API_KEY` in `.env` to use Jev directly (`jev-1.13.0`) for these checks. The key selects TypeSafe regardless of your chat connection. Remove it to use the connection rules above, and restart nod after either change. The key stays on the server and is not added to **Models**.
+In a source install or self-hosted server, set `TYPESAFE_API_KEY` in `.env` to use Jev directly (`jev-1.13.0`) for these checks. The key selects TypeSafe regardless of your chat connection. Remove it to use the connection rules above, then [apply the configuration change](/deploy/configuration/#how-settings-work). The key stays on the server and is not added to **Models**.
 
 A failed decision request does not switch providers or approve anything: the confirmation stays pending, and your reply reaches nod as an ordinary message. A failed email check hides that email's content. See [Approvals and the trust check](/trust/approvals/).
 
-:::note[Voice needs its own key]
-Spoken replies need an OpenAI API key in server settings (`OPENAI_API_KEY`). An OpenAI key in **Models** or a ChatGPT plan doesn't turn on voice.
+:::note[Voice needs an API connection]
+Spoken replies need an OpenAI API key, saved in **Models** or set through `OPENAI_API_KEY`. Transcription also works with an OpenRouter connection; a ChatGPT plan alone doesn't enable voice.
 :::
 
 ## Set connections in server settings
 
-In a source install, you can add connections in `.env` instead. They show **Server settings** in **Models**, and you remove them from `.env`, not from the app.
+In a source install or self-hosted server, you can add connections in `.env`. They show **Server settings** in **Models**. Update their values in `.env`, then [apply the configuration change](/deploy/configuration/#how-settings-work).
 
-Set `LLM_PROVIDER` to a provider ID below and add its key variable. Leave `LLM_MODEL` empty for the service's recommended model, or set an explicit model ID. A model you choose in the app takes priority.
+Removing an API key removes its server-managed connection. For an OpenAI-compatible server, remove `OPENAI_COMPATIBLE_BASE_URL` instead. Connections saved through the app stay intact. If you removed the selected connection, choose another model in **Models**.
+
+Every service below supports environment setup. You can add several provider keys at once. Set `LLM_PROVIDER` to the provider ID for your initial model choice. Leave `LLM_MODEL` empty for the [provider's default](#supported-connections), or set an exact model ID from its list. A model you choose in the app takes priority. ChatGPT subscriptions still need browser sign-in in **Models**.
 
 | Provider ID                  | Service                     | Key variable                         |
 | ---------------------------- | --------------------------- | ------------------------------------ |
@@ -286,19 +286,23 @@ Set `LLM_PROVIDER` to a provider ID below and add its key variable. Leave `LLM_M
 
 Additional settings:
 
-| Service           | Settings                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------- |
-| Amazon Bedrock    | `AWS_REGION`; choose `LLM_MODEL` explicitly if you want a server-selected profile                 |
-| Azure OpenAI      | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_MODEL`, `AZURE_OPENAI_DEPLOYMENT`                          |
-| Cloudflare        | `CLOUDFLARE_ACCOUNT_ID`; AI Gateway also needs `CLOUDFLARE_GATEWAY_ID`                            |
-| OpenAI-compatible | `LLM_PROVIDER=compatible`, `OPENAI_COMPATIBLE_BASE_URL`, and optional `OPENAI_COMPATIBLE_API_KEY` |
+| Service           | Settings                                                                                                                                                   |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Amazon Bedrock    | `AWS_REGION`, such as `us-east-1`. Set `LLM_MODEL` to select a model or inference profile when several are available.                                      |
+| Azure OpenAI      | `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_MODEL`, the model ID your deployment runs. Set `AZURE_OPENAI_DEPLOYMENT` if the deployment has a different name. |
+| Cloudflare        | `CLOUDFLARE_ACCOUNT_ID`, the 32-character hexadecimal account ID. AI Gateway also requires `CLOUDFLARE_GATEWAY_ID`.                                        |
+| OpenAI-compatible | `OPENAI_COMPATIBLE_BASE_URL` and optional `OPENAI_COMPATIBLE_API_KEY`. Use `LLM_PROVIDER=compatible` for the initial choice.                               |
+
+Set the cloud provider's required fields before starting nod. A Cloudflare gateway ID has one to 64 lowercase letters, digits, or hyphens, starting with a letter or digit. Both Cloudflare connections use the same account ID from `.env`; connections saved in **Models** can use separate accounts and gateways.
+
+For Azure, leave `LLM_MODEL` empty to use the deployment's model, or set it to the same model ID as `AZURE_OPENAI_MODEL`. The deployment name defaults to that ID. The [Azure setup rules](#connect-a-service) for endpoints also apply to `.env`.
 
 ```sh title=".env"
 LLM_PROVIDER=google
 GEMINI_API_KEY=<your-key>
 ```
 
-Restart nod after editing `.env`. Regional providers use separate key variables so one region's key isn't automatically sent to another region. These connections don't inherit host-wide AWS profiles or Google service account files.
+Regional providers use separate key variables so one region's key isn't automatically sent to another region. These connections don't inherit host-wide AWS profiles or Google service account files.
 
 ## Where your keys go
 
@@ -315,7 +319,7 @@ flowchart LR
   server -. no key .-> sandbox
 ```
 
-- nod encrypts saved keys and sign-ins with the Vault key. The Mac keeps that key in Keychain, and the Windows app protects it with Windows DPAPI. Other source installs need `NOD_VAULT_KEY`.
+- nod encrypts saved keys and sign-ins with the Vault key. macOS uses Keychain, the Windows app uses Windows DPAPI, and Linux source installs use a private file. The self-hosting stack generates `NOD_VAULT_KEY` in its private `.env`. See [Vault configuration](/deploy/configuration/#vault).
 - nod checks credential storage before starting a connection. If storage is unavailable, check the Vault configuration, permissions and database connection, then try again.
 - Keys from `.env` stay in server memory and aren't copied into the database.
 - Each key goes only to its own service: Amazon Bedrock in the Region you entered, Google Vertex AI, or the Azure OpenAI endpoint you entered.

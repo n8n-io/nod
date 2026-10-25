@@ -68,13 +68,13 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/nod/
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                                                                                  |
 | `skills`                                                            | Reads a [guide](/how-it-works/skills/) or [learned skill](/how-it-works/memory/#learned-skills); only owner-started work writes one.         |
-| `send_message`                                                      | Sends a message now. The only delivery in background turns.                                                                                  |
+| `send_message`                                                      | Sends a message now. Schedule and event runs use explicit delivery; saved tasks also deliver their final reply.                              |
 | `follow_up`                                                         | In a chat or saved task, queues one short line that goes out as its own message right after the reply, such as an offer to keep doing a job. |
 | `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                                                              |
 | `react_to_message`                                                  | Now and then, reacts to the user's message with one emoji, on web, Telegram and WhatsApp. At most one every five minutes.                    |
 | `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and handoff.                                                     |
 | `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.                                                                  |
-| `pay`                                                               | Pays at a checkout with a Vault card after your approval.                                                                                    |
+| `pay`                                                               | Submits a Vault card at checkout after your approval. Submission does not establish that payment succeeded.                                  |
 | `browser_session`                                                   | Creates a browser profile to sign in to, or opens a saved one after the same check as a sign-in.                                             |
 | `apps`                                                              | Runs an action on a connected account, after the trust check.                                                                                |
 | `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                                                                      |
@@ -143,7 +143,7 @@ The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `
 
 The owner context is a message of its own, never part of the system prompt, so a memory change leaves the system prompt and the conversation before it untouched:
 
-- A session gets the full current owner context with its first turn, and again with the first turn after it changes. The newest copy replaces earlier ones.
+- A session gets the full current owner context with its first turn, and again with the first turn after it changes. The newest copy gives the current values.
 - Earlier copies stay where they are, so the cached conversation after them stays valid.
 - Compaction summaries leave the owner context out. A session that compacts it away gets it again with its next request.
 

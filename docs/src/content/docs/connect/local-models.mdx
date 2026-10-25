@@ -9,7 +9,9 @@ import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
 nod can use a model that runs on your own computer, or on any server with an OpenAI-compatible API. Model requests then go only to the address you enter, and a local model costs nothing per request.
 
-Local models work in the [desktop app](/get-started/install-desktop/) and [source installs](/get-started/install-from-source/).
+Local models work in the [desktop app](/get-started/install-desktop/), [source installs](/get-started/install-from-source/), and [self-hosted servers](/deploy/self-host/).
+
+The model server must be reachable from nod's server. On a remote install, `localhost` refers to that server; inside Docker, it refers to nod's container.
 
 :::caution[Your model also decides when nod asks you]
 nod's [trust check](/trust/approvals/) runs on your selected model. It decides whether your words cover each app action, website step and sign-in, or whether nod asks you first. Smaller models make that call less reliably: they can ask more often, or run something you didn't ask for. Use the largest model your computer runs well.
@@ -98,7 +100,7 @@ With LM Studio 0.4 or later, nod reads each model's details. It skips embedding 
 
 <Steps>
 
-1. Open the account menu, select **Models**, then select **Add server** next to **OpenAI-compatible**. During onboarding, select **More providers**, then **Your own server**.
+1. Open **Settings → Models**, then select **Add server** next to **OpenAI-compatible**. During onboarding, select **More providers**, then **Your own server**.
 2. Check the **Server address**. nod fills in Ollama's address, `http://localhost:11434/v1`. If you leave out `/v1`, nod tries it for you.
 3. Add an **API key** only if the server needs one.
 4. Select **Save connection**, or **Connect** during onboarding.
@@ -115,7 +117,7 @@ After you pull or load another model, select the refresh button next to the conn
 
 ## Set the server in `.env`
 
-In a source install, you can set the server in `.env` instead of in the app. It then shows **Server settings** in **Models**, and you remove it from `.env`.
+In a source install or self-hosted server, you can set the model server in `.env` instead of in the app. It then shows **Server settings** in **Models**. Remove `OPENAI_COMPATIBLE_BASE_URL` to remove this connection.
 
 ```sh title=".env"
 LLM_PROVIDER=compatible
@@ -124,31 +126,27 @@ OPENAI_COMPATIBLE_API_KEY=
 LLM_MODEL=gpt-oss:20b
 ```
 
-Leave `OPENAI_COMPATIBLE_API_KEY` empty if the server doesn't need a key, and `LLM_MODEL` empty to use the server's first model. Restart nod after you edit `.env`. If the server isn't running when nod starts, start it and select the refresh button next to the connection. See [Configuration](/deploy/configuration/#models).
+Leave `OPENAI_COMPATIBLE_API_KEY` empty if the server doesn't need a key, and `LLM_MODEL` empty to use the server's first model. After editing `.env`, [apply the configuration change](/deploy/configuration/#how-settings-work). If the server isn't running when nod starts, start it and select the refresh button next to the connection.
 
 ## Other OpenAI-compatible services
 
-The same connection works with hosted services that offer an OpenAI-compatible API. Enter the service's address and your API key.
+For services listed in **Models**, such as Groq, Together AI, and DeepSeek, use the [named provider connection](/connect/models/). It includes the provider's model capabilities and prices.
 
-| Service     | Address                          |
-| ----------- | -------------------------------- |
-| Groq        | `https://api.groq.com/openai/v1` |
-| Together AI | `https://api.together.xyz/v1`    |
-| DeepSeek    | `https://api.deepseek.com/v1`    |
+Use an OpenAI-compatible connection for other hosted services that offer this API. Enter the service's address and your API key.
 
 nod lists every model such a service returns, including ones that can't chat. Pick a chat model that supports tools.
 
 ## What changes with these connections
 
-| Area                | With a local or OpenAI-compatible model                                                                                                                                                        |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Spending            | nod doesn't know the server's prices, so it records each request at $0. That usage doesn't count toward the [monthly limit or task check-ins](/use/spending/). A paid service still bills you. |
-| Images              | Ollama and LM Studio models that support vision get screenshots and images. Models on other servers get text only.                                                                             |
-| Thinking levels     | Only Ollama models offer them. Other servers use the model's own default.                                                                                                                      |
-| Decision checks     | Your selected model reads your replies to confirmations and checks emails that give account access. See [Decision checks](/connect/models/#decision-checks).                                   |
-| Background work     | Memory upkeep and other background work use your selected model.                                                                                                                               |
-| Where requests go   | Model requests go only to the address you enter. Web search, websites, your apps and chat channels work as before. See [Your data and privacy](/trust/privacy/).                               |
-| Where your key goes | An API key stays in nod's encrypted key store and is added to each request by the nod server, like any other model key. See [Where your keys go](/connect/models/#where-your-keys-go).         |
+| Area                | With a local or OpenAI-compatible model                                                                                                                                                               |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Spending            | nod doesn't know the server's prices, so it records each request at $0. That usage doesn't count toward the [monthly limit or task check-ins](/use/spending/). A paid service still bills you.        |
+| Images              | Ollama and LM Studio models that support vision get screenshots and images. Models on other servers get text only.                                                                                    |
+| Thinking levels     | Only Ollama models offer them. Other servers use the model's own default.                                                                                                                             |
+| Decision checks     | Your selected model handles confirmation replies and email checks unless `TYPESAFE_API_KEY` configures a decision model. See [Decision checks](/connect/models/#decision-checks).                     |
+| Background work     | Memory upkeep and other background work use your selected model.                                                                                                                                      |
+| Where requests go   | Model requests go only to the address you enter. Web search, websites, your apps and chat channels work as before. See [Your data and privacy](/trust/privacy/).                                      |
+| Where your key goes | Keys saved in **Models** are encrypted. Keys from `.env` stay in server configuration and memory. The server adds the key to requests. See [Where your keys go](/connect/models/#where-your-keys-go). |
 
 ## Troubleshooting
 

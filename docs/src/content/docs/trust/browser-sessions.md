@@ -54,7 +54,7 @@ Passkeys are turned off in nod's browser, because your passkeys live on your own
 Like the rest of nod's browser, a saved profile reaches only public addresses: never your computer, your local network or other containers.
 
 :::caution
-Once signed in, nod can act anywhere on that website. Vault doesn't review each click. A saved session is browser data kept with nod's other data, and Vault doesn't encrypt it, so protect your computer and backups.
+Once signed in, nod can act anywhere on that website. Vault doesn't review each click. A saved session is browser data kept with nod's other data, and Vault doesn't encrypt it, so protect the machine running nod and its backups.
 :::
 
 ## Where this is enforced

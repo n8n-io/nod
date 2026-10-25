@@ -7,6 +7,28 @@ const preferenceFields = ['launchAtLogin', 'notifications', 'onboardingCompleted
 const onboardingPreferenceSteps = ['notifications', 'launchAtLogin', 'complete'];
 const notificationRequests = ['pending', 'requested', 'chosen', 'unsupported', 'failed', 'legacy'];
 
+export function serverOrigin(value) {
+  try {
+    if (typeof value !== 'string' || value.length > 2048) throw new Error();
+    const url = new URL(value.trim());
+    if (
+      (url.protocol !== 'https:' &&
+        !(
+          url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+        )) ||
+      url.username ||
+      url.password ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash
+    )
+      throw new Error();
+    return url.origin;
+  } catch {
+    throw new Error('Enter an HTTPS server address, or a localhost address for an SSH tunnel.');
+  }
+}
+
 export function createSettingsStore(path, encryption, platform = process.platform) {
   let current;
   let unsynced = false;
@@ -79,18 +101,23 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         'onboardingPreferenceStep',
         'notificationRequest',
         'welcome',
+        'serverUrl',
         'secrets',
       ];
       value = Object.fromEntries(Object.entries(saved).filter(([field]) => fields.includes(field)));
-      value.secrets = Object.hasOwn(saved.secrets, 'vaultKey')
-        ? { vaultKey: saved.secrets.vaultKey }
-        : {};
+      value.secrets = Object.fromEntries(
+        Object.entries(saved.secrets).filter(([field]) =>
+          ['vaultKey', 'serverToken'].includes(field),
+        ),
+      );
       if (
         value.version !== 1 ||
         !['system', 'light', 'dark'].includes(value.theme) ||
         preferenceFields.some((field) => typeof value[field] !== 'boolean') ||
         (value.onboardingPreferenceStep !== undefined &&
           !onboardingPreferenceSteps.includes(value.onboardingPreferenceStep)) ||
+        (value.serverUrl !== undefined &&
+          (serverOrigin(value.serverUrl) !== value.serverUrl || !value.secrets.serverToken)) ||
         (value.notificationRequest !== undefined &&
           !notificationRequests.includes(value.notificationRequest)) ||
         (value.welcome !== undefined &&
@@ -150,13 +177,18 @@ export function createSettingsStore(path, encryption, platform = process.platfor
   }
   async function available(signal) {
     signal?.throwIfAborted();
-    if (
-      !(platform === 'darwin'
-        ? await waitForKeyStore(() => encryption.isAsyncEncryptionAvailable(), signal)
-        : encryption.isEncryptionAvailable()) ||
-      encryption.getSelectedStorageBackend?.() === 'basic_text'
-    )
+    try {
+      if (
+        !(platform === 'darwin'
+          ? await waitForKeyStore(() => encryption.isAsyncEncryptionAvailable(), signal)
+          : encryption.isEncryptionAvailable()) ||
+        encryption.getSelectedStorageBackend?.() === 'basic_text'
+      )
+        throw new Error();
+    } catch {
+      signal?.throwIfAborted();
       throw new Error(keyStoreMessage);
+    }
   }
   async function protect(value, signal) {
     try {
@@ -171,10 +203,10 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       throw new Error(keyStoreMessage);
     }
   }
-  async function reveal(value, signal) {
+  async function reveal(value, signal, failure) {
     if (!value) return '';
+    await available(signal);
     try {
-      await available(signal);
       if (platform === 'darwin') {
         const ciphertext = Buffer.from(value, 'base64');
         const { result } = await waitForKeyStore(
@@ -192,10 +224,13 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       return encryption.decryptString(Buffer.from(value, 'base64'));
     } catch {
       signal?.throwIfAborted();
-      throw new Error(
-        platform === 'darwin'
-          ? keyStoreMessage
-          : 'The system key store could not unlock your saved keys.',
+      throw (
+        failure ??
+        new Error(
+          platform === 'darwin'
+            ? keyStoreMessage
+            : 'The system key store could not unlock your saved keys.',
+        )
       );
     }
   }
@@ -205,6 +240,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       notifications: value.notifications,
       theme: value.theme,
       onboardingCompleted: value.onboardingCompleted,
+      ...(value.serverUrl ? { serverUrl: value.serverUrl } : {}),
       ...(value.welcome ? { welcome: { ...value.welcome } } : {}),
       onboardingPreferenceStep: value.onboardingCompleted
         ? 'complete'
@@ -216,6 +252,53 @@ export function createSettingsStore(path, encryption, platform = process.platfor
   return {
     get() {
       return exclusive(async () => redacted(await read()));
+    },
+    connection(signal) {
+      return exclusive(async () => {
+        signal?.throwIfAborted();
+        const value = await read();
+        signal?.throwIfAborted();
+        if (!value.serverUrl) return null;
+        return {
+          url: value.serverUrl,
+          token: await reveal(
+            value.secrets.serverToken,
+            signal,
+            Object.assign(
+              new Error(
+                'nod could not unlock your saved server token. Reconnect with your server’s authentication token.',
+              ),
+              { code: 'NOD_SERVER_TOKEN_UNAVAILABLE' },
+            ),
+          ),
+        };
+      });
+    },
+    saveConnection(input, signal) {
+      return exclusive(async () => {
+        signal?.throwIfAborted();
+        const previous = await read();
+        signal?.throwIfAborted();
+        const value = { ...previous, secrets: { ...previous.secrets } };
+        if (input === null) {
+          delete value.serverUrl;
+          delete value.secrets.serverToken;
+        } else {
+          if (
+            !input ||
+            typeof input !== 'object' ||
+            Array.isArray(input) ||
+            Object.keys(input).some((field) => !['url', 'token'].includes(field)) ||
+            typeof input.token !== 'string' ||
+            !/^[A-Za-z0-9_-]{43,}$/.test(input.token)
+          )
+            throw new Error('Enter the authentication token configured on your server.');
+          value.serverUrl = serverOrigin(input.url);
+          value.secrets.serverToken = await protect(input.token, signal);
+        }
+        await write(value, signal);
+        return redacted(value);
+      });
     },
     save(input) {
       return exclusive(async () => {

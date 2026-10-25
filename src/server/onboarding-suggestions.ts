@@ -274,7 +274,7 @@ function assembled(checked: Checked, fallback: PreparedSuggestions, sources: rea
 
 function welcomeGreeting(name: string | undefined) {
   const firstName = name?.trim().split(/\s+/)[0]?.slice(0, 40);
-  return `${firstName ? `Hi ${firstName}!` : 'Hi!'} What are you working on these days? I’d like to find something I can take off your plate.\n\nYou can also connect [Telegram or WhatsApp](/channels) to chat with me from your phone. Keep nod open on your computer so I can reply.`;
+  return `${firstName ? `Hi ${firstName}!` : 'Hi!'} What are you working on these days? I’d like to find something I can take off your plate.\n\nYou can also connect [Telegram or WhatsApp](/channels) to chat with me from your phone. Keep nod running so I can reply.`;
 }
 
 const extraTasks: Task[] = [

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell } from 'electron';
 import { createArtifactFiles, canOpenArtifact } from './artifact-files.mjs';
 
-export function registerArtifactFileHandlers({ isEngine, origin, token, window, icon }) {
+export function registerArtifactFileHandlers({ isEngine, origin, headers, window, icon }) {
   const attached = new WeakSet();
   function attach(contents) {
     if (attached.has(contents)) return;
@@ -41,7 +41,7 @@ export function registerArtifactFileHandlers({ isEngine, origin, token, window, 
       if (!window() || !origin()) throw new Error('The workspace is unavailable.');
       return fetch(`${origin()}/api/artifacts/${id}`, {
         redirect: 'error',
-        headers: { 'x-nod-desktop-token': token() },
+        headers: headers(),
         signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
       });
     },
@@ -69,7 +69,7 @@ export function registerArtifactFileHandlers({ isEngine, origin, token, window, 
       throw new Error('This file is unavailable.');
     const access = await fetch(`${origin()}/api/artifacts/${id}/metadata`, {
       redirect: 'error',
-      headers: { 'x-nod-desktop-token': token() },
+      headers: headers(),
       signal: AbortSignal.timeout(10000),
     });
     await access.arrayBuffer();

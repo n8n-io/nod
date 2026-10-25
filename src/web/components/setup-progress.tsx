@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { NodGlyph } from './motion';
-import { desktopLinksAvailable } from '../lib/desktop';
+import { desktopRuntimeAvailable } from '../lib/desktop';
 
 export function SetupProgress({
   title,
@@ -8,12 +8,14 @@ export function SetupProgress({
   error,
   progress,
   children,
+  local = desktopRuntimeAvailable(),
 }: {
   title: string;
   description?: string;
   error?: string;
   progress?: number;
   children?: ReactNode;
+  local?: boolean;
 }) {
   const panel = useRef<HTMLElement>(null);
   const fraction =
@@ -49,9 +51,8 @@ export function SetupProgress({
         {children && <div className="setup-progress-actions">{children}</div>}
       </div>
       <p className="setup-progress-note">
-        {desktopLinksAvailable() && 'Your workspace, browser and data stay on this computer. '}
-        Your chosen AI providers process requests; browsing and connected apps contact external
-        services.
+        Your workspace, browser and data stay on {local ? 'this computer' : 'your server'}. Your
+        chosen AI providers process requests; browsing and connected apps contact external services.
       </p>
     </main>
   );

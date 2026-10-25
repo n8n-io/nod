@@ -13,7 +13,7 @@ nod never sends what you write, what nod replies, what your apps return, or what
 
 ## Turn usage data on or off
 
-You turn on **Share usage data** in the introduction after **Get started**, or later in **Settings → General**. Opt-in usage events and recordings start only in the app after your choice is saved; the native Welcome window sends neither.
+You turn on **Share usage data** in the introduction, or later in **Settings → General**. Opt-in usage events and recordings start only in the app after your choice is saved; the native Welcome window sends neither.
 
 Next to the switch, nod says: "Help us make nod better by sharing how you use it. Never your messages." It links to this page, which lists everything that is sent.
 
@@ -40,10 +40,12 @@ To disable both upstream analytics and feedback, set `NOD_ANALYTICS_ENABLED=fals
 
 nod counts installations, not people. Two installations count as two, and a shared one counts as one.
 
-| Runtime        | Identity                                                      | Available by default                       |
-| -------------- | ------------------------------------------------------------- | ------------------------------------------ |
-| Source install | `local:<installation UUID>` in `<NOD_DATA_ROOT>/analytics-id` | With `pnpm start`, not with `pnpm run dev` |
-| Desktop app    | `local:<installation UUID>` in the desktop profile            | In packaged apps, not in development       |
+| Runtime                      | Identity                                                      | Available by default                                                          |
+| ---------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Source or self-hosted server | `local:<installation UUID>` in `<NOD_DATA_ROOT>/analytics-id` | With `NODE_ENV=production`, including `pnpm start` and the self-hosting stack |
+| Local desktop runtime        | `local:<installation UUID>` in the desktop profile            | In packaged apps, not in development                                          |
+
+Web and desktop clients connected to the same server use that server's installation identity. A separate local desktop assistant has its own identity.
 
 "Available" still needs the owner's opt-in. PostHog creates no person profile and doesn't look up your location from your IP address.
 
@@ -108,7 +110,7 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 | `nod_model_selected`           | A model choice you made is saved                   | `provider`: a supported provider ID or `other`; `entry`: `settings`, `onboarding`; `recommended`. Never the model name                                                                              |
 | `nod_ui_error`                 | An instrumented UI action or render fails          | `area`: `application`, `onboarding`, `chat`, `settings`, `apps`, `models`; `action`: `load`, `save`, `send`, `connect`, `disconnect`, `prepare`, `stop`, `render`. Never the error itself           |
 
-Onboarding asks about **Share usage data** in the introduction after **Get started**. Step events are sent only after you turn it on, so the welcome screen and introduction are usually not recorded. The native welcome is not recorded. The introduction is recorded if sharing was already enabled when it appears; enabling sharing there does not backfill earlier events. The Open at login question is reported when it appears. Setup finishes after the last required step. If you leave usage sharing off, onboarding sends nothing. Email and calendar can be skipped. The apps step always lets you continue without connecting a tool.
+Onboarding asks about **Share usage data** in the introduction. Step events are sent only after you turn it on, so the welcome screen and introduction are usually not recorded. The native welcome is not recorded. The introduction is recorded if sharing was already enabled when it appears; enabling sharing there does not backfill earlier events. The Open at login question is reported when it appears. Setup finishes after the last required step. If you leave usage sharing off, onboarding sends nothing. Email and calendar can be skipped. The apps step always lets you continue without connecting a tool.
 
 ### What nod does
 

@@ -128,7 +128,7 @@ Drafts are never offered to the installer or the updater.
 - When the newest release is incomplete for a platform, nod tries up to three newer releases and offers the first that validates.
 - A Mac app outside Applications offers to move itself there at startup, because it can update itself only from Applications.
 - Updates download in the background. On a Mac, nod also loads the new runtime's images into the running VM, so the restart skips that step.
-- An automatic check announces a ready update with a notification when notifications are on, and with a **Restart** or **Later** dialog otherwise. The menu offers **Restart to update** until you restart.
+- An automatic check announces a ready update with a notification when notifications are on and quiet hours allow it. Background checks never open a dialog. The menu offers **Restart to update** until you restart.
 - If a reply, schedule or background check is running, or nod can't tell, it asks before restarting.
 - If the runtime hasn't changed, nod reuses it and downloads only the app or installer.
 - A Mac runtime is rebuilt when one of its inputs changes, or by the first release built in a new week (below). Its inputs are the browser worker and the source it imports, the scripts the images copy, dependencies, Dockerfiles, pinned downloads, the runtime build scripts and the release workflow. Other app changes reuse the published runtime. A test fails when a runtime build script or Dockerfile reads a repository file the fingerprint doesn't cover.

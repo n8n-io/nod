@@ -3,6 +3,7 @@ import { NodGlyph, Rise, type GlyphReaction } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import type { StepProps } from '..';
 import { errorMessage } from '../../../lib/api';
+import { desktopRuntimeAvailable } from '../../../lib/desktop';
 import { posthogConfig } from '../../../../shared/analytics';
 import { Bubble, Messages, PreferenceBubble, useReveal, type RevealStep } from '../motion';
 
@@ -22,7 +23,8 @@ export function Introduction({
   onNext,
   usage,
   continuing = false,
-}: StepProps & { continuing?: boolean }) {
+  local = desktopRuntimeAvailable(),
+}: StepProps & { continuing?: boolean; local?: boolean }) {
   const [saving, setSaving] = useState<boolean | null>(null);
   const pending = useRef<Promise<boolean> | null>(null);
   const [error, setError] = useState('');
@@ -145,7 +147,7 @@ export function Introduction({
             </span>
           </Bubble>,
           <Bubble>
-            I run on <strong>your computer</strong> and work in{' '}
+            I run on <strong>{local ? 'your computer' : 'your server'}</strong> and work in{' '}
             <strong>the apps you already use</strong>. Let’s get to know each other a bit first, so
             I can really help.
           </Bubble>,

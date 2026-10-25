@@ -33,11 +33,16 @@ export const accessCookie = (port: number) => `nod-access-${port}`;
 export function registerLocalAccess(
   app: FastifyInstance,
   port: number,
-  access: { key: string; desktop?: boolean },
+  access: { key: string; desktop?: boolean; origin?: string; bearer?: boolean },
 ) {
   const desktop = access.desktop === true;
+  const origin = access.origin ? new URL(access.origin) : undefined;
   const hosts = new Set(
-    desktop ? [`127.0.0.1:${port}`] : [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`],
+    desktop
+      ? [`127.0.0.1:${port}`]
+      : origin
+        ? [origin.host]
+        : [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`],
   );
   const expected = Buffer.from(access.key);
   const cookie = accessCookie(port);
@@ -48,11 +53,13 @@ export function registerLocalAccess(
   const presented = (request: FastifyRequest) =>
     desktop
       ? request.headers['x-nod-desktop-token']
-      : request.headers.cookie
-          ?.split(';')
-          .map((part) => part.trim())
-          .find((part) => part.startsWith(`${cookie}=`))
-          ?.slice(cookie.length + 1);
+      : access.bearer && request.headers.authorization !== undefined
+        ? /^Bearer ([^\s]+)$/i.exec(request.headers.authorization)?.[1]
+        : request.headers.cookie
+            ?.split(';')
+            .map((part) => part.trim())
+            .find((part) => part.startsWith(`${cookie}=`))
+            ?.slice(cookie.length + 1);
   const pages = new Set([
     '/',
     '/tasks',
@@ -80,6 +87,8 @@ export function registerLocalAccess(
       .header('Cache-Control', 'no-store')
       .header('Content-Security-Policy', "frame-ancestors 'none'");
     const path = request.url.split('?')[0];
+    if (!hosts.has(request.headers.host || ''))
+      return reply.code(403).send({ error: 'This host is not permitted.' });
     if (
       !desktop &&
       request.method === 'POST' &&
@@ -87,18 +96,19 @@ export function registerLocalAccess(
     )
       return;
     if (!desktop && request.method === 'GET' && path === '/api/webhooks/whatsapp') return;
-    if (!hosts.has(request.headers.host || ''))
-      return reply.code(403).send({ error: 'nod is only available on localhost.' });
     if (request.headers.origin) {
-      let origin: URL;
+      let requested: URL;
       try {
-        origin = new URL(request.headers.origin);
+        requested = new URL(request.headers.origin);
       } catch {
         return reply.code(403).send({ error: 'Invalid origin.' });
       }
       if (
-        origin.protocol !== 'http:' ||
-        !hosts.has(origin.host) ||
+        (origin
+          ? request.headers.origin !== origin.origin
+          : requested.protocol !== 'http:' ||
+            request.headers.origin !== requested.origin ||
+            !hosts.has(requested.host)) ||
         (desktop && request.headers.origin !== `http://127.0.0.1:${port}`)
       )
         return reply.code(403).send({ error: 'This origin is not permitted.' });
@@ -130,19 +140,21 @@ export function registerLocalAccess(
       return reply.code(401).send({
         error: desktop
           ? 'Open nod in the desktop app.'
-          : 'Open nod from the link in your terminal.',
+          : access.bearer
+            ? 'Enter your server authentication token.'
+            : 'Open nod from the link in your terminal.',
       });
     if (request.headers['sec-fetch-site'] === 'cross-site' && !appCallback && !pageNavigation)
       return reply.code(403).send({ error: 'Cross-site requests are not permitted.' });
   });
   if (!desktop)
-    app.post('/api/access', async (request, reply) => {
+    app.post('/api/access', { bodyLimit: 4096 }, async (request, reply) => {
       if (!matches((request.body as { key?: unknown } | undefined)?.key))
         return reply.code(401).send({ error: 'This link is no longer valid.' });
       return reply
         .header(
           'Set-Cookie',
-          `${cookie}=${access.key}; Path=/; HttpOnly; SameSite=Strict; Max-Age=34560000`,
+          `${cookie}=${access.key}; Path=/; HttpOnly; SameSite=Strict; Max-Age=34560000${origin?.protocol === 'https:' ? '; Secure' : ''}`,
         )
         .code(204)
         .send();

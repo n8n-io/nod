@@ -334,7 +334,7 @@ export function PersonalConnection({
     try {
       const response = await api<{ url: string; attempt?: string }>(`/api/apps/${slug}/connect`, {
         method: 'POST',
-        body: JSON.stringify({ returnTo: 'window', connectionId }),
+        body: JSON.stringify({ returnTo: external ? 'desktop' : 'window', connectionId }),
         signal: controller.signal,
       });
       if (controller.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');

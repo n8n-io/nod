@@ -117,6 +117,7 @@ if (process.argv.includes('--run')) {
       'desktop/main',
       'desktop/preload',
       'desktop/ui',
+      'deployment/self-host',
       'tsconfig.json',
       'dist/web',
     ].flatMap((path) => [

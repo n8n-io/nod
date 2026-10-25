@@ -3,7 +3,7 @@ import { ExternalLink } from './icons';
 import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
-import { desktopLinksAvailable, openConnection } from '../lib/desktop';
+import { desktopLinksAvailable, desktopRuntimeAvailable, openConnection } from '../lib/desktop';
 import {
   Button,
   Dialog,
@@ -244,7 +244,7 @@ export function AppDiscoveryDialog({
           body: JSON.stringify({
             instanceUrl: typed,
             ...(token ? { token } : {}),
-            returnTo: 'window',
+            returnTo: external ? 'desktop' : 'window',
           }),
           signal: controller.signal,
         },
@@ -328,7 +328,7 @@ export function AppDiscoveryDialog({
           method: 'POST',
           body: JSON.stringify({
             ...(enteredClientId ? { clientId: enteredClientId } : {}),
-            returnTo: 'window',
+            returnTo: external ? 'desktop' : 'window',
             restart: true,
             restartAttempt,
           }),
@@ -502,7 +502,10 @@ export function AppDiscoveryDialog({
             <form onSubmit={(event) => void connect(event)} autoComplete="off">
               <Field
                 label={`Your ${discovery.name} address`}
-                hint={discovery.localAddress && 'Found on this computer.'}
+                hint={
+                  discovery.localAddress &&
+                  (desktopRuntimeAvailable() ? 'Found on this computer.' : 'Found on your server.')
+                }
               >
                 <Input
                   name="instanceUrl"

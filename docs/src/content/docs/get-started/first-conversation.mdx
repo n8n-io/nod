@@ -11,11 +11,13 @@ This page walks you through nod's onboarding, your first tasks and what to do wh
 
 ## Onboarding at a glance
 
-nod opens onboarding the first time you use it. In the desktop app, you can connect accounts while nod prepares its computer. Optionally connect email and calendar, choose an AI provider, then connect other tools if useful. nod gets to know you in the chat after setup.
+nod opens onboarding the first time you set up an assistant. Optionally connect email and calendar, choose an AI provider, then connect other tools if useful. nod gets to know you in chat after setup.
+
+For a local desktop assistant, you can connect accounts while nod prepares its computer. When you connect to a server, setup and saved connections belong to that server. A server that already completed onboarding opens your existing chat.
 
 ```mermaid
 flowchart TD
-  start[Get started] --> hi[Say hi and<br/>usage data]
+  start[Welcome] --> hi[Say hi and<br/>usage data]
   hi --> email[Email or skip]:::muted
   email --> calendar[Calendar or skip]:::muted
   calendar --> model[Connect<br/>a model]:::accent
@@ -27,23 +29,25 @@ flowchart TD
 
 <Steps>
 
-1. **Get started.** Select **Get started** on the welcome screen. The desktop app starts its services as soon as it opens. If storage is still preparing, a loading screen appears and continues automatically when storage is ready.
+1. **Choose your assistant.** In the desktop app, select **Use this computer** for a local assistant or **Connect to a server**. In the web app, select **Get started**. Local setup prepares its services in the background after your choice. If storage is still preparing, nod waits and continues automatically when it's ready.
 
-2. **Say hi.** nod introduces itself and asks whether to **Share usage data**. It's off unless you turn it on, and you can change it later in **Settings → General**. Select **Let’s go**. The introduction stays visible until email setup is ready to open.
+2. **Say hi.** nod introduces itself and asks whether to **Share usage data**. It's off unless you turn it on, and you can change it later in **Settings → General**. Select **Let’s go**. For a local desktop assistant, the introduction stays visible until email setup is ready to open.
 
 3. **Connect email (optional).** Choose **Gmail** or **Outlook** to get help with replies and follow-ups. Sign in and review the permissions, or select **Skip for now**. Setup continues after the connection is confirmed. Failed sign-in does not erase your earlier progress. If you go **Back**, **Manage** opens the same account manager as Apps to add another account or confirm removal. Select **Continue** when you’re ready.
 
 4. **Connect a calendar (optional).** Choose **Google Calendar** or **Outlook Calendar** to get help planning around your schedule and finding time for meetings. If you already connected Outlook, that account is available here. **Manage** offers the same account controls as email and keeps you on this step. Select **Continue** or **Skip for now**.
 
-5. **Connect a model.** Pick OpenAI, Anthropic or OpenRouter, or select **More providers** for Google Vertex AI, Amazon Bedrock, Azure OpenAI and **Your own server**. For OpenAI, select **Sign in with ChatGPT** to use your ChatGPT Plus or Pro plan. For OpenRouter, select **Sign in to OpenRouter** to have it create a key for nod. To paste a key for either one instead, select **Use an API key instead**. Anthropic takes an API key only, because Claude plans can't be used. Google Vertex AI needs an express mode key or a key bound to a service account with Vertex AI access in a project with billing enabled, Amazon Bedrock a key and Region, and Azure OpenAI an endpoint, deployment and key. See [Connect a model](/connect/models/) for what to prepare. A provider you already connected shows a check; select it to use that connection. In the desktop app or a source install, you can pick **Your own server** to use a [local model](/connect/local-models/): check the server address, add a key only if the server needs one, then select **Connect**. Your key is encrypted and never shown to the model. nod then shows the provider it connected to and the model it will use, its default when available. You can change the model there, or later in **Models**. If nod asks you to choose a model, choose one, then select **Continue**.
+5. **Connect a model.** Choose a provider, or select **More providers** to search all supported services. Follow its sign-in or API-key form. See [Connect a model](/connect/models/) for required credentials and cloud settings. Existing connections, including those configured through server environment variables, are available here.
 
-6. **Connect other apps (optional).** Browse the categories or search by name, then select **Connect** and review the access requested by each app. Connected apps keep their place in the list. **Manage** opens the same account manager as Apps, where you can add another account or disconnect one. A count beside **Continue** shows connected tools, excluding email. Each app counts once, even with multiple accounts. Select **Continue** whenever you’re ready, including with no apps connected. You can add apps anytime from **Apps**.
+   To use an [OpenAI-compatible model server](/connect/local-models/), choose **Your own server** and enter an address reachable from nod's server. If nod shows **Key saved for**, access will be checked on first use. Choose a model if prompted, then select **Continue**. You can change the model here or later in **Models**.
 
-7. **Open at login.** In the desktop app, enable **Open at login**, then select **Start chatting**. The first chat requests desktop notifications once. You can change both preferences in **Settings → General**.
+6. **Connect other apps (optional).** Browse the categories or search by name, then select **Connect** and review the access requested by each app. Connected apps keep their place in the list. **Manage** opens the same account manager as Apps, where you can add another account or disconnect one. A count shows connected tools, excluding email. Each app counts once, even with multiple accounts. Finish this step whenever you’re ready, including with no apps connected. You can add apps anytime from **Apps**.
+
+7. **Open at login for a local assistant.** Enable **Open at login**, then select **Start chatting**. The first chat introduction enables desktop notifications on a new profile. You can change both preferences in **Settings → General**.
 
 </Steps>
 
-Setup finishes after the apps step in the web app, or after desktop preferences in the app. If the computer is still preparing, nod shows its progress and opens chat automatically when ready. If it is already ready, chat opens directly. A startup failure offers **Try again** without clearing your connections. If setup needs a model connection, nod sends you back to that step.
+Setup finishes after the apps step in the web app or a desktop client connected to a server. A local assistant also requires desktop preferences. If its computer is still preparing, nod shows progress and opens chat when ready. A startup failure offers **Try again** without clearing your connections. If setup needs a model connection, nod sends you back to that step.
 
 You can add more later from **Apps** and **Channels** in the sidebar. See [Connect apps](/connect/apps/) and [Channels](/use/channels/).
 
@@ -53,9 +57,9 @@ In the desktop app, **Replay onboarding** opens setup again without deleting sav
 
 ## Start your first task
 
-nod opens the conversation by asking what you're working on and what it can take off your plate. Reply in chat, or ask for a task directly. There is no required interview. What you share follows the normal chat memory settings. The opening message also links to **Channels**, where you can connect Telegram or WhatsApp to chat from your phone. Keep nod running on your computer so it can reply.
+nod opens the conversation by asking what you're working on and what it can take off your plate. Reply in chat, or ask for a task directly. There is no required interview. What you share follows the normal chat memory settings. The opening message also links to **Channels**, where you can connect Telegram or WhatsApp to chat from your phone. Keep your local assistant or server running so it can reply.
 
-On a new desktop installation, nod requests notification permission when its first chat message appears, so it can tell you when work is ready or needs your attention. Your operating system may show a permission prompt. If you decline, nod does not ask again automatically; you can allow notifications in your system settings later. Existing notification choices are kept. Desktop alerts do not authorize app monitoring or scheduled work.
+On a new desktop profile, nod enables notifications when its first chat introduction appears, so it can tell you when work is ready or needs your attention. macOS may ask for permission; your system settings control delivery. If you decline, nod does not ask again automatically. You can allow notifications in your system settings later. Existing notification choices are kept. Desktop alerts do not authorize app monitoring or scheduled work.
 
 nod also prepares three starting task cards: one **Right now** and two **Ongoing** ideas. It reads a small sample from your connected tools to find work it could take off your plate. That might be a meeting to prepare for, a conversation waiting on you, or a recurring report. It uses only available read operations and respects your rules. Preparing suggestions never sends messages, changes your accounts, or starts ongoing work.
 
