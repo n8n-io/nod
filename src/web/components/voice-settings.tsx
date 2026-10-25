@@ -61,9 +61,9 @@ export function VoiceSettings({
     setPreviewing(null);
   }
   useEffect(() => {
-    onBusyChange(saving);
+    onBusyChange(saving || preparing);
     return () => onBusyChange(false);
-  }, [saving, onBusyChange]);
+  }, [saving, preparing, onBusyChange]);
   useEffect(
     () => () => {
       saveRequest.current?.abort();

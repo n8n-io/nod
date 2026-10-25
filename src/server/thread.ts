@@ -1420,7 +1420,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
               for (const message of taken) {
                 const loadedMessage = await loadMessage(message.id);
                 const { uploads, replyTo } = loadedMessage;
-                voice = loadedMessage.voice;
+                voice ||= loadedMessage.voice;
                 ownerMessage = true;
                 messages.push({
                   ...message,

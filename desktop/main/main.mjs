@@ -389,7 +389,7 @@ function isEngine(event) {
   );
 }
 
-function allowMicrophone(sender, details) {
+function isTrustedAppFrame(sender, details) {
   return Boolean(
     engineBound &&
     details?.isMainFrame === true &&
@@ -960,16 +960,21 @@ function configureAppSession() {
   const appSession = session.fromPartition(clientPartition);
   appSession.setPermissionCheckHandler((sender, permission, origin, details) => {
     return (
-      permission !== 'media' ||
-      (details.mediaType === 'audio' && trustedAppURL(origin) && allowMicrophone(sender, details))
+      permission === 'notifications' ||
+      ((permission === 'clipboard-sanitized-write' ||
+        (permission === 'media' && details.mediaType === 'audio')) &&
+        trustedAppURL(origin) &&
+        isTrustedAppFrame(sender, details))
     );
   });
   appSession.setPermissionRequestHandler((sender, permission, callback, details) => {
     callback(
-      permission !== 'media' ||
-        (details.mediaTypes?.length === 1 &&
-          details.mediaTypes[0] === 'audio' &&
-          allowMicrophone(sender, details)),
+      permission === 'notifications' ||
+        ((permission === 'clipboard-sanitized-write' ||
+          (permission === 'media' &&
+            details.mediaTypes?.length === 1 &&
+            details.mediaTypes[0] === 'audio')) &&
+          isTrustedAppFrame(sender, details)),
     );
   });
   appSession.on('will-download', saveEngineDownload);

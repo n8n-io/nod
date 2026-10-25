@@ -61,9 +61,10 @@ export function registerSpeechSettings(
       controller.signal.throwIfAborted();
       const saved = await preferences.get();
       if (!saved.speechVoice && speech.voices.every((voice) => voice.engine === 'Local')) {
-        const initial = speech.voices.find(
-          (voice) => voice.language?.split('-')[0] === locale?.toLowerCase().split('-')[0],
-        );
+        const language = locale?.toLowerCase();
+        const initial =
+          speech.voices.find((voice) => voice.language?.toLowerCase() === language) ??
+          speech.voices.find((voice) => voice.language?.split('-')[0] === language?.split('-')[0]);
         if (initial) await preferences.update({ speechVoice: initial.id });
       }
       return { local: options.local.status() };

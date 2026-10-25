@@ -193,7 +193,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
       const codeLike =
         classifyVerificationReply(text).kind !== 'ordinary' || Boolean(securityCodeIn(text));
       let verificationRequestId = input.verificationRequestId;
-      if (!verificationRequestId && codeLike && verificationRequests.length) {
+      if (!verificationRequestId && verificationRequests.length) {
         const eligible = verificationRequests.filter(
           (pending) => !accepted.replyTurnId || pending.turnId === accepted.replyTurnId,
         );

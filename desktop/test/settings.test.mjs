@@ -2599,9 +2599,52 @@ test('microphone access requires audio from an owned top-level app frame', async
   sender.mainFrame.url = `${origin}/`;
   assert.equal(f.checkPermission(sender, 'notifications', origin, details), true);
   assert.equal(await f.requestPermission(sender, 'notifications', details), true);
+  const clipboard = { requestingUrl: `${origin}/`, isMainFrame: true };
+  const checkClipboard = (candidate = sender, overrides = {}, requestingOrigin = origin) =>
+    f.checkPermission(candidate, 'clipboard-sanitized-write', requestingOrigin, {
+      ...clipboard,
+      ...overrides,
+    });
+  const requestClipboard = (candidate = sender, overrides = {}) =>
+    f.requestPermission(candidate, 'clipboard-sanitized-write', { ...clipboard, ...overrides });
+  assert.equal(checkClipboard(), true);
+  assert.equal(await requestClipboard(), true);
+  for (const candidate of [null, { mainFrame: sender.mainFrame }]) {
+    assert.equal(checkClipboard(candidate), false);
+    assert.equal(await requestClipboard(candidate), false);
+  }
+  for (const overrides of [
+    { isMainFrame: false },
+    { isMainFrame: undefined },
+    { requestingUrl: 'https://example.test/' },
+    { requestingUrl: `${origin}/api/artifacts/synthetic` },
+    { requestingUrl: undefined },
+  ]) {
+    assert.equal(checkClipboard(sender, overrides), false);
+    assert.equal(await requestClipboard(sender, overrides), false);
+  }
+  assert.equal(checkClipboard(sender, {}, 'https://example.test'), false);
+  for (const permission of [
+    'geolocation',
+    'midi',
+    'clipboard-read',
+    'display-capture',
+    'unknown',
+  ]) {
+    assert.equal(
+      f.checkPermission(sender, permission, origin, { ...details, mediaType: 'audio' }),
+      false,
+    );
+    assert.equal(
+      await f.requestPermission(sender, permission, { ...details, mediaTypes: ['audio'] }),
+      false,
+    );
+  }
   window.destroy();
   assert.equal(check(), false);
   assert.equal(await request(), false);
+  assert.equal(checkClipboard(), false);
+  assert.equal(await requestClipboard(), false);
 });
 
 test('native artifact saving requires an owned main frame on the current trusted app', async (t) => {
@@ -3138,6 +3181,60 @@ test('the remote desktop starts without a local runtime and fences tokens to its
     assert.equal(checkMicrophone(null), false);
     assert.equal(await requestMicrophone(null), false);
     assert.equal(checkMicrophone(window.webContents, {}, 'https://other.example.test'), false);
+    const clipboard = { requestingUrl: url, isMainFrame: true };
+    const checkClipboard = (sender = window.webContents, overrides = {}, origin = url) =>
+      appSession.permissionCheck(sender, 'clipboard-sanitized-write', origin, {
+        ...clipboard,
+        ...overrides,
+      });
+    const requestClipboard = (sender = window.webContents, overrides = {}) =>
+      new Promise((resolve) =>
+        appSession.permissionRequest(sender, 'clipboard-sanitized-write', resolve, {
+          ...clipboard,
+          ...overrides,
+        }),
+      );
+    assert.equal(checkClipboard(), true);
+    assert.equal(await requestClipboard(), true);
+    for (const sender of [null, { mainFrame: frame }]) {
+      assert.equal(checkClipboard(sender), false);
+      assert.equal(await requestClipboard(sender), false);
+    }
+    for (const overrides of [
+      { isMainFrame: false },
+      { isMainFrame: undefined },
+      { requestingUrl: 'http://127.0.0.1:4310/' },
+      { requestingUrl: `${url}/api/artifacts/synthetic` },
+      { requestingUrl: undefined },
+    ]) {
+      assert.equal(checkClipboard(window.webContents, overrides), false);
+      assert.equal(await requestClipboard(window.webContents, overrides), false);
+    }
+    assert.equal(checkClipboard(window.webContents, {}, 'https://other.example.test'), false);
+    for (const permission of [
+      'geolocation',
+      'midi',
+      'clipboard-read',
+      'display-capture',
+      'unknown',
+    ]) {
+      assert.equal(
+        appSession.permissionCheck(window.webContents, permission, url, {
+          ...media,
+          mediaType: 'audio',
+        }),
+        false,
+      );
+      assert.equal(
+        await new Promise((resolve) =>
+          appSession.permissionRequest(window.webContents, permission, resolve, {
+            ...media,
+            mediaTypes: ['audio'],
+          }),
+        ),
+        false,
+      );
+    }
     const request = {
       url: `${url}/api/session`,
       resourceType: 'xhr',

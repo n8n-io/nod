@@ -3442,7 +3442,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         globalThis[name] = dom.window[name];
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
       Object.defineProperty(navigator, 'language', { configurable: true, value: 'pt-PT' });
-      const requests = [], writes = [], players = [], revoked = [];
+      const requests = [], writes = [], players = [], revoked = [], preparations = [], busy = [];
       URL.createObjectURL = () => 'blob:preview-' + players.length;
       URL.revokeObjectURL = url => revoked.push(url);
       globalThis.Audio = function(url) {
@@ -3456,12 +3456,17 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         return player;
       };
       let settings = { transcription: true, synthesis: true, speechReply: 'voice', speechVoice: null,
+        local: { state: 'not_downloaded' },
         defaultVoice: 'openai:coral', voices: [
           { id: 'openai:coral', name: 'Coral', description: 'Warm and friendly', engine: 'OpenAI' },
           { id: 'local:pf_dora', name: 'Dora', description: 'Brazilian Portuguese', engine: 'Local', language: 'pt-BR' },
         ] };
       globalThis.fetch = (path, options) => {
         if (path === '/api/speech') return Promise.resolve(Response.json(settings));
+        if (path === '/api/speech/prepare') return new Promise((resolve, reject) => {
+          preparations.push({ options, resolve });
+          options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        });
         if (path === '/api/preferences') {
           const change = JSON.parse(options.body);
           writes.push(change);
@@ -3476,7 +3481,8 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
       const { VoiceSettings } = await import('./src/web/components/voice-settings.tsx');
       let root = createRoot(document.querySelector('#root'));
       let mounted = true;
-      const render = () => act(async () => root.render(createElement(VoiceSettings, { onBusyChange() {}, onModels() {} })));
+      const onBusyChange = value => busy.push(value);
+      const render = () => act(async () => root.render(createElement(VoiceSettings, { onBusyChange, onModels() {} })));
       const settle = async check => {
         for (let i = 0; i < 100 && !check(); i++)
           await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
@@ -3492,6 +3498,13 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
       });
       const open = async () => {
         await act(async () => trigger().click());
+        await settle(() => picker());
+      };
+      const openKeyboard = async key => {
+        await act(async () => {
+          trigger().focus();
+          trigger().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+        });
         await settle(() => picker());
       };
       const resolve = index => act(async () => requests[index].resolve(new Response(new Blob(['Synthetic audio'], { type: 'audio/wav' }))));
@@ -3549,7 +3562,7 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await resolve(4);
         assert.equal(players[2].playing, true);
         const thirdUrl = players[2].src;
-        await open();
+        await openKeyboard('ArrowUp');
         released(players[2], thirdUrl);
         await click('Play ' + coral, picker());
         await click('Close voice picker', picker());
@@ -3559,7 +3572,21 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         assert.deepEqual(writes, [{ speechVoice: 'local:pf_dora' }]);
         await settle(() => !picker());
         await click('Play ' + dora);
+        await openKeyboard('ArrowDown');
+        assert.equal(requests[6].options.signal.aborted, true);
         await resolve(6);
+        assert.equal(players.length, 3);
+        await click('Close voice picker', picker());
+        await settle(() => !picker());
+        await click('Play ' + dora);
+        await act(async () => requests[7].resolve(Response.json({ error: 'Synthetic preview failure' }, { status: 503 })));
+        assert.ok(document.body.textContent.includes('Synthetic preview failure'));
+        await openKeyboard('ArrowUp');
+        assert.equal(document.body.textContent.includes('Synthetic preview failure'), false);
+        await click('Close voice picker', picker());
+        await settle(() => !picker());
+        await click('Play ' + dora);
+        await resolve(8);
         const fourthUrl = players[3].src;
         await act(async () => root.unmount());
         mounted = false;
@@ -3572,10 +3599,33 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         await click('Play ' + coral, picker());
         await act(async () => root.unmount());
         mounted = false;
-        assert.equal(requests[7].options.signal.aborted, true);
-        await resolve(7);
+        assert.equal(requests[9].options.signal.aborted, true);
+        await resolve(9);
         assert.equal(players.length, 4);
         assert.deepEqual(writes, [{ speechVoice: 'local:pf_dora' }]);
+        root = createRoot(document.querySelector('#root'));
+        mounted = true;
+        await render();
+        await settle(() => trigger());
+        const button = label => [...document.querySelectorAll('button')].find(item => item.textContent === label);
+        for (const outcome of ['cancel', 'failure', 'complete']) {
+          await act(async () => button('Download voices').click());
+          const preparation = preparations.at(-1);
+          assert.equal(busy.at(-1), true, 'Local preparation must guard settings navigation');
+          assert.equal(preparation.options.signal.aborted, false);
+          if (outcome === 'cancel') {
+            await act(async () => button('Cancel').click());
+            assert.equal(preparation.options.signal.aborted, true);
+          } else {
+            if (outcome === 'complete') settings = { ...settings, local: { state: 'ready' } };
+            await act(async () => preparation.resolve(outcome === 'complete'
+              ? Response.json({ local: { state: 'ready' } })
+              : Response.json({ error: 'Synthetic download failure' }, { status: 503 })));
+          }
+          await settle(() => busy.at(-1) === false);
+          if (outcome === 'failure') assert.ok(document.body.textContent.includes('Synthetic download failure'));
+          if (outcome === 'complete') assert.equal(button('Download voices'), undefined);
+        }
       } finally {
         if (mounted) await act(async () => root.unmount());
         dom.window.close();

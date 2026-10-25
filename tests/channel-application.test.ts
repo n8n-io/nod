@@ -22,7 +22,12 @@ import { createChannelSessionStore } from '../src/server/channel-session.ts';
 import { createSpeech } from '../src/server/speech.ts';
 import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
 import { registerSpeechSettings } from '../src/server/speech-settings.ts';
-import type { createPreferencesStore } from '../src/server/preferences.ts';
+import {
+  defaultPreferences,
+  validatePreferences,
+  type createPreferencesStore,
+} from '../src/server/preferences.ts';
+import { speechVoices } from '../src/shared/speech.ts';
 
 test('speech previews reject unavailable voices, serialize generation and release cancelled requests', async (t) => {
   let calls = 0;
@@ -150,6 +155,71 @@ test('speech previews reject unavailable voices, serialize generation and releas
       assert.equal(calls, before);
     }
   });
+  await t.test(
+    'local preparation preserves a chosen voice and matches region before language',
+    async () => {
+      const localApp = Fastify();
+      let ready = false;
+      let saved = { ...defaultPreferences };
+      registerSpeechSettings(localApp, {
+        speech: createSpeech({
+          id: 'local-fixture',
+          configured: true,
+          voices: speechVoices.filter((voice) => voice.engine === 'Local'),
+          synthesize: async () => assert.fail('Preparing voices must not generate audio.'),
+        }),
+        preferences: {
+          validate: validatePreferences,
+          get: async () => saved,
+          update: async (change) => {
+            assert.equal(ready, true);
+            saved = { ...saved, ...validatePreferences(change) };
+            return saved;
+          },
+        },
+        local: {
+          prepare: async () => {
+            ready = true;
+          },
+          status: () => ({ state: ready ? 'ready' : 'not_downloaded' }),
+          close: async () => {},
+        },
+      });
+      try {
+        for (const [locale, expected] of [
+          ['en-GB', 'local:bf_emma'],
+          ['EN-gb', 'local:bf_emma'],
+          ['en-AU', 'local:af_heart'],
+          ['pt-PT', 'local:pf_dora'],
+          ['zz-ZZ', null],
+        ]) {
+          ready = false;
+          saved.speechVoice = null;
+          const response = await localApp.inject({
+            method: 'POST',
+            url: '/api/speech/prepare',
+            payload: { locale },
+          });
+          assert.equal(response.statusCode, 200);
+          assert.equal(saved.speechVoice, expected, locale!);
+        }
+        saved.speechVoice = 'local:bm_george';
+        assert.equal(
+          (
+            await localApp.inject({
+              method: 'POST',
+              url: '/api/speech/prepare',
+              payload: { locale: 'fr-FR' },
+            })
+          ).statusCode,
+          200,
+        );
+        assert.equal(saved.speechVoice, 'local:bm_george');
+      } finally {
+        await localApp.close();
+      }
+    },
+  );
 });
 
 test('OpenAI previews preserve configured voices and enforce the selected speech model', async (t) => {
@@ -163,15 +233,20 @@ test('OpenAI previews preserve configured voices and enforce the selected speech
   });
   const origin = await endpoint.listen({ host: '127.0.0.1', port: 0 });
   t.after(() => endpoint.close());
-  for (const model of ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd']) {
-    await t.test(model, async () => {
+  for (const [model, configuredVoice, expectedVoice] of [
+    ['gpt-4o-mini-tts', 'alloy', 'alloy'],
+    ['tts-1', 'alloy', 'alloy'],
+    ['tts-1-hd', 'alloy', 'alloy'],
+    ['gpt-4o-mini-tts', '', 'coral'],
+  ] as const) {
+    await t.test(`${model} (${configuredVoice || 'empty default'})`, async () => {
       const provider = createOpenAISpeechProvider({
         apiKey: async () => {
           keyRequests++;
           return 'synthetic-speech-key';
         },
         speechModel: model,
-        voice: 'alloy',
+        voice: configuredVoice,
         fetch: async (input, init) => {
           assert.equal(String(input), 'https://api.openai.com/v1/audio/speech');
           return fetch(origin + '/v1/audio/speech', init);
@@ -199,7 +274,7 @@ test('OpenAI previews preserve configured voices and enforce the selected speech
         assert.deepEqual(requests.at(-1), {
           model,
           input: text,
-          voice: 'alloy',
+          voice: expectedVoice,
           response_format: 'opus',
         });
         const before = requests.length;

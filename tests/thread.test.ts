@@ -1952,6 +1952,74 @@ test(
       );
 
       await t.test(
+        'audio stays private while verification is pending regardless of transcript language',
+        async (t) => {
+          for (const fixture of [
+            { language: 'English', text: 'one two three four five six', multiple: false },
+            { language: 'Portuguese', text: 'um dois três quatro cinco seis', multiple: false },
+            { language: 'Arabic', text: 'واحد اثنان ثلاثة أربعة خمسة ستة', multiple: true },
+          ]) {
+            await t.test(fixture.language, async () => {
+              await waitFor(settledThread);
+              const waiting = await thread.submitUserMessage('ask-credentials');
+              await waitFor(settled(waiting.turnId));
+              if (fixture.multiple) {
+                const second = randomUUID();
+                await db.pool.query(
+                  `INSERT INTO credential_requests(id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,selectors,inspection)
+                   VALUES($1,$2,$3,$4,$5,$5,'https://fixture.test','Synthetic second code','otp','{}','{}')`,
+                  [second, `synthetic-${second}`, ownerId, threadId, waiting.turnId],
+                );
+              }
+              const artifactsBefore = (
+                await db.pool.query('SELECT count(*)::int AS n FROM artifacts')
+              ).rows[0].n;
+              const privateBefore = privateAudioCodes.length;
+              const message = { threadId, clientMessageId: randomUUID() };
+              transcript = fixture.text;
+              try {
+                const response = await sendAudio(message);
+                assert.equal(response.statusCode, 409, response.body);
+                assert.equal(privateAudioCodes.length, privateBefore);
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      'SELECT 1 FROM messages WHERE id=$1 UNION ALL SELECT 1 FROM turns WHERE message_id=$1',
+                      [message.clientMessageId],
+                    )
+                  ).rowCount,
+                  0,
+                );
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      'SELECT 1 FROM messages WHERE text LIKE $1 UNION ALL SELECT 1 FROM turns WHERE prompt LIKE $1 UNION ALL SELECT 1 FROM audio_messages WHERE response::text LIKE $1',
+                      [`%${fixture.text}%`],
+                    )
+                  ).rowCount,
+                  0,
+                );
+                assert.equal(
+                  (await db.pool.query('SELECT count(*)::int AS n FROM artifacts')).rows[0].n,
+                  artifactsBefore,
+                );
+                const calls = transcriptions.length;
+                assert.equal((await sendAudio(message)).statusCode, 409);
+                assert.equal(transcriptions.length, calls);
+              } finally {
+                transcript = 'Synthetic spoken request';
+                await db.pool.query(
+                  "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+                  [waiting.turnId],
+                );
+                await waitFor(settledThread);
+              }
+            });
+          }
+        },
+      );
+
+      await t.test(
         'spoken verification stays bound to intake requests when they close or become unambiguous',
         async () => {
           for (const multiple of [false, true]) {
@@ -2107,6 +2175,66 @@ test(
             synthesisError = undefined;
             synthesisGate = undefined;
             releaseSynthesis?.();
+          }
+        },
+      );
+
+      await t.test(
+        'spoken replies preserve audio from any message joined into a running turn',
+        async (t) => {
+          const clip = await storeArtifact(
+            Buffer.from('Synthetic batched voice request'),
+            'batch.ogg',
+            'audio/ogg',
+            threadId,
+          );
+          const manage = dependencies.manage;
+          dependencies.manage = async () => ({});
+          audioReplyMode = 'voice';
+          try {
+            for (const initialAudio of [true, false]) {
+              const prompt = `steer-audio-batch-${initialAudio}`;
+              await t.test(initialAudio ? 'initial audio' : 'queued audio', async () => {
+                await waitFor(settledThread);
+                block(prompt);
+                try {
+                  const before = spoken.length;
+                  const first = await thread.submitUserMessage(prompt, initialAudio ? [clip] : []);
+                  await waitFor(() => Boolean(ran(first.turnId)));
+                  const queued = [];
+                  if (!initialAudio)
+                    queued.push(await thread.submitUserMessage('Synthetic queued voice', [clip]));
+                  queued.push(await thread.submitUserMessage('Synthetic trailing text'));
+                  release(prompt);
+                  await waitFor(settled(first.turnId));
+                  assert.deepEqual(
+                    taken.get(first.turnId)!.map(({ id }) => id),
+                    queued.map(({ messageId }) => messageId),
+                  );
+                  assert.equal(spoken.length, before + 1);
+                  assert.equal(spoken.at(-1), `done: ${prompt}`);
+                  const replies = (
+                    await db.pool.query(
+                      "SELECT id,attachments,reply_to_message_id FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at,id",
+                      [first.turnId],
+                    )
+                  ).rows;
+                  assert.equal(replies.length, 2);
+                  assert.equal(replies[1].reply_to_message_id, replies[0].id);
+                  assert.equal(replies[1].attachments.length, 1);
+                  assert.deepEqual(
+                    await localArtifacts.readArtifact(replies[1].attachments[0].id),
+                    Buffer.from('Synthetic generated audio'),
+                  );
+                  for (const message of queued) assert.equal(ran(message.turnId), undefined);
+                } finally {
+                  release(prompt);
+                }
+              });
+            }
+          } finally {
+            audioReplyMode = 'never';
+            dependencies.manage = manage;
           }
         },
       );

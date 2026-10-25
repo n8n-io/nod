@@ -30,7 +30,7 @@ export function createOpenAISpeechProvider(options: {
           'openai:shimmer',
         ].includes(voice.id)),
   );
-  const defaultVoice = `openai:${options.voice ?? 'coral'}`;
+  const defaultVoice = `openai:${options.voice || 'coral'}`;
   async function headers() {
     const key = typeof options.apiKey === 'function' ? await options.apiKey() : options.apiKey;
     if (!key) throw new Error('Speech is not configured.');
